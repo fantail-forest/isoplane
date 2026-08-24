@@ -77,6 +77,49 @@ impl Default for Limits {
     }
 }
 
+/// Execution and residency states reported by the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleTier {
+    /// Executing on a pool thread.
+    Hot,
+    /// Empty invocation stack with host-owned wake sources and resident guest memory.
+    Parked,
+    /// Resumable sandbox state is retained at a host return boundary.
+    Hibernated,
+    /// No resumable sandbox state is retained.
+    Discarded,
+}
+
+impl LifecycleTier {
+    pub const ALL: &'static [LifecycleTier] = &[
+        LifecycleTier::Hot,
+        LifecycleTier::Parked,
+        LifecycleTier::Hibernated,
+        LifecycleTier::Discarded,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LifecycleTier::Hot => "hot",
+            LifecycleTier::Parked => "parked",
+            LifecycleTier::Hibernated => "hibernated",
+            LifecycleTier::Discarded => "discarded",
+        }
+    }
+
+    /// Whether this state retains resident guest memory.
+    pub fn is_resident(self) -> bool {
+        matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
+    }
+}
+
+impl std::fmt::Display for LifecycleTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +128,18 @@ mod tests {
     fn fresh_guarantees_reset() {
         assert!(HandlerLifecycle::Fresh.resets_every_dispatch());
         assert!(!HandlerLifecycle::Reuse.resets_every_dispatch());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn only_hot_and_parked_hold_memory() {
+        assert!(LifecycleTier::Hot.is_resident());
+        assert!(LifecycleTier::Parked.is_resident());
+        assert!(!LifecycleTier::Hibernated.is_resident());
+        assert!(!LifecycleTier::Discarded.is_resident());
     }
 }

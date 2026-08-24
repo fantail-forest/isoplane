@@ -27,7 +27,7 @@ pub enum DispatchKind {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
@@ -39,7 +39,7 @@ pub struct HttpRequest {
 
 
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceContext {
     pub trace_id: String,
     pub span_id: String,
@@ -47,7 +47,7 @@ pub struct TraceContext {
 }
 
 /// The response head a guest hands back via `resp_new`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResponseHead {
     pub status: u16,
     pub headers: Vec<(String, String)>,

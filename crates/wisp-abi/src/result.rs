@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// The payload is opaque at this layer: the guest SDK knows which typed
 /// response a given future expects because it recorded that when it issued
 /// the import call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResultRecord {
     Ok(Vec<u8>),
     Err(FutureError),
@@ -38,7 +38,7 @@ impl ResultRecord {
 // Typed payloads carried inside `ResultRecord::Ok`.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -50,7 +50,7 @@ pub struct FetchResponse {
 
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyChunk {
     pub data: Vec<u8>,
     pub eof: bool,
