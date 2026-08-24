@@ -110,6 +110,29 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
         // would hand the guest back the measurement primitive the freeze exists
         // to remove.
         "clock_now_coarse" => return Ok(c.data().clock_ms),
+        // §4.6's kill-cooperation ABI. Both halves are engine-owned and never
+        // reach a `HostBindings` vtable: the state they read and write is the
+        // meter the epoch callback compares against, which lives here.
+        //
+        // "the host-published remaining-budget value" (§4.6), signed, in
+        // nanoseconds against B. Negative means the dispatch is in grace and
+        // by how much — the number a runtime layer needs to decide whether it
+        // can still afford to unwind. It is deliberately NOT a fine clock the
+        // guest can difference for timing (§8.4): it moves only with the
+        // guest's own thread CPU, so measuring it measures the guest itself.
+        "budget_remaining_ns" => {
+            let m = c.data().meter;
+            let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos());
+            let remaining = (m.cpu_budget_ns as i128) - (cpu as i128);
+            return Ok(remaining.clamp(i64::MIN as i128, i64::MAX as i128) as i64 as u64);
+        }
+        // The runtime layer's *unsafe-to-trap* bit: set around GC phases and
+        // scheduler queue mutations. Honoured during grace entry, ignored at
+        // the hard deadline (§6.4).
+        "unsafe_to_trap" => {
+            c.data_mut().unsafe_to_trap = raw[0] != 0;
+            return Ok(0);
+        }
         // §5.3 core group. An abort is a guest fault, so it leaves as a trap
         // rather than a return value; the message is kept for telemetry.
         "abort" => {

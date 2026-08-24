@@ -57,7 +57,7 @@ mod watchdog;
 mod wtconfig;
 
 pub use bindings::{HostBindings, ImportCall};
-pub use budget::{CpuBudget, DispatchOutcome, TrapInfo, TrapKind};
+pub use budget::{CpuBudget, DispatchOutcome, KillPhase, TrapInfo, TrapKind};
 pub use instance::Instance;
 pub use meter::{thread_cpu_nanos, thread_cpu_resolution_nanos};
 pub use snapshot::InstanceImage;
@@ -234,7 +234,7 @@ impl WispEngine {
             engine: self.inner.clone(),
             template: t.inner.clone(),
             live: Some(live),
-            poisoned: false,
+            tombstone: None,
             last: None,
             last_violation: None,
         })
@@ -405,13 +405,59 @@ pub(crate) fn instantiate(
     // *thread* clock is the thing compared. Under preemption a dispatch may
     // burn many epochs while off-CPU and is not killed for it, which is the
     // same reason wall time does not consume the CPU budget.
+    //
+    // §6.4's two-phase kill lives in these twenty lines, and the ORDER of the
+    // two comparisons is the whole guarantee:
+    //
+    //   1. **B+G first, unconditionally.** The hard deadline ignores the
+    //      runtime layer's *unsafe-to-trap* bit (§4.6) and ignores whether
+    //      grace was ever successfully entered. A guest that pins the bit, or
+    //      one whose host declines to offer grace at all, still dies here.
+    //      That is what makes the grace window safe to offer.
+    //   2. **B second, and it does not trap.** Crossing B enters grace: the
+    //      host completes the cancellation future and poisons this dispatch's
+    //      imports, and the guest is allowed to keep running so it can unwind
+    //      and return. Entry *defers* while the unsafe-to-trap bit is set,
+    //      because delivering `Cancelled` into a half-mutated GC or scheduler
+    //      queue is precisely the corruption tombstones exist to contain.
     store.epoch_deadline_callback(|mut ctx| {
         let m = ctx.data().meter;
-        let cpu = thread_cpu_nanos().saturating_sub(m.cpu0_ns);
-        if cpu >= m.cpu_budget_ns {
-            ctx.data_mut().kill = Some(Kill::Cpu);
-            return Err(BudgetExceeded { cpu_ns: cpu, budget_ns: m.cpu_budget_ns }.into());
+        let cpu = m.dispatch_cpu_ns(thread_cpu_nanos());
+
+        // Phase 2 — the hard deadline. Bit-blind by construction.
+        if cpu >= m.hard_ns() {
+            ctx.data_mut().kill = Some(Kill::CpuHard);
+            return Err(BudgetExceeded {
+                cpu_ns: cpu,
+                budget_ns: m.cpu_budget_ns,
+                grace_ns: m.grace_ns,
+            }
+            .into());
         }
+
+        // Phase 1 — grace entry. At most once per slice, and only when the
+        // host was actually told: a deferral leaves `grace_at_ns` unset so the
+        // next tick tries again, which is what bounds a pinned bit to G.
+        if cpu >= m.cpu_budget_ns && ctx.data().grace_at_ns.is_none() {
+            if ctx.data().unsafe_to_trap {
+                ctx.data_mut().grace_deferrals += 1;
+            } else if let Some(mut b) = ctx.data_mut().bindings.take() {
+                // The vtable is moved out for the duration, exactly as an
+                // import call does, so `enter_grace` cannot observe a
+                // half-borrowed store. It is put back before returning to the
+                // guest whatever happens.
+                b.enter_grace();
+                let d = ctx.data_mut();
+                d.bindings = Some(b);
+                d.grace_at_ns = Some(cpu);
+            }
+            // `bindings` is `None` only while an import call is in flight, and
+            // epoch checks are emitted into *wasm* code, not into host
+            // functions — so that branch is unreachable in practice. If it
+            // ever is reached, leaving `grace_at_ns` unset simply retries on
+            // the next tick, 200 µs later, well inside G.
+        }
+
         if let Some(w) = m.wall0 {
             let wall = w.elapsed().as_nanos() as u64;
             if wall >= m.wall_cap_ns {
@@ -583,9 +629,18 @@ pub enum Completion {
     Parked,
     /// Guest faulted. Instance discarded; never retried on the same memory.
     Trapped,
-    /// CPU budget elapsed. As trap, but with `budget_exceeded` telemetry and
-    /// no unwinding whatsoever (§2.5.8).
+    /// §6.4's **hard** kill: still executing at B+G, terminated with no
+    /// unwinding whatsoever (§2.5.8). The instance is **tombstoned** — its
+    /// memory is a state no execution ever produced.
     BudgetKill,
+    /// §6.4's **clean** kill: the dispatch entered grace and *returned* inside
+    /// it. `finally` ran, the instance is consistent, the slot is reusable,
+    /// and the overage CPU is recorded.
+    ///
+    /// The request still fails with `budget_exceeded` (§13) — a clean kill is
+    /// a kill. What it is not is a tombstone, and it does not count toward the
+    /// hang breaker: it is the budget working as designed (§6.4).
+    CleanKill,
 }
 
 impl Completion {
@@ -596,9 +651,18 @@ impl Completion {
             PollStatus::Trapped { .. } => Completion::Trapped,
         }
     }
-    /// Whether the instance may be reused. A killed or trapped instance may
-    /// not: its memory is arbitrary and no cleanup ran.
+    /// Whether the instance may be reused. A hard-killed or trapped instance
+    /// may not: its memory is arbitrary and no cleanup ran. A **clean**-killed
+    /// one may — that is the entire point of the grace window (§6.4).
     pub fn instance_survives(self) -> bool {
-        matches!(self, Completion::Done | Completion::Parked)
+        matches!(self, Completion::Done | Completion::Parked | Completion::CleanKill)
+    }
+    /// Whether §6.4 requires this completion to leave a **tombstone**: a
+    /// hard-killed instance may be internally inconsistent because the trap
+    /// landed at an arbitrary back-edge — mid-collection, mid-queue-mutation,
+    /// mid-frame — and the engine does not poison a store after a trap
+    /// (Appendix C, F2), so the platform must.
+    pub fn tombstones(self) -> bool {
+        matches!(self, Completion::Trapped | Completion::BudgetKill)
     }
 }

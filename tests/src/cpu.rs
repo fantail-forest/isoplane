@@ -176,6 +176,23 @@ pub struct NoiseFloor {
 impl NoiseFloor {
     /// Sample for `ms` with the process doing whatever it does at rest.
     pub fn measure(ms: u64) -> Self {
+        Self::measure_settled(0, ms)
+    }
+
+    /// Sleep `settle_ms` first, then sample for `ms`.
+    ///
+    /// The settle is not politeness, it is the difference between a floor and
+    /// a tail. Measured immediately after a template is compiled and loaded,
+    /// the floor picks up cranelift's thread pool winding down and reads an
+    /// order of magnitude high — on a real run, 0.0598 cores against a true
+    /// rest cost near 0.0002. A floor that is too *high* is the dangerous
+    /// direction: [`net_cores`](Self::net_cores) clamps at zero, so an
+    /// inflated floor subtracts a real cost into an apparent zero and the
+    /// scenario reports a pass it did not earn.
+    pub fn measure_settled(settle_ms: u64, ms: u64) -> Self {
+        if settle_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+        }
         let w = CpuWindow::start();
         std::thread::sleep(std::time::Duration::from_millis(ms));
         let u = w.read();
@@ -187,8 +204,19 @@ impl NoiseFloor {
 
     /// A window's cost with the floor removed, clamped at zero — a negative
     /// marginal cost is measurement noise, not a discovery.
+    ///
+    /// **The clamp is why this must never be the only number reported.** If
+    /// the floor was over-measured, every window under it reads as exactly
+    /// 0.00000 cores, which looks like the strongest possible result and is in
+    /// fact the absence of one. Report [`CpuUsage::cores`] alongside it.
     pub fn net_cores(&self, u: &CpuUsage) -> f64 {
         (u.cores() - self.cores).max(0.0)
+    }
+
+    /// True when [`net_cores`](Self::net_cores) hit the clamp — i.e. the
+    /// window cost *less* than the floor, so the subtraction told us nothing.
+    pub fn clamped(&self, u: &CpuUsage) -> bool {
+        u.cores() < self.cores
     }
 
     /// Whether the floor is quiet enough for a marginal measurement to mean
@@ -361,5 +389,52 @@ mod tests {
         };
         assert!((u.cores() - 0.0001).abs() < 1e-9);
         assert!((u.cores_per_instance(1000) - 1e-7).abs() < 1e-12);
+    }
+
+    /// The failure this module was corrected for. An over-measured floor makes
+    /// `net_cores` clamp, and a clamped zero is indistinguishable in the
+    /// report from a genuine zero unless the clamp is announced. S3 reads a
+    /// real 1.8e-6 cores/instance as "0.000e0" if it trusts the subtraction
+    /// alone, which is a measurement bug in the flattering direction.
+    #[test]
+    fn an_over_measured_floor_clamps_and_says_so() {
+        let floor = NoiseFloor {
+            cores: 0.0598,
+            sampled_ms: 500,
+        };
+        let window = CpuUsage {
+            cpu_ns: 18_161_000,
+            wall_ns: 10_018_000_000,
+            voluntary_switches: 1,
+            involuntary_switches: 0,
+        };
+        // The window really did cost something: 1.81e-3 cores gross.
+        assert!(
+            (window.cores() - 0.001813).abs() < 1e-5,
+            "gross was {}",
+            window.cores()
+        );
+        // ...which the subtraction erases entirely.
+        assert_eq!(floor.net_cores(&window), 0.0);
+        assert!(
+            floor.clamped(&window),
+            "the clamp must be visible to the caller"
+        );
+
+        // A floor genuinely below the window subtracts honestly and does not
+        // report itself as clamped.
+        let quiet = NoiseFloor {
+            cores: 0.0002,
+            sampled_ms: 2000,
+        };
+        assert!(!quiet.clamped(&window));
+        assert!(quiet.net_cores(&window) > 0.0015);
+    }
+
+    #[test]
+    fn a_settled_floor_still_measures_a_window() {
+        let f = NoiseFloor::measure_settled(20, 60);
+        assert_eq!(f.sampled_ms, 60);
+        assert!(f.cores >= 0.0);
     }
 }

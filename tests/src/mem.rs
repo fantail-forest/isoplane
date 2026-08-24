@@ -193,6 +193,43 @@ impl DensityCurve {
     pub fn bookkeeping_per_instance(&self, guest_dirty_bytes: u64) -> Option<f64> {
         self.marginal_private_dirty().map(|m| m - guest_dirty_bytes as f64)
     }
+
+    /// Marginal PSS per instance.
+    ///
+    /// PSS is the number a capacity planner should size from: it divides each
+    /// shared page by the number of mappers, so a template page mapped by
+    /// 5,000 instances is charged 1/5000 to each rather than once to the
+    /// process (RSS) or not at all. `docs/spike-findings.md` measured the two
+    /// diverging by ~64 kB/instance at N=2000 — the kernel's fault-around
+    /// pulling a 64 kB region of shared template in whenever an instance reads
+    /// a page it never wrote — so quoting RSS where PSS was meant overstates
+    /// marginal cost, and quoting it the other way understates it.
+    pub fn marginal_pss(&self) -> Option<f64> {
+        let pts: Vec<(f64, f64)> =
+            self.steady_state().iter().map(|(n, m)| (*n as f64, m.pss_bytes as f64)).collect();
+        crate::stats::linear_fit(&pts).map(|(slope, _)| slope)
+    }
+
+    /// How well the steady-state private-dirty points lie on a line. A density
+    /// slope quoted without this is a slope with no error bar.
+    pub fn fit_quality(&self) -> Option<f64> {
+        let pts: Vec<(f64, f64)> = self
+            .steady_state()
+            .iter()
+            .map(|(n, m)| (*n as f64, m.private_dirty_bytes as f64))
+            .collect();
+        crate::stats::r_squared(&pts)
+    }
+
+    /// How many points the slope was actually fitted through.
+    ///
+    /// Not the same as `points.len()`: the zero point and the first activation
+    /// are excluded from the fit (see [`DensityCurve::steady_state`]), and a
+    /// report that prints the wrong one invites a reader to check the
+    /// arithmetic and find it does not reproduce.
+    pub fn fitted_points(&self) -> usize {
+        self.steady_state().len()
+    }
 }
 
 /// Human bytes, for report lines.

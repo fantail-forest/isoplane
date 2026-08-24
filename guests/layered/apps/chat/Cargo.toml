@@ -1,0 +1,17 @@
+[package]
+name = "layered-chat"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Tenant 2: a chat room that redacts and normalizes messages. Reaches regex, case mapping and the runtime's map."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-rtabi = { path = "../../rtabi", default-features = false }
+
+[features]
+default = []
+layered = ["wisp-rtabi/layered"]
+selfcontained = ["wisp-rtabi/selfcontained"]

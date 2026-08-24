@@ -155,6 +155,19 @@ interface ctx {
     /// Extends instance lifetime past the response for fire-and-forget work,
     /// bounded by the CPU budget (§2.2).
     wait-until: func(f: future-id);
+
+    /// The host-published remaining-budget value (§4.6, §6.4). Signed
+    /// nanoseconds left against the dispatch's CPU budget B; negative once the
+    /// dispatch is in its grace window. The runtime layer reads it at the
+    /// allocation slow path, GC entry and task switch, and raises
+    /// `BudgetExceededException` when it is <= 0 — which is what makes clean
+    /// kills the common case.
+    budget-remaining-ns: func() -> s64;
+
+    /// The runtime layer's *unsafe-to-trap* bit (§4.6). Set around GC phases
+    /// and scheduler queue mutations. Grace entry defers while it is set; the
+    /// hard deadline at B+G ignores it, so a pinned bit buys exactly G.
+    unsafe-to-trap: func(on: bool);
 }
 
 /// What the platform provides to a guest.

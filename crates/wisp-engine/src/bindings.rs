@@ -58,4 +58,22 @@ pub trait HostBindings: Send + 'static {
     fn is_init_sandbox(&self) -> bool {
         false
     }
+
+    /// **The dispatch has crossed B and entered its grace window** (§6.4).
+    ///
+    /// Called from the epoch deadline callback, once per slice, on the
+    /// execution-pool thread with the guest suspended at a back-edge. The host
+    /// owes two things in response, and §6.4 names both:
+    ///
+    /// * complete the dispatch's **cancellation future**, so a guest sitting
+    ///   at an `await` observes a tripped token at its next wake (§5.4);
+    /// * **poison this dispatch's imports** so every subsequent call returns
+    ///   `Cancelled` immediately (§5.3).
+    ///
+    /// It must be cheap and it must not re-enter the guest — the guest is on
+    /// the stack. The default is a no-op so a `HostBindings` that predates the
+    /// two-phase kill still compiles; such a host simply never offers grace,
+    /// and every over-budget dispatch of its guests takes the hard trap at
+    /// B+G, which is v1.1 behaviour and is safe, not wrong.
+    fn enter_grace(&mut self) {}
 }

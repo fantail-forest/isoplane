@@ -1,0 +1,17 @@
+[package]
+name = "layered-quotes"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Tenant 1: an FX quote endpoint. Reaches JSON, float formatting and date formatting."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-rtabi = { path = "../../rtabi", default-features = false }
+
+[features]
+default = []
+layered = ["wisp-rtabi/layered"]
+selfcontained = ["wisp-rtabi/selfcontained"]

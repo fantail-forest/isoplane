@@ -220,6 +220,29 @@ pub fn linear_fit(points: &[(f64, f64)]) -> Option<(f64, f64)> {
     Some((slope, (sy - slope * sx) / n))
 }
 
+/// How much of the variation in `y` the fitted line accounts for, 0.0 to 1.0.
+///
+/// A slope with no goodness-of-fit beside it is a number without an error bar,
+/// and S3 is the scenario where that matters most: the marginal CPU of a
+/// parked instance is small enough that a four-point fit through a noisy
+/// machine can produce a confident-looking slope out of scheduler jitter. A
+/// low R² is the signal to lengthen the sample windows or widen the range of N
+/// rather than to quote the slope.
+///
+/// Returns `None` when `y` does not vary at all, because "the line explains
+/// all of nothing" is not a meaningful 1.0.
+pub fn r_squared(points: &[(f64, f64)]) -> Option<f64> {
+    let (slope, intercept) = linear_fit(points)?;
+    let mean_y: f64 = points.iter().map(|p| p.1).sum::<f64>() / points.len() as f64;
+    let ss_tot: f64 = points.iter().map(|p| (p.1 - mean_y).powi(2)).sum();
+    if ss_tot <= f64::EPSILON {
+        return None;
+    }
+    let ss_res: f64 =
+        points.iter().map(|p| (p.1 - (slope * p.0 + intercept)).powi(2)).sum();
+    Some(1.0 - ss_res / ss_tot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +294,27 @@ mod tests {
     fn nans_are_dropped_not_sorted() {
         let s = Summary::new(vec![1.0, f64::NAN, 3.0], "ms");
         assert_eq!(s.n(), 2);
+    }
+
+    /// A slope quoted without a goodness-of-fit is a number without an error
+    /// bar. S3's marginal park cost is small enough that scheduler jitter can
+    /// manufacture a confident-looking slope, so the fit has to say how well
+    /// it explains the points.
+    #[test]
+    fn r_squared_separates_a_real_line_from_noise() {
+        let clean: Vec<(f64, f64)> =
+            (0..6).map(|i| (i as f64, 3.0 + 2.0 * i as f64)).collect();
+        assert!((r_squared(&clean).unwrap() - 1.0).abs() < 1e-12);
+
+        // The same slope buried in scatter: the fit still returns a slope, and
+        // R^2 is what says not to trust it.
+        let noisy = [(0.0, 3.3), (250.0, 2.9), (500.0, 3.0), (1000.0, 4.2)];
+        let (slope, _) = linear_fit(&noisy).unwrap();
+        assert!(slope > 0.0);
+        assert!(r_squared(&noisy).unwrap() < 0.85, "this scatter must not look like a line");
+
+        // A flat y has no variation to explain, and 1.0 would be a lie.
+        assert_eq!(r_squared(&[(0.0, 5.0), (1.0, 5.0), (2.0, 5.0)]), None);
+        assert_eq!(r_squared(&[(0.0, 1.0)]), None);
     }
 }

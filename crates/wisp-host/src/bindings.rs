@@ -3,7 +3,7 @@
 //! Scalar arguments follow declaration order after the buffer pair.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -135,6 +135,18 @@ pub struct InstanceCtx {
     /// A trap the vtable owes the guest but cannot raise from `call_sync`
     /// (which returns an `i64`). The cell converts it after the call returns.
     trap_latch: Mutex<Option<TrapCode>>,
+    /// §6.4/§5.3: **import poisoning**. Set the moment this dispatch enters
+    /// its grace window, and cleared at the next `begin_dispatch`. While it is
+    /// set, *"every import called by that dispatch returns `Cancelled`
+    /// immediately"* — the guest cannot start new work with budget it does not
+    /// have, and every `await` it is already sitting on resolves to a terminal
+    /// error, which is what gives the unwind something to unwind *for*.
+    cancelled: AtomicBool,
+    /// The dispatch's implicit cancellation future (§5.4). The host cancels by
+    /// completing it; the guest observes a tripped token at its next await.
+    /// Cancellation is deliberately **not** an entrancy — it would violate the
+    /// single-caller rule against exactly the instance least able to honour it.
+    cancel_future: AtomicU64,
     /// Host→guest bytes for sync imports that write into guest memory
     /// (`entropy_fill`). The engine copies this out after the call.
     out_buffer: Mutex<Vec<u8>>,
@@ -171,6 +183,8 @@ impl InstanceCtx {
             log_bytes: AtomicU32::new(0),
             entropy_calls: AtomicU64::new(0),
             trap_latch: Mutex::new(None),
+            cancelled: AtomicBool::new(false),
+            cancel_future: AtomicU64::new(0),
             out_buffer: Mutex::new(Vec::new()),
             responses: Mutex::new(ResponseTable::default()),
             spans: Mutex::new(HashMap::new()),
@@ -209,7 +223,36 @@ impl InstanceCtx {
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
         self.subrequests.store(0, Ordering::Relaxed);
         self.log_bytes.store(0, Ordering::Relaxed);
+        // A new dispatch is not cancelled, whatever happened to the last one.
+        // Under `reuse` this instance may well be one that was cleanly killed
+        // a moment ago; leaving the poison set would make the grace window a
+        // one-way door for the slot.
+        self.cancelled.store(false, Ordering::Relaxed);
+        self.cancel_future.store(0, Ordering::Relaxed);
         self.begin_slice(now_ms, dispatch);
+    }
+
+    /// §5.4: the dispatch's implicit cancellation future, allocated by the
+    /// cell before the guest is entered and carried in the `DispatchRecord`.
+    pub fn set_cancel_future(&self, id: u64) {
+        self.cancel_future.store(id, Ordering::Relaxed);
+    }
+
+    pub fn cancel_future(&self) -> u64 {
+        self.cancel_future.load(Ordering::Relaxed)
+    }
+
+    /// §6.4: has this dispatch entered grace, i.e. are its imports poisoned?
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+
+    /// Enter the grace window: poison this dispatch's imports (§5.3).
+    ///
+    /// Returns false if it was already set, so the caller can complete the
+    /// cancellation future exactly once.
+    pub fn poison_imports(&self) -> bool {
+        !self.cancelled.swap(true, Ordering::Relaxed)
     }
 
     pub fn slice_clock_ms(&self) -> u64 {
@@ -367,6 +410,22 @@ impl HostBindings for CellBindings {
         let Some(id) = self.alloc() else {
             return INVALID_FUTURE;
         };
+
+        // §5.3, import poisoning: *"During a dispatch's grace window (§6.4)
+        // every import called by that dispatch returns `Cancelled`
+        // immediately"*. The refusal still arrives through the future, which
+        // keeps §5.1's "there is no import that waits" intact — the guest gets
+        // a future id back and learns the answer at its next poll, exactly as
+        // it would for an SSRF denial.
+        //
+        // This is what makes a clean kill *possible* rather than merely
+        // permitted: an over-budget dispatch that keeps calling `kv_get` in a
+        // retry loop would otherwise consume its whole grace window issuing
+        // work the host will not do.
+        if self.ctx.is_cancelled() {
+            return self.settle_now(id, ResultRecord::Err(FutureError::Cancelled));
+        }
+
         let Some(rt) = self.rt().cloned() else {
             return id;
         };
@@ -575,6 +634,15 @@ impl HostBindings for CellBindings {
                 0
             }
 
+            // §4.6's kill-cooperation ABI is answered by the ENGINE, next to
+            // the meter it reads and the epoch callback it feeds, and never
+            // reaches this vtable. These arms exist so that a host running
+            // against a fake or future engine that does not intercept them
+            // gets a safe answer — "budget untouched, bit clear" — instead of
+            // a capability violation for calling a declared import.
+            "budget_remaining_ns" => i64::MAX,
+            "unsafe_to_trap" => 0,
+
             other => {
                 tracing::error!(import = other, "sync import with no route");
                 ctx.latch_trap(TrapCode::CapabilityViolation);
@@ -621,6 +689,34 @@ impl HostBindings for CellBindings {
                 self.ctx.latch_trap(TrapCode::Protocol);
                 -1
             }
+        }
+    }
+
+    /// §6.4: the dispatch has crossed B. Two things, both required:
+    ///
+    /// 1. **poison the imports** (§5.3) — from here every future-returning
+    ///    import this dispatch makes answers `Cancelled` immediately;
+    /// 2. **complete the cancellation future** (§5.4) — the guest observes a
+    ///    tripped token at its next await, which is the only way a dispatch
+    ///    sitting on an `await` can learn about a kill, because cancellation
+    ///    is not an entrancy.
+    ///
+    /// Runs inside the epoch deadline callback with the guest on the stack, so
+    /// it must not re-enter the instance. It does not: completing a future
+    /// marks it ready and signals the wake router, and §5.4's reentrancy guard
+    /// makes that wake wait for the current call to return.
+    fn enter_grace(&mut self) {
+        if !self.ctx.poison_imports() {
+            return;
+        }
+        let cancel = self.ctx.cancel_future();
+        tracing::debug!(
+            tenant = %self.ctx.tenant, instance = %self.ctx.instance,
+            dispatch = self.ctx.dispatch_id(), cancel_future = cancel,
+            "dispatch entered its grace window: imports poisoned, cancellation tripped (§6.4)"
+        );
+        if cancel != 0 {
+            self.settle_now(cancel, ResultRecord::Err(FutureError::Cancelled));
         }
     }
 

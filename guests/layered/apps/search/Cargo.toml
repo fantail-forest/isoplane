@@ -1,0 +1,17 @@
+[package]
+name = "layered-search"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Tenant 6: a log search endpoint. Reaches regex counting, whitespace normalization and line sorting."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-rtabi = { path = "../../rtabi", default-features = false }
+
+[features]
+default = []
+layered = ["wisp-rtabi/layered"]
+selfcontained = ["wisp-rtabi/selfcontained"]

@@ -11,3 +11,4 @@ guests/dotnet/src/bin/
 guests/dotnet/hostcheck/target/
 bench/*/target/
 bench/out/*.wasm
+.scratch-*

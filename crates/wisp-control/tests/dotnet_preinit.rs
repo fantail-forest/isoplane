@@ -41,9 +41,13 @@ fn dotnet_guest() -> Option<Vec<u8>> {
 }
 
 /// §4.3 against the real thing. `docs/dotnet-findings.md` §4 reported 32
-/// undeclared `wasi:*@0.2.0` imports and recommended V1 grow a "runtime PAL"
-/// allowlist for them. The current build does not need it: the module imports
-/// **only** `wisp`, so the exception is unnecessary and V1 stands unmodified.
+/// undeclared `wasi:*@0.2.0` imports; spec v1.4 answers them with the
+/// deploy-time PAL adapter (`crate::pal`, and see `tests/pal_dotnet.rs` for
+/// the stock module going through it). *This* build needs none of that: the
+/// guest-side shim in `guests/dotnet/native/wisp_pal.c` resolves wasi-libc's
+/// imports inside the module, so it imports **only** `wisp` and the adapter
+/// has nothing to compose. Both paths must work, and this test owns the
+/// second one.
 #[test]
 fn the_dotnet_guest_satisfies_v1_with_no_pal_exception() {
     let Some(wasm) = dotnet_guest() else { return };

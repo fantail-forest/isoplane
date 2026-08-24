@@ -1,0 +1,17 @@
+[package]
+name = "layered-audit"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Tenant 5: a signed audit log. Reaches HMAC, hex, JSON and dates — an overlapping but not identical subset to tenants 1 and 3."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-rtabi = { path = "../../rtabi", default-features = false }
+
+[features]
+default = []
+layered = ["wisp-rtabi/layered"]
+selfcontained = ["wisp-rtabi/selfcontained"]

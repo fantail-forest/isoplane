@@ -53,8 +53,14 @@ fn sysboxfs_over_proc() -> bool {
 fn mountinfo_has_sysboxfs_over_proc(mountinfo: &str) -> bool {
     mountinfo.lines().any(|line| {
         let Some((before, after)) = line.split_once(" - ") else { return false };
-        let fstype = after.split_whitespace().next().unwrap_or("");
-        if fstype != "sysboxfs" {
+        let mut post = after.split_whitespace();
+        let fstype = post.next().unwrap_or("");
+        let source = post.next().unwrap_or("");
+        // FUSE can identify sysboxfs in the filesystem type or source field.
+        let is_sysboxfs = fstype == "sysboxfs"
+            || fstype == "fuse.sysboxfs"
+            || (fstype == "fuse" && source == "sysboxfs");
+        if !is_sysboxfs {
             return false;
         }
         let mountpoint = before.split_whitespace().nth(4).unwrap_or("");
@@ -138,6 +144,14 @@ mod tests {
     fn a_host_serving_sysbox_containers_is_not_the_sandbox() {
         const HOST: &str = "3262 31 0:123 / /var/lib/sysboxfs/c8f30b8e5736 rw,nosuid,nodev,relatime shared:1624 - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other";
         const INSIDE: &str = "412 388 0:98 / /proc/sys rw,relatime - sysboxfs sysboxfs rw,user_id=0,group_id=0";
+        // This FUSE shape identifies sysboxfs through the source field.
+        const INSIDE_FUSE: &str = "4481 4440 0:157 /proc/sys /proc/sys rw,nosuid,nodev,relatime - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other";
+        assert!(
+            mountinfo_has_sysboxfs_over_proc(INSIDE_FUSE),
+            "the `- fuse sysboxfs` shape is what a sysbox container really reports"
+        );
+        const OTHER_FUSE: &str = "1 2 0:9 / /proc/foo rw - fuse gvfs rw";
+        assert!(!mountinfo_has_sysboxfs_over_proc(OTHER_FUSE));
 
         assert!(
             !mountinfo_has_sysboxfs_over_proc(HOST),

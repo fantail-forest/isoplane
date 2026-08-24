@@ -12,11 +12,17 @@ use crate::bindings::HostBindings;
 /// string-matched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kill {
-    /// §6.4: `CLOCK_THREAD_CPUTIME_ID` passed the dispatch's CPU budget and the
-    /// epoch counter delivered the kill.
-    Cpu,
+    /// §6.4's **hard** phase: `CLOCK_THREAD_CPUTIME_ID` passed **B+G** and the
+    /// epoch counter delivered the kill without unwinding. The grace window
+    /// had already been offered and the dispatch did not take it.
+    ///
+    /// There is deliberately no `Kill::Clean`: a clean kill is not something
+    /// the engine does *to* the guest, it is the guest returning. It leaves no
+    /// trap and no error, only a `grace` record in the store.
+    CpuHard,
     /// The wall-clock backstop. Never a meter (§11.2) — purely a guard against
-    /// a dispatch pinned off-CPU forever.
+    /// a dispatch pinned off-CPU forever. Bypasses grace: a dispatch pinned
+    /// off-CPU is not burning budget, so there is nothing to warn it about.
     Wall,
 }
 
@@ -29,10 +35,31 @@ pub(crate) enum Kill {
 pub(crate) struct Meter {
     pub cpu0_ns: u64,
     pub wall0: Option<Instant>,
+    /// **B** (§6.4). Crossing it enters grace; it is not itself fatal.
     pub cpu_budget_ns: u64,
+    /// **G** (§6.4), `max(2 ms, 10% of B)`. `cpu_budget_ns + grace_ns` is the
+    /// hard deadline, and it is the only deadline that traps.
+    pub grace_ns: u64,
+    /// Thread CPU burned by earlier slices of this same dispatch. B and B+G
+    /// are per-dispatch, not per-slice.
+    pub spent_ns: u64,
     pub wall_cap_ns: u64,
     /// How far to extend the epoch deadline at each check.
     pub check_ticks: u64,
+}
+
+impl Meter {
+    /// Thread CPU this dispatch has burned in total, earlier slices included.
+    #[inline]
+    pub fn dispatch_cpu_ns(&self, now_ns: u64) -> u64 {
+        self.spent_ns.saturating_add(now_ns.saturating_sub(self.cpu0_ns))
+    }
+
+    /// The hard deadline B+G, saturating.
+    #[inline]
+    pub fn hard_ns(&self) -> u64 {
+        self.cpu_budget_ns.saturating_add(self.grace_ns)
+    }
 }
 
 impl Default for Meter {
@@ -41,6 +68,8 @@ impl Default for Meter {
             cpu0_ns: 0,
             wall0: None,
             cpu_budget_ns: u64::MAX,
+            grace_ns: 0,
+            spent_ns: 0,
             wall_cap_ns: u64::MAX,
             check_ticks: 1,
         }
@@ -116,6 +145,23 @@ pub(crate) struct StoreState {
 
     pub meter: Meter,
     pub kill: Option<Kill>,
+
+    /// §6.4 grace. `Some(cpu_ns)` from the moment the dispatch crossed B and
+    /// the host was told — the cancellation future completed and imports began
+    /// answering `Cancelled` (§5.3).
+    ///
+    /// It is set only once per slice and only when the notification actually
+    /// reached the host, so a deferral (§4.6's *unsafe-to-trap* bit) leaves it
+    /// `None` and the next epoch tick tries again.
+    pub grace_at_ns: Option<u64>,
+    /// §4.6: the runtime layer's *unsafe-to-trap* bit. Set around GC phases
+    /// and scheduler queue mutations by the `unsafe_to_trap` import.
+    ///
+    /// Grace entry **defers** while it is set. The hard deadline **ignores**
+    /// it — which is the whole of "a pinned bit buys exactly G, nothing more".
+    pub unsafe_to_trap: bool,
+    /// How many epoch ticks found the bit set and deferred grace entry.
+    pub grace_deferrals: u64,
     /// The import that violated capability policy, for `TrapInfo::message` and
     /// for §4.4's deferral loop, which needs to know *which* import an impure
     /// static initializer touched.
@@ -138,6 +184,9 @@ impl StoreState {
             max_wasm_depth: 0,
             meter: Meter::default(),
             kill: None,
+            grace_at_ns: None,
+            unsafe_to_trap: false,
+            grace_deferrals: 0,
             violation: None,
             abort_msg: None,
             limits: Limits { max_memory_bytes, oom: false },
@@ -151,6 +200,12 @@ impl StoreState {
         self.clock_ms = clock_ms;
         self.meter = meter;
         self.kill = None;
+        self.grace_at_ns = None;
+        // The bit is a property of the runtime layer's *current* critical
+        // section, not of the instance. A slice that ended inside one ended
+        // because it trapped, and the next slice starts outside it.
+        self.unsafe_to_trap = false;
+        self.grace_deferrals = 0;
         self.violation = None;
         self.abort_msg = None;
         self.limits.oom = false;
@@ -166,12 +221,22 @@ impl StoreState {
 // exact rather than a match on wasmtime's message strings.
 // ---------------------------------------------------------------------------
 
-/// §6.4 budget kill. Raised from the epoch deadline callback.
+/// §6.4's **hard** kill, raised from the epoch deadline callback at B+G.
+///
+/// The message names both numbers on purpose: a tenant reading
+/// `budget_exceeded` needs to see that a grace window existed and was not
+/// taken, because that is the difference between "my code is slow" and "my
+/// code cannot be interrupted".
 #[derive(Debug, thiserror::Error)]
-#[error("cpu budget exceeded: {cpu_ns} ns of thread CPU against a {budget_ns} ns budget")]
+#[error(
+    "cpu budget exceeded: {cpu_ns} ns of thread CPU against a {budget_ns} ns budget \
+     (+{grace_ns} ns grace); the dispatch was still executing at the hard deadline and was \
+     terminated without unwinding (§2.5.8, §6.4)"
+)]
 pub(crate) struct BudgetExceeded {
     pub cpu_ns: u64,
     pub budget_ns: u64,
+    pub grace_ns: u64,
 }
 
 /// §6.4 wall-clock backstop. Distinct from `BudgetExceeded` because it is not a

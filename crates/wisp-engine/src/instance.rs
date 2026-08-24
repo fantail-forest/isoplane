@@ -12,13 +12,15 @@ use wisp_abi::result::ResultRecord;
 use wisp_abi::status::{PollStatus, TrapCode};
 use wisp_abi::PAGE_SIZE;
 
-use crate::budget::{CpuBudget, TrapKind};
+use crate::budget::{CpuBudget, KillPhase, TrapKind};
 use crate::meter::thread_cpu_nanos;
 use crate::state::{
     AllocFailed, BudgetExceeded, GuestAbort, Kill, Meter, Reentrancy, StoreState, WallCapExceeded,
 };
 use crate::template::TemplateInner;
-use crate::{Completion, DispatchOutcome, EngineInner, InstanceImage, InstanceOps, Result, TrapInfo};
+use crate::{
+    Completion, DispatchOutcome, EngineInner, InstanceImage, InstanceOps, Result, TrapInfo,
+};
 
 /// The wasmtime side of an activation. Separated from [`Instance`] so that
 /// `reset` can drop the whole thing — returning the slot to the pool, which is
@@ -40,8 +42,8 @@ pub struct Instance {
     pub(crate) engine: Arc<EngineInner>,
     pub(crate) template: Arc<TemplateInner>,
     pub(crate) live: Option<Live>,
-    /// Marks an instance whose last completion prevents further execution.
-    pub(crate) poisoned: bool,
+    /// Reason further execution is prohibited after a trap or hard budget kill.
+    pub(crate) tombstone: Option<&'static str>,
     pub(crate) last: Option<Completion>,
     pub(crate) last_violation: Option<&'static str>,
 }
@@ -50,7 +52,7 @@ impl std::fmt::Debug for Instance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Instance")
             .field("template", &self.template.memory_pages)
-            .field("poisoned", &self.poisoned)
+            .field("tombstone", &self.tombstone)
             .field("last", &self.last)
             .field("live", &self.live.is_some())
             .finish()
@@ -86,7 +88,9 @@ impl Instance {
 
     /// Counts pages that differ from the template; reading the full mapping can make it resident.
     pub fn dirty_page_count(&self) -> usize {
-        let Some(live) = self.live.as_ref() else { return 0 };
+        let Some(live) = self.live.as_ref() else {
+            return 0;
+        };
         let data = live.memory.data(&live.store);
         let image = &self.template.image;
         let mut n = 0;
@@ -103,10 +107,24 @@ impl Instance {
         n
     }
 
-    /// True once a dispatch ended in a way the instance does not survive. The
-    /// host must drop it; the engine will refuse every further operation.
+    /// Whether a trap or hard budget kill has prohibited further execution.
     pub fn is_poisoned(&self) -> bool {
-        self.poisoned
+        self.tombstone.is_some()
+    }
+
+    /// Recorded reason further execution is prohibited, if any.
+    pub fn tombstone_reason(&self) -> Option<&'static str> {
+        self.tombstone
+    }
+
+    /// Panics when attempting to enter an instance already marked as terminated.
+    #[inline]
+    fn assert_not_tombstoned(&self, what: &str) {
+        if let Some(why) = self.tombstone {
+            panic!(
+                "call into a TOMBSTONED instance: `{what}` on an instance discarded because {why}"
+            );
+        }
     }
 
     /// How the last dispatch ended, or `None` if none has run since activation
@@ -122,7 +140,10 @@ impl Instance {
 
     /// Maximum Wasm call depth observed by the engine call hook.
     pub fn max_wasm_depth_observed(&self) -> i32 {
-        self.live.as_ref().map(|l| l.store.data().max_wasm_depth).unwrap_or(0)
+        self.live
+            .as_ref()
+            .map(|l| l.store.data().max_wasm_depth)
+            .unwrap_or(0)
     }
 
     /// Runs guest initialization with the supplied CPU budget.
@@ -134,21 +155,30 @@ impl Instance {
 
     fn refuse(&self, why: &str) -> DispatchOutcome {
         DispatchOutcome {
-            status: PollStatus::Trapped { code: TrapCode::Unknown },
+            status: PollStatus::Trapped {
+                code: TrapCode::Unknown,
+            },
             completion: Completion::Trapped,
             cpu_ns: 0,
             wall_ns: 0,
-            trap: Some(TrapInfo { kind: TrapKind::Other, message: why.to_string() }),
+            trap: Some(TrapInfo {
+                kind: TrapKind::Other,
+                message: why.to_string(),
+            }),
+            kill: None,
+            overage_ns: 0,
+            grace_deferrals: 0,
         }
     }
 
     /// Executes one guest entry while measuring its CPU consumption.
     fn slice(&mut self, budget: CpuBudget, entry: Entry<'_>) -> DispatchOutcome {
-        if self.poisoned {
-            return self.refuse(
-                "instance was discarded after a trap or budget kill and may not be reused",
-            );
-        }
+        self.assert_not_tombstoned(match entry {
+            Entry::Handle(_) => "wisp_handle",
+            Entry::Wake(..) => "wisp_wake",
+            Entry::GcHint(_) => "wisp_gc_hint",
+            Entry::Initialize => "wisp_initialize",
+        });
         if self.live.is_none() {
             return self.refuse("instance has no live store");
         }
@@ -161,11 +191,19 @@ impl Instance {
         if depth != 0 {
             let e: anyhow::Error = Reentrancy { depth }.into();
             return DispatchOutcome {
-                status: PollStatus::Trapped { code: TrapCode::Protocol },
+                status: PollStatus::Trapped {
+                    code: TrapCode::Protocol,
+                },
                 completion: Completion::Trapped,
                 cpu_ns: 0,
                 wall_ns: 0,
-                trap: Some(TrapInfo { kind: TrapKind::Other, message: format!("{e}") }),
+                trap: Some(TrapInfo {
+                    kind: TrapKind::Other,
+                    message: format!("{e}"),
+                }),
+                kill: None,
+                overage_ns: 0,
+                grace_deferrals: 0,
             };
         }
 
@@ -181,7 +219,10 @@ impl Instance {
         let meter = Meter {
             cpu0_ns: 0, // filled in below, as late as possible
             wall0: None,
-            cpu_budget_ns: (budget.cpu_ms as u64).saturating_mul(1_000_000),
+            cpu_budget_ns: budget.budget_ns(),
+
+            grace_ns: budget.grace_ns(),
+            spent_ns: budget.spent_ns,
             wall_cap_ns: (budget.wall_ms_cap as u64).saturating_mul(1_000_000),
             // Check the thread CPU clock on each epoch callback.
             check_ticks: 1,
@@ -198,7 +239,11 @@ impl Instance {
         let cpu0 = thread_cpu_nanos();
         live.store.data_mut().begin_slice(
             clock_ms,
-            Meter { cpu0_ns: cpu0, wall0: Some(wall0), ..meter },
+            Meter {
+                cpu0_ns: cpu0,
+                wall0: Some(wall0),
+                ..meter
+            },
         );
         live.store.set_epoch_deadline(meter.check_ticks);
 
@@ -230,27 +275,72 @@ impl Instance {
             }
             Err(e) => {
                 let info = classify(live, &e);
-                (PollStatus::Trapped { code: trap_code_of_kind(info.kind) }, Some(info))
+                (
+                    PollStatus::Trapped {
+                        code: trap_code_of_kind(info.kind),
+                    },
+                    Some(info),
+                )
             }
         };
 
         let violation = live.store.data().violation;
-        // Preserve the budget-kill completion category for host accounting.
-        let completion = match trap.as_ref().map(|t| t.kind) {
-            Some(TrapKind::BudgetExceeded) => Completion::BudgetKill,
-            _ => Completion::from_status(status),
+        let grace_at_ns = live.store.data().grace_at_ns;
+        let grace_deferrals = live.store.data().grace_deferrals;
+
+        // A parked slice preserves its consumed CPU allowance for its next wake.
+        let hard_kill = matches!(
+            trap.as_ref().map(|t| t.kind),
+            Some(TrapKind::BudgetExceeded)
+        );
+        let in_grace = grace_at_ns.is_some();
+        let completion = if hard_kill {
+            Completion::BudgetKill
+        } else {
+            match Completion::from_status(status) {
+                Completion::Done if in_grace => Completion::CleanKill,
+                other => other,
+            }
+        };
+        let kill = match (hard_kill, completion) {
+            (true, _) => Some(KillPhase::Hard),
+            (false, Completion::CleanKill) => Some(KillPhase::Clean),
+            // Grace was entered but the dispatch has not ended yet (parked, or
+            // it trapped for an unrelated reason). No phase to report.
+            _ => None,
+        };
+        // Record CPU consumption beyond the dispatch allowance.
+        let dispatch_cpu = budget.spent_ns.saturating_add(cpu_ns);
+        let overage_ns = if in_grace || hard_kill {
+            dispatch_cpu.saturating_sub(budget.budget_ns())
+        } else {
+            0
         };
 
         if !(is_gc_hint && completion.instance_survives()) {
             self.last = Some(completion);
         }
         self.last_violation = violation;
-        // This is the line that makes `Completion::instance_survives` govern.
-        if !completion.instance_survives() {
-            self.poisoned = true;
+        // Prevent a trapped store from being entered again.
+        if completion.tombstones() {
+            self.tombstone = Some(match completion {
+                Completion::BudgetKill => {
+                    "execution reached the hard CPU deadline and trapped without unwinding"
+                }
+                _ => "execution trapped; the same instance cannot run again",
+            });
         }
 
-        DispatchOutcome { status, completion, cpu_ns, wall_ns, trap }
+        DispatchOutcome {
+            status,
+            completion,
+            cpu_ns,
+            wall_ns,
+            trap,
+            kill,
+            overage_ns,
+            grace_deferrals,
+        }
     }
 }
 
@@ -259,13 +349,17 @@ const ZERO_PAGE: [u8; PAGE_SIZE] = [0u8; PAGE_SIZE];
 fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
     match entry {
         Entry::Handle(rec) => {
-            let bytes = postcard::to_allocvec(rec).map_err(wasmtime::Error::new).context("encoding dispatch record")?;
+            let bytes = postcard::to_allocvec(rec)
+                .map_err(wasmtime::Error::new)
+                .context("encoding dispatch record")?;
             let (ptr, len) = handoff(live, &bytes)?;
             let f = live.f_handle.clone();
             Ok(f.call(&mut live.store, (ptr, len))? as u64)
         }
         Entry::Wake(future, res) => {
-            let bytes = postcard::to_allocvec(res).map_err(wasmtime::Error::new).context("encoding result record")?;
+            let bytes = postcard::to_allocvec(res)
+                .map_err(wasmtime::Error::new)
+                .context("encoding result record")?;
             let (ptr, len) = handoff(live, &bytes)?;
             let f = live.f_wake.clone();
             Ok(f.call(&mut live.store, (future as i64, ptr, len))? as u64)
@@ -288,7 +382,9 @@ fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
 
 /// Allocates guest memory and copies the input bytes into it.
 fn handoff(live: &mut Live, bytes: &[u8]) -> wasmtime::Result<(i32, i32)> {
-    let len = i32::try_from(bytes.len()).map_err(wasmtime::Error::new).context("record too large for the guest ABI")?;
+    let len = i32::try_from(bytes.len())
+        .map_err(wasmtime::Error::new)
+        .context("record too large for the guest ABI")?;
     let alloc = live.f_alloc.clone();
     let ptr = alloc.call(&mut live.store, (len, 8))?;
     if ptr == 0 {
@@ -316,7 +412,7 @@ fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
     if let Some(kill) = d.kill {
         let kind = TrapKind::BudgetExceeded;
         let message = match kill {
-            Kill::Cpu => err
+            Kill::CpuHard => err
                 .downcast_ref::<BudgetExceeded>()
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "cpu budget exceeded".into()),
@@ -332,16 +428,28 @@ fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
     }
 
     if let Some(v) = err.downcast_ref::<crate::state::CapabilityViolation>() {
-        return TrapInfo { kind: TrapKind::CapabilityViolation, message: v.to_string() };
+        return TrapInfo {
+            kind: TrapKind::CapabilityViolation,
+            message: v.to_string(),
+        };
     }
     if let Some(a) = err.downcast_ref::<GuestAbort>() {
-        return TrapInfo { kind: TrapKind::GuestPanic, message: a.to_string() };
+        return TrapInfo {
+            kind: TrapKind::GuestPanic,
+            message: a.to_string(),
+        };
     }
     if let Some(a) = err.downcast_ref::<AllocFailed>() {
-        return TrapInfo { kind: TrapKind::OutOfMemory, message: a.to_string() };
+        return TrapInfo {
+            kind: TrapKind::OutOfMemory,
+            message: a.to_string(),
+        };
     }
     if let Some(r) = err.downcast_ref::<Reentrancy>() {
-        return TrapInfo { kind: TrapKind::Other, message: r.to_string() };
+        return TrapInfo {
+            kind: TrapKind::Other,
+            message: r.to_string(),
+        };
     }
     if d.limits.oom {
         return TrapInfo {
@@ -374,10 +482,16 @@ fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
             | T::AtomicWaitNonSharedMemory => TrapKind::Sandbox,
             _ => TrapKind::Other,
         };
-        return TrapInfo { kind, message: format!("{err}") };
+        return TrapInfo {
+            kind,
+            message: format!("{err}"),
+        };
     }
 
-    TrapInfo { kind: TrapKind::Other, message: format!("{err:#}") }
+    TrapInfo {
+        kind: TrapKind::Other,
+        message: format!("{err:#}"),
+    }
 }
 
 fn trap_kind_of_code(c: TrapCode) -> TrapKind {
@@ -417,10 +531,8 @@ impl InstanceOps for Instance {
 
     /// Recreates the live store from the prepared template; refuses terminated instances.
     fn reset(&mut self) -> Result<()> {
-        if self.poisoned {
-            bail!(
-                "refusing to reset a trapped or budget-killed instance; activate a fresh instance"
-            );
+        if let Some(why) = self.tombstone {
+            bail!("refusing to reset a TOMBSTONED instance ({why}); activate a fresh instance");
         }
         let live = anyhow::Context::context(self.live.take(), "instance has no live store")?;
         let mut data = live.store.into_data();
@@ -428,6 +540,9 @@ impl InstanceOps for Instance {
         data.wasm_depth = 0;
         data.max_wasm_depth = 0;
         data.kill = None;
+        data.grace_at_ns = None;
+        data.unsafe_to_trap = false;
+        data.grace_deferrals = 0;
         data.violation = None;
         data.abort_msg = None;
         data.limits.oom = false;
@@ -439,18 +554,23 @@ impl InstanceOps for Instance {
         Ok(())
     }
 
-    /// Reports a live, unpoisoned instance with an empty Wasm stack whose last completion was parked.
+    /// Reports a live, nonterminated instance with an empty Wasm stack whose last completion was parked.
     fn is_parked(&self) -> bool {
-        let Some(live) = self.live.as_ref() else { return false };
-        !self.poisoned
+        let Some(live) = self.live.as_ref() else {
+            return false;
+        };
+        self.tombstone.is_none()
             && live.store.data().wasm_depth == 0
             && self.last == Some(Completion::Parked)
     }
 
     /// Checks live stack depth and completion state before capture.
     fn is_capture_eligible(&self) -> bool {
-        let Some(live) = self.live.as_ref() else { return false };
-        !self.poisoned
+        let Some(live) = self.live.as_ref() else {
+            return false;
+        };
+
+        self.tombstone.is_none()
             && live.store.data().wasm_depth == 0
             && self.last.is_some_and(|c| c.instance_survives())
     }
@@ -469,10 +589,8 @@ impl InstanceOps for Instance {
     }
 
     fn capture_mutable_state(&mut self) -> Result<InstanceImage> {
-        if self.poisoned {
-            bail!(
-                "refusing to capture a trapped instance"
-            );
+        if let Some(why) = self.tombstone {
+            bail!("refusing to capture a TOMBSTONED instance ({why})");
         }
         let template = self.template.clone();
         let live = anyhow::Context::context(self.live.as_mut(), "instance has no live store")?;
@@ -488,14 +606,22 @@ impl InstanceOps for Instance {
         // dropping half of invariant 1 on the floor.
         let table_mutations = Vec::new();
         for (i, t) in live.tables.iter().enumerate() {
-            let baseline = template.table_nullness.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
+            let baseline = template
+                .table_nullness
+                .get(i)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
             let size = t.size(&live.store);
             if size as usize != baseline.len() {
                 bail!(
                     "table `{}` grew from {} to {size} entries; the engine cannot name a funcref \
                      by function index through wasmtime's public API, so this mutation cannot be \
                      represented in a delta (documented gap)",
-                    template.tables.get(i).map(|(n, _)| n.as_str()).unwrap_or("?"),
+                    template
+                        .tables
+                        .get(i)
+                        .map(|(n, _)| n.as_str())
+                        .unwrap_or("?"),
                     baseline.len()
                 );
             }
@@ -510,7 +636,11 @@ impl InstanceOps for Instance {
                     bail!(
                         "table `{}` slot {slot} changed nullness since activation; see the \
                          documented gap on funcref identity",
-                        template.tables.get(i).map(|(n, _)| n.as_str()).unwrap_or("?")
+                        template
+                            .tables
+                            .get(i)
+                            .map(|(n, _)| n.as_str())
+                            .unwrap_or("?")
                     );
                 }
             }
@@ -524,8 +654,8 @@ impl InstanceOps for Instance {
     }
 
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> Result<()> {
-        if self.poisoned {
-            bail!("refusing to restore into a trapped instance");
+        if self.tombstone.is_some() {
+            bail!("refusing to restore into a tombstoned instance");
         }
         if !img.table_mutations.is_empty() {
             bail!(
@@ -560,7 +690,10 @@ impl InstanceOps for Instance {
     }
 }
 
-fn to_global_value(v: Val, store: impl wasmtime::AsContext) -> Result<crate::snapshot::GlobalValue> {
+fn to_global_value(
+    v: Val,
+    store: impl wasmtime::AsContext,
+) -> Result<crate::snapshot::GlobalValue> {
     use crate::snapshot::GlobalValue as G;
     Ok(match v {
         Val::I32(x) => G::I32(x),

@@ -36,6 +36,8 @@ use wasmparser::{
 use wisp_abi::config::Limits;
 use wisp_abi::imports::{self, ImportDef, ImportKind, Sig, Ty};
 
+use crate::pal::{self, Disposition, PalDef};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViolationCode {
     /// **V1** — component types fail to match the declared world, or any
@@ -119,6 +121,16 @@ pub struct ValidationReport {
     /// Which optional exports are present (§5.2): `wisp_gc_hint` gates the
     /// pre-hibernation compaction hint, `wisp_initialize` gates pre-init.
     pub optional_exports: Vec<&'static str>,
+    /// §4.3 WASI PAL adapter: every `wasi:*` import the deploy-time
+    /// composition will satisfy for this module, in table order.
+    ///
+    /// This is kept **separate** from `capabilities` on purpose. The
+    /// capability a delegated import resolves to is added to `capabilities`
+    /// — a module that reaches the CSPRNG through `wasi:random` holds the
+    /// `entropy_fill` capability and the manifest must say so — but the fact
+    /// that it arrived through a WASI door is itself audit-relevant, and a
+    /// report that merged the two would lose it.
+    pub pal: Vec<&'static PalDef>,
 }
 
 impl ValidationReport {
@@ -166,6 +178,45 @@ impl ValidationReport {
             "denied",
             denied.len()
         );
+        // §4.3: a delegated WASI import must appear here as what it delegates
+        // to. The capability is already counted above; this block is what
+        // stops it from having arrived *silently*.
+        if !self.pal.is_empty() {
+            let delegated: Vec<&&PalDef> = self
+                .pal
+                .iter()
+                .filter(|p| p.disposition.is_delegated())
+                .collect();
+            let trapped = self.pal.len() - delegated.len();
+            let _ = writeln!(
+                s,
+                "  {:<14} {} wasi:* imports composed at deploy (§4.3 PAL adapter):",
+                "wasi-pal",
+                self.pal.len()
+            );
+            for p in &delegated {
+                let to = match p.disposition.capability() {
+                    Some(cap) => format!("delegates to `{cap}`"),
+                    None => "answers empty; no such capability exists".to_string(),
+                };
+                let _ = writeln!(s, "  {:<14}   {} -> {to}", "", p.full_name());
+            }
+            let mut ifaces: Vec<&str> = self
+                .pal
+                .iter()
+                .filter(|p| !p.disposition.is_delegated())
+                .map(|p| p.module)
+                .collect();
+            ifaces.sort_unstable();
+            ifaces.dedup();
+            let _ = writeln!(
+                s,
+                "  {:<14}   {trapped} trap-on-call across {} interface(s): {}",
+                "",
+                ifaces.len(),
+                ifaces.join(", ")
+            );
+        }
         if let Some(max) = self.memory_pages_max {
             let _ = writeln!(
                 s,
@@ -556,15 +607,40 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
         } else {
             None
         }) else {
-            v.push(Violation::about(
-                ViolationCode::V1UndeclaredImport,
-                format!("{module}.{field}"),
-                format!(
-                    "import `{module}`.`{field}` is not in the wisp:platform@1 capability table — \
-                     an undeclared import is an attempted capability (§4.3 V1)"
-                ),
-            ));
-            continue;
+            // §4.3 WASI PAL adapter. A `wasi:*` import that is in the
+            // enumerated whitelist is satisfied at deploy by composition —
+            // delegated to a `wisp:platform` capability under the
+            // no-new-channels rule, or given a trap-on-call stub. Anything
+            // else, `wasi:*` or not, is still an attempted capability.
+            match pal::lookup(module, field) {
+                Some(p) => {
+                    check_pal_import(p, ty, s, &mut seen, report, v);
+                    continue;
+                }
+                None => {
+                    v.push(Violation::about(
+                        ViolationCode::V1UndeclaredImport,
+                        format!("{module}.{field}"),
+                        if pal::is_wasi(module) {
+                            format!(
+                                "import `{module}`.`{field}` is a WASI import outside the \
+                                 enumerated PAL whitelist (§4.3) — the adapter composes only \
+                                 the {} `wasi:*` functions it can satisfy without adding a \
+                                 capability or an information channel, and this is not one of \
+                                 them (§4.3 V1)",
+                                pal::PAL_IMPORTS.len()
+                            )
+                        } else {
+                            format!(
+                                "import `{module}`.`{field}` is not in the wisp:platform@1 \
+                                 capability table — an undeclared import is an attempted \
+                                 capability (§4.3 V1)"
+                            )
+                        },
+                    ));
+                    continue;
+                }
+            }
         };
 
         match func_type_index(ty) {
@@ -619,12 +695,87 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
     }
 
     // Report in table order, not module order: the manifest is the platform's
-    // document, not the tenant's.
+    // document, not the tenant's. `seen` includes capabilities reached
+    // through the PAL adapter: a module that draws entropy via `wasi:random`
+    // holds `entropy_fill`, and a manifest that omitted it would be a lie of
+    // the exact kind invariant 4 exists to prevent.
     report.capabilities = imports::IMPORTS
         .iter()
         .map(|d| d.name)
         .filter(|n| seen.contains(n))
         .collect();
+    // Table order, again for the auditor's benefit rather than the module's.
+    report.pal.sort_by_key(|p| {
+        pal::PAL_IMPORTS
+            .iter()
+            .position(|q| q.module == p.module && q.func == p.func)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// §4.3 WASI PAL adapter. One whitelisted `wasi:*` import.
+///
+/// The signature is checked for **delegated** entries only — see
+/// [`crate::pal::PalDef::sig`]: a delegated import gets a real body run
+/// against its declared type, so a mismatch is a type confusion reaching host
+/// code; a trap-on-call stub is generated from the module's own type and
+/// traps before it reads an argument.
+fn check_pal_import(
+    p: &'static PalDef,
+    ty: &TypeRef,
+    s: &Scan,
+    seen: &mut BTreeSet<&'static str>,
+    report: &mut ValidationReport,
+    v: &mut Vec<Violation>,
+) {
+    let Some(idx) = func_type_index(ty) else {
+        v.push(Violation::about(
+            ViolationCode::V1SignatureMismatch,
+            p.full_name(),
+            format!(
+                "`{}` is imported as a memory/table/global; every entry the PAL adapter \
+                 composes is a function (§5.5: no host objects inside the sandbox)",
+                p.full_name()
+            ),
+        ));
+        return;
+    };
+
+    if let (Disposition::Delegate(_), Some(want)) = (p.disposition, p.sig) {
+        match s.func_types.get(idx as usize) {
+            Some(Some((params, results))) if sig_matches(&want, params, results) => {}
+            Some(Some((params, results))) => {
+                v.push(Violation::about(
+                    ViolationCode::V1SignatureMismatch,
+                    p.full_name(),
+                    format!(
+                        "`{}` has signature {}, but the PAL adapter delegates it with {} — a \
+                         delegated import runs a real body against its declared type, so half \
+                         a type check is not a type check (§4.3)",
+                        p.full_name(),
+                        render_sig(params, results),
+                        render_want(&want)
+                    ),
+                ));
+                return;
+            }
+            _ => {
+                v.push(Violation::new(
+                    ViolationCode::V1SignatureMismatch,
+                    format!("`{}` references non-function type {idx}", p.full_name()),
+                ));
+                return;
+            }
+        }
+    }
+
+    // The delegated capability is a capability this module holds. Recording
+    // it here is what keeps the tenant-facing manifest honest.
+    if let Some(cap) = p.disposition.capability() {
+        let def = imports::lookup(cap).expect("pal::tests asserts every target is real");
+        seen.insert(def.name);
+    }
+    report.pal.push(p);
 }
 
 fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>) {

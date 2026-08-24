@@ -27,21 +27,19 @@ fn is_no_unit(id: u32) -> bool {
     id == NO_UNIT || id == NO_UNIT_ALT
 }
 
-/// Controls the coarse-clock response outside an explicit initialization unit.
-///
-/// Initialization entropy is supplied independently of this setting. Values
-/// captured in guest state are shared by instances activated from that template.
+/// Controls additional runtime PAL access during initialization.
+/// Entropy is available under both modes, including inside initialization units;
+/// random values captured in guest memory remain captured in that image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InitPal {
-    /// Refuse runtime-only operations outside an explicit initialization unit.
+    /// Baseline initialization imports and application entropy.
     #[default]
     Sealed,
-    /// Answer the coarse clock with zero when no initialization unit is in scope.
+    /// Additionally permit [`RUNTIME_PAL`] outside initialization units.
     RuntimeBringUp,
 }
 
-/// Operations recognized by the initialization PAL. The bring-up mode answers
-/// the coarse clock with zero outside a unit; entropy draws use fresh host bytes.
+/// Additional PAL imports governed by runtime mode and unit scope.
 pub const RUNTIME_PAL: &[&str] = &["clock_now_coarse", "entropy_fill"];
 
 impl InitPal {
@@ -384,18 +382,26 @@ struct Sandbox {
     pal: InitPal,
     /// PAL call counts for this initialization pass.
     pal_calls: BTreeMap<&'static str, u32>,
-    /// Number of entropy draws during this pass.
+    /// Counts host entropy draws during initialization.
     entropy_draws: u64,
 }
 
+impl Sandbox {
+    fn serves(&self, name: &str) -> bool {
+        name == "entropy_fill" || (self.current_unit.is_none() && self.pal.serves(name))
+    }
+}
+
 fn wizen(wasm: &[u8], init_func: &str, state: Arc<Mutex<Sandbox>>) -> anyhow::Result<Vec<u8>> {
+    // Managed runtime startup can call WASI through the explicit PAL adapter.
+    let wasi = wasi_imports(wasm);
     let mut w = Wizer::new();
     w.init_func(init_func);
     // Disable automatic WASI bindings; the explicit linker controls admission.
     w.allow_wasi(false)?;
     w.inherit_stdio(false);
     w.inherit_env(false);
-    w.make_linker(Some(sealed_linker(state)))?;
+    w.make_linker(Some(sealed_linker(state, wasi)))?;
     // The init entrypoint is stripped from the template: it has already run,
     // and leaving a second way to re-run static initialization inside a live
     // instance would be a way to desynchronize memory from the manifest.
@@ -416,9 +422,11 @@ fn wizen(wasm: &[u8], init_func: &str, state: Arc<Mutex<Sandbox>>) -> anyhow::Re
 /// sandbox state; prior host effects are not rolled back.
 fn sealed_linker(
     state: Arc<Mutex<Sandbox>>,
+    wasi: Vec<WasiImport>,
 ) -> Rc<dyn Fn(&wt::Engine) -> anyhow::Result<wizer::Linker>> {
     Rc::new(move |engine: &wt::Engine| {
         let mut linker: wizer::Linker = wt::Linker::new(engine);
+        install_pal_adapter(&mut linker, engine, &wasi, &state)?;
         for def in imports::IMPORTS {
             let st = state.clone();
             let ty = func_type(engine, def);
@@ -433,9 +441,7 @@ fn sealed_linker(
                     name,
                     ty,
                     move |mut caller, args, rets| {
-                        let in_unit = st.lock().current_unit.is_some();
-                        let pal = st.lock().pal;
-                        if !in_unit && pal.serves(name) {
+                        if st.lock().serves(name) {
                             return serve_pal(name, &st, &mut caller, args, rets);
                         }
                         let mut s = st.lock();
@@ -633,20 +639,224 @@ fn serve_pal(
             Ok(())
         }
         "entropy_fill" => {
-            let [wt::Val::I32(ptr), wt::Val::I32(len)] = args else {
-                anyhow::bail!("entropy_fill requires an output pointer and length");
-            };
+            let (ptr, len) = (args[0].unwrap_i32(), args[1].unwrap_i32());
             anyhow::ensure!(
-                (0..=(1 << 20)).contains(len),
+                (0..=(1 << 20)).contains(&len),
                 "entropy_fill length {len} out of range"
             );
-            st.lock().entropy_draws += 1;
-            let mut bytes = vec![0u8; *len as usize];
-            rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
-            write_guest(caller, *ptr, &bytes)
+            let bytes = host_entropy(st, len as usize);
+            write_guest(caller, ptr, &bytes)
         }
         _ => anyhow::bail!("`{name}` is listed in RUNTIME_PAL but has no implementation"),
     }
+}
+
+/// Draws bytes from the host randomness source.
+fn host_entropy(st: &Arc<Mutex<Sandbox>>, len: usize) -> Vec<u8> {
+    st.lock().entropy_draws += 1;
+    let mut out = vec![0u8; len];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut out);
+    out
+}
+
+/// Record the denied platform capability and produce its trap.
+fn refuse_capability(st: &Arc<Mutex<Sandbox>>, name: &'static str) -> anyhow::Error {
+    let mut s = st.lock();
+    s.refusals += 1;
+    let unit = s.current_unit;
+    let told_to_skip = s.last_deferred;
+    if s.violation.is_none() {
+        s.violation = Some((unit.or(told_to_skip), name));
+    }
+    anyhow::anyhow!(
+        "WISP init sandbox: capability `{name}` is sealed during pre-init; the init \
+         unit that reached for it is deferred to lazy per-instance execution"
+    )
+}
+
+/// A non-`wisp` import as the module declares it: `(module, name, core type)`.
+pub(crate) struct WasiImport {
+    module: String,
+    name: String,
+    params: Vec<wasmparser::ValType>,
+    results: Vec<wasmparser::ValType>,
+}
+
+/// Every non-`wisp` function import, with its core signature. The validator
+/// has already refused anything outside the PAL whitelist, so this is a
+/// re-read of bytes already judged — not a second judgement.
+fn wasi_imports(wasm: &[u8]) -> Vec<WasiImport> {
+    let mut types: Vec<(Vec<wasmparser::ValType>, Vec<wasmparser::ValType>)> = Vec::new();
+    let mut out = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(wasm).flatten() {
+        match payload {
+            wasmparser::Payload::TypeSection(r) => {
+                for group in r.into_iter().flatten() {
+                    for sub in group.into_types() {
+                        match sub.composite_type.inner {
+                            wasmparser::CompositeInnerType::Func(f) => {
+                                types.push((f.params().to_vec(), f.results().to_vec()))
+                            }
+                            _ => types.push((Vec::new(), Vec::new())),
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::ImportSection(r) => {
+                for imp in r.into_imports().flatten() {
+                    if imp.module == imports::HOST_MODULE {
+                        continue;
+                    }
+                    let idx = match imp.ty {
+                        wasmparser::TypeRef::Func(i) | wasmparser::TypeRef::FuncExact(i) => i,
+                        _ => continue,
+                    };
+                    let Some((params, results)) = types.get(idx as usize).cloned() else {
+                        continue;
+                    };
+                    out.push(WasiImport {
+                        module: imp.module.to_string(),
+                        name: imp.name.to_string(),
+                        params,
+                        results,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Apply the same capability policy to declared WASI adapter imports.
+fn install_pal_adapter(
+    linker: &mut wizer::Linker,
+    engine: &wt::Engine,
+    wasi: &[WasiImport],
+    state: &Arc<Mutex<Sandbox>>,
+) -> anyhow::Result<()> {
+    use crate::pal::{self, Disposition};
+
+    for imp in wasi {
+        let cvt = |t: &wasmparser::ValType| match t {
+            wasmparser::ValType::I64 => wt::ValType::I64,
+            wasmparser::ValType::F32 => wt::ValType::F32,
+            wasmparser::ValType::F64 => wt::ValType::F64,
+            wasmparser::ValType::V128 => wt::ValType::V128,
+            _ => wt::ValType::I32,
+        };
+        let ty = wt::FuncType::new(
+            engine,
+            imp.params.iter().map(cvt),
+            imp.results.iter().map(cvt),
+        );
+        let st = state.clone();
+        let Some(def) = pal::lookup(&imp.module, &imp.name) else {
+            // Unreachable behind the validator, and defined anyway: leaving it
+            // undefined would let wizer's dummy-import shim answer it with
+            // zeros, which is the one outcome worse than a trap.
+            let full = format!("{}::{}", imp.module, imp.name);
+            linker.func_new(&imp.module, &imp.name, ty, move |_c, _a, _r| {
+                anyhow::bail!("`{full}` is outside the WASI PAL whitelist")
+            })?;
+            continue;
+        };
+        match (def.disposition, def.module, def.func) {
+            // Initialization clock is zero, in nanoseconds. Same value the runtime
+            // would get from `clock_now_coarse` here, widened by the same
+            // quantum the runtime adapter uses.
+            (Disposition::Delegate(_), m, "now") if m == pal::MONOTONIC_CLOCK => {
+                linker.func_new(&imp.module, &imp.name, ty, move |_c, _a, rets| {
+                    if !st.lock().serves("clock_now_coarse") {
+                        return Err(refuse_capability(&st, "clock_now_coarse"));
+                    }
+                    *st.lock().pal_calls.entry("clock_now_coarse").or_default() += 1;
+                    rets[0] = wt::Val::I64(0);
+                    Ok(())
+                })?;
+            }
+            // A constant, and a truthful one. It reveals nothing about the
+            // host, so it needs no scope rule.
+            (Disposition::Delegate(_), m, "resolution") if m == pal::MONOTONIC_CLOCK => {
+                linker.func_new(&imp.module, &imp.name, ty, move |_c, _a, rets| {
+                    rets[0] = wt::Val::I64(pal::CLOCK_QUANTUM_NS);
+                    Ok(())
+                })?;
+            }
+            // An empty environment has no external values to preserve, and
+            // the value is the same on every replay — a template may bake it.
+            (Disposition::Delegate(_), m, "get-environment") if m == pal::CLI_ENVIRONMENT => {
+                linker.func_new(&imp.module, &imp.name, ty, move |mut c, args, _r| {
+                    let retptr = args
+                        .last()
+                        .and_then(|v| {
+                            if let wt::Val::I32(p) = v {
+                                Some(*p)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| anyhow::anyhow!("get-environment has no return area"))?;
+                    write_guest(&mut c, retptr, &[0u8; 8])
+                })?;
+            }
+            // Delegated and canonical entropy use the same host randomness provider.
+            (Disposition::Delegate(_), m, "get-random-bytes") if m == pal::RANDOM_RANDOM => {
+                linker.func_new(&imp.module, &imp.name, ty, move |mut c, args, _r| {
+                    if !st.lock().serves("entropy_fill") {
+                        return Err(refuse_capability(&st, "entropy_fill"));
+                    }
+                    *st.lock().pal_calls.entry("entropy_fill").or_default() += 1;
+                    let len = match args.first() {
+                        Some(wt::Val::I64(n)) if *n >= 0 => *n as usize,
+                        _ => 0,
+                    };
+                    anyhow::ensure!(
+                        len <= (1 << 20),
+                        "entropy draw of {len} bytes is out of range"
+                    );
+                    let retptr = match args.get(1) {
+                        Some(wt::Val::I32(p)) => *p,
+                        _ => anyhow::bail!("get-random-bytes has no return area"),
+                    };
+                    let ptr = if len == 0 {
+                        0
+                    } else {
+                        let realloc = c
+                            .get_export("cabi_realloc")
+                            .and_then(|e| e.into_func())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "guest declares `wasi:random` but exports no `cabi_realloc`"
+                                )
+                            })?
+                            .typed::<(i32, i32, i32, i32), i32>(&c)?;
+                        realloc.call(&mut c, (0, 0, 1, len as i32))?
+                    };
+                    let bytes = host_entropy(&st, len);
+                    if len > 0 {
+                        write_guest(&mut c, ptr, &bytes)?;
+                    }
+                    let mut area = [0u8; 8];
+                    area[..4].copy_from_slice(&(ptr as u32).to_le_bytes());
+                    area[4..].copy_from_slice(&(len as u32).to_le_bytes());
+                    write_guest(&mut c, retptr, &area)
+                })?;
+            }
+            // Everything else: the declaration links, the capability is absent.
+            _ => {
+                let full = format!("{}::{}", def.module, def.func);
+                let why = def.why;
+                linker.func_new(&imp.module, &imp.name, ty, move |_c, _a, _r| {
+                    anyhow::bail!(
+                        "guest called `{full}` during pre-init; the WISP PAL adapter satisfies \
+                         it with a trap-on-call stub: {why}"
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn func_type(engine: &wt::Engine, def: &ImportDef) -> wt::FuncType {

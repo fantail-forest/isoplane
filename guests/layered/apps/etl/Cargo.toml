@@ -1,0 +1,17 @@
+[package]
+name = "layered-etl"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Tenant 3: a batch transform. Reaches compression, SHA-256 and the byte codecs; touches no JSON and no regex."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-rtabi = { path = "../../rtabi", default-features = false }
+
+[features]
+default = []
+layered = ["wisp-rtabi/layered"]
+selfcontained = ["wisp-rtabi/selfcontained"]

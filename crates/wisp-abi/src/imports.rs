@@ -207,6 +207,31 @@ pub const IMPORTS: &[ImportDef] = &[
 
     // Imports marked as carrying sensitive data.
 
+
+    // ---- the kill-cooperation ABI (§4.6, §6.4) ----------------------------
+    // Two halves of one mechanism, and both are engine-owned: neither ever
+    // reaches a `HostBindings` vtable, because the budget state they read and
+    // write lives in the engine's store, next to the meter the epoch callback
+    // compares against.
+    //
+    // `budget_remaining_ns` is *"the host-published remaining-budget value"*
+    // §4.6 requires the runtime layer to read so it can raise
+    // `BudgetExceededException` at its natural boundaries — the allocation
+    // slow path, GC entry, and task switch. It returns the signed nanoseconds
+    // left against B; once grace has begun it is <= 0 and keeps falling, so a
+    // guest can tell "at budget" from "deep into grace" and decide how much
+    // unwinding it can still afford.
+    ImportDef { buf: BufSpec::None, ..imp!("budget_remaining_ns", Ctx, Sig { params: &[], results: &[I64] }, SYNC, "ctx.budget-remaining-ns") },
+    // `unsafe_to_trap` is the bit §4.6 has the runtime layer publish around GC
+    // phases and scheduler queue mutations. The epoch callback **defers grace
+    // entry** while it is set and the **hard deadline ignores it**: a pinned
+    // bit buys exactly G, nothing more (§6.4).
+    //
+    // A production runtime layer would publish this as an exported mutable
+    // global so the host reads it for free; an import costs one host call per
+    // GC phase, which is the honest PoC shape and keeps the bit's owner
+    // unambiguous.
+    ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC, "ctx.unsafe-to-trap") },
 ];
 
 pub fn lookup(name: &str) -> Option<&'static ImportDef> {
