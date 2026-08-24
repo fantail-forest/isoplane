@@ -14,6 +14,12 @@ thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
     /// §4.4: unit ids the "host" has already learned are impure.
     static DEFERRED: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
+    /// §4.4/§9.5: the init-visible config blob this deploy supplies.
+    static CONFIG: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Bytes an `Out(_)` import "wrote into guest memory". Host builds cannot
+    /// use the passed pointer (it truncates to `i32`), so the stub parks them
+    /// here and `abi::read_sized_out` copies them out.
+    static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static CALLS: RefCell<Vec<(&'static str, Vec<i64>)>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -39,6 +45,12 @@ impl StubHost {
         DEFERRED.with(|d| d.borrow_mut().push(id));
     }
 
+    /// §4.4/§9.5: supply the init-visible config blob the sealed init sandbox
+    /// will serve. The control plane encodes it as JSON `[(name, value), ..]`.
+    pub fn set_config(&self, blob: Vec<u8>) {
+        CONFIG.with(|c| *c.borrow_mut() = blob);
+    }
+
     /// Every import the SDK called, in order.
     pub fn calls(&self) -> Vec<(&'static str, Vec<i64>)> {
         CALLS.with(|c| c.borrow().clone())
@@ -60,10 +72,23 @@ pub fn with_stub_host<R>(f: impl FnOnce(&StubHost) -> R) -> R {
     CALLS.with(|c| c.borrow_mut().clear());
     NEXT_ID.with(|c| c.set(1));
     DEFERRED.with(|d| d.borrow_mut().clear());
-    // The executor is a module-global; start every test from a clean one.
+    CONFIG.with(|c| c.borrow_mut().clear());
+    OUT.with(|o| o.borrow_mut().clear());
+    // The executor and the pre-init state are module-globals; start every
+    // test from a clean one.
     crate::rt::reset();
+    crate::init::reset_for_test();
     let host = StubHost { _guard: guard };
     f(&host)
+}
+
+/// Collect what the last `Out(_)` stub produced. See [`OUT`].
+pub(crate) fn take_out_buffer(dst: &mut [u8]) {
+    OUT.with(|o| {
+        let src = o.borrow();
+        let n = src.len().min(dst.len());
+        dst[..n].copy_from_slice(&src[..n]);
+    });
 }
 
 /// Called by every generated host stub in [`crate::abi`].
@@ -79,6 +104,18 @@ pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
     // §4.4 replay: non-zero means "this unit is deferred, skip it".
     if name == "init_unit_deferred" {
         return DEFERRED.with(|d| i64::from(d.borrow().contains(&args[0])));
+    }
+    // §4.4 config blob: write up to `cap` bytes, return the FULL length so a
+    // zero-length probe sizes the buffer. Mirrors the host in
+    // `wisp_control::preinit`.
+    if name == "init_config_get" {
+        return CONFIG.with(|c| {
+            let blob = c.borrow();
+            let cap = args[1].max(0) as usize;
+            let n = cap.min(blob.len());
+            OUT.with(|o| *o.borrow_mut() = blob[..n].to_vec());
+            blob.len() as i64
+        });
     }
     if wisp_abi::imports::lookup(name)
         .is_some_and(|import| matches!(import.kind, wisp_abi::imports::ImportKind::Future))

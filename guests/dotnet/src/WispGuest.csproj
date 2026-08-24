@@ -52,6 +52,15 @@
     <IlcOptimizationPreference>Size</IlcOptimizationPreference>
     <IlcFoldVTables>true</IlcFoldVTables>
     <StackTraceSupport>false</StackTraceSupport>
+
+    <!-- §4.3 rule V3 rejects a declared memory maximum above the plan's
+         ceiling, and `wisp_abi::config` caps plans at 64 / 128 / 512 MB. The
+         toolchain's own link line declares 2 GiB, so this must be set or the
+         module is rejected on every plan. 134217728 is §5.5's 128 MB default
+         (the Standard plan); build with -p:WispMemoryMaxBytes=67108864 to
+         target Free. Note that .NET runtime startup alone reserves ~50 MB, so
+         a Free-plan guest runs with very little headroom. -->
+    <WispMemoryMaxBytes Condition="'$(WispMemoryMaxBytes)' == ''">134217728</WispMemoryMaxBytes>
   </PropertyGroup>
 
   <!-- The §12.1 compatibility probe (App/Compat.cs). Off by default: the
@@ -59,6 +68,11 @@
        §4.2's 2.5 MB target. `-p:WispCompatProbe=true` turns it on. -->
   <PropertyGroup Condition="'$(WispCompatProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_COMPAT_PROBE</DefineConstants>
+  </PropertyGroup>
+
+  <!-- The §4.4 clone-uniqueness probe (App/Entropy.cs). Off by default. -->
+  <PropertyGroup Condition="'$(WispEntropyProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_ENTROPY_PROBE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -79,7 +93,14 @@
          V3-rejected as built. wasm-ld honours the last max-memory flag, and
          ours is appended after the toolchain's. 134217728 = the 128 MB
          standard-plan ceiling of §5.5. -->
-    <LinkerArg Include="-Wl,--max-memory=134217728" />
+    <LinkerArg Include="-Wl,--max-memory=$(WispMemoryMaxBytes)" />
+
+    <!-- The PAL shim, compiled by build.sh with the WASI SDK's clang. It
+         defines the `__wasm_import_*` symbols wasi-libc leaves undefined, so
+         wasm-ld resolves them here instead of emitting `wasi:*` imports. Order
+         does not matter: an explicit object file always participates in
+         resolution, and libc.a is searched after it. -->
+    <LinkerArg Condition="'$(WispPalObject)' != ''" Include="&quot;$(WispPalObject)&quot;" />
   </ItemGroup>
 
   <ItemGroup>

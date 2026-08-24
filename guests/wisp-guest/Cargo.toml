@@ -20,3 +20,7 @@ serde_json = { workspace = true, optional = true }
 [features]
 default = []
 json = ["dep:serde_json"]
+
+[dev-dependencies]
+# The init-config blob is JSON on the wire, so the SDK's own tests need it.
+serde_json = { workspace = true }

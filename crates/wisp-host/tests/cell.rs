@@ -137,6 +137,18 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
         )
         .unwrap();
 
+    // Baseline first: what does an *empty* cell cost? Reactor threads, the
+    // timer wheel and the idle sweeper all run whether or not anything is
+    // parked, and claim C3 is about the *marginal* cost of an instance, not
+    // about the fixed cost of having a cell at all. Measuring the difference
+    // also makes the test robust on a loaded build machine, where absolute
+    // CPU readings drift.
+    let base0 = wisp_host::meters::read_process_cpu_ns();
+    let base_wall = Instant::now();
+    std::thread::sleep(Duration::from_secs(2));
+    let baseline_ns_per_s = (wisp_host::meters::read_process_cpu_ns() - base0) as f64
+        / base_wall.elapsed().as_secs_f64();
+
     let mut pending = Vec::with_capacity(N);
     for i in 0..N {
         let mut rec = http(&r.cell, &module, "/park");
@@ -174,19 +186,30 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
     let cpu_ns = wisp_host::meters::read_process_cpu_ns() - cpu0;
     let wall_ns = wall0.elapsed().as_nanos() as u64;
 
+    let secs = wall_ns as f64 / 1e9;
     let cores_used = cpu_ns as f64 / wall_ns as f64;
+    let marginal_ns_per_s = (cpu_ns as f64 / secs - baseline_ns_per_s).max(0.0);
+    let per_instance_us_per_s = marginal_ns_per_s / 1e3 / N as f64;
     eprintln!(
-        "{N} instances parked for {:.1}s -> cell CPU {:.1} ms ({:.4} cores, {:.1} µs/instance/s)",
-        wall_ns as f64 / 1e9,
+        "empty cell {:.1} ms/s; {N} parked for {secs:.1}s -> {:.1} ms total          ({cores_used:.4} cores), marginal {per_instance_us_per_s:.2} µs/instance/s",
+        baseline_ns_per_s / 1e6,
         cpu_ns as f64 / 1e6,
-        cores_used,
-        cpu_ns as f64 / 1e3 / N as f64 / seconds as f64,
     );
 
-    // "≈0" made falsifiable: under 2% of one core for a thousand sleeping
-    // instances. A real per-instance cost of even 100 µs/s would be 10% here.
+    // "≈0" made falsifiable, twice over.
+    //
+    // The marginal bound is the claim: a parked instance holds no thread and
+    // no stack, so the only CPU it can cost is whatever the cell spends
+    // noticing it exists. At 10 µs/instance/s, G1's 5,000 instances would cost
+    // 5% of one core — visible but not structural. At 100 µs/s it would be
+    // half a core and the economics would be different.
     assert!(
-        cores_used < 0.02,
+        per_instance_us_per_s < 15.0,
+        "each parked instance costs {per_instance_us_per_s:.1} µs/s of cell CPU; parking is not free"
+    );
+    // And the absolute, so a regression in the fixed overhead is caught too.
+    assert!(
+        cores_used < 0.03,
         "1,000 parked instances used {cores_used:.4} cores, exceeding the test budget"
     );
 

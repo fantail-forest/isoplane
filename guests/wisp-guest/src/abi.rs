@@ -86,6 +86,31 @@ macro_rules! wisp_imports {
     };
 }
 
+/// Read a `BufSpec::Out(0)` import that reports the blob's full length --
+/// `(ptr, cap) -> full_len`, the probe-then-fill idiom (§4.4).
+///
+/// On wasm this is the import call and nothing else, which is the path that
+/// ships. On host builds a guest pointer truncates to `i32`, so the stub hands
+/// the bytes back through [`crate::testing`] instead; that shim exists only so
+/// the idiom itself is testable without a wasm engine.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn read_sized_out(
+    imp: unsafe extern "C" fn(i32, i32) -> i32,
+    dst: &mut [u8],
+) -> i32 {
+    unsafe { imp(dst.as_mut_ptr() as i32, dst.len() as i32) }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn read_sized_out(
+    imp: unsafe extern "C" fn(i32, i32) -> i32,
+    dst: &mut [u8],
+) -> i32 {
+    let full = unsafe { imp(0, dst.len() as i32) };
+    crate::testing::take_out_buffer(dst);
+    full
+}
+
 /// Host-build stub behaviour. Tests install a hook so they can drive the
 /// executor without a wasm engine; unhooked calls return 0.
 #[cfg(not(target_arch = "wasm32"))]
@@ -106,6 +131,8 @@ wisp_imports! {
     fn init_unit_deferred(id: i32) -> i32;
     /// The preparation string-hash seed is separate from entropy requests and can be captured in guest state.
     fn init_hash_seed(ptr: i32, len: i32);
+    /// Copies preparation configuration into the guest buffer and returns its full length.
+    fn init_config_get(ptr: i32, cap: i32) -> i32;
 
     // ---- observability ----------------------------------------------------
     /// `(level, ptr, len)`. Counts against the dispatch CPU budget, which is
@@ -140,9 +167,11 @@ wisp_imports! {
 // ---------------------------------------------------------------------------
 // The guest exports (§5.2).
 //
-// CONTRACT GAP: `wisp_abi::imports::exports` names the five exports but does
-// not give their core-wasm signatures, so the engine and the SDK could
-// disagree silently. This is the lowering the SDK emits; see guests/README.md.
+// `wisp_abi::imports::exports::SIGNATURES` is now the contract (it was not
+// when this SDK was first written -- see guests/README.md gap G1, resolved).
+// The table below is what the `export_*!` macros actually emit, kept separate
+// so that `exports_match_the_contract` can catch drift rather than have the
+// two definitions be the same line of code.
 // ---------------------------------------------------------------------------
 
 /// One guest export, as this SDK lowers it to core wasm.
@@ -176,7 +205,7 @@ pub const SDK_EXPORTS: &[SdkExport] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wisp_abi::imports::{self, IMPORTS};
+    use wisp_abi::imports::{self, BufSpec, IMPORTS};
 
     /// The one test that keeps three consumers of one table honest: the
     /// validator, the host linker and this SDK. If `wisp-abi` grows an import
@@ -211,6 +240,71 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The export half of `sdk_matches_the_contract`. `exports::SIGNATURES`
+    /// is what the engine's `get_typed_func` is written against, so a
+    /// disagreement here is an instantiation failure at activation time.
+    #[test]
+    fn exports_match_the_contract() {
+        for e in SDK_EXPORTS {
+            let want = imports::exports::signature(e.name)
+                .unwrap_or_else(|| panic!("{} is not a declared export", e.name));
+            assert_eq!(e.sig, want, "export signature drift on `{}`", e.name);
+        }
+        for (name, _) in imports::exports::SIGNATURES {
+            assert!(
+                SDK_EXPORTS.iter().any(|e| e.name == *name),
+                "the contract declares `{name}` but the SDK does not emit it"
+            );
+        }
+    }
+
+    /// `BufSpec` (§5.5) resolves an ambiguity the raw signature cannot: which
+    /// `(i32, i32)` pairs are buffers, which way the bytes flow, and where the
+    /// pair sits among the scalars. The SDK hard-codes that at each call site,
+    /// so this asserts the hard-coding still matches the contract. Getting it
+    /// wrong would hand the host a length as a pointer.
+    #[test]
+    fn buffer_layout_matches_every_call_site() {
+        // What `crate::bindings` and `crate::init` assume, written out.
+        let assumed: &[(&str, BufSpec)] = &[
+            // Host writes INTO guest memory: we pass (ptr, capacity) of a
+            // buffer we own. Only these two.
+            ("entropy_fill", BufSpec::Out(0)),
+            ("init_hash_seed", BufSpec::Out(0)),
+            ("init_config_get", BufSpec::Out(0)),
+            // A scalar before the pair.
+            ("log_emit", BufSpec::In(1)),
+            ("resp_write", BufSpec::In(1)),
+            // A scalar after the pair.
+            // Looks like a buffer import, is not: (handle, max_len).
+            ("http_body_read", BufSpec::None),
+            ("clock_deadline_in", BufSpec::None),
+            ("resp_finish", BufSpec::None),
+            ("trace_span_end", BufSpec::None),
+            ("init_unit_begin", BufSpec::None),
+            ("init_unit_deferred", BufSpec::None),
+            // Plain postcard payloads.
+            ("abort", BufSpec::In(0)),
+            ("http_fetch", BufSpec::In(0)),
+            ("resp_new", BufSpec::In(0)),
+        ];
+        for (name, want) in assumed {
+            let got = imports::lookup(name).unwrap().buf;
+            assert_eq!(got, *want, "BufSpec drift on `{name}`");
+        }
+        // And the SDK's blanket assumption: nothing else is an out-buffer.
+        let outs: Vec<&str> = IMPORTS
+            .iter()
+            .filter(|i| matches!(i.buf, BufSpec::Out(_)))
+            .map(|i| i.name)
+            .collect();
+        assert_eq!(
+            outs,
+            vec!["init_hash_seed", "init_config_get", "entropy_fill"],
+            "a new host-writes-into-guest-memory import needs an SDK call site"
+        );
     }
 
     #[test]

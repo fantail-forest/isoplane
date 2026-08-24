@@ -5,12 +5,35 @@ use core::cell::Cell;
 use serde::Serialize;
 use wisp_guest::{Clock, Ctx, Handler, Request, RequestExt, Response};
 
+const DEFAULT_FX_URL: &str = "https://rates.internal/nzd";
+
+/// Configuration values observed by the initialized-state probe.
+#[derive(Debug, Clone)]
+pub struct ApiConfig {
+    pub fx_url: String,
+    pub region: String,
+    /// How many vars the deploy actually supplied.
+    pub var_count: usize,
+}
+
 wisp_guest::deferred_lazy! {
     /// Routes handled by this fixture.
     static ROUTES: Vec<&'static str> = { vec!["/memo", "/park", "/stream"] };
 
     /// Reads the serving clock when this instance first needs it.
     static BOOT_MS: u64 = { Clock::now_ms() };
+
+
+    /// Parses supplied configuration into initialized guest state.
+    static CONFIG: ApiConfig = {
+        let vars = wisp_guest::init::config_vars();
+        let get = |k: &str| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        ApiConfig {
+            fx_url: get("FX_URL").unwrap_or_else(|| DEFAULT_FX_URL.to_string()),
+            region: get("REGION").unwrap_or_else(|| "unknown".to_string()),
+            var_count: vars.len(),
+        }
+    };
 }
 
 /// Handles initialization, timer and streaming probes.
@@ -26,6 +49,11 @@ struct MemoReport {
     /// Initializer executions represented by this guest state, including preparation.
     routes_initializer_runs: u32,
     routes_len: usize,
+    /// Initializer executions represented by this guest state, including preparation.
+    config_initializer_runs: u32,
+    config_var_count: usize,
+    config_fx_url: String,
+    config_region: String,
     /// Initializer executions before this report reads the clock value.
     boot_ms_initializer_runs: u32,
     boot_ms: u64,
@@ -48,6 +76,10 @@ impl Api {
             instance_dispatches: self.dispatches.get(),
             routes_initializer_runs: ROUTES.run_count(),
             routes_len: ROUTES.get().len(),
+            config_initializer_runs: CONFIG.run_count(),
+            config_var_count: CONFIG.get().var_count,
+            config_fx_url: CONFIG.get().fx_url.clone(),
+            config_region: CONFIG.get().region.clone(),
             boot_ms_initializer_runs: BOOT_MS.run_count(),
             boot_ms: *BOOT_MS.get(),
             heap_live_bytes: h.live_bytes,
@@ -106,4 +138,7 @@ impl Handler for Api {
     }
 }
 
-wisp_guest::export_handler!(Api, units = wisp_guest::init_units![ROUTES, BOOT_MS]);
+wisp_guest::export_handler!(
+    Api,
+    units = wisp_guest::init_units![ROUTES, BOOT_MS, CONFIG]
+);

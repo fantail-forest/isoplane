@@ -7,6 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$ROOT/out"
 TARGET=wasm32-unknown-unknown
 PROFILE=release
+# `scripts/dev` points CARGO_TARGET_DIR at a volume outside the repo so
+# container builds cannot leave root-owned artifacts in the working tree.
+TDIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 mkdir -p "$OUT"
 rm -f "$OUT"/*.wasm
 cd "$ROOT"
@@ -20,12 +23,12 @@ GUESTS=(quotes-api misbehaver bigheap impure-cctor undeclared-import)
 echo "==> building guests for $TARGET ($PROFILE)"
 for g in "${GUESTS[@]}"; do
   cargo build -p "$g" "${CARGO_FLAGS[@]}"
-  cp "target/$TARGET/$PROFILE/${g//-/_}.wasm" "$OUT/$g.wasm"
+  cp "$TDIR/$TARGET/$PROFILE/${g//-/_}.wasm" "$OUT/$g.wasm"
 done
 
 # V1 fixture, variant 2: an undeclared MODULE rather than an undeclared field.
 cargo build -p undeclared-import --features foreign-module "${CARGO_FLAGS[@]}"
-cp "target/$TARGET/$PROFILE/undeclared_import.wasm" "$OUT/foreign-module.wasm"
+cp "$TDIR/$TARGET/$PROFILE/undeclared_import.wasm" "$OUT/foreign-module.wasm"
 
 echo
 echo "==> sizes"

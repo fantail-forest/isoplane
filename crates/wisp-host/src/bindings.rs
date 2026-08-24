@@ -24,8 +24,13 @@ use crate::metrics::Metrics;
 use crate::response::ResponseTable;
 use crate::{InstanceId, ModuleId};
 
-/// The documented `scalars` layout, per import. `None` means the import takes
-/// only a buffer or nothing at all.
+/// What each import's `scalars` entries *mean*.
+///
+/// `wisp_abi::imports::ImportDef::buf` is the authority on *where* the
+/// `(ptr, len)` pair sits in the parameter list; this table only names what is
+/// left over, so the vtable's `call.scalars[0]` reads are legible instead of
+/// magic. `scalar_layout_matches_the_abi` checks the two agree, so a new
+/// import cannot land with an undocumented scalar.
 pub const SCALARS: &[(&str, &[&str])] = &[
     ("log_emit", &["level"]),
     ("trace_span_end", &["span"]),
@@ -36,6 +41,16 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("init_unit_begin", &["unit"]),
     ("init_unit_deferred", &["unit"]),
 ];
+
+/// Scalars an import carries, per `wisp_abi`'s own `BufSpec`.
+fn scalar_count(def: &imports::ImportDef) -> usize {
+    match def.buf {
+        imports::BufSpec::None => def.sig.params.len(),
+        imports::BufSpec::In(_) | imports::BufSpec::Out(_) => {
+            def.sig.params.len().saturating_sub(2)
+        }
+    }
+}
 
 /// How a completed host future gets back to an execution-pool thread.
 /// Implemented by [`crate::Cell`]; a no-op in unit tests.
@@ -536,7 +551,7 @@ impl HostBindings for CellBindings {
             // engine linked it as an ordinary sync import; deny rather than
             // return a zero-filled buffer, because a silently constant
             // "CSPRNG" would break §8.5 invisibly.
-            "entropy_fill" | "init_hash_seed" if true => {
+            "entropy_fill" | "init_hash_seed" | "init_config_get" => {
                 ctx.latch_trap(TrapCode::Protocol);
                 -1
             }
@@ -580,10 +595,18 @@ impl HostBindings for CellBindings {
                 *self.ctx.out_buffer.lock() = out.to_vec();
                 out.len() as i64
             }
-            // §8.6: the one externally sourced value the *init sandbox* is
-            // allowed to see. At runtime it is a capability violation, not a
-            // value.
-            "init_hash_seed" => {
+            // §4.4/§8.6: both of these belong to the sealed init sandbox, and
+            // `wisp-control` serves them there. At runtime they are a
+            // capability violation, not a value.
+            //
+            // `init_config_get` is safe to *pre-run* — it is tenant-authored
+            // deploy input, fixed for the version and part of §8.7's
+            // reproducibility preimage, so unlike a secret it bakes no shared
+            // entropy into the template. But that is an argument for reading
+            // it at init, not for reading it later: the guest captured the
+            // blob into linear memory during pre-init and serves it from there
+            // forever after, so a runtime call means something has gone wrong.
+            "init_hash_seed" | "init_config_get" => {
                 self.ctx.latch_trap(TrapCode::CapabilityViolation);
                 -1
             }
@@ -624,12 +647,12 @@ mod tests {
         }
     }
 
-    /// The scalar layout table must only name real imports, and must cover
-    /// every import whose signature has a non-buffer scalar. If this fails,
-    /// the engine and the cell have drifted about argument order.
+    /// Every import's scalars are named, and the count matches `wisp_abi`'s
+    /// own `BufSpec`. If a new import lands with an undocumented scalar, or
+    /// the ABI moves a buffer, this fails here rather than at runtime as an
+    /// argument read from the wrong slot.
     #[test]
-    fn scalar_layout_covers_every_import_that_needs_it() {
-        use wisp_abi::imports::Ty;
+    fn scalar_layout_matches_the_abi() {
         for (name, _) in SCALARS {
             assert!(
                 imports::lookup(name).is_some(),
@@ -637,22 +660,44 @@ mod tests {
             );
         }
         for def in IMPORTS {
-            let params = def.sig.params;
-            // Buffer imports pass (ptr, len) as two adjacent i32s.
-            let buffer_pair = params.windows(2).any(|w| w == [Ty::I32, Ty::I32]);
-            let scalar_count = if buffer_pair {
-                params.len().saturating_sub(2)
-            } else {
-                params.len()
-            };
-            let documented = SCALARS.iter().any(|(n, _)| *n == def.name);
-            if scalar_count > 0 {
-                assert!(
-                    documented,
-                    "{} takes {scalar_count} scalar(s) but SCALARS does not document them",
+            let n = scalar_count(def);
+            let documented = SCALARS
+                .iter()
+                .find(|(m, _)| *m == def.name)
+                .map(|(_, s)| s.len());
+            match documented {
+                Some(named) => assert_eq!(
+                    named, n,
+                    "{} carries {n} scalar(s) per BufSpec but SCALARS names {named}",
                     def.name
-                );
+                ),
+                None => assert_eq!(
+                    n, 0,
+                    "{} carries {n} scalar(s) that SCALARS does not name",
+                    def.name
+                ),
             }
+        }
+    }
+
+    /// §5.5: host bytes reach guest memory through `call_fill` and nowhere
+    /// else, so every `BufSpec::Out` import must be routed there.
+    #[test]
+    fn every_out_buffer_import_is_routed_through_call_fill() {
+        let c = ctx();
+        let mut b = CellBindings::new(c.clone());
+        let mut out = [0u8; 64];
+        for def in IMPORTS
+            .iter()
+            .filter(|d| matches!(d.buf, imports::BufSpec::Out(_)))
+        {
+            let n = b.call_fill(call(def.name, &[], [0; 3]), &mut out);
+            let _ = c.take_trap();
+            assert!(
+                n >= 0 || matches!(def.name, "init_hash_seed" | "init_config_get"),
+                "{} has an out buffer but call_fill refuses it",
+                def.name
+            );
         }
     }
 

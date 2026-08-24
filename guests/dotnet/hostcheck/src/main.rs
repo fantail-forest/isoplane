@@ -15,8 +15,27 @@ use wasmtime::{
 use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead, TraceContext};
 use wisp_abi::status::PollStatus;
 
+/// Select how this fixture binds non-host imports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasiMode {
+    /// Every non-`wisp` import traps if called. The decisive experiment: if a
+    /// dispatch completes under this, all 32 are dead declarations and the
+    /// mitigation is a trapping-stub bind or a strip pass. If it does not,
+    /// the set that fires is a genuine capability the toolchain requires.
+    Trap,
+    /// Provide the fixture environment, fixed clock and deterministic bytes.
+    Pal,
+    /// Everything gets a recording stub that returns zeroes, so one run
+    /// enumerates which imports are reachable rather than stopping at the
+    /// first. Use to re-measure after a toolchain bump.
+    Stub,
+}
+
 /// This fixture uses deterministic bytes and does not provide cryptographic entropy.
 static SEED: AtomicU64 = AtomicU64::new(0x243F_6A88_85A3_08D3);
+
+/// §8.5: the clock is coarse and does not advance within a dispatch slice.
+const FROZEN_NOW_MS: i64 = 1_724_000_000_000;
 
 /// Everything the fake host observed, so the assertions can be about
 /// behaviour rather than about return codes alone.
@@ -173,6 +192,106 @@ fn density(engine: &Engine, module: &Module, linker: &Linker<()>, n: usize) -> R
     Ok(())
 }
 
+/// Compare the entropy probe responses from two copies of the sample image.
+fn entropy_clone(
+    engine: &Engine,
+    module: &Module,
+    linker: &Linker<()>,
+    log: &Shared,
+    dispatch: &[u8],
+) -> Result<()> {
+    let mut store = Store::new(engine, ());
+    let inst = linker.instantiate(&mut store, module)?;
+    inst.get_typed_func::<(), ()>(&mut store, "_initialize")?
+        .call(&mut store, ())?;
+    initialize_sample(&mut store, &inst)?;
+
+    let mem = inst.get_memory(&mut store, "memory").context("no memory")?;
+    let template: Vec<u8> = mem.data(&store).to_vec();
+    let sp_global = inst
+        .get_global(&mut store, "__stack_pointer")
+        .context("no sp")?;
+    let sp_template = read_sp(&mut store, &sp_global)?;
+    drop(store);
+
+    // 2. Two independent activations of that one template.
+    let mut samples = Vec::new();
+    for _ in 0..2 {
+        let mut st = Store::new(engine, ());
+        let i = linker.instantiate(&mut st, module)?;
+        let m = i.get_memory(&mut st, "memory").context("no memory")?;
+        let have = m.data_size(&st);
+        if template.len() > have {
+            m.grow(&mut st, (template.len() - have).div_ceil(64 * 1024) as u64)?;
+        }
+        m.write(&mut st, 0, &template)?;
+        i.get_global(&mut st, "__stack_pointer")
+            .context("no sp")?
+            .set(&mut st, Val::I32(sp_template))?;
+
+        let before = response_count(log)?;
+        require_done(call_handle(&mut st, &i, dispatch)?)?;
+        let l = log
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host observation lock poisoned"))?;
+        let head = l
+            .responses
+            .get(before)
+            .context("clone produced no response")?;
+        samples.push(String::from_utf8_lossy(&head.body).into_owned());
+    }
+
+    println!();
+    println!("  RANDOMNESS OBSERVATIONS (two instances from one post-startup image)");
+    println!("    clone A  {}", samples[0]);
+    println!("    clone B  {}", samples[1]);
+    println!();
+
+    // Compare field by field: the interesting answer is WHICH values repeat,
+    // not whether the lines differ.
+    let fields = |s: &str| -> Vec<(String, String)> {
+        s.split_whitespace()
+            .filter_map(|kv| kv.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let (a, b) = (fields(&samples[0]), fields(&samples[1]));
+    if a.is_empty()
+        || a.len() != b.len()
+        || !a.iter().zip(b.iter()).all(|((ka, _), (kb, _))| ka == kb)
+    {
+        bail!("the entropy probe returned incomplete or inconsistent fields");
+    }
+    let mut shared = Vec::new();
+    for ((ka, va), (_, vb)) in a.iter().zip(b.iter()) {
+        if va.starts_with("THREW:") {
+            // An unsupported API is a §12 gap, not an entropy-sharing signal.
+            println!("    {ka:<8} unsupported ({va})");
+            continue;
+        }
+        let verdict = if va == vb {
+            shared.push(ka.clone());
+            "IDENTICAL  <- shared across clones"
+        } else {
+            "differs"
+        };
+        println!("    {ka:<8} {verdict}");
+    }
+    println!();
+    if shared.is_empty() {
+        println!("    => no repeated supported field was observed in these two samples.");
+    } else {
+        println!(
+            "    => {} of {} shared: {}",
+            shared.len(),
+            a.len(),
+            shared.join(", ")
+        );
+        println!("These observations concern captured heap state, not a cryptographic guarantee.");
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let path = std::env::args()
         .nth(1)
@@ -188,8 +307,18 @@ fn main() -> Result<()> {
 
     check_abi_surface(&module)?;
 
+    let mode = match std::env::args()
+        .find_map(|a| a.strip_prefix("--wasi=").map(str::to_string))
+        .as_deref()
+    {
+        None | Some("pal") => WasiMode::Pal,
+        Some("trap") => WasiMode::Trap,
+        Some("stub") => WasiMode::Stub,
+        Some(other) => bail!("--wasi={other}: expected pal, trap or stub"),
+    };
+
     let log: Shared = Arc::new(Mutex::new(HostLog::default()));
-    let linker = build_linker(&engine, &module, log.clone())?;
+    let linker = build_linker(&engine, &module, log.clone(), mode)?;
 
     let mut store = Store::new(&engine, ());
     let t_inst = Instant::now();
@@ -231,6 +360,11 @@ fn main() -> Result<()> {
         now_ms: 1_724_000_000_000,
     };
     let encoded = wisp_abi::encode(&dispatch)?;
+    if std::env::args().any(|argument| argument == "--entropy-clone") {
+        entropy_clone(&engine, &module, &linker, &log, &encoded)?;
+        return Ok(());
+    }
+
     let compatibility = std::env::args().any(|argument| argument == "--compat");
     let first_response = response_count(&log)?;
     let t_first = Instant::now();
@@ -353,7 +487,12 @@ fn check_abi_surface(module: &Module) -> Result<()> {
     Ok(())
 }
 
-fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<()>> {
+fn build_linker(
+    engine: &Engine,
+    module: &Module,
+    log: Shared,
+    mode: WasiMode,
+) -> Result<Linker<()>> {
     let mut linker: Linker<()> = Linker::new(engine);
 
     // ---- the declared capability surface ---------------------------------
@@ -386,31 +525,25 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
 
     linker.func_wrap("wisp", "resp_finish", move |_handle: i32| {})?;
 
-    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
-    let l = log.clone();
-    linker.func_wrap(
-        "wasi:random/random@0.2.0",
-        "get-random-bytes",
-        move |mut caller: Caller<'_, ()>, len: i64, retptr: i32| -> wasmtime::Result<()> {
-            l.lock()
-                .unwrap()
-                .non_wisp_calls
-                .push("wasi:random/random@0.2.0::get-random-bytes".to_string());
-            let len = len.max(0) as usize;
-            // The canonical ABI makes the callee allocate; `cabi_realloc` is
-            // the guest's own exported allocator for exactly this.
-            let Some(Extern::Func(realloc)) = caller.get_export("cabi_realloc") else {
-                return Err(wasmtime::Error::msg("guest does not export cabi_realloc"));
-            };
-            let realloc = realloc.typed::<(i32, i32, i32, i32), i32>(&caller)?;
-            let ptr = realloc.call(&mut caller, (0, 0, 1, len as i32))?;
+    // ---- the three imports the PAL shim (native/wisp_pal.c) is built from --
+    // These exist so the .NET runtime's own clock and entropy needs are
+    // expressed as WISP capabilities instead of as `wasi:*` imports outside
+    // the manifest. They are ordinary entries in `wisp_abi::imports::IMPORTS`.
 
+    // §8.4/§8.5: coarse (1 ms) and FROZEN for the dispatch slice. A constant
+    // is the policy, not a shortcut past it.
+    linker.func_wrap("wisp", "clock_now_coarse", move || -> i64 { FROZEN_NOW_MS })?;
+
+    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+    linker.func_wrap(
+        "wisp",
+        "entropy_fill",
+        move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> wasmtime::Result<()> {
             let Some(Extern::Memory(mem)) = caller.get_export("memory") else {
                 return Err(wasmtime::Error::msg("no memory export"));
             };
-            // This fixture uses deterministic bytes and does not provide cryptographic entropy.
             let mut seed = SEED.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
-            let mut bytes = vec![0u8; len];
+            let mut bytes = vec![0u8; len.max(0) as usize];
             for b in bytes.iter_mut() {
                 seed = seed
                     .wrapping_mul(6364136223846793005)
@@ -418,22 +551,80 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
                 *b = (seed >> 33) as u8;
             }
             mem.write(&mut caller, ptr as usize, &bytes)?;
-            mem.write(&mut caller, retptr as usize, &(ptr as u32).to_le_bytes())?;
-            mem.write(
-                &mut caller,
-                retptr as usize + 4,
-                &(len as u32).to_le_bytes(),
-            )?;
             Ok(())
         },
     )?;
 
+    // The PAL's dead entries call this before `unreachable`, so a toolchain
+    // bump that starts reaching one produces a named message rather than a
+    // bare trap. Reaching it is a test failure, which is the point.
+    let l = log.clone();
+    linker.func_wrap(
+        "wisp",
+        "abort",
+        move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+            let msg = read_guest_string(&mut caller, ptr, len);
+            l.lock()
+                .unwrap()
+                .non_wisp_calls
+                .push(format!("wisp::abort: {msg}"));
+        },
+    )?;
+
+    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+    let l = log.clone();
+    if mode != WasiMode::Trap {
+        linker.func_wrap(
+            "wasi:random/random@0.2.0",
+            "get-random-bytes",
+            move |mut caller: Caller<'_, ()>, len: i64, retptr: i32| -> wasmtime::Result<()> {
+                l.lock()
+                    .unwrap()
+                    .non_wisp_calls
+                    .push("wasi:random/random@0.2.0::get-random-bytes".to_string());
+                let len = len.max(0) as usize;
+                // The canonical ABI makes the callee allocate; `cabi_realloc` is
+                // the guest's own exported allocator for exactly this.
+                let Some(Extern::Func(realloc)) = caller.get_export("cabi_realloc") else {
+                    return Err(wasmtime::Error::msg("guest does not export cabi_realloc"));
+                };
+                let realloc = realloc.typed::<(i32, i32, i32, i32), i32>(&caller)?;
+                let ptr = realloc.call(&mut caller, (0, 0, 1, len as i32))?;
+
+                let Some(Extern::Memory(mem)) = caller.get_export("memory") else {
+                    return Err(wasmtime::Error::msg("no memory export"));
+                };
+                // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+                let mut seed = SEED.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+                let mut bytes = vec![0u8; len];
+                for b in bytes.iter_mut() {
+                    seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    *b = (seed >> 33) as u8;
+                }
+                mem.write(&mut caller, ptr as usize, &bytes)?;
+                mem.write(&mut caller, retptr as usize, &(ptr as u32).to_le_bytes())?;
+                mem.write(
+                    &mut caller,
+                    retptr as usize + 4,
+                    &(len as u32).to_le_bytes(),
+                )?;
+                Ok(())
+            },
+        )?;
+    }
+
     // ---- everything else -------------------------------------------------
-    // NativeAOT-LLVM leaves ~32 residual `wasi:*` imports in the module. Rule
-    // V1 would reject all of them, so the interesting question is not whether
-    // they are DECLARED but whether they are REACHABLE. Rather than trapping
-    // (which only tells us the first one) each gets a recording stub, so one
-    // run enumerates the whole set the host would have to stub for real.
+    // NativeAOT-LLVM leaves 32 residual `wasi:*` imports in the module. Rule
+    // V1 rejects all of them, so the question that decides how bad that is is
+    // not whether they are DECLARED but whether they are REACHABLE.
+    //
+    // Under `Trap` every one of these aborts the guest if called, which is the
+    // decisive form of the question. Under `Pal` only the three the guest
+    // actually reaches are implemented and the other 29 still trap, which is
+    // the configuration a real cell would run. Under `Stub` nothing traps and
+    // the run enumerates the reachable set instead of stopping at the first.
     for import in module.imports() {
         if import.module() == wisp_abi::imports::HOST_MODULE {
             continue;
@@ -449,6 +640,12 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
         // `get-random-bytes` above is the one wasi import with a real
         // implementation; do not shadow it with a stub.
         if PROVIDED.contains(&full.as_str()) {
+            continue;
+        }
+        if mode == WasiMode::Trap || (mode == WasiMode::Pal && !PAL.contains(&full.as_str())) {
+            // No stub at all. wasmtime's own unknown-import trap fires on
+            // call, names the import in the error, and leaves a wasm
+            // backtrace — which is exactly the diagnostic we want.
             continue;
         }
         let fixup = RETURN_AREA_FIXUPS
@@ -493,11 +690,31 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
         )?;
     }
 
+    // Anything left unbound traps on call rather than failing instantiation,
+    // so `_initialize` still runs and the failure names the exact import.
+    linker.define_unknown_imports_as_traps(module)?;
+
     Ok(linker)
 }
 
 /// Non-`wisp` imports this harness implements for real rather than stubbing.
 const PROVIDED: &[&str] = &["wasi:random/random@0.2.0::get-random-bytes"];
+
+/// **The runtime PAL set.** The only non-`wisp` imports a NativeAOT-LLVM .NET
+/// guest was measured to reach. Under `WasiMode::Pal` these three are
+/// implemented to WISP policy and the other 29 trap; if a toolchain bump makes
+/// the guest reach a fourth, `check.sh` fails and names it.
+const PAL: &[&str] = &[
+    // .NET runtime startup reads configuration. §2.5.4 says there is no
+    // ambient environment, so the policy-correct answer is an empty list.
+    "wasi:cli/environment@0.2.0::get-environment",
+    // §8.4/§8.5: coarse and frozen for the dispatch slice. Returning a
+    // constant is the policy, not a gap in it — a fine-grained monotonic
+    // clock is the measurement primitive §8.4 deliberately denies guests.
+    "wasi:clocks/monotonic-clock@0.2.0::now",
+    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+    "wasi:random/random@0.2.0::get-random-bytes",
+];
 
 /// Imports whose canonical-ABI return area must be zeroed for the stub to be
 /// a coherent "empty" answer rather than whatever was on the shadow stack.

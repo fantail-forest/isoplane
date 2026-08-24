@@ -8,8 +8,23 @@ edition = "2021"
 license-file = "../../../LICENSE.txt"
 description = "Checks the managed HTTP fixture response ABI and sample memory round trip"
 
+[[bin]]
+name = "wisp-dotnet-hostcheck"
+path = "src/main.rs"
+
+# Runs the module through the platform's real validator. Feature-gated because
+# `wisp-control` pulls in wizer, which pins a second wasmtime major.
+[[bin]]
+name = "wisp-validate"
+path = "src/bin/wisp-validate.rs"
+required-features = ["validator"]
+
+[features]
+validator = ["dep:wisp-control"]
+
 [dependencies]
 wisp-abi = { path = "../../../crates/wisp-abi" }
+wisp-control = { path = "../../../crates/wisp-control", optional = true }
 anyhow = "1"
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }

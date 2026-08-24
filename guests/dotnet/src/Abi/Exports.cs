@@ -106,9 +106,9 @@ public static unsafe class Exports
         {
             return PollStatus.Trapped(TrapCode.TooManyFutures);
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            return PollStatus.Trapped(TrapCode.Panic);
+            return Panic(e);
         }
     }
 
@@ -157,6 +157,32 @@ public static unsafe class Exports
         }
     }
 
+    /// <summary>Initializes guest state for a preparation attempt. A failed attempt may be retried; prior external effects are not undone.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "wisp_initialize")]
+    public static void Initialize()
+    {
+        try
+        {
+            Boot();
+            // Force the pieces a first dispatch would otherwise pay for: the
+            // GC heap, the Task machinery, and the postcard codec's buffers.
+            var warm = new PostcardWriter(64);
+            warm.Varint(1);
+            warm.Str("wisp");
+            GC.KeepAlive(warm.Span.Length);
+#if WISP_ENTROPY_PROBE
+            // The probe initializes representative application collections so
+            // the entropy-clone check uses a populated template.
+            Wisp.App.EntropyProbe.WarmLikePreInit();
+#endif
+        }
+        catch
+        {
+            // A failed warm-up is not a failed deploy: the work simply happens
+            // lazily on the first dispatch, which is today's behaviour anyway.
+        }
+    }
+
     // -----------------------------------------------------------------------
     // wisp_gc_hint(pressure)
     // -----------------------------------------------------------------------
@@ -201,7 +227,11 @@ public static unsafe class Exports
         if (root.IsFaulted || root.IsCanceled)
         {
             _root = null;
-            return PollStatus.Trapped(TrapCode.Panic);
+            // The handler's own exception, not ours. Same reasoning as
+            // `Panic`: the type name is the only diagnostic that survives
+            // `UseSystemResourceKeys` and `StackTraceSupport=false`.
+            Exception? inner = root.Exception?.GetBaseException();
+            return inner is null ? PollStatus.Trapped(TrapCode.Panic) : Panic(inner);
         }
 
         Response resp = root.Result;
@@ -226,6 +256,23 @@ public static unsafe class Exports
 
         Log(1, "done: status=" + resp.Status.ToString());
         return PollStatus.Done((uint)handle);
+    }
+
+    /// <summary>
+    /// Reports the managed exception type before returning a panic trap.
+    /// Build settings may omit exception messages and stack traces.
+    /// </summary>
+    private static long Panic(Exception e)
+    {
+        try
+        {
+            Log(3, "unhandled " + e.GetType().FullName);
+        }
+        catch
+        {
+            // Never let diagnosis be the thing that breaks the trap path.
+        }
+        return PollStatus.Trapped(TrapCode.Panic);
     }
 
     /// <summary>

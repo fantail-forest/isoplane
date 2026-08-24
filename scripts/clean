@@ -13,9 +13,16 @@ before=$(du -sm . 2>/dev/null | cut -f1)
 
 # Always safe: pure caches and intermediates. Nothing here is an input to
 # anything; the worst case is a slower next build.
-rm -rf target/debug/incremental target/release/incremental
-rm -rf guests/target guests/dotnet/src/obj guests/dotnet/src/bin
-rm -rf crates/spike/target
+JUNK="target/debug/incremental target/release/incremental
+      guests/target guests/dotnet/src/obj guests/dotnet/src/bin
+      crates/spike/target"
+
+# A container build that wrote into the bind mount leaves root-owned trees the
+# host user cannot unlink. Deleting them from inside the container works
+# because we are root there, so try the cheap path first and fall back.
+if ! rm -rf $JUNK 2>/dev/null; then
+  "$ROOT/scripts/dev" bash -c "cd /wisp && rm -rf $JUNK" >/dev/null 2>&1 || true
+fi
 find . -name '*.rs.bk' -delete 2>/dev/null || true
 
 if [ "${1:-}" = "--all" ]; then
