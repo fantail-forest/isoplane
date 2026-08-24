@@ -58,8 +58,9 @@ async fn run() -> anyhow::Result<()> {
                 {
                     // The authority for V1-V4, when it is compiled in.
                     println!("\n  VALIDATOR (wisp-control)");
-                    match wisp_control::validate(&bytes) {
-                        Ok(()) => println!("    {} no violations", st.green("✓")),
+                    // No application configuration was supplied, so use the default limits.
+                    match wisp_control::validate(&bytes, wisp_abi::config::Limits::default()) {
+                        Ok(_) => println!("    {} no violations", st.green("✓")),
                         Err(v) => println!("    {} {v:?}", st.red("✗")),
                     }
                 }

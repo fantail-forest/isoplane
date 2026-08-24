@@ -41,7 +41,7 @@ wisp-hibernate = { workspace = true, optional = true }
 wisp-engine    = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["real-backends"]
 real-backends = [
     "dep:wisp-control",
     "dep:wisp-host",

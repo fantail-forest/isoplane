@@ -65,6 +65,16 @@ fn config(dir: &std::path::Path) -> NodeConfig {
     let mut cfg = NodeConfig::dev_default();
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
+    // Several of these tests build a node each, concurrently, in one process.
+    // At the default sizing each engine reserves ~21 TiB of virtual address
+    // space and a 47-bit address space holds about six — so the tests would
+    // fail on the sixth with a message about the pooling allocator rather than
+    // about anything they are testing.
+    cfg.engine = wispd::config::EngineLimits {
+        max_instances: 64,
+        max_memory_mib: 32,
+        guard_mib: 64,
+    };
     cfg.cells = vec![CellConfig {
         name: "cell-1".into(),
         max_hot: 4,
@@ -80,6 +90,7 @@ fn config(dir: &std::path::Path) -> NodeConfig {
         versions: vec![VersionConfig {
             id: "v1".into(),
             tier: TierConfig::Fast,
+            wasm: None,
         }],
     }];
     cfg
@@ -266,3 +277,7 @@ async fn a_node_reports_measurements_from_served_requests() {
     assert!(!text.contains("NaN"));
     rig.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------
+// Durable Instances on a real cell (§7).
+// ---------------------------------------------------------------------------

@@ -447,6 +447,14 @@ impl InstanceOps for Instance {
             && self.last == Some(Completion::Parked)
     }
 
+    /// Checks live stack depth and completion state before capture.
+    fn is_capture_eligible(&self) -> bool {
+        let Some(live) = self.live.as_ref() else { return false };
+        !self.poisoned
+            && live.store.data().wasm_depth == 0
+            && self.last.is_some_and(|c| c.instance_survives())
+    }
+
     fn memory(&mut self) -> &mut [u8] {
         let live = self.live.as_mut().expect("instance has no live store");
         let mem = live.memory;

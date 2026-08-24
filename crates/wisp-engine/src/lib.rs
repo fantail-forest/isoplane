@@ -528,10 +528,43 @@ pub trait InstanceOps {
     /// §6.2 reset: `madvise(MADV_DONTNEED)` restores template contents in
     /// microseconds and globals/tables are re-sealed.
     fn reset(&mut self) -> Result<()>;
-    /// True only when the WASM stack is empty (§6.6: "checked, not assumed").
-    /// Snapshot eligibility is operational, which is why smuggled blocking can
-    /// never corrupt a snapshot (§4.5).
+    /// True only when this instance came to rest by returning `pending` and
+    /// its WASM stack is empty (§6.6: "checked, not assumed").
+    ///
+    /// This is invariant 3's predicate — *suspension implies an empty stack* —
+    /// and it is deliberately about **suspension**, not about eligibility. It
+    /// is what claim C4 measures.
     fn is_parked(&self) -> bool;
+
+    /// True when this instance is at a serializable point and may be captured
+    /// (§6.6, and normative since spec v1.4: snapshot eligibility is
+    /// `SP == base`, the shadow stack pointer at its base — an empty stack —
+    /// and nothing about which return value produced it. Appendix C F1 cites
+    /// this prototype for the finding.)
+    ///
+    /// Distinct from [`InstanceOps::is_parked`], and the distinction cost a
+    /// real bug. §6.6 says capture is *"eligible only when Parked (empty stack
+    /// — checked, not assumed)"*, and the parenthetical is the definition:
+    /// what a capture depends on is the stack being empty, not how the
+    /// instance got there. An instance that returned `done` also has an empty
+    /// stack — in fact it is the *easier* case, because there are no pending
+    /// futures for the capture sequence to quiesce first.
+    ///
+    /// Requiring `pending` excluded exactly the instances G3 is about: a
+    /// Durable Instance that answers a message and goes idle would never have
+    /// been capturable, so "a DI parked beyond `hibernate_after` is captured
+    /// with no tenant involvement" (§6.6) would have been true only of DIs
+    /// that happened to be waiting on something.
+    ///
+    /// `Trapped` and `BudgetKill` are excluded, and they are the whole reason
+    /// this is not simply "the stack is empty": §2.5.8 kills a dispatch with no
+    /// unwinding, so the memory of a killed instance is arbitrary — storing it
+    /// would persist a state no execution ever produced. That is exactly the
+    /// line `Completion::instance_survives` already draws.
+    ///
+    /// Implementations MUST still check the stack rather than infer it from
+    /// the completion; §6.6 is explicit that this is checked, not assumed.
+    fn is_capture_eligible(&self) -> bool;
     fn memory(&mut self) -> &mut [u8];
     fn memory_len(&self) -> usize;
     /// Capture globals + tables. Linear memory is diffed separately by

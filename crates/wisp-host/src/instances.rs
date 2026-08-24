@@ -36,72 +36,41 @@ pub trait Activator: Send + Sync + 'static {
     ) -> anyhow::Result<Box<dyn InstanceOps + Send>>;
 }
 
-/// Lifecycle state recorded by a slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InstanceState {
-    Hot,
-    Parked,
-    Hibernated,
-    /// The slot's resident instance has been discarded.
-    Discarded,
-}
+/// Lifecycle state shared with the host interface.
+pub use wisp_abi::config::LifecycleTier;
 
-impl InstanceState {
-    /// Whether the pair is listed by the lifecycle transition policy.
-    pub fn may_transition_to(self, next: Self) -> bool {
-        use InstanceState::*;
-        matches!(
-            (self, next),
-            (Hot, Parked)
-                | (Hot, Discarded)
-                | (Parked, Hot)
-                | (Parked, Hibernated)
-                | (Parked, Discarded)
-                | (Hibernated, Hot)
-        )
-    }
-    pub fn label(self) -> &'static str {
-        match self {
-            InstanceState::Hot => "hot",
-            InstanceState::Parked => "parked",
-            InstanceState::Hibernated => "hibernated",
-            InstanceState::Discarded => "discarded",
-        }
-    }
-    fn as_u8(self) -> u8 {
-        match self {
-            InstanceState::Hot => 0,
-            InstanceState::Parked => 1,
-            InstanceState::Hibernated => 2,
-            InstanceState::Discarded => 3,
-        }
-    }
-    fn from_u8(v: u8) -> Self {
-        match v {
-            0 => InstanceState::Hot,
-            1 => InstanceState::Parked,
-            2 => InstanceState::Hibernated,
-            _ => InstanceState::Discarded,
-        }
+// Private byte encoding for the atomic lifecycle hint.
+fn tier_as_u8(t: LifecycleTier) -> u8 {
+    match t {
+        LifecycleTier::Hot => 0,
+        LifecycleTier::Parked => 1,
+        LifecycleTier::Hibernated => 2,
+        LifecycleTier::Discarded => 3,
     }
 }
 
-/// A lifecycle tier recorded by an instance slot.
-pub type Tier = InstanceState;
+fn tier_from_u8(v: u8) -> LifecycleTier {
+    match v {
+        0 => LifecycleTier::Hot,
+        1 => LifecycleTier::Parked,
+        2 => LifecycleTier::Hibernated,
+        _ => LifecycleTier::Discarded,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnterError {
     /// A call guard already owns the instance.
     Busy,
     /// The slot currently has no resident instance.
-    NotResident(InstanceState),
+    NotResident(LifecycleTier),
 }
 
 impl std::fmt::Display for EnterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EnterError::Busy => write!(f, "instance already has a call in flight"),
-            EnterError::NotResident(s) => write!(f, "instance is {}", s.label()),
+            EnterError::NotResident(s) => write!(f, "instance is {}", s.as_str()),
         }
     }
 }
@@ -126,7 +95,7 @@ impl CallGuard<'_> {
     /// Drop the instance and mark its slot discarded.
     pub fn destroy(mut self) {
         self.inst = None;
-        self.slot.set_state(InstanceState::Discarded);
+        self.slot.set_state(LifecycleTier::Discarded);
     }
 }
 
@@ -144,7 +113,7 @@ impl Drop for CallGuard<'_> {
                 // the caller straight after this; a host-initiated call such
                 // as the pre-capture `gc-hint` simply leaves no trace.
                 g.state = g.resume_state;
-                if g.state == InstanceState::Parked && g.parked_since_ms.is_none() {
+                if g.state == LifecycleTier::Parked && g.parked_since_ms.is_none() {
                     g.parked_since_ms = Some(crate::now_ms().max(1));
                 }
             }
@@ -152,7 +121,7 @@ impl Drop for CallGuard<'_> {
                 // The instance was destroyed under us; the slot cannot be Hot
                 // with nothing in it.
                 g.resident = None;
-                g.state = InstanceState::Discarded;
+                g.state = LifecycleTier::Discarded;
             }
         }
         self.slot.publish(&g);
@@ -160,9 +129,9 @@ impl Drop for CallGuard<'_> {
 }
 
 struct SlotInner {
-    state: InstanceState,
+    state: LifecycleTier,
     /// State restored when a host-initiated call returns without changing it.
-    resume_state: InstanceState,
+    resume_state: LifecycleTier,
     /// The resident instance between calls; a call guard temporarily owns it.
     resident: Option<Box<dyn InstanceOps + Send>>,
     in_call: bool,
@@ -194,8 +163,8 @@ impl Slot {
             id,
             ctx,
             inner: Mutex::new(SlotInner {
-                state: InstanceState::Parked,
-                resume_state: InstanceState::Parked,
+                state: LifecycleTier::Parked,
+                resume_state: LifecycleTier::Parked,
                 resident: Some(inst),
                 in_call: false,
                 parked_since_ms: None,
@@ -204,13 +173,14 @@ impl Slot {
                 dirty: false,
             }),
             parked_ms_total: AtomicU64::new(0),
-            state_hint: AtomicU8::new(InstanceState::Parked.as_u8()),
+            state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
         }
     }
 
     fn publish(&self, g: &SlotInner) {
-        self.state_hint.store(g.state.as_u8(), Ordering::Relaxed);
+        self.state_hint
+            .store(tier_as_u8(g.state), Ordering::Relaxed);
         self.parked_since_hint
             .store(g.parked_since_ms.unwrap_or(0), Ordering::Relaxed);
     }
@@ -235,7 +205,7 @@ impl Slot {
                 .fetch_add(now.saturating_sub(since), Ordering::Relaxed);
         }
         g.resume_state = g.state;
-        g.state = InstanceState::Hot;
+        g.state = LifecycleTier::Hot;
         self.publish(&g);
         drop(g);
         Ok(CallGuard {
@@ -245,8 +215,8 @@ impl Slot {
     }
 
     /// Lock-free. See `state_hint`.
-    pub fn state(&self) -> InstanceState {
-        InstanceState::from_u8(self.state_hint.load(Ordering::Relaxed))
+    pub fn state(&self) -> LifecycleTier {
+        tier_from_u8(self.state_hint.load(Ordering::Relaxed))
     }
 
     pub fn is_busy(&self) -> bool {
@@ -256,7 +226,7 @@ impl Slot {
     /// Whether the slot is parked, resident, and has no call in flight.
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
-        !g.in_call && g.state == InstanceState::Parked && g.resident.is_some()
+        !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
     }
 
     pub fn is_pristine(&self) -> bool {
@@ -283,7 +253,7 @@ impl Slot {
         std::mem::take(&mut self.inner.lock().shed_on_capture)
     }
 
-    pub(crate) fn set_state(&self, s: InstanceState) {
+    pub(crate) fn set_state(&self, s: LifecycleTier) {
         let mut g = self.inner.lock();
         g.state = s;
         self.publish(&g);
@@ -294,11 +264,11 @@ impl Slot {
     pub fn park(&self, now_ms: u64) {
         let mut g = self.inner.lock();
         debug_assert!(
-            g.state.may_transition_to(InstanceState::Parked) || g.state == InstanceState::Parked,
+            g.state.may_transition_to(LifecycleTier::Parked) || g.state == LifecycleTier::Parked,
             "illegal transition {:?} -> Parked",
             g.state
         );
-        g.state = InstanceState::Parked;
+        g.state = LifecycleTier::Parked;
         g.parked_since_ms = Some(now_ms.max(1));
         self.publish(&g);
     }
@@ -310,11 +280,11 @@ impl Slot {
         if g.in_call {
             return Err(HibernateRefused::Hot);
         }
-        if g.state != InstanceState::Parked {
+        if g.state != LifecycleTier::Parked {
             return Err(HibernateRefused::NotParked(g.state));
         }
         g.resident = None;
-        g.state = InstanceState::Hibernated;
+        g.state = LifecycleTier::Hibernated;
         g.delta_key = Some(delta_key);
         g.shed_on_capture = shed;
         g.parked_since_ms = None;
@@ -325,9 +295,9 @@ impl Slot {
     /// Install the caller's restored instance and return the slot to parked.
     pub fn rehydrate(&self, inst: Box<dyn InstanceOps + Send>) {
         let mut g = self.inner.lock();
-        debug_assert_eq!(g.state, InstanceState::Hibernated);
+        debug_assert_eq!(g.state, LifecycleTier::Hibernated);
         g.resident = Some(inst);
-        g.state = InstanceState::Parked;
+        g.state = LifecycleTier::Parked;
         g.delta_key = None;
         g.dirty = true;
         self.publish(&g);
@@ -345,7 +315,7 @@ impl Slot {
         }
         g.dirty = false;
         g.parked_since_ms = None;
-        g.state = InstanceState::Parked;
+        g.state = LifecycleTier::Parked;
         self.publish(&g);
         Ok(())
     }
@@ -355,7 +325,7 @@ impl Slot {
     pub fn discard(&self) {
         let mut g = self.inner.lock();
         g.resident = None;
-        g.state = InstanceState::Discarded;
+        g.state = LifecycleTier::Discarded;
         g.delta_key = None;
         g.parked_since_ms = None;
         self.publish(&g);
@@ -366,7 +336,7 @@ impl Slot {
 pub enum HibernateRefused {
     /// A call guard is still in flight.
     Hot,
-    NotParked(InstanceState),
+    NotParked(LifecycleTier),
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +595,7 @@ mod tests {
     /// Check the listed transition pairs, including no exit from Discarded.
     #[test]
     fn lifecycle_transitions_match_the_spec_table() {
-        use InstanceState::*;
+        use LifecycleTier::*;
         let legal = [
             (Hot, Parked),
             (Hot, Discarded),
@@ -656,7 +626,7 @@ mod tests {
             .unwrap();
         let guard = slot.enter().expect("first entry");
         assert_eq!(slot.enter().err(), Some(EnterError::Busy));
-        assert_eq!(slot.state(), InstanceState::Hot);
+        assert_eq!(slot.state(), LifecycleTier::Hot);
         drop(guard);
         // Once the call returns, the instance is available again.
         assert!(slot.enter().is_ok());
@@ -672,7 +642,7 @@ mod tests {
         slot.hibernate("k".into(), vec![]).unwrap();
         assert_eq!(
             slot.enter().err(),
-            Some(EnterError::NotResident(InstanceState::Hibernated))
+            Some(EnterError::NotResident(LifecycleTier::Hibernated))
         );
     }
 

@@ -11,7 +11,6 @@ use wisp_abi::host::RouteTarget;
 
 use wisp_abi::dispatch::HttpRequest;
 use wisp_abi::host::{Dispatcher, HttpReply};
-use wisp_host::cell::Target;
 use wisp_host::ModuleId;
 use wisp_host::{Cell, EngineActivator};
 
@@ -29,6 +28,7 @@ pub struct RealCells {
     placement: RwLock<HashMap<String, usize>>,
     /// `app@version` -> the module registered for it.
     modules: RwLock<HashMap<String, ModuleId>>,
+    tenants: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl RealCells {
@@ -53,28 +53,18 @@ impl RealCells {
         let module = ModuleId::new(app, version);
         let activator = EngineActivator::load(self.engine.clone(), module.clone(), template_wasm)?;
         cell.register_module(tenant, Arc::new(activator), manifest)?;
+        self.tenants
+            .write()
+            .insert(app.to_string(), tenant.to_string());
         self.modules
             .write()
             .insert(Self::key(app, version), module.clone());
         tracing::info!(app, version, cell = %cell.cfg.name, "module registered");
         Ok(module)
     }
-
-    fn module_for(&self, target: &wisp_abi::host::RouteTarget) -> anyhow::Result<ModuleId> {
-        self.modules
-            .read()
-            .get(&Self::key(&target.app, &target.version))
-            .cloned()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no module registered for {}@{} on this node",
-                    target.app,
-                    target.version
-                )
-            })
-    }
 }
 
+/// Dispatches to the application's configured local cell.
 #[async_trait::async_trait]
 impl Dispatcher for RealCells {
     async fn dispatch_http(
@@ -82,31 +72,7 @@ impl Dispatcher for RealCells {
         target: &wisp_abi::host::RouteTarget,
         req: HttpRequest,
     ) -> anyhow::Result<HttpReply> {
-        let cell = self.cell_for(&target.app)?;
-        let module = self.module_for(target)?;
-        let route = req.path.clone();
-        let rec = cell.http_record(&module, req);
-        let out = cell
-            .dispatch(
-                &module,
-                Target::Handler { route },
-                rec,
-                self.dispatch_timeout,
-            )
-            .await?;
-
-        if let Some(trap) = &out.trap {
-            // §13: a trap is a 5xx and the instance is discarded; it is never
-            // retried on the same memory. Logged rather than swallowed because
-            // §10 wants the trap rate visible.
-            tracing::warn!(app = %target.app, version = %target.version, trap, "guest fault");
-        }
-        Ok(HttpReply {
-            status: out.status,
-            headers: out.headers,
-            body: out.body,
-            streaming: false,
-        })
+        self.cell_for(&target.app)?.dispatch_http(target, req).await
     }
 }
 

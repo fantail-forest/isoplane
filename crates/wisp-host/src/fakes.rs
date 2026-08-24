@@ -47,6 +47,8 @@ pub enum Step {
     Fetch { url: String, times: usize },
     /// Record the bytes returned by `entropy_fill`.
     Entropy { bytes: usize },
+    /// Return the received dispatch record as the response body.
+    EchoRecord,
 }
 
 /// The scripted behaviour of a fake module.
@@ -111,6 +113,12 @@ pub struct FakeInstance {
     /// no engine stack to be suspended, so a suspended instance is at a
     /// serializable point by construction.
     stack_empty: bool,
+    /// Whether the last call returned `pending` — invariant 3's predicate, and
+    /// what `is_parked` is about.
+    last_parked: bool,
+    /// Whether the last call left this instance usable at all (§6.6: a trap or
+    /// a budget kill leaves arbitrary memory, so it is never capturable).
+    survived_last_call: bool,
     dirty_pages: usize,
     gc_hints: u32,
     /// Every entropy draw this module's instances have made (§8.5).
@@ -244,6 +252,29 @@ impl FakeInstance {
                 }
                 PollStatus::Pending
             }
+            Step::EchoRecord => {
+                let body = rec
+                    .map(|r| postcard::to_allocvec(r).unwrap_or_default())
+                    .unwrap_or_default();
+                let head = wisp_abi::dispatch::ResponseHead {
+                    status: 200,
+                    headers: vec![],
+                    body,
+                    streaming: false,
+                };
+                let payload = postcard::to_allocvec(&head).unwrap();
+                let h = self.bindings.call_sync(ImportCall {
+                    import: "resp_new",
+                    payload: &payload,
+                    scalars: [0; 3],
+                });
+                self.bindings.call_sync(ImportCall {
+                    import: "resp_finish",
+                    payload: &[],
+                    scalars: [h as u64, 0, 0],
+                });
+                PollStatus::Done { response: h as u32 }
+            }
             Step::Spin => {
                 // Real CPU on the real calling thread, killed by a real
                 // deadline. §6.4's epoch counter exists to *deliver* the kill,
@@ -264,6 +295,8 @@ impl FakeInstance {
                 }
                 let cpu_ns = cpu.elapsed_ns();
                 self.stack_empty = true;
+                self.last_parked = false;
+                self.survived_last_call = false;
                 return DispatchOutcome {
                     status: PollStatus::Trapped {
                         code: TrapCode::Unknown,
@@ -282,9 +315,12 @@ impl FakeInstance {
 
         let _ = rec;
         self.stack_empty = true;
+        let completion = Completion::from_status(status);
+        self.last_parked = completion == Completion::Parked;
+        self.survived_last_call = completion.instance_survives();
         DispatchOutcome {
             status,
-            completion: Completion::from_status(status),
+            completion,
             cpu_ns: cpu.elapsed_ns(),
             wall_ns: wall.elapsed().as_nanos() as u64,
             trap: match status {
@@ -309,6 +345,7 @@ impl FakeInstance {
     }
 }
 
+/// Encode the supported request payload for a scripted import.
 fn fake_payload_for(name: &'static str) -> Vec<u8> {
     match name {
         "http_fetch" => postcard::to_allocvec(&FetchRequest {
@@ -356,7 +393,12 @@ impl InstanceOps for FakeInstance {
         Ok(())
     }
     fn is_parked(&self) -> bool {
-        self.stack_empty
+        self.stack_empty && self.last_parked
+    }
+    fn is_capture_eligible(&self) -> bool {
+        // The fake models the stack directly, so "empty stack and the last
+        // call did not trap" is the whole of §6.6's condition here.
+        self.stack_empty && self.survived_last_call
     }
     fn memory(&mut self) -> &mut [u8] {
         &mut self.memory
@@ -457,6 +499,8 @@ impl Activator for FakeActivator {
             behaviour: self.behaviour.clone(),
             image: InstanceImage::default(),
             stack_empty: true,
+            last_parked: false,
+            survived_last_call: true,
             dirty_pages: 0,
             gc_hints: 0,
         }))

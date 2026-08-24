@@ -112,6 +112,27 @@ impl LifecycleTier {
     pub fn is_resident(self) -> bool {
         matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
     }
+
+    /// §6.5's Entry/Exit columns as a predicate, and nothing outside them.
+    ///
+    /// This lives with the tiers rather than in the cell because it *is* the
+    /// normative table: `Hibernated -> Parked` is absent because §6.5's exit
+    /// from Hibernated is a wake trigger, which makes the instance Hot; and
+    /// nothing leaves Discarded, because §6.5's exit from Discarded is "fresh
+    /// activation", which produces a *new* instance rather than resurrecting
+    /// this one.
+    pub fn may_transition_to(self, next: Self) -> bool {
+        use LifecycleTier::*;
+        matches!(
+            (self, next),
+            (Hot, Parked)
+                | (Hot, Discarded)
+                | (Parked, Hot)
+                | (Parked, Hibernated)
+                | (Parked, Discarded)
+                | (Hibernated, Hot)
+        )
+    }
 }
 
 impl std::fmt::Display for LifecycleTier {

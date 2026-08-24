@@ -60,7 +60,7 @@ pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
 use crate::futures::FutureTable;
 use crate::instances::{
-    decide, evict, AcquireSource, Activator, InstancePool, InstanceState, RequestEnd, Slot,
+    decide, evict, AcquireSource, Activator, InstancePool, LifecycleTier, RequestEnd, Slot,
 };
 use crate::meters::Meters;
 use crate::metrics::{Metrics, MetricsSnapshot};
@@ -336,6 +336,15 @@ impl WakeSink for CellWake {
 
 pub struct Cell {
     pub cfg: CellConfig,
+    /// A weak self-reference, set once at construction.
+    ///
+    /// `Dispatcher`'s methods take `&self`, but every path from the proxy into
+    /// a guest has to hand the dispatch to a blocking task — §6.1 puts guest
+    /// execution on the exec pool and never on a reactor thread — and that
+    /// needs an owned `Arc`. Weak, not strong, for the same reason the exec
+    /// threads hold a `Weak`: a cell that keeps itself alive is a cell that
+    /// leaks its threads in every test and every embedding.
+    me: std::sync::OnceLock<Weak<Cell>>,
     rt: Arc<CellRuntime>,
     runtime: Option<tokio::runtime::Runtime>,
     queue: Arc<WorkQueue>,
@@ -382,12 +391,16 @@ impl Cell {
         });
 
         let cell = Arc::new(Cell {
+            me: std::sync::OnceLock::new(),
             breaker: HangBreaker::new(cfg.breaker),
             rt,
             runtime: Some(runtime),
             queue,
             index,
             modules: RwLock::new(HashMap::new()),
+            // Handle 0 is reserved: a guest that reads an uninitialised field
+            // and calls `socket_send(0, ..)` must get `NotFound`, not
+            // somebody's chat room.
             residents: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
             metrics,
@@ -399,9 +412,18 @@ impl Cell {
             cfg,
         });
 
+        let _ = cell.me.set(Arc::downgrade(&cell));
         cell.start_exec_pool();
         cell.start_idle_sweeper();
         cell
+    }
+
+    /// The owning `Arc`, when there still is one.
+    ///
+    /// `None` only while the cell is being dropped, which is exactly when a
+    /// late dispatch should be refused rather than served.
+    pub(crate) fn me(&self) -> Option<Arc<Cell>> {
+        self.me.get().and_then(Weak::upgrade)
     }
 
     /// §6.1: execution-pool threads run Hot dispatches as synchronous calls
@@ -512,16 +534,16 @@ impl Cell {
         let (mut live, mut parked, mut hib, mut hot) = (0u64, 0u64, 0u64, 0u64);
         for r in self.residents.lock().values() {
             match r.slot.state() {
-                InstanceState::Hot => {
+                LifecycleTier::Hot => {
                     hot += 1;
                     live += 1;
                 }
-                InstanceState::Parked => {
+                LifecycleTier::Parked => {
                     parked += 1;
                     live += 1;
                 }
-                InstanceState::Hibernated => hib += 1,
-                InstanceState::Discarded => {}
+                LifecycleTier::Hibernated => hib += 1,
+                LifecycleTier::Discarded => {}
             }
         }
         for m in self.modules.read().values() {
@@ -1088,7 +1110,7 @@ impl Cell {
         }
         self.rt.futures.release_instance(slot.id);
         entry.pool.release(slot.clone(), d);
-        if slot.state() == InstanceState::Discarded {
+        if slot.state() == LifecycleTier::Discarded {
             self.forget(slot);
         }
     }
@@ -1139,7 +1161,41 @@ impl Cell {
     pub fn slot(&self, id: InstanceId) -> Option<Arc<Slot>> {
         self.residents.lock().get(&id).map(|r| r.slot.clone())
     }
-    pub fn instance_state(&self, id: InstanceId) -> Option<InstanceState> {
+
+    // -----------------------------------------------------------------------
+    // §7.1 identity lookups
+    //
+    // These are public because the questions they answer are asked from
+    // outside the cell and answering them by guessing is worse than not
+    // answering: the proxy's thundering-herd guard (§9.1) keys off residency,
+    // and an admin surface that reports tiers by identity has to get the
+    // identity from somewhere.
+    // -----------------------------------------------------------------------
+
+    /// Whether a version's template is registered on this cell. §9.2's "any
+    /// cell with the template cached", asked rather than assumed.
+    pub fn has_module(&self, module: &ModuleId) -> bool {
+        self.modules.read().contains_key(module)
+    }
+
+    /// The tenant a registered module belongs to.
+    pub fn module_tenant(&self, module: &ModuleId) -> Option<String> {
+        self.modules.read().get(module).map(|m| m.tenant.clone())
+    }
+
+    // -----------------------------------------------------------------------
+    // §6.6/§9.1 socket handles
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn rt_services(&self) -> &Arc<Services> {
+        &self.rt.services
+    }
+
+    pub(crate) fn next_dispatch_id(&self) -> u64 {
+        self.next_dispatch.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn instance_state(&self, id: InstanceId) -> Option<LifecycleTier> {
         self.residents.lock().get(&id).map(|r| r.slot.state())
     }
     pub fn resident_ids(&self) -> Vec<InstanceId> {
@@ -1155,6 +1211,20 @@ impl Cell {
         let r = g.get(&id)?;
         let t = r.slot.ctx.responses.lock();
         t.get(handle).map(|resp| resp.body())
+    }
+
+    /// Discards an instance and releases its host futures without saving guest memory.
+    pub fn discard_instance(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
+        let slot = self
+            .slot(id)
+            .ok_or_else(|| anyhow::anyhow!("no such instance {id}"))?;
+        if slot.state() == LifecycleTier::Hot {
+            anyhow::bail!("instance {id} is Hot; eviction is from Parked, not from a live stack");
+        }
+        self.rt.futures.release_instance(id);
+        self.forget(&slot);
+        slot.discard();
+        Ok(())
     }
 
     /// Run one pass of the §6.6 idle trajectory synchronously.

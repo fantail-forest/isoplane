@@ -599,7 +599,7 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
     );
     assert_eq!(
         r.cell.instance_state(instance),
-        Some(wisp_host::InstanceState::Parked)
+        Some(wisp_host::LifecycleTier::Parked)
     );
     r.cell.shutdown();
 }

@@ -22,6 +22,52 @@ pub struct NodeConfig {
     /// Directory for local node data.
     #[serde(default = "default_data_dir")]
     pub data_dir: std::path::PathBuf,
+    #[serde(default)]
+    pub engine: EngineLimits,
+}
+
+/// The engine sizing a real node's cells share (§6.2, §11.1).
+///
+/// These are a node-level setting rather than a constant because they are not
+/// free: the pooling allocator reserves `max_instances × (max_memory + guard)`
+/// of virtual address space, which at the defaults is ~21 TiB per engine.
+/// That costs no physical memory, but a 47-bit address space holds about six
+/// of them — so a machine running several nodes, or a test binary building
+/// several, has to be able to say "smaller". Leaving this unconfigurable is
+/// how you get a node that works alone and fails in a fleet.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct EngineLimits {
+    /// Ceiling on concurrently resident instances per engine. G1 wants ≥ 5,000
+    /// (§6.2), so the default leaves headroom above it.
+    #[serde(default = "default_max_instances")]
+    pub max_instances: u32,
+    /// Per-instance linear-memory ceiling (§5.5, §11.1).
+    #[serde(default = "default_max_memory_mib")]
+    pub max_memory_mib: u64,
+    /// §8.2.1's reserved guard region, which is what lets Cranelift elide
+    /// explicit bounds checks.
+    #[serde(default = "default_guard_mib")]
+    pub guard_mib: u64,
+}
+
+fn default_max_instances() -> u32 {
+    10_000
+}
+fn default_max_memory_mib() -> u64 {
+    128
+}
+fn default_guard_mib() -> u64 {
+    2048
+}
+
+impl Default for EngineLimits {
+    fn default() -> Self {
+        EngineLimits {
+            max_instances: default_max_instances(),
+            max_memory_mib: default_max_memory_mib(),
+            guard_mib: default_guard_mib(),
+        }
+    }
 }
 
 fn default_data_dir() -> std::path::PathBuf {
@@ -110,6 +156,9 @@ pub struct VersionConfig {
     pub id: String,
     #[serde(default)]
     pub tier: TierConfig,
+    /// Local module path. Requests fail when no module is installed.
+    #[serde(default)]
+    pub wasm: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -187,9 +236,11 @@ impl NodeConfig {
                 versions: vec![VersionConfig {
                     id: "v1".into(),
                     tier: TierConfig::Fast,
+                    wasm: None,
                 }],
             }],
             data_dir: default_data_dir(),
+            engine: EngineLimits::default(),
         }
     }
 
