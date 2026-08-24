@@ -1,0 +1,44 @@
+[package]
+name = "wisp-cli"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "WebAssembly validation"
+
+[lib]
+name = "wisp_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wisp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+wisp-abi = { workspace = true, features = ["host"] }
+
+toml = { workspace = true }
+hex = { workspace = true }
+blake3 = { workspace = true }
+# `wisp doctor` reads the import section directly. This is presentation of the
+# capability manifest, NOT validation: `wisp-control::validate` is the
+# authority for V1-V4 and is wired in behind the `control` feature.
+wasmparser = { workspace = true }
+reqwest = { version = "0.12", features = ["json"], default-features = false }
+
+wisp-control = { workspace = true, optional = true }
+
+[features]
+default = []
+# Lights up when `wisp-control` compiles: `wisp doctor` then also prints the
+# validator's V1-V4 verdict rather than only the derived manifest.
+control = ["dep:wisp-control"]
+
+[dev-dependencies]
+tokio = { workspace = true }

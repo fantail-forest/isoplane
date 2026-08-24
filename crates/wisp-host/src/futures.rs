@@ -238,6 +238,15 @@ impl FutureTable {
 
 
 
+    /// Every live future id, ascending. For tests and the `wisp dev`
+    /// inspector.
+    pub fn live_future_ids(&self) -> Vec<u64> {
+        let g = self.inner.lock();
+        let mut v: Vec<u64> = g.entries.keys().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
 
     pub fn live_futures(&self) -> usize {
         self.inner.lock().entries.len()

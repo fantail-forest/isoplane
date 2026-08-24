@@ -35,7 +35,7 @@ Record the machine and execution environment when comparing measurements.
 | `crates/wisp-control`  | Module validation and application preparation. |
 | `crates/wisp-host` | The cell: reactors, execution pool, future table, import vtable, lifecycle tiers. |
 | `crates/wisp-hibernate`  | Snapshot identity primitives. |
-| `crates/wisp-proxy` | HTTP termination and routing. |
+| `crates/wisp-proxy`, `wispd`, `wisp-cli` | Termination and routing, the node daemon, the `wisp` command. |
 | `guests/` | The guest SDK and demo guests, including deliberately hostile ones. |
 
 ## The four invariants

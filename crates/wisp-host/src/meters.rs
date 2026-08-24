@@ -21,6 +21,21 @@ pub fn read_thread_cpu_ns() -> u64 {
     (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
 }
 
+/// Process CPU time, summed across all threads.
+#[allow(unsafe_code)]
+pub fn read_process_cpu_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: as `read_thread_cpu_ns`.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
+    if rc != 0 {
+        return 0;
+    }
+    (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
+}
+
 /// A scoped thread-CPU measurement over an active guest interval.
 pub struct CpuInterval {
     start: u64,

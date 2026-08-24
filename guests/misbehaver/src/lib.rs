@@ -83,9 +83,7 @@ fn alloc_bomb(mb: usize) -> ! {
 /// the runtime could turn into a graceful error.
 fn hard_trap() -> ! {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
-        core::arch::wasm32::unreachable()
-    }
+    core::arch::wasm32::unreachable();
     #[cfg(not(target_arch = "wasm32"))]
     unreachable!("explicit trap")
 }

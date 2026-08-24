@@ -47,10 +47,12 @@ macro_rules! wisp_imports {
         $(#[$m:meta])*
         fn $name:ident ( $($p:ident : $pt:ident),* $(,)? ) $(-> $r:ident)? ;
     )*) => {
-        // Declarations and descriptors below share the same signatures.
-        // Note: no doc attributes here. rustdoc does not document items in an
-        // extern block, and rustc warns about the attempt; the documentation
-        // lives on the host stubs and on the list below.
+        // The real thing. `wasm_import_module = "wisp"` is
+        // `wisp_abi::imports::HOST_MODULE`; the host linker defines these and
+        // nothing else. No doc attributes here or on the items inside:
+        // rustdoc does not document extern blocks and rustc warns about the
+        // attempt, so the documentation lives on the host stubs below and on
+        // the import list itself.
         #[cfg(target_arch = "wasm32")]
         #[link(wasm_import_module = "wisp")]
         unsafe extern "C" {
@@ -62,7 +64,7 @@ macro_rules! wisp_imports {
         // these -- they exist so the executor's park-without-spinning
         // behaviour can be tested with `cargo test` on a laptop.
         #[cfg(not(target_arch = "wasm32"))]
-        #[allow(unused_variables, dead_code)]
+        #[allow(unused_variables, dead_code, clippy::missing_safety_doc)]
         pub mod stubs {
             $( $(#[$m])*
                pub unsafe extern "C" fn $name($($p: $pt),*) $(-> $r)? {

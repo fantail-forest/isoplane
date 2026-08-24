@@ -86,6 +86,11 @@ const LAZY_INIT_FLAG: usize = 0;
 const LAZY_INIT_RUNS: usize = 8;
 
 pub struct FakeInstance {
+    /// Every `(future, result)` this instance was woken with, shared with the
+    /// [`FakeActivator`] so a test can assert what the *guest* observed rather
+    /// than what the future table thinks it sent (§6.8's claim is about the
+    /// guest's view).
+    pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
     bindings: Box<dyn HostBindings>,
     template: Arc<Vec<u8>>,
     memory: Vec<u8>,
@@ -268,7 +273,8 @@ impl InstanceOps for FakeInstance {
     fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
         self.run(budget, Some(rec))
     }
-    fn wake(&mut self, _future: u64, _res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn wake(&mut self, future: u64, res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome {
+        self.wakes_seen.lock().push((future, res.clone()));
         self.run(budget, None)
     }
     fn gc_hint(&mut self, _pressure: u8) -> DispatchOutcome {
@@ -326,6 +332,7 @@ pub struct FakeActivator {
     template: Arc<Vec<u8>>,
     behaviour: FakeBehaviour,
     pub activations: AtomicU64,
+    pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
 }
 
 impl FakeActivator {
@@ -353,7 +360,12 @@ impl FakeActivator {
                 ..behaviour
             },
             activations: AtomicU64::new(0),
+            wakes_seen: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+    /// What every instance of this module has been woken with, in order.
+    pub fn wakes(&self) -> Vec<(u64, ResultRecord)> {
+        self.wakes_seen.lock().clone()
     }
     pub fn activation_count(&self) -> u64 {
         self.activations.load(Ordering::Relaxed)
@@ -381,6 +393,7 @@ impl Activator for FakeActivator {
         let mut memory = (*self.template).clone();
         memory.resize(self.behaviour.memory_bytes, 0);
         Ok(Box::new(FakeInstance {
+            wakes_seen: self.wakes_seen.clone(),
             bindings,
             template: self.template.clone(),
             memory,

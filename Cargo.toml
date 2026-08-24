@@ -8,6 +8,7 @@ members = [
     "crates/wisp-control",
     "crates/wisp-proxy",
     "crates/wispd",
+    "crates/wisp-cli",
     "tests",
 ]
 exclude = ["crates/spike", "guests"]
@@ -49,7 +50,7 @@ hyper-util  = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 bytes       = "1"
 aes-gcm     = "0.10"
-clap        = { version = "4", features = ["derive"] }
+clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
 
 # Line tables preserve source locations for workspace development backtraces.

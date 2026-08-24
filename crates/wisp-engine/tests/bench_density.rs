@@ -24,11 +24,77 @@ fn env_usize(k: &str, d: usize) -> usize {
     std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
 }
 
+struct Scenario {
+    n: usize,
+    /// 4 KiB pages each instance writes to, *inside* the pre-initialized image,
+    /// so every one of them forces a real copy-on-write fault.
+    dirty: u32,
+    label: &'static str,
+}
+
 #[test]
 fn marginal_instance_cost_is_dirty_pages() {
-    let n = env_usize("WISP_DENSITY_N", 2_000);
-    let dirty = env_usize("WISP_DENSITY_DIRTY_PAGES", 16) as u32;
     let guard = env_usize("WISP_DENSITY_GUARD_MIB", 2) as u64 * (1 << 20);
+    let scale = env_usize("WISP_DENSITY_SCALE", 1);
+
+    let scenarios = [
+        Scenario { n: 2_000 * scale, dirty: 16, label: "64 KiB dirty set" },
+        // The case the claim is actually about: §6.2 says G1's >= 5,000
+        // instances/server "follows from typical dirty sets of 1-8 MB".
+        Scenario { n: 5_000 * scale, dirty: 256, label: "1 MiB dirty set (§6.2 typical, low end)" },
+    ];
+
+    eprintln!("\n=== C1: instance density (spec G1, §6.2) ===");
+    if cfg!(debug_assertions) {
+        eprintln!("  *** DEBUG BUILD — re-run with --release for numbers worth quoting. ***");
+    }
+
+    let mut summary = Vec::new();
+    for s in scenarios {
+        let per_inst_kb = run_scenario(&s, guard);
+        summary.push((s.n, s.dirty, s.label, per_inst_kb));
+    }
+
+    eprintln!("\n  --- C1 summary ---");
+    for (n, dirty, label, per_inst_kb) in &summary {
+        let dirty_kb = *dirty as f64 * 4.0;
+        eprintln!(
+            "  {n:>6} instances, {label:<40} -> {per_inst_kb:>8.1} kB/instance \
+             (dirty set {dirty_kb:.0} kB, everything else {:.1} kB)",
+            per_inst_kb - dirty_kb
+        );
+    }
+
+    // §6.2 sizes the claim off "typical dirty sets of 1-8 MB". Turn the measured
+    // per-instance overhead into the residency the spec is actually claiming.
+    let overhead_kb = summary
+        .iter()
+        .map(|(_, d, _, p)| p - *d as f64 * 4.0)
+        .fold(f64::MIN, f64::max);
+    eprintln!(
+        "\n  measured overhead beyond the dirty set: {overhead_kb:.1} kB/instance \
+         (§6.2 targets <= 64 kB)"
+    );
+    for host_gib in [32.0f64, 64.0, 128.0] {
+        let line: Vec<String> = [1.0f64, 4.0, 8.0]
+            .iter()
+            .map(|dirty_mib| {
+                let per = dirty_mib * 1024.0 + overhead_kb.max(0.0);
+                format!("{dirty_mib:.0} MiB -> {:>7.0}", host_gib * 1024.0 * 1024.0 / per)
+            })
+            .collect();
+        eprintln!("  instances in a {host_gib:>5.0} GiB budget: {}", line.join("   "));
+    }
+
+    assert!(
+        overhead_kb < 64.0,
+        "§6.2 targets <= 64 kB of fixed per-instance overhead beyond the dirty set, \
+         measured {overhead_kb:.1} kB"
+    );
+}
+
+fn run_scenario(s: &Scenario, guard: u64) -> f64 {
+    let (n, dirty) = (s.n, s.dirty);
 
     let e = WispEngine::new(EngineConfig {
         max_instances: n as u32 + 16,
@@ -62,6 +128,7 @@ fn marginal_instance_cost_is_dirty_pages() {
     let t0 = std::time::Instant::now();
     let mut live: Vec<Instance> = Vec::with_capacity(n);
     let mut marks = Vec::new();
+    let step = (n / 4).max(1);
     for i in 0..n {
         let mut inst = e
             .activate(&t, Box::new(TestBindings::new(Recorder::default())))
@@ -69,7 +136,7 @@ fn marginal_instance_cost_is_dirty_pages() {
         let out = inst.dispatch(&http_dispatch(i as u64), CpuBudget::http());
         assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
         live.push(inst);
-        if i + 1 == 1 || (i + 1) % 500 == 0 || i + 1 == n {
+        if i + 1 == 1 || (i + 1) % step == 0 || i + 1 == n {
             marks.push((i + 1, rss_kb()));
         }
     }
@@ -98,52 +165,42 @@ fn marginal_instance_cost_is_dirty_pages() {
     let dirty_kb = dirty as f64 * 4.0;
     let naive_mib = (MEM_PAGES as usize * 65536 / (1 << 20)) * n;
 
-    eprintln!("\n=== C1: instance density (spec G1, §6.2) ===");
     eprintln!(
-        "template: {} MiB linear memory, {} MiB pre-initialized image, {} instances, \
-         {dirty} pages dirtied each ({dirty_kb:.0} KiB)",
+        "\n-- {n} instances x {} MiB template ({} MiB pre-initialized), {dirty} pages dirtied each \
+         ({dirty_kb:.0} kB) --",
         MEM_PAGES as usize * 65536 >> 20,
         big::IMAGE_BYTES >> 20,
-        n
     );
-    eprintln!("baseline RSS (engine + module + pool reservation, 0 live): {base_rss} kB");
+    eprintln!("  baseline RSS (engine + module + pool reservation, 0 live): {base_rss} kB");
     for (i, r) in &marks {
         eprintln!(
-            "  live={i:<6} RSS={r:<10} kB  (+{} kB, {:.1} kB/instance marginal)",
+            "    live={i:<6} RSS={r:<10} kB  (+{} kB, {:.1} kB/instance marginal)",
             r.saturating_sub(base_rss),
             r.saturating_sub(base_rss) as f64 / *i as f64
         );
     }
     eprintln!(
-        "  Private_Dirty {base_private} -> {end_private} kB (+{:.1} kB/instance)",
+        "  Private_Dirty {base_private} -> {end_private} kB (+{:.1} kB/instance);  \
+         Shared_Clean {base_shared} -> {end_shared} kB",
         (end_private.saturating_sub(base_private)) as f64 / n as f64
     );
-    eprintln!("  Shared_Clean  {base_shared} -> {end_shared} kB");
     eprintln!(
         "  engine-reported: dirty_page_count={dirty_reported} ({} kB), bookkeeping={book} B",
         dirty_reported * 4
     );
     eprintln!(
-        "  MEASURED MARGINAL COST: {per_inst_kb:.1} kB/instance vs {dirty_kb:.0} kB dirtied \
-         + {:.1} kB bookkeeping = {:.1} kB accounted",
-        book as f64 / 1024.0,
-        dirty_kb + book as f64 / 1024.0
+        "  MARGINAL COST: {per_inst_kb:.1} kB/instance; dirty set is {dirty_kb:.0} kB, so \
+         everything else costs {:.1} kB",
+        per_inst_kb - dirty_kb
     );
     eprintln!(
-        "  naive cost with no page sharing would be {naive_mib} MiB; measured growth is {} MiB \
-         ({:.0}x less)",
+        "  naive cost with no page sharing: {naive_mib} MiB. Measured growth: {} MiB ({:.0}x less).",
         growth_kb / 1024,
         naive_mib as f64 / (growth_kb as f64 / 1024.0).max(1.0)
     );
     eprintln!(
         "  activate + first dispatch: {elapsed:?} total => {:.1} us/instance",
         elapsed.as_secs_f64() * 1e6 / n as f64
-    );
-    let budget_gib = 64.0;
-    eprintln!(
-        "  EXTRAPOLATION: at {per_inst_kb:.1} kB/instance, {budget_gib:.0} GiB of instance \
-         memory holds ~{:.0} instances of this template",
-        budget_gib * 1024.0 * 1024.0 / per_inst_kb
     );
 
     // The guest dirties `dirty` pages; the engine's own `wisp_alloc` handoff of
@@ -152,20 +209,33 @@ fn marginal_instance_cost_is_dirty_pages() {
         (dirty as usize..dirty as usize + 4).contains(&dirty_reported),
         "engine reported {dirty_reported} dirty pages, expected ~{dirty}"
     );
-
-    // The claim, as an assertion: marginal cost is the dirty set plus fixed
-    // bookkeeping, not the template size. Allow 2x headroom over the accounted
-    // figure for page-table and allocator overhead.
-    let accounted_kb = dirty_kb + book as f64 / 1024.0;
     assert!(
-        per_inst_kb < accounted_kb * 2.0,
-        "marginal cost {per_inst_kb:.1} kB/instance is more than 2x the {accounted_kb:.1} kB \
-         accounted for by dirty pages + bookkeeping — page sharing is not working"
-    );
-    assert!(
-        per_inst_kb < (MEM_PAGES as f64 * 64.0) / 4.0,
-        "marginal cost is within 4x of copying the whole template"
+        per_inst_kb < dirty_kb + 64.0,
+        "marginal cost {per_inst_kb:.1} kB/instance exceeds the {dirty_kb:.0} kB dirty set by more \
+         than §6.2's 64 kB bookkeeping target — page sharing is not working"
     );
 
     drop(live);
+    per_inst_kb
+}
+
+/// The default config asks for 10,000 slots behind a 2 GiB guard, i.e. ~20 TiB
+/// of `PROT_NONE` address space. If that is not actually constructible then
+/// every default-configured cell fails at startup, so it is worth an assertion
+/// rather than a comment.
+#[test]
+fn the_default_engine_configuration_is_constructible() {
+    let cfg = EngineConfig::default();
+    let va_tib = (cfg.max_instances as f64) * ((cfg.max_memory_bytes + cfg.guard_size_bytes) as f64)
+        / (1u64 << 40) as f64;
+    match WispEngine::new(cfg.clone()) {
+        Ok(_) => eprintln!(
+            "\n  default EngineConfig OK: {} slots x ({} MiB + {} MiB guard) = {va_tib:.1} TiB of \
+             reserved address space",
+            cfg.max_instances,
+            cfg.max_memory_bytes >> 20,
+            cfg.guard_size_bytes >> 20
+        ),
+        Err(e) => panic!("the default engine configuration ({va_tib:.1} TiB of VA) failed: {e:#}"),
+    }
 }

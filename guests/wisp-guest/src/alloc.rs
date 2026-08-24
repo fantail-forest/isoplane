@@ -422,6 +422,12 @@ fn heap() -> &'static mut Heap {
     unsafe { &mut *HEAP.0.get() }
 }
 
+impl Default for Heap {
+    fn default() -> Heap {
+        Heap::new()
+    }
+}
+
 pub struct WispAlloc;
 
 unsafe impl GlobalAlloc for WispAlloc {

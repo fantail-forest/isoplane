@@ -581,6 +581,46 @@ impl Cell {
             .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))
     }
 
+    /// Submit without waiting, handing back the channel the final response
+    /// will arrive on.
+    ///
+    /// This is the shape the C3 measurement needs: a thousand dispatches that
+    /// *park* and stay parked. `dispatch_blocking` would hold a thread per
+    /// outstanding request, which would measure the test harness rather than
+    /// the cell.
+    pub fn submit(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+    ) -> Option<std::sync::mpsc::Receiver<DispatchResult>> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let now = crate::now_ms();
+        let key = BreakerKey {
+            module: module.clone(),
+            route: target.route(),
+        };
+        if self.breaker.check(&key, now).is_err() {
+            self.metrics
+                .breaker_rejections
+                .fetch_add(1, Ordering::Relaxed);
+            let _ = tx.send(DispatchResult::breaker_open());
+            return Some(rx);
+        }
+        let job = Box::new(DispatchJob {
+            module: module.clone(),
+            target,
+            rec,
+            responder: tx,
+            enqueued: Instant::now(),
+        });
+        if self.queue.push_dispatch(job).is_err() {
+            self.metrics.shed.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        Some(rx)
+    }
+
     /// Async form, for callers already on a reactor.
     pub async fn dispatch(
         self: &Arc<Self>,
@@ -593,6 +633,18 @@ impl Cell {
         let module = module.clone();
         tokio::task::spawn_blocking(move || me.dispatch_blocking(&module, target, rec, timeout))
             .await?
+    }
+
+    /// What a reactor thread does when a host future completes: map the id to
+    /// its owning instance and enqueue the wake (§6.1's wake router).
+    ///
+    /// Public because the reactor is not the only completer — an alarm from
+    /// the control plane, a socket frame at the proxy and a DI reply all
+    /// arrive this way, and in the PoC so do tests.
+    pub fn complete_future(&self, id: u64, result: wisp_abi::result::ResultRecord) {
+        if let crate::futures::WakeTarget::Instance(owner) = self.rt.futures.complete(id, result) {
+            self.rt.wake.signal(owner);
+        }
     }
 
     /// Build a plain HTTP dispatch record with this app's budget (§11.1).
@@ -672,6 +724,21 @@ impl Cell {
             cpu_ms: job.rec.cpu_budget_ms,
             wall_ms_cap: self.cfg.wall_ms_cap,
         };
+        // §5.2/§7.2: "One instance MAY have multiple in-flight dispatches only
+        // for read-only Handler reuse; DIs are strictly one dispatch at a
+        // time." A Handler never reaches this branch — a parked instance is
+        // not in the pool, so a second dispatch gets a different one — but a
+        // DI is addressed by identity and can. Refuse rather than overwrite the
+        // in-flight request. Ordering and serialization of DI messages is the
+        // single-writer inbox's job (§7.2), which lives in `wisp-durable`.
+        if self.active.lock().contains_key(&slot.id) {
+            let _ = job.responder.send(DispatchResult {
+                status: 409,
+                body: b"durable instance already has a dispatch in flight".to_vec(),
+                ..DispatchResult::shed()
+            });
+            return;
+        }
         self.active.lock().insert(
             slot.id,
             ActiveRequest {
@@ -1009,6 +1076,26 @@ impl Cell {
             });
         Ok((slot, src))
     }
+
+    // -----------------------------------------------------------------------
+    // Inspection and forced transitions (tests, drills, `wisp dev`)
+    // -----------------------------------------------------------------------
+
+    pub fn slot(&self, id: InstanceId) -> Option<Arc<Slot>> {
+        self.residents.lock().get(&id).map(|r| r.slot.clone())
+    }
+    pub fn instance_state(&self, id: InstanceId) -> Option<InstanceState> {
+        self.residents.lock().get(&id).map(|r| r.slot.state())
+    }
+    pub fn resident_ids(&self) -> Vec<InstanceId> {
+        self.residents.lock().keys().copied().collect()
+    }
+    pub fn resident_count(&self) -> usize {
+        self.residents.lock().len()
+    }
+
+    /// Run one pass of the §6.6 idle trajectory synchronously.
+    pub fn sweep_now(self: &Arc<Self>) {}
 
     // -----------------------------------------------------------------------
     // §8.2.4 quarantine migration

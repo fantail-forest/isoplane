@@ -239,8 +239,9 @@ fn waker_for(id: u32) -> Waker {
 /// When nothing is ready the function returns and the wasm stack unwinds to
 /// nothing -- that return *is* the park.
 pub(crate) fn run() -> PollStatus {
-    loop {
-        let Some(id) = with(|rt| rt.ready.pop_front()) else { break };
+    while let Some(id) = with(|rt| rt.ready.pop_front()) {
+        // A stale ready entry (its task already finished) is a permitted
+        // spurious wakeup, not an error.
         let Some(mut task) = with(|rt| rt.take_task(id)) else { continue };
         with(|rt| {
             rt.current = id;

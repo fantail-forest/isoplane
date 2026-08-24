@@ -1,0 +1,3 @@
+# The 128 MiB ceiling supplies the guest fixture limit.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--max-memory=134217728"]
