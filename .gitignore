@@ -1,0 +1,6 @@
+/target
+/crates/spike/target
+/guests/target
+/guests/out/*.wasm
+**/*.rs.bk
+.wisp-data/

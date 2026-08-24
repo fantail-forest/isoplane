@@ -1,0 +1,195 @@
+// wisp:platform@1 — the normative capability world (spec.md §5).
+//
+// STATUS IN THIS PoC: this file is the document of record for the capability
+// surface. The prototype implements the *same* world as a flat core-wasm ABI
+// (module "wisp"), because pre-initialization (§4.4, Wizer) and the
+// copy-on-write template mapping (§6.2) both operate on a single core module
+// with a single linear memory. Componentization is deferred exactly as §5.1
+// defers stack-switching: it is a lowering change, not a semantics change.
+//
+// The mapping from each function below to its core-ABI name and its future
+// class (§6.8) is machine-checked in `wisp-abi::imports::IMPORTS`.
+
+package wisp:platform@1.0.0;
+
+interface types {
+    /// Host-side pending operation (§5.1). Every potentially-slow import
+    /// returns one of these immediately; there is no import that waits.
+    type future-id = u64;
+
+    /// Opaque host resource. The guest never holds a host pointer (§5.5).
+    type handle = u32;
+
+    /// §6.8. Declared per import; governs eviction semantics.
+    enum future-class {
+        /// Buffered host-side across hibernation; delivery on wake is lossless.
+        bounded,
+        /// Not preserved across hibernation; guest observes future-lost on wake.
+        unbounded,
+    }
+
+    variant future-error {
+        /// §6.8: an unbounded future did not survive hibernation. Re-issue.
+        future-lost(lost-reason),
+        /// Dispatch CPU budget or an explicit deadline elapsed.
+        timeout,
+        /// The dispatch's implicit cancellation future completed (§5.4).
+        cancelled,
+        /// Capability policy refused this call (e.g. SSRF guard, §8.6).
+        denied(string),
+        /// Fencing epoch stale — this activation was deposed (§7.2).
+        fenced,
+        not-found,
+        io(string),
+    }
+
+    enum lost-reason { hibernated, evicted, cell-loss }
+
+    record trace-context {
+        trace-id: string,
+        span-id: string,
+        sampled: bool,
+    }
+}
+
+interface clock {
+    use types.{future-id};
+    /// Millisecond granularity, monotonic per instance, and FROZEN for the
+    /// duration of a dispatch slice (§8.4, §8.5) — it advances only at
+    /// host-call and wake boundaries. This removes the measurement primitive
+    /// that Spectre-class attacks need.
+    now-coarse: func() -> u64;
+    /// Timers are host futures, never guest loops. Class: bounded.
+    deadline-in: func(ms: u64) -> future-id;
+}
+
+interface entropy {
+    /// Host CSPRNG, drawn per call. Host generator state stays outside captured
+    /// guest memory. Guest code can retain returned bytes or its own PRNG state
+    /// in a template.
+    fill: func(len: u32) -> list<u8>;
+}
+
+interface http {
+    use types.{future-id, handle};
+    record request  { method: string, url: string, headers: list<tuple<string, string>>, body: list<u8> }
+    record response { status: u16, headers: list<tuple<string, string>>, body-handle: handle }
+    /// The ONLY outbound HTTP. SSRF policy is enforced host-side (§8.6).
+    /// Class: bounded (response head).
+    fetch: func(req: request) -> future-id;
+    /// Class: UNBOUNDED — a streaming body does not survive hibernation.
+    read-body: func(h: handle, max: u32) -> future-id;
+}
+
+interface kv {
+    use types.{future-id};
+    get:    func(ns: string, key: string) -> future-id;          // bounded
+    put:    func(ns: string, key: string, value: list<u8>, ttl-ms: option<u64>) -> future-id;
+    delete: func(ns: string, key: string) -> future-id;
+    list:   func(ns: string, prefix: string, limit: u32) -> future-id;
+}
+
+interface blob {
+    use types.{future-id};
+    get: func(bucket: string, key: string) -> future-id;         // UNBOUNDED
+    put: func(bucket: string, key: string, value: list<u8>) -> future-id;
+}
+
+interface queue {
+    use types.{future-id};
+    send: func(q: string, body: list<u8>) -> future-id;          // bounded
+}
+
+interface sql {
+    use types.{future-id};
+    query: func(binding: string, statement: string, params: list<list<u8>>) -> future-id;
+}
+
+interface durable {
+    use types.{future-id};
+    /// Addressed call to another Durable Instance (§7.1). Class: bounded.
+    call: func(class: string, name: string, method: string, payload: list<u8>) -> future-id;
+    /// Transactional write, fenced by the current epoch (§7.3).
+    persist: func(state: list<u8>) -> future-id;
+    storage-get: func(key: string) -> future-id;
+    storage-put: func(key: string, value: list<u8>) -> future-id;
+    /// Durable, at-least-once, survives hibernation; lives in the control
+    /// plane, not the guest (invariant 2).
+    alarm-set:    func(name: string, at-ms: u64);
+    alarm-cancel: func(name: string);
+    /// Exposed so tenants can build idempotency keys (§7.4).
+    fencing-epoch: func() -> u64;
+    /// Effectively-once external effects: persisted atomically with state
+    /// under the same fencing epoch, then executed at-least-once with an
+    /// idempotency key (§7.4).
+    outbox-enqueue: func(effect: list<u8>) -> future-id;
+}
+
+interface socket {
+    use types.{future-id, handle};
+    /// Registers a host-owned socket against this instance. The instance may
+    /// then hibernate while the socket stays open (§6.6).
+    accept:    func(h: handle, tag: string);
+    send:      func(h: handle, frame: list<u8>) -> future-id;
+    broadcast: func(frame: list<u8>, except-tag: option<string>) -> future-id;
+    close:     func(h: handle);
+}
+
+interface secret {
+    use types.{future-id};
+    /// SENSITIVE. Runtime only — never available at init (§8.6) — and
+    /// excluded from every capture path including `wisp replay` (§10).
+    get: func(name: string) -> future-id;
+}
+
+interface observe {
+    enum level { trace, debug, info, warn, error }
+    /// Log CPU counts against the dispatch budget (§10).
+    emit: func(lvl: level, fields-json: string);
+    span-begin: func(name: string) -> u64;
+    span-end: func(span: u64);
+}
+
+interface ctx {
+    use types.{future-id};
+    /// Extends instance lifetime past the response for fire-and-forget work,
+    /// bounded by the CPU budget (§2.2).
+    wait-until: func(f: future-id);
+}
+
+/// What the platform provides to a guest.
+world wisp-platform {
+    import types;
+    import clock;
+    import entropy;
+    import http;
+    import kv;
+    import blob;
+    import queue;
+    import sql;
+    import durable;
+    import socket;
+    import secret;
+    import observe;
+    import ctx;
+
+    /// Host->guest buffer handoff (§5.5). No host pointer ever enters guest
+    /// memory; data is copied into a guest-allocated buffer.
+    export wisp-alloc: func(size: u32, align: u32) -> u32;
+
+    /// A new top-level work item: HTTP request, DI message, alarm, socket
+    /// frame, queue batch, or cron tick (§5.2).
+    export wisp-handle: func(dispatch: list<u8>) -> u64;
+
+    /// Completion of a previously returned future. Delivery order for
+    /// distinct futures is UNSPECIFIED (§5.4).
+    export wisp-wake: func(f: u64, result: list<u8>) -> u64;
+
+    /// Pre-snapshot compaction hint (§5.5, §6.6). A guest that ignores it is
+    /// correct but stores a larger delta — and pays for it.
+    export wisp-gc-hint: func(pressure: u8);
+
+    /// Pre-initialization entrypoint, run ONCE at deploy time inside the
+    /// sealed init sandbox where every I/O import traps (§4.4).
+    export wisp-initialize: func();
+}

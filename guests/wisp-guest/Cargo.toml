@@ -1,0 +1,22 @@
+[package]
+name = "wisp-guest"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "The WISP Rust guest SDK: the wisp scheduler (a single-threaded, never-blocking executor), typed capability bindings, the snapshot-friendly arena allocator, and the pre-init unit registry."
+
+[lib]
+# rlib only: the `#[no_mangle]` exports are emitted into the *guest* crate by
+# `wisp_guest::export_handler!` / `export_durable!`, so the linker cannot GC
+# them and every guest gets exactly one copy.
+crate-type = ["rlib"]
+
+[dependencies]
+wisp-abi = { workspace = true }
+serde    = { workspace = true }
+postcard = { workspace = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = []
+json = ["dep:serde_json"]

@@ -1,0 +1,27 @@
+[package]
+name = "wisp-host"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "The cell: reactor threads, execution pool, future table, wake router, import vtable, meters, lifecycle tiers"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+wisp-abi = { workspace = true, features = ["host"] }
+wisp-engine = { workspace = true }
+wisp-hibernate = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+parking_lot = { workspace = true }
+postcard = { workspace = true }
+futures = { workspace = true }
+libc = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+rand = { workspace = true }
+serde_json = { workspace = true }

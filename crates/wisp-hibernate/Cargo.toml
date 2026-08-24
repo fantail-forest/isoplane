@@ -1,0 +1,16 @@
+[package]
+name = "wisp-hibernate"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Snapshot identity and local storage primitives"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+wisp-abi = { workspace = true, features = ["host"] }
+wisp-engine = { workspace = true }
+postcard = { workspace = true }
+libc = { workspace = true }

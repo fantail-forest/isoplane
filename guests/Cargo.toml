@@ -1,0 +1,38 @@
+# The guest workspace is deliberately SEPARATE from the root one: guests target
+# wasm32-unknown-unknown with a size-tuned release profile, while host crates
+# build for the native target. The root
+# Cargo.toml excludes `guests` for exactly this reason.
+[workspace]
+resolver = "2"
+members = [
+    "wisp-guest",
+    "quotes-api",
+    "misbehaver",
+    "undeclared-import",
+    "impure-cctor",
+    "bigheap",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license-file = "../LICENSE.txt"
+
+[workspace.dependencies]
+wisp-guest = { path = "wisp-guest" }
+# The contract. Built from the same source as the host side, so the encoding
+# on both sides of the sandbox boundary is one implementation, not two.
+wisp-abi   = { path = "../crates/wisp-abi", default-features = false }
+serde      = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+postcard   = { version = "1", features = ["alloc"] }
+
+# Keep release guest artifacts small; a guest panic aborts execution.
+[profile.release]
+opt-level        = "z"
+lto              = true
+codegen-units    = 1
+panic            = "abort"
+strip            = true
+overflow-checks  = false
+debug            = false

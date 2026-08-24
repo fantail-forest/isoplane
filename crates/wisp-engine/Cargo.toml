@@ -1,0 +1,12 @@
+[package]
+name = "wisp-engine"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Guest-execution contracts, module identities and mutable-state data"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+wisp-abi = { workspace = true, features = ["host"] }
+blake3 = { workspace = true }

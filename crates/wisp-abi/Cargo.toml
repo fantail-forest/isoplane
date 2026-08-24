@@ -1,0 +1,19 @@
+[package]
+name = "wisp-abi"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "The wisp:platform@1 contract: dispatch/result records, poll status and the canonical import table."
+
+[dependencies]
+serde = { workspace = true }
+postcard = { workspace = true }
+
+# `host` pulls in the cross-crate service traits. Off by default so that the
+# guest SDK can depend on this crate from wasm32 with no host-only deps.
+async-trait = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[features]
+default = []
+host = ["dep:async-trait", "dep:anyhow"]

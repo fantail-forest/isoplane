@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Run a command in the configured development container.
+# Usage: scripts/dev <command> [args...]
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="${WISP_IMAGE:-wisp-dev:latest}"
+ARGS=(--rm --runtime=sysbox-runc
+      -v "$ROOT:/wisp"
+      -v wisp-cargo-registry:/opt/cargo/registry
+      -v wisp-ctarget:/ctarget
+      -v wisp-nuget:/root/.nuget
+      -w /wisp
+      -e CARGO_TARGET_DIR=/ctarget
+      -e CARGO_TERM_COLOR=always
+      -e RUST_BACKTRACE=1)
+[ -n "${WISP_CONTAINER_NAME:-}" ] && ARGS+=(--name "$WISP_CONTAINER_NAME")
+[ -t 0 ] && ARGS+=(-it)
+for p in ${WISP_PORTS:-}; do ARGS+=(-p "$p"); done
+exec docker run "${ARGS[@]}" "$IMAGE" "$@"
