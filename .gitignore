@@ -14,3 +14,5 @@ bench/*/target/
 bench/out/*.wasm
 bench/out/**/*.wasm
 .scratch-*
+wispd-data/
+.wisp-data/
