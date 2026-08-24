@@ -10,7 +10,7 @@
 //! applies the disposition and discards instances when reset or pool admission
 //! fails.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -68,6 +68,22 @@ impl InstanceState {
             InstanceState::Discarded => "discarded",
         }
     }
+    fn as_u8(self) -> u8 {
+        match self {
+            InstanceState::Hot => 0,
+            InstanceState::Parked => 1,
+            InstanceState::Hibernated => 2,
+            InstanceState::Discarded => 3,
+        }
+    }
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => InstanceState::Hot,
+            1 => InstanceState::Parked,
+            2 => InstanceState::Hibernated,
+            _ => InstanceState::Discarded,
+        }
+    }
 }
 
 /// A lifecycle tier recorded by an instance slot.
@@ -119,18 +135,34 @@ impl Drop for CallGuard<'_> {
         let inst = self.inst.take();
         let mut g = self.slot.inner.lock();
         g.in_call = false;
-        if let Some(i) = inst {
-            g.resident = Some(i);
-        } else if g.state != InstanceState::Discarded {
-            // The instance was destroyed under us; the slot cannot be Hot with
-            // nothing in it.
-            g.state = InstanceState::Discarded;
+        match inst {
+            Some(i) => {
+                g.resident = Some(i);
+                // The call returned, so the stack is empty again (invariant 3)
+                // and the slot goes back to the tier it came from. A dispatch
+                // that parked or completed will be re-parked or disposed by
+                // the caller straight after this; a host-initiated call such
+                // as the pre-capture `gc-hint` simply leaves no trace.
+                g.state = g.resume_state;
+                if g.state == InstanceState::Parked && g.parked_since_ms.is_none() {
+                    g.parked_since_ms = Some(crate::now_ms().max(1));
+                }
+            }
+            None => {
+                // The instance was destroyed under us; the slot cannot be Hot
+                // with nothing in it.
+                g.resident = None;
+                g.state = InstanceState::Discarded;
+            }
         }
+        self.slot.publish(&g);
     }
 }
 
 struct SlotInner {
     state: InstanceState,
+    /// State restored when a host-initiated call returns without changing it.
+    resume_state: InstanceState,
     /// The resident instance between calls; a call guard temporarily owns it.
     resident: Option<Box<dyn InstanceOps + Send>>,
     in_call: bool,
@@ -150,6 +182,10 @@ pub struct Slot {
     inner: Mutex<SlotInner>,
     /// Milliseconds accrued when entry consumes a recorded park timestamp.
     parked_ms_total: AtomicU64,
+    /// A lock-free mirror of `inner.state` and `inner.parked_since_ms`,
+    /// written inside the same critical sections.
+    state_hint: AtomicU8,
+    parked_since_hint: AtomicU64,
 }
 
 impl Slot {
@@ -159,6 +195,7 @@ impl Slot {
             ctx,
             inner: Mutex::new(SlotInner {
                 state: InstanceState::Parked,
+                resume_state: InstanceState::Parked,
                 resident: Some(inst),
                 in_call: false,
                 parked_since_ms: None,
@@ -167,7 +204,15 @@ impl Slot {
                 dirty: false,
             }),
             parked_ms_total: AtomicU64::new(0),
+            state_hint: AtomicU8::new(InstanceState::Parked.as_u8()),
+            parked_since_hint: AtomicU64::new(0),
         }
+    }
+
+    fn publish(&self, g: &SlotInner) {
+        self.state_hint.store(g.state.as_u8(), Ordering::Relaxed);
+        self.parked_since_hint
+            .store(g.parked_since_ms.unwrap_or(0), Ordering::Relaxed);
     }
 
     /// Take exclusive ownership of the instance for one call into the guest.
@@ -183,12 +228,15 @@ impl Slot {
         };
         g.in_call = true;
         g.dirty = true;
+        // Accumulate the completed park interval separately from active execution time.
         if let Some(since) = g.parked_since_ms.take() {
             let now = crate::now_ms();
             self.parked_ms_total
                 .fetch_add(now.saturating_sub(since), Ordering::Relaxed);
         }
+        g.resume_state = g.state;
         g.state = InstanceState::Hot;
+        self.publish(&g);
         drop(g);
         Ok(CallGuard {
             slot: self,
@@ -196,8 +244,9 @@ impl Slot {
         })
     }
 
+    /// Lock-free. See `state_hint`.
     pub fn state(&self) -> InstanceState {
-        self.inner.lock().state
+        InstanceState::from_u8(self.state_hint.load(Ordering::Relaxed))
     }
 
     pub fn is_busy(&self) -> bool {
@@ -214,8 +263,12 @@ impl Slot {
         !self.inner.lock().dirty
     }
 
+    /// Lock-free. See `state_hint`.
     pub fn parked_since_ms(&self) -> Option<u64> {
-        self.inner.lock().parked_since_ms
+        match self.parked_since_hint.load(Ordering::Relaxed) {
+            0 => None,
+            v => Some(v),
+        }
     }
 
     pub fn parked_ms_total(&self) -> u64 {
@@ -231,7 +284,9 @@ impl Slot {
     }
 
     pub(crate) fn set_state(&self, s: InstanceState) {
-        self.inner.lock().state = s;
+        let mut g = self.inner.lock();
+        g.state = s;
+        self.publish(&g);
     }
 
     /// Mark a returned guest call parked and record the start of its idle time.
@@ -244,7 +299,8 @@ impl Slot {
             g.state
         );
         g.state = InstanceState::Parked;
-        g.parked_since_ms = Some(now_ms);
+        g.parked_since_ms = Some(now_ms.max(1));
+        self.publish(&g);
     }
 
     /// Drop the resident instance and record its capture key and future IDs.
@@ -262,6 +318,7 @@ impl Slot {
         g.delta_key = Some(delta_key);
         g.shed_on_capture = shed;
         g.parked_since_ms = None;
+        self.publish(&g);
         Ok(())
     }
 
@@ -273,6 +330,7 @@ impl Slot {
         g.state = InstanceState::Parked;
         g.delta_key = None;
         g.dirty = true;
+        self.publish(&g);
     }
 
     /// Ask the resident instance to reset and clear the slot's dirty marker.
@@ -288,6 +346,7 @@ impl Slot {
         g.dirty = false;
         g.parked_since_ms = None;
         g.state = InstanceState::Parked;
+        self.publish(&g);
         Ok(())
     }
 
@@ -299,6 +358,7 @@ impl Slot {
         g.state = InstanceState::Discarded;
         g.delta_key = None;
         g.parked_since_ms = None;
+        self.publish(&g);
     }
 }
 

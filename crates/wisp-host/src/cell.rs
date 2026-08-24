@@ -294,6 +294,8 @@ struct Resident {
     module: ModuleId,
 }
 
+impl Resident {}
+
 /// In-flight request state for one instance.
 struct ActiveRequest {
     dispatch_id: u64,
@@ -407,12 +409,17 @@ impl Cell {
     fn start_exec_pool(self: &Arc<Self>) {
         let mut handles = Vec::new();
         for i in 0..self.cfg.exec_threads {
-            let me = self.clone();
+            // `Weak`, not `Arc`: a pool thread holding the cell alive would
+            // make the cell un-droppable, and a cell that only stops when you
+            // remember to stop it is a cell that leaks threads in every test
+            // and every embedding.
+            let me = Arc::downgrade(self);
+            let queue = self.queue.clone();
             let name = format!("{}-exec-{i}", self.cfg.name);
             handles.push(
                 std::thread::Builder::new()
                     .name(name)
-                    .spawn(move || me.exec_loop())
+                    .spawn(move || Cell::exec_loop(me, queue))
                     .expect("exec thread"),
             );
         }
@@ -421,26 +428,29 @@ impl Cell {
 
     /// §6.6's idle trajectory, running with no tenant involvement.
     fn start_idle_sweeper(self: &Arc<Self>) {
-        let me = self.clone();
+        let me = Arc::downgrade(self);
         let interval = Duration::from_millis(self.cfg.sweep_interval_ms.max(1));
+        let stop = self.shutdown.clone();
         let name = format!("{}-idle", self.cfg.name);
         let h = std::thread::Builder::new()
             .name(name)
             .spawn(move || {
-                while !me.shutdown.load(Ordering::Relaxed) {
+                while !stop.load(Ordering::Relaxed) {
                     std::thread::sleep(interval);
-                    me.sweep_idle();
+                    let Some(cell) = me.upgrade() else { return };
+                    cell.sweep_idle();
                 }
             })
             .expect("idle sweeper");
         self.workers.lock().push(h);
     }
 
-    fn exec_loop(self: Arc<Self>) {
-        while let Some(job) = self.queue.pop() {
+    fn exec_loop(me: Weak<Self>, queue: Arc<WorkQueue>) {
+        while let Some(job) = queue.pop() {
+            let Some(cell) = me.upgrade() else { return };
             match job {
-                Job::Dispatch(j) => self.run_dispatch(*j),
-                Job::Wake(slot) => self.run_wake(slot),
+                Job::Dispatch(j) => cell.run_dispatch(*j),
+                Job::Wake(slot) => cell.run_wake(slot),
             }
         }
     }
@@ -734,7 +744,9 @@ impl Cell {
         if self.active.lock().contains_key(&slot.id) {
             let _ = job.responder.send(DispatchResult {
                 status: 409,
-                body: b"durable instance already has a dispatch in flight".to_vec(),
+                body: "durable instance already has a dispatch in flight (§7.2)"
+                    .as_bytes()
+                    .to_vec(),
                 ..DispatchResult::shed()
             });
             return;
@@ -790,7 +802,12 @@ impl Cell {
             out
         };
 
-        self.settle(&slot, &entry, outcome);
+        // A completion can land while a dispatch is Hot; §5.4 made it wait, so
+        // if one did, hand the instance to the wake lane rather than leaving a
+        // result queued against a parked instance nobody will visit again.
+        if !self.settle(&slot, &entry, outcome) {
+            self.queue.push_wake(slot);
+        }
     }
 
     fn run_wake(self: &Arc<Self>, slot: Arc<Slot>) {
@@ -807,6 +824,24 @@ impl Cell {
         };
 
         loop {
+            // Take exclusive ownership of the instance *before* taking the
+            // result out of the future table. The other order has a hole: a
+            // result pulled out with nowhere to deliver it has been silently
+            // dropped, and a dropped wake is a request that never finishes.
+            let mut guard = match slot.enter() {
+                Ok(g) => g,
+                Err(crate::instances::EnterError::Busy) => {
+                    // §5.4: a previous call into this instance has not
+                    // returned. This is the reentrancy rule doing its job —
+                    // the result stays queued and the in-flight call drains it
+                    // when it finishes.
+                    self.metrics
+                        .reentrancy_refusals
+                        .fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                Err(_) => return,
+            };
             let Some((fid, res)) = self.rt.futures.take_ready(slot.id) else {
                 return;
             };
@@ -823,30 +858,13 @@ impl Cell {
                 .begin_slice(crate::now_ms(), slot.ctx.dispatch_id());
 
             let t0 = Instant::now();
-            let outcome = {
-                let mut guard = match slot.enter() {
-                    Ok(g) => g,
-                    Err(crate::instances::EnterError::Busy) => {
-                        // §5.4: a call into this instance has not returned. The
-                        // result stays in the future table and the in-flight
-                        // call drains it when it finishes. Not a reentrancy.
-                        self.metrics
-                            .reentrancy_refusals
-                            .fetch_add(1, Ordering::Relaxed);
-                        self.rt.futures.complete(fid, res);
-                        return;
-                    }
-                    Err(_) => return,
-                };
-                self.hot.fetch_add(1, Ordering::Relaxed);
-                let out = guard.instance().wake(fid, &res, budget);
-                self.hot.fetch_sub(1, Ordering::Relaxed);
-                out
-            };
+            self.hot.fetch_add(1, Ordering::Relaxed);
+            let outcome = guard.instance().wake(fid, &res, budget);
+            self.hot.fetch_sub(1, Ordering::Relaxed);
+            drop(guard);
             self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
 
-            let done = self.settle(&slot, &entry, outcome);
-            if done {
+            if self.settle(&slot, &entry, outcome) {
                 return;
             }
         }
@@ -1105,10 +1123,23 @@ impl Cell {
         self.quarantined.lock().iter().any(|t| t == tenant)
     }
 
+    /// Stop the pool and join its threads. Idempotent.
     pub fn shutdown(&self) {
+        self.stop(false);
+    }
+
+    fn stop(&self, from_drop: bool) {
         self.shutdown.store(true, Ordering::Relaxed);
         self.queue.close();
+        let me = std::thread::current().id();
         for h in self.workers.lock().drain(..) {
+            // A worker upgrades its `Weak<Cell>` to run a job, so the last
+            // strong reference can briefly live on a pool thread — and if it
+            // does, `Drop` runs *there*. Joining yourself is a deadlock, so
+            // that one handle is dropped instead.
+            if from_drop && h.thread().id() == me {
+                continue;
+            }
             let _ = h.join();
         }
     }
@@ -1116,11 +1147,7 @@ impl Cell {
 
 impl Drop for Cell {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-        self.queue.close();
-        for h in self.workers.lock().drain(..) {
-            let _ = h.join();
-        }
+        self.stop(true);
         if let Some(rt) = self.runtime.take() {
             rt.shutdown_timeout(Duration::from_millis(200));
         }

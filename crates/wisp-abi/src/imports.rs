@@ -162,6 +162,20 @@ pub const IMPORTS: &[ImportDef] = &[
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_hash_seed", Core, BUF_TO_VOID, SYNC, "A per-attempt string-hash seed, separate from host entropy requests.") }
     },
 
+    // §4.4 lists "config parse (already ran)" among the things a template
+    // deletes from cold activation, and §9.5 has the tenant declare
+    // `init_visible_vars` — but without this import the blob has no way to
+    // reach the guest, so that line is unimplementable. Unlike the hash seed
+    // this is NOT externally sourced: it is tenant-authored deploy input,
+    // fixed for the version and part of the §8.7 reproducibility preimage, so
+    // pre-running a config parse bakes no shared secret and no shared entropy.
+    // (ptr, cap) -> i32 returns the blob's FULL length, so a guest can size
+    // its buffer with a zero-length probe.
+    ImportDef {
+        init_visible: true,
+        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC, "-") }
+    },
+
     // ---- observability ----------------------------------------------------
     // Log CPU counts against the dispatch budget, which is what stops
     // log-as-compute abuse (§10).
@@ -265,14 +279,15 @@ mod tests {
         }
     }
 
+    /// Requests bytes through the host entropy interface; captured guest values remain captured.
     #[test]
-    fn only_two_imports_write_into_guest_memory() {
+    fn host_writes_into_guest_memory_through_exactly_three_imports() {
         let out: Vec<_> = IMPORTS
             .iter()
             .filter(|i| matches!(i.buf, BufSpec::Out(_)))
             .map(|i| i.name)
             .collect();
-        assert_eq!(out, vec!["init_hash_seed", "entropy_fill"]);
+        assert_eq!(out, vec!["init_hash_seed", "init_config_get", "entropy_fill"]);
     }
 
 }

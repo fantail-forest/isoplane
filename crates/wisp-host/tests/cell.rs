@@ -3,12 +3,13 @@ use std::time::{Duration, Instant};
 
 use wisp_abi::config::{AppManifest, Bindings, HandlerConfig, HandlerLifecycle, Limits};
 use wisp_abi::dispatch::{DispatchRecord, HttpRequest};
+use wisp_abi::result::ResultRecord;
 use wisp_engine::Completion;
 
 use wisp_host::cell::{Cell, CellConfig, Services, Target};
 use wisp_host::egress::HostEgressPolicy;
 use wisp_host::fakes::*;
-use wisp_host::{ModuleId, Resolver};
+use wisp_host::{Activator, ModuleId, Resolver};
 
 // ---------------------------------------------------------------------------
 // harness
@@ -84,6 +85,260 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
 
 const T: Duration = Duration::from_secs(10);
 
+const PARK_MS: u64 = 600_000;
+
+#[test]
+fn parked_instance_cpu_use_stays_within_the_test_budget() {
+    const N: usize = 1_000;
+    let seconds: u64 = std::env::var("WISP_PARK_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
+    let r = rig(CellConfig {
+        exec_threads: 8,
+        max_hot: 8,
+        admission_queue: 4096,
+        max_idle_per_module: N + 16,
+        ..CellConfig::for_test("c3")
+    });
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("parker", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            act,
+            manifest("parker", HandlerLifecycle::Reuse, Limits::default()),
+        )
+        .unwrap();
+
+    let mut pending = Vec::with_capacity(N);
+    for i in 0..N {
+        let mut rec = http(&r.cell, &module, "/park");
+        rec.dispatch_id = i as u64 + 1;
+        pending.push(r.cell.submit(
+            &module,
+            Target::Handler {
+                route: "/park".into(),
+            },
+            rec,
+        ));
+    }
+    assert!(
+        pending.iter().all(|p| p.is_some()),
+        "the cell shed while admitting {N} dispatches"
+    );
+
+    assert!(
+        wait_for(
+            || r.cell.resident_count() >= N && r.cell.hot_count() == 0,
+            Duration::from_secs(30)
+        ),
+        "only {} of {N} instances parked (hot={})",
+        r.cell.resident_count(),
+        r.cell.hot_count()
+    );
+    let parked = r.cell.metrics().parked;
+    assert!(parked >= N as u64, "expected >= {N} parked, saw {parked}");
+
+    // Now: 1,000 instances, each with an outstanding host future, doing
+    // nothing. Measure what that costs.
+    let cpu0 = wisp_host::meters::read_process_cpu_ns();
+    let wall0 = Instant::now();
+    std::thread::sleep(Duration::from_secs(seconds));
+    let cpu_ns = wisp_host::meters::read_process_cpu_ns() - cpu0;
+    let wall_ns = wall0.elapsed().as_nanos() as u64;
+
+    let cores_used = cpu_ns as f64 / wall_ns as f64;
+    eprintln!(
+        "{N} instances parked for {:.1}s -> cell CPU {:.1} ms ({:.4} cores, {:.1} µs/instance/s)",
+        wall_ns as f64 / 1e9,
+        cpu_ns as f64 / 1e6,
+        cores_used,
+        cpu_ns as f64 / 1e3 / N as f64 / seconds as f64,
+    );
+
+    // "≈0" made falsifiable: under 2% of one core for a thousand sleeping
+    // instances. A real per-instance cost of even 100 µs/s would be 10% here.
+    assert!(
+        cores_used < 0.02,
+        "1,000 parked instances used {cores_used:.4} cores, exceeding the test budget"
+    );
+
+    let meters = r.cell.meters(&module).unwrap();
+    let cpu_ms = meters.cpu_ms();
+    eprintln!("tenant recorded {cpu_ms:.3} CPU-ms for {N} dispatches + {seconds}s of parking");
+    assert!(
+        cpu_ms < 200.0,
+        "recorded {cpu_ms} CPU-ms; the park window must contribute nothing"
+    );
+    assert!(meters.observed_park_ms() == 0 || meters.cpu_ns() > 0);
+    r.cell.shutdown();
+}
+
+#[test]
+fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
+    let r = rig(CellConfig {
+        exec_threads: 4,
+        max_hot: 4,
+        ..CellConfig::for_test("c7")
+    });
+
+    let spinner = Arc::new(FakeActivator::named(
+        ModuleId::new("spinner", "v1"),
+        FakeBehaviour::program([Step::Spin]),
+    ));
+    let spin_mod = spinner.module().clone();
+    r.cell
+        .register_module(
+            "noisy",
+            spinner,
+            manifest("spinner", HandlerLifecycle::Reuse, Limits::default()),
+        )
+        .unwrap();
+
+    let victim = Arc::new(FakeActivator::named(
+        ModuleId::new("victim", "v1"),
+        FakeBehaviour::program([
+            Step::Park {
+                imports: vec![("clock_deadline_in", PARK_MS)],
+            },
+            Step::Done {
+                status: 200,
+                body: b"woken".to_vec(),
+            },
+        ]),
+    ));
+    let victim_mod = victim.module().clone();
+    r.cell
+        .register_module(
+            "quiet",
+            victim,
+            manifest("victim", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    // Baseline: how fast is a wake with nobody spinning?
+    let baseline = measure_wake(&r, &victim_mod);
+
+    // Now saturate two of the four execution-pool threads with spinners, each
+    // burning its full 50 ms budget before being killed.
+    let mut spins = Vec::new();
+    for i in 0..2 {
+        let mut rec = http(&r.cell, &spin_mod, "/spin");
+        rec.dispatch_id = 1000 + i;
+        rec.cpu_budget_ms = 50;
+        spins.push(
+            r.cell
+                .submit(
+                    &spin_mod,
+                    Target::Handler {
+                        route: "/spin".into(),
+                    },
+                    rec,
+                )
+                .unwrap(),
+        );
+    }
+    assert!(
+        wait_for(|| r.cell.hot_count() >= 2, Duration::from_secs(5)),
+        "spinners never went Hot"
+    );
+
+    let under_load = measure_wake(&r, &victim_mod);
+
+    for s in spins {
+        let out = s.recv_timeout(T).expect("spinner never finished");
+        assert_eq!(
+            out.completion,
+            Completion::BudgetKill,
+            "the spinner was not killed at its budget"
+        );
+        assert_eq!(out.status, 503);
+        let trap = out.trap.unwrap();
+        assert!(trap.starts_with("budget_exceeded"), "wrong trap: {trap}");
+        assert!(
+            trap.contains("without unwinding"),
+            "kill was not abrupt: {trap}"
+        );
+        // It really did burn its budget rather than being rejected cheaply.
+        assert!(
+            out.cpu_ns >= 40_000_000,
+            "spinner only burned {} ms; it was not actually spinning",
+            out.cpu_ns / 1_000_000
+        );
+    }
+
+    eprintln!(
+        "C7: victim wake {} µs idle -> {} µs while two tenants spin at their budget",
+        baseline.as_micros(),
+        under_load.as_micros()
+    );
+    assert!(
+        under_load < Duration::from_millis(25),
+        "wake took {under_load:?} while a neighbour spun; the spinner is blocking other tenants"
+    );
+
+    let m = r.cell.metrics();
+    assert_eq!(m.tenants["quiet"].traps, 0, "the victim tenant was harmed");
+    assert_eq!(m.tenants["noisy"].traps, 2);
+    assert_eq!(m.budget_kills, 2);
+    r.cell.shutdown();
+}
+
+/// One park-then-wake round trip for the victim tenant, measured from
+/// "complete the host future" to "the response arrived".
+fn measure_wake(r: &Rig, module: &ModuleId) -> Duration {
+    let before: std::collections::HashSet<u64> =
+        r.cell.futures().live_future_ids().into_iter().collect();
+    let rec = http(&r.cell, module, "/wake");
+    let rx = r
+        .cell
+        .submit(
+            module,
+            Target::Handler {
+                route: "/wake".into(),
+            },
+            rec,
+        )
+        .unwrap();
+
+    // Wait for it to park with a future outstanding. Parking is a *return*
+    // (invariant 3), so from here the victim holds no thread at all.
+    let id = {
+        let mut found = None;
+        assert!(
+            wait_for(
+                || {
+                    found = r
+                        .cell
+                        .futures()
+                        .live_future_ids()
+                        .into_iter()
+                        .find(|i| !before.contains(i));
+                    found.is_some()
+                },
+                Duration::from_secs(5)
+            ),
+            "the victim never registered a future"
+        );
+        found.unwrap()
+    };
+
+    let t0 = Instant::now();
+    r.cell.complete_future(id, ResultRecord::Ok(b"v".to_vec()));
+    let out = rx.recv_timeout(T).expect("the victim never woke");
+    let elapsed = t0.elapsed();
+    assert_eq!(out.status, 200, "victim failed: {:?}", out.trap);
+    assert_eq!(out.slices, 2, "expected dispatch + one wake");
+    elapsed
+}
+
 #[test]
 fn fresh_leaves_no_residue_reuse_does() {
     let r = rig(CellConfig::for_test("residue"));
@@ -140,6 +395,117 @@ fn fresh_leaves_no_residue_reuse_does() {
         }
     }
     r.cell.shutdown();
+}
+
+#[test]
+fn the_pending_futures_cap_traps_the_guest() {
+    let free = rig(CellConfig {
+        ..CellConfig::for_test("cap-free")
+    });
+    let paid = rig(CellConfig::for_test("cap-paid"));
+    let r = &free;
+    let limit = Limits {
+        module_bytes_compressed: 5242880,
+        instance_memory_max: 67108864,
+        cpu_ms_per_http_dispatch: 10,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .pending_futures_per_dispatch;
+    assert_eq!(limit, 6);
+
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("greedy", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: (0..limit + 3)
+                .map(|_| ("clock_deadline_in", PARK_MS))
+                .collect(),
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "limited-app",
+            act,
+            manifest(
+                "greedy",
+                HandlerLifecycle::Reuse,
+                Limits {
+                    module_bytes_compressed: 5242880,
+                    instance_memory_max: 67108864,
+                    cpu_ms_per_http_dispatch: 10,
+                    subrequests_per_dispatch: 20,
+                    pending_futures_per_dispatch: 6,
+                },
+            ),
+        )
+        .unwrap();
+
+    let mut rec = http(&r.cell, &module, "/greedy");
+    rec.dispatch_id = 1;
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/greedy".into(),
+            },
+            rec,
+            T,
+        )
+        .unwrap();
+
+    assert_eq!(
+        out.completion,
+        Completion::Trapped,
+        "the cap did not trap the guest"
+    );
+    assert_eq!(out.status, 500);
+    assert_eq!(r.cell.metrics().pending_cap_rejections, 1);
+
+    let ok = Arc::new(FakeActivator::named(
+        ModuleId::new("higher-limit-app", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: (0..limit + 3)
+                .map(|_| ("clock_deadline_in", PARK_MS))
+                .collect(),
+        }]),
+    ));
+    let ok_mod = ok.module().clone();
+    paid.cell
+        .register_module(
+            "acme",
+            ok,
+            manifest(
+                "higher-limit-app",
+                HandlerLifecycle::Reuse,
+                Limits::default(),
+            ),
+        )
+        .unwrap();
+    let mut rec = http(&paid.cell, &ok_mod, "/ok");
+    rec.dispatch_id = 2;
+    let rx = paid
+        .cell
+        .submit(
+            &ok_mod,
+            Target::Handler {
+                route: "/ok".into(),
+            },
+            rec,
+        )
+        .unwrap();
+    assert!(
+        wait_for(
+            || paid.cell.futures().live_futures() >= (limit + 3) as usize,
+            Duration::from_secs(5)
+        ),
+        "the higher configured future cap was not applied"
+    );
+    assert_eq!(paid.cell.metrics().pending_cap_rejections, 0);
+    drop(rx);
+    free.cell.shutdown();
+    paid.cell.shutdown();
 }
 
 #[test]

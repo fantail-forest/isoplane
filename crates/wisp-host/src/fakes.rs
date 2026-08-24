@@ -30,7 +30,7 @@ pub enum Step {
     /// Return `done` with a response.
     Done { status: u16, body: Vec<u8> },
     /// Issue imports and return `pending`.
-    Park { imports: Vec<&'static str> },
+    Park { imports: Vec<(&'static str, u64)> },
     /// Return `trapped`.
     Trap(TrapCode),
     /// Burn CPU on the calling thread until the budget kills it. Real CPU, on
@@ -38,6 +38,13 @@ pub enum Step {
     Spin,
     /// Touch `pages` pages of linear memory, so the dirty set is measurable.
     Dirty { pages: usize },
+    /// Emit `times` log lines of `bytes` each, then return `done`. §10: log
+    /// CPU counts against the dispatch budget, and this is what makes that
+    /// measurable.
+    Log { bytes: usize, times: usize },
+    /// Issue `http_fetch` for `url` `times` over, then park. Exercises §8.6's
+    /// egress policy and §11.1's subrequest cap through the real vtable.
+    Fetch { url: String, times: usize },
 }
 
 /// The scripted behaviour of a fake module.
@@ -164,12 +171,12 @@ impl FakeInstance {
                 PollStatus::Done { response: h as u32 }
             }
             Step::Park { imports } => {
-                for name in imports {
+                for (name, scalar) in imports {
                     let payload = fake_payload_for(name);
                     let fid = self.bindings.call_future(ImportCall {
                         import: name,
                         payload: &payload,
-                        scalars: [0; 3],
+                        scalars: [scalar, 0, 0],
                     });
                     if fid == crate::futures::INVALID_FUTURE {
                         // The pending-futures cap refused us (§11.1). A real
@@ -190,6 +197,34 @@ impl FakeInstance {
                 }
                 self.dirty_pages = self.dirty_pages.max(pages);
                 PollStatus::Done { response: 0 }
+            }
+            Step::Log { bytes, times } => {
+                let line = vec![b'x'; bytes];
+                for _ in 0..times {
+                    self.bindings.call_sync(ImportCall {
+                        import: "log_emit",
+                        payload: &line,
+                        scalars: [2, 0, 0],
+                    });
+                }
+                PollStatus::Done { response: 0 }
+            }
+            Step::Fetch { url, times } => {
+                let payload = postcard::to_allocvec(&FetchRequest {
+                    method: "GET".into(),
+                    url,
+                    headers: vec![],
+                    body: vec![],
+                })
+                .unwrap();
+                for _ in 0..times {
+                    self.bindings.call_future(ImportCall {
+                        import: "http_fetch",
+                        payload: &payload,
+                        scalars: [0; 3],
+                    });
+                }
+                PollStatus::Pending
             }
             Step::Spin => {
                 // Real CPU on the real calling thread, killed by a real
@@ -421,6 +456,17 @@ impl Activator for FakeActivator {
 pub struct FakeFetcher {
     pub connected_to: Mutex<Vec<std::net::SocketAddr>>,
     pub bodies: Mutex<HashMap<u32, VecDeque<Vec<u8>>>>,
+    /// When set, `read_body` never resolves — an honest model of a streaming
+    /// transfer that is still in flight. §6.8's Unbounded case only means
+    /// anything while a transfer is outstanding, so a test that wants to
+    /// observe it has to be able to keep one outstanding.
+    stall: std::sync::atomic::AtomicBool,
+}
+
+impl FakeFetcher {
+    pub fn stall_bodies(&self, on: bool) {
+        self.stall.store(on, Ordering::Relaxed);
+    }
 }
 
 #[async_trait]
@@ -439,6 +485,9 @@ impl crate::bindings::Fetcher for FakeFetcher {
         })
     }
     async fn read_body(&self, handle: u32, _max: usize) -> Result<BodyChunk, FutureError> {
+        if self.stall.load(Ordering::Relaxed) {
+            std::future::pending::<()>().await;
+        }
         let mut g = self.bodies.lock();
         let q = g.entry(handle).or_default();
         match q.pop_front() {

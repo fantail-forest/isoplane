@@ -72,6 +72,7 @@ pub mod futures;
 pub mod instances;
 pub mod meters;
 pub mod metrics;
+pub mod net;
 pub mod response;
 
 pub use bindings::{CellBindings, InstanceCtx};
@@ -82,6 +83,7 @@ pub use futures::{FutureTable, PendingCapError};
 pub use instances::{Activator, CallGuard, Disposition, InstanceState, Tier};
 pub use meters::Meters;
 pub use metrics::MetricsSnapshot;
+pub use net::PinnedHttpFetcher;
 
 pub type Result<T> = anyhow::Result<T>;
 

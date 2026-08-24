@@ -51,7 +51,11 @@ impl Histogram {
             return 0;
         }
         s.sort_unstable();
-        let idx = ((s.len() as f64 - 1.0) * p).round() as usize;
+        // Nearest-rank, lower-inclusive: p50 of 1..=100 is 50, not 51. Using
+        // `round` here would make the median of an even sample the upper of
+        // the two middles, which reads as a bug every time someone checks it
+        // by hand.
+        let idx = ((s.len() as f64 - 1.0) * p).floor() as usize;
         s[idx.min(s.len() - 1)]
     }
     pub fn p50(&self) -> u64 {
