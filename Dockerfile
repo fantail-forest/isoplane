@@ -41,4 +41,17 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
 # --- wasm tooling ----------------------------------------------------------
 RUN cargo install --locked wasm-tools@1.244.0 || cargo install --locked wasm-tools
 
+# Cargo/NuGet caches and the container-side target dir are docker volumes.
+# Docker creates a volume's mountpoint root:root when the path does not exist
+# in the image, and sysbox then re-chowns volume contents into the container's
+# uid range -- so a container running as the host user cannot write to them.
+# Creating them here, owned by the invoking uid, is what makes
+# `--user $(id -u):$(id -g)` actually usable. Without this the sandbox fails
+# with "Permission denied" on .cargo-build-lock, which reads like a cargo bug.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN mkdir -p /ctarget /opt/cargo /opt/cargo/registry /nuget /tmp/home \
+    && chown -R ${HOST_UID}:${HOST_GID} /ctarget /opt/cargo /nuget /tmp/home \
+    && chmod -R u+rwX /ctarget /opt/cargo /nuget
+
 WORKDIR /wisp
