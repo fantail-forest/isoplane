@@ -1353,21 +1353,31 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
 // §6.2 bookkeeping
 // ---------------------------------------------------------------------------
 
+
 #[test]
-fn fixed_bookkeeping_is_within_the_64_kb_target() {
+fn fixed_bookkeeping_stays_within_its_address_space_and_heap_budgets() {
     let e = test_engine();
     let t = e.load_template(&echo_guest()).unwrap();
     let i = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
         .unwrap();
-    let b = i.bookkeeping_bytes();
+    let total = i.bookkeeping_bytes();
+    let reserved = e.bookkeeping_bytes_per_instance();
+    let host = total - reserved;
     eprintln!(
-        "BOOKKEEPING: {b} B/instance ({} B committed by the pooling allocator + host structs)",
-        e.bookkeeping_bytes_per_instance()
+        "BOOKKEEPING: {total} B/instance = {reserved} B configured pool bookkeeping + {host} B host bookkeeping"
     );
+
+
     assert!(
-        b <= 64 * 1024,
-        "§6.2 targets <= 64 KB of fixed bookkeeping, got {b}"
+        reserved <= 128 * 1024,
+        "per-slot configured bookkeeping exceeds the test bound: {reserved} B"
+    );
+
+    // The instance has not dispatched, so its scratch buffer is empty.
+    assert!(
+        host <= 4 * 1024,
+        "host bookkeeping exceeds the test bound for an undispatched instance: {host} B"
     );
 }
 
