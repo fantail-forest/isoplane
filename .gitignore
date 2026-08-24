@@ -2,6 +2,7 @@
 /crates/spike/target
 /guests/target
 /guests/out/*.wasm
+/guests/layered/out/*.wasm
 **/*.rs.bk
 .wisp-data/
 
@@ -11,4 +12,5 @@ guests/dotnet/src/bin/
 guests/dotnet/hostcheck/target/
 bench/*/target/
 bench/out/*.wasm
+bench/out/**/*.wasm
 .scratch-*
