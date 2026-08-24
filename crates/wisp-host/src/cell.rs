@@ -591,6 +591,9 @@ impl Cell {
             // §6.4: overflow queues at admission; the cell sheds rather than
             // saturating. The proxy is supposed to shed before this point.
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
+            if let Some(m) = self.meters(module) {
+                m.record_shed();
+            }
             return Ok(DispatchResult::shed());
         }
         rx.recv_timeout(timeout)
@@ -632,6 +635,9 @@ impl Cell {
         });
         if self.queue.push_dispatch(job).is_err() {
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
+            if let Some(m) = self.meters(module) {
+                m.record_shed();
+            }
             return None;
         }
         Some(rx)

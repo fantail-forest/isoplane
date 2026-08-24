@@ -19,6 +19,13 @@ pub struct NodeConfig {
     pub cells: Vec<CellConfig>,
     #[serde(default)]
     pub apps: Vec<AppConfig>,
+    /// Directory for local node data.
+    #[serde(default = "default_data_dir")]
+    pub data_dir: std::path::PathBuf,
+}
+
+fn default_data_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from("./wispd-data")
 }
 
 fn default_node_name() -> String {
@@ -182,6 +189,7 @@ impl NodeConfig {
                     tier: TierConfig::Fast,
                 }],
             }],
+            data_dir: default_data_dir(),
         }
     }
 

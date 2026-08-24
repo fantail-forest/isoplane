@@ -35,8 +35,8 @@ fn clock_ns(which: libc::clockid_t) -> u64 {
     (ts.tv_sec as u64) * 1_000_000_000 + ts.tv_nsec as u64
 }
 
-/// Voluntary/involuntary context switches for the process, from
-/// `/proc/self/status`.
+/// Voluntary/involuntary context switches, summed over **every thread** in the
+/// process.
 ///
 /// Included because a busy-wait and a correct park can both look cheap over a
 /// short window, but they have completely different switch profiles: a parked
@@ -44,25 +44,50 @@ fn clock_ns(which: libc::clockid_t) -> u64 {
 /// epoll), while a spinner racks up involuntary ones as the kernel preempts
 /// it. This is corroborating evidence for C3 and for S7's "the spinner
 /// occupies only its own thread".
+///
+/// ## Why it walks `/proc/self/task/`
+///
+/// `/proc/self/status` reports the **thread group leader's** counters, not the
+/// sum over the process. Reading it from a worker thread therefore reports the
+/// main thread's numbers, which for a multi-threaded cell means watching a
+/// thread that is doing nothing. The first version of this did exactly that,
+/// and a test asserting "20 sleeps produce voluntary switches" failed on a
+/// perfectly working machine, because the sleeps happened on a test thread and
+/// the counter being read belonged to the main one.
+///
+/// Summing `/proc/self/task/*/status` gives the process-wide figure, which is
+/// also the scope [`process_cpu_ns`] uses — the two numbers now describe the
+/// same population, which they must if they are going to be read side by side.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct Switches {
     pub voluntary: u64,
     pub involuntary: u64,
+    /// How many threads were summed. Printed so a reader can tell a quiet
+    /// single-threaded run from a busy cell.
+    pub threads: u32,
 }
 
 impl Switches {
     pub fn now() -> io::Result<Self> {
-        let s = std::fs::read_to_string("/proc/self/status")?;
         let mut out = Switches::default();
-        for line in s.lines() {
-            let Some((k, v)) = line.split_once(':') else {
+        for entry in std::fs::read_dir("/proc/self/task")? {
+            let Ok(entry) = entry else { continue };
+            // A thread can exit between the readdir and the read; that is not
+            // an error, it is one fewer thread.
+            let Ok(s) = std::fs::read_to_string(entry.path().join("status")) else {
                 continue;
             };
-            let n = v.trim().parse::<u64>().unwrap_or(0);
-            match k {
-                "voluntary_ctxt_switches" => out.voluntary = n,
-                "nonvoluntary_ctxt_switches" => out.involuntary = n,
-                _ => {}
+            out.threads += 1;
+            for line in s.lines() {
+                let Some((k, v)) = line.split_once(':') else {
+                    continue;
+                };
+                let n = v.trim().parse::<u64>().unwrap_or(0);
+                match k {
+                    "voluntary_ctxt_switches" => out.voluntary += n,
+                    "nonvoluntary_ctxt_switches" => out.involuntary += n,
+                    _ => {}
+                }
             }
         }
         Ok(out)
@@ -281,16 +306,48 @@ mod tests {
 
     /// A sleeper yields voluntarily; a spinner gets preempted. S7 leans on the
     /// distinction, so check the instrument can see it.
+    ///
+    /// This is also the regression test for the scope bug: reading
+    /// `/proc/self/status` from a test thread reports the *main* thread's
+    /// counters, which do not move while this thread sleeps. Summing over
+    /// `/proc/self/task/` is what makes the number describe the process.
     #[test]
     fn switch_counters_move() {
         let before = Switches::now().unwrap();
+        assert!(
+            before.threads >= 1,
+            "at least this thread should have been counted"
+        );
         for _ in 0..20 {
             std::thread::sleep(Duration::from_millis(1));
         }
         let after = Switches::now().unwrap();
         assert!(
             after.voluntary > before.voluntary,
-            "20 sleeps produced no voluntary context switches"
+            "20 sleeps produced no voluntary context switches \
+             (before {} over {} threads, after {} over {} threads)",
+            before.voluntary,
+            before.threads,
+            after.voluntary,
+            after.threads,
+        );
+    }
+
+    /// The scope must match `process_cpu_ns`'s, or the two numbers printed
+    /// side by side in S3 would describe different populations.
+    #[test]
+    fn switches_are_summed_over_every_thread() {
+        let before = Switches::now().unwrap();
+        let h = std::thread::spawn(|| {
+            for _ in 0..50 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        h.join().unwrap();
+        let after = Switches::now().unwrap();
+        assert!(
+            after.voluntary > before.voluntary,
+            "a *different* thread's 50 sleeps must show up in the process total"
         );
     }
 

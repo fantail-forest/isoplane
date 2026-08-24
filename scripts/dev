@@ -2,45 +2,141 @@
 # Run a command in the configured development container.
 # Usage: scripts/dev <command> [args...]
 set -euo pipefail
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${WISP_IMAGE:-wisp-dev:latest}"
-NAME="${WISP_CONTAINER_NAME:-wisp-shared}"
+NAME="${WISP_CONTAINER_NAME:-wisp-$(id -u)-shared}"
+LABEL="wisp.owner=$(id -u)"          # rule 5: our ownership mark
+PROBE_TIMEOUT="${WISP_PROBE_TIMEOUT:-15}"
+DOCKER_TIMEOUT="${WISP_DOCKER_TIMEOUT:-60}"
 
-if [ "${1:-}" = "--stop" ]; then
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
-  echo "stopped $NAME"
-  exit 0
+d() { timeout "$DOCKER_TIMEOUT" docker "$@"; }
+
+# --- rule 5 ------------------------------------------------------------------
+# True only for containers this script created. Guards every destructive path.
+ours() {
+  local n="$1" got
+  got=$(d inspect -f '{{index .Config.Labels "wisp.owner"}}' "$n" 2>/dev/null) || return 1
+  [ "$got" = "$(id -u)" ]
+}
+
+remove_if_ours() {
+  local n="$1"
+  if ours "$n"; then
+    d rm -f "$n" >/dev/null 2>&1 || true
+    return 0
+  fi
+  if d inspect "$n" >/dev/null 2>&1; then
+    echo "refusing to remove '$n': not labelled $LABEL (not ours)" >&2
+    return 1
+  fi
+  return 0
+}
+
+state_of() { d inspect -f '{{.State.Status}}' "$1" 2>/dev/null || echo absent; }
+
+# --- rule 3 ------------------------------------------------------------------
+# A container can be "running" and still be useless. Probe it before trusting
+# it, and treat a non-responsive one as a hard stop rather than a reason to
+# create another.
+responsive() {
+  timeout "$PROBE_TIMEOUT" docker exec "$1" true >/dev/null 2>&1
+}
+
+case "${1:-}" in
+  --stop)
+    remove_if_ours "$NAME" && echo "stopped $NAME"
+    exit 0
+    ;;
+  --reap)
+    # rule 4/5: only our own, and only the ones already stopped.
+    n=0
+    while read -r c; do
+      [ -z "$c" ] && continue
+      d rm "$c" >/dev/null 2>&1 && { echo "reaped $c"; n=$((n+1)); }
+    done < <(d ps -aq --filter "label=$LABEL" --filter "status=exited" --format '{{.Names}}')
+    echo "reaped $n"
+    exit 0
+    ;;
+  --status)
+    echo "name:  $NAME"
+    echo "state: $(state_of "$NAME")"
+    if [ "$(state_of "$NAME")" = running ]; then
+      responsive "$NAME" && echo "probe: OK" || echo "probe: HUNG"
+    fi
+    echo "ours:"
+    d ps -a --filter "label=$LABEL" --format '  {{.Names}}\t{{.Status}}' 2>/dev/null
+    exit 0
+    ;;
+esac
+
+if ! d info >/dev/null 2>&1; then
+  echo "docker daemon is not responding; refusing to queue work behind it (rule 3)" >&2
+  exit 69
 fi
 
-running() { [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = "true" ]; }
+case "$(state_of "$NAME")" in
+  running)
+    # rule 2 + 3
+    if ! responsive "$NAME"; then
+      cat >&2 <<MSG
+'$NAME' is running but did not answer a probe within ${PROBE_TIMEOUT}s.
 
-if ! running; then
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+Refusing to start another container behind a hung one (rule 3) -- that is
+what jams the sandbox for everyone. Investigate, then:
+    scripts/dev --stop
+MSG
+      exit 70
+    fi
+    ;;
+  exited|created|dead)
+    remove_if_ours "$NAME" || exit 71     # rule 4
+    ;;
+  absent) ;;
+  *)
+    remove_if_ours "$NAME" || exit 71
+    ;;
+esac
+
+if [ "$(state_of "$NAME")" != running ]; then
   PORTS=()
   for p in ${WISP_PORTS:-}; do PORTS+=(-p "$p"); done
-  # Runs as the host user so that anything written into the bind mount stays
-  # owned by that user. A container writing as root leaves trees the host
-  # cannot even delete -- and under sysbox's userns remap they land as a
-  # high-numbered uid, which is worse than useless.
-  docker run -d --name "$NAME" --runtime=sysbox-runc \
-    --user "$(id -u):$(id -g)" \
-    -v "$ROOT:/wisp" \
-    -v wisp-ctarget:/ctarget \
-    -v wisp-cargo-registry:/opt/cargo/registry \
-    -v wisp-nuget:/nuget \
-    -w /wisp \
-    -e CARGO_TARGET_DIR=/ctarget \
-    -e CARGO_HOME=/opt/cargo \
-    -e NUGET_PACKAGES=/nuget \
-    -e HOME=/tmp \
-    -e CARGO_TERM_COLOR=always \
-    -e RUST_BACKTRACE=1 \
-    "${PORTS[@]}" \
-    "$IMAGE" sleep infinity >/dev/null
+  if ! err=$(d run -d --name "$NAME" --runtime=sysbox-runc \
+        --label "$LABEL" --label "wisp.created=$(date -u +%FT%TZ)" \
+        --user "$(id -u):$(id -g)" \
+        -v "$ROOT:/wisp" \
+        -v wisp-ctarget:/ctarget \
+        -v wisp-cargo-registry:/opt/cargo/registry \
+        -v wisp-nuget:/nuget \
+        -w /wisp \
+        -e CARGO_TARGET_DIR=/ctarget \
+        -e CARGO_HOME=/opt/cargo \
+        -e NUGET_PACKAGES=/nuget \
+        -e HOME=/tmp \
+        -e CARGO_TERM_COLOR=always \
+        -e RUST_BACKTRACE=1 \
+        "${PORTS[@]}" "$IMAGE" sleep infinity 2>&1); then
+    # A name held by a container docker can no longer inspect ("ghost"):
+    # `rm` by name cannot clear it, so recover the id from the conflict.
+    if ghost=$(grep -oE '[0-9a-f]{12,64}' <<<"$err" | head -1) && [ -n "$ghost" ]; then
+      echo "clearing ghost container name '$NAME' ($ghost)" >&2
+      d rm -f "$ghost" >/dev/null 2>&1 || true
+      d run -d --name "$NAME" --runtime=sysbox-runc \
+        --label "$LABEL" --user "$(id -u):$(id -g)" \
+        -v "$ROOT:/wisp" -v wisp-ctarget:/ctarget \
+        -v wisp-cargo-registry:/opt/cargo/registry -v wisp-nuget:/nuget \
+        -w /wisp -e CARGO_TARGET_DIR=/ctarget -e CARGO_HOME=/opt/cargo \
+        -e NUGET_PACKAGES=/nuget -e HOME=/tmp -e CARGO_TERM_COLOR=always \
+        -e RUST_BACKTRACE=1 "${PORTS[@]}" "$IMAGE" sleep infinity >/dev/null
+    else
+      echo "$err" >&2
+      exit 72
+    fi
+  fi
 fi
 
 EXEC=(docker exec)
 [ -t 0 ] && EXEC+=(-it)
 EXEC+=("$NAME")
-if [ $# -eq 0 ]; then set -- bash; fi
+[ $# -eq 0 ] && set -- bash
 exec "${EXEC[@]}" "$@"

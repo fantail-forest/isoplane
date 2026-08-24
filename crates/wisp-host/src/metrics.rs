@@ -89,8 +89,15 @@ pub struct Metrics {
     pub budget_kills: AtomicU64,
     pub shed: AtomicU64,
     pub breaker_rejections: AtomicU64,
+    /// §5.4's rule biting. Mostly benign: two wake jobs for one instance, the
+    /// second finding the first still inside the guest and leaving the result
+    /// queued for it to drain. A non-zero value is the reentrancy guard
+    /// working, not a fault — the fault it prevents would not be counted here,
+    /// it would be unrepresentable.
     pub reentrancy_refusals: AtomicU64,
     pub pending_cap_rejections: AtomicU64,
+    /// §8.6 refusals plus §11.1 subrequest-cap refusals — every outbound call
+    /// the host declined to make on the tenant's behalf.
     pub egress_denials: AtomicU64,
 
     pub live: AtomicU64,

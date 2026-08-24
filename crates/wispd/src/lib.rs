@@ -5,6 +5,8 @@ pub mod config;
 pub mod logs;
 pub mod metrics;
 pub mod node;
+#[cfg(feature = "real-backends")]
+pub mod real;
 
 pub use config::{ConfigError, NodeConfig};
 pub use node::DeployStage;

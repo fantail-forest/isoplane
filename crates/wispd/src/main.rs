@@ -11,6 +11,10 @@ struct Args {
     #[arg(long)]
     config: Option<std::path::PathBuf>,
 
+    /// Directory used for local compilation artifacts.
+    #[arg(long)]
+    data_dir: Option<std::path::PathBuf>,
+
     /// Validate the configuration and exit.
     #[arg(long)]
     check: bool,
@@ -21,10 +25,13 @@ struct Args {
 }
 
 fn effective_config(args: &Args) -> anyhow::Result<NodeConfig> {
-    let cfg = match &args.config {
+    let mut cfg = match &args.config {
         Some(p) => NodeConfig::from_toml(&std::fs::read_to_string(p)?)?,
         None => NodeConfig::dev_default(),
     };
+    if let Some(d) = &args.data_dir {
+        cfg.data_dir = d.clone();
+    }
     Ok(cfg)
 }
 

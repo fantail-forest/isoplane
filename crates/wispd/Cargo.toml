@@ -53,3 +53,7 @@ real-backends = [
 tokio = { workspace = true }
 wisp-proxy = { workspace = true }
 async-trait = { workspace = true }
+# The real-cell test assembles its guest from hand-written .wat, for the same
+# reason wisp-engine's tests do: a guest-SDK bug must not be mistakable for a
+# wiring bug.
+wat = "1"

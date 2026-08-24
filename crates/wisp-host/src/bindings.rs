@@ -42,7 +42,11 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("init_unit_deferred", &["unit"]),
 ];
 
-/// Scalars an import carries, per `wisp_abi`'s own `BufSpec`.
+/// Scalars an import carries, per `wisp_abi`'s own `BufSpec`. The vtable does
+/// not need this at runtime — the engine has already split the arguments — but
+/// `scalar_layout_matches_the_abi` uses it to prove [`SCALARS`] has not
+/// drifted from the contract.
+#[cfg_attr(not(test), allow(dead_code))]
 fn scalar_count(def: &imports::ImportDef) -> usize {
     match def.buf {
         imports::BufSpec::None => def.sig.params.len(),
@@ -407,6 +411,7 @@ impl HostBindings for CellBindings {
                     );
                 };
                 if let Err(e) = self.check_subrequest() {
+                    rt.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
                     return self.settle_now(id, ResultRecord::Err(e));
                 }
                 // SSRF policy, host-side, resolve-then-pin (§8.6). The check
@@ -437,6 +442,7 @@ impl HostBindings for CellBindings {
                         }
                         Ok(Err(deny)) => {
                             tracing::warn!(tenant = %tenant, reason = %deny, "egress denied (§8.6)");
+                            rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
                             ResultRecord::Err(FutureError::Denied(deny.to_string()))
                         }
                         Err(e) => ResultRecord::Err(FutureError::Io(format!("egress check: {e}"))),
