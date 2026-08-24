@@ -98,6 +98,7 @@ pub struct EngineConfig {
     /// is ~20 TiB of `PROT_NONE` reservation. That costs no memory, but it is
     /// a real limit and `WispEngine::new` reports it if the kernel refuses.
     pub guard_size_bytes: u64,
+
 }
 
 impl Default for EngineConfig {

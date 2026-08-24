@@ -231,6 +231,16 @@ impl Instance {
         // A successful GC hint preserves the preceding completion state for capture.
         let is_gc_hint = matches!(entry, Entry::GcHint(_));
 
+        // Compare the epoch interval with the allowance used by this dispatch.
+        debug_assert!(
+            budget.grace_ns() / engine.cfg.epoch_tick_us.max(1).saturating_mul(1_000)
+                >= crate::budget::MIN_GRACE_TICKS,
+            "epoch_tick_us = {} leaves fewer than {} ticks inside the {:.1} ms grace allowance",
+            engine.cfg.epoch_tick_us,
+            crate::budget::MIN_GRACE_TICKS,
+            budget.grace_ns() as f64 / 1e6,
+        );
+
         // The watchdog only ticks while something is Hot, so this must precede
         // arming the deadline or the deadline would never be reached.
         engine.watchdog.shared().enter_hot();

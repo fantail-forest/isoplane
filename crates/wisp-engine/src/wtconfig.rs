@@ -8,7 +8,12 @@ use wasmtime::{
 use crate::EngineConfig;
 
 /// Configured dense-image threshold for sparse initialized data.
-pub(crate) const DENSE_IMAGE_BYTES: u64 = 128 << 20;
+pub(crate) const DENSE_IMAGE_FLOOR: u64 = 128 << 20;
+
+/// Copy-on-write image threshold covering the configured memory allowance.
+pub(crate) fn dense_image_bytes(cfg: &EngineConfig) -> u64 {
+    DENSE_IMAGE_FLOOR.max(cfg.max_memory_bytes)
+}
 
 /// Metadata byte limit for each pooled core instance.
 /// Managed guests with more runtime functions need a larger allowance;
@@ -54,7 +59,7 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
 
     c.memory_init_cow(true);
     // Sparse initialized data can fall outside Wasmtime's default dense-image threshold.
-    c.memory_guaranteed_dense_image_size(DENSE_IMAGE_BYTES);
+    c.memory_guaranteed_dense_image_size(dense_image_bytes(cfg));
     c.memory_reservation(cfg.max_memory_bytes);
     c.memory_reservation_for_growth(0);
     c.memory_may_move(false);
@@ -119,7 +124,38 @@ pub(crate) fn engine_fingerprint(cfg: &EngineConfig) -> String {
         cfg.guard_size_bytes,
         cfg.max_memory_bytes,
         cfg.pooling,
-        DENSE_IMAGE_BYTES,
+        dense_image_bytes(cfg),
     );
     blake3::hash(desc.as_bytes()).to_hex().to_string()[..16].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The image threshold covers each configured memory ceiling.
+    #[test]
+    fn the_image_threshold_covers_the_configured_memory_ceiling() {
+        for ceiling in [67108864, 134217728, 536870912] {
+            let cfg = EngineConfig {
+                max_memory_bytes: ceiling,
+                ..EngineConfig::default()
+            };
+            assert!(
+                dense_image_bytes(&cfg) >= ceiling,
+                "image threshold {} B is below the configured {ceiling}-byte memory ceiling",
+                dense_image_bytes(&cfg),
+            );
+        }
+    }
+
+    /// Small memory limits retain the configured image-threshold floor.
+    #[test]
+    fn the_image_threshold_keeps_its_floor_for_small_memory_limits() {
+        let cfg = EngineConfig {
+            max_memory_bytes: 32 << 20,
+            ..EngineConfig::default()
+        };
+        assert_eq!(dense_image_bytes(&cfg), DENSE_IMAGE_FLOOR);
+    }
 }

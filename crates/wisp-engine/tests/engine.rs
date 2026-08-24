@@ -14,16 +14,22 @@ use wisp_engine::{
 /// Small engine: 64 slots, 4 MiB ceiling, small guard. The guard is not the
 /// 2 GiB default because every test process would otherwise reserve tens of
 /// GiB of address space per engine it builds.
-fn test_engine() -> WispEngine {
-    WispEngine::new(EngineConfig {
+/// The config every test engine here is built from. Split out from
+/// [`test_engine`] so a test can vary one field without restating the rest —
+/// which matters for anything asserting that a *bad* configuration is refused.
+fn small_engine_config() -> EngineConfig {
+    EngineConfig {
         max_instances: 64,
         max_memory_bytes: 4 << 20,
         epoch_tick_us: 200,
         pooling: true,
         spectre_mitigations: true,
         guard_size_bytes: 2 << 20,
-    })
-    .expect("engine")
+    }
+}
+
+fn test_engine() -> WispEngine {
+    WispEngine::new(small_engine_config()).expect("engine")
 }
 
 fn echo_guest() -> Vec<u8> {

@@ -37,8 +37,7 @@ impl CpuBudget {
 
     /// Grace allowance in nanoseconds: the larger of two milliseconds and ten percent of the budget.
     pub fn grace_ns(self) -> u64 {
-        const FLOOR_NS: u64 = 2_000_000;
-        (self.budget_ns() / 10).max(FLOOR_NS)
+        (self.budget_ns() / 10).max(GRACE_FLOOR_NS)
     }
 
     /// The hard deadline, B+G. Reaching it is the only thing that still
@@ -53,6 +52,20 @@ impl CpuBudget {
         Self { spent_ns, ..self }
     }
 }
+
+/// Minimum CPU grace allowance, in nanoseconds.
+pub const GRACE_FLOOR_NS: u64 = 2_000_000;
+
+/// How many epoch ticks must fit inside the **smallest** grace window the
+/// platform can offer, for grace to be deliverable at all.
+///
+/// One tick would be arithmetically sufficient and operationally useless: the
+/// check is Cranelift-inserted at back-edges and calls, so a guest between two
+/// back-edges when the tick fires does not see it until the next one, and a
+/// dispatch that got exactly one opportunity would take the hard trap on any
+/// scheduling hiccup. Four is the smallest number that leaves the delivery
+/// mechanism room to miss and recover inside the floor.
+pub const MIN_GRACE_TICKS: u64 = 4;
 
 /// How execution ended after entering the CPU grace allowance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +166,41 @@ mod tests {
             ..CpuBudget::http()
         };
         assert_eq!(one.grace_ns(), 2_000_000);
+    }
+
+    /// The epoch tick can deliver grace across the configured budget range.
+    #[test]
+    fn configured_cpu_budgets_get_deliverable_grace_windows() {
+        let tick_ns = crate::EngineConfig::default().epoch_tick_us * 1_000;
+        for budget_ms in [10, 50, 300000] {
+            let b = CpuBudget {
+                cpu_ms: budget_ms,
+                ..CpuBudget::http()
+            };
+            let g = b.grace_ns();
+            assert!(g >= GRACE_FLOOR_NS, "grace allowance {g} ns is below its configured floor");
+            assert!(
+                g / tick_ns >= MIN_GRACE_TICKS,
+                "a {} ms budget gives G = {:.1} ms, only {} epoch tick(s) at \
+                 {tick_ns} ns — a dispatch with this budget could reach B+G without the callback \
+                 ever having had a chance to open the grace window, and the symptom would be a \
+                 clean:hard ratio of zero rather than an error",
+                b.cpu_ms,
+                g as f64 / 1e6,
+                g / tick_ns,
+            );
+            assert_eq!(b.hard_ns(), b.budget_ns() + g);
+        }
+    }
+
+    #[test]
+    fn a_coarse_epoch_tick_makes_the_grace_floor_undeliverable() {
+        let coarse_tick_ns = 5_000_000u64; // 5 ms
+        assert!(
+            GRACE_FLOOR_NS / coarse_tick_ns < MIN_GRACE_TICKS,
+            "a 5 ms tick must not be able to deliver a 2 ms grace floor; if this passes, the \
+             engine's configuration check is guarding nothing"
+        );
     }
 
     #[test]
