@@ -39,22 +39,23 @@
 //!
 //! (`build.sh` exits 1 on its own import gate — that gate is the guest-side
 //! rule and this test is about the platform-side one — but the module is
-//! written out before it fires.) They are large binaries and are not
-//! committed, which is exactly why a missing one is a hard failure and not a
-//! skip — absence means a broken checkout, in the
-//! same style as `real_guests.rs`.
+//! written out before it fires.) They are large binaries, and they ARE
+//! committed — which is exactly why a missing one is a hard failure rather
+//! than a skip: no legitimate checkout lacks them, so absence means the
+//! checkout is broken, and skipping would trade a real assertion for a green
+//! test that asserted nothing. See `docs/plan.md`, "fixture-dependent tests".
 
 use wasmtime::{Engine, Linker, Module};
 use wisp_abi::config::Limits;
 use wisp_control::pal::{self, PalSource};
 use wisp_control::validator::{self, ViolationCode as V};
 
-fn artifact(name: &str) -> Option<Vec<u8>> {
+fn artifact(name: &str) -> Vec<u8> {
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../guests/dotnet/out")
         .join(format!("{name}.wasm"));
     match std::fs::read(&p) {
-        Ok(b) => Some(b),
+        Ok(b) => b,
         Err(_) => {
             panic!(
                 "{} is missing.\n\n\
@@ -107,9 +108,7 @@ fn report(name: &str, wasm: &[u8]) -> validator::ValidationReport {
 /// and no widening of `wisp_abi::imports::IMPORTS`.
 #[test]
 fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_stock");
     let r = report("wisp_guest_dotnet_stock", &wasm);
 
     // F7's number, confirmed from a second build path.
@@ -174,9 +173,7 @@ fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
 /// widen the set again.
 #[test]
 fn the_compat_stock_dotnet_module_passes_v1_too() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_compat_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_compat_stock");
     let r = report("wisp_guest_dotnet_compat_stock", &wasm);
     assert_eq!(r.pal.len(), 44);
     assert_eq!(
@@ -201,9 +198,7 @@ fn the_compat_stock_dotnet_module_passes_v1_too() {
 /// grows no `wasi-pal` section.
 #[test]
 fn the_shipped_dotnet_module_still_passes_and_needs_no_adapter() {
-    let Some(wasm) = artifact("wisp_guest_dotnet") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet");
     let r = report("wisp_guest_dotnet", &wasm);
     assert!(
         r.pal.is_empty(),
@@ -256,9 +251,7 @@ fn rename_import(wasm: &[u8], from: &str, to: &str) -> Vec<u8> {
 /// interfaces they live in and not names that merely look like them.
 #[test]
 fn a_real_module_with_one_off_whitelist_wasi_import_still_fails_v1() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_stock");
 
     // 1. A trap-on-call entry, renamed. Same interface, same shape, one
     //    character different: still an attempted capability.
@@ -304,9 +297,7 @@ fn a_real_module_with_one_off_whitelist_wasi_import_still_fails_v1() {
 /// leave the module deployable — and the count must still be 32.
 #[test]
 fn negative_control_renaming_to_another_whitelisted_import_still_passes() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_stock");
 
     // Both trap-on-call entries in `wasi:filesystem/types`, both 23 bytes.
     // The stock module imports `stat` and not `read`, so this is a real
@@ -353,9 +344,7 @@ fn negative_control_renaming_to_another_whitelisted_import_still_passes() {
 /// environment before tenant code exists.
 #[test]
 fn the_stock_dotnet_module_pre_initializes_through_the_adapter() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_stock");
     validator::validate(&wasm, Limits::default()).expect("must validate first");
 
     let out = wisp_control::PreInitializer::new()
@@ -432,9 +421,7 @@ fn the_stock_dotnet_module_pre_initializes_through_the_adapter() {
 /// this hands the engine.
 #[test]
 fn the_stock_dotnet_template_loads_into_the_data_plane() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_stock");
     validator::validate(&wasm, Limits::default()).expect("must validate");
 
     let out = wisp_control::PreInitializer::new()
@@ -495,9 +482,7 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
 /// `load_template` accepts things.
 #[test]
 fn negative_control_the_data_plane_refuses_an_off_whitelist_wasi_import() {
-    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
-        return;
-    };
+    let wasm = artifact("wisp_guest_dotnet_stock");
     let mutated = rename_import(&wasm, "get-directories", "get-directoryZZ");
 
     let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {

@@ -26,10 +26,10 @@ use wisp_control::validator;
 
 const DOTNET: &str = "../../guests/dotnet/out/wisp_guest_dotnet.wasm";
 
-fn dotnet_guest() -> Option<Vec<u8>> {
+fn dotnet_guest() -> Vec<u8> {
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(DOTNET);
     match std::fs::read(&p) {
-        Ok(b) => Some(b),
+        Ok(b) => b,
         Err(_) => {
             panic!(
                 "{} is missing.\n\n\
@@ -56,7 +56,7 @@ fn dotnet_guest() -> Option<Vec<u8>> {
 /// second one.
 #[test]
 fn the_dotnet_guest_satisfies_v1_with_no_pal_exception() {
-    let Some(wasm) = dotnet_guest() else { return };
+    let wasm = dotnet_guest();
     let report = validator::validate(&wasm, Limits::default())
         .unwrap_or_else(|vs| panic!(".NET guest rejected:\n{}", render(&vs)));
 
@@ -84,7 +84,7 @@ fn the_dotnet_guest_satisfies_v1_with_no_pal_exception() {
 /// The headline measurement.
 #[test]
 fn pre_initialization_deletes_dotnet_runtime_startup() {
-    let Some(wasm) = dotnet_guest() else { return };
+    let wasm = dotnet_guest();
     validator::validate(&wasm, Limits::default()).expect(".NET guest must validate");
 
     let t0 = Instant::now();
