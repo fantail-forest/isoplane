@@ -40,7 +40,8 @@
 //! (`build.sh` exits 1 on its own import gate — that gate is the guest-side
 //! rule and this test is about the platform-side one — but the module is
 //! written out before it fires.) They are large binaries and are not
-//! committed, so each test skips loudly when its artifact is absent, in the
+//! committed, which is exactly why a missing one is a hard failure and not a
+//! skip — absence means a broken checkout, in the
 //! same style as `real_guests.rs`.
 
 use wasmtime::{Engine, Linker, Module};
@@ -55,11 +56,17 @@ fn artifact(name: &str) -> Option<Vec<u8>> {
     match std::fs::read(&p) {
         Ok(b) => Some(b),
         Err(_) => {
-            eprintln!(
-                "skipped: {} not built (see this file's header)",
+            panic!(
+                "{} is missing.\n\n\
+                 This artifact is COMMITTED, so its absence means a broken \n\
+                 checkout rather than an unbuilt fixture — no legitimate \n\
+                 configuration lacks it. Skipping here would trade a real \n\
+                 assertion for a green test that asserted nothing, which is \n\
+                 the trap docs/plan.md's fixture convention exists to close.\n\n\
+                 Restore it with `git checkout -- guests/dotnet/out`, or \n\
+                 rebuild with `scripts/dev guests/dotnet/build.sh`.",
                 p.display()
-            );
-            None
+            )
         }
     }
 }

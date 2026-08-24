@@ -31,11 +31,17 @@ fn dotnet_guest() -> Option<Vec<u8>> {
     match std::fs::read(&p) {
         Ok(b) => Some(b),
         Err(_) => {
-            eprintln!(
-                "skipped: {} not built (scripts/dev guests/dotnet/build.sh)",
+            panic!(
+                "{} is missing.\n\n\
+                 This artifact is COMMITTED, so its absence means a broken \n\
+                 checkout rather than an unbuilt fixture — no legitimate \n\
+                 configuration lacks it. Skipping here would trade a real \n\
+                 assertion for a green test that asserted nothing, which is \n\
+                 the trap docs/plan.md's fixture convention exists to close.\n\n\
+                 Restore it with `git checkout -- guests/dotnet/out`, or \n\
+                 rebuild with `scripts/dev guests/dotnet/build.sh`.",
                 p.display()
-            );
-            None
+            )
         }
     }
 }
