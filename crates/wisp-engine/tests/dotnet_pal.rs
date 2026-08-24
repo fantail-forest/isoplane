@@ -22,32 +22,59 @@
 //!    in and two capabilities went out, both already in the tenant-facing
 //!    manifest.
 //!
-//! The artifact is not tracked in git (it is ~900 KB of build output), so an
-//! absent one is reported and skipped rather than failed. Its build command is
-//! in `guests/dotnet/build.sh`.
+//! ## Why this fails rather than skips
+//!
+//! `guests/dotnet/out/wisp_guest_dotnet_stock.wasm` is **committed** — all
+//! five .NET artifacts are, because building them needs a .NET SDK that most
+//! checkouts do not have. So its absence is a broken checkout, not an
+//! environment: there is no legitimate configuration in which this test has
+//! nothing to run against.
+//!
+//! That is the whole of the rule. A fixture-dependent test should **fail** on
+//! a missing *tracked* fixture and may **skip** on a missing *generated* one
+//! (`guests/out/*.wasm` is `.gitignore`d, so those are absent on every fresh
+//! clone and failing would make `cargo test` red for an environmental reason
+//! — which trains people to ignore red). A skip in the first case buys
+//! nothing and costs the thing that matters: a green test that asserted
+//! nothing, with no aggregator to notice, because `cargo test` has no notion
+//! of "ran but proved nothing".
+//!
+//! This test skipped for its first day, on the mistaken belief that the
+//! artifact was untracked build output. It was untracked, briefly, in a
+//! working tree where another track had built it before committing it — which
+//! is a decent illustration that "is this fixture tracked" is a question about
+//! the repository and not about whatever happens to be in one's own `git
+//! status` at the time.
+//!
+//! The claim is *also* reported through S10, which GAPs rather than passing
+//! when the artifact is missing. That is the aggregating home; this is the
+//! fast local one.
 
 use wisp_engine::{EngineConfig, WispEngine};
 
-fn stock_module() -> Option<(String, Vec<u8>)> {
+fn stock_module() -> (String, Vec<u8>) {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(|p| p.parent())?
+        .and_then(|p| p.parent())
+        .expect("crates/wisp-engine has a grandparent")
         .to_path_buf();
     let p = root.join("guests/dotnet/out/wisp_guest_dotnet_stock.wasm");
-    let bytes = std::fs::read(&p).ok()?;
-    Some((p.display().to_string(), bytes))
+    let bytes = std::fs::read(&p).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {}: {e}\n\nThis file is COMMITTED — see this test's header — so its \
+             absence is a broken checkout rather than a missing build step, and skipping would \
+             turn F7's only engine-level assertion into a green test that proved nothing. If it \
+             genuinely needs rebuilding:\n    WISP_OUT=wisp_guest_dotnet_stock \
+             guests/dotnet/build.sh -p:WispPalObject=",
+            p.display()
+        )
+    });
+    (p.display().to_string(), bytes)
 }
 
 #[test]
 fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
-    let Some((path, wasm)) = stock_module() else {
-        eprintln!(
-            "SKIP: no stock .NET module built. This is F7's subject, so the test means nothing \
-             without it. Build it with:\n    WISP_OUT=wisp_guest_dotnet_stock \
-             guests/dotnet/build.sh -p:WispPalObject="
-        );
-        return;
-    };
+    let (path, wasm) = stock_module();
 
     let e = WispEngine::new(EngineConfig {
         max_instances: 8,
