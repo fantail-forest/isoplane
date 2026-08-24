@@ -54,7 +54,7 @@ case "${1:-}" in
     while read -r c; do
       [ -z "$c" ] && continue
       d rm "$c" >/dev/null 2>&1 && { echo "reaped $c"; n=$((n+1)); }
-    done < <(d ps -aq --filter "label=$LABEL" --filter "status=exited" --format '{{.Names}}')
+    done < <(d ps -a --filter "label=$LABEL" --filter "status=exited" --format '{{.Names}}')
     echo "reaped $n"
     exit 0
     ;;
