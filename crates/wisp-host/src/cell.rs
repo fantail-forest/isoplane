@@ -134,6 +134,15 @@ impl Target {
 
 #[derive(Debug, Clone)]
 pub struct DispatchResult {
+    /// The `dispatch_id` of the `DispatchRecord` this is the answer to.
+    ///
+    /// Echoed back because a caller that submits many dispatches onto **one**
+    /// completion channel — which is what any load generator must do, since a
+    /// channel and a thread per outstanding request measures the caller — has
+    /// no other way to match a result to the request it belongs to.
+    /// Completions arrive out of order by design (§6.1: a wake may land on any
+    /// pool thread), so arrival order carries no information.
+    pub dispatch_id: u64,
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -152,8 +161,9 @@ pub struct DispatchResult {
 }
 
 impl DispatchResult {
-    fn shed() -> Self {
+    fn shed(dispatch_id: u64) -> Self {
         Self {
+            dispatch_id,
             status: 503,
             headers: vec![("retry-after".into(), "1".into())],
             body: b"cell shed load".to_vec(),
@@ -166,8 +176,9 @@ impl DispatchResult {
             slices: 0,
         }
     }
-    fn breaker_open() -> Self {
+    fn breaker_open(dispatch_id: u64) -> Self {
         Self {
+            dispatch_id,
             status: 503,
             headers: vec![],
             // §6.4: fail fast, without entering the guest at all.
@@ -644,11 +655,12 @@ impl Cell {
             module: module.clone(),
             route: route.clone(),
         };
+        let dispatch_id = rec.dispatch_id;
         if self.breaker.check(&key, now).is_err() {
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
-            return Ok(DispatchResult::breaker_open());
+            return Ok(DispatchResult::breaker_open(dispatch_id));
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
@@ -664,7 +676,7 @@ impl Cell {
             if let Some(m) = self.meters(module) {
                 m.record_shed();
             }
-            return Ok(DispatchResult::shed());
+            return Ok(DispatchResult::shed(dispatch_id));
         }
         rx.recv_timeout(timeout)
             .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))
@@ -684,7 +696,40 @@ impl Cell {
         rec: DispatchRecord,
     ) -> Option<std::sync::mpsc::Receiver<DispatchResult>> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.submit_with(module, target, rec, tx).then_some(rx)
+    }
+
+    /// Submit onto a **caller-provided** channel, which many submissions may
+    /// share.
+    ///
+    /// [`Cell::submit`] allocates one channel per request, which is right for
+    /// a test holding a few dozen parked instances and wrong for anything
+    /// offering sustained load: at a hundred thousand requests a second it is
+    /// a hundred thousand allocations a second on the caller's path, and —
+    /// worse — leaves the caller holding a hundred thousand receivers to poll.
+    /// A load generator built that way measures itself.
+    ///
+    /// The result carries [`DispatchResult::dispatch_id`], so a caller
+    /// draining one shared channel can match each completion to its request.
+    ///
+    /// Returns `false` if the cell shed at admission (§6.4), in which case a
+    /// `503` has already been sent on `responder` — the same contract
+    /// `submit` has, stated as a bool because there is no receiver to hand
+    /// back.
+    ///
+    /// **The channel must not be allowed to fill.** `SyncSender::send` blocks,
+    /// and the sender here is an execution-pool thread, so a caller that stops
+    /// draining stops the cell. Size it for the outstanding count and treat
+    /// the bound as a harness invariant rather than as backpressure.
+    pub fn submit_with(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        responder: std::sync::mpsc::SyncSender<DispatchResult>,
+    ) -> bool {
         let now = crate::now_ms();
+        let dispatch_id = rec.dispatch_id;
         let key = BreakerKey {
             module: module.clone(),
             route: target.route(),
@@ -693,14 +738,14 @@ impl Cell {
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
-            let _ = tx.send(DispatchResult::breaker_open());
-            return Some(rx);
+            let _ = responder.send(DispatchResult::breaker_open(dispatch_id));
+            return true;
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
             target,
             rec,
-            responder: tx,
+            responder,
             enqueued: Instant::now(),
         });
         if self.queue.push_dispatch(job).is_err() {
@@ -708,9 +753,9 @@ impl Cell {
             if let Some(m) = self.meters(module) {
                 m.record_shed();
             }
-            return None;
+            return false;
         }
-        Some(rx)
+        true
     }
 
     /// Async form, for callers already on a reactor.
@@ -761,11 +806,12 @@ impl Cell {
     // -----------------------------------------------------------------------
 
     fn run_dispatch(self: &Arc<Self>, job: DispatchJob) {
+        let did = job.rec.dispatch_id;
         let Some(entry) = self.modules.read().get(&job.module).cloned() else {
             let _ = job.responder.send(DispatchResult {
                 status: 404,
                 body: b"no such module".to_vec(),
-                ..DispatchResult::shed()
+                ..DispatchResult::shed(did)
             });
             return;
         };
@@ -804,7 +850,7 @@ impl Cell {
                         let _ = job.responder.send(DispatchResult {
                             status: 500,
                             body: e.to_string().into_bytes(),
-                            ..DispatchResult::shed()
+                            ..DispatchResult::shed(did)
                         });
                         return;
                     }
@@ -833,7 +879,7 @@ impl Cell {
                 body: "durable instance already has a dispatch in flight (§7.2)"
                     .as_bytes()
                     .to_vec(),
-                ..DispatchResult::shed()
+                ..DispatchResult::shed(did)
             });
             return;
         }
@@ -891,7 +937,7 @@ impl Cell {
                         DispatchResult {
                             status: 409,
                             body: b"instance busy".to_vec(),
-                            ..DispatchResult::shed()
+                            ..DispatchResult::shed(did)
                         },
                     );
                     self.active.lock().remove(&slot.id);
@@ -1218,11 +1264,12 @@ impl Cell {
         trap: Option<String>,
     ) -> DispatchResult {
         let a = self.active.lock();
-        let (cpu_ns, wall_ns, slices, acquired) = a
+        let (dispatch_id, cpu_ns, wall_ns, slices, acquired) = a
             .get(&slot.id)
-            .map(|r| (r.cpu_ns, r.wall_ns, r.slices, r.acquired))
-            .unwrap_or((0, 0, 0, "unknown"));
+            .map(|r| (r.dispatch_id, r.cpu_ns, r.wall_ns, r.slices, r.acquired))
+            .unwrap_or((0, 0, 0, 0, "unknown"));
         DispatchResult {
+            dispatch_id,
             status,
             headers,
             body,

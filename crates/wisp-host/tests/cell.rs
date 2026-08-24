@@ -777,3 +777,190 @@ fn clones_of_one_template_never_share_entropy() {
     );
     r.cell.shutdown();
 }
+
+#[test]
+fn many_dispatches_share_one_channel_and_stay_matchable() {
+    let r = rig(CellConfig {
+        exec_threads: 4,
+        max_hot: 4,
+        admission_queue: 256,
+        ..CellConfig::for_test("share")
+    });
+
+    // Parks on a real host timer, then answers. 250 ms is far longer than the
+    // fifty fast dispatches need, so the ordering this test asserts is a
+    // property of the design and not a race.
+    let slow = Arc::new(FakeActivator::named(
+        ModuleId::new("slow", "v1"),
+        FakeBehaviour::program([
+            Step::Park {
+                imports: vec![("clock_deadline_in", 250)],
+            },
+            Step::Done {
+                status: 200,
+                body: b"slow".to_vec(),
+            },
+        ]),
+    ));
+    let slow_mod = slow.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            slow,
+            manifest("slow", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    let fast = Arc::new(FakeActivator::named(
+        ModuleId::new("fast", "v1"),
+        FakeBehaviour::program([Step::Done {
+            status: 200,
+            body: b"fast".to_vec(),
+        }]),
+    ));
+    let fast_mod = fast.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            fast,
+            manifest("fast", HandlerLifecycle::Reuse, Limits::default()),
+        )
+        .unwrap();
+
+    const SLOW_ID: u64 = 9_000;
+    const FAST: u64 = 50;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<wisp_host::DispatchResult>(1024);
+
+    let mut rec = http(&r.cell, &slow_mod, "/slow");
+    rec.dispatch_id = SLOW_ID;
+    assert!(r.cell.submit_with(
+        &slow_mod,
+        Target::Handler {
+            route: "/slow".into()
+        },
+        rec,
+        tx.clone()
+    ));
+
+    for i in 0..FAST {
+        let mut rec = http(&r.cell, &fast_mod, "/fast");
+        rec.dispatch_id = i;
+        assert!(r.cell.submit_with(
+            &fast_mod,
+            Target::Handler {
+                route: "/fast".into()
+            },
+            rec,
+            tx.clone()
+        ));
+    }
+    drop(tx);
+
+    let mut ids = Vec::new();
+    for _ in 0..=FAST {
+        let res = rx.recv_timeout(Duration::from_secs(10)).expect("result");
+        assert_eq!(
+            res.status, 200,
+            "unexpected status for dispatch {}",
+            res.dispatch_id
+        );
+        ids.push(res.dispatch_id);
+    }
+    assert!(
+        rx.recv_timeout(Duration::from_millis(50)).is_err(),
+        "extra result on the channel"
+    );
+
+    assert_ne!(
+        ids[0], SLOW_ID,
+        "the slow dispatch was submitted first; if it also answered first, this test is not          exercising out-of-order completion and proves nothing about correlation"
+    );
+    assert_eq!(
+        *ids.last().unwrap(),
+        SLOW_ID,
+        "the 250 ms park should answer last"
+    );
+
+    let unique: std::collections::HashSet<u64> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), ids.len(), "a dispatch_id came back twice");
+    let mut expected: std::collections::HashSet<u64> = (0..FAST).collect();
+    expected.insert(SLOW_ID);
+    assert_eq!(
+        unique, expected,
+        "the ids that came back are not the ids that went in"
+    );
+
+    r.cell.shutdown();
+}
+
+/// A shed submission is reported as shed **and** still answers on the caller's
+/// channel.
+///
+/// The contract `submit` has, restated for the shared-channel form: an
+/// admission-queue overflow returns `false`. A generator that ignored that and
+/// waited for a result would hang; one that treated `false` as "no answer is
+/// coming" would be right. What must never happen is silence with no signal,
+/// which is what an early draft did by returning `()` .
+#[test]
+fn a_shed_submission_says_so_rather_than_going_quiet() {
+    let r = rig(CellConfig {
+        exec_threads: 1,
+        max_hot: 1,
+        admission_queue: 1,
+        ..CellConfig::for_test("shed")
+    });
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("slow", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            act,
+            manifest("slow", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    let (tx, rx) = std::sync::mpsc::sync_channel::<wisp_host::DispatchResult>(64);
+    let mut shed = 0;
+    let mut accepted = 0;
+    for i in 0..64u64 {
+        let mut rec = http(&r.cell, &module, "/slow");
+        rec.dispatch_id = i;
+        if r.cell.submit_with(
+            &module,
+            Target::Handler {
+                route: "/slow".into(),
+            },
+            rec,
+            tx.clone(),
+        ) {
+            accepted += 1;
+        } else {
+            shed += 1;
+        }
+    }
+    drop(tx);
+    assert!(
+        shed > 0,
+        "a one-deep queue behind a parked instance must shed something"
+    );
+    assert!(
+        accepted >= 2,
+        "the running one and the queued one must both be accepted"
+    );
+    // Nothing shed produced a result on the channel, so the caller can account
+    // for every submission as exactly one of the two outcomes.
+    let mut got = 0;
+    while rx.recv_timeout(Duration::from_millis(100)).is_ok() {
+        got += 1;
+    }
+    assert!(
+        got <= accepted,
+        "more results ({got}) than accepted submissions ({accepted})"
+    );
+    r.cell.shutdown();
+}
