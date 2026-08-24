@@ -1,0 +1,54 @@
+[package]
+name = "wispd"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "The cell daemon: wires engine + host + control + proxy into a runnable node"
+
+[lib]
+name = "wispd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wispd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+futures = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+wisp-abi = { workspace = true, features = ["host"] }
+wisp-proxy = { workspace = true }
+
+wisp-control   = { workspace = true, optional = true }
+wisp-host      = { workspace = true, optional = true }
+wisp-hibernate = { workspace = true, optional = true }
+wisp-engine    = { workspace = true, optional = true }
+
+[features]
+default = []
+real-backends = [
+    "dep:wisp-control",
+    "dep:wisp-host",
+    "dep:wisp-hibernate",
+    "dep:wisp-engine",
+]
+
+[dev-dependencies]
+tokio = { workspace = true }
+wisp-proxy = { workspace = true }

@@ -11,7 +11,9 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
-wisp-control = { workspace = true }
+# NOTE: no `wisp-control` dependency. The proxy consumes a *resolved* route
+# through the `routes::RouteResolver` trait so that it compiles and is testable
+# without the control plane; `wispd` supplies the control-plane-backed impl.
 tokio = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
@@ -20,3 +22,9 @@ bytes = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
 serde_json = { workspace = true }
+async-trait = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }

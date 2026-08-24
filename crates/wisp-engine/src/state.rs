@@ -59,7 +59,7 @@ impl ResourceLimiter for Limits {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         let ok = desired <= self.max_memory_bytes;
         if !ok {
             // Remembered so a later trap can be classified `OutOfMemory`
@@ -75,7 +75,7 @@ impl ResourceLimiter for Limits {
         _current: usize,
         _desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         Ok(true)
     }
 

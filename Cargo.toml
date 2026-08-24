@@ -7,6 +7,8 @@ members = [
     "crates/wisp-host",
     "crates/wisp-control",
     "crates/wisp-proxy",
+    "crates/wispd",
+    "tests",
 ]
 exclude = ["crates/spike", "guests"]
 

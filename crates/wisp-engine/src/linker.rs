@@ -21,8 +21,8 @@
 //!
 //! In neither direction does a host pointer enter guest memory.
 
-use anyhow::{bail, Context, Result};
-use wasmtime::{Caller, Engine, Linker};
+use wasmtime::error::Context;
+use wasmtime::{bail, Caller, Engine, Linker, Result};
 use wisp_abi::imports::{ImportDef, ImportKind, Ty, HOST_MODULE, IMPORTS};
 
 use crate::bindings::ImportCall;
@@ -30,7 +30,7 @@ use crate::layout::{self, Buf};
 use crate::state::{CapabilityViolation, GuestAbort, StoreState};
 
 pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<StoreState>> {
-    layout::validate_table().map_err(|e| anyhow::anyhow!(e))?;
+    layout::validate_table().map_err(wasmtime::Error::msg)?;
     let mut l: Linker<StoreState> = Linker::new(engine);
     for def in IMPORTS {
         define(&mut l, def).with_context(|| format!("defining import `{}`", def.name))?;

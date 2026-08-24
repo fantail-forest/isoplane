@@ -18,3 +18,28 @@ pub enum WakeFallback {
     Corrupt,
     NotFound,
 }
+
+impl WakeFallback {
+    /// Stable label for a failed snapshot read.
+    pub fn reason(self) -> &'static str {
+        match self {
+            WakeFallback::ModuleMismatch => "module_mismatch",
+            WakeFallback::AbiMismatch => "abi_mismatch",
+            WakeFallback::Corrupt => "corrupt",
+            WakeFallback::NotFound => "not_found",
+        }
+    }
+}
+
+impl std::fmt::Display for WakeFallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "delta unusable: {}", self.reason())
+    }
+}
+
+impl std::error::Error for WakeFallback {}
+
+/// Wraps a restore refusal while retaining its typed reason.
+pub fn wake_error(f: WakeFallback) -> anyhow::Error {
+    anyhow::Error::new(f)
+}

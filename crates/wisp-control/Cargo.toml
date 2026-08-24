@@ -3,7 +3,7 @@ name = "wisp-control"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
-description = "WebAssembly module validation"
+description = "WebAssembly module validation and pre-initialization"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -15,14 +15,9 @@ wisp-engine = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 wasmparser = { workspace = true }
-# §4.4 pre-initialization. wizer 10 pins wasmtime ^36 internally; the runtime
-# we ship is wasmtime 48. Both live in this graph on purpose — wizer's output
-# is just bytes, so the two are decoupled (proved by crates/spike/q1_wizer.rs).
+# Wizer's engine produces WebAssembly bytes for the separate execution engine.
 wizer = "10"
-# §4.4 tiered AOT: the fast tier (Winch, baseline) is produced synchronously
-# so routes go live inside the 60 s SLO; the optimized tier (Cranelift) lands
-# asynchronously. Same major as wisp-engine's engine, deliberately.
-wasmtime = "48"
+wasmtime = { version = "48", features = ["winch"] }
 blake3 = { workspace = true }
 hex = { workspace = true }
 toml = { workspace = true }
@@ -32,6 +27,5 @@ rand = { workspace = true }
 parking_lot = { workspace = true }
 
 [dev-dependencies]
-# The V1-V4 test corpus is hand-written .wat (spec §4.3).
 wat = "1"
 tokio = { workspace = true }

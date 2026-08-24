@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Context};
+use wasmtime::error::Context as WtContext;
 use wasmtime::{Global, Memory, Ref, Store, Table, TypedFunc, Val};
 
 use wisp_abi::dispatch::DispatchRecord;
-use wisp_abi::imports::exports as guest_exports;
 use wisp_abi::result::ResultRecord;
 use wisp_abi::status::{PollStatus, TrapCode};
 use wisp_abi::PAGE_SIZE;
@@ -46,6 +46,17 @@ pub struct Instance {
     pub(crate) last_violation: Option<&'static str>,
 }
 
+impl std::fmt::Debug for Instance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Instance")
+            .field("template", &self.template.memory_pages)
+            .field("poisoned", &self.poisoned)
+            .field("last", &self.last)
+            .field("live", &self.live.is_some())
+            .finish()
+    }
+}
+
 /// What the engine is about to call into the guest.
 enum Entry<'a> {
     Handle(&'a DispatchRecord),
@@ -73,7 +84,7 @@ impl Instance {
         committed + host
     }
 
-    /// Counts linear-memory pages whose bytes differ from the template.
+    /// Counts pages that differ from the template; reading the full mapping can make it resident.
     pub fn dirty_page_count(&self) -> usize {
         let Some(live) = self.live.as_ref() else { return 0 };
         let data = live.memory.data(&live.store);
@@ -221,7 +232,11 @@ impl Instance {
         };
 
         let violation = live.store.data().violation;
-        let completion = Completion::from_status(status);
+        // Preserve the budget-kill completion category for host accounting.
+        let completion = match trap.as_ref().map(|t| t.kind) {
+            Some(TrapKind::BudgetExceeded) => Completion::BudgetKill,
+            _ => Completion::from_status(status),
+        };
 
         self.last = Some(completion);
         self.last_violation = violation;
@@ -236,29 +251,29 @@ impl Instance {
 
 const ZERO_PAGE: [u8; PAGE_SIZE] = [0u8; PAGE_SIZE];
 
-fn call_entry(live: &mut Live, entry: Entry<'_>) -> anyhow::Result<u64> {
+fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
     match entry {
         Entry::Handle(rec) => {
-            let bytes = postcard::to_allocvec(rec).context("encoding dispatch record")?;
+            let bytes = postcard::to_allocvec(rec).map_err(wasmtime::Error::new).context("encoding dispatch record")?;
             let (ptr, len) = handoff(live, &bytes)?;
-            let f = live.f_handle;
+            let f = live.f_handle.clone();
             Ok(f.call(&mut live.store, (ptr, len))? as u64)
         }
         Entry::Wake(future, res) => {
-            let bytes = postcard::to_allocvec(res).context("encoding result record")?;
+            let bytes = postcard::to_allocvec(res).map_err(wasmtime::Error::new).context("encoding result record")?;
             let (ptr, len) = handoff(live, &bytes)?;
-            let f = live.f_wake;
+            let f = live.f_wake.clone();
             Ok(f.call(&mut live.store, (future as i64, ptr, len))? as u64)
         }
         Entry::GcHint(pressure) => {
-            if let Some(f) = live.f_gc_hint {
+            if let Some(f) = live.f_gc_hint.clone() {
                 f.call(&mut live.store, pressure as i32)?;
             }
             // The GC hint export is optional.
             Ok(PollStatus::Done { response: 0 }.encode())
         }
         Entry::Initialize => {
-            if let Some(f) = live.f_initialize {
+            if let Some(f) = live.f_initialize.clone() {
                 f.call(&mut live.store, ())?;
             }
             Ok(PollStatus::Done { response: 0 }.encode())
@@ -267,9 +282,9 @@ fn call_entry(live: &mut Live, entry: Entry<'_>) -> anyhow::Result<u64> {
 }
 
 /// Allocates guest memory and copies the input bytes into it.
-fn handoff(live: &mut Live, bytes: &[u8]) -> anyhow::Result<(i32, i32)> {
-    let len = i32::try_from(bytes.len()).context("record too large for the guest ABI")?;
-    let alloc = live.f_alloc;
+fn handoff(live: &mut Live, bytes: &[u8]) -> wasmtime::Result<(i32, i32)> {
+    let len = i32::try_from(bytes.len()).map_err(wasmtime::Error::new).context("record too large for the guest ABI")?;
+    let alloc = live.f_alloc.clone();
     let ptr = alloc.call(&mut live.store, (len, 8))?;
     if ptr == 0 {
         return Err(AllocFailed { size: bytes.len() }.into());
@@ -277,15 +292,20 @@ fn handoff(live: &mut Live, bytes: &[u8]) -> anyhow::Result<(i32, i32)> {
     let mem = live.memory;
     let data = mem.data_mut(&mut live.store);
     let start = ptr as u32 as usize;
-    let end = start.checked_add(bytes.len()).context("wisp_alloc pointer overflow")?;
-    data.get_mut(start..end)
-        .context("wisp_alloc returned a pointer outside linear memory")?
-        .copy_from_slice(bytes);
+    let end = WtContext::context(
+        start.checked_add(bytes.len()),
+        "wisp_alloc pointer overflow",
+    )?;
+    WtContext::context(
+        data.get_mut(start..end),
+        "wisp_alloc returned a pointer outside linear memory",
+    )?
+    .copy_from_slice(bytes);
     Ok((ptr, len))
 }
 
 /// Classifies dispatch failure using recorded engine state and the Wasmtime error.
-fn classify(live: &Live, err: &anyhow::Error) -> TrapInfo {
+fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
     let d = live.store.data();
 
     if let Some(kill) = d.kill {
@@ -397,7 +417,7 @@ impl InstanceOps for Instance {
                 "refusing to reset a trapped or budget-killed instance; activate a fresh instance"
             );
         }
-        let live = self.live.take().context("instance has no live store")?;
+        let live = anyhow::Context::context(self.live.take(), "instance has no live store")?;
         let mut data = live.store.into_data();
         data.memory = None;
         data.wasm_depth = 0;
@@ -442,17 +462,18 @@ impl InstanceOps for Instance {
             );
         }
         let template = self.template.clone();
-        let live = self.live.as_mut().context("instance has no live store")?;
+        let live = anyhow::Context::context(self.live.as_mut(), "instance has no live store")?;
 
         let mut globals = Vec::with_capacity(live.globals.len());
         for g in &live.globals {
-            globals.push(to_global_value(g.get(&mut live.store))?);
+            let v = g.get(&mut live.store);
+            globals.push(to_global_value(v, &live.store)?);
         }
 
         // Tables. See the note on `TABLE GAP` below: the engine detects
         // mutation but cannot represent it, so it fails loudly rather than
         // dropping half of invariant 1 on the floor.
-        let mut table_mutations = Vec::new();
+        let table_mutations = Vec::new();
         for (i, t) in live.tables.iter().enumerate() {
             let baseline = template.table_nullness.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
             let size = t.size(&live.store);
@@ -499,13 +520,14 @@ impl InstanceOps for Instance {
                  mapping, so a captured mutation could not be reproduced (documented gap)"
             );
         }
-        let live = self.live.as_mut().context("instance has no live store")?;
+        let live = anyhow::Context::context(self.live.as_mut(), "instance has no live store")?;
 
         // Grow memory before restoring captured pages.
         let cur = live.memory.size(&live.store) as u32;
         if img.memory_pages > cur {
             live.memory
                 .grow(&mut live.store, (img.memory_pages - cur) as u64)
+                .map_err(anyhow::Error::from)
                 .context("growing linear memory to the captured size")?;
         }
 
@@ -518,13 +540,14 @@ impl InstanceOps for Instance {
         }
         for (g, v) in live.globals.iter().zip(&img.globals) {
             g.set(&mut live.store, from_global_value(*v))
+                .map_err(anyhow::Error::from)
                 .context("restoring a mutable global")?;
         }
         Ok(())
     }
 }
 
-fn to_global_value(v: Val) -> Result<crate::snapshot::GlobalValue> {
+fn to_global_value(v: Val, store: impl wasmtime::AsContext) -> Result<crate::snapshot::GlobalValue> {
     use crate::snapshot::GlobalValue as G;
     Ok(match v {
         Val::I32(x) => G::I32(x),
@@ -533,7 +556,7 @@ fn to_global_value(v: Val) -> Result<crate::snapshot::GlobalValue> {
         Val::F64(x) => G::F64(x),
         other => bail!(
             "mutable global of type {:?} is outside the numeric set invariant 1 can capture",
-            other.ty()
+            other.ty(store)
         ),
     })
 }

@@ -1,0 +1,369 @@
+//! Host-owned futures, completion routing and per-instance resource limits.
+
+use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use parking_lot::Mutex;
+
+use wisp_abi::result::{ResultRecord};
+
+use crate::InstanceId;
+
+/// Reserved: never a valid future id. Returned by the import vtable when
+/// allocation is refused, so a guest that ignores the failure gets a wake that
+/// never arrives rather than a wake for someone else's future.
+pub const INVALID_FUTURE: u64 = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingCapError {
+    pub limit: u32,
+    pub outstanding: u32,
+}
+
+impl std::fmt::Display for PendingCapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "simultaneous pending futures cap exceeded: {} outstanding, limit {} (§11.1)",
+            self.outstanding, self.limit
+        )
+    }
+}
+
+/// What a completion means for the owner's lifecycle tier. The table does not
+/// know where instances live, so it reports and the cell decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeTarget {
+    /// The owning instance exists and now has a deliverable result.
+    Instance(InstanceId),
+    /// The future had no owner any more (instance discarded, dispatch over).
+    /// The result is dropped; the host reclaimed the handle on instance death,
+    /// which is invariant 2 doing the cleanup (§5.4).
+    Orphan,
+    /// Already completed; a duplicate completion is a reactor bug, not a
+    /// guest-visible event.
+    Duplicate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum State {
+    Pending,
+    Ready,
+    Delivered,
+}
+
+#[derive(Debug)]
+struct Entry {
+    owner: InstanceId,
+    dispatch: u64,
+    state: State,
+    result: Option<ResultRecord>,
+}
+
+#[derive(Debug, Default)]
+struct Owned {
+    /// Registered and not yet completed.
+    pending: BTreeSet<u64>,
+    /// Completed and not yet handed to the guest, in completion order. Order
+    /// between distinct futures is unspecified by contract (§5.4), but FIFO is
+    /// the least surprising unspecified order.
+    ready: VecDeque<u64>,
+    /// Pending count per dispatch — the unit §11.1 caps.
+    per_dispatch: HashMap<u64, u32>,
+}
+
+struct Inner {
+    entries: HashMap<u64, Entry>,
+    owned: HashMap<InstanceId, Owned>,
+}
+
+pub struct FutureTable {
+    next: AtomicU64,
+    inner: Mutex<Inner>,
+}
+
+impl Default for FutureTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FutureTable {
+    /// Create an empty host future table.
+    pub fn new() -> Self {
+        Self {
+            // Start at 1: id 0 is reserved as INVALID_FUTURE.
+            next: AtomicU64::new(1),
+            inner: Mutex::new(Inner {
+                entries: HashMap::new(),
+                owned: HashMap::new(),
+            }),
+        }
+    }
+
+    /// Register a future for `owner` under `dispatch`.
+    ///
+    /// `limit` is the application's `pending_futures_per_dispatch` (§11.1). Refusal is
+    /// a `Result`, not a panic or a silent success, because the guest must be
+    /// able to observe it as `TrapCode::TooManyFutures`.
+    pub fn alloc(
+        &self,
+        owner: InstanceId,
+        dispatch: u64,
+        limit: u32,
+    ) -> Result<u64, PendingCapError> {
+        let mut g = self.inner.lock();
+        let owned = g.owned.entry(owner).or_default();
+        let outstanding = *owned.per_dispatch.get(&dispatch).unwrap_or(&0);
+        if outstanding >= limit {
+            return Err(PendingCapError { limit, outstanding });
+        }
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        owned.pending.insert(id);
+        *owned.per_dispatch.entry(dispatch).or_insert(0) += 1;
+        g.entries.insert(
+            id,
+            Entry {
+                owner,
+                dispatch,
+                state: State::Pending,
+                result: None,
+            },
+        );
+        Ok(id)
+    }
+
+    /// A reactor thread completed a host future. Maps id → owning instance and
+    /// makes the result deliverable; the caller enqueues the wake (§6.1).
+    pub fn complete(&self, id: u64, result: ResultRecord) -> WakeTarget {
+        let mut g = self.inner.lock();
+        let Some(e) = g.entries.get_mut(&id) else {
+            return WakeTarget::Orphan;
+        };
+        if e.state != State::Pending {
+            return WakeTarget::Duplicate;
+        }
+        e.state = State::Ready;
+        e.result = Some(result);
+        let owner = e.owner;
+        let dispatch = e.dispatch;
+        if let Some(o) = g.owned.get_mut(&owner) {
+            o.pending.remove(&id);
+            if let Some(n) = o.per_dispatch.get_mut(&dispatch) {
+                *n = n.saturating_sub(1);
+            }
+            o.ready.push_back(id);
+        }
+        WakeTarget::Instance(owner)
+    }
+
+    /// Pull the next deliverable result for `owner`. The exec-pool thread calls
+    /// this in a loop while it holds the instance's [`crate::CallGuard`], which
+    /// is how a completion that lands mid-dispatch is delivered *after* the
+    /// current call returns rather than reentrantly (§5.4).
+    pub fn take_ready(&self, owner: InstanceId) -> Option<(u64, ResultRecord)> {
+        let mut g = self.inner.lock();
+        loop {
+            let id = g.owned.get_mut(&owner)?.ready.pop_front()?;
+            let Some(e) = g.entries.get_mut(&id) else {
+                continue;
+            };
+            let Some(result) = e.result.take() else {
+                continue;
+            };
+            e.state = State::Delivered;
+            g.entries.remove(&id);
+            return Some((id, result));
+        }
+    }
+
+    pub fn has_ready(&self, owner: InstanceId) -> bool {
+        self.inner
+            .lock()
+            .owned
+            .get(&owner)
+            .is_some_and(|o| !o.ready.is_empty())
+    }
+
+
+
+    pub fn pending_for_dispatch(&self, owner: InstanceId, dispatch: u64) -> u32 {
+        let g = self.inner.lock();
+        g.owned
+            .get(&owner)
+            .and_then(|o| o.per_dispatch.get(&dispatch))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn pending_total(&self, owner: InstanceId) -> usize {
+        self.inner
+            .lock()
+            .owned
+            .get(&owner)
+            .map_or(0, |o| o.pending.len())
+    }
+
+    /// Reclaim pending futures owned by the completed dispatch.
+    pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) {
+        let mut g = self.inner.lock();
+        let Some(o) = g.owned.get_mut(&owner) else {
+            return;
+        };
+        o.per_dispatch.remove(&dispatch);
+        let pending: Vec<u64> = o.pending.iter().copied().collect();
+        let doomed: Vec<u64> = pending
+            .into_iter()
+            .filter(|id| g.entries.get(id).is_some_and(|e| e.dispatch == dispatch))
+            .collect();
+        for id in doomed {
+            g.entries.remove(&id);
+            if let Some(o) = g.owned.get_mut(&owner) {
+                o.pending.remove(&id);
+                o.ready.retain(|r| *r != id);
+            }
+        }
+    }
+
+    /// Instance death. Every handle the instance held is reclaimed here; this
+    /// is the mechanical form of §2.5.8's "cleanup lives outside the sandbox
+    /// lifetime".
+    pub fn release_instance(&self, owner: InstanceId) {
+        let mut g = self.inner.lock();
+        g.owned.remove(&owner);
+        g.entries.retain(|_, e| e.owner != owner);
+    }
+
+
+
+
+
+
+    pub fn live_futures(&self) -> usize {
+        self.inner.lock().entries.len()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+    fn table() -> FutureTable {
+        FutureTable::new()
+    }
+
+    #[test]
+    fn ids_are_never_zero_and_never_reused() {
+        let t = table();
+        let i = InstanceId(1);
+        let a = t.alloc(i, 1, 64).unwrap();
+        let b = t.alloc(i, 1, 64).unwrap();
+        assert_ne!(a, INVALID_FUTURE);
+        assert_ne!(a, b);
+    }
+
+    /// Pending futures are capped per dispatch.
+    #[test]
+    fn pending_cap_is_enforced_per_dispatch() {
+        let t = table();
+        let i = InstanceId(1);
+        let limit = 6;
+        assert_eq!(limit, 6);
+        for n in 0..limit {
+            assert!(
+                t.alloc(i, 7, limit).is_ok(),
+                "alloc {n} refused early"
+            );
+        }
+        let err = t.alloc(i, 7, limit).unwrap_err();
+        assert_eq!(
+            err,
+            PendingCapError {
+                limit: 6,
+                outstanding: 6
+            }
+        );
+
+        // A *different* dispatch on the same instance has its own budget: the
+        // cap in §11.1 is per dispatch, not per instance.
+        assert!(t.alloc(i, 8, limit).is_ok());
+    }
+
+    #[test]
+    fn completing_a_future_frees_cap_headroom() {
+        let t = table();
+        let i = InstanceId(1);
+        let mut ids = Vec::new();
+        for _ in 0..6 {
+            ids.push(t.alloc(i, 1, 6).unwrap());
+        }
+        assert!(t.alloc(i, 1, 6).is_err());
+        t.complete(ids[0], ResultRecord::Ok(vec![1]));
+        assert!(t.alloc(i, 1, 6).is_ok());
+    }
+
+    #[test]
+    fn completion_routes_to_the_owner_and_is_idempotent() {
+        let t = table();
+        let a = InstanceId(1);
+        let b = InstanceId(2);
+        let fa = t.alloc(a, 1, 64).unwrap();
+        let fb = t.alloc(b, 1, 64).unwrap();
+        assert_eq!(
+            t.complete(fa, ResultRecord::Ok(vec![1])),
+            WakeTarget::Instance(a)
+        );
+        assert_eq!(
+            t.complete(fb, ResultRecord::Ok(vec![2])),
+            WakeTarget::Instance(b)
+        );
+        assert_eq!(
+            t.complete(fa, ResultRecord::Ok(vec![9])),
+            WakeTarget::Duplicate
+        );
+        assert_eq!(
+            t.complete(9_999, ResultRecord::Ok(vec![])),
+            WakeTarget::Orphan
+        );
+
+        let (id, res) = t.take_ready(a).unwrap();
+        assert_eq!(id, fa);
+        assert!(matches!(res, ResultRecord::Ok(v) if v == vec![1]));
+        assert!(t.take_ready(a).is_none());
+    }
+
+
+
+
+    #[test]
+    fn ending_a_dispatch_reclaims_its_handles_and_preserves_other_dispatches() {
+        let t = table();
+        let i = InstanceId(1);
+        let doomed = t.alloc(i, 1, 64).unwrap();
+        let kept = t.alloc(i, 2, 64).unwrap();
+        t.end_dispatch(i, 1);
+        assert_eq!(t.pending_total(i), 1);
+        assert_eq!(
+            t.complete(doomed, ResultRecord::Ok(vec![])),
+            WakeTarget::Orphan
+        );
+        assert_eq!(
+            t.complete(kept, ResultRecord::Ok(vec![])),
+            WakeTarget::Instance(i)
+        );
+        t.take_ready(i);
+    }
+
+    #[test]
+    fn releasing_an_instance_reclaims_every_handle() {
+        let t = table();
+        let i = InstanceId(1);
+        let f = t.alloc(i, 1, 64).unwrap();
+        t.release_instance(i);
+        assert_eq!(t.live_futures(), 0);
+        assert_eq!(t.complete(f, ResultRecord::Ok(vec![])), WakeTarget::Orphan);
+    }
+
+}

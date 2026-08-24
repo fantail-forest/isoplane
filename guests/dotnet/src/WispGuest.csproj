@@ -54,6 +54,13 @@
     <StackTraceSupport>false</StackTraceSupport>
   </PropertyGroup>
 
+  <!-- The §12.1 compatibility probe (App/Compat.cs). Off by default: the
+       shipped guest is a hello-world Handler so its size is comparable to
+       §4.2's 2.5 MB target. `-p:WispCompatProbe=true` turns it on. -->
+  <PropertyGroup Condition="'$(WispCompatProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_COMPAT_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
     <PackageReference Include="runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />

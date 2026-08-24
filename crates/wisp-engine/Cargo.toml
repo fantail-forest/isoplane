@@ -18,6 +18,7 @@ wisp-abi = { workspace = true, features = ["host"] }
 # i.e. hidden native stacks, which invariant 3 forbids". With the feature off the
 # fiber code is not merely unused, it is not compiled in.
 wasmtime = { version = "48", default-features = false, features = [
+    "anyhow",               # makes `wasmtime::Error` *be* `anyhow::Error`
     "runtime",              # the JIT runtime itself
     "std",
     "cranelift",            # AOT compile (§4.4)

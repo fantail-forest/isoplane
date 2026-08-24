@@ -120,6 +120,10 @@ macro_rules! init_units {
 
 /// Runs units in slice order with stable positional IDs, skipping units the host deferred.
 pub fn run_init_units(units: &[InitUnit]) {
+    // `abort` is one of the four init-visible imports precisely so that a
+    // failed pre-init reports usefully (§4.4).
+    #[cfg(target_arch = "wasm32")]
+    crate::install_panic_hook();
     for (id, u) in units.iter().enumerate() {
         // Announce BEFORE running: if `run` traps, this id is the only record
         // of which unit was responsible.

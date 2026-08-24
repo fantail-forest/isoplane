@@ -1,0 +1,4 @@
+# NativeAOT-LLVM build output
+src/bin/
+src/obj/
+hostcheck/target/

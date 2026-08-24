@@ -1,0 +1,84 @@
+//! Exercise guest dispatch and wake exports through the host-test import stub.
+//! The real guest executor returns pending and completes the dispatch after a wake.
+
+use std::future::Future;
+
+use wisp_guest::testing::{with_stub_host, RESP_HANDLE};
+use wisp_guest::wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use wisp_guest::wisp_abi::result::ResultRecord;
+use wisp_guest::wisp_abi::status::PollStatus;
+use wisp_guest::{Clock, Ctx, Handler, Request, Response};
+
+struct Api;
+
+impl Handler for Api {
+    fn new() -> Self {
+        Api
+    }
+    fn handle(&'static self, req: Request, _ctx: Ctx) -> impl Future<Output = Response> + 'static {
+        async move {
+            match Clock::delay(1).await {
+                Ok(()) => Response::new(200, req.path.into_bytes()),
+                Err(e) => Response::text(502, format!("{e}")),
+            }
+        }
+    }
+}
+
+wisp_guest::export_handler!(Api);
+
+fn record(path: &str) -> DispatchRecord {
+    DispatchRecord {
+        dispatch_id: 7,
+        kind: DispatchKind::Http(HttpRequest {
+            method: "GET".into(),
+            url: format!("https://x{path}"),
+            path: path.into(),
+            query: vec![],
+            headers: vec![],
+            body: vec![],
+        }),
+        trace: TraceContext::default(),
+        cancel_future: 999,
+        cpu_budget_ms: 50,
+        now_ms: 1_700_000_000_000,
+    }
+}
+
+/// Copy `bytes` into a guest buffer the way a host does: ask `wisp_alloc`,
+/// write, then hand back `(ptr, len)`.
+fn handoff(bytes: &[u8]) -> (usize, usize) {
+    let p = wisp_alloc(bytes.len(), 8);
+    assert_ne!(p, 0, "wisp_alloc refused");
+    // SAFETY: the non-null allocation above has room for all copied bytes.
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, bytes.len()) };
+    (p, bytes.len())
+}
+
+#[test]
+fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
+    with_stub_host(|host| {
+        let enc = postcard::to_allocvec(&record("/hello")).unwrap();
+        let (ptr, len) = handoff(&enc);
+
+        // 1. The dispatch. The handler awaits `clock_deadline_in`, so this MUST park.
+        let st = PollStatus::decode(wisp_handle(ptr, len));
+        assert_eq!(st, PollStatus::Pending, "an awaited host future must park");
+        assert_eq!(wisp_guest::rt::pending_futures(), 1);
+        assert!(host.called("clock_deadline_in"), "the import must have been issued before parking");
+        assert!(!host.called("resp_new"), "no response may exist while parked");
+
+        // The stub mints future ids from 1, so `clock_deadline_in` got id 1.
+        let fut_id = 1u64;
+
+        // 2. The wake. A fresh call from the host, a fresh wasm stack.
+        let res = ResultRecord::Ok(Vec::new());
+        let enc = postcard::to_allocvec(&res).unwrap();
+        let (ptr, len) = handoff(&enc);
+        let st = PollStatus::decode(wisp_wake(fut_id, ptr, len));
+
+        assert_eq!(st, PollStatus::Done { response: RESP_HANDLE as u32 });
+        assert!(host.called("resp_new"));
+        assert_eq!(wisp_guest::rt::pending_futures(), 0, "future table must not leak");
+    });
+}

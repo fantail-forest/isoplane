@@ -385,6 +385,8 @@ pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask
 
 /// `wisp_wake(future, ptr, len) -> poll-status`.
 pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    crate::install_panic_hook();
     let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
     let res: ResultRecord = match postcard::from_bytes(bytes) {
         Ok(r) => r,
@@ -395,8 +397,9 @@ pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
     run().encode()
 }
 
-#[cfg(test)]
-pub(crate) fn reset_for_test() {
+/// Test support (non-wasm builds only): drop every task and future.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn reset() {
     // Move the old runtime OUT before dropping it: dropping a `Task` drops its
     // `HostFuture`s, whose `Drop` re-enters the runtime to deregister. That
     // rule holds in production too -- see `run`.
@@ -416,7 +419,7 @@ mod tests {
     #[test]
     fn parking_is_one_poll_and_a_return() {
         testing::with_stub_host(|host| {
-            reset_for_test();
+            reset();
             let before = with(|rt| rt.polls);
             let id = host.next_future_id();
             spawn_main(Box::pin(async move {
@@ -436,7 +439,7 @@ mod tests {
     #[test]
     fn a_wake_resumes_and_completes() {
         testing::with_stub_host(|host| {
-            reset_for_test();
+            reset();
             let id = host.next_future_id();
             spawn_main(Box::pin(async move {
                 let f: HostFuture<()> = crate::future::new_unit(id);
@@ -456,7 +459,7 @@ mod tests {
     #[test]
     fn two_concurrent_futures_park_once_and_join() {
         testing::with_stub_host(|host| {
-            reset_for_test();
+            reset();
             let (a, b) = (host.next_future_id(), host.next_future_id());
             spawn_main(Box::pin(async move {
                 let fa: HostFuture<()> = crate::future::new_unit(a);
@@ -484,7 +487,7 @@ mod tests {
     #[test]
     fn wait_until_work_outlives_the_response() {
         testing::with_stub_host(|host| {
-            reset_for_test();
+            reset();
             let bg = host.next_future_id();
             spawn(async move {
                 let f: HostFuture<()> = crate::future::new_unit(bg);
@@ -502,7 +505,7 @@ mod tests {
     #[test]
     fn dropping_a_future_deregisters_it() {
         testing::with_stub_host(|host| {
-            reset_for_test();
+            reset();
             let id = host.next_future_id();
             spawn_main(Box::pin(async move {
                 {
@@ -524,7 +527,7 @@ mod tests {
     #[test]
     fn a_malformed_dispatch_traps_with_protocol() {
         testing::with_stub_host(|_| {
-            reset_for_test();
+            reset();
             let junk = [0xFFu8; 8];
             let st = PollStatus::decode(export_handle(junk.as_ptr() as usize, 8, |_| {
                 Box::pin(async { TaskOutcome::Response(0) })

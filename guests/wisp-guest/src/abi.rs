@@ -48,10 +48,13 @@ macro_rules! wisp_imports {
         fn $name:ident ( $($p:ident : $pt:ident),* $(,)? ) $(-> $r:ident)? ;
     )*) => {
         // Declarations and descriptors below share the same signatures.
+        // Note: no doc attributes here. rustdoc does not document items in an
+        // extern block, and rustc warns about the attempt; the documentation
+        // lives on the host stubs and on the list below.
         #[cfg(target_arch = "wasm32")]
         #[link(wasm_import_module = "wisp")]
         unsafe extern "C" {
-            $( $(#[$m])* pub fn $name($($p: $pt),*) $(-> $r)?; )*
+            $( pub fn $name($($p: $pt),*) $(-> $r)?; )*
         }
 
         // Host builds: the same names with the same signatures so the SDK

@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -13,6 +14,9 @@ use wasmtime::{
 
 use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead, TraceContext};
 use wisp_abi::status::PollStatus;
+
+/// This fixture uses deterministic bytes and does not provide cryptographic entropy.
+static SEED: AtomicU64 = AtomicU64::new(0x243F_6A88_85A3_08D3);
 
 /// Everything the fake host observed, so the assertions can be about
 /// behaviour rather than about return codes alone.
@@ -382,6 +386,48 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
 
     linker.func_wrap("wisp", "resp_finish", move |_handle: i32| {})?;
 
+    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+    let l = log.clone();
+    linker.func_wrap(
+        "wasi:random/random@0.2.0",
+        "get-random-bytes",
+        move |mut caller: Caller<'_, ()>, len: i64, retptr: i32| -> wasmtime::Result<()> {
+            l.lock()
+                .unwrap()
+                .non_wisp_calls
+                .push("wasi:random/random@0.2.0::get-random-bytes".to_string());
+            let len = len.max(0) as usize;
+            // The canonical ABI makes the callee allocate; `cabi_realloc` is
+            // the guest's own exported allocator for exactly this.
+            let Some(Extern::Func(realloc)) = caller.get_export("cabi_realloc") else {
+                return Err(wasmtime::Error::msg("guest does not export cabi_realloc"));
+            };
+            let realloc = realloc.typed::<(i32, i32, i32, i32), i32>(&caller)?;
+            let ptr = realloc.call(&mut caller, (0, 0, 1, len as i32))?;
+
+            let Some(Extern::Memory(mem)) = caller.get_export("memory") else {
+                return Err(wasmtime::Error::msg("no memory export"));
+            };
+            // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+            let mut seed = SEED.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+            let mut bytes = vec![0u8; len];
+            for b in bytes.iter_mut() {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                *b = (seed >> 33) as u8;
+            }
+            mem.write(&mut caller, ptr as usize, &bytes)?;
+            mem.write(&mut caller, retptr as usize, &(ptr as u32).to_le_bytes())?;
+            mem.write(
+                &mut caller,
+                retptr as usize + 4,
+                &(len as u32).to_le_bytes(),
+            )?;
+            Ok(())
+        },
+    )?;
+
     // ---- everything else -------------------------------------------------
     // NativeAOT-LLVM leaves ~32 residual `wasi:*` imports in the module. Rule
     // V1 would reject all of them, so the interesting question is not whether
@@ -400,6 +446,11 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
             );
         };
         let full = format!("{}::{}", import.module(), import.name());
+        // `get-random-bytes` above is the one wasi import with a real
+        // implementation; do not shadow it with a stub.
+        if PROVIDED.contains(&full.as_str()) {
+            continue;
+        }
         let fixup = RETURN_AREA_FIXUPS
             .iter()
             .find(|(name, _)| *name == full)
@@ -444,6 +495,9 @@ fn build_linker(engine: &Engine, module: &Module, log: Shared) -> Result<Linker<
 
     Ok(linker)
 }
+
+/// Non-`wisp` imports this harness implements for real rather than stubbing.
+const PROVIDED: &[&str] = &["wasi:random/random@0.2.0::get-random-bytes"];
 
 /// Imports whose canonical-ABI return area must be zeroed for the stub to be
 /// a coherent "empty" answer rather than whatever was on the shadow stack.

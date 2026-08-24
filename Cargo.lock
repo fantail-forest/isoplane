@@ -3183,7 +3183,7 @@ dependencies = [
  "wasmtime-internal-slab",
  "wasmtime-internal-unwinder 36.0.14",
  "wasmtime-internal-versioned-export-macros 36.0.14",
- "wasmtime-internal-winch",
+ "wasmtime-internal-winch 36.0.14",
  "wat",
  "windows-sys 0.60.2",
 ]
@@ -3235,6 +3235,7 @@ dependencies = [
  "wasmtime-internal-jit-icache-coherence 48.0.0",
  "wasmtime-internal-unwinder 48.0.0",
  "wasmtime-internal-versioned-export-macros 48.0.0",
+ "wasmtime-internal-winch 48.0.0",
  "wat",
  "windows-sys 0.61.2",
  "wit-parser 0.254.0",
@@ -3607,7 +3608,24 @@ dependencies = [
  "wasmparser 0.236.1",
  "wasmtime-environ 36.0.14",
  "wasmtime-internal-cranelift 36.0.14",
- "winch-codegen",
+ "winch-codegen 36.0.14",
+]
+
+[[package]]
+name = "wasmtime-internal-winch"
+version = "48.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3653050eb8001be5fbc3ca5ceeef4b104dd02e8e9d3dc6238b9f33e8f996a61c"
+dependencies = [
+ "cranelift-codegen 0.135.0",
+ "gimli 0.33.0",
+ "log",
+ "object 0.39.1",
+ "target-lexicon",
+ "wasmparser 0.254.0",
+ "wasmtime-environ 48.0.0",
+ "wasmtime-internal-cranelift 48.0.0",
+ "winch-codegen 48.0.0",
 ]
 
 [[package]]
@@ -3812,6 +3830,25 @@ dependencies = [
  "wasmtime-environ 36.0.14",
  "wasmtime-internal-cranelift 36.0.14",
  "wasmtime-internal-math",
+]
+
+[[package]]
+name = "winch-codegen"
+version = "48.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e929b2df565b143e97d5782823718572ee7284b051b1a9075d329cff333a6eb"
+dependencies = [
+ "cranelift-assembler-x64 0.135.0",
+ "cranelift-codegen 0.135.0",
+ "gimli 0.33.0",
+ "regalloc2 0.15.2",
+ "smallvec",
+ "target-lexicon",
+ "thiserror 2.0.20",
+ "wasmparser 0.254.0",
+ "wasmtime-environ 48.0.0",
+ "wasmtime-internal-core",
+ "wasmtime-internal-cranelift 48.0.0",
 ]
 
 [[package]]
@@ -4076,6 +4113,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wisp-acceptance"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+]
+
+[[package]]
 name = "wisp-control"
 version = "0.1.0"
 dependencies = [
@@ -4128,10 +4173,12 @@ dependencies = [
  "blake3",
  "libc",
  "postcard",
+ "rand 0.9.5",
  "serde",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "wisp-abi",
  "wisp-engine",
  "zstd",
@@ -4157,6 +4204,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "wisp-abi",
  "wisp-engine",
  "wisp-hibernate",
@@ -4167,6 +4215,7 @@ name = "wisp-proxy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64",
  "bytes",
  "futures",
@@ -4174,14 +4223,45 @@ dependencies = [
  "hyper",
  "hyper-util",
  "parking_lot",
+ "rand 0.9.5",
  "serde",
  "serde_json",
  "sha1",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-subscriber",
+ "wisp-abi",
+]
+
+[[package]]
+name = "wispd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "bytes",
+ "clap",
+ "futures",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
  "wisp-abi",
  "wisp-control",
+ "wisp-engine",
+ "wisp-hibernate",
+ "wisp-host",
+ "wisp-proxy",
 ]
 
 [[package]]

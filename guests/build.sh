@@ -8,6 +8,7 @@ OUT="$ROOT/out"
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 mkdir -p "$OUT"
+rm -f "$OUT"/*.wasm
 cd "$ROOT"
 
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
@@ -44,7 +45,8 @@ if command -v wasm-tools >/dev/null 2>&1; then
   echo
   echo "==> validation (threads/atomics OFF, as rule V2 requires)"
   for f in "$OUT"/*.wasm; do
-    if wasm-tools validate --features=mvp,bulk-memory,sign-ext,multi-value,nontrapping-float-to-int,reference-types "$f" 2>/dev/null; then
+  # Validate the guest feature profile with threads and blocking atomics disabled.
+    if wasm-tools validate -f=-threads,-shared-everything-threads,-relaxed-simd,-exceptions,-legacy-exceptions "$f" 2>/dev/null; then
       echo "  ok        $(basename "$f")"
     else
       echo "  INVALID   $(basename "$f")"

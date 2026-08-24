@@ -43,7 +43,9 @@ pub enum ViolationCode {
     V1UndeclaredImport,
     /// **V1** — a required guest export is missing.
     V1MissingExport,
-    /// **V1** — a declared import has the wrong signature.
+    /// **V1** — a declared import, or a required export, has the wrong
+    /// signature. Name-only matching would be theatre: the world is a set of
+    /// *types*, and half a type check is not a type check.
     V1SignatureMismatch,
     /// **V2** — the binary requires disabled engine features: threads, shared
     /// memory, atomics, relaxed SIMD, exceptions beyond the profile.
@@ -319,7 +321,11 @@ struct Scan {
     func_types: Vec<Option<(Vec<ValType>, Vec<ValType>)>>,
     imports: Vec<(String, String, TypeRef)>,
     memories: Vec<MemoryType>,
-    exports: Vec<(String, ExternalKind)>,
+    exports: Vec<(String, ExternalKind, u32)>,
+    /// Type index of every function, in function-index-space order: imported
+    /// functions first, then defined ones. Needed to type-check *exports*,
+    /// which are named by index.
+    func_type_of: Vec<u32>,
     imported_funcs: u32,
     defined_funcs: u32,
     table_elements: u64,
@@ -362,10 +368,16 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                 }
             }
             Payload::ImportSection(r) => {
-                for imp in r {
+                // `into_imports` flattens the compact-import encodings. Those
+                // encodings are outside the engine profile (V2 rejects them),
+                // but the *scan* still has to read them, or a module could
+                // hide an undeclared import from V1 behind an encoding V2
+                // would have caught second.
+                for imp in r.into_imports() {
                     let imp = imp?;
-                    if let TypeRef::Func(_) = imp.ty {
+                    if let Some(t) = func_type_index(&imp.ty) {
                         s.imported_funcs += 1;
+                        s.func_type_of.push(t);
                     }
                     if let TypeRef::Memory(m) = imp.ty {
                         // An imported memory is still a memory for V3.
@@ -375,7 +387,12 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                         .push((imp.module.to_string(), imp.name.to_string(), imp.ty));
                 }
             }
-            Payload::FunctionSection(r) => s.defined_funcs = r.count(),
+            Payload::FunctionSection(r) => {
+                s.defined_funcs = r.count();
+                for t in r {
+                    s.func_type_of.push(t?);
+                }
+            }
             Payload::MemorySection(r) => {
                 for m in r {
                     s.memories.push(m?);
@@ -390,7 +407,7 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
             Payload::ExportSection(r) => {
                 for e in r {
                     let e = e?;
-                    s.exports.push((e.name.to_string(), e.kind));
+                    s.exports.push((e.name.to_string(), e.kind, e.index));
                 }
             }
             Payload::ElementSection(r) => s.element_segments = r.count(),
@@ -418,6 +435,19 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
         }
     }
     Ok(s)
+}
+
+fn func_type_index(t: &TypeRef) -> Option<u32> {
+    match t {
+        TypeRef::Func(i) | TypeRef::FuncExact(i) => Some(*i),
+        _ => None,
+    }
+}
+
+/// Exports are functions or a memory; `FuncExact` is the compact-import
+/// spelling of the same thing.
+fn kind_matches(got: ExternalKind, want: ExternalKind) -> bool {
+    got == want || (want == ExternalKind::Func && got == ExternalKind::FuncExact)
 }
 
 // ---------------------------------------------------------------------------
@@ -515,8 +545,8 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
             continue;
         };
 
-        match ty {
-            TypeRef::Func(idx) => match s.func_types.get(*idx as usize) {
+        match func_type_index(ty) {
+            Some(idx) => match s.func_types.get(idx as usize) {
                 Some(Some((params, results))) => {
                     if sig_matches(&def.sig, params, results) {
                         seen.insert(def.name);
@@ -545,7 +575,7 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
                     ),
                 )),
             },
-            other => v.push(Violation::new(
+            None => v.push(Violation::new(
                 ViolationCode::V1SignatureMismatch,
                 format!(
                     "import `wisp`.`{}` is declared as {} — every entry in the world is a \
@@ -553,12 +583,12 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
                      host object inside the sandbox (§5.5: no host pointers ever enter \
                      guest memory)",
                     def.name,
-                    match other {
+                    match ty {
                         TypeRef::Memory(_) => "a memory",
                         TypeRef::Table(_) => "a table",
                         TypeRef::Global(_) => "a global",
                         TypeRef::Tag(_) => "a tag",
-                        TypeRef::Func(_) => unreachable!(),
+                        TypeRef::Func(_) | TypeRef::FuncExact(_) => unreachable!(),
                     }
                 ),
             )),
@@ -581,9 +611,36 @@ fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
         } else {
             ExternalKind::Func
         };
-        match s.exports.iter().find(|(n, _)| n == required) {
-            Some((_, k)) if *k == want_kind => {}
-            Some((_, k)) => v.push(Violation::new(
+        match s.exports.iter().find(|(n, _, _)| n == required) {
+            Some((_, k, idx)) if kind_matches(*k, want_kind) => {
+                // A function export with the right name and the wrong type is
+                // a deploy-time bug the tenant should hear about now, not a
+                // link failure on the first request.
+                if want_kind == ExternalKind::Func {
+                    if let Some(want) = imports::exports::signature(required) {
+                        match s
+                            .func_type_of
+                            .get(*idx as usize)
+                            .and_then(|t| s.func_types.get(*t as usize))
+                        {
+                            Some(Some((params, results))) if sig_matches(&want, params, results) => {}
+                            Some(Some((params, results))) => v.push(Violation::new(
+                                ViolationCode::V1SignatureMismatch,
+                                format!(
+                                    "export `{required}` has signature {}, world declares {} (§5.2)",
+                                    render_sig(params, results),
+                                    render_want(&want)
+                                ),
+                            )),
+                            _ => v.push(Violation::new(
+                                ViolationCode::V1SignatureMismatch,
+                                format!("export `{required}` does not resolve to a function type"),
+                            )),
+                        }
+                    }
+                }
+            }
+            Some((_, k, _)) => v.push(Violation::new(
                 ViolationCode::V1MissingExport,
                 format!("export `{required}` is a {k:?}, expected {want_kind:?} (§5.2)"),
             )),
@@ -602,7 +659,7 @@ fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
         .filter(|o| {
             s.exports
                 .iter()
-                .any(|(n, k)| n == o && *k == ExternalKind::Func)
+                .any(|(n, k, _)| n == o && kind_matches(*k, ExternalKind::Func))
         })
         .collect();
 

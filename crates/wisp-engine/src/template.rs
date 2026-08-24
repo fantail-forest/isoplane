@@ -74,6 +74,12 @@ pub(crate) struct TemplateInner {
     pub mut_globals: Vec<(String, GlobalValue)>,
     /// Exported tables, in export order, with their instantiated sizes.
     pub tables: Vec<(String, u64)>,
+    /// Per exported table, whether each slot held a non-null reference in the
+    /// template. Recorded once per template (not per activation) so that
+    /// capture can *detect* a table mutation cheaply. See the documented gap in
+    /// `Instance::capture_mutable_state`: detection is possible, representation
+    /// is not, so the engine fails loudly rather than losing half of invariant 1.
+    pub table_nullness: Vec<Vec<bool>>,
     pub has_gc_hint: bool,
     pub has_initialize: bool,
 }
@@ -96,11 +102,35 @@ impl Template {
         &self.inner.deferred
     }
 
+    /// §5.2: `wisp_gc_hint` is optional but strongly recommended — a guest
+    /// that does not export it is correct, but stores a larger hibernation
+    /// delta and pays for it (§5.5, §11.2).
+    pub fn has_gc_hint(&self) -> bool {
+        self.inner.has_gc_hint
+    }
+
+    /// §4.4: whether the module can be driven through the sealed init sandbox.
+    pub fn has_initialize(&self) -> bool {
+        self.inner.has_initialize
+    }
+
     /// Names of the exported mutable globals, in the order `InstanceImage`
     /// captures them. Exposed so `wisp-hibernate` can sanity-check a delta
     /// against the template it claims to be bound to.
     pub fn mutable_global_names(&self) -> impl Iterator<Item = &str> {
         self.inner.mut_globals.iter().map(|(n, _)| n.as_str())
+    }
+}
+
+impl std::fmt::Debug for Template {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Template")
+            .field("hash", &self.hash)
+            .field("abi_rev", &self.abi_rev)
+            .field("memory_pages", &self.inner.memory_pages)
+            .field("deferred_init_units", &self.inner.deferred)
+            .field("mutable_globals", &self.inner.mut_globals.len())
+            .finish()
     }
 }
 

@@ -1,0 +1,15 @@
+[package]
+name = "wisp-acceptance"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish = false
+description = "Measurement helpers for CPU time, memory use and statistical summaries"
+
+[lib]
+name = "wisp_acceptance"
+path = "src/lib.rs"
+
+[dependencies]
+libc = { workspace = true }
+serde = { workspace = true }

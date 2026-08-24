@@ -20,18 +20,12 @@ pub(crate) const BOOKKEEPING_BYTES: usize =
 pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     let mut c = Config::new();
 
-    // Async suspension would retain a native stack outside snapshot state.
-    c.async_support(false);
-
-    c.wasm_threads(false);
-    c.wasm_shared_everything_threads(false);
     c.wasm_relaxed_simd(false);
     c.relaxed_simd_deterministic(true);
     c.wasm_simd(true);
     c.wasm_multi_memory(false);
     c.wasm_memory64(false);
     c.wasm_tail_call(false);
-    c.wasm_stack_switching(false);
     c.wasm_bulk_memory(true);
     c.wasm_reference_types(true);
     c.wasm_multi_value(true);
@@ -66,14 +60,14 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     }
 
     // Trap backtraces support diagnostics.
-    c.wasm_backtrace(true);
+    c.wasm_backtrace_max_frames(std::num::NonZeroUsize::new(32));
     c.native_unwind_info(true);
 
     if cfg.pooling {
         c.allocation_strategy(InstanceAllocationStrategy::Pooling(pooling(cfg)));
     }
 
-    let engine = Engine::new(&c).with_context(|| {
+    let engine = Engine::new(&c).map_err(anyhow::Error::from).with_context(|| {
         format!(
             "wasmtime engine configuration rejected (max_instances={}, max_memory={} MiB, \
              guard={} MiB): the pooling allocator reserves \
@@ -84,8 +78,6 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
         )
     })?;
 
-    debug_assert!(!engine.config().get_async_support());
-
     Ok(engine)
 }
 
@@ -94,7 +86,6 @@ fn pooling(cfg: &EngineConfig) -> PoolingAllocationConfig {
     p.total_core_instances(cfg.max_instances);
     p.total_memories(cfg.max_instances);
     p.total_tables(cfg.max_instances);
-    p.total_stacks(0);
     p.max_memory_size(cfg.max_memory_bytes as usize);
     p.max_memories_per_module(1);
     p.max_tables_per_module(4);

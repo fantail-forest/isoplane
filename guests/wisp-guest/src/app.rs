@@ -110,8 +110,8 @@ macro_rules! export_handler {
         /// §5.2 `wisp-handle: func(dispatch: dispatch-record) -> poll-status`,
         /// lowered as `(ptr, len) -> u64`.
         #[no_mangle]
-        pub extern "C" fn wisp_handle(ptr: u32, len: u32) -> u64 {
-            $crate::rt::export_handle(ptr as usize, len as usize, |rec| {
+        pub extern "C" fn wisp_handle(ptr: usize, len: usize) -> u64 {
+            $crate::rt::export_handle(ptr, len, |rec| {
                 use $crate::__rexport::DispatchKind;
                 let ctx = $crate::Ctx::from_record(&rec);
                 let app = __WISP_APP.get(<$ty as $crate::Handler>::new);
@@ -137,16 +137,16 @@ macro_rules! __wisp_common_exports {
         /// §5.5 host->guest buffer handoff. The guest frees the buffer when
         /// the host hands it back in `wisp_handle` / `wisp_wake`.
         #[no_mangle]
-        pub extern "C" fn wisp_alloc(size: u32, align: u32) -> u32 {
-            $crate::rt::export_alloc(size as usize, align as usize) as u32
+        pub extern "C" fn wisp_alloc(size: usize, align: usize) -> usize {
+            $crate::rt::export_alloc(size, align)
         }
 
         /// §5.2 `wisp-wake: func(future: u64, result: result-record) -> poll-status`.
         /// This is the *only* way a parked instance resumes, and it arrives on
         /// a fresh stack -- see the `wisp_guest::rt` module docs.
         #[no_mangle]
-        pub extern "C" fn wisp_wake(future: u64, ptr: u32, len: u32) -> u64 {
-            $crate::rt::export_wake(future, ptr as usize, len as usize)
+        pub extern "C" fn wisp_wake(future: u64, ptr: usize, len: usize) -> u64 {
+            $crate::rt::export_wake(future, ptr, len)
         }
 
         /// §5.5 pre-snapshot compaction hint.
