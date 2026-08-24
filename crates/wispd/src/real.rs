@@ -9,6 +9,8 @@ use wisp_abi::host::RouteTarget;
 
 // The real data plane: engine + cells behind the proxy's `Dispatcher`.
 
+use std::path::Path;
+
 use wisp_abi::dispatch::HttpRequest;
 use wisp_abi::host::{Dispatcher, HttpReply};
 use wisp_host::ModuleId;
@@ -31,6 +33,20 @@ pub struct RealCells {
     tenants: Arc<RwLock<HashMap<String, String>>>,
 }
 
+/// What a real node needs on disk. All local (docs/plan.md: "Local storage").
+pub struct RealPaths {
+    /// Private local preparation output.
+    pub registry: std::path::PathBuf,
+}
+
+impl RealPaths {
+    pub fn under(root: &Path) -> Self {
+        RealPaths {
+            registry: root.join("registry"),
+        }
+    }
+}
+
 impl RealCells {
     pub fn cells(&self) -> &[Arc<Cell>] {
         &self.cells
@@ -38,29 +54,6 @@ impl RealCells {
 
     fn key(app: &str, version: &str) -> String {
         format!("{app}@{version}")
-    }
-
-    /// Compile and register a template on the application's configured cell.
-    pub fn register_version(
-        &self,
-        app: &str,
-        version: &str,
-        tenant: &str,
-        manifest: wisp_abi::config::AppManifest,
-        template_wasm: &[u8],
-    ) -> anyhow::Result<ModuleId> {
-        let cell = self.cell_for(app)?;
-        let module = ModuleId::new(app, version);
-        let activator = EngineActivator::load(self.engine.clone(), module.clone(), template_wasm)?;
-        cell.register_module(tenant, Arc::new(activator), manifest)?;
-        self.tenants
-            .write()
-            .insert(app.to_string(), tenant.to_string());
-        self.modules
-            .write()
-            .insert(Self::key(app, version), module.clone());
-        tracing::info!(app, version, cell = %cell.cfg.name, "module registered");
-        Ok(module)
     }
 }
 

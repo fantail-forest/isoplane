@@ -7,10 +7,13 @@ use wasmtime::{
 
 use crate::EngineConfig;
 
+/// Configured dense-image threshold for sparse initialized data.
+pub(crate) const DENSE_IMAGE_BYTES: u64 = 128 << 20;
+
 /// Metadata byte limit for each pooled core instance.
 /// Managed guests with more runtime functions need a larger allowance;
 /// instantiation fails when a module exceeds this limit.
-pub(crate) const MAX_CORE_INSTANCE_SIZE: usize = 24 * 1024;
+pub(crate) const MAX_CORE_INSTANCE_SIZE: usize = 32 * 1024;
 
 /// Element limit for each pooled table.
 pub(crate) const TABLE_ELEMENTS: usize = 1024;
@@ -50,6 +53,8 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     c.consume_fuel(false);
 
     c.memory_init_cow(true);
+    // Sparse initialized data can fall outside Wasmtime's default dense-image threshold.
+    c.memory_guaranteed_dense_image_size(DENSE_IMAGE_BYTES);
     c.memory_reservation(cfg.max_memory_bytes);
     c.memory_reservation_for_growth(0);
     c.memory_may_move(false);
@@ -76,16 +81,18 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
         c.allocation_strategy(InstanceAllocationStrategy::Pooling(pooling(cfg)));
     }
 
-    let engine = Engine::new(&c).map_err(anyhow::Error::from).with_context(|| {
-        format!(
-            "wasmtime engine configuration rejected (max_instances={}, max_memory={} MiB, \
+    let engine = Engine::new(&c)
+        .map_err(anyhow::Error::from)
+        .with_context(|| {
+            format!(
+                "wasmtime engine configuration rejected (max_instances={}, max_memory={} MiB, \
              guard={} MiB): the pooling allocator reserves \
              max_instances * (max_memory + guard) of virtual address space",
-            cfg.max_instances,
-            cfg.max_memory_bytes >> 20,
-            cfg.guard_size_bytes >> 20,
-        )
-    })?;
+                cfg.max_instances,
+                cfg.max_memory_bytes >> 20,
+                cfg.guard_size_bytes >> 20,
+            )
+        })?;
 
     Ok(engine)
 }
@@ -106,12 +113,13 @@ fn pooling(cfg: &EngineConfig) -> PoolingAllocationConfig {
 /// Artifact-cache key derived from selected engine settings.
 pub(crate) fn engine_fingerprint(cfg: &EngineConfig) -> String {
     let desc = format!(
-        "wasmtime=48;target={};spectre={};guard={};maxmem={};pooling={}",
+        "wasmtime=48;target={};spectre={};guard={};maxmem={};pooling={};denseimage={}",
         std::env::consts::ARCH,
         cfg.spectre_mitigations,
         cfg.guard_size_bytes,
         cfg.max_memory_bytes,
         cfg.pooling,
+        DENSE_IMAGE_BYTES,
     );
     blake3::hash(desc.as_bytes()).to_hex().to_string()[..16].to_string()
 }
