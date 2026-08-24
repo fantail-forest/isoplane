@@ -4106,7 +4106,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "libc",
+ "parking_lot",
+ "postcard",
  "serde",
+ "thiserror 2.0.20",
+ "tracing",
+ "wasmparser 0.244.0",
+ "wasmtime 48.0.0",
+ "wat",
  "wisp-abi",
 ]
 

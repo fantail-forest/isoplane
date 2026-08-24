@@ -33,6 +33,21 @@ pub trait HostBindings: Send + 'static {
     /// CPU budget and hold the execution-pool thread.
     fn call_sync(&mut self, call: ImportCall<'_>) -> i64;
 
+    /// An import whose `(ptr, len)` pair is an **output** buffer: the guest
+    /// hands over space and the host fills it. `entropy_fill` and
+    /// `init_hash_seed` are the two, and `call_sync`'s `i64` return has nowhere
+    /// to put 16 bytes of hash seed or N bytes of CSPRNG output.
+    ///
+    /// The host writes into `out`, which is a **host-side** buffer; the engine
+    /// copies it into linear memory afterwards, so §5.5 still holds in this
+    /// direction: no host pointer enters guest memory.
+    ///
+    /// Returns the number of bytes written, or a negative value to deny.
+    /// The default denies unsupported fill operations.
+    fn call_fill(&mut self, _call: ImportCall<'_>, _out: &mut [u8]) -> i64 {
+        -1
+    }
+
     /// §8.5: the coarse clock is FROZEN for the duration of a dispatch slice
     /// and advances only at host-call/wake boundaries, which removes the
     /// measurement primitive Spectre-class attacks need. The engine asks the

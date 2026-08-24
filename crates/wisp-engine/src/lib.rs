@@ -14,7 +14,7 @@ pub mod template;
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{CpuBudget, DispatchOutcome, TrapInfo};
 pub use snapshot::InstanceImage;
-pub use template::ModuleHash;
+pub use template::{ModuleHash, Template};
 
 pub type Result<T> = anyhow::Result<T>;
 
