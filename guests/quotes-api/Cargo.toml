@@ -1,0 +1,13 @@
+[package]
+name = "quotes-api"
+description = "Handler initialization, host timer parking and streamed response probes"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-guest = { workspace = true, features = ["json"] }
+serde      = { workspace = true }

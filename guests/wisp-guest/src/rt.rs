@@ -52,7 +52,7 @@ use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc};
 use std::collections::{BTreeMap, VecDeque};
 
 /// What a top-level task hands back when it finishes.
-pub(crate) enum TaskOutcome {
+pub enum TaskOutcome {
     /// The dispatch is complete. Carries the response handle, or 0 for
     /// trigger types that have no response (an alarm does not, §5.2).
     Response(u32),
@@ -62,7 +62,7 @@ pub(crate) enum TaskOutcome {
     Trap(TrapCode),
 }
 
-pub(crate) type BoxTask = Pin<Box<dyn Future<Output = TaskOutcome> + 'static>>;
+pub type BoxTask = Pin<Box<dyn Future<Output = TaskOutcome> + 'static>>;
 
 struct Task {
     fut: BoxTask,
@@ -323,7 +323,8 @@ pub(crate) fn deliver(id: u64, res: ResultRecord) {
     });
 }
 
-pub(crate) fn pending_futures() -> usize {
+/// Futures registered and not yet delivered. Bounded by §11.1.
+pub fn pending_futures() -> usize {
     with(|rt| rt.futures.len())
 }
 
@@ -343,23 +344,23 @@ pub fn park_count() -> u64 {
 
 /// `wisp_alloc(size, align) -> ptr`: the host->guest buffer handoff (§5.5).
 /// The guest frees the buffer when the host hands it back.
-pub fn export_alloc(size: i32, align: i32) -> i32 {
-    let size = (size.max(0) as usize).max(1);
-    let align = (align.max(1) as usize).next_power_of_two();
+pub fn export_alloc(size: usize, align: usize) -> usize {
+    let size = size.max(1);
+    let align = align.max(1).next_power_of_two();
     let Ok(layout) = Layout::from_size_align(size, align) else { return 0 };
     let p = unsafe { raw_alloc(layout) };
     if p.is_null() {
         return 0;
     }
     with(|rt| rt.host_bufs.push((p as usize, size, align)));
-    p as i32
+    p as usize
 }
 
-fn free_host_buf(ptr: i32) {
+fn free_host_buf(ptr: usize) {
     let found = with(|rt| {
         rt.host_bufs
             .iter()
-            .position(|&(p, _, _)| p == ptr as usize)
+            .position(|&(p, _, _)| p == ptr)
             .map(|i| rt.host_bufs.swap_remove(i))
     });
     if let Some((p, size, align)) = found {
@@ -368,8 +369,10 @@ fn free_host_buf(ptr: i32) {
 }
 
 /// `wisp_handle(ptr, len) -> poll-status`.
-pub fn export_handle(ptr: i32, len: i32, make: fn(DispatchRecord) -> BoxTask) -> u64 {
-    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len.max(0) as usize) };
+pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask) -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    crate::install_panic_hook();
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
     let rec: DispatchRecord = match postcard::from_bytes(bytes) {
         Ok(r) => r,
         // Malformed dispatch encoding is an ABI break, not an app error.
@@ -381,20 +384,24 @@ pub fn export_handle(ptr: i32, len: i32, make: fn(DispatchRecord) -> BoxTask) ->
 }
 
 /// `wisp_wake(future, ptr, len) -> poll-status`.
-pub fn export_wake(future: i64, ptr: i32, len: i32) -> u64 {
-    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len.max(0) as usize) };
+pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
     let res: ResultRecord = match postcard::from_bytes(bytes) {
         Ok(r) => r,
         Err(_) => return PollStatus::Trapped { code: TrapCode::Protocol }.encode(),
     };
     free_host_buf(ptr);
-    deliver(future as u64, res);
+    deliver(future, res);
     run().encode()
 }
 
 #[cfg(test)]
 pub(crate) fn reset_for_test() {
-    with(|rt| *rt = Runtime::new());
+    // Move the old runtime OUT before dropping it: dropping a `Task` drops its
+    // `HostFuture`s, whose `Drop` re-enters the runtime to deregister. That
+    // rule holds in production too -- see `run`.
+    let old = with(|rt| core::mem::replace(rt, Runtime::new()));
+    drop(old);
 }
 
 #[cfg(test)]
@@ -411,8 +418,9 @@ mod tests {
         testing::with_stub_host(|host| {
             reset_for_test();
             let before = with(|rt| rt.polls);
-            spawn_main(Box::pin(async {
-                let f: HostFuture<()> = crate::future::new_unit(host.next_future_id());
+            let id = host.next_future_id();
+            spawn_main(Box::pin(async move {
+                let f: HostFuture<()> = crate::future::new_unit(id);
                 let _ = f.await;
                 TaskOutcome::Response(0)
             }));
@@ -515,11 +523,13 @@ mod tests {
 
     #[test]
     fn a_malformed_dispatch_traps_with_protocol() {
-        reset_for_test();
-        let junk = [0xFFu8; 8];
-        let st = PollStatus::decode(export_handle(junk.as_ptr() as i32, 8, |_| {
-            Box::pin(async { TaskOutcome::Response(0) })
-        }));
-        assert_eq!(st, PollStatus::Trapped { code: TrapCode::Protocol });
+        testing::with_stub_host(|_| {
+            reset_for_test();
+            let junk = [0xFFu8; 8];
+            let st = PollStatus::decode(export_handle(junk.as_ptr() as usize, 8, |_| {
+                Box::pin(async { TaskOutcome::Response(0) })
+            }));
+            assert_eq!(st, PollStatus::Trapped { code: TrapCode::Protocol });
+        });
     }
 }

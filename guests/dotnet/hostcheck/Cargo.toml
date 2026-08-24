@@ -1,0 +1,21 @@
+# Standalone host ABI checks for the managed HTTP fixture.
+[workspace]
+
+[package]
+name = "wisp-dotnet-hostcheck"
+version = "0.1.0"
+edition = "2021"
+license-file = "../../../LICENSE.txt"
+description = "Checks the managed HTTP fixture response ABI and sample memory round trip"
+
+[dependencies]
+wisp-abi = { path = "../../../crates/wisp-abi" }
+anyhow = "1"
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+# Same feature set as wisp-engine: `async` (fibers) stays OFF, because a fiber
+# is a hidden native stack and invariant 3 forbids those.
+wasmtime = { version = "48", default-features = false, features = [
+    "runtime", "std", "anyhow", "cranelift", "pooling-allocator", "backtrace", "demangle",
+    "parallel-compilation", "gc", "gc-null",
+] }

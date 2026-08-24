@@ -1,0 +1,67 @@
+//! Per-dispatch context (spec.md §2.2, §5.4, §7.4).
+
+use core::future::Future;
+
+use wisp_abi::dispatch::{DispatchRecord, TraceContext};
+
+use crate::future::{decode_unit, HostFuture};
+use crate::rt;
+
+
+
+
+
+
+/// Handed to every entrypoint. Cheap to clone; it is a view of the current
+/// dispatch, not a resource.
+#[derive(Clone)]
+pub struct Ctx {
+    pub dispatch_id: u64,
+    /// Coarse wall clock at dispatch start, frozen for the slice (§8.5).
+    pub now_ms: u64,
+    pub cpu_budget_ms: u32,
+    pub trace: TraceContext,
+    cancel_future: u64,
+}
+
+impl Ctx {
+    #[doc(hidden)]
+    pub fn from_record(rec: &DispatchRecord) -> Ctx {
+        Ctx {
+            dispatch_id: rec.dispatch_id,
+            now_ms: rec.now_ms,
+            cpu_budget_ms: rec.cpu_budget_ms,
+            trace: rec.trace.clone(),
+            cancel_future: rec.cancel_future,
+        }
+    }
+
+
+    /// Background work with more than one step. The host keeps the instance
+    /// alive because the task holds registered host futures -- so a `spawn`ed
+    /// task that awaits nothing is simply run to completion before the next
+    /// return to the host.
+    pub fn spawn(&self, fut: impl Future<Output = ()> + 'static) {
+        rt::spawn(fut);
+    }
+
+    /// §5.4. Cancellation is **not** an entrancy: the host cancels by
+    /// completing this future, and the guest observes it at its next await.
+    /// A dispatch that never awaits cannot observe cancellation and is killed
+    /// at its CPU budget instead -- abruptly, with no unwinding.
+    ///
+    /// Use with [`crate::future::select2`].
+    pub fn cancelled(&self) -> HostFuture<()> {
+        HostFuture::new(self.cancel_future, decode_unit)
+    }
+
+
+
+    /// Instrumentation for the host-side park tests (claim C3/C4).
+    pub fn park_count(&self) -> u64 {
+        rt::park_count()
+    }
+    pub fn poll_count(&self) -> u64 {
+        rt::poll_count()
+    }
+}

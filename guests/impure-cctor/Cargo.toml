@@ -1,0 +1,15 @@
+[package]
+name = "impure-cctor"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wisp-guest = { workspace = true }
+wisp-abi   = { workspace = true }
+serde      = { workspace = true }
+postcard   = { workspace = true }
+serde_json = { workspace = true }

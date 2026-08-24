@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- Pinned deliberately. The experimental feed publishes several builds a
+         week and they are not all mutually compatible; an unpinned float here
+         is a build that breaks on someone else's machine on a different day. -->
+    <ILCompilerVersion>10.0.0-rc.1.26357.1</ILCompilerVersion>
+  </PropertyGroup>
+</Project>

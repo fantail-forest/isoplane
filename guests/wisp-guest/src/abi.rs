@@ -32,6 +32,16 @@ macro_rules! wres {
     ($t:ident) => { &[wty!($t)] };
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! wstub_body {
+    ($name:ident, [$($p:ident),*],) => {{
+        crate::abi::host_stub_hook(stringify!($name), &[$($p as i64),*]);
+    }};
+    ($name:ident, [$($p:ident),*], $r:ident) => {{
+        crate::abi::host_stub_hook(stringify!($name), &[$($p as i64),*]) as $r
+    }};
+}
+
 macro_rules! wisp_imports {
     ($(
         $(#[$m:meta])*
@@ -52,9 +62,8 @@ macro_rules! wisp_imports {
         #[allow(unused_variables, dead_code)]
         pub mod stubs {
             $( $(#[$m])*
-               pub unsafe fn $name($($p: $pt),*) $(-> $r)? {
-                   crate::abi::host_stub_hook(stringify!($name), &[$($p as i64),*])
-                       $(as $r)?
+               pub unsafe extern "C" fn $name($($p: $pt),*) $(-> $r)? {
+                   wstub_body!($name, [$($p),*], $($r)?)
                }
             )*
         }
