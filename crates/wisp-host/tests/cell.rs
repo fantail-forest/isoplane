@@ -23,6 +23,7 @@ impl Resolver for Fixed {
 
 struct Rig {
     cell: Arc<Cell>,
+    #[allow(dead_code)]
     fetcher: Arc<FakeFetcher>,
 }
 
