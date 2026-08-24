@@ -7,7 +7,9 @@ use std::sync::atomic::Ordering;
 use common::*;
 use wisp_abi::result::ResultRecord;
 use wisp_abi::status::PollStatus;
-use wisp_engine::{Completion, CpuBudget, EngineConfig, InstanceOps, TrapKind, WispEngine};
+use wisp_engine::{
+    Completion, CpuBudget, EngineConfig, InstanceOps, KillPhase, TrapKind, WispEngine,
+};
 
 /// Small engine: 64 slots, 4 MiB ceiling, small guard. The guard is not the
 /// 2 GiB default because every test process would otherwise reserve tens of
@@ -294,8 +296,10 @@ fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
 // §6.4 / §2.5.8 / C7 — budget kills are abrupt and self-limiting
 // ---------------------------------------------------------------------------
 
+/// §6.4/§2.5.8, and the sharper form the spec took in v1.4: an *uncooperative*
+/// spinner is killed at **B+G**, not at B, and only then is the kill abrupt.
 #[test]
-fn a_spinner_is_killed_at_its_cpu_budget_and_the_instance_is_discarded() {
+fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
     let e = test_engine();
     // A tight back-edge loop: epoch checks are Cranelift-inserted at back-edges.
     // The guest marks memory before it starts spinning and would mark it again
@@ -323,6 +327,7 @@ fn a_spinner_is_killed_at_its_cpu_budget_and_the_instance_is_discarded() {
     let budget = CpuBudget {
         cpu_ms: 20,
         wall_ms_cap: 30_000,
+        spent_ns: 0,
     };
     let out = i.dispatch(&http_dispatch(1), budget);
 
@@ -332,18 +337,39 @@ fn a_spinner_is_killed_at_its_cpu_budget_and_the_instance_is_discarded() {
     assert_eq!(out.completion, Completion::BudgetKill);
     assert!(!out.completion.instance_survives());
 
-    // The kill lands close to the budget: the meter is the thread clock, so
-    // this is a CPU measurement, not a wall-clock one.
+    assert_eq!(out.kill, Some(KillPhase::Hard));
+
+    // The kill lands at B+G, not at B. G = max(2 ms, 10% of 20 ms) = 2 ms, so
+    // the hard deadline is 22 ms; the meter is the thread clock, so this is a
+    // CPU measurement and not a wall-clock one.
     let cpu_ms = out.cpu_ns as f64 / 1e6;
+    let hard_ms = budget.hard_ns() as f64 / 1e6;
+    assert_eq!(hard_ms, 22.0);
     assert!(
-        (20.0..30.0).contains(&cpu_ms),
-        "killed after {cpu_ms:.2} ms of CPU against a 20 ms budget"
+        cpu_ms >= hard_ms,
+        "killed after {cpu_ms:.2} ms, before the {hard_ms:.0} ms hard deadline — the grace \
+         window was cut short"
+    );
+    assert!(
+        cpu_ms < hard_ms + 8.0,
+        "killed after {cpu_ms:.2} ms against a {hard_ms:.0} ms hard deadline"
+    );
+    // §6.4: the overage is recorded, and it is the CPU past B — grace included.
+    assert!(
+        out.overage_ns >= budget.grace_ns(),
+        "a dispatch that ran the whole grace window must be recorded at least G of overage; \
+         recorded {} ns against G = {} ns",
+        out.overage_ns,
+        budget.grace_ns()
     );
     eprintln!(
-        "BUDGET KILL: budget 20 ms, recorded {:.3} ms CPU, {:.3} ms wall, overshoot {:.3} ms",
+        "HARD KILL: B=20 ms G={:.0} ms => B+G={hard_ms:.0} ms; recorded {:.3} ms CPU \
+         ({:.3} ms overage), {:.3} ms wall, overshoot past B+G {:.3} ms",
+        budget.grace_ns() as f64 / 1e6,
         cpu_ms,
+        out.overage_ns as f64 / 1e6,
         out.wall_ns as f64 / 1e6,
-        cpu_ms - 20.0
+        cpu_ms - hard_ms
     );
 
     // §2.5.8, checked rather than asserted in prose: the guest was inside the
@@ -361,25 +387,328 @@ fn a_spinner_is_killed_at_its_cpu_budget_and_the_instance_is_discarded() {
         "§2.5.8: no `finally`-equivalent may run after a budget kill"
     );
 
-    // §6.4: "an instance killed at budget is discarded". Every entry point
-    // must now refuse — `instance_survives` governs, it does not merely
-    // describe.
+    // §6.4: the instance is a TOMBSTONE. Not "discarded by convention" —
+    // every host-side operation on it fails, and a call into the guest is a
+    // hard assertion failure. Kill-then-call is checked in its own
+    // conformance test below; here it is enough that the state is set and the
+    // two host-side operations that could launder it refuse.
     assert!(i.is_poisoned());
+    assert!(i.tombstone_reason().is_some());
     assert!(!i.is_parked());
-    let again = i.dispatch(&http_dispatch(2), budget);
-    assert_eq!(again.completion, Completion::Trapped);
-    assert_eq!(
-        again.cpu_ns, 0,
-        "a refused dispatch must not bill the tenant"
-    );
     assert!(
         i.reset().is_err(),
-        "a killed instance must not be laundered back into the pool"
+        "a hard-killed instance must not be laundered back into the pool"
     );
     assert!(
         i.capture_mutable_state().is_err(),
-        "§13: never snapshot arbitrary memory"
+        "§6.4: deltas are never captured from a tombstone"
     );
+}
+
+// ---------------------------------------------------------------------------
+// §6.4 — the three CONFORMANCE TESTS, named in the spec
+//
+//   1. kill-then-call MUST observe refusal;
+//   2. a dispatch that yields during grace MUST be observed clean;
+//   3. a genuine spin MUST tombstone at exactly B+G.
+//
+// They are written against hand-built `.wat` guests rather than the Rust SDK
+// for the reason the fixture module gives: a guest-SDK bug must never be
+// mistakable for an engine bug. The SDK's own cooperation is proved
+// separately, end-to-end through a real cell, in
+// `crates/wisp-host/tests/two_phase_kill.rs`.
+// ---------------------------------------------------------------------------
+
+/// **Conformance 1: kill-then-call MUST observe refusal.**
+///
+/// This is the test Appendix C F2 asked for. The finding was that wasmtime
+/// does *not* poison a store after a budget trap — a killed instance answered
+/// a later exported call correctly, globals intact — so "the instance is
+/// discarded" is an invariant the platform has to enforce rather than one the
+/// engine provides.
+///
+/// The refusal is a panic, which is what "hard assertion failure" means, so
+/// the test has to catch it. That is the point: an `Err` could be ignored by
+/// a caller, and a caller ignoring it is exactly the bug.
+#[test]
+fn conformance_kill_then_call_is_refused() {
+    let e = test_engine();
+    let wasm = guest(
+        4,
+        "",
+        r#"
+  (global $spins (export "g_spins") (mut i64) (i64.const 0))
+  (func $spin (loop $l (global.set $spins (i64.add (global.get $spins) (i64.const 1))) (br $l)))"#,
+        "(call $spin) (i64.const 0)",
+        DONE,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    let budget = CpuBudget {
+        cpu_ms: 5,
+        wall_ms_cap: 30_000,
+        spent_ns: 0,
+    };
+
+    let out = i.dispatch(&http_dispatch(1), budget);
+    assert_eq!(out.completion, Completion::BudgetKill);
+    assert!(i.is_poisoned(), "a hard kill must tombstone");
+
+    // The call that F2 watched succeed. It must now be refused.
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        i.dispatch(&http_dispatch(2), budget)
+    }));
+    let payload = refused.expect_err(
+        "a tombstoned instance answered a second dispatch — this is exactly Appendix C F2, and \
+         §6.4 makes it a hard assertion failure",
+    );
+    let msg = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .unwrap_or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        });
+    assert!(msg.contains("TOMBSTONED"), "unhelpful refusal: {msg}");
+
+    // Every other door is shut too, and these refuse rather than panic
+    // because they are host-side operations on memory, not calls into a guest.
+    assert!(i.reset().is_err());
+    assert!(
+        i.capture_mutable_state().is_err(),
+        "deltas are never captured from a tombstone"
+    );
+    assert!(!i.is_capture_eligible());
+    assert!(!i.is_parked());
+}
+
+/// **Conformance 2: a dispatch that yields during grace MUST be observed
+/// clean (no tombstone).**
+///
+/// The fixture is the negative control's twin: the identical spin loop, plus
+/// a `budget_remaining_ns` check every 4096 iterations. When the check goes
+/// non-positive it stores a marker — the `finally` §2.5.8 says a *hard* kill
+/// never runs — and returns `done`.
+///
+/// Everything the spec promises a clean kill is asserted here: the completion
+/// is `CleanKill`, the instance is NOT tombstoned, `reset` works, the slot is
+/// reusable for a subsequent dispatch, and the overage is recorded.
+#[test]
+fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
+    let e = test_engine();
+    let wasm = guest(
+        4,
+        &import("budget_remaining_ns", "", "(result i64)"),
+        r#"
+  ;; The cooperative loop: a slab of pure arithmetic, then one read of the
+  ;; host-published remaining budget, repeat. §4.6's runtime layer does the
+  ;; same thing at its allocation slow path, GC entry and task switch.
+  ;;
+  ;; The slab size is the interesting parameter and it is what the third
+  ;; conformance test is really about: cooperation is only cooperation if the
+  ;; gap between checks is comfortably inside G. 1024 xorshift rounds is a few
+  ;; microseconds against a 2 ms window. An earlier draft of this fixture
+  ;; checked every 4096 turns of a loop whose body was itself a host call,
+  ;; which put the checks ~1.6 ms apart and made the "clean" kill land past
+  ;; B+G about half the time — a real bug in miniature, and exactly the one a
+  ;; runtime layer with a coarse safepoint interval would ship.
+  (func $cooperate (result i32)
+    (local $n i32) (local $x i64)
+    (local.set $x (i64.const 88172645463325252))
+    (block $out
+      (loop $l
+        (local.set $n (i32.const 0))
+        (block $ib (loop $il
+          (br_if $ib (i32.ge_u (local.get $n) (i32.const 1024)))
+          (local.set $x (i64.xor (local.get $x) (i64.shl (local.get $x) (i64.const 13))))
+          (local.set $x (i64.xor (local.get $x) (i64.shr_u (local.get $x) (i64.const 7))))
+          (local.set $x (i64.xor (local.get $x) (i64.shl (local.get $x) (i64.const 17))))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (br $il)))
+        (i64.store (i32.const 3016) (local.get $x))
+        (br_if $out (i64.le_s (call $budget_remaining_ns) (i64.const 0)))
+        (br $l)))
+    (i32.const 1))"#,
+        r#"
+    (i64.store (i32.const 3000) (i64.const 1))          ;; entered
+    (drop (call $cooperate))
+    (i64.store (i32.const 3008) (i64.const 1))          ;; the `finally`
+    (i64.const 0)"#,
+        DONE,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    let budget = CpuBudget {
+        cpu_ms: 20,
+        wall_ms_cap: 30_000,
+        spent_ns: 0,
+    };
+
+    let out = i.dispatch(&http_dispatch(1), budget);
+
+    assert!(
+        out.trap.is_none(),
+        "a clean kill is a return, not a trap: {:?}",
+        out.trap
+    );
+    assert_eq!(out.completion, Completion::CleanKill);
+    assert_eq!(out.kill, Some(KillPhase::Clean));
+    assert!(
+        out.completion.instance_survives(),
+        "§6.4: the slot is reusable"
+    );
+    assert!(!out.completion.tombstones());
+
+    // §2.5.8's difference, made visible: on a clean kill the code after the
+    // loop DOES run. The hard-kill test above asserts the same address stays
+    // zero, and the two fixtures differ only in the budget check.
+    let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
+    let (entered, cleaned_up) = {
+        let m = i.memory();
+        (read(m, 3000), read(m, 3008))
+    };
+    assert_eq!(entered, 1);
+    assert_eq!(cleaned_up, 1, "§6.4: on a clean kill `finally` runs");
+
+    // The overage is real and is recorded: it ran past B, inside G, and stopped.
+    let cpu_ms = out.cpu_ns as f64 / 1e6;
+    assert!(
+        cpu_ms >= 20.0,
+        "the dispatch must actually have crossed B, not merely returned early"
+    );
+    assert!(
+        out.cpu_ns < budget.hard_ns(),
+        "a clean kill must land INSIDE the grace window: {cpu_ms:.3} ms against a {:.0} ms hard \
+         deadline",
+        budget.hard_ns() as f64 / 1e6
+    );
+    assert!(out.overage_ns > 0, "§6.4: the overage CPU is recorded");
+    eprintln!(
+        "CLEAN KILL: B=20 ms G={:.0} ms; returned after {:.3} ms CPU ({:.3} ms overage, \
+         {:.1}% of G used)",
+        budget.grace_ns() as f64 / 1e6,
+        cpu_ms,
+        out.overage_ns as f64 / 1e6,
+        100.0 * out.overage_ns as f64 / budget.grace_ns() as f64
+    );
+
+    // Not a tombstone: it can be reset and reused, which is the whole
+    // economic point of the grace window.
+    assert!(!i.is_poisoned());
+    assert!(i.tombstone_reason().is_none());
+    i.reset()
+        .expect("§6.4: the slot is reusable after a clean kill");
+    let again = i.dispatch(
+        &http_dispatch(2),
+        CpuBudget {
+            cpu_ms: 20,
+            wall_ms_cap: 30_000,
+            spent_ns: 0,
+        },
+    );
+    assert_eq!(
+        again.completion,
+        Completion::CleanKill,
+        "the reused slot must run the guest again, not refuse it"
+    );
+}
+
+/// **Conformance 3: a genuine spin MUST tombstone at exactly B+G.**
+///
+/// "Exactly" is bounded by the mechanism, not by wishes: epochs tick every
+/// 200 µs and the check is at a back-edge, so the achievable statement is
+/// "at B+G, within one epoch tick plus scheduling noise". This measures the
+/// distribution over 30 runs and pins both sides — the kill must not come
+/// early (that would mean grace was not really offered) and must not come
+/// late (that would mean the deadline is soft).
+///
+/// It also runs the pinned-bit case, because §4.6's *unsafe-to-trap* bit is
+/// the one mechanism that could turn the hard deadline into a negotiation.
+#[test]
+fn conformance_a_genuine_spin_tombstones_at_exactly_b_plus_g() {
+    let e = test_engine();
+    let spin = "(func $spin (loop $l (br $l)))";
+    let plain = guest(4, "", spin, "(call $spin) (i64.const 0)", DONE);
+    // The same spin, with §4.6's bit pinned before it starts. A pinned bit
+    // buys exactly G, nothing more.
+    let pinned = guest(
+        4,
+        &import("unsafe_to_trap", "(param i32)", ""),
+        spin,
+        "(call $unsafe_to_trap (i32.const 1)) (call $spin) (i64.const 0)",
+        DONE,
+    );
+
+    for (label, wasm) in [("spin", plain), ("spin+pinned-bit", pinned)] {
+        let t = e.load_template(&wasm).unwrap();
+        let budget = CpuBudget {
+            cpu_ms: 10,
+            wall_ms_cap: 30_000,
+            spent_ns: 0,
+        };
+        let (b, g, hard) = (budget.budget_ns(), budget.grace_ns(), budget.hard_ns());
+        assert_eq!((b, g, hard), (10_000_000, 2_000_000, 12_000_000));
+
+        let mut deltas = Vec::new();
+        let mut deferrals = 0u64;
+        for n in 0..30u64 {
+            let mut i = e
+                .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+                .unwrap();
+            let out = i.dispatch(&http_dispatch(n), budget);
+
+            assert_eq!(
+                out.completion,
+                Completion::BudgetKill,
+                "[{label}] must hard-kill"
+            );
+            assert_eq!(out.kill, Some(KillPhase::Hard));
+            assert_eq!(out.trap.as_ref().unwrap().kind, TrapKind::BudgetExceeded);
+            assert!(i.is_poisoned(), "[{label}] §6.4: a hard kill tombstones");
+            assert!(
+                !i.is_capture_eligible(),
+                "[{label}] no delta from a tombstone"
+            );
+            assert!(
+                out.cpu_ns >= hard,
+                "[{label}] killed at {} ns, BEFORE the B+G deadline of {hard} ns — the grace \
+                 window was not really offered",
+                out.cpu_ns
+            );
+            deferrals += out.grace_deferrals;
+            deltas.push(out.cpu_ns - hard);
+        }
+        deltas.sort_unstable();
+        eprintln!(
+            "[{label}] B+G = {:.0} ms; overshoot past it p50={:.0} us p90={:.0} us max={:.0} us \
+             (grace deferrals: {deferrals})",
+            hard as f64 / 1e6,
+            pct(&deltas, 0.50) as f64 / 1000.0,
+            pct(&deltas, 0.90) as f64 / 1000.0,
+            *deltas.last().unwrap() as f64 / 1000.0
+        );
+        // One epoch tick is 200 µs; allow a generous multiple for scheduling
+        // noise on a shared machine but stay far below G itself, so "exactly
+        // B+G" remains a claim with teeth.
+        assert!(
+            pct(&deltas, 0.90) < g / 2,
+            "[{label}] the hard deadline is soft: p90 overshoot {} ns against G = {g} ns",
+            pct(&deltas, 0.90)
+        );
+        if label.contains("pinned") {
+            assert!(
+                deferrals > 0,
+                "the pinned-bit fixture must actually have caused grace entry to defer, or it is \
+                 not testing what it claims"
+            );
+        }
+    }
 }
 
 #[test]
@@ -399,15 +728,15 @@ fn budget_kill_latency_is_bounded_by_the_epoch_tick() {
         let mut i = e
             .activate(&t, Box::new(TestBindings::new(Recorder::default())))
             .unwrap();
-        let out = i.dispatch(
-            &http_dispatch(n),
-            CpuBudget {
-                cpu_ms: 5,
-                wall_ms_cap: 30_000,
-            },
-        );
+        let b = CpuBudget {
+            cpu_ms: 5,
+            wall_ms_cap: 30_000,
+            spent_ns: 0,
+        };
+        let out = i.dispatch(&http_dispatch(n), b);
         assert_eq!(out.trap.as_ref().unwrap().kind, TrapKind::BudgetExceeded);
-        over.push(out.cpu_ns.saturating_sub(5_000_000));
+        // Overshoot is measured past B+G, which is where the kill is now due.
+        over.push(out.cpu_ns.saturating_sub(b.hard_ns()));
     }
     over.sort_unstable();
     eprintln!(
@@ -897,6 +1226,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
     let out = i.run_initialize(CpuBudget {
         cpu_ms: 10_000,
         wall_ms_cap: 10_000,
+        spent_ns: 0,
     });
 
     let trap = out
@@ -960,13 +1290,19 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
     let out = i.run_initialize(CpuBudget {
         cpu_ms: 10_000,
         wall_ms_cap: 10_000,
+        spent_ns: 0,
     });
     assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
 
     let m = i.memory();
-    assert_eq!(
-        &m[512..528],
-        &[0xABu8; 16],
+    // `TestBindings::call_fill` varies its byte per call — a fake CSPRNG that
+    // answered a constant could not tell a per-call draw from a cached one —
+    // so each fill is checked for being uniform and non-zero rather than for
+    // one particular value. What matters here is the *extent* copied, which
+    // is what the (ptr, cap) contract is about.
+    let seed = &m[512..528];
+    assert!(
+        seed.iter().all(|b| *b == seed[0]) && seed[0] != 0,
         "the escrowed seed must be delivered"
     );
     assert_eq!(
@@ -975,12 +1311,16 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         "a zero-capacity probe must report the full length, not what was copied"
     );
     assert_eq!(u32::from_le_bytes(m[604..608].try_into().unwrap()), 9_000);
-    assert_eq!(
-        &m[1024..1032],
-        &[0xABu8; 8],
+    let capped = &m[1024..1032];
+    assert!(
+        capped.iter().all(|b| *b == capped[0]) && capped[0] != 0,
         "the capped read must fill exactly `cap` bytes"
     );
     assert_eq!(m[1032], 0, "and must not write one byte past `cap`");
+    assert_ne!(
+        seed[0], capped[0],
+        "two host fills in one dispatch must not be the same draw"
+    );
 
     // Cross-check against the contract: every import the sandbox admits is
     // marked init_visible, and nothing in a binding group is.
@@ -1114,6 +1454,7 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
         CpuBudget {
             cpu_ms: 600_000,
             wall_ms_cap: 40,
+            spent_ns: 0,
         },
     );
     let trap = out.trap.as_ref().expect("the backstop must trip");
@@ -1240,4 +1581,282 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
     e.load_template(&wat::parse_str(deterministic).unwrap())
         .expect("the deterministic SIMD subset must still load");
+}
+
+// ---------------------------------------------------------------------------
+// §4.3 — the WASI PAL adapter, at RUNTIME
+//
+// `wisp-control` proves the adapter validates and pre-initializes. These
+// prove the other half: that a module carrying `wasi:*` imports now
+// *instantiates in a cell*, and that the two channel properties survive the
+// trip through the data plane's linker. Both properties fail silently if
+// broken — the module still runs, every other test still passes, and a
+// channel §8 closed is quietly open again — which is exactly why they are
+// asserted here and not assumed from the deploy-time tests.
+// ---------------------------------------------------------------------------
+
+/// A guest that imports `wasi:*` as well as `wisp`, with the `cabi_realloc`
+/// export the canonical ABI needs to return a `list<u8>`.
+fn pal_guest(handle: &str) -> Vec<u8> {
+    let imports = format!(
+        r#"
+  (import "wasi:clocks/monotonic-clock@0.2.0" "now" (func $wasi_now (result i64)))
+  (import "wasi:random/random@0.2.0" "get-random-bytes" (func $wasi_random (param i64 i32)))
+  (import "wasi:cli/exit@0.2.0" "exit" (func $wasi_exit (param i32)))
+  (import "wasi:cli/environment@0.2.0" "get-environment" (func $wasi_env (param i32)))
+"#
+    );
+    let funcs = r#"
+  ;; The canonical ABI's allocator. A bump allocator over a fixed arena is
+  ;; enough: the adapter calls it once per `get-random-bytes`.
+  (global $cabi (mut i32) (i32.const 40000))
+  (func (export "cabi_realloc")
+        (param $old i32) (param $oldsz i32) (param $align i32) (param $newsz i32) (result i32)
+    (local $p i32)
+    (local.set $p (global.get $cabi))
+    (global.set $cabi
+      (i32.and (i32.add (i32.add (local.get $p) (local.get $newsz)) (i32.const 15))
+               (i32.const -16)))
+    (local.get $p))
+"#;
+    guest(4, &imports, funcs, handle, DONE)
+}
+
+/// §4.3: a module declaring `wasi:*` imports **instantiates**. Before the
+/// adapter reached the data plane's linker it could pass validation and
+/// pre-initialization and then fail at activation, which is the worst place
+/// for a capability decision to surface.
+#[test]
+fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
+    let e = test_engine();
+    let wasm = pal_guest("(i64.const 0)");
+    let t = e
+        .load_template(&wasm)
+        .expect("a whitelisted wasi: surface must instantiate");
+
+    assert!(
+        t.uses_pal(),
+        "the adapter should have been composed for this module"
+    );
+    let composed: Vec<String> = t.pal_composed().iter().map(|d| d.full_name()).collect();
+    assert_eq!(composed.len(), 4, "composed: {composed:?}");
+
+    // §4.3's audit trail: a capability that came in through a WASI door must
+    // be nameable as the `wisp:platform` capability it resolves to, or "no new
+    // channels" is a promise nobody can check.
+    let caps: Vec<&str> = t
+        .pal_composed()
+        .iter()
+        .filter_map(|d| d.disposition.capability())
+        .collect();
+    assert!(caps.contains(&"clock_now_coarse"), "caps: {caps:?}");
+    assert!(caps.contains(&"entropy_fill"), "caps: {caps:?}");
+    assert_eq!(
+        caps.len(),
+        2,
+        "the adapter drew on more than the two declared capabilities: {caps:?}"
+    );
+
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    assert_eq!(
+        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        Completion::Done
+    );
+}
+
+/// §8.4/§8.5, through the runtime linker: `monotonic-clock::now` is
+/// **quantized to the coarse clock and frozen intra-slice**.
+///
+/// The negative control is the whole test. A real nanosecond monotonic clock
+/// — which is what `wasmtime-wasi` would hand you, and the obvious thing to
+/// reach for — passes "the guest can read the time" and fails both assertions
+/// below. §8.4 denies guests a fine timer because it is the measurement
+/// primitive most Spectre-class attacks need.
+#[test]
+fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
+    let e = test_engine();
+    // Two reads in one dispatch, stored side by side.
+    let wasm = pal_guest(
+        r#"
+    (i64.store (i32.const 3000) (call $wasi_now))
+    (i64.store (i32.const 3008) (call $wasi_now))
+    (i64.const 0)"#,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let rec = Recorder::default();
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(rec.clone())))
+        .unwrap();
+
+    let read = |i: &mut wisp_engine::Instance, off: usize| -> i64 {
+        let m = i.memory();
+        i64::from_le_bytes(m[off..off + 8].try_into().unwrap())
+    };
+
+    assert_eq!(
+        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        Completion::Done
+    );
+    let (a, b) = (read(&mut i, 3000), read(&mut i, 3008));
+    assert_eq!(
+        a, b,
+        "§8.5: the clock is FROZEN within a slice — two reads cannot differ"
+    );
+    assert_eq!(
+        a % 1_000_000,
+        0,
+        "§8.4/§4.3: the delegated clock must be quantized to the coarse clock's 1 ms, so no \
+         sub-millisecond bit exists to leak; got {a} ns"
+    );
+
+    // Across slices it may advance — and must still be quantized. A clock
+    // that never moved would pass the two assertions above while being
+    // useless, so this is the control on the control.
+    assert_eq!(
+        i.dispatch(&http_dispatch(2), CpuBudget::http()).completion,
+        Completion::Done
+    );
+    let c = read(&mut i, 3000);
+    assert!(
+        c > a,
+        "the coarse clock must still advance between slices: {a} then {c}"
+    );
+    assert_eq!(
+        c % 1_000_000,
+        0,
+        "quantization must survive the slice boundary"
+    );
+}
+
+/// §8.5, through the runtime linker: `random::get-random-bytes` reaches the
+/// host CSPRNG **per call and caches nothing**.
+///
+/// Entropy captured into a
+/// template, or memoized anywhere on the delegation path, would be shared by
+/// every clone of that template — and would look completely fine, because
+/// random-looking bytes arrive either way.
+#[test]
+fn the_pal_entropy_delegation_draws_per_call_and_never_caches() {
+    let e = test_engine();
+    // Two 16-byte draws in one dispatch, into two return areas.
+    let wasm = pal_guest(
+        r#"
+    (call $wasi_random (i64.const 16) (i32.const 3000))
+    (call $wasi_random (i64.const 16) (i32.const 3016))
+    (i64.const 0)"#,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let mut b = TestBindings::new(Recorder::default());
+    b.allow_fill = true;
+    let mut i = e.activate(&t, Box::new(b)).unwrap();
+
+    assert_eq!(
+        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        Completion::Done
+    );
+
+    // Each return area holds (ptr, len) into guest memory.
+    let (p1, l1, p2, l2) = {
+        let m = i.memory();
+        let rd = |o: usize| u32::from_le_bytes(m[o..o + 4].try_into().unwrap()) as usize;
+        (rd(3000), rd(3004), rd(3016), rd(3020))
+    };
+    assert_eq!(
+        (l1, l2),
+        (16, 16),
+        "the adapter must return the requested length"
+    );
+    assert_ne!(
+        p1, p2,
+        "each draw must allocate its own buffer through `cabi_realloc`"
+    );
+
+    let (first, second) = {
+        let m = i.memory();
+        (m[p1..p1 + 16].to_vec(), m[p2..p2 + 16].to_vec())
+    };
+    // `TestBindings::call_fill` writes an incrementing byte per call, so two
+    // draws differ iff the host was really asked twice. A cached buffer —
+    // anywhere on the path — makes these equal.
+    assert_ne!(
+        first, second,
+        "§8.5/§4.4: two draws in one dispatch returned identical bytes, so something on the \
+         delegation path cached the CSPRNG output; clones of this template would share an RNG \
+         stream and nothing else in the suite would notice"
+    );
+}
+
+/// §4.3: a `TrapOnCall` entry **traps when called**, and does not quietly
+/// return zero.
+///
+/// This is the negative control for the whitelist itself. A silent
+/// zero-returning stub really does succeed — the guest carries on, the
+/// dispatch returns 200, and a denied capability has become a supported one
+/// that happens to answer badly. §13's disposition for a trap (fail the
+/// dispatch, discard the instance) is the honest answer for a declaration
+/// that is toolchain residue.
+#[test]
+fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
+    let e = test_engine();
+    let wasm = pal_guest(
+        r#"
+    (call $wasi_exit (i32.const 0))
+    (i64.store (i32.const 3000) (i64.const 1))   ;; must never run
+    (i64.const 0)"#,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+
+    let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    assert_eq!(
+        out.completion,
+        Completion::Trapped,
+        "a denied capability must not answer"
+    );
+    let msg = out
+        .trap
+        .as_ref()
+        .map(|t| t.message.clone())
+        .unwrap_or_default();
+    assert!(
+        msg.contains("wasi:cli/exit") && msg.contains("trap-on-call"),
+        "the trap must name the import and say why: {msg}"
+    );
+    assert!(i.is_poisoned(), "§13: a trapped instance is discarded");
+}
+
+/// §2.5.4, through the runtime linker: `get-environment` answers the **empty
+/// list**, which is the same fidelity as absent.
+#[test]
+fn the_pal_environment_delegation_answers_empty() {
+    let e = test_engine();
+    let wasm = pal_guest(
+        r#"
+    (i64.store (i32.const 3000) (i64.const -1))  ;; poison the return area
+    (call $wasi_env (i32.const 3000))
+    (i64.const 0)"#,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    assert_eq!(
+        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        Completion::Done
+    );
+
+    let (ptr, len) = {
+        let m = i.memory();
+        let rd = |o: usize| u32::from_le_bytes(m[o..o + 4].try_into().unwrap());
+        (rd(3000), rd(3004))
+    };
+    assert_eq!(
+        (ptr, len),
+        (0, 0),
+        "§2.5.4: there is no ambient environment, so the list is empty"
+    );
 }

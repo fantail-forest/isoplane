@@ -108,17 +108,17 @@ macro_rules! rt_surface_list {
 
 macro_rules! surface {
     ($( fn $n:ident ( $($a:ident : $t:ty),* $(,)? ) -> $r:ty; )*) => {
-        /// §4.6 layered: the runtime is an *import*. Note the module name is
-        /// `env`, which is also where `wasm-ld --import-memory` puts the
-        /// imported linear memory, so one `Linker::instance("env", base)` in
-        /// the host satisfies the whole runtime world at once.
+        // §4.6 layered: the runtime is an *import*. Note the module name is
+        // `env`, which is also where `wasm-ld --import-memory` puts the
+        // imported linear memory, so one `Linker::instance("env", base)` in
+        // the host satisfies the whole runtime world at once.
         #[cfg(feature = "layered")]
         #[link(wasm_import_module = "env")]
         extern "C" {
             $( pub fn $n($($a: $t),*) -> $r; )*
         }
 
-        /// §4.2 self-contained: the identical functions, statically linked.
+        // §4.2 self-contained: the identical functions, statically linked.
         #[cfg(feature = "selfcontained")]
         pub use wisp_rtlib::abi::{ $($n),* };
     };

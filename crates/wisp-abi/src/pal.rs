@@ -1,7 +1,7 @@
 //! The canonical table of admitted WASI imports and their dispositions.
 //! Validation and linking read this table; delegated entries name their host capability.
 
-use crate::imports::{self, Sig, Ty};
+use crate::imports::{Sig, Ty};
 
 const I32: Ty = Ty::I32;
 const I64: Ty = Ty::I64;

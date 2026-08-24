@@ -526,6 +526,15 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         r.cell
             .dispatch_blocking(&module, Target::Handler { route: "/".into() }, rec, T)
             .unwrap();
+        assert!(
+            wait_for(
+                || r.cell
+                    .idle_instances(&module)
+                    .is_some_and(|(w, f)| w + f >= 1),
+                Duration::from_secs(5)
+            ),
+            "the instance never returned to the pool after dispatch {i}"
+        );
     }
     let text = r.cell.metrics_text();
     for needle in [

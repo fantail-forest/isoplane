@@ -4125,6 +4125,7 @@ name = "wisp-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "blake3",
  "clap",
  "hex",
@@ -4260,6 +4261,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "blake3",
  "bytes",
  "clap",

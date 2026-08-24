@@ -82,9 +82,9 @@ rt! { pub fn rt_heap_used() -> u32 { crate::heap::heap_used() as u32 } }
 rt! { pub fn rt_memory_bytes() -> u32 { crate::heap::memory_bytes() as u32 } }
 rt! { pub fn rt_allocs() -> u64 { crate::heap::heap_allocs() } }
 
-/// §4.4 pre-initialization entry for the base layer: everything the runtime
-/// can compute once per machine, computed once per machine. Wizer calls this
-/// and freezes the result as the base template.
+// §4.4 pre-initialization entry for the base layer: everything the runtime
+// can compute once per machine, computed once per machine. Wizer calls this
+// and freezes the result as the base template.
 rt! { pub fn wisp_initialize() {
     if INITIALIZED != 0 { return; }
     INITIALIZED = 1;
@@ -370,8 +370,8 @@ rt! { pub fn rt_parse_f64(p: *const u8, l: u32, o: *mut f64) -> i32 {
     let Some(s) = st(p, l) else { return -1 };
     match s.trim().parse::<f64>() { Ok(f) => { *o = f; 0 } Err(_) => -1 } } }
 
-/// Civil-from-days (Howard Hinnant's algorithm), so the runtime layer owns
-/// date formatting the way a BCL would.
+// Civil-from-days (Howard Hinnant's algorithm), so the runtime layer owns
+// date formatting the way a BCL would.
 rt! { pub fn rt_fmt_date_iso(ms: i64) -> i32 {
     let secs = ms.div_euclid(1000);
     let days = secs.div_euclid(86_400);
@@ -501,8 +501,8 @@ rt! { pub fn rt_response(status: u32, body: *const u8, bl: u32) -> i32 {
     };
     match wisp_abi::encode(&head) { Ok(v) => put(&v), Err(_) => -2 } } }
 
-/// The future table §4.2 puts in the runtime layer: the app never sees an id
-/// it did not get from here.
+// The future table §4.2 puts in the runtime layer: the app never sees an id
+// it did not get from here.
 rt! { pub fn rt_future_next() -> u64 { FUTURE_SEQ += 1; FUTURE_SEQ } }
 
 rt! { pub fn rt_status_done(response: u32) -> u64 {

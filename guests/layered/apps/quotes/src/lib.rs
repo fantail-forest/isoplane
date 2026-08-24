@@ -31,6 +31,7 @@ unsafe fn take_out_after(n: i32) -> Vec<u8> {
     if n < 0 { Vec::new() } else { take_out() }
 }
 
+#[allow(dead_code)]
 unsafe fn rt_str(n: i32) -> alloc::string::String {
     alloc::string::String::from_utf8(take_out_after(n)).unwrap_or_default()
 }

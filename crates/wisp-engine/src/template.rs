@@ -59,6 +59,20 @@ pub struct Template {
 
 pub(crate) struct TemplateInner {
     pub module: Module,
+    /// §4.3: a linker carrying this module's **WASI PAL adapter**, or `None`
+    /// when the module imports only `wisp` — which is every guest the Rust SDK
+    /// builds, so the common path costs exactly nothing.
+    ///
+    /// Per *template* rather than per engine or per activation, and both ends
+    /// of that matter. Per engine is impossible: a `TrapOnCall` stub is
+    /// generated from the type the module itself declares (`PalDef::sig` is
+    /// deliberately `None` for those), so it cannot be built without a module
+    /// in hand. Per activation would put a ~45-entry map clone on the §6.5
+    /// "activation p50 ≤ 1 ms" path to save nothing — templates are shared by
+    /// every instance of a module on the machine (§4.4).
+    pub pal_linker: Option<wasmtime::Linker<crate::state::StoreState>>,
+    /// What the adapter composed, for the §4.3 audit trail.
+    pub pal_composed: Vec<&'static wisp_abi::pal::PalDef>,
     /// The post-init linear memory as laid down at deploy time. This is the
     /// baseline the hibernation page-diff is taken against (§6.6) and the
     /// oracle for "reset restores template contents".
@@ -112,6 +126,25 @@ impl Template {
     /// §4.4: whether the module can be driven through the sealed init sandbox.
     pub fn has_initialize(&self) -> bool {
         self.inner.has_initialize
+    }
+
+    /// §4.3: the `wasi:*` imports the PAL adapter composed for this template,
+    /// empty for a module that declares none.
+    ///
+    /// This is the audit trail the no-new-channels rule needs to be
+    /// *checkable*: a capability that entered through a WASI door has to be
+    /// nameable afterwards, or "no new channels" is a promise nobody can
+    /// verify. The two that can carry a real capability —
+    /// `monotonic-clock::now` and `random::get-random-bytes` — resolve to
+    /// `clock_now_coarse` and `entropy_fill`, which are already in the
+    /// tenant-facing manifest.
+    pub fn pal_composed(&self) -> &[&'static wisp_abi::pal::PalDef] {
+        &self.inner.pal_composed
+    }
+
+    /// Whether this template needed the WASI PAL adapter at all.
+    pub fn uses_pal(&self) -> bool {
+        self.inner.pal_linker.is_some()
     }
 
     /// Names of the exported mutable globals, in the order `InstanceImage`
@@ -249,10 +282,22 @@ pub(crate) fn structural_check(wasm: &[u8]) -> Result<()> {
                     // linker would fail instantiation anyway; failing here names
                     // the offender instead of producing wasmtime's generic
                     // "unknown import".
-                    if !wisp_abi::imports::is_declared(imp.module, imp.name) {
+                    //
+                    // "Declared" means one of two enumerated tables, never a
+                    // pattern: `wisp_abi::imports::IMPORTS`, or — since v1.4's
+                    // §4.3 — `wisp_abi::pal::PAL_IMPORTS`, the WASI whitelist
+                    // the deploy-time adapter composes (Appendix C, F7). A
+                    // `wasi:*` name outside that whitelist is still an
+                    // attempted capability and is still refused here; there is
+                    // no `wasi:`-prefix escape hatch, which is the whole point
+                    // of the table being a list rather than a rule.
+                    let declared = wisp_abi::imports::is_declared(imp.module, imp.name)
+                        || wisp_abi::pal::lookup(imp.module, imp.name).is_some();
+                    if !declared {
                         bail!(
                             "V1: undeclared import `{}::{}` — imports are the complete \
-                             capability surface (§4.3)",
+                             capability surface (§4.3), and neither `wisp:platform` nor the \
+                             WASI PAL whitelist declares this one",
                             imp.module,
                             imp.name
                         );

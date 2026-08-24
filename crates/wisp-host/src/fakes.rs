@@ -33,9 +33,10 @@ pub enum Step {
     Park { imports: Vec<(&'static str, u64)> },
     /// Return `trapped`.
     Trap(TrapCode),
-    /// Burn CPU on the calling thread until the budget kills it. Real CPU, on
-    /// a real pool thread, killed by a real deadline check.
+    /// Runs until the hard CPU deadline, ignoring grace cancellation.
     Spin,
+    /// Notices grace and unwinds for unwind_us before returning Done.
+    CooperativeSpin { unwind_us: u64 },
     /// Touch `pages` pages of linear memory, so the dirty set is measurable.
     Dirty { pages: usize },
     /// Emit `times` log lines of `bytes` each, then return `done`. §10: log
@@ -275,27 +276,68 @@ impl FakeInstance {
                 });
                 PollStatus::Done { response: h as u32 }
             }
-            Step::Spin => {
-                // Real CPU on the real calling thread, killed by a real
-                // deadline. §6.4's epoch counter exists to *deliver* the kill,
-                // and this is the same shape: check, then terminate without
-                // unwinding.
-                let deadline_ns = budget.cpu_ms as u64 * 1_000_000;
+            Step::Spin | Step::CooperativeSpin { .. } => {
+                // Real CPU on the real calling thread, and a real deadline
+                // check delivering §6.4's two phases in the right order.
+                let cooperative = matches!(step, Step::CooperativeSpin { .. });
+                let unwind_ns = match step {
+                    Step::CooperativeSpin { unwind_us } => unwind_us * 1_000,
+                    _ => 0,
+                };
+                let b_ns = budget.budget_ns();
+                let hard_ns = budget.hard_ns();
                 let wall_deadline =
                     std::time::Duration::from_millis(budget.wall_ms_cap.max(1) as u64);
+                let mut entered_grace = false;
                 let mut x: u64 = 0;
                 loop {
                     for i in 0..20_000u64 {
                         x = x.wrapping_mul(6364136223846793005).wrapping_add(i);
                     }
                     std::hint::black_box(x);
-                    if cpu.elapsed_ns() >= deadline_ns || wall.elapsed() >= wall_deadline {
+                    let now = budget.spent_ns + cpu.elapsed_ns();
+                    if !entered_grace && now >= b_ns {
+                        entered_grace = true;
+                        // Exactly what the engine's epoch callback does at B:
+                        // complete the cancellation future and poison this
+                        // dispatch's imports (§5.3, §5.4).
+                        self.bindings.enter_grace();
+                        if cooperative {
+                            // The unwind: `finally` blocks, disposals, and the
+                            // return. Accounted like any other CPU.
+                            let stop = cpu.elapsed_ns() + unwind_ns;
+                            while cpu.elapsed_ns() < stop {
+                                for i in 0..1_000u64 {
+                                    x = x.wrapping_mul(2862933555777941757).wrapping_add(i);
+                                }
+                                std::hint::black_box(x);
+                            }
+                            break;
+                        }
+                    }
+                    if now >= hard_ns || wall.elapsed() >= wall_deadline {
                         break;
                     }
                 }
                 let cpu_ns = cpu.elapsed_ns();
+                let overage_ns = (budget.spent_ns + cpu_ns).saturating_sub(b_ns);
                 self.stack_empty = true;
                 self.last_parked = false;
+                if cooperative {
+                    // §6.4: the slot is reusable. This is a *return*, not a
+                    // trap, so nothing about the instance is arbitrary.
+                    self.survived_last_call = true;
+                    return DispatchOutcome {
+                        status: PollStatus::Done { response: 0 },
+                        completion: Completion::CleanKill,
+                        cpu_ns,
+                        wall_ns: wall.elapsed().as_nanos() as u64,
+                        trap: None,
+                        kill: Some(wisp_engine::KillPhase::Clean),
+                        overage_ns,
+                        grace_deferrals: 0,
+                    };
+                }
                 self.survived_last_call = false;
                 return DispatchOutcome {
                     status: PollStatus::Trapped {
@@ -307,8 +349,13 @@ impl FakeInstance {
                     trap: Some(TrapInfo {
                         kind: TrapKind::BudgetExceeded,
                         // §2.5.8: no unwinding, no finally, no cleanup quantum.
-                        message: "cpu budget exceeded; terminated without unwinding".into(),
+                        message: "cpu budget exceeded at the B+G hard deadline; terminated \
+                                  without unwinding"
+                            .into(),
                     }),
+                    kill: Some(wisp_engine::KillPhase::Hard),
+                    overage_ns,
+                    grace_deferrals: 0,
                 };
             }
         };
@@ -330,6 +377,9 @@ impl FakeInstance {
                 }),
                 _ => None,
             },
+            kill: None,
+            overage_ns: 0,
+            grace_deferrals: 0,
         }
     }
 
@@ -379,6 +429,9 @@ impl InstanceOps for FakeInstance {
             cpu_ns: 0,
             wall_ns: 0,
             trap: None,
+            kill: None,
+            overage_ns: 0,
+            grace_deferrals: 0,
         }
     }
     fn reset(&mut self) -> anyhow::Result<()> {

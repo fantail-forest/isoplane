@@ -92,6 +92,8 @@ fn config(dir: &std::path::Path) -> NodeConfig {
             tier: TierConfig::Fast,
             wasm: None,
         }],
+        init_visible_vars: Default::default(),
+        init_sandbox: Default::default(),
     }];
     cfg
 }
@@ -138,8 +140,20 @@ async fn start(head: ResponseHead) -> Rig {
         .real
         .clone()
         .expect("the node has its execution backend");
-    real.register_version("quotes", "v1", "acme", manifest("quotes"), &guest(&head))
-        .expect("registering the module");
+    // Through the real pipeline (§4.1), like every other deploy on this node:
+    // the .wat fixture is validated, compiled, sealed into the registry and
+    // pulled back out before a cell ever sees it. It exports no
+    // `wisp_initialize`, so §4.4 builds no template — which the record says.
+    real.deploy_version(
+        "quotes",
+        "v1",
+        "acme",
+        manifest("quotes"),
+        &guest(&head),
+        wispd::config::InitSandbox::Sealed,
+    )
+    .await
+    .expect("deploying the module");
 
     let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -281,3 +295,119 @@ async fn a_node_reports_measurements_from_served_requests() {
 // ---------------------------------------------------------------------------
 // Durable Instances on a real cell (§7).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// §4.4 end to end: the daemon runs the deploy pipeline, so a real guest's
+// init-visible imports are consumed at pre-init instead of trapping at runtime.
+// ---------------------------------------------------------------------------
+
+/// Configuration supplied during preparation is observed by the serving guest.
+#[tokio::test]
+async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
+    let Some(path) = quotes_api_path() else {
+        eprintln!(
+            "skipping: guests/out/quotes-api.wasm is not built (run `scripts/dev guests/build.sh`)"
+        );
+        return;
+    };
+
+    let dir = std::env::temp_dir().join(format!(
+        "wispd-preinit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cfg = config(&dir);
+    // The whole point is the *startup* path: `Node::build` reads the artifact,
+    // runs the pipeline and registers the template before the proxy accepts.
+    cfg.apps[0].versions[0].wasm = Some(path);
+    cfg.apps[0].init_visible_vars = [("REGION".to_string(), "nz-akl".to_string())]
+        .into_iter()
+        .collect();
+
+    let node = Node::build(cfg).expect("a real node must assemble");
+
+    // The deploy record the daemon wrote for its own startup deploy.
+    let rec = node
+        .deploys
+        .lock()
+        .first()
+        .cloned()
+        .expect("startup deploys are recorded");
+    assert!(
+        rec.pipeline_ran,
+        "the daemon must run the pipeline, not register raw"
+    );
+    assert!(
+        rec.from_template,
+        "a guest that exports wisp_initialize must yield a template"
+    );
+    assert!(
+        rec.stages.iter().all(|s| !s.simulated),
+        "every stage of a real deploy is measured: {:?}",
+        rec.stages
+    );
+    assert!(
+        rec.within_slo,
+        "§9.3: routes live in < 60 s (took {} ms)",
+        rec.total_ms
+    );
+    let pre = rec
+        .preinit
+        .as_ref()
+        .expect("a template implies a pre-init summary");
+    // The impure initializer (`BOOT_MS`, which reads the clock) must have been
+    // deferred by the replay loop, and the pure ones must not have been.
+    let reasons: Vec<String> = pre["deferred_reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d[1].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        reasons,
+        vec!["clock_now_coarse".to_string()],
+        "exactly the clock-reading initializer defers (§4.4 impure-cctor deferral)"
+    );
+    assert_eq!(
+        pre["init_pal"], "sealed",
+        "a Rust SDK guest needs no runtime PAL"
+    );
+
+    let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
+    tokio::spawn(node.proxy.clone().serve(p));
+    tokio::spawn(wispd::http::serve(node.clone(), a));
+    let rig = Rig {
+        proxy,
+        admin,
+        node,
+        _dir: TempDir(dir),
+    };
+
+    let r = get(rig.proxy, "quotes.wisp.dev", "/memo").await;
+    assert_eq!(r.status, StatusCode::OK, "body: {}", r.body);
+    assert!(
+        !r.body.contains("capability_violation"),
+        "the init-visible imports must have been consumed at deploy time: {}",
+        r.body
+    );
+    // Deploy-time config, in the guest's own parsed shape, inside the template.
+    assert!(
+        r.body.contains("\"config_region\":\"nz-akl\""),
+        "body: {}",
+        r.body
+    );
+
+    rig.shutdown().await;
+}
+
+fn quotes_api_path() -> Option<std::path::PathBuf> {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests/out/quotes-api.wasm");
+    path.exists().then_some(path)
+}

@@ -86,7 +86,40 @@ pub struct Metrics {
     pub dispatches: AtomicU64,
     pub wakes: AtomicU64,
     pub traps: AtomicU64,
+    /// Every CPU-budget kill, clean and hard. Kept as the total so a dashboard
+    /// built against v1.1 still reads something true.
     pub budget_kills: AtomicU64,
+
+    // -- §6.4's two-phase kill, and the SLI it produces --------------------
+    /// Dispatches that entered grace and **returned inside it**: `finally`
+    /// ran, the instance stayed consistent, the slot was reused.
+    pub clean_kills: AtomicU64,
+    /// Dispatches still executing at **B+G**. Terminated without unwinding,
+    /// instance tombstoned. These are the ones the hang breaker counts.
+    pub hard_kills: AtomicU64,
+    /// Dispatches that crossed B at all — clean, hard, or still unwinding.
+    /// `grace_entries - clean_kills - hard_kills` is the number that parked
+    /// mid-unwind and are being driven to completion by their own poisoned
+    /// futures.
+    pub grace_entries: AtomicU64,
+    /// §4.6: epoch ticks that found the runtime layer's *unsafe-to-trap* bit
+    /// set and deferred grace entry. A guest pinning the bit shows up here and
+    /// still dies at B+G, which is the property worth being able to see.
+    pub grace_deferrals: AtomicU64,
+    /// Instances §6.4 required the platform to tombstone. Equal to
+    /// `hard_kills + traps` in a correct implementation; counted separately
+    /// because "the platform must enforce it" is exactly the claim, and a
+    /// divergence between these two is the bug Appendix C F2 describes.
+    pub tombstones: AtomicU64,
+    /// Host calls refused because the target was a tombstone. §10's negative
+    /// control for the rule: a green dashboard with this permanently at zero
+    /// and no failing probe is unfalsifiable.
+    pub tombstone_refusals: AtomicU64,
+    /// CPU recorded **past B** on kills of either phase (§6.4: "the overage CPU
+    /// is recorded"). Already inside the tenant's `cpu_ns`; broken out so the
+    /// share is visible.
+    pub overage_ns: AtomicU64,
+
     pub shed: AtomicU64,
     pub breaker_rejections: AtomicU64,
     /// §5.4's rule biting. Mostly benign: two wake jobs for one instance, the
@@ -169,6 +202,29 @@ impl Metrics {
             wakes: l(&self.wakes),
             traps: l(&self.traps),
             budget_kills: l(&self.budget_kills),
+            clean_kills: l(&self.clean_kills),
+            hard_kills: l(&self.hard_kills),
+            grace_entries: l(&self.grace_entries),
+            grace_deferrals: l(&self.grace_deferrals),
+            tombstones: l(&self.tombstones),
+            tombstone_refusals: l(&self.tombstone_refusals),
+            overage_ns: l(&self.overage_ns),
+            // §6.4: **the clean:hard ratio is a first-class SLI** — "a healthy
+            // fleet runs in the thousands". It is a metric and not a log line
+            // precisely because it is a ratio: no single kill event tells you
+            // anything, and the number only means something aggregated and
+            // watched over time. A fleet whose ratio collapses has guests that
+            // stopped cooperating, or a runtime layer that stopped raising
+            // `BudgetExceededException` at its natural boundaries — neither is
+            // visible in any per-request signal.
+            //
+            // Zero hard kills is not "infinite", it is "no evidence yet": the
+            // ratio is reported as the clean count in that case, which is the
+            // most it can honestly claim.
+            clean_hard_ratio: {
+                let (c, h) = (l(&self.clean_kills), l(&self.hard_kills));
+                if h == 0 { c as f64 } else { c as f64 / h as f64 }
+            },
             shed: l(&self.shed),
             breaker_rejections: l(&self.breaker_rejections),
             reentrancy_refusals: l(&self.reentrancy_refusals),
@@ -238,6 +294,15 @@ pub struct MetricsSnapshot {
     pub wakes: u64,
     pub traps: u64,
     pub budget_kills: u64,
+    pub clean_kills: u64,
+    pub hard_kills: u64,
+    pub grace_entries: u64,
+    pub grace_deferrals: u64,
+    pub tombstones: u64,
+    pub tombstone_refusals: u64,
+    pub overage_ns: u64,
+    /// §6.4's first-class SLI. See the note in [`Metrics::snapshot`].
+    pub clean_hard_ratio: f64,
     pub shed: u64,
     pub breaker_rejections: u64,
     pub reentrancy_refusals: u64,
@@ -280,6 +345,14 @@ impl MetricsSnapshot {
             ("wakes", self.wakes.to_string()),
             ("traps", self.traps.to_string()),
             ("budget_kills", self.budget_kills.to_string()),
+            ("clean_kills", self.clean_kills.to_string()),
+            ("hard_kills", self.hard_kills.to_string()),
+            ("grace_entries", self.grace_entries.to_string()),
+            ("grace_deferrals", self.grace_deferrals.to_string()),
+            ("tombstones", self.tombstones.to_string()),
+            ("tombstone_refusals", self.tombstone_refusals.to_string()),
+            ("overage_ms", format!("{:.3}", self.overage_ns as f64 / 1e6)),
+            ("clean_hard_ratio", format!("{:.6}", self.clean_hard_ratio)),
             ("shed", self.shed.to_string()),
             ("breaker_rejections", self.breaker_rejections.to_string()),
             ("reentrancy_refusals", self.reentrancy_refusals.to_string()),
@@ -366,6 +439,44 @@ mod tests {
         assert_eq!(h.p50(), 0);
         assert_eq!(h.p99(), 0);
         assert_eq!(h.mean(), 0.0);
+    }
+
+    /// §6.4: *"the clean:hard ratio is a first-class SLI — a healthy fleet
+    /// runs in the thousands"*. It has to be a number on the scrape, not a
+    /// sentence in a log.
+    #[test]
+    fn the_clean_hard_ratio_is_a_scraped_metric() {
+        let m = Metrics::new();
+        for _ in 0..3_000 {
+            m.clean_kills.fetch_add(1, Ordering::Relaxed);
+        }
+        m.hard_kills.fetch_add(1, Ordering::Relaxed);
+        let s = m.snapshot();
+        assert_eq!(s.clean_hard_ratio, 3_000.0, "a healthy fleet runs in the thousands");
+        assert!(m.to_text().contains("wisp_cell_clean_hard_ratio 3000.000000"));
+        let json: serde_json::Value = serde_json::from_str(&m.to_json()).unwrap();
+        assert_eq!(json["clean_kills"], 3_000);
+        assert_eq!(json["hard_kills"], 1);
+    }
+
+    /// **Negative control** (§10). The ratio must be able to say "unhealthy".
+    /// A denominator guard that silently reported a large number whenever
+    /// hard kills were rare would make the SLI unfalsifiable — which is the
+    /// exact failure mode §10's negative-control rule was written for
+    /// (Appendix C, F4: measurement bugs run in the flattering direction).
+    #[test]
+    fn the_clean_hard_ratio_can_report_an_unhealthy_fleet() {
+        let m = Metrics::new();
+        m.clean_kills.fetch_add(1, Ordering::Relaxed);
+        for _ in 0..1_000 {
+            m.hard_kills.fetch_add(1, Ordering::Relaxed);
+        }
+        assert!(
+            m.snapshot().clean_hard_ratio < 0.01,
+            "a fleet that is all hard kills must read as such, not as healthy"
+        );
+        // And with no kills at all it must not invent a healthy-looking number.
+        assert_eq!(Metrics::new().snapshot().clean_hard_ratio, 0.0);
     }
 
     /// §10's list, present and scrapeable. The harness reads this endpoint, so

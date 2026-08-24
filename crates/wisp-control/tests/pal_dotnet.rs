@@ -328,3 +328,186 @@ fn negative_control_renaming_to_another_whitelisted_import_still_passes() {
         32
     );
 }
+
+// ---------------------------------------------------------------------------
+// past the validator: the sealed init sandbox composes the adapter too
+// ---------------------------------------------------------------------------
+
+/// §4.3 gets a module *deployed*; §4.4 says pre-initialization is a **MUST**
+/// for a .NET guest ("G1's activation and density targets are unmeetable
+/// without it"). A module that validates and then cannot be pre-initialized
+/// has not been made deployable, so the init sandbox composes the same table:
+/// delegated entries under §4.4's scope rule, the remainder trapping.
+///
+/// This is the test that catches the thing `docs/dotnet-findings.md` §1.2
+/// measured the hard way — `--wasi=trap` does not merely leave 29 imports
+/// unused, it *fails inside `_initialize`* on
+/// `wasi:cli/environment@0.2.0::get-environment`. The runtime reaches for the
+/// environment before tenant code exists.
+#[test]
+fn the_stock_dotnet_module_pre_initializes_through_the_adapter() {
+    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
+        return;
+    };
+    validator::validate(&wasm, Limits::default()).expect("must validate first");
+
+    let out = wisp_control::PreInitializer::new()
+        // The managed runtime comes up outside any init unit, so its clock and
+        // entropy reads are served deterministically from the escrowed seed;
+        // a tenant static constructor doing the same still traps and defers.
+        .with_pal(wisp_control::InitPal::RuntimeBringUp)
+        .run(
+            &wasm,
+            &wisp_control::PreInitRequest {
+                module_hash: wisp_engine::ModuleHash::of(&wasm),
+                init_blob: Vec::new(),
+            },
+        )
+        .expect("a stock .NET module must pre-initialize through the PAL adapter");
+
+    println!(
+        "stock -> template: {} -> {} bytes, {} pass(es), deferred {:?}, {} refusals",
+        wasm.len(),
+        out.template_bytes,
+        out.passes,
+        out.deferred_units,
+        out.capability_refusals
+    );
+    println!(
+        "capabilities the .NET runtime reached during bring-up: {:?}",
+        out.pal_calls
+    );
+    assert!(out.template_bytes > 0);
+
+    // §8.7 reproducible-given-seed: the entropy the runtime consumed came from
+    // the escrowed seed, so a second run with the same seed is identical.
+    let again = wisp_control::PreInitializer::new()
+        .with_pal(wisp_control::InitPal::RuntimeBringUp)
+        .run(
+            &wasm,
+            &wisp_control::PreInitRequest {
+                module_hash: wisp_engine::ModuleHash::of(&wasm),
+                init_blob: Vec::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        out.reproducible_digest, again.reproducible_digest,
+        "the WASI entropy delegation must draw from the escrowed seed, not host entropy"
+    );
+    assert_eq!(
+        out.template_wasm, again.template_wasm,
+        "templates must be byte-identical"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// the last seam: the data plane loads it
+// ---------------------------------------------------------------------------
+
+/// **The whole chain, on the real artifact**: validate → pre-initialize →
+/// load the resulting template into the engine the cells run.
+///
+/// This is the test that would have caught the failure `wispd` hit after the
+/// control plane was already green:
+///
+/// ```text
+/// V1: undeclared import `wasi:io/error@0.2.0::[resource-drop]error`
+/// ```
+///
+/// — `wisp-engine`'s own structural check, which repeats V1 cheaply so that
+/// an import outside the table never reaches a slot, and which knew about
+/// `imports::IMPORTS` but not yet about `pal::PAL_IMPORTS`. A capability
+/// decision that passes deploy and fails at activation is the worst possible
+/// place for it to surface: the tenant has already been told yes.
+///
+/// The template — not the raw module — is what a cell loads, so that is what
+/// this hands the engine.
+#[test]
+fn the_stock_dotnet_template_loads_into_the_data_plane() {
+    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
+        return;
+    };
+    validator::validate(&wasm, Limits::default()).expect("must validate");
+
+    let out = wisp_control::PreInitializer::new()
+        .with_pal(wisp_control::InitPal::RuntimeBringUp)
+        .run(
+            &wasm,
+            &wisp_control::PreInitRequest {
+                module_hash: wisp_engine::ModuleHash::of(&wasm),
+                init_blob: Vec::new(),
+            },
+        )
+        .expect("must pre-initialize");
+
+    let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        max_instances: 8,
+        // The .NET module declares 19..2048 pages; a smaller ceiling would
+        // fail for a reason that has nothing to do with the adapter.
+        max_memory_bytes: 128 << 20,
+        epoch_tick_us: 200,
+        pooling: true,
+        spectre_mitigations: true,
+        guard_size_bytes: 2 << 20,
+    })
+    .expect("engine");
+
+    let t = engine
+        .load_template(&out.template_wasm)
+        .expect("the data plane must load a template carrying a whitelisted wasi: surface");
+
+    assert!(
+        t.uses_pal(),
+        "the runtime linker should have composed the adapter"
+    );
+    let composed: Vec<String> = t.pal_composed().iter().map(|d| d.full_name()).collect();
+    println!("data plane composed {} wasi imports", composed.len());
+    assert_eq!(
+        composed.len(),
+        32,
+        "F7's 32, all the way through to the cell"
+    );
+
+    // Same two capabilities as the validator reported, reached through the
+    // same table. If these ever disagree, one of the two is lying to the
+    // tenant about what their code can do.
+    let mut caps: Vec<&str> = t
+        .pal_composed()
+        .iter()
+        .filter_map(|d| d.disposition.capability())
+        .collect();
+    caps.sort_unstable();
+    caps.dedup();
+    assert_eq!(caps, vec!["clock_now_coarse", "entropy_fill"]);
+}
+
+/// **The negative control (§10)** for the engine-side check, on the same real
+/// artifact: rename one import off the whitelist and the data plane must
+/// refuse the template. Otherwise the assertion above only proves that
+/// `load_template` accepts things.
+#[test]
+fn negative_control_the_data_plane_refuses_an_off_whitelist_wasi_import() {
+    let Some(wasm) = artifact("wisp_guest_dotnet_stock") else {
+        return;
+    };
+    let mutated = rename_import(&wasm, "get-directories", "get-directoryZZ");
+
+    let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        max_instances: 8,
+        max_memory_bytes: 128 << 20,
+        epoch_tick_us: 200,
+        pooling: true,
+        spectre_mitigations: true,
+        guard_size_bytes: 2 << 20,
+    })
+    .expect("engine");
+
+    let err = engine
+        .load_template(&mutated)
+        .expect_err("an import outside the whitelist must never reach a slot");
+    let msg = format!("{err:#}");
+    println!("{msg}");
+    assert!(msg.contains("V1"));
+    assert!(msg.contains("get-directoryZZ"));
+}

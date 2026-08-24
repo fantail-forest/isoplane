@@ -293,7 +293,12 @@ impl Instance {
             trap.as_ref().map(|t| t.kind),
             Some(TrapKind::BudgetExceeded)
         );
-        let in_grace = grace_at_ns.is_some();
+        let dispatch_cpu = budget.spent_ns.saturating_add(cpu_ns);
+        // A dispatch is in grace if it crossed B — whether or not the epoch
+        // callback got there first.
+        //
+        // The guest can return after exceeding its budget before the next epoch callback.
+        let in_grace = grace_at_ns.is_some() || dispatch_cpu >= budget.budget_ns();
         let completion = if hard_kill {
             Completion::BudgetKill
         } else {
@@ -309,8 +314,7 @@ impl Instance {
             // it trapped for an unrelated reason). No phase to report.
             _ => None,
         };
-        // Record CPU consumption beyond the dispatch allowance.
-        let dispatch_cpu = budget.spent_ns.saturating_add(cpu_ns);
+
         let overage_ns = if in_grace || hard_kill {
             dispatch_cpu.saturating_sub(budget.budget_ns())
         } else {

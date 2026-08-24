@@ -157,7 +157,12 @@ impl HostBindings for TestBindings {
         if !self.allow_fill {
             return -1;
         }
+        // Vary per call, deliberately.
+        //
+        // A fake CSPRNG that answers the same bytes every time cannot tell a
+        // real per-call draw from a cached one.
         out.fill(self.fill_byte);
+        self.fill_byte = self.fill_byte.wrapping_add(1);
         // `(ptr, cap) -> full length`: the host may know more than it could fit.
         self.full_length.unwrap_or(out.len() as i64)
     }

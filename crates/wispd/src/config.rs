@@ -129,6 +129,28 @@ fn default_max_hot() -> usize {
     32
 }
 
+/// Selects additional runtime initialization imports.
+/// Application entropy admission is independent of this selector.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InitSandbox {
+    /// Uses the default initialization capability policy.
+    #[default]
+    Sealed,
+    /// Permits additional runtime imports when the host records no active initialization unit.
+    #[serde(rename = "runtime-bringup", alias = "runtime-bring-up")]
+    RuntimeBringUp,
+}
+
+impl InitSandbox {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InitSandbox::Sealed => "sealed",
+            InitSandbox::RuntimeBringUp => "runtime-bringup",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub name: String,
@@ -145,6 +167,16 @@ pub struct AppConfig {
     pub path_prefix: String,
     #[serde(default)]
     pub versions: Vec<VersionConfig>,
+    /// §4.4 / §9.5: non-secret vars the tenant marks `init-visible`, handed to
+    /// the sealed init sandbox as a data blob so config parsing happens once at
+    /// deploy time instead of once per activation. Runtime secrets are declared
+    /// by name elsewhere and are never available here (§8.6).
+    #[serde(default)]
+    pub init_visible_vars: BTreeMap<String, String>,
+    /// Additional runtime initialization capability policy.
+    /// Application entropy is governed separately by the preparation context.
+    #[serde(default)]
+    pub init_sandbox: InitSandbox,
 }
 
 fn default_path_prefix() -> String {
@@ -238,6 +270,8 @@ impl NodeConfig {
                     tier: TierConfig::Fast,
                     wasm: None,
                 }],
+                init_visible_vars: BTreeMap::new(),
+                init_sandbox: InitSandbox::Sealed,
             }],
             data_dir: default_data_dir(),
             engine: EngineLimits::default(),

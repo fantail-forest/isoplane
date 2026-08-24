@@ -64,6 +64,8 @@ pub enum EnterError {
     Busy,
     /// The slot currently has no resident instance.
     NotResident(LifecycleTier),
+    /// The instance was discarded and refuses further guest calls.
+    Tombstoned,
 }
 
 impl std::fmt::Display for EnterError {
@@ -71,6 +73,10 @@ impl std::fmt::Display for EnterError {
         match self {
             EnterError::Busy => write!(f, "instance already has a call in flight"),
             EnterError::NotResident(s) => write!(f, "instance is {}", s.as_str()),
+            EnterError::Tombstoned => write!(
+                f,
+                "instance is a tombstone: it was hard-killed or trapped and refuses further calls"
+            ),
         }
     }
 }
@@ -95,6 +101,7 @@ impl CallGuard<'_> {
     /// Drop the instance and mark its slot discarded.
     pub fn destroy(mut self) {
         self.inst = None;
+        self.slot.tombstone();
         self.slot.set_state(LifecycleTier::Discarded);
     }
 }
@@ -142,6 +149,11 @@ struct SlotInner {
     shed_on_capture: Vec<u64>,
     /// Set on entry or rehydration and cleared by reset.
     dirty: bool,
+    /// Once set, nothing enters this slot again: not a dispatch,
+    /// not a wake, not a `gc-hint` on the hibernation path. It is set *before*
+    /// the instance is dropped, so the window between "it was hard-killed" and
+    /// "its memory is gone" is not a window at all.
+    tombstoned: bool,
 }
 
 /// A resident instance, its shared host context, and lifecycle bookkeeping.
@@ -171,6 +183,7 @@ impl Slot {
                 delta_key: None,
                 shed_on_capture: Vec::new(),
                 dirty: false,
+                tombstoned: false,
             }),
             parked_ms_total: AtomicU64::new(0),
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
@@ -190,6 +203,9 @@ impl Slot {
     /// A second entry into this slot is refused while its guard is alive.
     pub fn enter(&self) -> Result<CallGuard<'_>, EnterError> {
         let mut g = self.inner.lock();
+        if g.tombstoned {
+            return Err(EnterError::Tombstoned);
+        }
         if g.in_call {
             return Err(EnterError::Busy);
         }
@@ -223,10 +239,20 @@ impl Slot {
         self.inner.lock().in_call
     }
 
-    /// Whether the slot is parked, resident, and has no call in flight.
+    /// Whether the slot is parked, resident, not tombstoned, and has no call in flight.
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
-        !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
+        !g.tombstoned && !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
+    }
+
+    /// Mark this slot as discarded, refusing further guest calls.
+    pub fn tombstone(&self) {
+        let mut g = self.inner.lock();
+        g.tombstoned = true;
+    }
+
+    pub fn is_tombstoned(&self) -> bool {
+        self.inner.lock().tombstoned
     }
 
     pub fn is_pristine(&self) -> bool {
@@ -277,6 +303,9 @@ impl Slot {
     /// Refuse while a call is in flight or the state is not parked.
     pub fn hibernate(&self, delta_key: String, shed: Vec<u64>) -> Result<(), HibernateRefused> {
         let mut g = self.inner.lock();
+        if g.tombstoned {
+            return Err(HibernateRefused::Tombstoned);
+        }
         if g.in_call {
             return Err(HibernateRefused::Hot);
         }
@@ -295,6 +324,7 @@ impl Slot {
     /// Install the caller's restored instance and return the slot to parked.
     pub fn rehydrate(&self, inst: Box<dyn InstanceOps + Send>) {
         let mut g = self.inner.lock();
+        debug_assert!(!g.tombstoned, "a tombstone cannot be rehydrated");
         debug_assert_eq!(g.state, LifecycleTier::Hibernated);
         g.resident = Some(inst);
         g.state = LifecycleTier::Parked;
@@ -307,6 +337,12 @@ impl Slot {
     /// Return an error if a call is in flight or the engine reset fails.
     pub fn reset(&self) -> anyhow::Result<()> {
         let mut g = self.inner.lock();
+        // Success would let InstancePool::release hand out the discarded slot again.
+        if g.tombstoned {
+            anyhow::bail!(
+                "refusing to reset a tombstoned slot: a hard-killed instance is discarded"
+            );
+        }
         if g.in_call {
             anyhow::bail!("cannot reset an instance with a call in flight");
         }
@@ -334,6 +370,8 @@ impl Slot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HibernateRefused {
+    /// The instance was tombstoned by a hard execution stop.
+    Tombstoned,
     /// A call guard is still in flight.
     Hot,
     NotParked(LifecycleTier),
@@ -403,6 +441,8 @@ pub fn decide(
         Completion::Trapped | Completion::BudgetKill => {
             RequestEnd::Disposed(Disposition(DispositionKind::Discard))
         }
+        // Cooperative termination resets dispatch state under either reuse policy.
+        Completion::CleanKill => RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
         Completion::Done => {
             if wait_until_outstanding {
                 return RequestEnd::RetainedForWaitUntil;

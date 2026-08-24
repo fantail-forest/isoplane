@@ -46,6 +46,7 @@ use wisp_abi::status::PollStatus;
 pub mod bindings;
 pub mod budget;
 pub mod instance;
+pub mod pal;
 pub mod snapshot;
 pub mod template;
 
@@ -276,9 +277,36 @@ impl WispEngine {
         store.limiter(|d| &mut d.limits);
         store.set_epoch_deadline(u64::MAX / 2);
 
-        let inst = self
-            .inner
-            .linker
+        // §4.3: compose the WASI PAL adapter over whatever `wasi:*` the module
+        // declares, before anything tries to instantiate it. A module that
+        // declares none — every Rust-SDK guest — takes the engine's shared
+        // linker unchanged and pays nothing.
+        //
+        // Composition happens here rather than at activation because a
+        // `TrapOnCall` stub is typed from the module's own declaration, so it
+        // needs the module; and because the result is a property of the
+        // template, which every instance of the module on the machine shares.
+        let needs_pal = module.imports().any(|i| pal::is_foreign_module(i.module()));
+        let (pal_linker, pal_composed) = if needs_pal {
+            let mut l = self.inner.linker.clone();
+            let composed = pal::link(&mut l, &module).context(
+                "composing the WASI PAL adapter (§4.3); an import outside \
+                 `wisp_abi::pal::PAL_IMPORTS` is a V1 rejection, not something the linker \
+                 may improvise",
+            )?;
+            tracing::info!(
+                composed = composed.len(),
+                delegated = composed.iter().filter(|d| d.disposition.is_delegated()).count(),
+                "composed the WASI PAL adapter for a template"
+            );
+            (Some(l), composed)
+        } else {
+            (None, Vec::new())
+        };
+
+        let inst = pal_linker
+            .as_ref()
+            .unwrap_or(&self.inner.linker)
             .instantiate(&mut store, &module)
             .map_err(anyhow::Error::from)
             .context("instantiating the template to read its pre-initialized image")?;
@@ -327,6 +355,8 @@ impl WispEngine {
             abi_rev: wisp_abi::ABI_REV,
             inner: Arc::new(TemplateInner {
                 module,
+                pal_linker,
+                pal_composed,
                 image,
                 memory_pages,
                 deferred,
@@ -473,8 +503,10 @@ pub(crate) fn instantiate(
     // store starts with an already-expired deadline.
     store.set_epoch_deadline(u64::MAX / 2);
 
-    let inst = engine
-        .linker
+    let inst = t
+        .pal_linker
+        .as_ref()
+        .unwrap_or(&engine.linker)
         .instantiate(&mut store, &t.module)
         .map_err(anyhow::Error::from)
         .context("activating template (an import outside the table fails here — §4.3 V1)")?;

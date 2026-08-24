@@ -40,6 +40,11 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("http_body_read", &["body_handle", "max_len"]),
     ("init_unit_begin", &["unit"]),
     ("init_unit_deferred", &["unit"]),
+    // §4.6's kill-cooperation ABI. Both are answered by the engine, so
+    // neither reaches this vtable — but they are declared imports and the
+    // drift check below covers the whole table, not the part this file
+    // happens to route.
+    ("unsafe_to_trap", &["on"]),
 ];
 
 /// Scalars an import carries, per `wisp_abi`'s own `BufSpec`. The vtable does
@@ -314,12 +319,13 @@ impl CellBindings {
     /// `u64` and cannot trap directly. The cell converts the latch into a trap
     /// as soon as the call returns, so the guest cannot proceed as though the
     /// call succeeded.
-    fn alloc(&self) -> Option<u64> {
+    fn alloc(&self, import: &'static str) -> Option<u64> {
         let rt = self.rt()?;
         let dispatch = self.ctx.dispatch_id();
         match rt.futures.alloc(
             self.ctx.instance,
             dispatch,
+            import,
             self.ctx.limits.pending_futures_per_dispatch,
         ) {
             Ok(id) => Some(id),
@@ -407,7 +413,7 @@ impl HostBindings for CellBindings {
                 return INVALID_FUTURE;
             }
         };
-        let Some(id) = self.alloc() else {
+        let Some(id) = self.alloc(def.name) else {
             return INVALID_FUTURE;
         };
 

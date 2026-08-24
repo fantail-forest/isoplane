@@ -56,6 +56,7 @@ enum State {
 struct Entry {
     owner: InstanceId,
     dispatch: u64,
+    import: &'static str,
     state: State,
     result: Option<ResultRecord>,
 }
@@ -110,6 +111,7 @@ impl FutureTable {
         &self,
         owner: InstanceId,
         dispatch: u64,
+        import: &'static str,
         limit: u32,
     ) -> Result<u64, PendingCapError> {
         let mut g = self.inner.lock();
@@ -126,11 +128,43 @@ impl FutureTable {
             Entry {
                 owner,
                 dispatch,
+                import,
                 state: State::Pending,
                 result: None,
             },
         );
         Ok(id)
+    }
+
+    /// Register the dispatch's **implicit cancellation future** (§5.4).
+    ///
+    /// Separate from [`FutureTable::alloc`] for one reason, and it is a
+    /// contract reason rather than a convenience: §11.1's
+    /// `pending_futures_per_dispatch` caps the fan-out a *guest* can create,
+    /// and this future is not the guest's. Charging it to the cap would
+    /// silently shrink every tenant's declared limit by one and make the
+    /// platform's own bookkeeping the thing that trips a tenant's trap.
+    ///
+    /// It cannot fail, for the same reason: there is no limit to refuse it
+    /// against. That matters — a dispatch whose cancellation future failed to
+    /// allocate would be a dispatch that can only ever be hard-killed, which
+    /// is precisely the outcome §6.4 is trying to make rare.
+    pub fn alloc_cancellation(&self, owner: InstanceId, dispatch: u64) -> u64 {
+        let mut g = self.inner.lock();
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let owned = g.owned.entry(owner).or_default();
+        owned.pending.insert(id);
+        g.entries.insert(
+            id,
+            Entry {
+                owner,
+                dispatch,
+                import: "ctx_cancel",
+                state: State::Pending,
+                result: None,
+            },
+        );
+        id
     }
 
     /// A reactor thread completed a host future. Maps id → owning instance and
@@ -247,6 +281,25 @@ impl FutureTable {
         v
     }
 
+    /// Live futures the **guest** issued, in id order.
+    ///
+    /// Excludes the implicit cancellation future §5.4 gives every dispatch,
+    /// which the guest did not ask for and (usually) never awaits. A test
+    /// reasoning about "the futures this dispatch registered" wants this one;
+    /// [`FutureTable::live_future_ids`] is the whole table, cancellation
+    /// included.
+    pub fn live_guest_future_ids(&self) -> Vec<u64> {
+        let g = self.inner.lock();
+        let mut v: Vec<u64> = g
+            .entries
+            .iter()
+            .filter(|(_, e)| e.import != "ctx_cancel")
+            .map(|(id, _)| *id)
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
 
     pub fn live_futures(&self) -> usize {
         self.inner.lock().entries.len()
@@ -267,8 +320,8 @@ mod tests {
     fn ids_are_never_zero_and_never_reused() {
         let t = table();
         let i = InstanceId(1);
-        let a = t.alloc(i, 1, 64).unwrap();
-        let b = t.alloc(i, 1, 64).unwrap();
+        let a = t.alloc(i, 1, "kv_get", 64).unwrap();
+        let b = t.alloc(i, 1, "kv_get", 64).unwrap();
         assert_ne!(a, INVALID_FUTURE);
         assert_ne!(a, b);
     }
@@ -282,11 +335,11 @@ mod tests {
         assert_eq!(limit, 6);
         for n in 0..limit {
             assert!(
-                t.alloc(i, 7, limit).is_ok(),
+                t.alloc(i, 7, "kv_get", limit).is_ok(),
                 "alloc {n} refused early"
             );
         }
-        let err = t.alloc(i, 7, limit).unwrap_err();
+        let err = t.alloc(i, 7, "kv_get", limit).unwrap_err();
         assert_eq!(
             err,
             PendingCapError {
@@ -297,7 +350,7 @@ mod tests {
 
         // A *different* dispatch on the same instance has its own budget: the
         // cap in §11.1 is per dispatch, not per instance.
-        assert!(t.alloc(i, 8, limit).is_ok());
+        assert!(t.alloc(i, 8, "kv_get", limit).is_ok());
     }
 
     #[test]
@@ -306,11 +359,11 @@ mod tests {
         let i = InstanceId(1);
         let mut ids = Vec::new();
         for _ in 0..6 {
-            ids.push(t.alloc(i, 1, 6).unwrap());
+            ids.push(t.alloc(i, 1, "kv_get", 6).unwrap());
         }
-        assert!(t.alloc(i, 1, 6).is_err());
+        assert!(t.alloc(i, 1, "kv_get", 6).is_err());
         t.complete(ids[0], ResultRecord::Ok(vec![1]));
-        assert!(t.alloc(i, 1, 6).is_ok());
+        assert!(t.alloc(i, 1, "kv_get", 6).is_ok());
     }
 
     #[test]
@@ -318,8 +371,8 @@ mod tests {
         let t = table();
         let a = InstanceId(1);
         let b = InstanceId(2);
-        let fa = t.alloc(a, 1, 64).unwrap();
-        let fb = t.alloc(b, 1, 64).unwrap();
+        let fa = t.alloc(a, 1, "kv_get", 64).unwrap();
+        let fb = t.alloc(b, 1, "kv_get", 64).unwrap();
         assert_eq!(
             t.complete(fa, ResultRecord::Ok(vec![1])),
             WakeTarget::Instance(a)
@@ -352,8 +405,8 @@ mod tests {
     fn ending_a_dispatch_reclaims_its_handles_and_preserves_other_dispatches() {
         let t = table();
         let i = InstanceId(1);
-        let doomed = t.alloc(i, 1, 64).unwrap();
-        let kept = t.alloc(i, 2, 64).unwrap();
+        let doomed = t.alloc(i, 1, "kv_get", 64).unwrap();
+        let kept = t.alloc(i, 2, "queue_send", 64).unwrap();
         t.end_dispatch(i, 1);
         assert_eq!(t.pending_total(i), 1);
         assert_eq!(
@@ -371,7 +424,7 @@ mod tests {
     fn releasing_an_instance_reclaims_every_handle() {
         let t = table();
         let i = InstanceId(1);
-        let f = t.alloc(i, 1, 64).unwrap();
+        let f = t.alloc(i, 1, "kv_get", 64).unwrap();
         t.release_instance(i);
         assert_eq!(t.live_futures(), 0);
         assert_eq!(t.complete(f, ResultRecord::Ok(vec![])), WakeTarget::Orphan);

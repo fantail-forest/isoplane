@@ -26,6 +26,7 @@ wisp-hibernate = { path = "crates/wisp-hibernate" }
 wisp-host      = { path = "crates/wisp-host" }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
+wispd          = { path = "crates/wispd" }
 
 anyhow      = "1"
 thiserror   = "2"
@@ -52,6 +53,7 @@ bytes       = "1"
 aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
+base64      = "0.22"
 
 # Line tables preserve source locations for workspace development backtraces.
 [profile.dev]

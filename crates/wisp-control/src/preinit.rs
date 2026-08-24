@@ -767,10 +767,15 @@ fn install_pal_adapter(
             // quantum the runtime adapter uses.
             (Disposition::Delegate(_), m, "now") if m == pal::MONOTONIC_CLOCK => {
                 linker.func_new(&imp.module, &imp.name, ty, move |_c, _a, rets| {
+                    // One lock, one snapshot. `parking_lot::Mutex` is not
+                    // reentrant, so reading two fields through two `lock()`
+                    // calls in one expression is a deadlock, not a style
+                    // preference.
                     if !st.lock().serves("clock_now_coarse") {
                         return Err(refuse_capability(&st, "clock_now_coarse"));
                     }
                     *st.lock().pal_calls.entry("clock_now_coarse").or_default() += 1;
+                    *st.lock().pal_calls.entry(pal::MONOTONIC_CLOCK).or_default() += 1;
                     rets[0] = wt::Val::I64(0);
                     Ok(())
                 })?;
@@ -787,6 +792,13 @@ fn install_pal_adapter(
             // the value is the same on every replay — a template may bake it.
             (Disposition::Delegate(_), m, "get-environment") if m == pal::CLI_ENVIRONMENT => {
                 linker.func_new(&imp.module, &imp.name, ty, move |mut c, args, _r| {
+                    // Counted even though it is unconditional: this is the
+                    // import that decided the question. `check.sh --wasi=trap`
+                    // does not fail late, it fails *inside `_initialize`* on
+                    // exactly this call (docs/dotnet-findings.md §1.2), so a
+                    // toolchain bump that stops reaching it — or starts
+                    // reaching it more — should be visible as a number.
+                    *st.lock().pal_calls.entry(pal::CLI_ENVIRONMENT).or_default() += 1;
                     let retptr = args
                         .last()
                         .and_then(|v| {
@@ -807,6 +819,7 @@ fn install_pal_adapter(
                         return Err(refuse_capability(&st, "entropy_fill"));
                     }
                     *st.lock().pal_calls.entry("entropy_fill").or_default() += 1;
+                    *st.lock().pal_calls.entry(pal::RANDOM_RANDOM).or_default() += 1;
                     let len = match args.first() {
                         Some(wt::Val::I64(n)) if *n >= 0 => *n as usize,
                         _ => 0,

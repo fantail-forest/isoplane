@@ -75,7 +75,13 @@ pub struct Meters {
     /// pool thread); broken out so the share is visible.
     log_cpu_ns: AtomicU64,
     trapped: AtomicU64,
+    /// Every CPU-budget kill this tenant took, both phases.
     budget_kills: AtomicU64,
+    /// Clean and hard CPU-budget kill counts.
+    clean_kills: AtomicU64,
+    hard_kills: AtomicU64,
+    /// CPU consumed past the budget, already included in `cpu_ns`.
+    overage_ns: AtomicU64,
     shed: AtomicU64,
 }
 
@@ -115,8 +121,15 @@ impl Meters {
     pub fn record_trap(&self) {
         self.trapped.fetch_add(1, Ordering::Relaxed);
     }
-    pub fn record_budget_kill(&self) {
+    /// Record the over-budget share already included in `record_cpu`.
+    pub fn record_budget_kill(&self, phase: wisp_engine::KillPhase, overage_ns: u64) {
         self.budget_kills.fetch_add(1, Ordering::Relaxed);
+        match phase {
+            wisp_engine::KillPhase::Clean => &self.clean_kills,
+            wisp_engine::KillPhase::Hard => &self.hard_kills,
+        }
+        .fetch_add(1, Ordering::Relaxed);
+        self.overage_ns.fetch_add(overage_ns, Ordering::Relaxed);
     }
     pub fn record_shed(&self) {
         self.shed.fetch_add(1, Ordering::Relaxed);
@@ -158,6 +171,16 @@ impl Meters {
     pub fn budget_kills(&self) -> u64 {
         self.budget_kills.load(Ordering::Relaxed)
     }
+    pub fn clean_kills(&self) -> u64 {
+        self.clean_kills.load(Ordering::Relaxed)
+    }
+    pub fn hard_kills(&self) -> u64 {
+        self.hard_kills.load(Ordering::Relaxed)
+    }
+    /// CPU consumed past the budget, already included in [`Meters::cpu_ns`].
+    pub fn overage_ns(&self) -> u64 {
+        self.overage_ns.load(Ordering::Relaxed)
+    }
     pub fn shed(&self) -> u64 {
         self.shed.load(Ordering::Relaxed)
     }
@@ -176,7 +199,62 @@ mod tests {
             cpu_ns,
             wall_ns,
             trap: None,
+            kill: None,
+            overage_ns: 0,
+            grace_deferrals: 0,
         }
+    }
+
+    #[test]
+    fn a_clean_kill_records_the_overage_rather_than_discarding_it() {
+        let m = Meters::new();
+        let out = DispatchOutcome {
+            status: PollStatus::Done { response: 0 },
+            completion: Completion::CleanKill,
+            cpu_ns: 53_000_000,
+            wall_ns: 53_500_000,
+            trap: None,
+            kill: Some(wisp_engine::KillPhase::Clean),
+            overage_ns: 3_000_000,
+            grace_deferrals: 0,
+        };
+        m.record_cpu(&out);
+        m.record_budget_kill(wisp_engine::KillPhase::Clean, out.overage_ns);
+
+        assert_eq!(m.cpu_ns(), 53_000_000, "the meter must not stop at B");
+        assert_eq!(m.overage_ns(), 3_000_000);
+        assert_eq!(m.clean_kills(), 1);
+        assert_eq!(m.hard_kills(), 0);
+        assert_eq!(m.budget_kills(), 1);
+    }
+
+    #[test]
+    fn overage_is_not_silently_forgiven() {
+        let m = Meters::new();
+        let budget_ns = 50_000_000u64;
+        for over in [1_000_000u64, 2_500_000, 4_900_000] {
+            let out = DispatchOutcome {
+                status: PollStatus::Done { response: 0 },
+                completion: Completion::CleanKill,
+                cpu_ns: budget_ns + over,
+                wall_ns: 0,
+                trap: None,
+                kill: Some(wisp_engine::KillPhase::Clean),
+                overage_ns: over,
+                grace_deferrals: 0,
+            };
+            m.record_cpu(&out);
+            m.record_budget_kill(wisp_engine::KillPhase::Clean, out.overage_ns);
+        }
+        assert_eq!(m.overage_ns(), 8_400_000);
+        assert!(
+            m.cpu_ns() > 3 * budget_ns,
+            "three over-budget dispatches measured {} ns, which is at most 3xB — the overage was \
+             dropped somewhere",
+            m.cpu_ns()
+        );
+        // Overage is a subset of the compute total, not an addition.
+        assert!(m.overage_ns() < m.cpu_ns());
     }
 
     #[test]

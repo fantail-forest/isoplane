@@ -53,7 +53,7 @@ use parking_lot::{Condvar, Mutex, RwLock};
 use wisp_abi::config::{AppManifest, HandlerLifecycle, Limits};
 use wisp_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
 use wisp_abi::status::{PollStatus, TrapCode};
-use wisp_engine::{Completion, CpuBudget, DispatchOutcome};
+use wisp_engine::{Completion, CpuBudget, DispatchOutcome, KillPhase};
 
 use crate::bindings::{CellRuntime, InstanceCtx, WakeSink};
 pub use crate::bindings::{Fetcher, Services};
@@ -349,6 +349,26 @@ pub struct Cell {
     runtime: Option<tokio::runtime::Runtime>,
     queue: Arc<WorkQueue>,
     index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
+    /// §6.4: **the tombstone ring.**
+    ///
+    /// A hard-killed instance's memory goes back to the kernel immediately —
+    /// that part is not negotiable, it is arbitrary state — but the *slot*
+    /// is kept for a while, holding nothing but its id and its tombstone
+    /// flag. Without it, "any subsequent host call into it is a hard
+    /// assertion failure" degrades to "the id is unknown", and those are very
+    /// different answers to give an operator: the first says *this instance
+    /// was killed and you may not talk to it*, the second says *never heard
+    /// of it*, which is what a use-after-free looks like from the outside.
+    ///
+    /// Appendix C F2 is the reason it is worth the bytes: the engine will
+    /// happily answer a call on a killed store, so the refusal has to come
+    /// from a platform structure that outlives the instance.
+    ///
+    /// Bounded, because an unbounded record of every kill a long-lived cell
+    /// ever took is a leak with a spec citation. The oldest entry is dropped
+    /// when the ring is full, and a call for an id older than that gets
+    /// `None` — the honest answer, since nothing about it is remembered.
+    tombstoned: Mutex<std::collections::VecDeque<Arc<Slot>>>,
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: Mutex<HashMap<InstanceId, ActiveRequest>>,
@@ -397,6 +417,7 @@ impl Cell {
             runtime: Some(runtime),
             queue,
             index,
+            tombstoned: Mutex::new(std::collections::VecDeque::new()),
             modules: RwLock::new(HashMap::new()),
             // Handle 0 is reserved: a guest that reads an uninitialised field
             // and calls `socket_send(0, ..)` must get `NotFound`, not
@@ -555,6 +576,33 @@ impl Cell {
         self.metrics.parked.store(parked, Ordering::Relaxed);
         self.metrics.hibernated.store(hib, Ordering::Relaxed);
         self.metrics.hot.store(hot, Ordering::Relaxed);
+    }
+
+    /// §6.4/§9.4: clear the hang breaker for a module.
+    ///
+    /// A new version deploys and the breaker is gone for free — the key
+    /// carries the version — so this exists for the operator's manual
+    /// override, and for tests that need to measure something the breaker
+    /// would otherwise fail fast before reaching.
+    pub fn clear_breaker(&self, module: &ModuleId) {
+        self.breaker.clear_module(module);
+    }
+
+    /// Idle instances a module's pool is holding: `(warm, pooled-fresh)`.
+    ///
+    /// §6.3's acquisition order is "warm-parked > pooled-fresh > activate", so
+    /// this is the difference between a request that pays for an activation
+    /// and one that does not. Exposed because a *parked* instance and a
+    /// *pooled* one are different things and the gauges cannot tell them
+    /// apart: an instance is Parked from the moment the guest returns, but it
+    /// is not acquirable until `finish_and_release` puts it back — a window
+    /// the response has already left through (§6.3 responds first, on
+    /// purpose).
+    pub fn idle_instances(&self, module: &ModuleId) -> Option<(usize, usize)> {
+        self.modules
+            .read()
+            .get(module)
+            .map(|e| e.pool.idle_counts())
     }
 
     pub fn queue_depth(&self) -> usize {
@@ -767,6 +815,10 @@ impl Cell {
         let budget = CpuBudget {
             cpu_ms: job.rec.cpu_budget_ms,
             wall_ms_cap: self.cfg.wall_ms_cap,
+            // First slice of this dispatch: nothing burned yet. Later slices
+            // carry what earlier ones spent, so B and B+G bind the dispatch
+            // rather than each wake (§6.4).
+            spent_ns: 0,
         };
         // §5.2/§7.2: "One instance MAY have multiple in-flight dispatches only
         // for read-only Handler reuse; DIs are strictly one dispatch at a
@@ -785,6 +837,22 @@ impl Cell {
             });
             return;
         }
+        // §5.4: *"every dispatch carries an implicit cancellation future; the
+        // host cancels by completing it"*. It is allocated here, before the
+        // guest is entered, because the epoch callback that completes it at B
+        // runs with the guest on the stack and could not allocate one then.
+        //
+        // A guest that never awaits it pays nothing but a table entry, which
+        // `end_dispatch` reaps. A guest that does await it observes a tripped
+        // token at its next wake — which is the only channel there is, because
+        // §5.4 makes cancellation deliberately *not* an entrancy.
+        let mut job = job;
+        job.rec.cancel_future = self
+            .rt
+            .futures
+            .alloc_cancellation(slot.id, job.rec.dispatch_id);
+        slot.ctx.set_cancel_future(job.rec.cancel_future);
+
         self.active.lock().insert(
             slot.id,
             ActiveRequest {
@@ -879,11 +947,18 @@ impl Cell {
             let Some((fid, res)) = self.rt.futures.take_ready(slot.id) else {
                 return;
             };
+            // §6.4: B and B+G bind the **dispatch**, so a wake resumes with
+            // what earlier slices already burned. Without this a guest could
+            // park and be woken indefinitely, each slice getting a fresh 50 ms
+            // and the hard deadline never arriving — and a guest unwinding
+            // inside grace would get its grace window back on every await,
+            // which would make "a pinned bit buys exactly G" false for anyone
+            // willing to park.
             let budget = self
                 .active
                 .lock()
                 .get(&slot.id)
-                .map(|a| a.budget)
+                .map(|a| a.budget.after(a.cpu_ns))
                 .unwrap_or_else(CpuBudget::http);
 
             // §8.5: a wake is a new slice, so the coarse clock advances here
@@ -912,8 +987,16 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         out: DispatchOutcome,
     ) -> bool {
-        // §11.2: record the Hot interval. Nothing else is ever recorded.
+        // §11.2: record the Hot interval. Nothing else is ever recorded — and on
+        // a kill of either phase that interval *includes the overage*, because
+        // the meter reads the thread clock and does not know what a budget is
+        // (§6.4: "the overage CPU is recorded").
         entry.meters.record_cpu(&out);
+        if out.grace_deferrals > 0 {
+            self.metrics
+                .grace_deferrals
+                .fetch_add(out.grace_deferrals, Ordering::Relaxed);
+        }
         self.metrics.record_tenant(
             &entry.tenant,
             out.cpu_ns,
@@ -928,6 +1011,11 @@ impl Cell {
         let latched = slot.ctx.take_trap();
         let mut latched_msg = None;
         let completion = match latched {
+            // A clean kill is deliberately NOT in this set. Its instance is
+            // consistent and its slot reusable; converting it to a trap on a
+            // latched code would tombstone something the grace window just
+            // saved. A latched code alongside a clean kill is almost always a
+            // poisoned import the guest ignored on its way out.
             Some(code) if matches!(out.completion, Completion::Done | Completion::Parked) => {
                 if code == TrapCode::TooManyFutures {
                     self.metrics
@@ -1017,16 +1105,83 @@ impl Cell {
                     RequestEnd::Parked => unreachable!("Done cannot decide Parked"),
                 }
             }
+            // §6.4's CLEAN kill: the dispatch entered grace and returned
+            // inside it. The request still fails — a kill is a kill, and §13
+            // gives it `budget_exceeded` telemetry — but three things that are
+            // true of a hard kill are false here, and all three are the point:
+            //
+            //   * the instance is NOT tombstoned. `finally` ran, its state is
+            //     consistent, and its slot is reusable (`decide` resets it);
+            //   * it does NOT count toward the hang breaker. §6.4: clean kills
+            //     "are the budget working as designed";
+            //   * it is recorded, overage and all, exactly like any other CPU.
+            Completion::CleanKill => {
+                let overage = out.overage_ns;
+                entry.meters.record_budget_kill(KillPhase::Clean, overage);
+                self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
+                self.metrics.clean_kills.fetch_add(1, Ordering::Relaxed);
+                self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .overage_ns
+                    .fetch_add(overage, Ordering::Relaxed);
+                tracing::info!(
+                    tenant = %entry.tenant, instance = %slot.id,
+                    overage_us = overage / 1_000,
+                    "clean kill: dispatch unwound inside its grace window (§6.4)"
+                );
+                let msg = format!(
+                    "budget_exceeded: cpu budget elapsed; the dispatch unwound cleanly inside its \
+                     grace window and was recorded {:.3} ms of overage (§6.4 clean kill)",
+                    overage as f64 / 1e6
+                );
+                let result = self.build_result(
+                    slot,
+                    503,
+                    vec![],
+                    msg.clone().into_bytes(),
+                    completion,
+                    Some(msg),
+                );
+                self.respond(slot, result);
+                match decide(lifecycle, completion, false) {
+                    RequestEnd::Disposed(d) => {
+                        // Note what is NOT here: no `breaker.record_kill`, and
+                        // no `breaker.record_success` either. A clean kill is
+                        // neither evidence of a hang nor evidence of health.
+                        self.finish_and_release(slot, entry, d);
+                        true
+                    }
+                    other => unreachable!("CleanKill cannot decide {other:?}"),
+                }
+            }
             Completion::Trapped | Completion::BudgetKill => {
                 let killed = completion == Completion::BudgetKill;
                 if killed {
-                    entry.meters.record_budget_kill();
+                    entry
+                        .meters
+                        .record_budget_kill(KillPhase::Hard, out.overage_ns);
                     self.metrics.budget_kills.fetch_add(1, Ordering::Relaxed);
+                    self.metrics.hard_kills.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .overage_ns
+                        .fetch_add(out.overage_ns, Ordering::Relaxed);
+                    if out.kill.is_some() {
+                        self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // §6.4: only HARD kills trip the hang breaker.
                     self.breaker.record_kill(&breaker_key, crate::now_ms());
                 } else {
                     entry.meters.record_trap();
                 }
                 self.metrics.traps.fetch_add(1, Ordering::Relaxed);
+                // §6.4: **the tombstone.** Set on the slot before anything
+                // else touches it, because the engine will not do it for us
+                // (Appendix C, F2: a killed instance answered a later exported
+                // call correctly, globals intact). From here `slot.enter()`
+                // refuses, capture is refused, and reuse is impossible.
+                slot.tombstone();
+                self.metrics.tombstones.fetch_add(1, Ordering::Relaxed);
+                self.remember_tombstone(slot);
                 let msg = out
                     .trap
                     .as_ref()
@@ -1043,7 +1198,10 @@ impl Cell {
                     Some(msg),
                 );
                 self.respond(slot, result);
-                // §13: traps are never retried on the same memory.
+                // §13: traps are never retried on the same memory. §6.4: the
+                // slot is reset before reuse — and for a tombstone "reset"
+                // means the whole activation goes back to the kernel, not a
+                // re-seal over memory a trap left mid-write.
                 self.finish_and_release(slot, entry, evict());
                 true
             }
@@ -1115,6 +1273,29 @@ impl Cell {
         }
     }
 
+    /// Keep a hard-killed slot addressable so a later call gets a refusal
+    /// rather than a shrug. See the note on [`Cell::tombstoned`].
+    fn remember_tombstone(&self, slot: &Arc<Slot>) {
+        /// Enough to cover the burst a breaker takes to notice, and small
+        /// enough that the ring is a rounding error next to one instance.
+        const RING: usize = 256;
+        let mut g = self.tombstoned.lock();
+        if g.iter().any(|s| s.id == slot.id) {
+            return;
+        }
+        g.push_back(slot.clone());
+        while g.len() > RING {
+            g.pop_front();
+        }
+    }
+
+    /// Every instance this cell currently remembers tombstoning. §10's
+    /// negative control reads it: a tombstone rule with nothing ever in here
+    /// and no failing probe is unfalsifiable.
+    pub fn tombstoned_instances(&self) -> Vec<InstanceId> {
+        self.tombstoned.lock().iter().map(|s| s.id).collect()
+    }
+
     fn forget(&self, slot: &Arc<Slot>) {
         self.index.lock().remove(&slot.id);
         self.residents.lock().remove(&slot.id);
@@ -1158,8 +1339,16 @@ impl Cell {
     // Inspection and forced transitions (tests, drills, `wisp dev`)
     // -----------------------------------------------------------------------
 
+    /// Look up an instance by id.
+    ///
+    /// Falls back to the tombstone ring (§6.4), so a kill-then-call gets an
+    /// instance that **refuses** rather than a `None` that reads as "no such
+    /// instance". Linear over the ring, and only on the miss path.
     pub fn slot(&self, id: InstanceId) -> Option<Arc<Slot>> {
-        self.residents.lock().get(&id).map(|r| r.slot.clone())
+        if let Some(s) = self.residents.lock().get(&id).map(|r| r.slot.clone()) {
+            return Some(s);
+        }
+        self.tombstoned.lock().iter().find(|s| s.id == id).cloned()
     }
 
     // -----------------------------------------------------------------------
