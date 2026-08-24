@@ -7,6 +7,7 @@ pub mod calls;
 pub mod config;
 pub mod dispatch;
 pub mod imports;
+pub mod pal;
 pub mod result;
 pub mod status;
 
