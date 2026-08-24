@@ -17,7 +17,7 @@ cd "$ROOT"
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
 [ -n "${WISP_OFFLINE:-}" ] && CARGO_FLAGS+=(--offline)
 
-# name:crate pairs. `undeclared-import` is built twice, once per variant.
+# `undeclared-import` is built twice, once per variant.
 GUESTS=(quotes-api misbehaver bigheap impure-cctor undeclared-import)
 
 echo "==> building guests for $TARGET ($PROFILE)"
