@@ -4121,6 +4121,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wisp-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "wisp-acceptance",
+]
+
+[[package]]
 name = "wisp-cli"
 version = "0.1.0"
 dependencies = [
