@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use wisp_abi::config::{AppManifest, Bindings, HandlerConfig, HandlerLifecycle, Limits};
 use wisp_abi::dispatch::{DispatchRecord, HttpRequest};
-use wisp_abi::result::ResultRecord;
+use wisp_abi::result::{FutureError, ResultRecord};
 use wisp_engine::Completion;
 
 use wisp_host::cell::{Cell, CellConfig, Services, Target};
@@ -28,6 +28,20 @@ struct Rig {
     fetcher: Arc<FakeFetcher>,
 }
 
+fn services_resolving(addr: &str) -> (Arc<Services>, Arc<FakeFetcher>) {
+    let fetcher = Arc::new(FakeFetcher::default());
+    let egress = Arc::new(HostEgressPolicy::new(
+        Box::new(Fixed(vec![addr.parse().unwrap()])),
+        1024,
+        1 << 30,
+    ));
+    let svc = Arc::new(Services {
+        egress,
+        fetcher: fetcher.clone(),
+    });
+    (svc, fetcher)
+}
+
 fn services() -> (Arc<Services>, Arc<FakeFetcher>) {
     let fetcher = Arc::new(FakeFetcher::default());
     let egress = Arc::new(HostEgressPolicy::new(
@@ -44,6 +58,12 @@ fn services() -> (Arc<Services>, Arc<FakeFetcher>) {
 
 fn rig(cfg: CellConfig) -> Rig {
     let (svc, fetcher) = services();
+    let cell = Cell::new(cfg, svc);
+    Rig { cell, fetcher }
+}
+
+fn rig_resolving(cfg: CellConfig, addr: &str) -> Rig {
+    let (svc, fetcher) = services_resolving(addr);
     let cell = Cell::new(cfg, svc);
     Rig { cell, fetcher }
 }
@@ -623,5 +643,222 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
     assert_eq!(json["dispatches"], 5);
     assert_eq!(json["served_activated"], 1);
     assert_eq!(json["served_warm"], 4);
+    r.cell.shutdown();
+}
+
+#[test]
+fn wait_until_keeps_the_instance_alive_past_the_response() {
+    let r = rig(CellConfig::for_test("waituntil"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("bg", "v1"),
+        FakeBehaviour::program([Step::WaitUntil {
+            import: "clock_deadline_in",
+            scalar: PARK_MS,
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            act,
+            manifest("bg", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    let rec = http(&r.cell, &module, "/bg");
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/bg".into(),
+            },
+            rec,
+            T,
+        )
+        .unwrap();
+    assert_eq!(
+        out.status, 202,
+        "the response must not wait for the background work"
+    );
+    assert_eq!(out.body, b"accepted");
+
+    // The response is delivered, the background future is still outstanding,
+    // and the instance is therefore still resident and Parked rather than
+    // reset back into the pool.
+    let instance = out.instance;
+    assert!(
+        r.cell.futures().wait_until_outstanding(instance),
+        "§2.2: the WaitUntil work was dropped"
+    );
+    assert_eq!(
+        r.cell.instance_state(instance),
+        Some(wisp_host::InstanceState::Parked)
+    );
+    r.cell.shutdown();
+}
+
+#[test]
+fn logging_is_charged_to_the_dispatch_that_logs() {
+    let r = rig(CellConfig::for_test("logcpu"));
+
+    let quiet = Arc::new(FakeActivator::named(
+        ModuleId::new("quiet-logger", "v1"),
+        FakeBehaviour::program([Step::Log {
+            bytes: 64,
+            times: 1,
+        }]),
+    ));
+    let loud = Arc::new(FakeActivator::named(
+        ModuleId::new("loud-logger", "v1"),
+        FakeBehaviour::program([Step::Log {
+            bytes: 64,
+            times: 2_000,
+        }]),
+    ));
+    let qm = quiet.module().clone();
+    let lm = loud.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            quiet,
+            manifest("quiet-logger", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+    r.cell
+        .register_module(
+            "acme",
+            loud,
+            manifest("loud-logger", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    let q = r
+        .cell
+        .dispatch_blocking(
+            &qm,
+            Target::Handler { route: "/l".into() },
+            http(&r.cell, &qm, "/l"),
+            T,
+        )
+        .unwrap();
+    let l = r
+        .cell
+        .dispatch_blocking(
+            &lm,
+            Target::Handler { route: "/l".into() },
+            http(&r.cell, &lm, "/l"),
+            T,
+        )
+        .unwrap();
+
+    eprintln!(
+        "§10: 1 log line = {} µs CPU, 2000 = {} µs",
+        q.cpu_ns / 1000,
+        l.cpu_ns / 1000
+    );
+    assert!(
+        l.cpu_ns > q.cpu_ns * 4,
+        "logging 2000 lines cost {} ns vs {} ns for one; logs are close to free",
+        l.cpu_ns,
+        q.cpu_ns
+    );
+    assert!(r.cell.meters(&lm).unwrap().log_cpu_ns() > 0);
+    r.cell.shutdown();
+}
+
+#[test]
+fn a_guest_cannot_fetch_a_private_address() {
+    let r = rig_resolving(CellConfig::for_test("ssrf"), "169.254.169.254:80");
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("prober", "v1"),
+        FakeBehaviour::program([Step::Fetch {
+            // The cloud metadata endpoint: the target this control exists for.
+            url: "http://169.254.169.254/latest/meta-data/".into(),
+            times: 1,
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            act.clone(),
+            manifest("prober", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    let rx = r
+        .cell
+        .submit(
+            &module,
+            Target::Handler {
+                route: "/probe".into(),
+            },
+            http(&r.cell, &module, "/probe"),
+        )
+        .unwrap();
+    assert!(
+        wait_for(|| !act.wakes().is_empty(), Duration::from_secs(5)),
+        "the guest was never told what happened to its fetch"
+    );
+    let (_, res) = act.wakes()[0].clone();
+    match res {
+        ResultRecord::Err(FutureError::Denied(m)) => {
+            assert!(m.contains("169.254.169.254"), "{m}");
+        }
+        other => panic!("the metadata endpoint was reachable: {other:?}"),
+    }
+    assert!(
+        r.fetcher.connected_to.lock().is_empty(),
+        "the host dialled a link-local address"
+    );
+    drop(rx);
+    r.cell.shutdown();
+}
+
+#[test]
+fn clones_of_one_template_never_share_entropy() {
+    let r = rig(CellConfig::for_test("entropy"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("rng", "v1"),
+        FakeBehaviour::program([Step::Entropy { bytes: 32 }]),
+    ));
+    let module = act.module().clone();
+    // `fresh`: every dispatch is a pristine clone of the same template, which
+    // is the worst case for this property.
+    r.cell
+        .register_module(
+            "acme",
+            act.clone(),
+            manifest("rng", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    for i in 0..50 {
+        let mut rec = http(&r.cell, &module, "/rng");
+        rec.dispatch_id = i;
+        r.cell
+            .dispatch_blocking(
+                &module,
+                Target::Handler {
+                    route: "/rng".into(),
+                },
+                rec,
+                T,
+            )
+            .unwrap();
+    }
+    let draws = act.entropy.lock().clone();
+    assert_eq!(draws.len(), 50);
+    let unique: std::collections::HashSet<Vec<u8>> = draws.into_iter().collect();
+    assert_eq!(
+        unique.len(),
+        50,
+        "clones of one template shared an RNG stream"
+    );
+    assert!(
+        unique.iter().all(|d| d.iter().any(|b| *b != 0)),
+        "entropy was zero-filled"
+    );
     r.cell.shutdown();
 }

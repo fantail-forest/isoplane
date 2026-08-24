@@ -7,11 +7,9 @@ use clap::{Parser, Subcommand};
 use wisp_cli::render::Style;
 use wisp_cli::{doctor, render};
 
-
 #[derive(Parser, Debug)]
 #[command(name = "wisp", version, about = "The WISP CLI")]
 struct Cli {
-
     #[arg(long, global = true)]
     no_color: bool,
 
@@ -25,20 +23,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-
-
-
-
-
-
-
-
     /// Print the capability manifest the validator derives from a module
-    Doctor {
-        module: PathBuf,
-    },
+    Doctor { module: PathBuf },
 }
-
 
 #[tokio::main]
 async fn main() {
@@ -63,7 +50,10 @@ async fn run() -> anyhow::Result<()> {
             if cli.json {
                 println!("{}", doctor_json(&report));
             } else {
-                print!("{}", render::doctor(&st, &module.display().to_string(), &report));
+                print!(
+                    "{}",
+                    render::doctor(&st, &module.display().to_string(), &report)
+                );
                 #[cfg(feature = "control")]
                 {
                     // The authority for V1-V4, when it is compiled in.
@@ -87,22 +77,9 @@ async fn run() -> anyhow::Result<()> {
                 std::process::exit(2);
             }
         }
-
-
-
-
-
-
-
-
-
-
-
     }
     Ok(())
 }
-
-
 
 fn doctor_json(r: &doctor::Report) -> String {
     serde_json::to_string_pretty(&serde_json::json!({
@@ -122,4 +99,31 @@ fn doctor_json(r: &doctor::Report) -> String {
         "missing_optional_exports": r.missing_optional_exports,
     }))
     .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_watcher_notices_the_newest_file_and_ignores_build_output() {
+        let dir = std::env::temp_dir().join(format!("wisp-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+        std::fs::write(dir.join("src/a.cs"), "x").unwrap();
+        let before = newest_mtime(&dir);
+        assert!(before > 0);
+
+        // `target/` churns on every build; watching it would reload forever.
+        std::fs::write(dir.join("target/huge.bin"), "y").unwrap();
+        assert_eq!(
+            newest_mtime(&dir),
+            before,
+            "build output must not trigger a reload"
+        );
+
+        assert_eq!(newest_mtime(&dir.join("does-not-exist")), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

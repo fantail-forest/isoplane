@@ -63,6 +63,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod activator;
 pub mod bindings;
 pub mod breaker;
 pub mod cell;
@@ -75,6 +76,7 @@ pub mod metrics;
 pub mod net;
 pub mod response;
 
+pub use activator::EngineActivator;
 pub use bindings::{CellBindings, InstanceCtx};
 pub use breaker::{BreakerState, HangBreaker};
 pub use cell::{Cell, CellConfig, DispatchResult, Services, Target};

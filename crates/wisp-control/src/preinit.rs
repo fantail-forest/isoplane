@@ -1,6 +1,6 @@
 //! Initialization inputs and captured state.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -16,15 +16,46 @@ pub use crate::validator::{INIT_CPU_LIMIT_MS, INIT_MEMORY_LIMIT_BYTES};
 /// Maximum number of initialization attempts.
 pub const MAX_PASSES: u32 = 16;
 
-/// Reserved init-unit id meaning "no unit is in scope" (see the protocol in
-/// [`PreInitializer::run`]). A trap while no unit is in scope is
-/// unattributable and fails the deploy rather than deferring the wrong thing.
-pub const NO_UNIT: u32 = 0;
+/// The host treats 0 and `u32::MAX` as no active initialization unit.
+pub const NO_UNIT: u32 = u32::MAX;
+
+/// The zero spelling of the no-active-unit sentinel.
+pub const NO_UNIT_ALT: u32 = 0;
+
+#[inline]
+fn is_no_unit(id: u32) -> bool {
+    id == NO_UNIT || id == NO_UNIT_ALT
+}
+
+/// Controls the coarse-clock response outside an explicit initialization unit.
+///
+/// Initialization entropy is supplied independently of this setting. Values
+/// captured in guest state are shared by instances activated from that template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InitPal {
+    /// Refuse runtime-only operations outside an explicit initialization unit.
+    #[default]
+    Sealed,
+    /// Answer the coarse clock with zero when no initialization unit is in scope.
+    RuntimeBringUp,
+}
+
+/// Operations recognized by the initialization PAL. The bring-up mode answers
+/// the coarse clock with zero outside a unit; entropy draws use fresh host bytes.
+pub const RUNTIME_PAL: &[&str] = &["clock_now_coarse", "entropy_fill"];
+
+impl InitPal {
+    pub fn serves(self, name: &str) -> bool {
+        self == InitPal::RuntimeBringUp && RUNTIME_PAL.contains(&name)
+    }
+}
 
 pub struct PreInitializer {
     cpu_limit_ms: u64,
     memory_limit_bytes: u64,
     max_passes: u32,
+    pal: InitPal,
+    init_func: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +84,8 @@ pub struct PreInitOutcome {
     pub init_logs: Vec<String>,
     /// Number of capability refusals across all attempts.
     pub capability_refusals: u32,
+    /// PAL call counts from the successful initialization pass.
+    pub pal_calls: Vec<(&'static str, u32)>,
     /// Hash-seed reads on the successful initialization pass.
     pub seed_reads: u32,
 }
@@ -60,7 +93,7 @@ pub struct PreInitOutcome {
 #[derive(Debug, thiserror::Error)]
 pub enum PreInitError {
     #[error("module does not export `{0}`; nothing to pre-initialize")]
-    NoInitFunc(&'static str),
+    NoInitFunc(String),
     /// The trap happened with no init unit in scope, so there is nothing to
     /// defer. Deferring a *guess* would silently change program behaviour.
     #[error(
@@ -97,6 +130,8 @@ impl PreInitializer {
             cpu_limit_ms: INIT_CPU_LIMIT_MS,
             memory_limit_bytes: INIT_MEMORY_LIMIT_BYTES,
             max_passes: MAX_PASSES,
+            pal: InitPal::Sealed,
+            init_func: None,
         }
     }
 
@@ -105,8 +140,26 @@ impl PreInitializer {
         Self {
             cpu_limit_ms,
             memory_limit_bytes,
-            max_passes: MAX_PASSES,
+            ..Self::new()
         }
+    }
+
+    /// Select the initialization PAL policy.
+    pub fn with_pal(mut self, pal: InitPal) -> Self {
+        self.pal = pal;
+        self
+    }
+
+    /// Select the guest entry point to initialize; defaults to `wisp_initialize`.
+    pub fn with_init_func(mut self, name: impl Into<String>) -> Self {
+        self.init_func = Some(name.into());
+        self
+    }
+
+    fn init_func_name(&self) -> &str {
+        self.init_func
+            .as_deref()
+            .unwrap_or(imports::exports::INITIALIZE)
     }
 
     /// Run initialization, recording denied capabilities for the guest's unit protocol.
@@ -118,16 +171,14 @@ impl PreInitializer {
     ///   if init_unit_deferred(id) == 0 {     ; host answers 1 if it wants this one skipped
     ///       ...unit body...                  ; may trap on a sealed capability
     ///   }
-    ///   init_unit_begin(0)                   ; optional: leave unit scope
+    ///   init_unit_begin(-1)                  ; optional: leave unit scope (NO_UNIT)
     /// ```
     ///
-    /// Id 0 is reserved for "no unit in scope". A guest that runs code
-    /// between units which might touch a capability should bracket it with
-    /// `init_unit_begin(0)`, because a trap the host cannot attribute fails
-    /// the deploy rather than deferring a guess.
+    /// The host treats 0 and `u32::MAX` as no active initialization unit.
+    /// A refusal when no unit is recorded fails initialization.
     pub fn run(&self, wasm: &[u8], req: &PreInitRequest) -> crate::Result<PreInitOutcome> {
-        if !exports_init_func(wasm) {
-            return Err(PreInitError::NoInitFunc(imports::exports::INITIALIZE).into());
+        if !exports_func(wasm, self.init_func_name()) {
+            return Err(PreInitError::NoInitFunc(self.init_func_name().to_string()).into());
         }
         let declared = declared_memory_bytes(wasm);
         if declared > self.memory_limit_bytes {
@@ -148,15 +199,21 @@ impl PreInitializer {
                 seed: rand::random(),
                 config: req.init_blob.clone(),
                 deferred: deferred.clone(),
+                pal: self.pal,
                 ..Default::default()
             }));
 
-            let result = wizen(wasm, state.clone());
+            let result = wizen(wasm, self.init_func_name(), state.clone());
             let s = state.lock();
             refusals += s.refusals;
 
             match result {
-                Ok(template_wasm) => {
+                Ok(mut template_wasm) => {
+                    // Recorded deferrals are not derivable from the wasm alone, and
+                    // `wisp-engine`'s `Template::deferred_init_units()` has to
+                    // answer it — so the fact travels *in the artifact*, not
+                    // in a side channel the artifact could get separated from.
+                    append_deferred_init_section(&mut template_wasm, &deferred);
                     let elapsed_ms = started.elapsed().as_millis() as u64;
                     // This rejects a slow result after return; it cannot interrupt Wizer.
                     if elapsed_ms > self.cpu_limit_ms {
@@ -183,6 +240,7 @@ impl PreInitializer {
                         deferred_reasons: reasons,
                         init_logs: s.logs.clone(),
                         capability_refusals: refusals,
+                        pal_calls: s.pal_calls.iter().map(|(k, v)| (*k, *v)).collect(),
                         seed_reads: s.seed_reads,
                     });
                 }
@@ -224,6 +282,69 @@ impl Default for PreInitializer {
     }
 }
 
+/// The name of the custom section carrying [`PreInitOutcome::deferred_units`]
+/// into the template (`wisp-engine` reads it as `Template::deferred_init_units`).
+/// Payload: little-endian `u32` count, then that many little-endian `u32` ids.
+/// An absent section means nothing was deferred.
+pub const DEFERRED_INIT_SECTION: &str = "wisp.deferred-init";
+
+/// Append the `wisp.deferred-init` custom section. A trailing custom section
+/// is valid wasm and invisible to the engine's own decoding, which is why the
+/// deferral record can ride along inside the artifact instead of beside it —
+/// an artifact and its metadata that can be separated eventually are.
+fn append_deferred_init_section(wasm: &mut Vec<u8>, deferred: &BTreeSet<u32>) {
+    if deferred.is_empty() {
+        return; // absent section == nothing deferred
+    }
+    let name = DEFERRED_INIT_SECTION.as_bytes();
+    let mut body = Vec::with_capacity(name.len() + 8 + deferred.len() * 4);
+    leb128_u32(&mut body, name.len() as u32);
+    body.extend_from_slice(name);
+    body.extend_from_slice(&(deferred.len() as u32).to_le_bytes());
+    for id in deferred {
+        body.extend_from_slice(&id.to_le_bytes());
+    }
+    wasm.push(0); // section id 0 = custom
+    leb128_u32(wasm, body.len() as u32);
+    wasm.extend_from_slice(&body);
+}
+
+/// Read the section back. `wisp-engine` has its own copy of this three-line
+/// decode; this one exists so the *writer* has a round-trip test.
+pub fn read_deferred_init_section(wasm: &[u8]) -> Vec<u32> {
+    for payload in wasmparser::Parser::new(0).parse_all(wasm).flatten() {
+        if let wasmparser::Payload::CustomSection(c) = payload {
+            if c.name() == DEFERRED_INIT_SECTION {
+                let d = c.data();
+                if d.len() < 4 {
+                    return Vec::new();
+                }
+                let n = u32::from_le_bytes(d[..4].try_into().unwrap()) as usize;
+                return d[4..]
+                    .chunks_exact(4)
+                    .take(n)
+                    .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn leb128_u32(out: &mut Vec<u8>, mut v: u32) {
+    loop {
+        let mut b = (v & 0x7f) as u8;
+        v >>= 7;
+        if v != 0 {
+            b |= 0x80;
+        }
+        out.push(b);
+        if v == 0 {
+            return;
+        }
+    }
+}
+
 /// Digest of explicit initialization inputs; fresh random output is excluded.
 pub fn reproducible_digest(wasm: &[u8], req: &PreInitRequest) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
@@ -260,11 +381,16 @@ struct Sandbox {
     refusals: u32,
     logs: Vec<String>,
     seed_reads: u32,
+    pal: InitPal,
+    /// PAL call counts for this initialization pass.
+    pal_calls: BTreeMap<&'static str, u32>,
+    /// Number of entropy draws during this pass.
+    entropy_draws: u64,
 }
 
-fn wizen(wasm: &[u8], state: Arc<Mutex<Sandbox>>) -> anyhow::Result<Vec<u8>> {
+fn wizen(wasm: &[u8], init_func: &str, state: Arc<Mutex<Sandbox>>) -> anyhow::Result<Vec<u8>> {
     let mut w = Wizer::new();
-    w.init_func(imports::exports::INITIALIZE);
+    w.init_func(init_func);
     // Disable automatic WASI bindings; the explicit linker controls admission.
     w.allow_wasi(false)?;
     w.inherit_stdio(false);
@@ -300,11 +426,18 @@ fn sealed_linker(
             if def.init_visible || def.name == "entropy_fill" {
                 install_init_visible(&mut linker, def, ty, st)?;
             } else {
+                // A runtime-only capability defers its explicit unit; bring-up
+                // mode can answer the coarse clock outside a unit.
                 linker.func_new(
                     imports::HOST_MODULE,
                     name,
                     ty,
-                    move |_caller, _args, _rets| {
+                    move |mut caller, args, rets| {
+                        let in_unit = st.lock().current_unit.is_some();
+                        let pal = st.lock().pal;
+                        if !in_unit && pal.serves(name) {
+                            return serve_pal(name, &st, &mut caller, args, rets);
+                        }
                         let mut s = st.lock();
                         s.refusals += 1;
                         let unit = s.current_unit;
@@ -339,18 +472,7 @@ fn install_init_visible(
                 imports::HOST_MODULE,
                 name,
                 ty,
-                move |mut caller, args, _rets| {
-                    let [wt::Val::I32(ptr), wt::Val::I32(len)] = args else {
-                        anyhow::bail!("entropy_fill requires an output pointer and length");
-                    };
-                    anyhow::ensure!(
-                        (0..=(1 << 20)).contains(len),
-                        "entropy_fill length {len} out of range"
-                    );
-                    let mut bytes = vec![0u8; *len as usize];
-                    rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
-                    write_guest(&mut caller, *ptr, &bytes)
-                },
+                move |mut caller, args, rets| serve_pal(name, &st, &mut caller, args, rets),
             )?;
         }
 
@@ -406,7 +528,7 @@ fn install_init_visible(
                 move |_caller, args, _rets| {
                     let id = args[0].unwrap_i32() as u32;
                     let mut s = st.lock();
-                    s.current_unit = if id == NO_UNIT { None } else { Some(id) };
+                    s.current_unit = if is_no_unit(id) { None } else { Some(id) };
                     s.last_deferred = None;
                     Ok(())
                 },
@@ -492,6 +614,41 @@ fn install_init_visible(
     Ok(())
 }
 
+/// Serve initialization clock and entropy requests (see [`InitPal`]).
+fn serve_pal(
+    name: &'static str,
+    st: &Arc<Mutex<Sandbox>>,
+    caller: &mut wt::Caller<'_, wizer::StoreData>,
+    args: &[wt::Val],
+    rets: &mut [wt::Val],
+) -> anyhow::Result<()> {
+    {
+        let mut s = st.lock();
+        *s.pal_calls.entry(name).or_default() += 1;
+    }
+    match name {
+        // Runtime bring-up uses a fixed initialization clock sample.
+        "clock_now_coarse" => {
+            rets[0] = wt::Val::I64(0);
+            Ok(())
+        }
+        "entropy_fill" => {
+            let [wt::Val::I32(ptr), wt::Val::I32(len)] = args else {
+                anyhow::bail!("entropy_fill requires an output pointer and length");
+            };
+            anyhow::ensure!(
+                (0..=(1 << 20)).contains(len),
+                "entropy_fill length {len} out of range"
+            );
+            st.lock().entropy_draws += 1;
+            let mut bytes = vec![0u8; *len as usize];
+            rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
+            write_guest(caller, *ptr, &bytes)
+        }
+        _ => anyhow::bail!("`{name}` is listed in RUNTIME_PAL but has no implementation"),
+    }
+}
+
 fn func_type(engine: &wt::Engine, def: &ImportDef) -> wt::FuncType {
     let cvt = |t: &Ty| match t {
         Ty::I32 => wt::ValType::I32,
@@ -540,12 +697,11 @@ fn read_guest(
 // cheap module facts (the validator has already parsed this module properly)
 // ---------------------------------------------------------------------------
 
-fn exports_init_func(wasm: &[u8]) -> bool {
+fn exports_func(wasm: &[u8], name: &str) -> bool {
     wasmparser::Parser::new(0).parse_all(wasm).any(|p| match p {
-        Ok(wasmparser::Payload::ExportSection(r)) => r
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .any(|e| e.name == imports::exports::INITIALIZE),
+        Ok(wasmparser::Payload::ExportSection(r)) => {
+            r.into_iter().filter_map(|e| e.ok()).any(|e| e.name == name)
+        }
         _ => false,
     })
 }

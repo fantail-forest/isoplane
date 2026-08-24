@@ -4,3 +4,8 @@
 /guests/out/*.wasm
 **/*.rs.bk
 .wisp-data/
+
+# .NET build intermediates (the ILCompiler packages restore large)
+guests/dotnet/src/obj/
+guests/dotnet/src/bin/
+guests/dotnet/hostcheck/target/

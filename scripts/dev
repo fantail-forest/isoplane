@@ -4,16 +4,43 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${WISP_IMAGE:-wisp-dev:latest}"
-ARGS=(--rm --runtime=sysbox-runc
-      -v "$ROOT:/wisp"
-      -v wisp-cargo-registry:/opt/cargo/registry
-      -v wisp-ctarget:/ctarget
-      -v wisp-nuget:/root/.nuget
-      -w /wisp
-      -e CARGO_TARGET_DIR=/ctarget
-      -e CARGO_TERM_COLOR=always
-      -e RUST_BACKTRACE=1)
-[ -n "${WISP_CONTAINER_NAME:-}" ] && ARGS+=(--name "$WISP_CONTAINER_NAME")
-[ -t 0 ] && ARGS+=(-it)
-for p in ${WISP_PORTS:-}; do ARGS+=(-p "$p"); done
-exec docker run "${ARGS[@]}" "$IMAGE" "$@"
+NAME="${WISP_CONTAINER_NAME:-wisp-shared}"
+
+if [ "${1:-}" = "--stop" ]; then
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  echo "stopped $NAME"
+  exit 0
+fi
+
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" = "true" ]; }
+
+if ! running; then
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  PORTS=()
+  for p in ${WISP_PORTS:-}; do PORTS+=(-p "$p"); done
+  # Runs as the host user so that anything written into the bind mount stays
+  # owned by that user. A container writing as root leaves trees the host
+  # cannot even delete -- and under sysbox's userns remap they land as a
+  # high-numbered uid, which is worse than useless.
+  docker run -d --name "$NAME" --runtime=sysbox-runc \
+    --user "$(id -u):$(id -g)" \
+    -v "$ROOT:/wisp" \
+    -v wisp-ctarget:/ctarget \
+    -v wisp-cargo-registry:/opt/cargo/registry \
+    -v wisp-nuget:/nuget \
+    -w /wisp \
+    -e CARGO_TARGET_DIR=/ctarget \
+    -e CARGO_HOME=/opt/cargo \
+    -e NUGET_PACKAGES=/nuget \
+    -e HOME=/tmp \
+    -e CARGO_TERM_COLOR=always \
+    -e RUST_BACKTRACE=1 \
+    "${PORTS[@]}" \
+    "$IMAGE" sleep infinity >/dev/null
+fi
+
+EXEC=(docker exec)
+[ -t 0 ] && EXEC+=(-it)
+EXEC+=("$NAME")
+if [ $# -eq 0 ]; then set -- bash; fi
+exec "${EXEC[@]}" "$@"

@@ -482,12 +482,6 @@ impl HostBindings for CellBindings {
             // has already run or been deferred, so nothing is deferred here.
             "init_unit_begin" => 0,
             "init_unit_deferred" => 0,
-            "init_hash_seed" => {
-                // §8.6: the ONE externally sourced value the init sandbox
-                // supplies. Reaching it at runtime is a capability violation.
-                ctx.latch_trap(TrapCode::CapabilityViolation);
-                0
-            }
 
             // ---- observability (§10) -----------------------------------------
             // "Log CPU counts against the dispatch budget (prevents
@@ -537,21 +531,14 @@ impl HostBindings for CellBindings {
             "clock_now_coarse" => ctx.slice_clock_ms() as i64,
 
             // ---- entropy (§8.5) -----------------------------------------------
-            // Each call draws from the host CSPRNG without caching its output.
-            // Host generator state stays outside captured guest memory; guest
-            // code can retain returned bytes or its own PRNG state.
-            "entropy_fill" => {
-                let len = call.scalars[0].min(MAX_ENTROPY_BYTES) as usize;
-                let len = if len == 0 {
-                    call.payload.len().min(MAX_ENTROPY_BYTES as usize)
-                } else {
-                    len
-                };
-                let mut buf = vec![0u8; len];
-                rand::rng().fill_bytes(&mut buf);
-                ctx.entropy_calls.fetch_add(1, Ordering::Relaxed);
-                *ctx.out_buffer.lock() = buf;
-                len as i64
+            // Host→guest, so it goes through `call_fill`, which is the only
+            // path with somewhere to put the bytes. Reaching it here means the
+            // engine linked it as an ordinary sync import; deny rather than
+            // return a zero-filled buffer, because a silently constant
+            // "CSPRNG" would break §8.5 invisibly.
+            "entropy_fill" | "init_hash_seed" if true => {
+                ctx.latch_trap(TrapCode::Protocol);
+                -1
             }
 
             // ---- response building (§6.3) -------------------------------------
@@ -571,6 +558,39 @@ impl HostBindings for CellBindings {
                 tracing::error!(import = other, "sync import with no route");
                 ctx.latch_trap(TrapCode::CapabilityViolation);
                 0
+            }
+        }
+    }
+
+    /// Host→guest sync imports (§5.5: the host writes into a host-side buffer
+    /// and the engine copies it in, so no host pointer enters guest memory).
+    fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> i64 {
+        match call.import {
+            // Each call draws from the host CSPRNG without caching its output.
+            // Host generator state stays outside captured guest memory; guest
+            // code can retain returned bytes or its own PRNG state.
+            "entropy_fill" => {
+                if out.len() > MAX_ENTROPY_BYTES as usize {
+                    return -1;
+                }
+                rand::rng().fill_bytes(out);
+                self.ctx.entropy_calls.fetch_add(1, Ordering::Relaxed);
+                // Mirrored for callers that cannot take an out-slice; see
+                // `InstanceCtx::take_out_buffer`.
+                *self.ctx.out_buffer.lock() = out.to_vec();
+                out.len() as i64
+            }
+            // §8.6: the one externally sourced value the *init sandbox* is
+            // allowed to see. At runtime it is a capability violation, not a
+            // value.
+            "init_hash_seed" => {
+                self.ctx.latch_trap(TrapCode::CapabilityViolation);
+                -1
+            }
+            other => {
+                tracing::error!(import = other, "fill import with no route");
+                self.ctx.latch_trap(TrapCode::Protocol);
+                -1
             }
         }
     }
@@ -671,18 +691,28 @@ mod tests {
         let c = ctx();
         let mut b = CellBindings::new(c.clone());
         let mut seen = std::collections::HashSet::new();
+        let mut buf = [0u8; 32];
         for _ in 0..64 {
-            let n = b.call_sync(call("entropy_fill", &[], [32, 0, 0]));
+            let n = b.call_fill(call("entropy_fill", &[], [0; 3]), &mut buf);
             assert_eq!(n, 32);
-            let bytes = b.take_out_buffer();
-            assert_eq!(bytes.len(), 32);
-            assert!(bytes.iter().any(|x| *x != 0), "entropy returned zeros");
+            assert!(buf.iter().any(|x| *x != 0), "entropy returned zeros");
             assert!(
-                seen.insert(bytes),
+                seen.insert(buf.to_vec()),
                 "entropy repeated: it was cached somewhere"
             );
         }
         assert_eq!(c.entropy_calls(), 64);
+    }
+
+    /// The engine's `call_fill` default denies rather than zero-filling, and
+    /// so does this: a sync path with nowhere to put the bytes must not
+    /// pretend to have succeeded (§8.5).
+    #[test]
+    fn entropy_through_a_path_with_no_out_buffer_is_denied() {
+        let c = ctx();
+        let mut b = CellBindings::new(c.clone());
+        assert_eq!(b.call_sync(call("entropy_fill", &[], [32, 0, 0])), -1);
+        assert_eq!(c.take_trap(), Some(TrapCode::Protocol));
     }
 
     /// Two instances cloned from the same template must not share a stream.
@@ -700,9 +730,10 @@ mod tests {
         ));
         let mut ba = CellBindings::new(a);
         let mut bz = CellBindings::new(z);
-        ba.call_sync(call("entropy_fill", &[], [32, 0, 0]));
-        bz.call_sync(call("entropy_fill", &[], [32, 0, 0]));
-        assert_ne!(ba.take_out_buffer(), bz.take_out_buffer());
+        let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
+        ba.call_fill(call("entropy_fill", &[], [0; 3]), &mut x);
+        bz.call_fill(call("entropy_fill", &[], [0; 3]), &mut y);
+        assert_ne!(x, y);
     }
 
     /// §8.6: `secret_get` is runtime-only, and the init-sandbox seed is not
@@ -711,8 +742,16 @@ mod tests {
     fn the_deploy_hash_seed_is_not_reachable_at_runtime() {
         let c = ctx();
         let mut b = CellBindings::new(c.clone());
-        b.call_sync(call("init_hash_seed", &[], [0; 3]));
+        let mut seed = [0u8; 16];
+        assert_eq!(
+            b.call_fill(call("init_hash_seed", &[], [0; 3]), &mut seed),
+            -1
+        );
         assert_eq!(c.take_trap(), Some(TrapCode::CapabilityViolation));
+        assert_eq!(
+            seed, [0u8; 16],
+            "the seed was written into guest memory at runtime"
+        );
     }
 
     #[test]

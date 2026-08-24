@@ -126,11 +126,35 @@ impl DensityCurve {
         self.points.push((instances, sample));
     }
 
-    /// Marginal bytes per instance, by least squares over the whole curve.
-    /// `None` until there are two points to fit.
+    /// Points after the first activation.
+    ///
+    /// The first activation of a template in a process is not representative
+    /// and never will be: it materialises the engine's pooling-allocator
+    /// arena, the AOT code mapping and wasmtime's per-module state, all of
+    /// which are paid once and shared by every subsequent instance. Measured
+    /// on a real run it was **158 MiB** for the first instance against
+    /// ~1 MiB for each of the next 199.
+    ///
+    /// Including it in the fit would inflate the reported marginal cost, which
+    /// is the wrong error to make in *either* direction: it would understate
+    /// the platform's density here, and in a different curve shape it could
+    /// hide a real per-instance cost inside a large intercept. So it is
+    /// excluded from the slope and reported on its own by
+    /// [`DensityCurve::first_activation_bytes`].
+    fn steady_state(&self) -> &[(u64, MemSample)] {
+        // Keep everything from the first non-zero instance count onward, and
+        // only skip the first activation when there is enough curve left to
+        // fit a line through.
+        let start = self.points.iter().position(|(n, _)| *n > 0).unwrap_or(0);
+        let skip_first = if self.points.len() - start >= 4 { start + 1 } else { start };
+        &self.points[skip_first.min(self.points.len())..]
+    }
+
+    /// Marginal bytes per instance, by least squares over the steady-state
+    /// part of the curve. `None` until there are two points to fit.
     pub fn marginal_private_dirty(&self) -> Option<f64> {
         let pts: Vec<(f64, f64)> = self
-            .points
+            .steady_state()
             .iter()
             .map(|(n, m)| (*n as f64, m.private_dirty_bytes as f64))
             .collect();
@@ -139,17 +163,27 @@ impl DensityCurve {
 
     pub fn marginal_rss(&self) -> Option<f64> {
         let pts: Vec<(f64, f64)> =
-            self.points.iter().map(|(n, m)| (*n as f64, m.rss_bytes as f64)).collect();
+            self.steady_state().iter().map(|(n, m)| (*n as f64, m.rss_bytes as f64)).collect();
         crate::stats::linear_fit(&pts).map(|(slope, _)| slope)
     }
 
-    /// The intercept of the RSS fit: what the cell costs with zero instances
-    /// resident. Reported separately so that fixed overhead is never smeared
-    /// across the per-instance number.
+    /// The intercept of the steady-state RSS fit: what the cell costs before
+    /// any *marginal* instance. Reported separately so that fixed overhead is
+    /// never smeared across the per-instance number.
     pub fn fixed_overhead_bytes(&self) -> Option<f64> {
         let pts: Vec<(f64, f64)> =
-            self.points.iter().map(|(n, m)| (*n as f64, m.rss_bytes as f64)).collect();
+            self.steady_state().iter().map(|(n, m)| (*n as f64, m.rss_bytes as f64)).collect();
         crate::stats::linear_fit(&pts).map(|(_, intercept)| intercept)
+    }
+
+    /// RSS growth from zero instances to one: the one-time cost of the first
+    /// activation of a template in this process. Paid once, shared by every
+    /// instance after it, and therefore not part of the marginal cost §6.2
+    /// makes its claim about.
+    pub fn first_activation_bytes(&self) -> Option<i64> {
+        let zero = self.points.iter().find(|(n, _)| *n == 0)?;
+        let one = self.points.iter().find(|(n, _)| *n == 1)?;
+        Some(one.1.rss_bytes as i64 - zero.1.rss_bytes as i64)
     }
 
     /// §6.2's "fixed bookkeeping ≤ 64 KB" target: marginal cost *above* what
@@ -229,6 +263,46 @@ mod tests {
         assert!((fixed - 100_000_000.0).abs() < 2.0, "fixed was {fixed}");
         // A guest that dirties exactly 1 MiB leaves ~0 bookkeeping.
         assert!(c.bookkeeping_per_instance(1 << 20).unwrap().abs() < 1.0);
+    }
+
+    /// The correction that a real run forced. The first activation of a
+    /// template materialises engine-wide state — measured at 158 MiB against
+    /// ~1 MiB per subsequent instance — and letting that into the fit would
+    /// report a marginal cost many times the truth.
+    #[test]
+    fn the_first_activations_one_time_cost_stays_out_of_the_slope() {
+        let mut c = DensityCurve::default();
+        c.record(0, MemSample { rss_bytes: 18 << 20, private_dirty_bytes: 16 << 20, ..Default::default() });
+        // The first instance pays 158 MiB of one-time engine state.
+        c.record(1, MemSample { rss_bytes: 176 << 20, private_dirty_bytes: 174 << 20, ..Default::default() });
+        for n in [2u64, 4, 8, 16, 32, 64, 128, 200] {
+            c.record(
+                n,
+                MemSample {
+                    rss_bytes: (176 << 20) + (n - 1) * 1_048_576,
+                    private_dirty_bytes: (174 << 20) + (n - 1) * 1_048_576,
+                    ..Default::default()
+                },
+            );
+        }
+        let marginal = c.marginal_rss().unwrap();
+        assert!(
+            (marginal - 1_048_576.0).abs() < 4096.0,
+            "marginal should be ~1 MiB, got {}",
+            human(marginal)
+        );
+        assert_eq!(c.first_activation_bytes(), Some(158 << 20));
+    }
+
+    /// With too few points to spare one, nothing is skipped — a short curve
+    /// should still produce a number, clearly labelled, rather than nothing.
+    #[test]
+    fn a_short_curve_keeps_every_point() {
+        let mut c = DensityCurve::default();
+        c.record(0, MemSample { rss_bytes: 100, ..Default::default() });
+        c.record(1, MemSample { rss_bytes: 200, ..Default::default() });
+        c.record(2, MemSample { rss_bytes: 300, ..Default::default() });
+        assert_eq!(c.marginal_rss(), Some(100.0));
     }
 
     #[test]

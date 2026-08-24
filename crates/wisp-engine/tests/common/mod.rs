@@ -115,11 +115,21 @@ pub struct TestBindings {
     pub fill_byte: u8,
     /// When false, `call_fill` denies — the default `HostBindings` behaviour.
     pub allow_fill: bool,
+    /// What `call_fill` reports as the value's FULL length, which for
+    /// `init_config_get` may exceed the capacity the guest offered.
+    pub full_length: Option<i64>,
 }
 
 impl TestBindings {
     pub fn new(rec: Recorder) -> Self {
-        Self { rec, init_sandbox: false, next_future: 1, fill_byte: 0xAB, allow_fill: true }
+        Self {
+            rec,
+            init_sandbox: false,
+            next_future: 1,
+            fill_byte: 0xAB,
+            allow_fill: true,
+            full_length: None,
+        }
     }
     pub fn init_sandbox(rec: Recorder) -> Self {
         Self { init_sandbox: true, ..Self::new(rec) }
@@ -148,7 +158,8 @@ impl HostBindings for TestBindings {
             return -1;
         }
         out.fill(self.fill_byte);
-        out.len() as i64
+        // `(ptr, cap) -> full length`: the host may know more than it could fit.
+        self.full_length.unwrap_or(out.len() as i64)
     }
 
     fn slice_clock_ms(&self) -> u64 {

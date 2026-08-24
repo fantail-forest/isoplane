@@ -4,31 +4,34 @@ use std::fmt::Write as _;
 
 use wisp_proxy::ProxyMetrics;
 
-use crate::admin::NodeSnapshot;
+use crate::admin::{Latency, NodeSnapshot};
 
-/// Nearest-rank quantile: the smallest sample at or above the `q` fraction of
-/// the ordered set. Chosen over interpolation because these are latency
-/// samples and an interpolated p99 is a number no request ever experienced.
-fn quantile(samples: &mut [u64], q: f64) -> f64 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    samples.sort_unstable();
-    let rank = (q * samples.len() as f64).ceil().max(1.0) as usize;
-    samples[(rank - 1).min(samples.len() - 1)] as f64
+fn latency_lines(out: &mut String, node: &str, name: &str, help: &str, l: Latency) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} summary");
+    let _ = writeln!(out, "{name}{{node=\"{node}\",quantile=\"0.5\"}} {}", l.p50_us);
+    let _ = writeln!(out, "{name}{{node=\"{node}\",quantile=\"0.99\"}} {}", l.p99_us);
+    let _ = writeln!(out, "{name}_count{{node=\"{node}\"}} {}", l.count);
 }
 
-fn histogram_lines(out: &mut String, name: &str, help: &str, samples: &[u64], buckets: &[u64]) {
+fn histogram_lines(
+    out: &mut String,
+    node: &str,
+    name: &str,
+    help: &str,
+    samples: &[u64],
+    buckets: &[u64],
+) {
     let _ = writeln!(out, "# HELP {name} {help}");
     let _ = writeln!(out, "# TYPE {name} histogram");
     // Prometheus buckets are cumulative.
     for b in buckets {
         let cum = samples.iter().filter(|s| **s <= *b).count();
-        let _ = writeln!(out, "{name}_bucket{{le=\"{b}\"}} {cum}");
+        let _ = writeln!(out, "{name}_bucket{{node=\"{node}\",le=\"{b}\"}} {cum}");
     }
-    let _ = writeln!(out, "{name}_bucket{{le=\"+Inf\"}} {}", samples.len());
-    let _ = writeln!(out, "{name}_sum {}", samples.iter().sum::<u64>());
-    let _ = writeln!(out, "{name}_count {}", samples.len());
+    let _ = writeln!(out, "{name}_bucket{{node=\"{node}\",le=\"+Inf\"}} {}", samples.len());
+    let _ = writeln!(out, "{name}_sum{{node=\"{node}\"}} {}", samples.iter().sum::<u64>());
+    let _ = writeln!(out, "{name}_count{{node=\"{node}\"}} {}", samples.len());
 }
 
 /// Renders the whole node's meters.
@@ -63,41 +66,20 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     let _ = writeln!(&mut o, "{} {:.3}", n("wisp_cpu_ms_total"), snap.cpu_ms_total);
 
     // --- activation & wake latency --------------------------------------
-    let mut act = snap.activation_us.clone();
-    let mut wake = snap.wake_us.clone();
-    let _ = writeln!(
+    latency_lines(
         &mut o,
-        "# HELP wisp_activation_us Cold activation from a local template"
+        node,
+        "wisp_activation_us",
+        "Cold activation from a local template",
+        snap.activation,
     );
-    let _ = writeln!(&mut o, "# TYPE wisp_activation_us summary");
-    let _ = writeln!(
+    latency_lines(
         &mut o,
-        "wisp_activation_us{{node=\"{node}\",quantile=\"0.5\"}} {:.0}",
-        quantile(&mut act, 0.5)
+        node,
+        "wisp_wake_us",
+        "Reported local wake latency",
+        snap.wake,
     );
-    let _ = writeln!(
-        &mut o,
-        "wisp_activation_us{{node=\"{node}\",quantile=\"0.99\"}} {:.0}",
-        quantile(&mut act, 0.99)
-    );
-    let _ = writeln!(&mut o, "wisp_activation_us_count{{node=\"{node}\"}} {}", snap.activation_us.len());
-
-    let _ = writeln!(
-        &mut o,
-        "# HELP wisp_wake_us Reported local wake latency"
-    );
-    let _ = writeln!(&mut o, "# TYPE wisp_wake_us summary");
-    let _ = writeln!(
-        &mut o,
-        "wisp_wake_us{{node=\"{node}\",quantile=\"0.5\"}} {:.0}",
-        quantile(&mut wake, 0.5)
-    );
-    let _ = writeln!(
-        &mut o,
-        "wisp_wake_us{{node=\"{node}\",quantile=\"0.99\"}} {:.0}",
-        quantile(&mut wake, 0.99)
-    );
-    let _ = writeln!(&mut o, "wisp_wake_us_count{{node=\"{node}\"}} {}", snap.wake_us.len());
 
     // --- lifecycle tier counts ------------------------------------------
     let _ = writeln!(
@@ -116,6 +98,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     // --- dirty set & delta storage --------------------------------------
     histogram_lines(
         &mut o,
+        node,
         "wisp_dirty_set_bytes",
         "Reported per-instance dirty-set bytes",
         &snap.dirty_set_bytes,
@@ -174,8 +157,8 @@ mod tests {
         NodeSnapshot {
             dispatches_total: 12,
             cpu_ms_total: 4.25,
-            activation_us: vec![300, 700, 900, 4000],
-            wake_us: vec![8000, 9000, 40000],
+            activation: Latency::from_samples(vec![300, 700, 900, 4000]),
+            wake: Latency::from_samples(vec![8000, 9000, 40000]),
             instances_hot: 1,
             instances_parked: 3,
             instances_hibernated: 7,

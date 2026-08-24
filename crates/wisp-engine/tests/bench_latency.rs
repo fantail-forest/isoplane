@@ -63,7 +63,7 @@ fn activation_and_reset_latency() {
     }
     eprintln!(
         "  template: {} MiB memory / {} MiB pre-initialized image; Cranelift compile took {compile:?}",
-        MEM_PAGES as usize * 65536 >> 20,
+        (MEM_PAGES as usize * 65536) >> 20,
         big::IMAGE_BYTES >> 20
     );
 
@@ -151,6 +151,24 @@ fn activation_and_reset_latency() {
         }
     }
     let (reset_dirty_p50, reset_dirty_p99) = report("reset (64 KiB dirtied first)", reset_dirty);
+
+    // The page-diff `dirty_page_count` performs, measured rather than guessed:
+    // it reads all 32 MiB and so also faults the whole mapping resident.
+    // `docs/spike-findings.md` Q1 shows the soft-dirty PTE walk §6.6 names as
+    // the primary mechanism does the same job ~46x faster.
+    let mut diff = Vec::with_capacity(64);
+    {
+        let mut inst = e.activate(&t, Box::new(TestBindings::new(Recorder::default()))).unwrap();
+        for i in 0..64 {
+            inst.dispatch(&http_dispatch(i), CpuBudget::http());
+            let s = Instant::now();
+            let n = inst.dirty_page_count();
+            diff.push(s.elapsed().as_nanos() as u64);
+            assert!(n >= 16);
+            inst.reset().unwrap();
+        }
+    }
+    report("dirty_page_count() over 32 MiB", diff);
 
     eprintln!(
         "\n  => C2 target is activation p50 < 1000 us, p99 < 5000 us. Measured p50={act_p50:.2} us, \

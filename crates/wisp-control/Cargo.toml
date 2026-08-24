@@ -16,7 +16,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 wasmparser = { workspace = true }
 # Wizer's engine produces WebAssembly bytes for the separate execution engine.
-wizer = "10"
+wizer = { version = "10", optional = true }
 wasmtime = { version = "48", features = ["winch"] }
 blake3 = { workspace = true }
 hex = { workspace = true }
@@ -29,3 +29,8 @@ parking_lot = { workspace = true }
 [dev-dependencies]
 wat = "1"
 tokio = { workspace = true }
+
+[features]
+# Consumers that only validate modules can disable initialization support.
+default = ["preinit"]
+preinit = ["dep:wizer"]

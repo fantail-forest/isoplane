@@ -122,6 +122,7 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
         );
     }
     let base_rss = rss_kb();
+    let base_pss = smaps_kb("Pss:");
     let base_shared = smaps_kb("Shared_Clean:");
     let base_private = smaps_kb("Private_Dirty:");
 
@@ -157,6 +158,7 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
     let dirty_reported = live[0].dirty_page_count();
     let book = live[0].bookkeeping_bytes();
     let end_rss = rss_kb();
+    let end_pss = smaps_kb("Pss:");
     let end_shared = smaps_kb("Shared_Clean:");
     let end_private = smaps_kb("Private_Dirty:");
 
@@ -168,7 +170,7 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
     eprintln!(
         "\n-- {n} instances x {} MiB template ({} MiB pre-initialized), {dirty} pages dirtied each \
          ({dirty_kb:.0} kB) --",
-        MEM_PAGES as usize * 65536 >> 20,
+        (MEM_PAGES as usize * 65536) >> 20,
         big::IMAGE_BYTES >> 20,
     );
     eprintln!("  baseline RSS (engine + module + pool reservation, 0 live): {base_rss} kB");
@@ -179,6 +181,14 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
             r.saturating_sub(base_rss) as f64 / *i as f64
         );
     }
+    // `docs/spike-findings.md` §2 is emphatic that PSS, not RSS, is the metric
+    // to size a machine from: RSS counts a shared template page once per
+    // mapping, so anyone provisioning off RSS over-provisions by roughly the
+    // fault-around region times the instance count.
+    let pss_per_inst = end_pss.saturating_sub(base_pss) as f64 / n as f64;
+    eprintln!(
+        "  Pss           {base_pss} -> {end_pss} kB (+{pss_per_inst:.1} kB/instance)  <== size machines from this"
+    );
     eprintln!(
         "  Private_Dirty {base_private} -> {end_private} kB (+{:.1} kB/instance);  \
          Shared_Clean {base_shared} -> {end_shared} kB",
@@ -216,6 +226,9 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
     );
 
     drop(live);
+    // Report PSS, assert on RSS: RSS is the pessimistic of the two, so the
+    // §6.2 overhead bound is held against the number that cannot flatter us.
+    let _ = pss_per_inst;
     per_inst_kb
 }
 

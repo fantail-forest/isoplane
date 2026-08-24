@@ -1,6 +1,6 @@
 //! Initialization inputs and captured state.
 
-use wisp_control::preinit::{PreInitRequest, PreInitializer};
+use wisp_control::preinit::{InitPal, PreInitRequest, PreInitializer};
 use wisp_engine::ModuleHash;
 
 /// Four explicit guest units build a seed-derived table, request a clock,
@@ -76,8 +76,8 @@ fn guest_wat(impure: bool) -> String {
             (global.set $high_marker (i32.const 1))))
 {unit4}
 
-    ;; Leave unit scope: later failures have no active guest unit.
-    (call $unit_begin (i32.const 0)))
+    ;; Leave unit scope (NO_UNIT = -1): a trap here is nobody's cctor.
+    (call $unit_begin (i32.const -1)))
 
   ;; ---- runtime exports ----
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
@@ -91,6 +91,10 @@ fn guest_wat(impure: bool) -> String {
   (func (export "get_clock_at_init") (result i64) (global.get $clock_at_init))
   (func (export "get_entropy_at_init") (result i32) (global.get $entropy_at_init))
   (func (export "get_high_marker") (result i32) (global.get $high_marker))
+  ;; Keep an init-only capability callable from a runtime export so the
+  ;; test observes runtime-phase refusal. This does not hide values already
+  ;; captured in guest memory.
+  (func (export "runtime_reread_seed") (call $seed_in (i32.const 32) (i32.const 16)))
 )"#
     )
 }
@@ -181,8 +185,33 @@ fn impure_units_are_deferred_and_pre_init_converges() {
     );
 }
 
-/// Loads the initialized template in the runtime engine with initialization-only
-/// imports bound to traps, then reads its captured state.
+/// §4.4's deferral list is not derivable from the wasm, so it rides *inside*
+/// the artifact as the `wisp.deferred-init` custom section — which is what
+/// `wisp-engine::Template::deferred_init_units()` reads.
+#[test]
+fn the_template_carries_its_deferred_units_in_a_custom_section() {
+    use wisp_control::preinit::read_deferred_init_section;
+
+    let wasm = wat::parse_str(guest_wat(true)).unwrap();
+    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    assert_eq!(out.deferred_units, vec![2, 4]);
+    assert_eq!(
+        read_deferred_init_section(&out.template_wasm),
+        out.deferred_units,
+        "the section must agree with the outcome"
+    );
+    // The template is still a valid module with the section appended.
+    Template::load(&out.template_wasm);
+
+    // Absent section means nothing deferred — a pure module carries no section
+    // rather than an empty one.
+    let pure = wat::parse_str(guest_wat(false)).unwrap();
+    let clean = PreInitializer::new().run(&pure, &req(&pure)).unwrap();
+    assert!(clean.deferred_units.is_empty());
+    assert!(read_deferred_init_section(&clean.template_wasm).is_empty());
+}
+
+/// Loads captured memory and globals in the runtime engine.
 #[test]
 fn template_carries_post_init_memory_into_the_runtime_engine() {
     let wasm = wat::parse_str(guest_wat(false)).unwrap();
@@ -255,7 +284,7 @@ fn unattributable_traps_fail_the_deploy() {
   (memory (export "memory") 1 16)
   (global $g (mut i64) (i64.const 0))
   (func (export "wisp_initialize")
-    (call $unit_begin (i32.const 0))   ;; explicitly outside any unit
+    (call $unit_begin (i32.const -1))   ;; explicitly outside any unit
     (global.set $g (call $now)))
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
@@ -299,6 +328,103 @@ fn sealed_imports_trap_rather_than_returning_zero() {
     );
 }
 
+/// Initialization-only imports remain unavailable to an activated instance.
+#[test]
+fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
+    let wasm = wat::parse_str(guest_wat(false)).unwrap();
+    let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
+    let mut t = Template::load(&out.template_wasm);
+
+    let captured = t.probe(0);
+    assert_eq!(
+        t.i64("get_seed_lo"),
+        captured,
+        "the hash seed is captured in guest state"
+    );
+
+    // ...but the live instance cannot ask for it again.
+    let err = t
+        .instance
+        .get_typed_func::<(), ()>(&mut t.store, "runtime_reread_seed")
+        .unwrap()
+        .call(&mut t.store, ())
+        .expect_err("re-reading the seed at runtime must trap");
+    // The host error is the trap's *cause*, so look at the whole chain.
+    let chain = format!("{err:?}");
+    println!("{chain}");
+    assert!(
+        chain.contains("called at RUNTIME"),
+        "the trap must name the violation, got: {chain}"
+    );
+}
+
+/// Bring-up mode defers a unit clock while capturing allowed entropy.
+#[test]
+fn runtime_bringup_defers_unit_clocks_and_captures_entropy() {
+    let wasm = wat::parse_str(guest_wat(true)).unwrap();
+    let out = PreInitializer::new()
+        .with_pal(InitPal::RuntimeBringUp)
+        .run(&wasm, &req(&wasm))
+        .expect("pre-init must converge");
+
+    assert_eq!(out.deferred_units, vec![2]);
+    assert_eq!(out.deferred_reasons, vec![(2, "clock_now_coarse")]);
+    assert_eq!(out.pal_calls, vec![("entropy_fill", 1)]);
+
+    let mut t = Template::load(&out.template_wasm);
+    assert_eq!(
+        t.i64("get_clock_at_init"),
+        0,
+        "a frozen clock must NOT have been baked"
+    );
+    assert_eq!(t.i32("get_entropy_at_init"), 1);
+}
+
+/// Bring-up mode supplies the fixed clock and fresh entropy outside a unit.
+#[test]
+fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
+    let wat = r#"(module
+  (import "wisp" "clock_now_coarse" (func $now (result i64)))
+  (import "wisp" "entropy_fill"     (func $entropy (param i32 i32)))
+  (memory (export "memory") 1 16)
+  (global $t (mut i64) (i64.const -1))
+  ;; No init_unit_begin at all: this is a runtime bringing itself up, which is
+  ;; exactly what a .NET module does before any tenant cctor runs.
+  (func (export "wisp_initialize")
+    (global.set $t (call $now))
+    (call $entropy (i32.const 0) (i32.const 32)))
+  (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+  (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
+  (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))
+  (func (export "get_t") (result i64) (global.get $t))
+  (func (export "probe") (param i32) (result i64) (i64.load (local.get 0)))
+)"#;
+    let wasm = wat::parse_str(wat).unwrap();
+
+    // The default mode refuses an unscoped clock request.
+    let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
+    assert!(err.to_string().contains("outside any init unit"), "{err}");
+
+    let out = PreInitializer::new()
+        .with_pal(InitPal::RuntimeBringUp)
+        .run(&wasm, &req(&wasm))
+        .expect("a runtime must be able to come up");
+    println!("PAL calls: {:?}", out.pal_calls);
+    assert_eq!(
+        out.pal_calls,
+        vec![("clock_now_coarse", 1), ("entropy_fill", 1)]
+    );
+
+    let mut t = Template::load(&out.template_wasm);
+    assert_eq!(
+        t.i64("get_t"),
+        0,
+        "runtime bring-up supplies the zero initialization clock"
+    );
+    let entropy = t.probe(0);
+    assert_ne!(entropy, 0, "entropy must be real bytes, not zeros");
+}
+
 /// A runtime-only operation defers the active guest unit before its state assignment.
 #[test]
 fn a_runtime_timer_defers_its_active_initialization_unit() {
@@ -312,7 +438,7 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
     (call $unit_begin (i32.const 9))
     (if (i32.eqz (call $unit_deferred (i32.const 9)))
       (then (global.set $g (call $deadline (i64.const 1)))))
-    (call $unit_begin (i32.const 0)))
+    (call $unit_begin (i32.const -1)))
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))

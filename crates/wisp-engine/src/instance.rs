@@ -187,6 +187,9 @@ impl Instance {
             check_ticks: 1,
         };
 
+        // A successful GC hint preserves the preceding completion state for capture.
+        let is_gc_hint = matches!(entry, Entry::GcHint(_));
+
         // The watchdog only ticks while something is Hot, so this must precede
         // arming the deadline or the deadline would never be reached.
         engine.watchdog.shared().enter_hot();
@@ -238,7 +241,9 @@ impl Instance {
             _ => Completion::from_status(status),
         };
 
-        self.last = Some(completion);
+        if !(is_gc_hint && completion.instance_survives()) {
+            self.last = Some(completion);
+        }
         self.last_violation = violation;
         // This is the line that makes `Completion::instance_survives` govern.
         if !completion.instance_survives() {

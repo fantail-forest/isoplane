@@ -544,6 +544,12 @@ impl Cell {
     pub fn futures(&self) -> &Arc<FutureTable> {
         &self.rt.futures
     }
+    /// The cell's reactor (§6.1). Reactor threads own all I/O, so anything
+    /// that touches the network — the metrics endpoint, the proxy's listener —
+    /// belongs here rather than on an execution-pool thread.
+    pub fn reactor(&self) -> &tokio::runtime::Handle {
+        &self.rt.reactor
+    }
 
     // -----------------------------------------------------------------------
     // Admission (§6.4)
@@ -887,17 +893,23 @@ impl Cell {
         );
 
         // The vtable may owe the guest a trap it could not raise from an
-        // `i64`-returning import (§11.1's futures cap, a protocol error).
+        // import that returns a bare `i64` — §11.1's pending-futures cap, a
+        // malformed payload, a capability violation. `call_future` cannot
+        // trap, so it latches; this is where the latch becomes a trap, before
+        // the guest is allowed to proceed as though the call had succeeded.
         let latched = slot.ctx.take_trap();
-        let completion = match (latched, out.completion) {
-            (Some(TrapCode::TooManyFutures), Completion::Parked) => {
-                self.metrics
-                    .pending_cap_rejections
-                    .fetch_add(1, Ordering::Relaxed);
+        let mut latched_msg = None;
+        let completion = match latched {
+            Some(code) if matches!(out.completion, Completion::Done | Completion::Parked) => {
+                if code == TrapCode::TooManyFutures {
+                    self.metrics
+                        .pending_cap_rejections
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                latched_msg = Some(format!("{code:?}"));
                 Completion::Trapped
             }
-            (Some(_), Completion::Parked) | (Some(_), Completion::Done) => Completion::Trapped,
-            (_, c) => c,
+            _ => out.completion,
         };
 
         let (lifecycle, module, route) = {
@@ -926,9 +938,27 @@ impl Cell {
                 !self.rt.futures.has_ready(slot.id)
             }
             Completion::Done => {
+                // §6.3: "the guest may return `done` with a body-stream handle
+                // and continue producing chunks via write futures under
+                // `WaitUntil` semantics". An unfinished streaming response
+                // must therefore stay in the response table — taking it here
+                // would make every subsequent `resp_write` fail with
+                // `NoSuchHandle`, which is a silent truncation of the tenant's
+                // response.
+                //
+                // **PoC gap:** `DispatchResult` carries a complete body, not a
+                // stream, so the caller receives the bytes accumulated up to
+                // `done`. Chunks written afterwards accumulate on the instance
+                // and are readable via `Cell::response_snapshot`, but the PoC
+                // does not pipe them to the requester. Streaming to the client
+                // is `wisp-proxy`'s half of §6.3 and is not wired.
                 let response = match out.status {
                     PollStatus::Done { response } if response != 0 => {
-                        slot.ctx.responses.lock().take(response)
+                        let mut t = slot.ctx.responses.lock();
+                        match t.get(response) {
+                            Some(r) if r.head.streaming && !r.finished => Some(r.clone()),
+                            _ => t.take(response),
+                        }
                     }
                     _ => None,
                 };
@@ -973,6 +1003,7 @@ impl Cell {
                     .trap
                     .as_ref()
                     .map(|t| format!("{}: {}", t.kind.tenant_code(), t.message))
+                    .or_else(|| latched_msg.map(|c| format!("capability_violation: {c}")))
                     .unwrap_or_else(|| "trap".into());
                 let status = if killed { 503 } else { 500 };
                 let result = self.build_result(
@@ -1110,6 +1141,14 @@ impl Cell {
     }
     pub fn resident_count(&self) -> usize {
         self.residents.lock().len()
+    }
+    /// The bytes a streaming response has accumulated so far (§6.3). See the
+    /// PoC gap noted in `settle`.
+    pub fn response_snapshot(&self, id: InstanceId, handle: u32) -> Option<Vec<u8>> {
+        let g = self.residents.lock();
+        let r = g.get(&id)?;
+        let t = r.slot.ctx.responses.lock();
+        t.get(handle).map(|resp| resp.body())
     }
 
     /// Run one pass of the §6.6 idle trajectory synchronously.

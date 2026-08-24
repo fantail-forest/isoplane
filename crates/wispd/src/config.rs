@@ -135,6 +135,10 @@ pub enum ConfigError {
     NoVersions(String),
     #[error("duplicate app name `{0}`")]
     DuplicateApp(String),
+    #[error("proxy.max_in_flight must be at least 1 (got {0}): a node that admits nothing is not a node")]
+    ZeroInFlight(usize),
+    #[error("cell `{cell}` has max_hot = 0")]
+    ZeroMaxHot { cell: String },
 }
 
 impl NodeConfig {
@@ -185,6 +189,14 @@ impl NodeConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.cells.is_empty() {
             return Err(ConfigError::NoCells);
+        }
+        if self.proxy.max_in_flight == 0 {
+            return Err(ConfigError::ZeroInFlight(self.proxy.max_in_flight));
+        }
+        if let Some(c) = self.cells.iter().find(|c| c.max_hot == 0) {
+            return Err(ConfigError::ZeroMaxHot {
+                cell: c.name.clone(),
+            });
         }
         let mut seen = BTreeSet::new();
         for c in &self.cells {
@@ -336,6 +348,22 @@ versions = [{{ id = "v1" }}]
     #[test]
     fn a_node_with_no_cells_is_refused() {
         assert_eq!(cfg("node = \"n\"").validate(), Err(ConfigError::NoCells));
+    }
+
+    #[test]
+    fn degenerate_capacity_settings_are_refused_at_startup() {
+        let mut c = NodeConfig::dev_default();
+        c.proxy.max_in_flight = 0;
+        assert_eq!(c.validate(), Err(ConfigError::ZeroInFlight(0)));
+
+        let mut c = NodeConfig::dev_default();
+        c.cells[0].max_hot = 0;
+        assert_eq!(
+            c.validate(),
+            Err(ConfigError::ZeroMaxHot {
+                cell: "cell-0".into()
+            })
+        );
     }
 
     #[test]

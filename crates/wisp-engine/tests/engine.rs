@@ -298,13 +298,21 @@ fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
 fn a_spinner_is_killed_at_its_cpu_budget_and_the_instance_is_discarded() {
     let e = test_engine();
     // A tight back-edge loop: epoch checks are Cranelift-inserted at back-edges.
+    // The guest marks memory before it starts spinning and would mark it again
+    // on the way out. §2.5.8: a budget kill is "not unwound: no `finally`
+    // blocks, no finalizers, no cleanup quantum", so the second marker must
+    // never appear.
     let wasm = guest(
         4,
         "",
         r#"
   (global $spins (export "g_spins") (mut i64) (i64.const 0))
   (func $spin (loop $l (global.set $spins (i64.add (global.get $spins) (i64.const 1))) (br $l)))"#,
-        "(call $spin) (i64.const 0)",
+        r#"
+    (i64.store (i32.const 3000) (i64.const 1))   ;; entered
+    (call $spin)
+    (i64.store (i32.const 3008) (i64.const 1))   ;; "finally" — must never run
+    (i64.const 0)"#,
         DONE,
     );
     let t = e.load_template(&wasm).unwrap();
@@ -336,6 +344,21 @@ fn a_spinner_is_killed_at_its_cpu_budget_and_the_instance_is_discarded() {
         cpu_ms,
         out.wall_ns as f64 / 1e6,
         cpu_ms - 20.0
+    );
+
+    // §2.5.8, checked rather than asserted in prose: the guest was inside the
+    // dispatch, and the code after the loop never ran. There is no unwinding
+    // to run it — which is exactly why §5.4 can say "the host reclaims all of
+    // the dispatch's handles on kill; invariant 2 *is* the cleanup story".
+    let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
+    let (entered, cleaned_up) = {
+        let m = i.memory();
+        (read(m, 3000), read(m, 3008))
+    };
+    assert_eq!(entered, 1, "the guest must actually have been running");
+    assert_eq!(
+        cleaned_up, 0,
+        "§2.5.8: no `finally`-equivalent may run after a budget kill"
     );
 
     // §6.4: "an instance killed at budget is discarded". Every entry point
@@ -906,10 +929,13 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
 #[test]
 fn the_init_sandbox_permits_exactly_the_init_visible_set() {
     let e = test_engine();
-    // §4.4: the escrowed hash seed is the one externally sourced value.
+    // §4.4: the escrowed hash seed is the one *externally sourced* value; the
+    // config blob is tenant-authored deploy input, which is why pre-running a
+    // config parse bakes no shared secret.
     let imports = format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         import("init_hash_seed", "(param i32 i32)", ""),
+        import("init_config_get", "(param i32 i32)", "(result i32)"),
         import("init_unit_deferred", "(param i32)", "(result i32)"),
     );
     let wasm = guest(
@@ -918,32 +944,49 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         r#"
   (func (export "wisp_initialize")
     (if (i32.eqz (call $init_unit_deferred (i32.const 1)))
-      (then (call $init_hash_seed (i32.const 512) (i32.const 16)))))"#,
+      (then
+        (call $init_hash_seed (i32.const 512) (i32.const 16))
+        ;; The zero-length probe: `(ptr, cap) -> i32` answers with the blob's
+        ;; FULL length, so a guest can size its buffer before asking for bytes.
+        (i32.store (i32.const 600) (call $init_config_get (i32.const 0) (i32.const 0)))
+        (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))))))"#,
         DONE,
         DONE,
     );
     let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(
-            &t,
-            Box::new(TestBindings::init_sandbox(Recorder::default())),
-        )
-        .unwrap();
+    let mut b = TestBindings::init_sandbox(Recorder::default());
+    b.full_length = Some(9_000);
+    let mut i = e.activate(&t, Box::new(b)).unwrap();
     let out = i.run_initialize(CpuBudget {
         cpu_ms: 10_000,
         wall_ms_cap: 10_000,
     });
     assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
+
+    let m = i.memory();
     assert_eq!(
-        &i.memory()[512..528],
+        &m[512..528],
         &[0xABu8; 16],
         "the escrowed seed must be delivered"
     );
+    assert_eq!(
+        u32::from_le_bytes(m[600..604].try_into().unwrap()),
+        9_000,
+        "a zero-capacity probe must report the full length, not what was copied"
+    );
+    assert_eq!(u32::from_le_bytes(m[604..608].try_into().unwrap()), 9_000);
+    assert_eq!(
+        &m[1024..1032],
+        &[0xABu8; 8],
+        "the capped read must fill exactly `cap` bytes"
+    );
+    assert_eq!(m[1032], 0, "and must not write one byte past `cap`");
 
     // Cross-check against the contract: every import the sandbox admits is
     // marked init_visible, and nothing in a binding group is.
     let visible: Vec<&str> = wisp_abi::imports::init_visible().map(|d| d.name).collect();
     assert!(visible.contains(&"init_hash_seed"));
+    assert!(visible.contains(&"init_config_get"));
     assert!(!visible.contains(&"clock_now_coarse"));
 }
 
@@ -986,4 +1029,215 @@ fn fixed_bookkeeping_is_within_the_64_kb_target() {
         b <= 64 * 1024,
         "§6.2 targets <= 64 KB of fixed bookkeeping, got {b}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// §5.5 / §6.6 — the pre-capture GC hint
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
+    let e = test_engine();
+    let wasm = guest(
+        4,
+        "",
+        r#"
+  (func (export "wisp_gc_hint") (param $pressure i32)
+    (i32.store (i32.const 2048) (local.get $pressure))
+    (i32.store (i32.const 2052) (i32.add (i32.load (i32.const 2052)) (i32.const 1))))"#,
+        PENDING,
+        DONE,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    assert!(t.has_gc_hint());
+
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    i.dispatch(&http_dispatch(1), CpuBudget::http());
+    assert!(i.is_parked());
+
+    let out = i.gc_hint(255);
+    assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
+
+    let m = i.memory();
+    assert_eq!(u32::from_le_bytes(m[2048..2052].try_into().unwrap()), 255);
+    assert_eq!(u32::from_le_bytes(m[2052..2056].try_into().unwrap()), 1);
+
+    // The whole point of the hint is that capture happens next.
+    assert!(
+        i.is_parked(),
+        "§6.6 calls gc-hint on a Parked instance immediately before capture; \
+         the hint must not clear park state"
+    );
+    i.capture_mutable_state()
+        .expect("a hinted, parked instance must still be capturable");
+}
+
+#[test]
+fn gc_hint_is_optional() {
+    // §5.5: "a guest that ignores the hint is correct but stores a larger delta
+    // (and pays for it)". Not exporting it at all is the same choice, earlier.
+    let e = test_engine();
+    let t = e.load_template(&guest(4, "", "", PENDING, DONE)).unwrap();
+    assert!(!t.has_gc_hint());
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    i.dispatch(&http_dispatch(1), CpuBudget::http());
+    assert_eq!(i.gc_hint(255).completion, Completion::Done);
+    assert!(i.is_parked());
+}
+
+// ---------------------------------------------------------------------------
+// §6.4 — the wall-clock backstop is a guard, not a meter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_wall_clock_backstop_reports_its_distinct_cap() {
+    let e = test_engine();
+    let wasm = guest(
+        4,
+        "",
+        "(func $spin (loop $l (br $l)))",
+        "(call $spin) (i64.const 0)",
+        DONE,
+    );
+    let t = e.load_template(&wasm).unwrap();
+    let mut i = e
+        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+
+    // A CPU budget it will never reach, and a wall cap it will.
+    let out = i.dispatch(
+        &http_dispatch(1),
+        CpuBudget {
+            cpu_ms: 600_000,
+            wall_ms_cap: 40,
+        },
+    );
+    let trap = out.trap.as_ref().expect("the backstop must trip");
+    assert_eq!(trap.kind, TrapKind::BudgetExceeded, "{trap:?}");
+    assert!(
+        trap.message.contains("wall-clock backstop"),
+        "the message must distinguish the backstop from the CPU meter, since \
+         §11.2 says wall time is excluded from execution CPU accounting: {}",
+        trap.message
+    );
+    assert!(
+        out.wall_ns >= 40_000_000,
+        "tripped after {} ns of wall",
+        out.wall_ns
+    );
+    assert!(
+        out.cpu_ns < 600_000 * 1_000_000,
+        "the CPU budget was never reached; the kill came from the wall guard"
+    );
+    eprintln!(
+        "WALL BACKSTOP: 40 ms cap tripped at {:.1} ms wall / {:.1} ms CPU",
+        out.wall_ns as f64 / 1e6,
+        out.cpu_ns as f64 / 1e6
+    );
+}
+
+// ---------------------------------------------------------------------------
+// §4.3 V2 / §8.2 — the features that make blocking inexpressible
+// ---------------------------------------------------------------------------
+
+/// V2 is the rule that makes "no blocking" structural rather than advisory: with
+/// threads and shared memory off, `memory.atomic.wait*`/`notify` fail bytecode
+/// validation and a guest cannot express a wait at all (§4.5).
+///
+/// This is asserted empirically because arguing it from cargo features is not
+/// safe: cargo unifies features across a workspace, `wisp-control` depends on
+/// wasmtime with default features, and `WasmFeatures::THREADS` defaults to
+/// **true**. The engine therefore disables the proposals explicitly, and this
+/// test is what would catch it if that ever stopped working.
+#[test]
+fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
+    let e = test_engine();
+
+    let cases: [(&str, &str); 4] = [
+        (
+            "shared memory",
+            r#"(module (memory (export "memory") 1 1 shared)
+                       (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+                       (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
+                       (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
+        ),
+        (
+            "atomic wait",
+            r#"(module (memory (export "memory") 1 1 shared)
+                       (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+                       (func (export "wisp_handle") (param i32 i32) (result i64)
+                         (drop (memory.atomic.wait32 (i32.const 0) (i32.const 0) (i64.const -1)))
+                         (i64.const 0))
+                       (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
+        ),
+        (
+            "atomic rmw on unshared memory",
+            r#"(module (memory (export "memory") 1)
+                       (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+                       (func (export "wisp_handle") (param i32 i32) (result i64)
+                         (drop (i32.atomic.rmw.add (i32.const 0) (i32.const 1)))
+                         (i64.const 0))
+                       (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
+        ),
+        (
+            "two linear memories (V3)",
+            r#"(module (memory (export "memory") 1) (memory 1)
+                       (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+                       (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
+                       (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
+        ),
+    ];
+
+    for (what, src) in cases {
+        // Some of these do not even assemble once the feature is off, which is
+        // itself the rule holding; the ones that do assemble must be rejected
+        // by `load_template`.
+        match wat::parse_str(src) {
+            Err(e) => eprintln!("  V2 `{what}`: rejected at assembly ({e})"),
+            Ok(wasm) => {
+                let err = e
+                    .load_template(&wasm)
+                    .err()
+                    .unwrap_or_else(|| panic!("V2/V3: `{what}` must not load"));
+                eprintln!(
+                    "  V2 `{what}`: rejected -> {}",
+                    format!("{err:#}").lines().next().unwrap()
+                );
+            }
+        }
+    }
+
+    // Relaxed SIMD is off too (§4.3 V2: "deterministic SIMD subset only"), while
+    // the deterministic subset still works.
+    let relaxed = r#"(module (memory (export "memory") 1)
+        (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+        (func (export "wisp_handle") (param i32 i32) (result i64)
+          (drop (i32x4.relaxed_trunc_f32x4_s (v128.const i32x4 0 0 0 0)))
+          (i64.const 0))
+        (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
+    match wat::parse_str(relaxed) {
+        Ok(wasm) => {
+            let err = e
+                .load_template(&wasm)
+                .err()
+                .expect("V2: relaxed SIMD must be rejected");
+            eprintln!(
+                "  V2 `relaxed SIMD`: rejected -> {}",
+                format!("{err:#}").lines().next().unwrap()
+            );
+        }
+        Err(e) => eprintln!("  V2 `relaxed SIMD`: rejected at assembly ({e})"),
+    }
+    let deterministic = r#"(module (memory (export "memory") 1)
+        (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+        (func (export "wisp_handle") (param i32 i32) (result i64)
+          (drop (i32x4.add (v128.const i32x4 1 2 3 4) (v128.const i32x4 5 6 7 8)))
+          (i64.const 0))
+        (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
+    e.load_template(&wat::parse_str(deterministic).unwrap())
+        .expect("the deterministic SIMD subset must still load");
 }

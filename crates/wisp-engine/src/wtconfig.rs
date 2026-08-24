@@ -1,7 +1,9 @@
 //! Configure Wasmtime sandbox engines and pooling allocations.
 
 use anyhow::{Context, Result};
-use wasmtime::{Config, Engine, InstanceAllocationStrategy, OptLevel, PoolingAllocationConfig};
+use wasmtime::{
+    Config, Engine, InstanceAllocationStrategy, OptLevel, PoolingAllocationConfig, WasmFeatures,
+};
 
 use crate::EngineConfig;
 
@@ -20,6 +22,13 @@ pub(crate) const BOOKKEEPING_BYTES: usize =
 pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     let mut c = Config::new();
 
+    // Disable these proposals explicitly even when Cargo features enable their implementations.
+    c.wasm_features(
+        WasmFeatures::THREADS
+            | WasmFeatures::SHARED_EVERYTHING_THREADS
+            | WasmFeatures::STACK_SWITCHING,
+        false,
+    );
     c.wasm_relaxed_simd(false);
     c.relaxed_simd_deterministic(true);
     c.wasm_simd(true);

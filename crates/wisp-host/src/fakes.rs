@@ -45,6 +45,8 @@ pub enum Step {
     /// Issue `http_fetch` for `url` `times` over, then park. Exercises §8.6's
     /// egress policy and §11.1's subrequest cap through the real vtable.
     Fetch { url: String, times: usize },
+    /// Record the bytes returned by `entropy_fill`.
+    Entropy { bytes: usize },
 }
 
 /// The scripted behaviour of a fake module.
@@ -111,6 +113,8 @@ pub struct FakeInstance {
     stack_empty: bool,
     dirty_pages: usize,
     gc_hints: u32,
+    /// Every entropy draw this module's instances have made (§8.5).
+    entropy: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl FakeInstance {
@@ -196,6 +200,20 @@ impl FakeInstance {
                     }
                 }
                 self.dirty_pages = self.dirty_pages.max(pages);
+                PollStatus::Done { response: 0 }
+            }
+            Step::Entropy { bytes } => {
+                let mut buf = vec![0u8; bytes];
+                let n = self.bindings.call_fill(
+                    ImportCall {
+                        import: "entropy_fill",
+                        payload: &[],
+                        scalars: [0; 3],
+                    },
+                    &mut buf,
+                );
+                debug_assert_eq!(n, bytes as i64);
+                self.entropy.lock().push(buf);
                 PollStatus::Done { response: 0 }
             }
             Step::Log { bytes, times } => {
@@ -368,6 +386,7 @@ pub struct FakeActivator {
     behaviour: FakeBehaviour,
     pub activations: AtomicU64,
     pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
+    pub entropy: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl FakeActivator {
@@ -396,6 +415,7 @@ impl FakeActivator {
             },
             activations: AtomicU64::new(0),
             wakes_seen: Arc::new(Mutex::new(Vec::new())),
+            entropy: Arc::new(Mutex::new(Vec::new())),
         }
     }
     /// What every instance of this module has been woken with, in order.
@@ -428,6 +448,7 @@ impl Activator for FakeActivator {
         let mut memory = (*self.template).clone();
         memory.resize(self.behaviour.memory_bytes, 0);
         Ok(Box::new(FakeInstance {
+            entropy: self.entropy.clone(),
             wakes_seen: self.wakes_seen.clone(),
             bindings,
             template: self.template.clone(),

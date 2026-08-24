@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::*;
-
 use wisp_abi::host::{Dispatcher};
 use common::fake::FakeCell;
 use wisp_proxy::{ProxyConfig, ShedConfig};
+
 
 
 // ---------------------------------------------------------------------------
@@ -145,7 +145,8 @@ async fn a_cell_s_503_reaches_the_client_with_its_headers() {
     cell.trip_breaker("quotes:/spin");
     let r = get(rig.addr, "quotes.wisp.dev", "/spin", &[]).await;
     assert_eq!(r.status, 503);
-    assert_eq!(r.header("x-wisp-breaker"), Some("tripped"));
+    assert_eq!(r.body, "hang breaker tripped");
+    assert_eq!(r.header("retry-after"), Some("5"));
     // Other routes on the same app are unaffected — blast radius is the
     // offending (module, route), not the tenant.
     assert_eq!(
@@ -160,4 +161,20 @@ async fn a_cell_s_503_reaches_the_client_with_its_headers() {
         get(rig.addr, "quotes.wisp.dev", "/spin", &[]).await.status,
         200
     );
+}
+
+/// The `x-wisp-*` namespace is the platform's: a guest that could set
+/// `x-wisp-version` could lie to its own operator about which build served a
+/// request.
+#[tokio::test]
+async fn a_guest_cannot_forge_platform_headers() {
+    let cell = Arc::new(FakeCell::new());
+    let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
+    rig.routes.insert(quotes_target("v2", wisp_abi::host::CodeTier::Fast), &["quotes.wisp.dev".into()]).unwrap();
+    let r = get(rig.addr, "quotes.wisp.dev", "/", &[]).await;
+    // FakeCell's reply sets x-wisp-version to the target version; the proxy
+    // drops the guest's copy and writes its own. Exactly one survives.
+    assert_eq!(r.headers.get_all("x-wisp-version").iter().count(), 1);
+    assert_eq!(r.header("x-wisp-version"), Some("v2"));
+    assert_eq!(r.header("x-wisp-tier"), Some("fast"));
 }

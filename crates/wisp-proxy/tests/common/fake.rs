@@ -59,9 +59,10 @@ impl Dispatcher for FakeCell {
         req: HttpRequest,
     ) -> anyhow::Result<HttpReply> {
         if self.breaker_is_tripped(&format!("{}:{}", target.app, req.path)) {
+            // Proxy-owned headers are filtered from guest responses.
             return Ok(HttpReply {
                 status: 503,
-                headers: vec![("x-wisp-breaker".into(), "tripped".into())],
+                headers: vec![("retry-after".into(), "5".into())],
                 body: b"hang breaker tripped".to_vec(),
                 streaming: false,
             });

@@ -28,30 +28,38 @@ impl Provenance {
 
 /// Classifies the environment using available process and mount signals.
 pub fn detect() -> Provenance {
-    if sysbox_signals() > 0 {
+    if !in_container() {
+        return Provenance::Host;
+    }
+    if sysboxfs_over_proc() {
         return Provenance::Sandbox;
     }
-    if in_container() {
-        return Provenance::Container;
-    }
-    Provenance::Host
+    Provenance::Container
 }
 
-fn sysbox_signals() -> usize {
-    let mut n = 0;
-    if let Ok(mi) = fs::read_to_string("/proc/self/mountinfo") {
-        if mi.contains("sysboxfs") {
-            n += 1;
+/// Is `sysboxfs` mounted over part of `/proc` or `/sys`?
+///
+/// `mountinfo` fields: `id parent major:minor root mountpoint options... - fstype source super-options`.
+/// The mount point is field 5 (1-indexed); the filesystem type is the first
+/// field after the `-` separator. Both are parsed rather than substring-matched
+/// so that a *path* containing "sysboxfs" cannot masquerade as a *filesystem*
+/// of that type.
+fn sysboxfs_over_proc() -> bool {
+    fs::read_to_string("/proc/self/mountinfo")
+        .map(|mi| mountinfo_has_sysboxfs_over_proc(&mi))
+        .unwrap_or(false)
+}
+
+fn mountinfo_has_sysboxfs_over_proc(mountinfo: &str) -> bool {
+    mountinfo.lines().any(|line| {
+        let Some((before, after)) = line.split_once(" - ") else { return false };
+        let fstype = after.split_whitespace().next().unwrap_or("");
+        if fstype != "sysboxfs" {
+            return false;
         }
-    }
-    // A non-identity user namespace mapping is another environment hint.
-    if let Ok(uid_map) = fs::read_to_string("/proc/self/uid_map") {
-        let f: Vec<&str> = uid_map.split_whitespace().collect();
-        if f.len() >= 3 && f[1] != "0" {
-            n += 1;
-        }
-    }
-    n
+        let mountpoint = before.split_whitespace().nth(4).unwrap_or("");
+        mountpoint.starts_with("/proc") || mountpoint.starts_with("/sys")
+    })
 }
 
 fn in_container() -> bool {
@@ -125,6 +133,26 @@ mod tests {
         let p = detect();
         assert!(!p.label().is_empty());
     }
+
+    #[test]
+    fn a_host_serving_sysbox_containers_is_not_the_sandbox() {
+        const HOST: &str = "3262 31 0:123 / /var/lib/sysboxfs/c8f30b8e5736 rw,nosuid,nodev,relatime shared:1624 - fuse sysboxfs rw,user_id=0,group_id=0,default_permissions,allow_other";
+        const INSIDE: &str = "412 388 0:98 / /proc/sys rw,relatime - sysboxfs sysboxfs rw,user_id=0,group_id=0";
+
+        assert!(
+            !mountinfo_has_sysboxfs_over_proc(HOST),
+            "the host's own sysboxfs mounts are not evidence of being inside one"
+        );
+        assert!(mountinfo_has_sysboxfs_over_proc(INSIDE));
+
+        // Parse filesystem names independently of mount paths.
+        const DECOY: &str = "1 2 0:1 / /home/me/sysboxfs-notes rw - ext4 /dev/sda1 rw";
+        assert!(!mountinfo_has_sysboxfs_over_proc(DECOY));
+
+        // Container-specific classification also requires a container signal.
+        assert!(!(detect() == Provenance::Sandbox) || in_container());
+    }
+
 
     #[test]
     fn the_environment_banner_names_the_provenance() {

@@ -1,0 +1,406 @@
+//! Exercises the import vtable one host call at a time.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use wisp_abi::calls::FetchRequest;
+use wisp_abi::config::{HandlerLifecycle, Limits};
+use wisp_abi::result::{FetchResponse, FutureError, ResultRecord};
+use wisp_engine::{HostBindings, ImportCall};
+
+use wisp_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services};
+use wisp_host::egress::HostEgressPolicy;
+use wisp_host::fakes::*;
+use wisp_host::futures::{FutureTable, INVALID_FUTURE};
+use wisp_host::meters::Meters;
+use wisp_host::metrics::Metrics;
+use wisp_host::{InstanceId, ModuleId, Resolver};
+
+struct Fixed(Vec<SocketAddr>);
+impl Resolver for Fixed {
+    fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<SocketAddr>, String> {
+        Ok(self.0.clone())
+    }
+}
+
+struct Vt {
+    ctx: Arc<InstanceCtx>,
+    bindings: CellBindings,
+    futures: Arc<FutureTable>,
+    fetcher: Arc<FakeFetcher>,
+    meters: Arc<Meters>,
+    wake: Arc<RecordingWake>,
+}
+
+fn vtable(limits: Limits, resolve_to: &str, allowlist: Option<Vec<String>>) -> Vt {
+    let fetcher = Arc::new(FakeFetcher::default());
+    let egress = Arc::new(HostEgressPolicy::new(
+        Box::new(Fixed(vec![resolve_to.parse().unwrap()])),
+        1024,
+        1 << 30,
+    ));
+    let services = Arc::new(Services {
+        egress,
+        fetcher: fetcher.clone(),
+    });
+    let futures = Arc::new(FutureTable::new());
+    let wake = Arc::new(RecordingWake::default());
+    let meters = Arc::new(Meters::new());
+    let rt = Arc::new(CellRuntime {
+        services,
+        futures: futures.clone(),
+        metrics: Arc::new(Metrics::new()),
+        wake: wake.clone(),
+        reactor: tokio::runtime::Handle::current(),
+    });
+    let ctx = Arc::new(InstanceCtx::new(
+        InstanceId(1),
+        ModuleId::new("app", "v1"),
+        "acme",
+        limits,
+        HandlerLifecycle::Reuse,
+        allowlist,
+        meters.clone(),
+        Some(rt),
+    ));
+    ctx.begin_dispatch(1_000, 1);
+    let bindings = CellBindings::new(ctx.clone());
+    Vt {
+        ctx,
+        bindings,
+        futures,
+        fetcher,
+        meters,
+        wake,
+    }
+}
+
+fn fetch_payload(url: &str) -> Vec<u8> {
+    postcard::to_allocvec(&FetchRequest {
+        method: "GET".into(),
+        url: url.into(),
+        headers: vec![],
+        body: vec![],
+    })
+    .unwrap()
+}
+
+async fn settle(v: &Vt, id: u64) -> ResultRecord {
+    for _ in 0..500 {
+        if let Some((got, res)) = v.futures.take_ready(v.ctx.instance) {
+            assert_eq!(got, id);
+            return res;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    panic!("future {id} never settled");
+}
+
+#[tokio::test]
+async fn fetch_to_a_private_address_is_denied_through_the_future() {
+    let mut v = vtable(Limits::default(), "10.0.0.5:80", None);
+    let id = v.bindings.call_future(ImportCall {
+        import: "http_fetch",
+        payload: &fetch_payload("http://internal.example/"),
+        scalars: [0; 3],
+    });
+    assert_ne!(id, INVALID_FUTURE);
+    match settle(&v, id).await {
+        ResultRecord::Err(FutureError::Denied(msg)) => {
+            assert!(msg.contains("10.0.0.5"), "{msg}");
+            assert!(msg.contains("private/link-local"), "the denial should say why: {msg}");
+        }
+        other => panic!("SSRF target was not denied: {other:?}"),
+    }
+    // And nothing was dialled.
+    assert!(
+        v.fetcher.connected_to.lock().is_empty(),
+        "the host connected to a private address"
+    );
+}
+
+#[tokio::test]
+async fn the_fetch_connects_to_the_pinned_address() {
+    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    let id = v.bindings.call_future(ImportCall {
+        import: "http_fetch",
+        payload: &fetch_payload("http://example.com/"),
+        scalars: [0; 3],
+    });
+    let res = settle(&v, id).await;
+    let ResultRecord::Ok(bytes) = res else {
+        panic!("fetch failed: {res:?}")
+    };
+    let resp: FetchResponse = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(
+        *v.fetcher.connected_to.lock(),
+        vec!["93.184.216.34:80".parse::<SocketAddr>().unwrap()],
+        "the fetcher did not use the pinned address"
+    );
+}
+
+#[tokio::test]
+async fn a_host_off_the_allowlist_is_refused() {
+    let mut v = vtable(
+        Limits::default(),
+        "93.184.216.34:80",
+        Some(vec!["api.example.com".into()]),
+    );
+    let id = v.bindings.call_future(ImportCall {
+        import: "http_fetch",
+        payload: &fetch_payload("http://evil.example/"),
+        scalars: [0; 3],
+    });
+    match settle(&v, id).await {
+        ResultRecord::Err(FutureError::Denied(m)) => assert!(m.contains("allowlist"), "{m}"),
+        other => panic!("allowlist not enforced: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_subrequest_cap_is_per_dispatch() {
+    let mut v = vtable(
+        Limits {
+            module_bytes_compressed: 5242880,
+            instance_memory_max: 67108864,
+            cpu_ms_per_http_dispatch: 10,
+            subrequests_per_dispatch: 20,
+            pending_futures_per_dispatch: 6,
+        },
+        "93.184.216.34:80",
+        None,
+    );
+    let cap = Limits {
+        module_bytes_compressed: 5242880,
+        instance_memory_max: 67108864,
+        cpu_ms_per_http_dispatch: 10,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .subrequests_per_dispatch;
+    assert_eq!(cap, 20);
+
+    assert_eq!(
+        Limits {
+            module_bytes_compressed: 5242880,
+            instance_memory_max: 67108864,
+            cpu_ms_per_http_dispatch: 10,
+            subrequests_per_dispatch: 20,
+            live_dis: 1000,
+            delta_storage_bytes: 104857600,
+            hibernation_horizon_ms: 604800000,
+            websockets_per_di: 100,
+            pending_futures_per_dispatch: 6
+        }
+        .pending_futures_per_dispatch,
+        6
+    );
+
+    let payload = fetch_payload("http://example.com/");
+    for i in 0..cap {
+        let id = v.bindings.call_future(ImportCall {
+            import: "http_fetch",
+            payload: &payload,
+            scalars: [0; 3],
+        });
+        assert_ne!(
+            id, INVALID_FUTURE,
+            "subrequest {i} was refused before the cap"
+        );
+        assert!(
+            matches!(settle(&v, id).await, ResultRecord::Ok(_)),
+            "subrequest {i} of {cap} was refused early"
+        );
+    }
+
+    let over = v.bindings.call_future(ImportCall {
+        import: "http_fetch",
+        payload: &payload,
+        scalars: [0; 3],
+    });
+    match settle(&v, over).await {
+        ResultRecord::Err(FutureError::Denied(m)) => assert!(m.contains("subrequest cap"), "{m}"),
+        other => panic!("the 21st subrequest was allowed: {other:?}"),
+    }
+    assert_eq!(v.ctx.subrequests(), cap + 1);
+    // The refusal arrives as a policy denial through the future, not as a
+    // trap: the guest can catch it and carry on, which is the difference
+    // between "that call is not allowed" and "your dispatch is over".
+    assert_eq!(v.ctx.take_trap(), None);
+
+    // A new dispatch starts with a full allowance.
+    v.ctx.begin_dispatch(1_001, 2);
+    assert_eq!(v.ctx.subrequests(), 0);
+    let id = v.bindings.call_future(ImportCall {
+        import: "http_fetch",
+        payload: &payload,
+        scalars: [0; 3],
+    });
+    assert!(matches!(settle(&v, id).await, ResultRecord::Ok(_)));
+}
+
+#[tokio::test]
+async fn logging_costs_the_tenant_cpu() {
+    let output = TestLogCapture::default();
+    let subscriber = output.dispatch();
+    let _subscriber = tracing::dispatcher::set_default(&subscriber);
+    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    assert_eq!(v.meters.log_cpu_ns(), 0);
+    let line = vec![b'x'; 512];
+    for _ in 0..200 {
+        v.bindings.call_sync(ImportCall {
+            import: "log_emit",
+            payload: &line,
+            scalars: [2, 0, 0],
+        });
+    }
+    assert!(v.meters.log_cpu_ns() > 0, "logging was free");
+    // And volume is bounded per dispatch independently of CPU, so a tenant
+    // cannot turn the log sink into free storage either.
+    assert_eq!(output.records().len(), 200);
+    let before = output.records().len();
+    let big = vec![b'y'; 256 * 1024];
+    for _ in 0..4 {
+        v.bindings.call_sync(ImportCall {
+            import: "log_emit",
+            payload: &big,
+            scalars: [2, 0, 0],
+        });
+    }
+    assert!(
+        output.records().len() <= before + 1,
+        "the per-dispatch log byte cap did not bite"
+    );
+}
+
+#[tokio::test]
+async fn wait_until_keeps_work_alive_past_the_response() {
+    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    let id = v.bindings.call_future(ImportCall {
+        import: "clock_deadline_in",
+        payload: &[],
+        scalars: [60_000, 0, 0],
+    });
+    assert_eq!(
+        v.bindings.call_sync(ImportCall {
+            import: "wait_until",
+            payload: &[],
+            scalars: [id, 0, 0]
+        }),
+        0
+    );
+    assert!(v.futures.wait_until_outstanding(v.ctx.instance));
+
+    // Ending the dispatch reclaims ordinary handles but not this one.
+    v.futures.end_dispatch(v.ctx.instance, 1);
+    assert!(
+        v.futures.wait_until_outstanding(v.ctx.instance),
+        "§2.2: WaitUntil work must survive the end of the dispatch"
+    );
+
+    // Marking an unknown future is refused rather than silently accepted.
+    assert_eq!(
+        v.bindings.call_sync(ImportCall {
+            import: "wait_until",
+            payload: &[],
+            scalars: [99_999, 0, 0]
+        }),
+        -1
+    );
+}
+
+
+#[tokio::test]
+async fn completions_signal_the_wake_router() {
+    let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
+    let id = v.bindings.call_future(ImportCall {
+        import: "clock_deadline_in",
+        payload: &[],
+        scalars: [1, 0, 0],
+    });
+    for _ in 0..500 {
+        if !v.wake.signalled.lock().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(*v.wake.signalled.lock(), vec![v.ctx.instance]);
+    assert!(matches!(settle(&v, id).await, ResultRecord::Ok(_)));
+}
+
+#[tokio::test]
+async fn entropy_is_never_reused_across_calls_or_instances() {
+    let mut a = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut b = vtable(Limits::default(), "93.184.216.34:80", None);
+    let mut seen = std::collections::HashSet::new();
+    let mut buf = [0u8; 32];
+    for _ in 0..100 {
+        for v in [&mut a, &mut b] {
+            let n = v.bindings.call_fill(
+                ImportCall {
+                    import: "entropy_fill",
+                    payload: &[],
+                    scalars: [0; 3],
+                },
+                &mut buf,
+            );
+            assert_eq!(n, 32);
+            assert!(seen.insert(buf.to_vec()), "entropy repeated");
+        }
+    }
+    assert_eq!(seen.len(), 200);
+    assert_eq!(a.ctx.entropy_calls(), 100);
+}
+
+#[derive(Clone, Default)]
+struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl TestLogCapture {
+    fn dispatch(&self) -> tracing::Dispatch {
+        tracing::Dispatch::new(
+            tracing_subscriber::fmt()
+                .json()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(self.clone())
+                .finish(),
+        )
+    }
+
+    fn records(&self) -> Vec<serde_json::Value> {
+        let bytes = self.0.lock().expect("test writer mutex").clone();
+        String::from_utf8(bytes)
+            .expect("tracing emits UTF-8")
+            .lines()
+            .filter_map(|line| {
+                let event: serde_json::Value =
+                    serde_json::from_str(line).expect("tracing JSON event");
+                (event["fields"]["message"] == "guest log").then_some(event)
+            })
+            .collect()
+    }
+}
+
+impl std::io::Write for TestLogCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("test writer mutex")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for TestLogCapture {
+    type Writer = Self;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
+}

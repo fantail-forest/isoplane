@@ -175,6 +175,14 @@ impl Proxy {
             Ok(reply) => {
                 let mut b = Response::builder().status(reply.status);
                 for (k, v) in &reply.headers {
+                    // `x-wisp-*` is the platform's namespace. A guest that
+                    // could set `x-wisp-tier` or `x-wisp-version` could lie to
+                    // its own operator about which build served a request, so
+                    // guest-supplied values in this namespace are dropped
+                    // rather than merged.
+                    if k.to_ascii_lowercase().starts_with("x-wisp-") {
+                        continue;
+                    }
                     b = b.header(k, v);
                 }
                 // Report the selected execution tier to the client,

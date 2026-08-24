@@ -64,6 +64,11 @@ pub enum ViolationCode {
 pub struct Violation {
     pub code: ViolationCode,
     pub detail: String,
+    /// The offending import or export, when the rule is about one. `wisp
+    /// doctor` prints this next to the capability manifest, so a tenant sees
+    /// *which* symbol lost them the deploy rather than having to read it out
+    /// of prose.
+    pub subject: Option<String>,
 }
 
 impl Violation {
@@ -71,6 +76,14 @@ impl Violation {
         Violation {
             code,
             detail: detail.into(),
+            subject: None,
+        }
+    }
+    fn about(code: ViolationCode, subject: impl Into<String>, detail: impl Into<String>) -> Self {
+        Violation {
+            code,
+            detail: detail.into(),
+            subject: Some(subject.into()),
         }
     }
 }
@@ -78,6 +91,14 @@ impl Violation {
 impl std::fmt::Display for Violation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}: {}", self.code, self.detail)
+    }
+}
+
+impl Violation {
+    /// The three fields `wisp doctor` renders: a stable code, the symbol at
+    /// fault, and the human sentence.
+    pub fn parts(&self) -> (ViolationCode, Option<&str>, &str) {
+        (self.code, self.subject.as_deref(), &self.detail)
     }
 }
 
@@ -535,8 +556,9 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
         } else {
             None
         }) else {
-            v.push(Violation::new(
+            v.push(Violation::about(
                 ViolationCode::V1UndeclaredImport,
+                format!("{module}.{field}"),
                 format!(
                     "import `{module}`.`{field}` is not in the wisp:platform@1 capability table — \
                      an undeclared import is an attempted capability (§4.3 V1)"
@@ -556,8 +578,9 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
                         // host memory through a type confusion. The engine
                         // would refuse to link it, but the *deploy* is where
                         // a tenant is entitled to hear about it.
-                        v.push(Violation::new(
+                        v.push(Violation::about(
                             ViolationCode::V1SignatureMismatch,
+                            def.name,
                             format!(
                                 "import `wisp`.`{}` has signature {}, world declares {}",
                                 def.name,
@@ -624,8 +647,9 @@ fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
                             .and_then(|t| s.func_types.get(*t as usize))
                         {
                             Some(Some((params, results))) if sig_matches(&want, params, results) => {}
-                            Some(Some((params, results))) => v.push(Violation::new(
+                            Some(Some((params, results))) => v.push(Violation::about(
                                 ViolationCode::V1SignatureMismatch,
+                                *required,
                                 format!(
                                     "export `{required}` has signature {}, world declares {} (§5.2)",
                                     render_sig(params, results),
@@ -644,8 +668,9 @@ fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
                 ViolationCode::V1MissingExport,
                 format!("export `{required}` is a {k:?}, expected {want_kind:?} (§5.2)"),
             )),
-            None => v.push(Violation::new(
+            None => v.push(Violation::about(
                 ViolationCode::V1MissingExport,
+                *required,
                 format!(
                     "required guest export `{required}` is missing — the host has no way to \
                      enter this module (§5.2)"

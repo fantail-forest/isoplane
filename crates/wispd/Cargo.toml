@@ -52,3 +52,4 @@ real-backends = [
 [dev-dependencies]
 tokio = { workspace = true }
 wisp-proxy = { workspace = true }
+async-trait = { workspace = true }

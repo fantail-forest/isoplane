@@ -26,11 +26,10 @@ use wasmtime::{bail, Caller, Engine, Linker, Result};
 use wisp_abi::imports::{ImportDef, ImportKind, Ty, HOST_MODULE, IMPORTS};
 
 use crate::bindings::ImportCall;
-use crate::layout::{self, Buf};
+use crate::layout;
 use crate::state::{CapabilityViolation, GuestAbort, StoreState};
 
 pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<StoreState>> {
-    layout::validate_table().map_err(wasmtime::Error::msg)?;
     let mut l: Linker<StoreState> = Linker::new(engine);
     for def in IMPORTS {
         define(&mut l, def).with_context(|| format!("defining import `{}`", def.name))?;
@@ -122,7 +121,6 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
         _ => {}
     }
 
-    let buf = layout::buf_of(def.name);
     let scalars = layout::scalars_of(def, raw);
 
     // Borrow dance: `HostBindings` methods take `&mut self`, and both the
@@ -131,7 +129,7 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     let mut scratch = std::mem::take(&mut c.data_mut().scratch);
     scratch.clear();
 
-    let result = call_binding(c, def, buf, raw, scalars, &mut scratch);
+    let result = call_binding(c, def, raw, scalars, &mut scratch);
 
     scratch.clear();
     c.data_mut().scratch = scratch;
@@ -141,23 +139,30 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
 fn call_binding(
     c: &mut Caller<'_, StoreState>,
     def: &'static ImportDef,
-    buf: Buf,
     raw: &[u64],
     scalars: [u64; 3],
     scratch: &mut Vec<u8>,
 ) -> Result<u64> {
+    use wisp_abi::imports::BufSpec;
+
     // Guest -> host: copy out before the call (§5.5).
-    if let Buf::In(i) = buf {
+    if let BufSpec::In(i) = def.buf {
+        let i = i as usize;
         let (ptr, len) = (raw[i] as usize, raw[i + 1] as usize);
         let bytes = read_guest(c, ptr, len)?;
         *scratch = bytes;
     }
-    if let Buf::Out(i) = buf {
-        let len = raw[i + 1] as usize;
-        if len > MAX_OUT_BUFFER {
-            bail!("`{}` out-buffer of {len} bytes exceeds the {MAX_OUT_BUFFER} byte cap", def.name);
+    // Host -> guest: the second parameter is a *capacity*, not a length. The
+    // host may report a larger value than it could fit (`init_config_get`
+    // answers a zero-length probe with the blob's full size), so the engine
+    // never treats the return value as a byte count to copy.
+    if let BufSpec::Out(i) = def.buf {
+        let cap = raw[i as usize + 1] as usize;
+        if cap > MAX_OUT_BUFFER {
+            bail!("`{}` out-buffer of {cap} bytes exceeds the {MAX_OUT_BUFFER} byte cap", def.name);
         }
-        scratch.resize(len, 0);
+        scratch.clear();
+        scratch.resize(cap, 0);
     }
 
     let mut bindings = c
@@ -167,7 +172,7 @@ fn call_binding(
         .context("import called reentrantly: the binding vtable is already in use (§5.4)")?;
 
     let call = ImportCall { import: def.name, payload: scratch.as_slice(), scalars };
-    let ret = if buf.is_out() {
+    let ret = if layout::is_out(def) {
         // The one case where bytes flow host -> guest inside an import. The
         // host writes into a host-side buffer; the engine copies it in below.
         bindings.call_fill(
@@ -198,9 +203,9 @@ fn call_binding(
     c.data_mut().bindings = Some(bindings);
 
     // Host -> guest: copy in after the call (§5.5).
-    if let Buf::Out(i) = buf {
-        let (ptr, len) = (raw[i] as usize, raw[i + 1] as usize);
-        write_guest(c, ptr, &scratch[..len.min(scratch.len())])?;
+    if let BufSpec::Out(i) = def.buf {
+        let ptr = raw[i as usize] as usize;
+        write_guest(c, ptr, scratch.as_slice())?;
     }
 
     Ok(ret)
