@@ -304,9 +304,23 @@ async fn a_node_reports_measurements_from_served_requests() {
 /// Configuration supplied during preparation is observed by the serving guest.
 #[tokio::test]
 async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
+    // `guests/out/*.wasm` is gitignored build output, so on a fresh clone this
+    // fixture is absent and everything below is skipped. `cargo test` has no
+    // way to report "did not run" — a skipped test is a green test, and a green
+    // test that proved nothing reads exactly like one that proved something.
+    //
+    // This is not left dangling: the same claim is carried by **S13**, which
+    // runs the same deploy through a real node and reports a *GAP carrying the
+    // build command* when the fixture is missing, aggregated into the report
+    // rather than printed into a scrollback nobody reads. This test is the fast
+    // local copy of that check, not its only home — so the message below says
+    // what was not proven rather than announcing a skip as if it were a result.
     let Some(path) = quotes_api_path() else {
         eprintln!(
-            "skipping: guests/out/quotes-api.wasm is not built (run `scripts/dev guests/build.sh`)"
+            "NOT PROVEN: guests/out/quotes-api.wasm is absent, so this test asserted nothing \
+             about §4.4. Build it with `scripts/dev guests/build.sh`, or read S13's verdict \
+             (`scripts/dev cargo test -p wisp-acceptance --release --test s13_deploy`), which \
+             reports the same claim as a GAP rather than passing quietly."
         );
         return;
     };
