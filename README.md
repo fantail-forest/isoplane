@@ -37,6 +37,7 @@ Record the machine and execution environment when comparing measurements.
 | `crates/wisp-hibernate`  | Snapshot identity primitives. |
 | `crates/wisp-proxy`, `wispd`, `wisp-cli` | Termination and routing, the node daemon, the `wisp` command. |
 | `guests/` | The guest SDK and demo guests, including deliberately hostile ones. |
+| `crates/wisp-bench` | Measurement helpers for latency, arrival schedules and machine topology. |
 
 ## The four invariants
 
