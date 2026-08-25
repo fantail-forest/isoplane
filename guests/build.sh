@@ -44,34 +44,54 @@ for f in "$OUT"/*.wasm; do
   printf '%-24s %10s %10s %10s\n' "$(basename "$f")" "$raw" "$gz" "$zs"
 done
 
-if command -v wasm-tools >/dev/null 2>&1; then
-  echo
-  echo "==> validation (threads/atomics OFF, as rule V2 requires)"
-  for f in "$OUT"/*.wasm; do
-  # Validate the guest feature profile with threads and blocking atomics disabled.
-    if wasm-tools validate -f=-threads,-shared-everything-threads,-relaxed-simd,-exceptions,-legacy-exceptions "$f" 2>/dev/null; then
-      echo "  ok        $(basename "$f")"
-    else
-      echo "  INVALID   $(basename "$f")"
-    fi
-  done
-
-  echo
-  echo "==> import/export surface"
-  for f in "$OUT"/*.wasm; do
-    echo "--- $(basename "$f")"
-    echo -n "    imports: "
-    wasm-tools print "$f" | grep -oE '\(import "[^"]+" "[^"]+"' \
-      | sed -E 's/\(import "([^"]+)" "([^"]+)"/\1::\2/' | sort -u | tr '\n' ' '
-    echo
-    echo -n "    exports: "
-    wasm-tools print "$f" | grep -oE '\(export "[^"]+"' \
-      | sed -E 's/\(export "([^"]+)"/\1/' | sort -u | tr '\n' ' '
-    echo
-  done
-
-
+if ! command -v wasm-tools >/dev/null 2>&1; then
+  echo >&2
+  echo "FATAL: wasm-tools is required to validate the guest feature profile." >&2
+  echo "Install wasm-tools, then rerun this command:" >&2
+  echo "    scripts/dev guests/build.sh" >&2
+  exit 1
 fi
 
 echo
+echo "==> validation (threads/atomics OFF, as rule V2 requires)"
+# Every module must pass V2, the two V1 fixtures included: an undeclared import
+# is a capability question, not a well-formedness one, and both fixtures are
+# otherwise perfectly ordinary wasm.
+v2_failed=()
+for f in "$OUT"/*.wasm; do
+  # Validate the guest feature profile with threads and blocking atomics disabled.
+  if wasm-tools validate -f=-threads,-shared-everything-threads,-relaxed-simd,-exceptions,-legacy-exceptions "$f" 2>/dev/null; then
+    echo "  ok        $(basename "$f")"
+  else
+    echo "  INVALID   $(basename "$f")"
+    v2_failed+=("$(basename "$f")")
+  fi
+done
+
+echo
+echo "==> import/export surface"
+for f in "$OUT"/*.wasm; do
+  echo "--- $(basename "$f")"
+  echo -n "    imports: "
+  wasm-tools print "$f" | grep -oE '\(import "[^"]+" "[^"]+"' \
+    | sed -E 's/\(import "([^"]+)" "([^"]+)"/\1::\2/' | sort -u | tr '\n' ' '
+  echo
+  echo -n "    exports: "
+  wasm-tools print "$f" | grep -oE '\(export "[^"]+"' \
+    | sed -E 's/\(export "([^"]+)"/\1/' | sort -u | tr '\n' ' '
+  echo
+done
+
+
+echo
 echo "==> wrote $(ls -1 "$OUT"/*.wasm | wc -l) modules to $OUT"
+
+if [ "${#v2_failed[@]}" -ne 0 ]; then
+  echo >&2
+  echo "BUILD FAILED -- the modules are on disk and at least one is not a legal" >&2
+  echo "WISP guest, so nothing here is measuring the platform tenants get:" >&2
+  for m in ${v2_failed[@]+"${v2_failed[@]}"}; do
+    echo "  V2 (wasm-tools validate): $m" >&2
+  done
+  exit 1
+fi
