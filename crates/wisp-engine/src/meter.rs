@@ -62,12 +62,22 @@ pub fn thread_cpu_nanos() -> u64 {
     try_thread_cpu_nanos().unwrap_or(0)
 }
 
-/// Resolution of the meter, for reporting. Not used on the hot path.
-pub fn thread_cpu_resolution_nanos() -> u64 {
+/// Resolution of the meter, for reporting, or `None` if the clock could not be
+/// queried. Not used on the hot path.
+///
+/// This one discarded its return code entirely rather than merely asserting on
+/// it, so a failed query reported a resolution of `0 ns` — a meter of infinite
+/// precision, which is the most flattering number in the file.
+pub fn thread_cpu_resolution_nanos() -> Option<u64> {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: as above.
-    unsafe { libc::clock_getres(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
-    (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
+    let rc = unsafe { libc::clock_getres(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    if rc != 0 {
+        // Resolution queries do not measure an interval, so their failures
+        // do not contribute to the interval-read failure counter.
+        return None;
+    }
+    Some((ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
 }
 
 #[cfg(test)]
@@ -139,6 +149,17 @@ mod tests {
         };
         assert!(measured > 0, "a working clock measured nothing");
         assert_eq!(quiet, clock_read_failures(), "a working read was counted as a failure");
+    }
+
+    #[test]
+    fn the_resolution_query_reports_a_real_number_or_none() {
+        let res = thread_cpu_resolution_nanos().expect("clock_getres works on this platform");
+        assert!(res > 0, "a resolution of 0 ns is a meter of infinite precision, not a reading");
+        // Resolution queries do not measure a CPU interval, so their failures
+        // are not included in the interval-read failure counter.
+        let before = clock_read_failures();
+        let _ = thread_cpu_resolution_nanos();
+        assert_eq!(clock_read_failures(), before);
     }
 
     /// The injection is thread-local. A global switch would make every CPU
