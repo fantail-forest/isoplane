@@ -136,6 +136,20 @@ impl HistSnapshot {
         }
     }
 
+    /// Bucket-wise sum: the distribution of the union of two samples.
+    ///
+    /// Merge the samples before computing a quantile; averaging quantiles does
+    /// not produce the quantile of their union.
+    pub fn plus(&self, other: &HistSnapshot) -> HistSnapshot {
+        HistSnapshot {
+            buckets: self.buckets.iter().zip(&other.buckets).map(|(a, b)| a + b).collect(),
+            count: self.count + other.count,
+            sum: self.sum + other.sum,
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
+
     /// The value at quantile `q` (0.0..=1.0), in nanoseconds, or `None` if
     /// nothing was recorded.
     pub fn quantile(&self, q: f64) -> Option<f64> {
@@ -283,6 +297,27 @@ mod tests {
         assert!((p50 - 100_000.0).abs() / 100_000.0 < 0.01, "window p50 was {p50}");
         // And the cumulative view still sees both halves.
         assert_eq!(h.snapshot().count, 2_000);
+    }
+
+    /// Merging must union the samples, not average the summaries. The check
+    /// that catches the wrong implementation: a merge of a fast half and a
+    /// slow half has the slow half's values at the top of its range, which an
+    /// average of quantiles would smear away.
+    #[test]
+    fn merging_unions_the_samples() {
+        let a = Histogram::new();
+        for _ in 0..1_000 {
+            a.record(1_000);
+        }
+        let b = Histogram::new();
+        for _ in 0..1_000 {
+            b.record(100_000);
+        }
+        let m = a.snapshot().plus(&b.snapshot());
+        assert_eq!(m.count, 2_000);
+        assert!((m.p50().unwrap() - 1_000.0).abs() < 20.0, "p50 was {:?}", m.p50());
+        assert!((m.p99().unwrap() - 100_000.0).abs() < 500.0, "p99 was {:?}", m.p99());
+        assert!((m.max().unwrap() - 100_000.0).abs() < 500.0);
     }
 
     #[test]
