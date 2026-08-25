@@ -388,7 +388,15 @@ const CHAIN_OPS: u64 = 8;
 #[inline(never)]
 #[cfg(target_arch = "x86_64")]
 fn dependent_chain(iters: u64) -> u64 {
+    // `a` is written only by the asm block, through an `inout` operand, so
+    // rustc sees no assignment and warns; the `#[allow]` is narrower than
+    // dropping `mut`, which the operand requires.
+    // `a` and `n` are written only by the asm block, through `inout`
+    // operands, so rustc sees no assignment and warns; the narrow `#[allow]`
+    // is preferable to dropping `mut`, which the operands require.
+    #[allow(unused_mut)]
     let mut a: u64 = 1;
+    #[allow(unused_mut)]
     let mut n = iters;
     if n == 0 {
         return a;
