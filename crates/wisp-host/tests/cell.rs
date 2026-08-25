@@ -893,14 +893,24 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     r.cell.shutdown();
 }
 
-/// A shed submission is reported as shed **and** still answers on the caller's
-/// channel.
+/// A shed submission is reported as shed rather than going quiet.
 ///
 /// The contract `submit` has, restated for the shared-channel form: an
 /// admission-queue overflow returns `false`. A generator that ignored that and
 /// waited for a result would hang; one that treated `false` as "no answer is
-/// coming" would be right. What must never happen is silence with no signal,
-/// which is what an early draft did by returning `()` .
+/// coming" is right. What must never happen is silence with no signal, which
+/// is what an early draft did by returning `()`.
+///
+/// **The fixture is a spinner, and the first draft's parker is why.** A parked
+/// dispatch does not occupy its execution-pool thread — that is the entire
+/// point of invariant 3 — so with a parking guest the exec thread drains the
+/// queue as fast as the test fills it, and whether anything sheds is a race
+/// between the submitting loop and the pool. It passed about five runs in six.
+/// A spinner genuinely holds its thread until its CPU budget kills it, so with
+/// one exec thread and a one-deep queue the outcome is determined: one Hot,
+/// one queued, the rest shed. Waiting for `hot_count() == 1` before filling
+/// removes the other half of the race, which is whether the pool had dequeued
+/// the first submission yet.
 #[test]
 fn a_shed_submission_says_so_rather_than_going_quiet() {
     let r = rig(CellConfig {
@@ -910,30 +920,43 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
         ..CellConfig::for_test("shed")
     });
     let act = Arc::new(FakeActivator::named(
-        ModuleId::new("slow", "v1"),
-        FakeBehaviour::program([Step::Park {
-            imports: vec![("clock_deadline_in", PARK_MS)],
-        }]),
+        ModuleId::new("spin", "v1"),
+        FakeBehaviour::program([Step::Spin]),
     ));
     let module = act.module().clone();
     r.cell
         .register_module(
             "acme",
             act,
-            manifest("slow", HandlerLifecycle::Fresh, Limits::default()),
+            manifest("spin", HandlerLifecycle::Reuse, Limits::default()),
         )
         .unwrap();
 
-    let (tx, rx) = std::sync::mpsc::sync_channel::<wisp_host::DispatchResult>(64);
+    let (tx, rx) = std::sync::mpsc::sync_channel::<wisp_host::DispatchResult>(128);
+    let mut rec = http(&r.cell, &module, "/spin");
+    rec.dispatch_id = 0;
+    assert!(r.cell.submit_with(
+        &module,
+        Target::Handler {
+            route: "/spin".into()
+        },
+        rec,
+        tx.clone()
+    ));
+    assert!(
+        wait_for(|| r.cell.hot_count() == 1, Duration::from_secs(5)),
+        "the spinner never became Hot, so the queue state below is not determined"
+    );
+
     let mut shed = 0;
-    let mut accepted = 0;
-    for i in 0..64u64 {
-        let mut rec = http(&r.cell, &module, "/slow");
+    let mut accepted = 1;
+    for i in 1..64u64 {
+        let mut rec = http(&r.cell, &module, "/spin");
         rec.dispatch_id = i;
         if r.cell.submit_with(
             &module,
             Target::Handler {
-                route: "/slow".into(),
+                route: "/spin".into(),
             },
             rec,
             tx.clone(),
@@ -944,23 +967,27 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
         }
     }
     drop(tx);
-    assert!(
-        shed > 0,
-        "a one-deep queue behind a parked instance must shed something"
+    assert_eq!(
+        accepted, 2,
+        "one Hot and one queued; everything else must shed at admission (§6.4)"
     );
+    assert_eq!(shed, 62);
     assert!(
-        accepted >= 2,
-        "the running one and the queued one must both be accepted"
+        r.cell.metrics().shed >= 62,
+        "the cell must count what it shed"
     );
-    // Nothing shed produced a result on the channel, so the caller can account
-    // for every submission as exactly one of the two outcomes.
+
+    // Every accepted submission answers, and nothing shed produces a result on
+    // the channel — so a caller can account for each submission as exactly one
+    // of the two outcomes, which is what makes a completion count usable as a
+    // denominator.
     let mut got = 0;
-    while rx.recv_timeout(Duration::from_millis(100)).is_ok() {
+    while rx.recv_timeout(Duration::from_secs(2)).is_ok() {
         got += 1;
     }
-    assert!(
-        got <= accepted,
-        "more results ({got}) than accepted submissions ({accepted})"
+    assert_eq!(
+        got, accepted,
+        "results on the channel must equal accepted submissions"
     );
     r.cell.shutdown();
 }
