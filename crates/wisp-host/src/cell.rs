@@ -712,10 +712,17 @@ impl Cell {
     /// The result carries [`DispatchResult::dispatch_id`], so a caller
     /// draining one shared channel can match each completion to its request.
     ///
-    /// Returns `false` if the cell shed at admission (§6.4), in which case a
-    /// `503` has already been sent on `responder` — the same contract
-    /// `submit` has, stated as a bool because there is no receiver to hand
-    /// back.
+    /// Returns `false` if the cell shed at admission (§6.4). **Nothing is sent
+    /// on `responder` in that case** — the shed is reported by the return
+    /// value alone, and the caller owns counting it.
+    ///
+    /// This differs from [`Cell::submit`], which does send a `503`, and the
+    /// difference is forced by the shared channel: a caller draining one
+    /// receiver for every request in flight cannot tell a synthesised refusal
+    /// from a real completion without matching it up first, so a shed
+    /// delivered both ways would be counted twice — once from the `false` and
+    /// once out of the drain. The breaker path above *does* send, because a
+    /// breaker rejection returns `true` and the drain is its only report.
     ///
     /// **The channel must not be allowed to fill.** `SyncSender::send` blocks,
     /// and the sender here is an execution-pool thread, so a caller that stops
