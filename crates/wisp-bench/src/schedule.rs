@@ -146,7 +146,8 @@ impl Pacer {
             self.late_ns.record(now - deadline);
             return (now, false);
         }
-        while deadline - now > SPIN_MARGIN_NS {
+        // Compare by addition so an overshot sleep cannot underflow a subtraction.
+        while now + SPIN_MARGIN_NS < deadline {
             if abort() {
                 return (now, true);
             }
@@ -270,6 +271,27 @@ mod tests {
         let (aborted, fired) = h.join().expect("the pacer must not hang");
         assert!(aborted, "the wait must report that it aborted");
         assert_eq!(fired, 0, "an aborted wait released no arrival and must record none");
+    }
+
+    /// Exercise repeated waits whose gaps enter the sleeping path.
+    #[test]
+    fn the_pacer_keeps_its_rate_at_a_gap_near_the_spin_margin() {
+        let gap = SPIN_MARGIN_NS + 60_000;
+        let n = 300u64;
+        let t0 = mono_ns();
+        let mut p = Pacer::new(t0);
+        for i in 1..=n {
+            p.wait_until_or(i * gap, &|| false);
+        }
+        let elapsed = mono_ns() - t0;
+        assert_eq!(p.fired(), n, "every arrival must be released");
+        let achieved = n as f64 / (elapsed as f64 / 1e9);
+        let wanted = 1e9 / gap as f64;
+        assert!(
+            achieved > 0.7 * wanted,
+            "released {achieved:.0}/s against a schedule of {wanted:.0}/s — the pacer is not \
+             keeping its rate"
+        );
     }
 
     #[test]
