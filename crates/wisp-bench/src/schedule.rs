@@ -119,6 +119,9 @@ impl Pacer {
         self.t0_ns
     }
 
+    /// Longest single sleep between checks of the caller's abort predicate.
+    const MAX_SLEEP_NS: u64 = 200_000_000;
+
     /// Block until `t0 + offset_ns`, then return the actual monotonic time.
     ///
     /// Never sleeps past the deadline on purpose and never *shifts* it: if we
@@ -127,16 +130,27 @@ impl Pacer {
     /// coordinated omission.
     #[inline]
     pub fn wait_until(&mut self, offset_ns: u64) -> u64 {
+        self.wait_until_or(offset_ns, &|| false).0
+    }
+
+    /// As [`Pacer::wait_until`], but returns early when `abort` becomes true.
+    ///
+    /// The second element of the return is whether it aborted; an aborted wait
+    /// records nothing, because no arrival was released.
+    pub fn wait_until_or(&mut self, offset_ns: u64, abort: &dyn Fn() -> bool) -> (u64, bool) {
         let deadline = self.t0_ns + offset_ns;
         let mut now = mono_ns();
         if now >= deadline {
             self.backlogged += 1;
             self.fired += 1;
             self.late_ns.record(now - deadline);
-            return now;
+            return (now, false);
         }
-        if deadline - now > SPIN_MARGIN_NS {
-            let target = deadline - SPIN_MARGIN_NS;
+        while deadline - now > SPIN_MARGIN_NS {
+            if abort() {
+                return (now, true);
+            }
+            let target = (deadline - SPIN_MARGIN_NS).min(now + Self::MAX_SLEEP_NS);
             let ts = libc::timespec {
                 tv_sec: (target / 1_000_000_000) as libc::time_t,
                 tv_nsec: (target % 1_000_000_000) as i64,
@@ -157,7 +171,7 @@ impl Pacer {
         }
         self.fired += 1;
         self.late_ns.record(now - deadline);
-        now
+        (now, false)
     }
 
     /// The distribution of `(actual release - scheduled arrival)`.
@@ -235,6 +249,27 @@ mod tests {
         let umean = ugaps.iter().sum::<f64>() / ugaps.len() as f64;
         let uvar = ugaps.iter().map(|g| (g - umean).powi(2)).sum::<f64>() / ugaps.len() as f64;
         assert!(uvar.sqrt() / umean < 0.01, "uniform gaps should be fixed");
+    }
+
+    /// A wait for a distant arrival observes cancellation between sleeps.
+    #[test]
+    fn a_wait_for_a_distant_arrival_still_notices_a_stop() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let stop = Arc::new(AtomicBool::new(false));
+        let s2 = stop.clone();
+        let t0 = mono_ns();
+        let h = std::thread::spawn(move || {
+            let mut p = Pacer::new(t0);
+            // A year away.
+            let (_, aborted) = p.wait_until_or(31_536_000_000_000_000, &|| s2.load(Ordering::Relaxed));
+            (aborted, p.fired())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        stop.store(true, Ordering::Relaxed);
+        let (aborted, fired) = h.join().expect("the pacer must not hang");
+        assert!(aborted, "the wait must report that it aborted");
+        assert_eq!(fired, 0, "an aborted wait released no arrival and must record none");
     }
 
     #[test]
