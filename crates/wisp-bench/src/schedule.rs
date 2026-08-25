@@ -108,7 +108,7 @@ pub struct Pacer {
 }
 
 /// How long before the deadline to stop sleeping and start spinning.
-pub const SPIN_MARGIN_NS: u64 = 60_000;
+pub const SPIN_MARGIN_NS: u64 = 250_000;
 
 impl Pacer {
     pub fn new(t0_ns: u64) -> Self {
