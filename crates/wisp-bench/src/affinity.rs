@@ -32,9 +32,14 @@ pub fn pin_tid(tid: libc::pid_t, cpus: &[usize]) -> io::Result<()> {
 
 /// The cpus the calling thread is currently allowed to run on.
 pub fn current_affinity() -> io::Result<Vec<usize>> {
+    affinity_of(0)
+}
+
+/// The cpus `tid` is allowed to run on (`0` means the caller).
+pub fn affinity_of(tid: libc::pid_t) -> io::Result<Vec<usize>> {
     unsafe {
         let mut set: libc::cpu_set_t = std::mem::zeroed();
-        if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
+        if libc::sched_getaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
             return Err(io::Error::last_os_error());
         }
         Ok((0..libc::CPU_SETSIZE as usize).filter(|c| libc::CPU_ISSET(*c, &set)).collect())
@@ -61,6 +66,44 @@ pub fn pin_by_comm(prefix: &str, cpus: &[usize]) -> io::Result<Vec<libc::pid_t>>
         }
     }
     Ok(moved)
+}
+
+/// A thread that is allowed to run somewhere it must not be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stray {
+    pub tid: libc::pid_t,
+    /// `comm`, truncated to 15 bytes by the kernel.
+    pub comm: String,
+    /// The forbidden cpus this thread's affinity mask still admits.
+    pub on: Vec<usize>,
+}
+
+impl std::fmt::Display for Stray {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "tid {} (`{}`) may run on cpus {:?}", self.tid, self.comm, self.on)
+    }
+}
+
+/// Every thread of this process, other than `allowed`, whose affinity mask
+/// admits a CPU in `forbidden`.
+///
+/// Rechecking the current thread set detects threads created after a previous
+/// affinity update.
+pub fn strays(forbidden: &[usize], allowed: &[libc::pid_t]) -> io::Result<Vec<Stray>> {
+    let mut out = Vec::new();
+    for (tid, comm) in threads()? {
+        if allowed.contains(&tid) {
+            continue;
+        }
+        // A thread that exited between the readdir and the getaffinity is not
+        // a stray; it is gone.
+        let Ok(mask) = affinity_of(tid) else { continue };
+        let on: Vec<usize> = forbidden.iter().copied().filter(|c| mask.contains(c)).collect();
+        if !on.is_empty() {
+            out.push(Stray { tid, comm, on });
+        }
+    }
+    Ok(out)
 }
 
 /// Every thread of this process, as `(tid, comm)`.
@@ -182,6 +225,69 @@ pub fn numa_residency() -> io::Result<std::collections::BTreeMap<usize, u64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Check both inherited and explicitly assigned affinity masks.
+    #[test]
+    fn a_thread_spawned_after_the_pinning_pass_is_named_as_a_stray() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let all = current_affinity().expect("the caller's own affinity");
+        if all.len() < 2 {
+            return;
+        }
+        let forbidden = vec![all[all.len() - 1]];
+        let elsewhere = vec![all[0]];
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let s2 = stop.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let h = std::thread::spawn(move || {
+            let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
+            tx.send(tid).unwrap();
+            while !s2.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+        let tid = rx.recv().unwrap();
+
+        // The real scenario: a thread nobody pinned inherits whatever mask the
+        // builder had, so if the builder could run on a forbidden cpu then so
+        // can this one. Asserted only when that precondition actually holds.
+        let inherited = affinity_of(tid).expect("the child's mask");
+        if inherited.contains(&forbidden[0]) {
+            let found = strays(&forbidden, &[]).unwrap();
+            let me = found.iter().find(|s| s.tid == tid).unwrap_or_else(|| {
+                panic!("an unpinned thread inheriting a forbidden cpu was not reported")
+            });
+            assert_eq!(me.on, forbidden);
+            assert!(!me.comm.is_empty(), "a stray must carry its `comm`: {me}");
+        }
+
+        // …and the same three properties against a mask this test constructs,
+        // so they hold regardless of what the thread inherited.
+        pin_tid(tid, &forbidden).unwrap();
+        let found = strays(&forbidden, &[]).unwrap();
+        let me = found
+            .iter()
+            .find(|s| s.tid == tid)
+            .unwrap_or_else(|| panic!("a thread on a forbidden cpu was not reported"));
+        assert_eq!(me.on, forbidden);
+        assert!(!me.comm.is_empty(), "a stray must carry its `comm`: {me}");
+
+        // Explicitly allowed threads are excluded from the result.
+        assert!(!strays(&forbidden, &[tid]).unwrap().iter().any(|s| s.tid == tid));
+
+        // Pinned away, it stops being one.
+        pin_tid(tid, &elsewhere).unwrap();
+        assert!(
+            !strays(&forbidden, &[]).unwrap().iter().any(|s| s.tid == tid),
+            "a thread pinned off the forbidden cpus is not a stray"
+        );
+
+        stop.store(true, Ordering::Relaxed);
+        h.join().unwrap();
+    }
 
     #[test]
     fn a_nodemask_sets_the_right_bit() {

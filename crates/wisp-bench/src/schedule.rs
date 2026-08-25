@@ -87,11 +87,60 @@ impl ArrivalStream {
 }
 
 /// A monotonic clock reading in nanoseconds for absolute pacer deadlines.
+///
+/// Aborts if the clock does not return a usable timestamp.
 #[inline]
 pub fn mono_ns() -> u64 {
+    match try_mono_ns() {
+        Some(t) => t,
+        None => clock_failed(),
+    }
+}
+
+/// The fallible read. `None` is a failed `clock_gettime`; `Some(0)` is a clock
+/// reading zero. Those are different facts and the old signature could not
+/// tell them apart.
+#[inline]
+pub fn try_mono_ns() -> Option<u64> {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    reading(rc, &ts)
+}
+
+/// Turn a raw `(rc, timespec)` pair into a reading.
+///
+/// Split out from the syscall because `CLOCK_MONOTONIC` cannot be made to fail
+/// on demand, and a guard nobody has watched fire is not a guard: the test
+/// constructs the failing input here.
+#[inline]
+fn reading(rc: i32, ts: &libc::timespec) -> Option<u64> {
+    // A non-zero `rc` leaves `ts` untouched — and zero-initialised, that reads
+    // as a clock sitting at the epoch.
+    if rc != 0 {
+        return None;
+    }
+    // Nor is a nonsensical `timespec` a reading. Both fields are signed, so a
+    // negative one converts into an enormous unsigned time rather than a small
+    // one, which is the same underflow arriving by a different route.
+    if ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1_000_000_000 {
+        return None;
+    }
+    Some(ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64)
+}
+
+/// Out of line and `#[cold]`, so the hot path carries a never-taken branch and
+/// nothing else.
+#[cold]
+#[inline(never)]
+fn clock_failed() -> ! {
+    let errno = std::io::Error::last_os_error();
+    eprintln!(
+        "wisp-bench: clock_gettime(CLOCK_MONOTONIC) did not return a usable time (errno: \
+         {errno}). Every latency figure in this process is measured against that clock and \
+         every consumer of it subtracts on unsigned times, so continuing would produce \
+         elapsed times near 2^64 rather than no times at all. Aborting instead."
+    );
+    std::process::abort();
 }
 
 /// Waits until an absolute monotonic deadline and records lateness.
@@ -166,7 +215,18 @@ impl Pacer {
             }
             now = mono_ns();
         }
+        // **The final spin checks the stop flag too, and the bound is stated.**
+        // It used to not, which put a hard ceiling of `2 * SPIN_MARGIN_NS` —
+        // 8 ms — on how long a shutdown could take per waiting thread. Eight
+        // milliseconds is small, but "small" is not a number anybody had
+        // written down, and the sleep path above already returns early for
+        // exactly this reason. `abort` is checked once per `mono_ns()`, which
+        // is a vDSO call an order of magnitude more expensive than the
+        // predicate, so the spin's precision is unaffected.
         while now < deadline {
+            if abort() {
+                return (now, true);
+            }
             std::hint::spin_loop();
             now = mono_ns();
         }
@@ -191,6 +251,42 @@ impl Pacer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The clock the whole latency measurement is built on used to drop
+    /// `clock_gettime`'s return code, so a failed read became a reading of
+    /// zero — and every consumer of it subtracts on unsigned times, which
+    /// turns that zero into an elapsed time near 2^64.
+    ///
+    /// `CLOCK_MONOTONIC` cannot be made to fail on demand, so the guard is
+    /// tested where the decision is made, on the exact `(rc, timespec)` pair a
+    /// failed call leaves behind.
+    #[test]
+    fn a_failed_clock_read_is_not_a_reading_of_zero() {
+        let zero = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // What a failed `clock_gettime` leaves: a non-zero return code and the
+        // zero-initialised `timespec` the caller passed in.
+        assert_eq!(reading(-1, &zero), None, "a failed read must not become a time");
+        // …while a clock genuinely at the epoch is a reading, and the two are
+        // now different values rather than the same one.
+        assert_eq!(reading(0, &zero), Some(0));
+
+        // A nonsensical `timespec` is not a reading either: the fields are
+        // signed, and a negative one converts to an enormous unsigned time.
+        assert_eq!(reading(0, &libc::timespec { tv_sec: -1, tv_nsec: 0 }), None);
+        assert_eq!(reading(0, &libc::timespec { tv_sec: 0, tv_nsec: -1 }), None);
+        assert_eq!(reading(0, &libc::timespec { tv_sec: 0, tv_nsec: 1_000_000_000 }), None);
+        assert_eq!(
+            reading(0, &libc::timespec { tv_sec: 3, tv_nsec: 500_000_000 }),
+            Some(3_500_000_000)
+        );
+
+        // …and the live clock answers, is not at the epoch, and advances — so
+        // the guard is not simply refusing everything.
+        let a = try_mono_ns().expect("CLOCK_MONOTONIC must read");
+        let b = try_mono_ns().expect("CLOCK_MONOTONIC must read");
+        assert!(a > 0, "the monotonic clock should not be at the epoch: {a}");
+        assert!(b >= a, "the monotonic clock must not run backwards: {a} then {b}");
+    }
 
     #[test]
     fn a_seed_reproduces_a_schedule_exactly() {
@@ -292,6 +388,63 @@ mod tests {
             "released {achieved:.0}/s against a schedule of {wanted:.0}/s — the pacer is not \
              keeping its rate"
         );
+    }
+
+    /// A stop raised while the pacer is in its **final spin** must be observed
+    /// there, rather than `2 * SPIN_MARGIN_NS` later when the deadline
+    /// arrives. That was a hard 8 ms floor on how long a shutdown could take
+    /// per waiting thread, and nobody had written the number down.
+    ///
+    /// **The assertion is a property, not a stopwatch.** An earlier version of
+    /// this test set the flag 200 µs after spawning and asserted the wait
+    /// returned inside one margin — which fails whenever a sibling test
+    /// saturates the cpus, for reasons that have nothing to do with the guard.
+    /// A test that goes red for the wrong reason is barely better than one that
+    /// cannot go red at all.
+    ///
+    /// So the flag is set *before* the thread starts, and the deadline is
+    /// placed inside two margins so `wait_until_or` skips the sleep branch
+    /// entirely and drops straight into the final spin. The sleep loop's own
+    /// `abort()` therefore never runs; an abort observed at all can only have
+    /// come from the spin. No timing is asserted and nothing races.
+    #[test]
+    fn a_stop_raised_during_the_final_spin_is_observed_inside_it() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let stop = Arc::new(AtomicBool::new(true));
+        let s2 = stop.clone();
+        let h = std::thread::spawn(move || {
+            // `t0` inside the thread, so the deadline is a full margin away
+            // from the moment the wait actually begins however long the spawn
+            // took.
+            let t0 = mono_ns();
+            let mut p = Pacer::new(t0);
+            // One margin out: `now + 2 * SPIN_MARGIN_NS < deadline` is false
+            // from the first test, so the sleep branch is skipped and the
+            // deadline is still in the future.
+            let (_, aborted) = p.wait_until_or(SPIN_MARGIN_NS, &|| s2.load(Ordering::Relaxed));
+            (aborted, p.fired(), mono_ns() - t0)
+        });
+        let (aborted, fired, waited) = h.join().expect("the pacer must not hang");
+        assert!(
+            aborted,
+            "the wait returned without aborting after {waited} ns — the final spin is not \
+             checking the stop flag, so a shutdown waits out the whole margin"
+        );
+        assert_eq!(fired, 0, "an aborted wait released no arrival and must record none");
+
+        // …and the control: with no stop, the same wait runs to its deadline
+        // and releases the arrival. Without this the assertion above would
+        // pass just as well against a `wait_until_or` that aborted always.
+        let h = std::thread::spawn(|| {
+            let t0 = mono_ns();
+            let mut p = Pacer::new(t0);
+            let (_, aborted) = p.wait_until_or(SPIN_MARGIN_NS, &|| false);
+            (aborted, p.fired())
+        });
+        let (aborted, fired) = h.join().expect("the pacer must not hang");
+        assert!(!aborted, "a wait with no stop must not report an abort");
+        assert_eq!(fired, 1, "a wait that ran to its deadline released its arrival");
     }
 
     #[test]
