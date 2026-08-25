@@ -108,7 +108,7 @@ pub struct Pacer {
 }
 
 /// How long before the deadline to stop sleeping and start spinning.
-pub const SPIN_MARGIN_NS: u64 = 250_000;
+pub const SPIN_MARGIN_NS: u64 = 4_000_000;
 
 impl Pacer {
     pub fn new(t0_ns: u64) -> Self {
@@ -147,7 +147,7 @@ impl Pacer {
             return (now, false);
         }
         // Compare by addition so an overshot sleep cannot underflow a subtraction.
-        while now + SPIN_MARGIN_NS < deadline {
+        while now + 2 * SPIN_MARGIN_NS < deadline {
             if abort() {
                 return (now, true);
             }
