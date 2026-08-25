@@ -84,6 +84,26 @@ pub struct CellConfig {
     pub breaker: BreakerConfig,
     /// How often the idle trajectory sweeps (§6.6).
     pub sweep_interval_ms: u64,
+    /// §10/H7: how densely the two **per-dispatch** histograms (`request_us`,
+    /// `park_ms`) keep samples. `1` — the default — keeps every one; `N` keeps
+    /// one in N; `0` keeps none and takes no lock at all on the dispatch path.
+    ///
+    /// Each of those histograms is a per-cell mutex acquired by every
+    /// execution thread on every completed dispatch. Counting the locks one
+    /// dispatch takes through `run_dispatch` → `settle` — the work queue's
+    /// push and pop, `modules`, `durables` + `residents`, `active` three
+    /// times, and these two — gives at least eight, six of them per-cell
+    /// singletons shared by all execution threads. The campaign publishes
+    /// "the cell's knee is lock contention, not CPU" and names the work queue
+    /// as the prime suspect; that inference is equally consistent with
+    /// contention on `active`, on `durables`, or on these two histograms.
+    ///
+    /// So this exists to let the claim be **tested by difference** rather than
+    /// assumed: run the same point at `1` and at `0` and see whether the knee
+    /// moves. Setting it to `0` does not remove the metrics — counts, rates
+    /// and means keep working, only percentiles stop — because §10 asks for
+    /// them and a run without them still has to be comparable to a run with.
+    pub telemetry_sample_every: u64,
 }
 
 impl Default for CellConfig {
@@ -99,6 +119,7 @@ impl Default for CellConfig {
             wall_ms_cap: 30_000,
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
+            telemetry_sample_every: 1,
         }
     }
 }
@@ -404,6 +425,9 @@ impl Cell {
             .expect("reactor runtime");
 
         let metrics = Arc::new(Metrics::new());
+        // §10/H7. Applied once, here, so every metrics reader sees the same
+        // setting the dispatch path is running under.
+        metrics.set_per_dispatch_sampling(cfg.telemetry_sample_every);
         let queue = Arc::new(WorkQueue::new(cfg.admission_queue));
         let index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -552,6 +576,16 @@ impl Cell {
     pub fn metrics(&self) -> MetricsSnapshot {
         self.refresh_gauges();
         self.metrics.snapshot()
+    }
+    /// The live counters, not a snapshot of them.
+    ///
+    /// A snapshot flattens histograms to the percentiles §10 exports, which is
+    /// the right shape for a scrape and the wrong one for asking whether a
+    /// histogram is still *recording* — the question
+    /// `CellConfig::telemetry_sample_every` exists to answer. Also carries
+    /// [`Metrics::tombstone_invariant`], which is meaningful at rest.
+    pub fn metrics_raw(&self) -> &Arc<Metrics> {
+        &self.metrics
     }
     pub fn metrics_json(&self) -> String {
         self.refresh_gauges();
@@ -881,6 +915,20 @@ impl Cell {
         // in-flight request. Ordering and serialization of DI messages is the
         // single-writer inbox's job (§7.2), which lives in `wisp-durable`.
         if self.active.lock().contains_key(&slot.id) {
+            // §10: counted, because this refusal is one of the four legs the
+            // density gate stands on and the only other count of it lives in
+            // the load generator. Two independent counts of the same event is
+            // the whole point — a counting error on either side is otherwise
+            // undetectable.
+            //
+            // Note where this returns from: *before* `Metrics::dispatches` is
+            // incremented below, so a 409 is not a dispatch. The identity that
+            // closes the books is
+            // `submitted == dispatches + shed + breaker_rejections +
+            //  single_writer_refusals`.
+            self.metrics
+                .single_writer_refusals
+                .fetch_add(1, Ordering::Relaxed);
             let _ = job.responder.send(DispatchResult {
                 status: 409,
                 body: "durable instance already has a dispatch in flight (§7.2)"
@@ -932,13 +980,18 @@ impl Cell {
         let outcome = {
             let mut guard = match slot.enter() {
                 Ok(g) => g,
-                Err(_) => {
+                Err(e) => {
                     // §5.4 refusing a reentrant call. For a Durable Instance
                     // this is §7.2's "strictly one dispatch at a time"; the
                     // caller must retry.
-                    self.metrics
-                        .reentrancy_refusals
-                        .fetch_add(1, Ordering::Relaxed);
+                    //
+                    // §6.4's tombstone refusal arrives at the same door and is
+                    // a different fact — "this instance was killed and you may
+                    // not talk to it", not "come back in a moment" — so it is
+                    // counted separately. Folding it into the reentrancy
+                    // counter left `tombstone_refusals`, §10's negative
+                    // control for the tombstone rule, permanently at zero.
+                    self.count_enter_refusal(e);
                     self.respond(
                         &slot,
                         DispatchResult {
@@ -993,6 +1046,12 @@ impl Cell {
                     self.metrics
                         .reentrancy_refusals
                         .fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                Err(e @ crate::instances::EnterError::Tombstoned) => {
+                    // A wake queued for an instance that was tombstoned before
+                    // the wake lane reached it. §6.4 refuses, and §10 counts.
+                    self.count_enter_refusal(e);
                     return;
                 }
                 Err(_) => return,
@@ -1225,14 +1284,30 @@ impl Cell {
                     self.breaker.record_kill(&breaker_key, crate::now_ms());
                 } else {
                     entry.meters.record_trap();
+                    // Inside the `else`, beside `record_trap`, and not in the
+                    // shared tail. A hard budget kill is not a trap: counting
+                    // it as one made `traps ⊇ hard_kills`, made
+                    // `tombstones == hard_kills + traps` false by construction
+                    // (a correct implementation gave `tombstones == traps` and
+                    // the sum overshot by exactly `hard_kills`), and made the
+                    // blast table's adjacent `hard kills` and `tombstones`
+                    // rows double-count for anyone reading down the column.
+                    self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                 }
-                self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                 // §6.4: **the tombstone.** Set on the slot before anything
                 // else touches it, because the engine will not do it for us
                 // (Appendix C, F2: a killed instance answered a later exported
                 // call correctly, globals intact). From here `slot.enter()`
                 // refuses, capture is refused, and reuse is impossible.
                 slot.tombstone();
+                // §6.4's identity — `tombstones == hard_kills + traps` — is
+                // established by these three increments and nowhere else, but
+                // it is NOT asserted here: the three counters are separate
+                // atomics and two execution threads tombstoning at once are
+                // transiently inconsistent between them, so a check on this
+                // line would be a race, not an invariant.
+                // [`Metrics::tombstone_invariant`] is the check, and it is
+                // meaningful at rest — which is where the tests call it.
                 self.metrics.tombstones.fetch_add(1, Ordering::Relaxed);
                 self.remember_tombstone(slot);
                 let msg = out
@@ -1348,6 +1423,67 @@ impl Cell {
     /// and no failing probe is unfalsifiable.
     pub fn tombstoned_instances(&self) -> Vec<InstanceId> {
         self.tombstoned.lock().iter().map(|s| s.id).collect()
+    }
+
+    /// §10: attribute one `Slot::enter` refusal to the counter that names it.
+    ///
+    /// One place rather than three, because the failure this had was a
+    /// `Err(_)` arm that swallowed the distinction — and a second copy of the
+    /// match is a second chance to make the same mistake.
+    fn count_enter_refusal(&self, e: crate::instances::EnterError) {
+        match e {
+            crate::instances::EnterError::Busy => {
+                self.metrics
+                    .reentrancy_refusals
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            crate::instances::EnterError::Tombstoned => {
+                self.metrics
+                    .tombstone_refusals
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            // Hibernated or Discarded: not a refusal of a rule, just an
+            // instance that is not here. Counted by the tier gauges.
+            crate::instances::EnterError::NotResident(_) => {}
+        }
+    }
+
+    /// Call into an instance by id, through the cell's front door (§6.4, §10).
+    ///
+    /// [`Cell::slot`] answers from the tombstone ring on purpose, so a
+    /// kill-then-call gets an instance that **refuses** rather than a `None`
+    /// that reads as "no such instance". This is that refusal *counted*:
+    /// `tombstone_refusals` is §10's negative control for the tombstone rule,
+    /// and a control nothing ever increments cannot fail, which makes a green
+    /// dashboard unfalsifiable.
+    ///
+    /// The closure shape is not decoration: [`crate::instances::CallGuard`]
+    /// borrows the slot, so handing one out would mean handing out the
+    /// lifetime too. Going through `Slot::enter` rather than re-deriving the
+    /// three refusals from `is_tombstoned`/`is_busy`/`state` keeps §5.4's
+    /// "unrepresentable, not discouraged" property intact — this is the same
+    /// door every dispatch uses, with a counter on it.
+    pub fn with_instance<R>(
+        &self,
+        id: InstanceId,
+        f: impl FnOnce(&mut (dyn wisp_engine::InstanceOps + Send)) -> R,
+    ) -> Result<R, crate::instances::EnterError> {
+        let Some(slot) = self.slot(id) else {
+            return Err(crate::instances::EnterError::NotResident(
+                LifecycleTier::Discarded,
+            ));
+        };
+        // Bound rather than returned directly: the `Result<CallGuard>`
+        // temporary borrows `slot`, and as a tail expression it would outlive
+        // the `Arc` it borrows from.
+        let out = match slot.enter() {
+            Ok(mut guard) => Ok(f(guard.instance())),
+            Err(e) => {
+                self.count_enter_refusal(e);
+                Err(e)
+            }
+        };
+        out
     }
 
     fn forget(&self, slot: &Arc<Slot>) {

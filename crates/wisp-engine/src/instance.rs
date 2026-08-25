@@ -13,7 +13,7 @@ use wisp_abi::status::{PollStatus, TrapCode};
 use wisp_abi::PAGE_SIZE;
 
 use crate::budget::{CpuBudget, KillPhase, TrapKind};
-use crate::meter::thread_cpu_nanos;
+use crate::meter::try_thread_cpu_nanos;
 use crate::state::{
     AllocFailed, BudgetExceeded, GuestAbort, Kill, Meter, Reentrancy, StoreState, WallCapExceeded,
 };
@@ -246,11 +246,17 @@ impl Instance {
         engine.watchdog.shared().enter_hot();
 
         let wall0 = Instant::now();
-        let cpu0 = thread_cpu_nanos();
+        // A failed clock read must not be mistaken for a zero starting value.
+        let cpu0 = try_thread_cpu_nanos();
         live.store.data_mut().begin_slice(
             clock_ms,
+            // The budget path keeps today's behaviour on an unreadable clock
+            // (`cpu0_ns: 0`, so `dispatch_cpu_ns` reads high and the dispatch
+            // is killed at its deadline rather than escaping its budget). That
+            // is the conservative direction, and the counter now says it
+            // happened; accounting is what this change makes honest.
             Meter {
-                cpu0_ns: cpu0,
+                cpu0_ns: cpu0.unwrap_or(0),
                 wall0: Some(wall0),
                 ..meter
             },
@@ -261,7 +267,15 @@ impl Instance {
 
         // Metered before anything else, so that trap classification and
         // teardown are not included in the guest CPU interval.
-        let cpu_ns = thread_cpu_nanos().saturating_sub(cpu0);
+        //
+        // Either end unreadable yields `0` — a floor, never an invention —
+        // and `meter::clock_read_failures()` is non-zero, so a meter
+        // cross-check can attribute its residual instead of absorbing it into
+        // "platform overhead".
+        let cpu_ns = match (cpu0, try_thread_cpu_nanos()) {
+            (Some(start), Some(end)) => end.saturating_sub(start),
+            _ => 0,
+        };
         let wall_ns = wall0.elapsed().as_nanos() as u64;
 
         // Stand the deadline down: host-side work on this store afterwards

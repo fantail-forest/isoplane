@@ -60,7 +60,9 @@ mod wtconfig;
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{CpuBudget, DispatchOutcome, KillPhase, TrapInfo, TrapKind};
 pub use instance::Instance;
-pub use meter::{thread_cpu_nanos, thread_cpu_resolution_nanos};
+pub use meter::{
+    clock_read_failures, thread_cpu_nanos, thread_cpu_resolution_nanos, try_thread_cpu_nanos,
+};
 pub use snapshot::InstanceImage;
 pub use template::{ModuleHash, Template, DEFERRED_INIT_SECTION};
 
