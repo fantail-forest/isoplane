@@ -3,8 +3,6 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use parking_lot::Mutex;
-
 use wisp_abi::result::{ResultRecord};
 
 use crate::InstanceId;
@@ -80,7 +78,8 @@ struct Inner {
 
 pub struct FutureTable {
     next: AtomicU64,
-    inner: Mutex<Inner>,
+    /// Synchronized future records and owner indexes.
+    inner: crate::lockstats::CountedMutex<Inner>,
 }
 
 impl Default for FutureTable {
@@ -90,12 +89,17 @@ impl Default for FutureTable {
 }
 
 impl FutureTable {
+    /// What waiting for the future table cost. See `lockstats`.
+    pub fn lock_stats(&self) -> crate::lockstats::LockSample {
+        self.inner.stats().snapshot()
+    }
+
     /// Create an empty host future table.
     pub fn new() -> Self {
         Self {
             // Start at 1: id 0 is reserved as INVALID_FUTURE.
             next: AtomicU64::new(1),
-            inner: Mutex::new(Inner {
+            inner: crate::lockstats::CountedMutex::new(Inner {
                 entries: HashMap::new(),
                 owned: HashMap::new(),
             }),

@@ -48,7 +48,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use parking_lot::{Condvar, Mutex, RwLock};
+use parking_lot::{Condvar, Mutex};
+
+// The seven locks a dispatch takes most often are wrapped so a run can say
+// which of them the execution threads lost time to. `lock()`/`read()` keep
+// their signatures, so no call site below changes. See `lockstats`.
+use crate::lockstats::{CountedMutex, CountedRwLock};
 
 use wisp_abi::config::{AppManifest, HandlerLifecycle, Limits};
 use wisp_abi::dispatch::{DispatchKind, DispatchRecord, TraceContext};
@@ -78,6 +83,11 @@ pub struct CellConfig {
     /// §6.4: overflow queues at admission; beyond this the cell sheds, which
     /// is the backstop for "the proxy sheds before cells saturate".
     pub admission_queue: usize,
+    /// How incoming work is spread across the execution pool.
+    ///
+    /// Defaults to [`QueueStrategy::Shared`], which is what this cell has
+    /// always done. See that type for what the alternative buys and why.
+    pub queue_strategy: QueueStrategy,
     pub max_idle_per_module: usize,
     /// Wall-clock backstop for a dispatch. Not a meter (§11.2).
     pub wall_ms_cap: u32,
@@ -104,6 +114,28 @@ pub struct CellConfig {
     /// and means keep working, only percentiles stop — because §10 asks for
     /// them and a run without them still has to be comparable to a run with.
     pub telemetry_sample_every: u64,
+    /// How densely [`StageTimings`] is collected: `N` times one request in `N`,
+    /// `0` or `1` — `1` meaning every request — with `0` switching it off.
+    ///
+    /// **Sampled rather than always-on because the clock is the cost.** Three
+    /// extra `clock_gettime` calls per request at 300,000 requests a second is
+    /// close to a million vDSO reads a second across the pool, on the one path
+    /// whose timing is the measurement. At the default it is one request in
+    /// 128: still 2,300 samples a second, which is 70,000 over a thirty-second
+    /// hold and enough for a p99.9 by the same ten-observations-past-the-
+    /// quantile rule the rest of the suite uses, while 0.8% of requests pay
+    /// anything at all.
+    ///
+    /// **Whether a request is sampled is `dispatch_id % N == 0`.** Stateless,
+    /// so no counter is shared between submitting threads; deterministic, so a
+    /// test can say exactly which requests it expects back. It assumes ids are
+    /// dense and that nothing about a request correlates with its id modulo
+    /// `N` — true for the cell's own counter and for the bench generator,
+    /// whose ids are per-thread sequence numbers and whose instance choice is
+    /// drawn from the arrival stream rather than round-robined. A caller that
+    /// hands out ids correlated with the work would bias the sample, and would
+    /// be sampling nothing or everything if it reused one id.
+    pub stage_sample_every: u64,
 }
 
 impl Default for CellConfig {
@@ -117,10 +149,33 @@ impl Default for CellConfig {
             admission_queue: 1024,
             max_idle_per_module: 64,
             wall_ms_cap: 30_000,
+            queue_strategy: QueueStrategy::default(),
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
             telemetry_sample_every: 1,
+            stage_sample_every: DEFAULT_STAGE_SAMPLE_EVERY,
         }
+    }
+}
+
+/// One request in 128 carries stage timings. See
+/// [`CellConfig::stage_sample_every`] for the arithmetic behind the number.
+pub const DEFAULT_STAGE_SAMPLE_EVERY: u64 = 128;
+
+/// Is this the one request in `every` that gets timed?
+///
+/// `0` is off and `1` is every request; both are stated here rather than at
+/// each call site, because "one in zero" read as a modulo is a division by
+/// zero and this runs on the dispatch path.
+#[inline]
+pub fn stage_sampled(dispatch_id: u64, every: u64) -> bool {
+    match every {
+        0 => false,
+        1 => true,
+        // `%` rather than `is_multiple_of`: the workspace declares
+        // `rust-version = "1.85"` and that method landed in 1.87.
+        #[allow(clippy::manual_is_multiple_of)]
+        n => dispatch_id % n == 0,
     }
 }
 
@@ -179,6 +234,88 @@ pub struct DispatchResult {
     /// Slices this request took: 1 for a dispatch that never parked, more if
     /// it awaited.
     pub slices: u32,
+    /// Where this request's time went inside the cell, if it was one of the
+    /// sampled ones. `None` on every other request and on every refusal.
+    ///
+    /// See [`StageTimings`]. It rides back on the result rather than being
+    /// accumulated cell-side because the caller already owns a histogram per
+    /// distribution, already scopes it to a hold by differencing two
+    /// snapshots, and already reads percentiles off it — a second set of
+    /// histograms inside the cell would be a second implementation of all
+    /// three, on the one path that must not grow a lock.
+    pub stages: Option<StageTimings>,
+}
+
+/// Where one request's time went between `submit` and the reply landing.
+///
+/// **Why this exists.** The harness had exactly three timings — scheduled
+/// arrival to reply, actual release to reply, and the generator's own lateness
+/// — so everything the cell did was one opaque block. A p99 of 13.8 ms at
+/// sixty-four execution threads against 98 mu-s at eight is a fact about
+/// queueing, and nothing in the record could say *which* queue: the intake
+/// lane's lock, the wait for a worker, the guest itself, or the reply channel
+/// backing up behind a collector that lost its cpu. Those four have different
+/// fixes and the difference between them was being inferred from a thread
+/// count.
+///
+/// **The four are disjoint and they are on one request.** `submit_ns` ends
+/// where `queue_ns` begins and so on, so they add; and because the sampling
+/// decision is taken once, at admission, and carried on the job, all four
+/// figures for a sampled request describe *that* request. Sampling each stage
+/// independently would give four distributions over four different
+/// populations, which cannot be added and would look exactly the same in the
+/// report.
+///
+/// **What is deliberately not here.** The gap between the four and the
+/// caller's own service time — module lookup, instance acquisition, the
+/// `active` insert, `settle`, the response table — is left as a residual for
+/// the caller to compute and publish. Naming it as a fifth stage would imply
+/// it had been measured; it has not, and a decomposition that appears to
+/// account for everything is the one nobody checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StageTimings {
+    /// Entering the submit path to the instant the job goes into a lane:
+    /// the breaker check, the job allocation, lane selection and — the part
+    /// that matters — acquiring the intake queue's lock.
+    ///
+    /// It stops just short of the push itself and of the condvar notify,
+    /// because the job is moved by that call and cannot be stamped afterwards.
+    /// The lock acquisition is the contended half and it is inside.
+    pub submit_ns: u64,
+    /// Sitting in a lane, waiting for an execution thread to pop it.
+    ///
+    /// The queueing delay proper. Under `QueueStrategy::PerWorker` this is a
+    /// wait on one lane rather than on the pool, which is the whole point of
+    /// that strategy and the number that shows whether it worked.
+    pub queue_ns: u64,
+    /// Inside the guest, summed over every slice of the dispatch.
+    ///
+    /// Every slice, not the first: a dispatch that parks and is woken runs the
+    /// guest again, and §6.3 makes that one request. Timing only the first
+    /// slice would report a `chatty` guest as faster than an `echo` one.
+    pub guest_ns: u64,
+    /// [`crate::mono_ns`] at the instant the cell handed the reply to the
+    /// responder channel.
+    ///
+    /// A stamp rather than a duration, because the interval worth having runs
+    /// from here to the caller *receiving* it and the cell is not present for
+    /// the second half. Timing `SyncSender::send` alone would measure only the
+    /// case where the channel is already full — it is the queueing in front of
+    /// that, on a collector thread that lost its cpu, that shows up as
+    /// platform latency in the report.
+    pub replied_mono_ns: u64,
+}
+
+/// The stamps a sampled request carries while it is in flight.
+///
+/// Absent on every unsampled request, so the cost of the whole mechanism on
+/// the common path is one `Option` discriminant and the modulo that set it.
+#[derive(Debug, Clone, Copy)]
+struct StageStamps {
+    /// When the job entered a lane. Set by `WorkQueue::push_dispatch`.
+    queued: Instant,
+    submit_ns: u64,
+    queue_ns: u64,
 }
 
 impl DispatchResult {
@@ -195,6 +332,7 @@ impl DispatchResult {
             instance: InstanceId(0),
             acquired: "none",
             slices: 0,
+            stages: None,
         }
     }
     fn breaker_open(dispatch_id: u64) -> Self {
@@ -211,6 +349,7 @@ impl DispatchResult {
             instance: InstanceId(0),
             acquired: "none",
             slices: 0,
+            stages: None,
         }
     }
 }
@@ -231,19 +370,126 @@ struct DispatchJob {
     rec: DispatchRecord,
     responder: std::sync::mpsc::SyncSender<DispatchResult>,
     enqueued: Instant,
+    /// `Some` on the one request in [`CellConfig::stage_sample_every`] that
+    /// was chosen for stage timing, at admission and once.
+    stamps: Option<StageStamps>,
 }
 
-/// A two-lane queue.
+/// Shards for `Cell::active`.
 ///
-/// Wakes jump ahead of new dispatches, and wakes are never shed. That is
-/// §6.4's admission story stated as a data structure: overflow queues at
-/// admission and sheds *new* work; work already in flight keeps making
-/// progress, which is what keeps a saturated cell from converting itself into
-/// a pile of half-finished requests.
+/// Sized above the execution pool so a collision is unlikely rather than
+/// certain: §6.1's default is 4x the cell's logical cpus, which is 64 on a
+/// sixteen-core cell and 256 on the widest this box can build. An empty
+/// `HashMap` is three words, so 256 of them cost less than one instance.
+const ACTIVE_SHARDS: usize = 256;
+
+/// How incoming work is spread across the execution pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum QueueStrategy {
+    /// One queue, every worker pops from it.
+    ///
+    /// Simple and correct, and it does not scale: every producer and every
+    /// worker takes the same lock on every operation. Measured at 89,600
+    /// req/s with a 64-thread pool, this lock accounted for 99.5% of all the
+    /// time the workers spent blocked — 365 seconds of it inside a 30 second
+    /// hold — and its cost is superlinear in the pool size (1.1 µs per
+    /// dispatch at 8 threads, 133 µs at 64).
+    #[default]
+    Shared,
+    /// One queue per worker, with new work placed by power-of-two choices.
+    ///
+    /// A producer samples two lanes at random and pushes to the shallower.
+    /// That is O(1) per push and gets most of the balance of scanning every
+    /// lane, which is the standard result for randomised load balancing.
+    ///
+    /// **Why not a single lock-free queue.** Lock-free guarantees progress,
+    /// not independence: one shared queue still has every thread doing
+    /// compare-and-swap on the same head and tail, so the cachelines holding
+    /// them bounce between cores and the retries grow with the pool. It
+    /// removes the syscalls and the context switches, and leaves the sharing.
+    /// Per-worker lanes remove the sharing: a worker pops its own lane, which
+    /// in the common case no other thread is touching.
+    PerWorker,
+    /// One shared pair of lock-free queues, and no mutex on the data at all.
+    ///
+    /// Keeps the two lanes and their priority — a bounded ring for dispatches,
+    /// so a full ring hands the job back and that *is* §6.4's shed, and an
+    /// unbounded queue for wakes, which are never shed.
+    ///
+    /// **This removes blocking, not sharing.** Every thread still does
+    /// compare-and-swap on the same head and tail, so the cachelines holding
+    /// them still move between cores and the retries still grow with the pool.
+    /// What it removes is the futex: no syscall, no context switch, no thread
+    /// descheduled while holding the structure. Expect it to beat `Shared`
+    /// comfortably and to fall behind `PerWorker` as the pool grows — and if
+    /// it does not, that is worth knowing, which is why all three are
+    /// selectable rather than one being chosen by argument.
+    ///
+    /// A worker with nothing to do still has to sleep. The parking mutex and
+    /// condition variable below guard no data — they exist only so a consumer
+    /// can wait without spinning, and the producer touches them only when a
+    /// consumer is actually parked.
+    LockFree,
+}
+
+/// A two-lane queue, in one or many copies.
+///
+/// **The two lanes are the admission story, and they are unchanged by either
+/// strategy.** Wakes jump ahead of new dispatches, and wakes are never shed:
+/// overflow queues at admission and sheds *new* work, so work already in
+/// flight keeps making progress and a saturated cell does not turn itself
+/// into a pile of half-finished requests (§6.4).
+///
+/// `lanes` is one entry under [`QueueStrategy::Shared`] — in which case this
+/// is exactly the structure it replaces — and one per worker under
+/// [`QueueStrategy::PerWorker`].
 struct WorkQueue {
-    inner: Mutex<QueueInner>,
-    cv: Condvar,
+    /// Empty under [`QueueStrategy::LockFree`].
+    lanes: Box<[Lane]>,
+    /// `Some` only under [`QueueStrategy::LockFree`].
+    free: Option<LockFreeLanes>,
+    /// Per-lane capacity for the dispatch lane. The whole-cell cap divided
+    /// across the lanes, so the strategy changes where work waits and not how
+    /// much of it the cell will hold.
     cap: usize,
+    strategy: QueueStrategy,
+}
+
+/// One lane: the two queues, the lock over them, and a depth counter that can
+/// be read without taking it.
+///
+/// `depth` is padded to its own cache line. Without that, sampling two lanes'
+/// depths would pull in a line that a third lane's push is writing, and the
+/// balancer would generate exactly the sharing it exists to avoid.
+#[repr(align(128))]
+struct Lane {
+    inner: CountedMutex<QueueInner>,
+    cv: Condvar,
+    /// Dispatches queued here. Approximate by design: it is read outside the
+    /// lock to pick a lane, and a stale read costs a slightly worse choice
+    /// rather than a wrong one.
+    depth: AtomicUsize,
+}
+
+/// The lock-free pair, plus the parking spot a worker sleeps on.
+struct LockFreeLanes {
+    /// Bounded: `push` returns the job back when full, which is the shed.
+    dispatches: crossbeam_queue::ArrayQueue<Box<DispatchJob>>,
+    /// Unbounded: §6.4 never sheds a wake.
+    wakes: crossbeam_queue::SegQueue<Arc<Slot>>,
+    closed: AtomicBool,
+    /// Guards nothing. A consumer takes it only to park, and a producer takes
+    /// it only when `parked` says someone is there to wake.
+    park: Mutex<()>,
+    cv: Condvar,
+    /// How many workers are parked or about to park.
+    ///
+    /// The whole point of the count is to keep the producer off the parking
+    /// mutex when nobody is waiting, which is the common case under load. It
+    /// is also what closes the lost-wakeup race: a consumer increments it
+    /// while holding `park`, so a producer that reads a non-zero count cannot
+    /// acquire `park` until that consumer is actually waiting on `cv`.
+    parked: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -253,56 +499,279 @@ struct QueueInner {
     closed: bool,
 }
 
+/// A cheap per-thread xorshift, for picking two lanes.
+///
+/// Not `rand::rng()`: this runs on every dispatch and the choice does not need
+/// to be good randomness, only unbiased and fast. Seeded off the thread id so
+/// two workers do not walk the same sequence.
+fn lane_rand(n: usize) -> usize {
+    use std::cell::Cell as StdCell;
+    thread_local! {
+        static STATE: StdCell<u64> = const { StdCell::new(0) };
+    }
+    STATE.with(|s| {
+        let mut x = s.get();
+        if x == 0 {
+            // Any non-zero seed; the address of the cell differs per thread.
+            x = s as *const _ as u64 | 1;
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        s.set(x);
+        (x % n as u64) as usize
+    })
+}
+
 impl WorkQueue {
-    fn new(cap: usize) -> Self {
-        Self {
-            inner: Mutex::new(QueueInner::default()),
+    fn new(cap: usize, lanes: usize, strategy: QueueStrategy) -> Self {
+        let n = match strategy {
+            QueueStrategy::Shared => 1,
+            QueueStrategy::PerWorker => lanes.max(1),
+            QueueStrategy::LockFree => 0,
+        };
+        let free = (strategy == QueueStrategy::LockFree).then(|| LockFreeLanes {
+            dispatches: crossbeam_queue::ArrayQueue::new(cap.max(1)),
+            wakes: crossbeam_queue::SegQueue::new(),
+            closed: AtomicBool::new(false),
+            park: Mutex::new(()),
             cv: Condvar::new(),
-            cap,
+            parked: AtomicUsize::new(0),
+        });
+        Self {
+            lanes: (0..n)
+                .map(|_| Lane {
+                    inner: CountedMutex::new(QueueInner::default()),
+                    cv: Condvar::new(),
+                    depth: AtomicUsize::new(0),
+                })
+                .collect(),
+            free,
+            cap: (cap / n.max(1)).max(1),
+            strategy,
         }
     }
+
+    /// Wake one parked worker, if any is parked.
+    ///
+    /// The `parked` check is what keeps this off the parking mutex entirely
+    /// while the cell is busy — under load a worker finds work on its next
+    /// `try_pop` and never sleeps, so producers never touch the mutex.
+    #[inline]
+    fn free_notify(f: &LockFreeLanes) {
+        if f.parked.load(Ordering::SeqCst) > 0 {
+            let _g = f.park.lock();
+            f.cv.notify_one();
+        }
+    }
+
+    /// One non-blocking attempt at the two lock-free lanes, wakes first.
+    #[inline]
+    fn free_try_pop(f: &LockFreeLanes) -> Option<Job> {
+        if let Some(s) = f.wakes.pop() {
+            return Some(Job::Wake(s));
+        }
+        f.dispatches.pop().map(Job::Dispatch)
+    }
+
+    /// The lane a new dispatch should go to.
+    ///
+    /// Power of two: sample two, take the shallower. With one lane this is
+    /// free and always returns it.
+    #[inline]
+    fn pick(&self) -> usize {
+        let n = self.lanes.len();
+        if n == 1 {
+            return 0;
+        }
+        let a = lane_rand(n);
+        let b = lane_rand(n);
+        if self.lanes[a].depth.load(Ordering::Relaxed)
+            <= self.lanes[b].depth.load(Ordering::Relaxed)
+        {
+            a
+        } else {
+            b
+        }
+    }
+
+    /// Close the submit stage and open the queue stage, on a sampled job.
+    ///
+    /// One clock read produces both: the instant the job enters a lane is the
+    /// end of one interval and the start of the next, and reading it twice
+    /// would leave a gap between the stages that belongs to neither.
+    ///
+    /// Called immediately before the push in both strategies. It cannot be
+    /// called after, because the push moves the job — so `submit_ns` excludes
+    /// the `push_back` (or the ring's compare-and-swap) and the notify, and
+    /// includes the lane choice and the lock acquisition, which is the half
+    /// that contends.
+    #[inline]
+    fn stamp_queued(j: &mut DispatchJob) {
+        if let Some(s) = &mut j.stamps {
+            let now = Instant::now();
+            s.submit_ns = now.duration_since(j.enqueued).as_nanos() as u64;
+            s.queued = now;
+        }
+    }
+
     /// `Err` means shed (§6.4).
     fn push_dispatch(&self, j: Box<DispatchJob>) -> Result<(), Box<DispatchJob>> {
-        let mut g = self.inner.lock();
+        let mut j = j;
+        if let Some(f) = &self.free {
+            if f.closed.load(Ordering::Relaxed) {
+                return Err(j);
+            }
+            Self::stamp_queued(&mut j);
+            // A full ring hands the job straight back, which is exactly the
+            // shed the mutex version does at `dispatches.len() >= cap`.
+            f.dispatches.push(j)?;
+            Self::free_notify(f);
+            return Ok(());
+        }
+        let lane = &self.lanes[self.pick()];
+        let mut g = lane.inner.lock();
         if g.closed || g.dispatches.len() >= self.cap {
             return Err(j);
         }
+        // Inside the lock, so `submit_ns` contains the acquisition. That is
+        // the contended half and the reason this stage exists at all: the
+        // `Shared` strategy's one mutex cost the pool 365 s of blocked time
+        // inside a 30 s hold, and until now nothing said how much of a
+        // request's life was spent waiting for it as opposed to waiting in it.
+        Self::stamp_queued(&mut j);
         g.dispatches.push_back(j);
+        lane.depth.fetch_add(1, Ordering::Relaxed);
         drop(g);
-        self.cv.notify_one();
+        lane.cv.notify_one();
         Ok(())
     }
+
+    /// A wake is never shed, so it goes to the shallowest of two regardless of
+    /// capacity.
     fn push_wake(&self, s: Arc<Slot>) {
-        let mut g = self.inner.lock();
+        if let Some(f) = &self.free {
+            if f.closed.load(Ordering::Relaxed) {
+                return;
+            }
+            f.wakes.push(s);
+            Self::free_notify(f);
+            return;
+        }
+        let lane = &self.lanes[self.pick()];
+        let mut g = lane.inner.lock();
         if g.closed {
             return;
         }
         g.wakes.push_back(s);
         drop(g);
-        self.cv.notify_one();
+        lane.cv.notify_one();
     }
-    fn pop(&self) -> Option<Job> {
-        let mut g = self.inner.lock();
+
+    /// Take the next job for `worker`.
+    ///
+    /// Under [`QueueStrategy::Shared`] every worker reads lane zero, which is
+    /// the original behaviour exactly. Under [`QueueStrategy::PerWorker`] a
+    /// worker reads only its own lane: it blocks there rather than stealing,
+    /// because power-of-two placement is what keeps the lanes even, and a
+    /// stealing scan would put every idle worker back on every other worker's
+    /// lock — the sharing this exists to remove.
+    fn pop(&self, worker: usize) -> Option<Job> {
+        if let Some(f) = &self.free {
+            loop {
+                // Fast path: no lock, no atomics beyond the queue's own.
+                if let Some(j) = Self::free_try_pop(f) {
+                    return Some(j);
+                }
+                if f.closed.load(Ordering::SeqCst) {
+                    return None;
+                }
+                // Slow path. Announce the park BEFORE the last check and while
+                // holding `park`, so a producer that pushes after that check
+                // must either see `parked > 0` and block on `park` until this
+                // thread is genuinely waiting, or have pushed early enough for
+                // the check to see it. That ordering is the whole reason a
+                // wake-up cannot be lost here.
+                let mut g = f.park.lock();
+                f.parked.fetch_add(1, Ordering::SeqCst);
+                let missed = Self::free_try_pop(f);
+                if missed.is_some() || f.closed.load(Ordering::SeqCst) {
+                    f.parked.fetch_sub(1, Ordering::SeqCst);
+                    if missed.is_some() {
+                        return missed;
+                    }
+                    return None;
+                }
+                f.cv.wait(&mut g);
+                f.parked.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let lane = &self.lanes[worker % self.lanes.len()];
+        let mut g = lane.inner.lock();
         loop {
             if let Some(s) = g.wakes.pop_front() {
                 return Some(Job::Wake(s));
             }
             if let Some(d) = g.dispatches.pop_front() {
+                lane.depth.fetch_sub(1, Ordering::Relaxed);
                 return Some(Job::Dispatch(d));
             }
             if g.closed {
                 return None;
             }
-            self.cv.wait(&mut g);
+            lane.cv.wait(&mut g);
         }
     }
+
     fn close(&self) {
-        self.inner.lock().closed = true;
-        self.cv.notify_all();
+        if let Some(f) = &self.free {
+            f.closed.store(true, Ordering::SeqCst);
+            let _g = f.park.lock();
+            f.cv.notify_all();
+            return;
+        }
+        for lane in self.lanes.iter() {
+            lane.inner.lock().closed = true;
+            lane.cv.notify_all();
+        }
     }
+
     fn depth(&self) -> usize {
-        let g = self.inner.lock();
-        g.wakes.len() + g.dispatches.len()
+        if let Some(f) = &self.free {
+            return f.dispatches.len() + f.wakes.len();
+        }
+        self.lanes
+            .iter()
+            .map(|l| {
+                let g = l.inner.lock();
+                g.wakes.len() + g.dispatches.len()
+            })
+            .sum()
+    }
+
+    /// Every lane's contention, summed — so the figure stays comparable with
+    /// the unsharded locks beside it however many lanes there are.
+    /// Under `LockFree` this is structurally zero: the parking mutex guards
+    /// no data and is taken only to sleep. A zero here means "no lock to
+    /// block on", which is a different statement from "nothing blocked", and
+    /// the report says which strategy produced it.
+    fn lock_stats(&self) -> crate::lockstats::LockSample {
+        if self.free.is_some() {
+            return crate::lockstats::LockSample::default();
+        }
+        self.lanes
+            .iter()
+            .fold(crate::lockstats::LockSample::default(), |acc, l| {
+                let x = l.inner.stats().snapshot();
+                crate::lockstats::LockSample {
+                    contended: acc.contended + x.contended,
+                    blocked_ns: acc.blocked_ns + x.blocked_ns,
+                }
+            })
+    }
+
+    fn strategy(&self) -> QueueStrategy {
+        self.strategy
     }
 }
 
@@ -341,6 +810,10 @@ struct ActiveRequest {
     slices: u32,
     acquired: &'static str,
     budget: CpuBudget,
+    /// Carried from the job so the reply can report the two stages that were
+    /// already closed. `wall_ns` beside it is the third, accumulated per slice
+    /// by `settle`, so the guest stage costs no clock read of its own.
+    stamps: Option<StageStamps>,
 }
 
 /// Routes completions from reactor threads onto the exec pool (§6.1's wake
@@ -401,9 +874,14 @@ pub struct Cell {
     /// when the ring is full, and a call for an id older than that gets
     /// `None` — the honest answer, since nothing about it is remembered.
     tombstoned: Mutex<std::collections::VecDeque<Arc<Slot>>>,
-    modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
-    residents: Mutex<HashMap<InstanceId, Resident>>,
-    active: Mutex<HashMap<InstanceId, ActiveRequest>>,
+    modules: CountedRwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
+    residents: CountedMutex<HashMap<InstanceId, Resident>>,
+    /// **Sharded, and measured before it was.** One mutex here cost the
+    /// execution threads 160 s of blocked time over a 30 s hold at 896
+    /// instances — 48.8% of everything they waited on, across 3.2 million
+    /// contended acquisitions — while every use of it is a single-key
+    /// operation on an `InstanceId`. See `lockstats::ShardedMap`.
+    active: crate::lockstats::ShardedMap<InstanceId, ActiveRequest>,
     breaker: HangBreaker,
     metrics: Arc<Metrics>,
     hot: AtomicUsize,
@@ -428,7 +906,11 @@ impl Cell {
         // §10/H7. Applied once, here, so every metrics reader sees the same
         // setting the dispatch path is running under.
         metrics.set_per_dispatch_sampling(cfg.telemetry_sample_every);
-        let queue = Arc::new(WorkQueue::new(cfg.admission_queue));
+        let queue = Arc::new(WorkQueue::new(
+            cfg.admission_queue,
+            cfg.exec_threads,
+            cfg.queue_strategy,
+        ));
         let index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let futures = Arc::new(FutureTable::new());
@@ -453,12 +935,12 @@ impl Cell {
             queue,
             index,
             tombstoned: Mutex::new(std::collections::VecDeque::new()),
-            modules: RwLock::new(HashMap::new()),
+            modules: CountedRwLock::new(HashMap::new()),
             // Handle 0 is reserved: a guest that reads an uninitialised field
             // and calls `socket_send(0, ..)` must get `NotFound`, not
             // somebody's chat room.
-            residents: Mutex::new(HashMap::new()),
-            active: Mutex::new(HashMap::new()),
+            residents: CountedMutex::new(HashMap::new()),
+            active: crate::lockstats::ShardedMap::new(ACTIVE_SHARDS),
             metrics,
             hot: AtomicUsize::new(0),
             next_dispatch: AtomicU64::new(1),
@@ -497,7 +979,7 @@ impl Cell {
             handles.push(
                 std::thread::Builder::new()
                     .name(name)
-                    .spawn(move || Cell::exec_loop(me, queue))
+                    .spawn(move || Cell::exec_loop(me, queue, i))
                     .expect("exec thread"),
             );
         }
@@ -523,8 +1005,8 @@ impl Cell {
         self.workers.lock().push(h);
     }
 
-    fn exec_loop(me: Weak<Self>, queue: Arc<WorkQueue>) {
-        while let Some(job) = queue.pop() {
+    fn exec_loop(me: Weak<Self>, queue: Arc<WorkQueue>, worker: usize) {
+        while let Some(job) = queue.pop(worker) {
             let Some(cell) = me.upgrade() else { return };
             match job {
                 Job::Dispatch(j) => cell.run_dispatch(*j),
@@ -573,9 +1055,61 @@ impl Cell {
         self.modules.read().get(module).map(|m| m.meters.clone())
     }
 
+    /// How densely this cell is collecting [`StageTimings`].
+    ///
+    /// Published so a reader can tell how many observations a stage percentile
+    /// rests on. A percentile with no sample count beside it is a number
+    /// wearing a quantile's name, and at one request in 128 the count is not
+    /// something a reader can derive from the request total either — sheds and
+    /// refusals never reach the stamping points.
+    pub fn stage_sample_every(&self) -> u64 {
+        self.cfg.stage_sample_every
+    }
+
+    /// The sampling decision, taken once per request at admission.
+    ///
+    /// **Once, and carried**, rather than re-derived at each of the four
+    /// stamping points. Re-deriving would be three more integer divisions per
+    /// request on the dispatch path, and — the part that actually matters —
+    /// would let the four stages disagree about which requests they describe
+    /// if the configuration were ever changed mid-run.
+    #[inline]
+    fn new_stamps(&self, dispatch_id: u64) -> Option<StageStamps> {
+        stage_sampled(dispatch_id, self.cfg.stage_sample_every).then(|| StageStamps {
+            queued: Instant::now(),
+            submit_ns: 0,
+            queue_ns: 0,
+        })
+    }
+
     pub fn metrics(&self) -> MetricsSnapshot {
         self.refresh_gauges();
         self.metrics.snapshot()
+    }
+
+    /// What each of the cell's hot locks cost the threads that waited for it.
+    ///
+    /// Ordered by how many times one Durable `Done` dispatch takes each, so
+    /// the list reads as the hypothesis it exists to test. The names are the
+    /// field paths rather than prose, because the next step after reading this
+    /// table is opening that field.
+    ///
+    /// **Seven of the ten, not all ten.** The two §10 telemetry histograms
+    /// already have a way to be measured — `CellConfig::telemetry_sample_every
+    /// = 0` takes both off the dispatch path while leaving counts and means
+    /// intact, so their cost is a difference between two runs — and
+    /// `Metrics::by_tenant` is taken once on a path that also takes `active`
+    /// six times. Instrumenting a lock is not free of judgement either: each
+    /// wrapper adds a counter pair that the contending threads share.
+    pub fn lock_stats(&self) -> Vec<(&'static str, crate::lockstats::LockSample)> {
+        vec![
+            ("Cell::active", self.active.lock_stats()),
+            ("FutureTable::inner", self.rt.futures.lock_stats()),
+            ("WorkQueue::inner", self.queue.lock_stats()),
+            ("HangBreaker::entries", self.breaker.lock_stats()),
+            ("Cell::residents", self.residents.stats().snapshot()),
+            ("Cell::modules", self.modules.stats().snapshot()),
+        ]
     }
     /// The live counters, not a snapshot of them.
     ///
@@ -702,6 +1236,7 @@ impl Cell {
             rec,
             responder: tx,
             enqueued: Instant::now(),
+            stamps: self.new_stamps(dispatch_id),
         });
         if self.queue.push_dispatch(job).is_err() {
             // §6.4: overflow queues at admission; the cell sheds rather than
@@ -788,6 +1323,7 @@ impl Cell {
             rec,
             responder,
             enqueued: Instant::now(),
+            stamps: self.new_stamps(dispatch_id),
         });
         if self.queue.push_dispatch(job).is_err() {
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
@@ -847,6 +1383,15 @@ impl Cell {
     // -----------------------------------------------------------------------
 
     fn run_dispatch(self: &Arc<Self>, job: DispatchJob) {
+        // The queue stage closes here, at the top, before the module lookup:
+        // everything below this line is work the cell does *for* the request,
+        // and folding the first `modules` read into the queueing delay would
+        // charge a lock the request needed to the lane it was waiting in.
+        let mut job = job;
+        if let Some(s) = &mut job.stamps {
+            s.queue_ns = s.queued.elapsed().as_nanos() as u64;
+        }
+        let job = job;
         let did = job.rec.dispatch_id;
         let Some(entry) = self.modules.read().get(&job.module).cloned() else {
             let _ = job.responder.send(DispatchResult {
@@ -914,7 +1459,7 @@ impl Cell {
         // DI is addressed by identity and can. Refuse rather than overwrite the
         // in-flight request. Ordering and serialization of DI messages is the
         // single-writer inbox's job (§7.2), which lives in `wisp-durable`.
-        if self.active.lock().contains_key(&slot.id) {
+        if self.active.shard(slot.id.0).lock().contains_key(&slot.id) {
             // §10: counted, because this refusal is one of the four legs the
             // density gate stands on and the only other count of it lives in
             // the load generator. Two independent counts of the same event is
@@ -954,7 +1499,7 @@ impl Cell {
             .alloc_cancellation(slot.id, job.rec.dispatch_id);
         slot.ctx.set_cancel_future(job.rec.cancel_future);
 
-        self.active.lock().insert(
+        self.active.shard(slot.id.0).lock().insert(
             slot.id,
             ActiveRequest {
                 dispatch_id: job.rec.dispatch_id,
@@ -968,6 +1513,7 @@ impl Cell {
                 slices: 0,
                 acquired,
                 budget,
+                stamps: job.stamps,
             },
         );
 
@@ -1000,7 +1546,7 @@ impl Cell {
                             ..DispatchResult::shed(did)
                         },
                     );
-                    self.active.lock().remove(&slot.id);
+                    self.active.shard(slot.id.0).lock().remove(&slot.id);
                     return;
                 }
             };
@@ -1068,6 +1614,7 @@ impl Cell {
             // willing to park.
             let budget = self
                 .active
+                .shard(slot.id.0)
                 .lock()
                 .get(&slot.id)
                 .map(|a| a.budget.after(a.cpu_ns))
@@ -1141,7 +1688,7 @@ impl Cell {
         };
 
         let (lifecycle, module, route) = {
-            let mut a = self.active.lock();
+            let mut a = self.active.shard(slot.id.0).lock();
             match a.get_mut(&slot.id) {
                 Some(req) => {
                     req.cpu_ns += out.cpu_ns;
@@ -1345,11 +1892,20 @@ impl Cell {
         completion: Completion,
         trap: Option<String>,
     ) -> DispatchResult {
-        let a = self.active.lock();
-        let (dispatch_id, cpu_ns, wall_ns, slices, acquired) = a
+        let a = self.active.shard(slot.id.0).lock();
+        let (dispatch_id, cpu_ns, wall_ns, slices, acquired, stamps) = a
             .get(&slot.id)
-            .map(|r| (r.dispatch_id, r.cpu_ns, r.wall_ns, r.slices, r.acquired))
-            .unwrap_or((0, 0, 0, 0, "unknown"));
+            .map(|r| {
+                (
+                    r.dispatch_id,
+                    r.cpu_ns,
+                    r.wall_ns,
+                    r.slices,
+                    r.acquired,
+                    r.stamps,
+                )
+            })
+            .unwrap_or((0, 0, 0, 0, "unknown", None));
         DispatchResult {
             dispatch_id,
             status,
@@ -1362,16 +1918,36 @@ impl Cell {
             instance: slot.id,
             acquired,
             slices,
+            // `wall_ns` is the guest stage: `settle` accumulates it per slice,
+            // so a dispatch that parked and was woken reports the guest time
+            // of the whole request rather than of its first slice.
+            stages: stamps.map(|s| StageTimings {
+                submit_ns: s.submit_ns,
+                queue_ns: s.queue_ns,
+                guest_ns: wall_ns,
+                replied_mono_ns: 0,
+            }),
         }
     }
 
     fn respond(&self, slot: &Arc<Slot>, result: DispatchResult) {
         let tx = self
             .active
+            .shard(slot.id.0)
             .lock()
             .get_mut(&slot.id)
             .and_then(|a| a.responder.take());
         if let Some(tx) = tx {
+            // Stamped after the `active` shard is released and immediately
+            // before the send, so the interval the caller reconstructs is the
+            // channel and nothing else. Inside the lock it would carry the
+            // shard's own contention, which `lock_stats` already reports under
+            // its own name — one cost, counted twice, in two tables that are
+            // read together.
+            let mut result = result;
+            if let Some(st) = &mut result.stages {
+                st.replied_mono_ns = crate::mono_ns();
+            }
             let _ = tx.send(result);
         }
     }
@@ -1382,7 +1958,7 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         d: crate::instances::Disposition,
     ) {
-        let req = self.active.lock().remove(&slot.id);
+        let req = self.active.shard(slot.id.0).lock().remove(&slot.id);
         if let Some(r) = &req {
             self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
             self.metrics
@@ -1644,6 +2220,176 @@ impl Drop for Cell {
         self.stop(true);
         if let Some(rt) = self.runtime.take() {
             rt.shutdown_timeout(Duration::from_millis(200));
+        }
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    /// `Shared` is one lane and `PerWorker` is one per worker, and the
+    /// whole-cell admission cap is divided rather than multiplied.
+    ///
+    /// The second half is the one worth pinning: if each lane kept the full
+    /// cap, moving to per-worker queues would silently give a 64-thread cell
+    /// sixty-four times the buffering, and every latency figure would improve
+    /// for a reason that has nothing to do with the queue's structure.
+    #[test]
+    fn the_strategy_sets_the_lane_count_and_divides_the_cap() {
+        let q = WorkQueue::new(1024, 8, QueueStrategy::Shared);
+        assert_eq!(q.lanes.len(), 1);
+        assert_eq!(q.cap, 1024, "one lane holds the whole cap");
+
+        let q = WorkQueue::new(1024, 8, QueueStrategy::PerWorker);
+        assert_eq!(q.lanes.len(), 8);
+        assert_eq!(q.cap, 128, "8 x 128 = the same 1024 the cell always held");
+
+        // A cap smaller than the lane count still leaves each lane able to
+        // hold something, rather than a queue that refuses everything.
+        let q = WorkQueue::new(4, 64, QueueStrategy::PerWorker);
+        assert_eq!(q.cap, 1);
+    }
+
+    /// Power of two picks the shallower of the two it sampled.
+    ///
+    /// Checked statistically rather than by forcing the sample, because the
+    /// property that matters is the distribution: with one lane deep and the
+    /// rest empty, a balancer that works almost never chooses the deep one,
+    /// and one that ignores depth chooses it 1-in-N of the time.
+    #[test]
+    fn power_of_two_avoids_the_deep_lane() {
+        let q = WorkQueue::new(4096, 8, QueueStrategy::PerWorker);
+        q.lanes[3].depth.store(1_000, Ordering::Relaxed);
+
+        let mut hit_deep = 0;
+        const N: usize = 20_000;
+        for _ in 0..N {
+            if q.pick() == 3 {
+                hit_deep += 1;
+            }
+        }
+        // Blind choice would land on lane 3 about N/8 = 2,500 times. Power of
+        // two only lands there when BOTH samples were lane 3, i.e. 1/64 of
+        // the time, so ~310. Generous bound; the point is the order of
+        // magnitude, not the constant.
+        assert!(
+            hit_deep < N / 20,
+            "the deep lane was chosen {hit_deep} times in {N} — power of two should sample it \
+             twice before choosing it"
+        );
+        // …and it is not simply never chosen, which would mean the sampler is
+        // stuck rather than choosing.
+        let seen: std::collections::HashSet<usize> = (0..2_000).map(|_| q.pick()).collect();
+        assert!(
+            seen.len() >= 6,
+            "the sampler must reach most lanes, saw {}",
+            seen.len()
+        );
+    }
+
+    /// One lane means every worker reads the same queue, which is exactly the
+    /// behaviour `Shared` replaced and must keep.
+    #[test]
+    fn under_shared_every_worker_reads_the_same_lane() {
+        let q = WorkQueue::new(64, 16, QueueStrategy::Shared);
+        for worker in 0..16 {
+            assert_eq!(worker % q.lanes.len(), 0);
+        }
+        assert_eq!(q.pick(), 0);
+    }
+
+    /// A `DispatchJob` with nothing behind it, for exercising the queue.
+    ///
+    /// The queue never looks inside a job — it moves boxes between lanes — so
+    /// the payload can be minimal and the test stays about the structure.
+    fn job() -> Box<DispatchJob> {
+        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        Box::new(DispatchJob {
+            module: ModuleId::new("t", "v1"),
+            target: Target::Handler { route: "/".into() },
+            rec: wisp_abi::dispatch::DispatchRecord {
+                dispatch_id: 1,
+                kind: crate::cell::cell_tests::http(dispatch_id).kind,
+                trace: Default::default(),
+                cancel_future: 0,
+                cpu_budget_ms: 50,
+                now_ms: 0,
+            },
+            responder: tx,
+            enqueued: Instant::now(),
+            stamps: None,
+        })
+    }
+
+    /// The lock-free ring sheds when full, which is the property §6.4 needs
+    /// and the reason a *bounded* queue was chosen for dispatches.
+    #[test]
+    fn the_lock_free_ring_sheds_when_full() {
+        let q = WorkQueue::new(4, 8, QueueStrategy::LockFree);
+        assert!(
+            q.lanes.is_empty(),
+            "no mutex lanes are built for this strategy"
+        );
+        for i in 0..4 {
+            assert!(q.push_dispatch(job()).is_ok(), "job {i} inside the cap");
+        }
+        assert_eq!(q.depth(), 4);
+        assert!(
+            q.push_dispatch(job()).is_err(),
+            "past the cap the job is handed back"
+        );
+        // Draining makes room again, so the shed is a capacity limit rather
+        // than a one-way door.
+        assert!(q.pop(0).is_some());
+        assert!(q.push_dispatch(job()).is_ok());
+    }
+
+    /// **A parked worker is never left asleep beside work.**
+    ///
+    /// This is the race a lock-free queue introduces and a mutex does not: the
+    /// producer must not slip its push and its notify between the consumer's
+    /// last look at the queue and its going to sleep. If it can, a worker
+    /// sleeps while work waits, and under load that shows up as a latency
+    /// tail nobody can explain.
+    ///
+    /// Two hundred rounds because a lost wake-up is a timing bug — one round
+    /// proves nothing. The assertion is the join completing: a lost wake-up
+    /// hangs rather than returning something wrong.
+    #[test]
+    fn a_parked_worker_is_never_left_asleep_beside_work() {
+        for round in 0..200 {
+            let q = Arc::new(WorkQueue::new(64, 4, QueueStrategy::LockFree));
+            let q2 = q.clone();
+            let h = std::thread::spawn(move || q2.pop(0).is_some());
+            // Land the push inside the window where the consumer is deciding
+            // whether to sleep.
+            std::thread::yield_now();
+            assert!(q.push_dispatch(job()).is_ok());
+            assert!(
+                h.join().expect("worker panicked"),
+                "round {round}: woken with work"
+            );
+        }
+    }
+
+    /// Closing wakes every parked worker, or shutdown hangs.
+    #[test]
+    fn closing_the_lock_free_queue_releases_parked_workers() {
+        let q = Arc::new(WorkQueue::new(64, 4, QueueStrategy::LockFree));
+        let hs: Vec<_> = (0..4)
+            .map(|w| {
+                let q = q.clone();
+                std::thread::spawn(move || q.pop(w))
+            })
+            .collect();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        q.close();
+        for h in hs {
+            assert!(
+                h.join().expect("worker panicked").is_none(),
+                "a closed queue returns None"
+            );
         }
     }
 }

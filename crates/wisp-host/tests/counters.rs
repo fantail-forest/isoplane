@@ -311,3 +311,65 @@ fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
     r.cell.shutdown();
     sampled.cell.shutdown();
 }
+
+#[test]
+fn per_worker_queues_serve_every_dispatch_exactly_once() {
+    for strategy in [
+        wisp_host::cell::QueueStrategy::Shared,
+        wisp_host::cell::QueueStrategy::PerWorker,
+        wisp_host::cell::QueueStrategy::LockFree,
+    ] {
+        let mut cfg = CellConfig::for_test("qstrat");
+        cfg.exec_threads = 8;
+        cfg.queue_strategy = strategy;
+        let r = rig(cfg);
+        let module = app(&r, "http", FakeBehaviour::done());
+
+        const BATCHES: u64 = 16;
+        const EACH: u64 = 8;
+        let mut ok = 0u64;
+        for i in 0..BATCHES {
+            let path = format!("/batch/{i}");
+            let target = Target::Handler {
+                route: path.clone(),
+            };
+            for n in 1..=EACH {
+                let mut record = http(&r.cell, &module, &path);
+                record.cpu_budget_ms = 50;
+                let out = r
+                    .cell
+                    .dispatch_blocking(&module, target.clone(), record, T)
+                    .unwrap_or_else(|e| panic!("{strategy:?}: dispatch {i}/{n} lost: {e:?}"));
+                assert_eq!(
+                    out.status, 200,
+                    "{strategy:?}: dispatch {i}/{n}: {:?}",
+                    out.trap
+                );
+                ok += 1;
+            }
+        }
+        assert_eq!(
+            ok,
+            BATCHES * EACH,
+            "{strategy:?}: every caller must get a reply"
+        );
+
+        let m = r.cell.metrics();
+        assert_eq!(
+            m.dispatches,
+            BATCHES * EACH,
+            "{strategy:?}: the cell must have run exactly what was submitted — more means a job \
+             was popped twice, fewer means one was dropped"
+        );
+        assert_eq!(
+            m.served_warm + m.served_pooled_fresh + m.served_hibernation_wake + m.served_activated,
+            m.dispatches,
+            "{strategy:?}: the acquisition sources stay exhaustive whichever queue was used"
+        );
+        assert_eq!(
+            m.shed, 0,
+            "{strategy:?}: this load is far inside the admission cap"
+        );
+        r.cell.shutdown();
+    }
+}

@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 
-use parking_lot::Mutex;
 
 use crate::ModuleId;
 
@@ -62,12 +61,17 @@ struct Entry {
 
 pub struct HangBreaker {
     cfg: BreakerConfig,
-    entries: Mutex<HashMap<BreakerKey, Entry>>,
+    entries: crate::lockstats::CountedMutex<HashMap<BreakerKey, Entry>>,
 }
 
 impl HangBreaker {
+    /// What waiting for the breaker table cost. See `lockstats`.
+    pub fn lock_stats(&self) -> crate::lockstats::LockSample {
+        self.entries.stats().snapshot()
+    }
+
     pub fn new(cfg: BreakerConfig) -> Self {
-        Self { cfg, entries: Mutex::new(HashMap::new()) }
+        Self { cfg, entries: crate::lockstats::CountedMutex::new(HashMap::new()) }
     }
 
     /// Admission check. `Err(until_ms)` means fail fast — the dispatch never

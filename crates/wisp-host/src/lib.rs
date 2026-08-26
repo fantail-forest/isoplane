@@ -72,6 +72,7 @@ pub mod egress;
 pub mod fakes;
 pub mod futures;
 pub mod instances;
+pub mod lockstats;
 pub mod meters;
 pub mod metrics;
 pub mod net;
@@ -142,6 +143,26 @@ pub fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Monotonic nanoseconds since the first call, for stamping an instant that
+/// another thread in the same process will difference against.
+///
+/// **Not a wall clock and not comparable across processes.** It exists because
+/// [`cell::StageTimings::replied_mono_ns`] has to name an instant that the
+/// receiving thread can subtract from its own reading, and `Instant` is
+/// opaque: two of them subtract, but one cannot be put in a struct that
+/// crosses a channel and be turned back into a duration by the reader without
+/// an agreed origin. This is that origin.
+///
+/// `CLOCK_MONOTONIC` underneath, the same clock `Instant` reads, so a caller
+/// timing the other end with either one is measuring against the same source.
+pub fn mono_ns() -> u64 {
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    ORIGIN
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
 }
 
 /// `CLOCK_THREAD_CPUTIME_ID` for the calling thread (§6.4, §11.2). This is
