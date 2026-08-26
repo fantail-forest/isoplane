@@ -158,10 +158,25 @@ pub fn now_ms() -> u64 {
 /// `CLOCK_MONOTONIC` underneath, the same clock `Instant` reads, so a caller
 /// timing the other end with either one is measuring against the same source.
 pub fn mono_ns() -> u64 {
+    mono_ns_at(std::time::Instant::now())
+}
+
+/// The same origin, for an `Instant` that was read earlier.
+///
+/// It exists so a stamp the cell already holds can be published on the shared
+/// origin **without a second clock read**. [`cell::StageTimings`] brackets a
+/// request between two readings on this scale — admission and reply — and the
+/// admission one is an `Instant` the submit path captured for its own reasons;
+/// re-reading the clock to express it here would be a vDSO call bought purely
+/// to restate a number already in hand, on the one path whose timing is the
+/// measurement.
+///
+/// Saturates at zero for an instant older than the origin. That is reachable
+/// exactly once — the origin is initialised by whichever of these two runs
+/// first — so [`cell::Cell::new`] pins it before the cell can take a request.
+pub fn mono_ns_at(t: std::time::Instant) -> u64 {
     static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    ORIGIN
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
+    t.saturating_duration_since(*ORIGIN.get_or_init(std::time::Instant::now))
         .as_nanos() as u64
 }
 

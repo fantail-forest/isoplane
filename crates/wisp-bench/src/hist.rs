@@ -96,6 +96,13 @@ impl Histogram {
     }
 }
 
+/// Minimum sample count for ten observations beyond quantile `q`.
+///
+/// Used by both histogram snapshots and serialized percentile summaries.
+pub fn samples_needed_at(q: f64) -> u64 {
+    (10.0 / (1.0 - q).max(1e-9)).ceil() as u64
+}
+
 /// A histogram snapshot. Subtract two snapshots to describe an observation window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistSnapshot {
@@ -196,8 +203,7 @@ impl HistSnapshot {
 
     /// Minimum sample count used by the quantile confidence check.
     pub fn confident_at(&self, q: f64) -> bool {
-        let needed = (10.0 / (1.0 - q).max(1e-9)).ceil() as u64;
-        self.count >= needed
+        self.count >= samples_needed_at(q)
     }
 
     /// A compact triple for the report: the SLO vector's three quantiles.
@@ -229,6 +235,11 @@ pub struct Percentiles {
 }
 
 impl Percentiles {
+    /// Whether this summary meets the sample-count rule for quantile `q`.
+    pub fn confident_at(&self, q: f64) -> bool {
+        self.count >= samples_needed_at(q)
+    }
+
     pub fn fmt_us(&self) -> String {
         format!(
             "p50 {:.0}µs p75 {:.0}µs p95 {:.0}µs p99 {:.0}µs p99.9 {:.0}µs max {:.0}µs (n={})",
@@ -329,5 +340,31 @@ mod tests {
         let s = h.snapshot();
         assert!(!s.confident_at(0.99));
         assert!(s.confident_at(0.75));
+    }
+
+    /// Percentile summaries apply the same sample-count rule as histogram snapshots.
+    #[test]
+    fn a_triple_knows_which_of_its_own_quantiles_it_cannot_support() {
+        let h = Histogram::new();
+        h.record(1_000);
+        let one = h.snapshot().triple().expect("one sample still produces a triple");
+        assert_eq!(one.count, 1);
+        assert_eq!(one.p50_ns, one.p99_ns, "at one sample every quantile is that sample");
+        assert!(!one.confident_at(0.50), "twenty observations are needed for a median");
+        assert!(!one.confident_at(0.99));
+
+        // The boundaries of the rule, exactly: ten past the quantile.
+        assert_eq!(samples_needed_at(0.50), 20);
+        assert_eq!(samples_needed_at(0.99), 1_000);
+
+        let h = Histogram::new();
+        for _ in 0..999 {
+            h.record(1_000);
+        }
+        let nearly = h.snapshot().triple().unwrap();
+        assert!(nearly.confident_at(0.50));
+        assert!(!nearly.confident_at(0.99), "999 is one short of the thousand a p99 needs");
+        h.record(1_000);
+        assert!(h.snapshot().triple().unwrap().confident_at(0.99));
     }
 }

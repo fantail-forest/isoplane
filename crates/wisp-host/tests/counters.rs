@@ -315,13 +315,13 @@ fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
 #[test]
 fn per_worker_queues_serve_every_dispatch_exactly_once() {
     for strategy in [
-        wisp_host::cell::QueueStrategy::Shared,
-        wisp_host::cell::QueueStrategy::PerWorker,
-        wisp_host::cell::QueueStrategy::LockFree,
+        wisp_host::cell::QueueStructure::Shared,
+        wisp_host::cell::QueueStructure::PerWorker,
+        wisp_host::cell::QueueStructure::LockFree,
     ] {
         let mut cfg = CellConfig::for_test("qstrat");
         cfg.exec_threads = 8;
-        cfg.queue_strategy = strategy;
+        cfg.queue_structure = strategy;
         let r = rig(cfg);
         let module = app(&r, "http", FakeBehaviour::done());
 
