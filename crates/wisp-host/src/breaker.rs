@@ -77,7 +77,25 @@ impl HangBreaker {
     /// Admission check. `Err(until_ms)` means fail fast — the dispatch never
     /// reaches an execution-pool thread.
     pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<(), u64> {
+        self.check_marked(key, now_ms, &mut None)
+    }
+
+    /// [`HangBreaker::check`], marking the wait for `entries` separately from
+    /// the work done under it.
+    ///
+    /// **A triple.** The hold is ~34 ns of hashing three strings against a
+    /// mark that costs 20 ns on this machine, so the wait and the hold are
+    /// separable. It was briefly classified as a pair on the strength of a
+    /// calibration that reported the mark cost as 40 ns; that calibration was
+    /// measuring a core fresh out of a sleep and is fixed.
+    pub fn check_marked(
+        &self,
+        key: &BreakerKey,
+        now_ms: u64,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) -> Result<(), u64> {
         let mut g = self.entries.lock();
+        crate::marks::mark(marks, crate::marks::Mark::BreakerLockAcquired);
         let Some(e) = g.get_mut(key) else { return Ok(()) };
         if e.open_until_ms == 0 {
             return Ok(());
@@ -118,7 +136,18 @@ impl HangBreaker {
     /// A dispatch completed normally. Success closes the breaker: the tenant
     /// pushed a fix, or the hang was input-dependent.
     pub fn record_success(&self, key: &BreakerKey) {
+        self.record_success_marked(key, &mut None)
+    }
+
+    /// [`HangBreaker::record_success`], marking the wait for `entries`
+    /// separately. A **triple**, for the same reason as `check_marked`.
+    pub fn record_success_marked(
+        &self,
+        key: &BreakerKey,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) {
         let mut g = self.entries.lock();
+        crate::marks::mark(marks, crate::marks::Mark::BreakerSuccessAcquired);
         if let Some(e) = g.get_mut(key) {
             e.kills = 0;
             e.open_until_ms = 0;

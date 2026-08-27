@@ -315,7 +315,26 @@ impl Metrics {
     }
 
     pub fn record_tenant(&self, tenant: &str, cpu_ns: u64, trapped: bool) {
+        self.record_tenant_marked(tenant, cpu_ns, trapped, &mut None)
+    }
+
+    /// [`Metrics::record_tenant`], marking the wait for `by_tenant` separately
+    /// from the work done under it.
+    ///
+    /// **A triple.** The hold allocates a `String` from the tenant name and
+    /// then walks a `BTreeMap` — 26.6 ns at eight tenants, and it grows with
+    /// the tenant count, so on a run with many it is the hold rather than the
+    /// wait that moves. `by_tenant` is not a `CountedMutex` and appears in no
+    /// row of `Cell::lock_stats`, so nothing else measures it at all.
+    pub fn record_tenant_marked(
+        &self,
+        tenant: &str,
+        cpu_ns: u64,
+        trapped: bool,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) {
         let mut g = self.by_tenant.lock();
+        crate::marks::mark(marks, crate::marks::Mark::TenantRecordAcquired);
         let e = g.entry(tenant.to_string()).or_default();
         e.dispatches += 1;
         e.cpu_ns += cpu_ns;

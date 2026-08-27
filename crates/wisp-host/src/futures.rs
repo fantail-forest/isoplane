@@ -161,7 +161,7 @@ impl FutureTable {
     /// lock separately from the work done under it.
     ///
     /// **A triple, not a pair.** The hold is 60 ns and more — two map inserts
-    /// and a set insert, any of which can grow — comfortably above the 40 ns a
+    /// and a set insert, any of which can grow — comfortably above the 20 ns a
     /// mark costs on this machine, so the wait and the hold are separable and
     /// worth separating. This is a global lock every dispatch takes.
     pub fn alloc_cancellation_marked(

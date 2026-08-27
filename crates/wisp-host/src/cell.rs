@@ -1193,12 +1193,13 @@ impl WorkQueue {
         // those have different fixes: a lock wait wants a shorter critical
         // section or more lanes, a queue wait wants more workers.
         //
-        // There is deliberately no third mark after the release. The critical
-        // section is a `len()` check, a `push_back` and a `fetch_add` — about
-        // 4 ns against a 40 ns mark — so a hold measured around it would be
-        // ninety percent instrument, and the job is gone the instant the guard
-        // drops in any case. Its cost falls into `queue.wait`, which is stated
-        // in `crate::marks`.
+        // There is deliberately no third mark after the release, and this is
+        // the one classification the corrected mark cost does *not* move. The
+        // critical section is a `len()` check, a `push_back` and a
+        // `fetch_add` — about 4 ns, which is below the counter's own 10 ns
+        // step and therefore unmeasurable at any mark cost. The job is gone
+        // the instant the guard drops in any case; its cost falls into
+        // `queue.wait`, which `crate::marks` states.
         marks::mark(&mut j.marks, Mark::LaneLockWanted);
         let mut g = lane.inner.lock();
         marks::mark(&mut j.marks, Mark::LaneLockAcquired);
@@ -2277,13 +2278,13 @@ impl Cell {
             module: module.clone(),
             route: target.route(),
         };
-        // A **pair**, not a triple. The hold is ~34 ns of hashing three
-        // strings, below the 40 ns a mark costs on this machine, so a third
-        // mark inside would report the instrument rather than the lock. The
-        // only thing that can stretch this span is waiting for `entries`,
-        // which is what a reader wants from it.
+        // A **triple**. The hold is ~34 ns of hashing three strings against a
+        // mark that costs 20 ns here, so the wait for `entries` and the work
+        // under it separate cleanly. It was briefly a pair, on the strength of
+        // a calibration that measured the mark cost on a core fresh out of a
+        // sleep and reported double.
         marks::mark(&mut marks, Mark::BreakerLockWanted);
-        let refused = self.breaker.check(&key, now).is_err();
+        let refused = self.breaker.check_marked(&key, now, &mut marks).is_err();
         marks::mark(&mut marks, Mark::BreakerChecked);
         if refused {
             self.metrics
@@ -2386,11 +2387,15 @@ impl Cell {
         }
         let job = job;
         let did = job.rec.dispatch_id;
-        // A **pair**: ~34 ns held, hashing a `ModuleId` and cloning an `Arc`.
-        // Bound to a local first so the read guard is dropped before the
-        // closing mark rather than at the end of a `let ... else`.
+        // A **triple**: ~34 ns held, hashing a `ModuleId` and cloning an
+        // `Arc`, against a 20 ns mark. Bound to a local first so the read
+        // guard is dropped before the closing mark rather than at the end of a
+        // `let ... else`.
         marks::mark(&mut marks, Mark::ModulesLockWanted);
-        let entry = self.modules.read().get(&job.module).cloned();
+        let modules = self.modules.read();
+        marks::mark(&mut marks, Mark::ModulesLockAcquired);
+        let entry = modules.get(&job.module).cloned();
+        drop(modules);
         marks::mark(&mut marks, Mark::ModulesLockReleased);
         let Some(entry) = entry else {
             let _ = job.responder.send(DispatchResult {
@@ -2503,7 +2508,7 @@ impl Cell {
         // §5.4 makes cancellation deliberately *not* an entrancy.
         let mut job = job;
         // A **triple**: the hold is 60 ns and more — two map inserts and a set
-        // insert, any of which can grow — against a 40 ns mark, so the wait
+        // insert, any of which can grow — against a 20 ns mark, so the wait
         // for this global table separates cleanly from the work under it.
         marks::mark(&mut marks, Mark::CancelAllocWanted);
         job.rec.cancel_future =
@@ -2746,15 +2751,17 @@ impl Cell {
                 .grace_deferrals
                 .fetch_add(out.grace_deferrals, Ordering::Relaxed);
         }
-        // A **pair**: 26.6 ns held at eight tenants, below one mark — though
-        // it allocates a `String` inside the hold and walks a `BTreeMap`, so it
-        // grows with the tenant count and is worth re-checking on a run with
-        // many. `Metrics::by_tenant` is not a `CountedMutex` and appears in no
-        // lock table.
-        self.metrics.record_tenant(
+        // A **triple**: 26.6 ns held at eight tenants, and it allocates a
+        // `String` from the tenant name inside the hold before walking a
+        // `BTreeMap` — so the hold grows with the tenant count while the wait
+        // grows with the thread count, and they are worth telling apart.
+        // `Metrics::by_tenant` is not a `CountedMutex` and appears in no row
+        // of `Cell::lock_stats`, so nothing else measures it at all.
+        self.metrics.record_tenant_marked(
             &entry.tenant,
             out.cpu_ns,
             !matches!(out.completion, Completion::Done | Completion::Parked),
+            marks,
         );
         marks::mark(marks, Mark::TenantRecordReleased);
 
@@ -2880,9 +2887,9 @@ impl Cell {
                         !self.rt.futures.has_ready(slot.id)
                     }
                     RequestEnd::Disposed(d) => {
-                        // A **pair**: ~34 ns held, hashing three strings.
+                        // A **triple**: ~34 ns held, hashing three strings.
                         marks::mark(marks, Mark::BreakerSuccessWanted);
-                        self.breaker.record_success(&breaker_key);
+                        self.breaker.record_success_marked(&breaker_key, marks);
                         marks::mark(marks, Mark::BreakerSuccessReleased);
                         self.finish_and_release(slot, entry, d);
                         true

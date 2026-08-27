@@ -24,6 +24,8 @@ pub enum Mark {
     /// Building the `BreakerKey`: two `String` clones for the `ModuleId` plus
     /// the route.
     BreakerLockWanted,
+    /// **Waiting for the hang breaker's `entries` lock.**
+    BreakerLockAcquired,
     /// End of the hang-breaker admission check.
     BreakerChecked,
     /// Allocating the `DispatchJob`: six owned `String`/`Vec`s.
@@ -65,6 +67,8 @@ pub enum Mark {
     // --- getting ready to run ----------------------------------------------
     /// Nothing; the left edge of the module table's read lock.
     ModulesLockWanted,
+    /// **Waiting for the module table's read lock.**
+    ModulesLockAcquired,
     /// End of accessing the module table.
     ModulesLockReleased,
     /// The 404 branch, where it is taken.
@@ -119,6 +123,9 @@ pub enum Mark {
     // --- settling -----------------------------------------------------------
     /// `entry.meters.record_cpu`, and the counter bumps at the top of `settle`.
     TenantRecordWanted,
+    /// **Waiting for the per-tenant totals lock.** Not a `CountedMutex`, so
+    /// nothing else in the cell measures it.
+    TenantRecordAcquired,
     /// End of updating per-tenant totals.
     TenantRecordReleased,
     /// The trap latch.
@@ -143,6 +150,8 @@ pub enum Mark {
     WaitUntilCheckReleased,
     /// Building the result and the response.
     BreakerSuccessWanted,
+    /// **Waiting for the hang breaker's lock a second time.**
+    BreakerSuccessAcquired,
     /// End of recording success in the hang breaker.
     BreakerSuccessReleased,
     /// Nothing; the left edge of `build_result`'s read.
@@ -178,7 +187,8 @@ impl Mark {
             CallerReleased => "caller.released",
             CellEntered => "cell.entered",
             BreakerLockWanted => "breaker.check.wanted",
-            BreakerChecked => "breaker.check",
+            BreakerLockAcquired => "breaker.check.wait",
+            BreakerChecked => "breaker.check.hold",
             JobBuilt => "job.built",
             PlacementDecided => "queue.placement",
             LaneLockWanted => "lane.lock.wanted",
@@ -188,7 +198,8 @@ impl Mark {
             JobTaken => "queue.wait",
             DispatchStarted => "worker.start",
             ModulesLockWanted => "modules.read.wanted",
-            ModulesLockReleased => "modules.read",
+            ModulesLockAcquired => "modules.read.wait",
+            ModulesLockReleased => "modules.read.hold",
             InstanceAcquireBegan => "acquire.begin",
             ResidentsLockWanted => "residents.lock.wanted",
             ResidentsLockAcquired => "residents.lock.wait",
@@ -209,7 +220,8 @@ impl Mark {
             SlotReleaseWanted => "slot.release.wanted",
             SlotReleaseReleased => "slot.release",
             TenantRecordWanted => "tenant.record.wanted",
-            TenantRecordReleased => "tenant.record",
+            TenantRecordAcquired => "tenant.record.wait",
+            TenantRecordReleased => "tenant.record.hold",
             ActiveUpdateWanted => "active.update.wanted",
             ActiveUpdateAcquired => "active.update.wait",
             ActiveUpdateReleased => "active.update.hold",
@@ -220,7 +232,8 @@ impl Mark {
             WaitUntilCheckAcquired => "futures.waituntil.wait",
             WaitUntilCheckReleased => "futures.waituntil.hold",
             BreakerSuccessWanted => "breaker.success.wanted",
-            BreakerSuccessReleased => "breaker.success",
+            BreakerSuccessAcquired => "breaker.success.wait",
+            BreakerSuccessReleased => "breaker.success.hold",
             ResultReadWanted => "active.read.wanted",
             ResultReadReleased => "active.read",
             ResponderTakenWanted => "active.responder.wanted",
@@ -475,6 +488,7 @@ mod tests {
             CallerReleased,
             CellEntered,
             BreakerLockWanted,
+            BreakerLockAcquired,
             BreakerChecked,
             JobBuilt,
             PlacementDecided,
@@ -485,6 +499,7 @@ mod tests {
             JobTaken,
             DispatchStarted,
             ModulesLockWanted,
+            ModulesLockAcquired,
             ModulesLockReleased,
             InstanceAcquireBegan,
             ResidentsLockWanted,
@@ -506,6 +521,7 @@ mod tests {
             SlotReleaseWanted,
             SlotReleaseReleased,
             TenantRecordWanted,
+            TenantRecordAcquired,
             TenantRecordReleased,
             ActiveUpdateWanted,
             ActiveUpdateAcquired,
@@ -517,6 +533,7 @@ mod tests {
             WaitUntilCheckAcquired,
             WaitUntilCheckReleased,
             BreakerSuccessWanted,
+            BreakerSuccessAcquired,
             BreakerSuccessReleased,
             ResultReadWanted,
             ResultReadReleased,

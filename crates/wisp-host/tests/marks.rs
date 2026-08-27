@@ -191,6 +191,7 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
     let want = vec![
         Mark::CellEntered,
         Mark::BreakerLockWanted,
+        Mark::BreakerLockAcquired,
         Mark::BreakerChecked,
         Mark::JobBuilt,
         Mark::PlacementDecided,
@@ -199,6 +200,7 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::JobTaken,
         Mark::DispatchStarted,
         Mark::ModulesLockWanted,
+        Mark::ModulesLockAcquired,
         Mark::ModulesLockReleased,
         Mark::InstanceAcquireBegan,
         Mark::ResidentsLockWanted,
@@ -220,6 +222,7 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::SlotReleaseWanted,
         Mark::SlotReleaseReleased,
         Mark::TenantRecordWanted,
+        Mark::TenantRecordAcquired,
         Mark::TenantRecordReleased,
         Mark::ActiveUpdateWanted,
         Mark::ActiveUpdateAcquired,
