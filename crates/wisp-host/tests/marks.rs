@@ -861,3 +861,182 @@ fn the_activation_is_its_own_span_and_a_warm_request_does_not_pay_it() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// what a refusal costs
+// ---------------------------------------------------------------------------
+
+/// **A shed pays for the module table, and the request had not touched it.**
+///
+/// The refusal was marked at the decision point and the work it then does was
+/// not. That work is not nothing: recording the shed as guest work needs
+/// `Meters`, which lives behind the module table's read lock — a lock this
+/// request never otherwise acquires, because it is refused inside
+/// `submit_with_marks` and never reaches `run_dispatch`'s own read of it.
+///
+/// So the claim is a **sequence**, not a presence: `refused.shed` is followed
+/// by the three `shed.meters.*` marks and by nothing else, which is what
+/// catches a mark emitted around the wrong interval or in the wrong order.
+#[test]
+fn a_shed_pays_for_the_module_table_and_the_span_says_so() {
+    let mut cfg = CellConfig::for_test("marks-shed-cost");
+    cfg.exec_threads = 1;
+    cfg.max_hot = 1;
+    cfg.admission_queue = 1;
+    cfg.queue_depth_per_worker = 1;
+    let c = cell(cfg);
+    let m = app(
+        &c,
+        "slow",
+        FakeBehaviour::program([Step::CooperativeSpin { unwind_us: 50 }]),
+    );
+    let p = pool();
+
+    let mut keep = Vec::new();
+    let mut shed = None;
+    for id in 0..64u64 {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        keep.push(rx);
+        let mk = p.checkout();
+        marks::begin(&mk);
+        let mut r = rec(id, "/x");
+        r.cpu_budget_ms = 200;
+        let out = c.submit_with_marks(&m, route("/x"), r, tx, mk);
+        if !out.admitted {
+            shed = out.refused_marks.map(|t| wisp_host::marks::read(&t));
+            break;
+        }
+    }
+    let t = shed.expect("the cell never shed, so this test measured nothing");
+    let got: Vec<Mark> = t.spans.iter().map(|(l, _)| *l).collect();
+    let tail: Vec<Mark> = got
+        .iter()
+        .skip_while(|l| **l != Mark::ShedDecided)
+        .copied()
+        .collect();
+    assert_eq!(
+        tail,
+        vec![
+            Mark::ShedDecided,
+            Mark::ShedMetersLockWanted,
+            Mark::ShedMetersLockAcquired,
+            Mark::ShedMetersLockReleased,
+        ],
+        "a shed's tail is not the module-table read it actually does: {:?}",
+        got.iter().map(|l| l.name()).collect::<Vec<_>>()
+    );
+    // And it is the *only* acquisition of that table on this trace, under its
+    // own label — a shed never reaches `modules.read.*`.
+    assert!(
+        !got.contains(&Mark::ModulesLockAcquired),
+        "a shed reported the dispatch path's module read, so the two labels have been merged"
+    );
+    drop(keep);
+    c.shutdown();
+}
+
+#[test]
+fn a_trap_reports_the_tombstone_ring_and_never_touches_the_breaker() {
+    let c = cell(CellConfig::for_test("marks-trap"));
+    let m = app(
+        &c,
+        "trapper",
+        FakeBehaviour::program([Step::Trap(wisp_abi::status::TrapCode::Panic)]),
+    );
+    let p = pool();
+    let (spans, _, _) = round_trip(&c, &p, &m, 0).expect("a traced reply");
+    let got = labels(&spans);
+    let names = || got.iter().map(|l| l.name()).collect::<Vec<_>>();
+
+    // The three marks, in order, and between the `active` update and the
+    // result read — where the tombstone bookkeeping actually happens.
+    let window: Vec<Mark> = got
+        .iter()
+        .skip_while(|l| **l != Mark::ActiveUpdateReleased)
+        .take_while(|l| **l != Mark::ResultReadWanted)
+        .copied()
+        .collect();
+    assert_eq!(
+        window,
+        vec![
+            Mark::ActiveUpdateReleased,
+            Mark::TombstoneRingWanted,
+            Mark::TombstoneRingAcquired,
+            Mark::TombstoneRingReleased,
+        ],
+        "the trap's tail is not the tombstone ring it actually takes: {:?}",
+        names()
+    );
+    assert!(
+        !got.contains(&Mark::BreakerKillWanted),
+        "a trap recorded a kill against the hang breaker; §6.4 says only hard kills do: {:?}",
+        names()
+    );
+    c.shutdown();
+}
+
+/// **A hard kill takes the breaker as well, and it is the second time.**
+///
+/// The same request already waited for `HangBreaker::entries` once, at
+/// admission, tens of microseconds and a whole dispatch earlier. Recording the
+/// kill goes back to it under entirely different contention, and the hold
+/// clones a `BreakerKey` — three `String` allocations — inside the lock before
+/// hashing it. Sharing `breaker.check.*` with the admission read would pool
+/// two acquisitions that have nothing in common but the mutex.
+#[test]
+fn a_hard_kill_takes_the_breaker_a_second_time_under_its_own_name() {
+    let mut cfg = CellConfig::for_test("marks-hardkill");
+    cfg.wall_ms_cap = 5_000;
+    let c = cell(cfg);
+    let m = app(&c, "spinner", FakeBehaviour::program([Step::Spin]));
+    let p = pool();
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let mk = p.checkout();
+    marks::begin(&mk);
+    let mut r = rec(0, "/x");
+    r.cpu_budget_ms = 20;
+    assert!(c.submit_with_marks(&m, route("/x"), r, tx, mk).admitted);
+    let res = rx.recv_timeout(T).expect("the spinner was never killed");
+    assert_eq!(
+        res.status, 503,
+        "this dispatch was not hard-killed: {:?}",
+        res.trap
+    );
+    marks::mark(&res.marks, Mark::CallerReceived);
+    let t = wisp_host::marks::read(res.marks.as_ref().expect("a trace"));
+    let got: Vec<Mark> = t.spans.iter().map(|(l, _)| *l).collect();
+    let names = || got.iter().map(|l| l.name()).collect::<Vec<_>>();
+
+    let window: Vec<Mark> = got
+        .iter()
+        .skip_while(|l| **l != Mark::ActiveUpdateReleased)
+        .take_while(|l| **l != Mark::ResultReadWanted)
+        .copied()
+        .collect();
+    assert_eq!(
+        window,
+        vec![
+            Mark::ActiveUpdateReleased,
+            Mark::BreakerKillWanted,
+            Mark::BreakerKillAcquired,
+            Mark::BreakerKillReleased,
+            Mark::TombstoneRingWanted,
+            Mark::TombstoneRingAcquired,
+            Mark::TombstoneRingReleased,
+        ],
+        "a hard kill's refusal work is not what the code does: {:?}",
+        names()
+    );
+    // Two acquisitions of one mutex in one request, under two names. Pooling
+    // them would average an uncontended admission check with a kill taken
+    // while the cell is full of spinners.
+    assert_eq!(
+        got.iter()
+            .filter(|l| **l == Mark::BreakerLockAcquired)
+            .count(),
+        1,
+        "the admission check must still be exactly one observation of its own label"
+    );
+    c.shutdown();
+}

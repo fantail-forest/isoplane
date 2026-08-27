@@ -2133,7 +2133,21 @@ impl Cell {
                 // value, which is the only channel a shed has.
                 marks::mark(&j.marks, Mark::ShedDecided);
                 self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-                if let Some(m) = self.meters(module) {
+                // **A refusal is not free, and this is the part that
+                // surprises.** Recording the shed to the tenant needs `Meters`,
+                // which lives behind the module table — a read lock this
+                // request has otherwise never touched, because it is refused
+                // here and never reaches `run_dispatch`. A **triple**: ~34 ns
+                // held, hashing a `ModuleId` and cloning an `Arc`, against a
+                // 20 ns mark. Inlined rather than calling `Cell::meters` so
+                // the acquisition can be marked from inside.
+                marks::mark(&j.marks, Mark::ShedMetersLockWanted);
+                let modules = self.modules.read();
+                marks::mark(&j.marks, Mark::ShedMetersLockAcquired);
+                let meters = modules.get(module).map(|e| e.meters.clone());
+                drop(modules);
+                marks::mark(&j.marks, Mark::ShedMetersLockReleased);
+                if let Some(m) = meters {
                     m.record_shed();
                 }
                 SubmitOutcome {
@@ -2890,8 +2904,16 @@ impl Cell {
                     if out.kill.is_some() {
                         self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
                     }
-                    // §6.4: only HARD kills trip the hang breaker.
-                    self.breaker.record_kill(&breaker_key, crate::now_ms());
+                    // §6.4: only HARD kills trip the hang breaker. A
+                    // **triple**, and the second acquisition of this lock in
+                    // one request — the first was the admission check, a whole
+                    // dispatch ago. The hold clones a `BreakerKey` into
+                    // `HashMap::entry` before hashing it, which is three
+                    // `String` allocations under the lock.
+                    marks::mark(marks, Mark::BreakerKillWanted);
+                    self.breaker
+                        .record_kill_marked(&breaker_key, crate::now_ms(), marks);
+                    marks::mark(marks, Mark::BreakerKillReleased);
                 } else {
                     entry.meters.record_trap();
                     // Inside the `else`, beside `record_trap`, and not in the
@@ -2919,7 +2941,14 @@ impl Cell {
                 // [`Metrics::tombstone_invariant`] is the check, and it is
                 // meaningful at rest — which is where the tests call it.
                 self.metrics.tombstones.fetch_add(1, Ordering::Relaxed);
-                self.remember_tombstone(slot);
+                // A **triple**: the hold is a linear scan of up to 256 ring
+                // entries before the push, so it is a few hundred nanoseconds
+                // at a full ring rather than a constant — and every trap and
+                // every hard kill takes it, which is exactly the traffic a
+                // cell under stress is producing.
+                marks::mark(marks, Mark::TombstoneRingWanted);
+                self.remember_tombstone_marked(slot, marks);
+                marks::mark(marks, Mark::TombstoneRingReleased);
                 let msg = out
                     .trap
                     .as_ref()
@@ -3107,10 +3136,17 @@ impl Cell {
     /// Keep a hard-killed slot addressable so a later call gets a refusal
     /// rather than a shrug. See the note on [`Cell::tombstoned`].
     fn remember_tombstone(&self, slot: &Arc<Slot>) {
+        self.remember_tombstone_marked(slot, &mut None)
+    }
+
+    /// [`Cell::remember_tombstone`], marking the wait for the ring separately
+    /// from the scan done under it.
+    fn remember_tombstone_marked(&self, slot: &Arc<Slot>, marks: &mut Option<RequestMarks>) {
         /// Enough to cover the burst a breaker takes to notice, and small
         /// enough that the ring is a rounding error next to one instance.
         const RING: usize = 256;
         let mut g = self.tombstoned.lock();
+        marks::mark(marks, Mark::TombstoneRingAcquired);
         if g.iter().any(|s| s.id == slot.id) {
             return;
         }

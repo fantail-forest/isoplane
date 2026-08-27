@@ -114,7 +114,30 @@ impl HangBreaker {
 
     /// A dispatch was killed at its CPU budget (§2.5.8: abrupt, no unwinding).
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
+        self.record_kill_marked(key, now_ms, &mut None)
+    }
+
+    /// [`HangBreaker::record_kill`], marking the wait for `entries` separately
+    /// from the work done under it.
+    ///
+    /// **A triple.** `HashMap::entry` takes the key by value, so the hold
+    /// begins by cloning a `BreakerKey` — a `ModuleId`'s two `String`s plus
+    /// the route — and only then hashes it. That is well past the 20 ns a mark
+    /// costs here.
+    ///
+    /// This is the **second** time one request touches this lock: the first
+    /// was the admission check in `Cell::submit_with_marks`, tens of
+    /// microseconds and a whole dispatch earlier, under entirely different
+    /// contention. Its own label rather than a second observation of
+    /// `breaker.check.*`, so a row cannot pool the two.
+    pub fn record_kill_marked(
+        &self,
+        key: &BreakerKey,
+        now_ms: u64,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) {
         let mut g = self.entries.lock();
+        crate::marks::mark(marks, crate::marks::Mark::BreakerKillAcquired);
         let e = g.entry(key.clone()).or_default();
         if e.probing {
             // The probe failed. Straight back open.

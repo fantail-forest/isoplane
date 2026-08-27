@@ -245,6 +245,21 @@ pub enum Mark {
     /// hands the job back and no lock is involved. Two different costs, and
     /// the span before this mark is what tells them apart.
     ShedDecided,
+    /// The shed counter, before the module table is reached.
+    ShedMetersLockWanted,
+    /// **Waiting for the module table's read lock, on the shed path.**
+    ///
+    /// Refusing is not free, and this is the part of it that surprises:
+    /// attributing the shed to the tenant needs `Meters`, which lives behind the
+    /// module table — a lock a shed request has otherwise never touched,
+    /// because it is refused in `submit_with_marks` and never reaches
+    /// `run_dispatch`'s own read of it. It is its own label rather than
+    /// `modules.read.*` for exactly that reason: the two are the same lock
+    /// under different contention and at different points in a request, and
+    /// one row over both could not say which side was waiting.
+    ShedMetersLockAcquired,
+    /// End of updating dispatch-shedding counters.
+    ShedMetersLockReleased,
     /// No such module. Refused **after** queueing and being given a worker.
     ModuleMissing,
     /// Building or finding a sandbox failed. Refused after the most expensive
@@ -254,6 +269,21 @@ pub enum Mark {
     SingleWriterRefused,
     /// The sandbox refused entry: busy, or tombstoned and refusing everything.
     EnterRefused,
+    /// The meters and counters a hard kill bumps, before the breaker.
+    BreakerKillWanted,
+    /// The hang-breaker lock was acquired to record a hard budget kill.
+    BreakerKillAcquired,
+    /// Holding it: a `BreakerKey::clone` — a `ModuleId`'s two `String`s plus
+    /// the route — allocated *inside* the hold before the entry is hashed, so
+    /// this is well past what a mark costs and separates cleanly from the
+    /// wait.
+    BreakerKillReleased,
+    /// Start of recording the tombstone and related counters.
+    TombstoneRingWanted,
+    /// **Waiting for the tombstone ring.**
+    TombstoneRingAcquired,
+    /// End of recording the tombstone and related counters.
+    TombstoneRingReleased,
 
     // --- the caller's side again --------------------------------------------
     /// The reply crossing the channel and the collector being scheduled, plus
@@ -350,10 +380,19 @@ pub const ALL: &[Mark] = &[
     Mark::ActiveBudgetReleased,
     Mark::BreakerRefused,
     Mark::ShedDecided,
+    Mark::ShedMetersLockWanted,
+    Mark::ShedMetersLockAcquired,
+    Mark::ShedMetersLockReleased,
     Mark::ModuleMissing,
     Mark::AcquireFailed,
     Mark::SingleWriterRefused,
     Mark::EnterRefused,
+    Mark::BreakerKillWanted,
+    Mark::BreakerKillAcquired,
+    Mark::BreakerKillReleased,
+    Mark::TombstoneRingWanted,
+    Mark::TombstoneRingAcquired,
+    Mark::TombstoneRingReleased,
     Mark::CallerReceived,
 ];
 
@@ -458,10 +497,19 @@ impl Mark {
             ActiveBudgetReleased => "active.budget",
             BreakerRefused => "refused.breaker",
             ShedDecided => "refused.shed",
+            ShedMetersLockWanted => "shed.meters.wanted",
+            ShedMetersLockAcquired => "shed.meters.wait",
+            ShedMetersLockReleased => "shed.meters.hold",
             ModuleMissing => "refused.no_module",
             AcquireFailed => "refused.acquire",
             SingleWriterRefused => "refused.single_writer",
             EnterRefused => "refused.enter",
+            BreakerKillWanted => "breaker.kill.wanted",
+            BreakerKillAcquired => "breaker.kill.wait",
+            BreakerKillReleased => "breaker.kill.hold",
+            TombstoneRingWanted => "tombstone.ring.wanted",
+            TombstoneRingAcquired => "tombstone.ring.wait",
+            TombstoneRingReleased => "tombstone.ring.hold",
             ReplyHandedOff => "reply.handoff",
             SendReturned => "reply.send.blocked",
             CallerReceived => "reply.delivery",
@@ -505,6 +553,15 @@ impl Mark {
             | ActiveBudgetReleased => Structural::ParkingRequest,
             BreakerRefused | ShedDecided | ModuleMissing | AcquireFailed | SingleWriterRefused
             | EnterRefused => Structural::RefusedRequest,
+            ShedMetersLockWanted | ShedMetersLockAcquired | ShedMetersLockReleased => {
+                Structural::ShedRequest
+            }
+            BreakerKillWanted | BreakerKillAcquired | BreakerKillReleased => {
+                Structural::HardKilledRequest
+            }
+            TombstoneRingWanted | TombstoneRingAcquired | TombstoneRingReleased => {
+                Structural::TombstonedRequest
+            }
             _ => Structural::Always,
         }
     }
@@ -535,6 +592,15 @@ pub enum Structural {
     ParkingRequest,
     /// A request that was refused rather than served.
     RefusedRequest,
+    /// A request the queue shed at admission. Narrower than
+    /// [`Structural::RefusedRequest`], which also covers the breaker, the
+    /// 404, the 409s and the acquisition failure — none of which touch the
+    /// module table on the way out.
+    ShedRequest,
+    /// The dispatch discards its instance after a trap or hard kill.
+    TombstonedRequest,
+    /// The dispatch reaches its hard-budget termination path.
+    HardKilledRequest,
 }
 
 impl Structural {
@@ -562,6 +628,14 @@ impl Structural {
             }
             Structural::ParkingRequest => "only a request that paused and resumed reaches it",
             Structural::RefusedRequest => "only a refused request reaches it",
+            Structural::ShedRequest => "only a request the queue shed at admission reaches it",
+            Structural::TombstonedRequest => {
+                "only a dispatch that trapped or was killed at its hard budget reaches it"
+            }
+            Structural::HardKilledRequest => {
+                "only a dispatch killed at its hard budget reaches it: §6.4 keeps a clean kill \
+                 and a trap away from the breaker"
+            }
         }
     }
 }
