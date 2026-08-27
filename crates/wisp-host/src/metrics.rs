@@ -135,6 +135,23 @@ impl Default for Histogram {
 pub struct Metrics {
     pub dispatches: AtomicU64,
     pub wakes: AtomicU64,
+    /// **Completions that arrived for an instance nobody could hand them to.**
+    ///
+    /// `CellWake::signal` maps an instance id through a table of `Weak<Slot>`
+    /// and enqueues the wake. When the id is not in the table, or the `Weak`
+    /// no longer upgrades, there is nothing to enqueue — and the completion
+    /// has *already* been written into the future table by
+    /// `FutureTable::complete`, so the result sits there Ready with nobody
+    /// coming for it. The request that awaited it is never answered: it waits
+    /// out its timeout, or, on the shared-channel path the load generator
+    /// uses, never learns anything at all.
+    ///
+    /// For a genuinely discarded instance that is the correct outcome and the
+    /// count is the receipt. For a live one it is a lost request, and until
+    /// this counter existed the two were the same silence — the drop touched
+    /// no metric, logged nothing, and left `dispatches` claiming the request
+    /// was still in flight.
+    pub wakes_dropped: AtomicU64,
     pub traps: AtomicU64,
     /// Every CPU-budget kill, clean and hard. Kept as the total so a dashboard
     /// built against v1.1 still reads something true.
@@ -395,6 +412,7 @@ impl Metrics {
         MetricsSnapshot {
             dispatches: l(&self.dispatches),
             wakes: l(&self.wakes),
+            wakes_dropped: l(&self.wakes_dropped),
             traps: l(&self.traps),
             budget_kills: l(&self.budget_kills),
             clean_kills: l(&self.clean_kills),
@@ -505,6 +523,9 @@ impl Metrics {
 pub struct MetricsSnapshot {
     pub dispatches: u64,
     pub wakes: u64,
+    /// Completions whose owning instance could not be reached, so no wake was
+    /// enqueued. See [`Metrics::wakes_dropped`].
+    pub wakes_dropped: u64,
     pub traps: u64,
     pub budget_kills: u64,
     pub clean_kills: u64,
@@ -563,6 +584,7 @@ impl MetricsSnapshot {
         vec![
             ("dispatches", self.dispatches.to_string()),
             ("wakes", self.wakes.to_string()),
+            ("wakes_dropped", self.wakes_dropped.to_string()),
             ("traps", self.traps.to_string()),
             ("budget_kills", self.budget_kills.to_string()),
             ("clean_kills", self.clean_kills.to_string()),

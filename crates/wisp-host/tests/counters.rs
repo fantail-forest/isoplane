@@ -373,3 +373,118 @@ fn per_worker_queues_serve_every_dispatch_exactly_once() {
         r.cell.shutdown();
     }
 }
+
+// ---------------------------------------------------------------------------
+// The wake router's silent drop
+// ---------------------------------------------------------------------------
+
+/// **A completion that cannot be delivered is counted, not swallowed.**
+///
+/// `CellWake::signal` maps an instance id through a table of `Weak<Slot>`. When
+/// the id is absent, or the `Weak` no longer upgrades, the old code took the
+/// `if let Some` and fell off the end: no wake enqueued, no counter, no log.
+///
+/// That is not a no-op. `FutureTable::complete` has *already* run by then — it
+/// is what produced the owner id — so the result is sitting in the table marked
+/// `Ready` on the owner's queue, and the enqueue that would have sent a worker
+/// to collect it is the thing that did not happen. Any dispatch awaiting that
+/// future is never answered: on `dispatch_blocking` it waits out its whole
+/// timeout, and on the shared-channel path the load generator uses it never
+/// learns anything at all.
+///
+/// The two halves are asserted separately because they fail separately: the
+/// counter says the drop was seen, and `has_ready` says the drop stranded
+/// something real. Without the second half the counter could be moved by a
+/// wake that had nothing behind it.
+#[test]
+fn a_completion_for_an_instance_that_is_gone_is_counted_rather_than_dropped_in_silence() {
+    let r = rig(CellConfig::for_test("wake-dropped"));
+    // Never resident, so the wake router's index has no entry for it and
+    // `Weak::upgrade` cannot succeed.
+    let ghost = wisp_host::InstanceId::alloc();
+    let fid = r
+        .cell
+        .futures()
+        .alloc(ghost, 1, "clock_deadline_in", 8)
+        .expect("the per-dispatch cap cannot refuse the first future");
+
+    assert_eq!(
+        r.cell.metrics().wakes_dropped,
+        0,
+        "nothing has been dropped yet"
+    );
+    r.cell
+        .complete_future(fid, wisp_abi::result::ResultRecord::Ok(vec![]));
+
+    let m = r.cell.metrics();
+    assert_eq!(
+        m.wakes_dropped, 1,
+        "a completion arrived for an unreachable instance and nothing counted it — which is \
+         how a request that simply stops looks from the outside"
+    );
+    assert_eq!(
+        m.wakes, 0,
+        "no wake was enqueued, so none may be counted: the two counters have to disagree here \
+         or neither of them means anything"
+    );
+    assert!(
+        r.cell.futures().has_ready(ghost),
+        "the completion was written into the table before the wake was dropped, so the result \
+         is stranded — this is what the counter is a receipt for"
+    );
+    r.cell.shutdown();
+}
+
+/// The control for the test above: a completion that **is** deliverable moves
+/// `wakes` and leaves `wakes_dropped` alone.
+///
+/// A counter that only ever goes up is indistinguishable from one wired to the
+/// wrong branch, so the drop count is worth nothing without a case that must
+/// not move it.
+#[test]
+fn a_deliverable_completion_moves_wakes_and_not_the_drop_count() {
+    let r = rig(CellConfig::for_test("wake-delivered"));
+    let module = app(
+        &r,
+        "parker",
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    );
+    let rx = r
+        .cell
+        .submit(
+            &module,
+            Target::Handler { route: "/x".into() },
+            http(&r.cell, &module, "/x"),
+        )
+        .unwrap();
+    assert!(
+        wait_for(
+            || r.cell.futures().live_futures() > 0,
+            Duration::from_secs(5)
+        ),
+        "the guest never parked, so there was no completion to deliver"
+    );
+    let fid = r
+        .cell
+        .futures()
+        .live_future_ids()
+        .into_iter()
+        .next()
+        .expect("one pending future");
+    r.cell
+        .complete_future(fid, wisp_abi::result::ResultRecord::Ok(vec![]));
+    let out = rx
+        .recv_timeout(T)
+        .expect("the woken dispatch never answered");
+    assert_eq!(out.status, 200);
+
+    let m = r.cell.metrics();
+    assert_eq!(m.wakes, 1, "the wake was enqueued and must be counted");
+    assert_eq!(
+        m.wakes_dropped, 0,
+        "a live instance's completion was counted as undeliverable"
+    );
+    r.cell.shutdown();
+}

@@ -653,7 +653,10 @@ pub struct MarkFaults {
     /// Intervals flagged as having out-of-order timestamps.
     pub out_of_order: u64,
     /// A trace that never reached its final mark. The wake path can drop a
-    /// wake when a `Weak::upgrade` fails, and nothing else counts that.
+    /// wake when a `Weak::upgrade` fails, which strands the request that was
+    /// awaiting it; the platform now counts that as
+    /// [`crate::metrics::Metrics::wakes_dropped`], and this is the same event
+    /// seen from the instrument's side.
     pub abandoned: u64,
     /// Checkouts that found the pool empty, so the request went untraced.
     /// Non-zero means the pool is smaller than the real in-flight peak, and

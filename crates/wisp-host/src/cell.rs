@@ -1292,7 +1292,29 @@ struct CellWake {
 impl WakeSink for CellWake {
     fn signal(&self, owner: InstanceId) {
         let slot = self.index.lock().get(&owner).and_then(Weak::upgrade);
-        if let Some(s) = slot {
+        let Some(s) = slot else {
+            // **The completion is already in the future table** — `complete`
+            // wrote it Ready and pushed it onto the owner's `ready` queue
+            // before this was called — and this is the only thing that would
+            // have told a worker to come and get it. Dropping it here means
+            // the result stays queued against an instance nobody will visit
+            // again and the request that awaited it is never answered.
+            //
+            // For a genuinely discarded instance that is right: §6.1 holds
+            // only `Weak` references precisely so a late completion is a no-op
+            // rather than a resurrection. For a live one it is a lost request.
+            // Nothing distinguished the two, and nothing counted either, so
+            // the symptom was a request that simply stopped — `dispatches`
+            // still claiming it was in flight, no trap, no refusal, no log.
+            self.metrics.wakes_dropped.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(
+                instance = %owner,
+                "a completion arrived for an instance that is no longer resident; the wake \
+                 is dropped and any dispatch awaiting it will not be answered (§6.1)"
+            );
+            return;
+        };
+        {
             self.metrics.wakes.fetch_add(1, Ordering::Relaxed);
             // The sampling decision, taken from the instance's own dispatch id
             // — an atomic load and a modulo, on a reactor thread, with no lock
