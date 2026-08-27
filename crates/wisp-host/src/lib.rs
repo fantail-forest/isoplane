@@ -56,8 +56,10 @@
 //!   fairness §6.4 promises — but the *weighting* half is absent. See
 //!   [`cell::CellConfig::exec_threads`].
 
-// One `unsafe` block exists in this crate, in `meters::read_thread_cpu_ns`,
-// for `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`. Everything else is denied.
+// Two places in this crate are `unsafe`, and both are excused by name rather
+// than by relaxing the rule: `meters::read_clock_ns`, for `clock_gettime`, and
+// the whole of `tsc_marks`, which is supplied code reading the CPU's timestamp
+// counter through the `RDTSCP` intrinsic. Everything else is denied.
 #![deny(unsafe_code)]
 
 use std::fmt;
@@ -73,10 +75,12 @@ pub mod fakes;
 pub mod futures;
 pub mod instances;
 pub mod lockstats;
+pub mod marks;
 pub mod meters;
 pub mod metrics;
 pub mod net;
 pub mod response;
+pub mod tsc_marks;
 
 pub use activator::EngineActivator;
 pub use bindings::{CellBindings, InstanceCtx};
@@ -145,39 +149,59 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Monotonic nanoseconds since the first call, for stamping an instant that
-/// another thread in the same process will difference against.
+/// Raw `CLOCK_MONOTONIC` nanoseconds.
 ///
-/// **Not a wall clock and not comparable across processes.** It exists because
-/// [`cell::StageTimings::replied_mono_ns`] has to name an instant that the
-/// receiving thread can subtract from its own reading, and `Instant` is
-/// opaque: two of them subtract, but one cannot be put in a struct that
-/// crosses a channel and be turned back into a duration by the reader without
-/// an agreed origin. This is that origin.
+/// **One epoch, shared with every other crate in this process.** This used to
+/// subtract a per-process origin captured on its own first call, which made a
+/// reading here and a reading from `wisp_bench::schedule::mono_ns` — a bare
+/// `clock_gettime(CLOCK_MONOTONIC)` — two numbers on two scales that look
+/// exactly alike. Subtracting one from the other yields the machine's uptime
+/// or, through a `saturating_sub`, a clean zero; neither reads as wrong.
 ///
-/// `CLOCK_MONOTONIC` underneath, the same clock `Instant` reads, so a caller
-/// timing the other end with either one is measuring against the same source.
+/// The origin bought nothing. The load generator and the cell run in **one
+/// process**, calling each other directly, so there was never a second process
+/// for which an agreed origin would have been necessary — and there is no
+/// second process now, so a raw reading is exactly as comparable and one
+/// subtraction cheaper.
+///
+/// The per-request stage timings are now taken with the CPU's timestamp
+/// counter rather than with this clock (see [`marks`]), so this is no longer
+/// on the measurement path. It is still what the cell stamps request
+/// scheduling and its own coarse intervals with, and having those on the same
+/// scale as everyone else's readings costs nothing and removes a whole class
+/// of silent subtraction error.
+///
+/// Aborting on an unreadable clock is deliberate and is the same decision
+/// `wisp_bench::schedule::mono_ns` takes for the same reason: every consumer
+/// subtracts on **unsigned** times, so a failed read flattened to `0` does not
+/// produce a missing duration, it produces one near 2^64 in whichever
+/// direction hurts most. `try_mono_ns` is the form to use where "could not
+/// read" is a fact the caller wants to hold.
 pub fn mono_ns() -> u64 {
-    mono_ns_at(std::time::Instant::now())
+    match try_mono_ns() {
+        Some(t) => t,
+        None => mono_clock_failed(),
+    }
 }
 
-/// The same origin, for an `Instant` that was read earlier.
-///
-/// It exists so a stamp the cell already holds can be published on the shared
-/// origin **without a second clock read**. [`cell::StageTimings`] brackets a
-/// request between two readings on this scale — admission and reply — and the
-/// admission one is an `Instant` the submit path captured for its own reasons;
-/// re-reading the clock to express it here would be a vDSO call bought purely
-/// to restate a number already in hand, on the one path whose timing is the
-/// measurement.
-///
-/// Saturates at zero for an instant older than the origin. That is reachable
-/// exactly once — the origin is initialised by whichever of these two runs
-/// first — so [`cell::Cell::new`] pins it before the cell can take a request.
-pub fn mono_ns_at(t: std::time::Instant) -> u64 {
-    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    t.saturating_duration_since(*ORIGIN.get_or_init(std::time::Instant::now))
-        .as_nanos() as u64
+/// The fallible read. `None` is a failed `clock_gettime`; `Some(0)` is a clock
+/// that genuinely reads zero, and those are different facts.
+pub fn try_mono_ns() -> Option<u64> {
+    meters::try_read_mono_ns()
+}
+
+/// Out of line and `#[cold]`, so the hot path carries a never-taken branch.
+#[cold]
+#[inline(never)]
+fn mono_clock_failed() -> ! {
+    let errno = std::io::Error::last_os_error();
+    eprintln!(
+        "wisp-host: clock_gettime(CLOCK_MONOTONIC) did not return a usable time (errno: \
+         {errno}). Every interval this cell reports is measured against that clock and every \
+         consumer subtracts on unsigned times, so continuing would produce elapsed times near \
+         2^64 rather than no times at all. Aborting instead."
+    );
+    std::process::abort();
 }
 
 /// `CLOCK_THREAD_CPUTIME_ID` for the calling thread (§6.4, §11.2). This is

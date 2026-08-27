@@ -48,6 +48,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
+use crate::marks::{self, Mark, RequestMarks};
+
 use parking_lot::{Condvar, Mutex};
 
 // The seven locks a dispatch takes most often are wrapped so a run can say
@@ -317,7 +319,11 @@ impl Target {
     }
 }
 
-#[derive(Debug, Clone)]
+/// **Not `Clone`.** It carries the request's marks, which are a checked-out
+/// buffer with exactly one owner: a second copy would either duplicate a
+/// pooled resource or silently drop the trace, and both are worse than the
+/// clone being unavailable. Nothing in this workspace cloned one.
+#[derive(Debug)]
 pub struct DispatchResult {
     /// The `dispatch_id` of the `DispatchRecord` this is the answer to.
     ///
@@ -353,6 +359,18 @@ pub struct DispatchResult {
     /// histograms inside the cell would be a second implementation of all
     /// three, on the one path that must not grow a lock.
     pub stages: Option<StageTimings>,
+    /// The request's labelled timestamps, if it was one of the traced ones.
+    ///
+    /// Rides home for the same reason `stages` does, and returns itself to
+    /// [`crate::marks::RequestMarksPool`] when the caller drops it — so a
+    /// caller that never reads the trace still gives the buffer back rather
+    /// than starving the pool.
+    ///
+    /// `None` on every untraced request, on every request that arrived when
+    /// the pool was dry, and on every refusal: a shed or a breaker rejection
+    /// never reaches most of the marks, and a partial trace pooled with whole
+    /// ones would shorten every span it appears in.
+    pub marks: Option<RequestMarks>,
 }
 
 /// Where one request's time went between `submit` and the reply landing.
@@ -425,9 +443,14 @@ pub struct StageTimings {
     /// end and no beginning, and has to reconstruct the start from its own
     /// clock — which a report reading an archived record cannot do at all.
     ///
-    /// Costs no clock read. The submit path already captures this instant for
-    /// `ActiveRequest::started`; this is that same `Instant` expressed on the
-    /// shared origin by [`crate::mono_ns_at`].
+    /// Costs no clock read. The submit path already reads the clock for
+    /// `ActiveRequest::started_ns`, and this is that same reading.
+    ///
+    /// It used to be an opaque `Instant` converted here onto a per-process
+    /// origin, which is what made this number incomparable with any reading
+    /// the caller took for itself. [`crate::mono_ns`] is now a raw
+    /// `CLOCK_MONOTONIC` read on one scale with every other crate's, so the
+    /// stamp travels as a plain number and needs no conversion at either end.
     pub admitted_mono_ns: u64,
     /// Entering the submit path to the instant the cell has decided where the
     /// job goes and is about to enqueue it: the breaker check, the job
@@ -547,10 +570,10 @@ struct StageStamps {
     /// Distinct from `queued` below, which moves: this one never does, and
     /// conflating the two is what would make the opening bracket drift to
     /// wherever the last stage boundary happened to fall.
-    admitted: Instant,
+    admitted_ns: u64,
     /// Where the submit stage ended and the queue stage began. Set by
     /// `WorkQueue::stamp_queued`, once, immediately before the enqueue.
-    queued: Instant,
+    queued_ns: u64,
     submit_ns: u64,
     queue_ns: u64,
 }
@@ -570,6 +593,7 @@ impl DispatchResult {
             acquired: "none",
             slices: 0,
             stages: None,
+            marks: None,
         }
     }
     fn breaker_open(dispatch_id: u64) -> Self {
@@ -587,6 +611,7 @@ impl DispatchResult {
             acquired: "none",
             slices: 0,
             stages: None,
+            marks: None,
         }
     }
 }
@@ -618,7 +643,7 @@ struct WakeItem {
     /// would mean taking `Cell::active`, on the reactor thread, for telemetry.
     /// It is the same predicate `Cell::new_stamps` used at admission and on
     /// the same id, so the two cannot disagree about which request this is.
-    queued: Option<Instant>,
+    queued_ns: Option<u64>,
 }
 
 struct DispatchJob {
@@ -626,7 +651,15 @@ struct DispatchJob {
     target: Target,
     rec: DispatchRecord,
     responder: std::sync::mpsc::SyncSender<DispatchResult>,
-    enqueued: Instant,
+    enqueued_ns: u64,
+    /// The request's marks while it is queued.
+    ///
+    /// **On the job, not beside it**, because the job is the thing that has
+    /// exactly one owner at every instant: the producer holds it until the
+    /// enqueue, the queue holds it until the pop, and the worker holds it
+    /// after. `Marks` is single-owner, and this is the only field in the cell
+    /// with the same lifetime.
+    marks: Option<RequestMarks>,
     /// `Some` on the one request in [`CellConfig::stage_sample_every`] that
     /// was chosen for stage timing, at admission and once.
     stamps: Option<StageStamps>,
@@ -1010,7 +1043,12 @@ impl WorkQueue {
         if let Some(s) = f.wakes.pop() {
             return Some(Job::Wake(s));
         }
-        f.dispatches.pop().map(Job::Dispatch)
+        f.dispatches.pop().map(|mut d| {
+            // The queue wait closes at the pop, on the thread that now owns
+            // the job. See the mutex arm of `pop` for what this span contains.
+            marks::mark(&mut d.marks, Mark::JobTaken);
+            Job::Dispatch(d)
+        })
     }
 
     /// The lane a new item should go to — [`QueuePlacement`] applied.
@@ -1101,9 +1139,9 @@ impl WorkQueue {
     #[inline]
     fn stamp_queued(j: &mut DispatchJob) {
         if let Some(s) = &mut j.stamps {
-            let now = Instant::now();
-            s.submit_ns = now.duration_since(j.enqueued).as_nanos() as u64;
-            s.queued = now;
+            let now = crate::mono_ns();
+            s.submit_ns = now.saturating_sub(j.enqueued_ns);
+            s.queued_ns = now;
         }
     }
 
@@ -1114,13 +1152,23 @@ impl WorkQueue {
             // There is no placement to make here — one ring — so the boundary
             // is simply "before the enqueue", above the `pushing` bookkeeping
             // as well as above the compare-and-swap. See `stamp_queued`.
+            //
+            // The mark is emitted all the same, so the span that ends at it
+            // means the same thing under every structure: everything the
+            // producer did between building the job and beginning the enqueue.
+            // Under one ring that is `pick`'s early return and nothing else,
+            // which is the honest reading rather than a missing row.
+            marks::mark(&mut j.marks, Mark::PlacementDecided);
             Self::stamp_queued(&mut j);
             // Announce before the check, release after the push. See
             // `LockFreeLanes::pushing`: without this pair the check and the
             // push are two steps and a job can land in a ring that every
             // worker has already left.
             f.pushing.fetch_add(1, Ordering::SeqCst);
-            if f.closed.load(Ordering::SeqCst) {
+            marks::mark(&mut j.marks, Mark::PushRegistered);
+            let closed = f.closed.load(Ordering::SeqCst);
+            marks::mark(&mut j.marks, Mark::ClosedChecked);
+            if closed {
                 f.pushing.fetch_sub(1, Ordering::SeqCst);
                 return Err(j);
             }
@@ -1136,8 +1184,24 @@ impl WorkQueue {
         // the lane lock below is not. That pairs with the lock-free branch
         // above, which stamps at the same point in its own sequence.
         let lane = &self.lanes[self.pick()];
+        marks::mark(&mut j.marks, Mark::PlacementDecided);
         Self::stamp_queued(&mut j);
+        // **The two marks this whole exercise exists for.** Everything between
+        // them is the wait for the lane's mutex and nothing else — no
+        // placement above it, no queueing below it. The old `queue_ns`
+        // contained both this wait and the wait in the lane for a worker, and
+        // those have different fixes: a lock wait wants a shorter critical
+        // section or more lanes, a queue wait wants more workers.
+        //
+        // There is deliberately no third mark after the release. The critical
+        // section is a `len()` check, a `push_back` and a `fetch_add` — about
+        // 4 ns against a 40 ns mark — so a hold measured around it would be
+        // ninety percent instrument, and the job is gone the instant the guard
+        // drops in any case. Its cost falls into `queue.wait`, which is stated
+        // in `crate::marks`.
+        marks::mark(&mut j.marks, Mark::LaneLockWanted);
         let mut g = lane.inner.lock();
+        marks::mark(&mut j.marks, Mark::LaneLockAcquired);
         if g.closed || g.dispatches.len() >= self.cap {
             return Err(j);
         }
@@ -1236,7 +1300,15 @@ impl WorkQueue {
             if let Some(s) = g.wakes.pop_front() {
                 return Some(Job::Wake(s));
             }
-            if let Some(d) = g.dispatches.pop_front() {
+            if let Some(mut d) = g.dispatches.pop_front() {
+                // **The queue wait closes here**, while the lane lock is still
+                // held — which is where it has to close, because this is the
+                // first instant this thread owns the job. The span running
+                // back to `LaneLockAcquired` is the producer's critical
+                // section, the notify, the wait in the lane, and this thread's
+                // own acquisition. Everything that stretches it is a worker
+                // being busy.
+                marks::mark(&mut d.marks, Mark::JobTaken);
                 return Some(Job::Dispatch(d));
             }
             if g.closed {
@@ -1387,7 +1459,7 @@ struct ActiveRequest {
     module: ModuleId,
     route: String,
     responder: Option<std::sync::mpsc::SyncSender<DispatchResult>>,
-    started: Instant,
+    started_ns: u64,
     cpu_ns: u64,
     wall_ns: u64,
     slices: u32,
@@ -1420,9 +1492,9 @@ impl WakeSink for CellWake {
             // The sampling decision, taken from the instance's own dispatch id
             // — an atomic load and a modulo, on a reactor thread, with no lock
             // taken. See `WakeItem::queued`.
-            let queued =
-                stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every).then(Instant::now);
-            self.queue.push_wake(WakeItem { slot: s, queued });
+            let queued_ns =
+                stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every).then(crate::mono_ns);
+            self.queue.push_wake(WakeItem { slot: s, queued_ns });
         }
     }
 }
@@ -1501,10 +1573,6 @@ impl Cell {
         // §10/H7. Applied once, here, so every metrics reader sees the same
         // setting the dispatch path is running under.
         metrics.set_per_dispatch_sampling(cfg.telemetry_sample_every);
-        // Pin the shared monotonic origin before this cell can take a
-        // request, so `StageTimings::admitted_mono_ns` is never the saturated
-        // zero `mono_ns_at` gives for an instant older than the origin.
-        let _ = crate::mono_ns();
         let queue = Arc::new(WorkQueue::new(
             cfg.depth_per_queue(),
             cfg.exec_threads,
@@ -1662,7 +1730,7 @@ impl Cell {
             if let Some(cell) = &cell {
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                     Job::Dispatch(j) => cell.run_dispatch(*j),
-                    Job::Wake(w) => cell.run_wake(w.slot, w.queued),
+                    Job::Wake(w) => cell.run_wake(w.slot, w.queued_ns),
                 }));
                 // Cleared either way, so a job that finished normally cannot
                 // leave a stale id for the next panic to answer.
@@ -1882,13 +1950,13 @@ impl Cell {
     /// skipped, degrades to a `queue_ns` that includes the submit rather than
     /// to a reading off an unrelated origin.
     #[inline]
-    fn new_stamps(&self, dispatch_id: u64, enqueued: Instant) -> Option<StageStamps> {
+    fn new_stamps(&self, dispatch_id: u64, enqueued_ns: u64) -> Option<StageStamps> {
         // `then_some`, not `then`: with the clock read gone there is nothing
         // left to defer — the value is three words copied from arguments the
         // caller already has.
         stage_sampled(dispatch_id, self.cfg.stage_sample_every).then_some(StageStamps {
-            admitted: enqueued,
-            queued: enqueued,
+            admitted_ns: enqueued_ns,
+            queued_ns: enqueued_ns,
             submit_ns: 0,
             queue_ns: 0,
         })
@@ -2066,7 +2134,7 @@ impl Cell {
     ) -> crate::Result<DispatchResult> {
         // The submit stage opens here, above the breaker check. See
         // `Cell::submit_with` for why that check is inside it.
-        let enqueued = Instant::now();
+        let enqueued_ns = crate::mono_ns();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let route = target.route();
         let now = crate::now_ms();
@@ -2086,8 +2154,12 @@ impl Cell {
             target,
             rec,
             responder: tx,
-            enqueued,
-            stamps: self.new_stamps(dispatch_id, enqueued),
+            enqueued_ns,
+            stamps: self.new_stamps(dispatch_id, enqueued_ns),
+            // `dispatch_blocking` is the one-thread-per-request form used by
+            // tests and the control plane, never by the load generator, so it
+            // has no pool to check a buffer out of and carries no trace.
+            marks: None,
         });
         if self.queue.push_dispatch(job).is_err() {
             // §6.4: overflow queues at admission; the cell sheds rather than
@@ -2155,6 +2227,33 @@ impl Cell {
         rec: DispatchRecord,
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
     ) -> bool {
+        self.submit_with_marks(module, target, rec, responder, None)
+    }
+
+    /// [`Cell::submit_with`], carrying a request's marks in with it.
+    ///
+    /// **The caller checks the buffer out, not the cell.** The first mark of a
+    /// request is the caller releasing it, which happens before the cell is
+    /// entered at all — so a cell-side checkout could not take it, and the
+    /// span the report most needs (`caller.released` → `cell.entered`, the
+    /// call into the cell) would not exist. The pool lives with whoever is
+    /// generating load; the cell only ever holds a buffer it was handed.
+    ///
+    /// A refused request's marks are dropped here rather than returned to the
+    /// caller. That returns the buffer to the pool — the guard does it on
+    /// drop — and loses the partial trace, which is deliberate: a shed reaches
+    /// perhaps six of a request's fifty marks, and pooling that into the same
+    /// distributions as a served request would shorten every one of them.
+    pub fn submit_with_marks(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        responder: std::sync::mpsc::SyncSender<DispatchResult>,
+        marks: Option<RequestMarks>,
+    ) -> bool {
+        let mut marks = marks;
+        marks::mark(&mut marks, Mark::CellEntered);
         // **The submit stage opens above the breaker check**, which is where
         // [`StageTimings::submit_ns`] has always said it opens and where the
         // struct literal below — evaluated after the check, since that is a
@@ -2171,28 +2270,38 @@ impl Cell {
         // It also moves `ActiveRequest::started`, and therefore
         // `Metrics::request_us`, up by the same interval. That is the more
         // honest reading of "how long the cell had this request" too.
-        let enqueued = Instant::now();
+        let enqueued_ns = crate::mono_ns();
         let now = crate::now_ms();
         let dispatch_id = rec.dispatch_id;
         let key = BreakerKey {
             module: module.clone(),
             route: target.route(),
         };
-        if self.breaker.check(&key, now).is_err() {
+        // A **pair**, not a triple. The hold is ~34 ns of hashing three
+        // strings, below the 40 ns a mark costs on this machine, so a third
+        // mark inside would report the instrument rather than the lock. The
+        // only thing that can stretch this span is waiting for `entries`,
+        // which is what a reader wants from it.
+        marks::mark(&mut marks, Mark::BreakerLockWanted);
+        let refused = self.breaker.check(&key, now).is_err();
+        marks::mark(&mut marks, Mark::BreakerChecked);
+        if refused {
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
             let _ = responder.send(DispatchResult::breaker_open(dispatch_id));
             return true;
         }
-        let job = Box::new(DispatchJob {
+        let mut job = Box::new(DispatchJob {
             module: module.clone(),
             target,
             rec,
             responder,
-            enqueued,
-            stamps: self.new_stamps(dispatch_id, enqueued),
+            enqueued_ns,
+            stamps: self.new_stamps(dispatch_id, enqueued_ns),
+            marks,
         });
+        marks::mark(&mut job.marks, Mark::JobBuilt);
         if self.queue.push_dispatch(job).is_err() {
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
             if let Some(m) = self.meters(module) {
@@ -2264,12 +2373,26 @@ impl Cell {
         // workload that queues most — the one that parks and is woken — as the
         // one that queues least.
         let mut job = job;
+        // **Off the job and into a local, for the rest of the request.** From
+        // here the trace is written by this thread and only this thread, so it
+        // does not need to live behind the job — and keeping it here is what
+        // lets `settle` and `respond` take marks without going through
+        // `Cell::active`, which would put the shard's own contention inside
+        // every span below.
+        let mut marks = job.marks.take();
+        marks::mark(&mut marks, Mark::DispatchStarted);
         if let Some(s) = &mut job.stamps {
-            s.queue_ns += s.queued.elapsed().as_nanos() as u64;
+            s.queue_ns += crate::mono_ns().saturating_sub(s.queued_ns);
         }
         let job = job;
         let did = job.rec.dispatch_id;
-        let Some(entry) = self.modules.read().get(&job.module).cloned() else {
+        // A **pair**: ~34 ns held, hashing a `ModuleId` and cloning an `Arc`.
+        // Bound to a local first so the read guard is dropped before the
+        // closing mark rather than at the end of a `let ... else`.
+        marks::mark(&mut marks, Mark::ModulesLockWanted);
+        let entry = self.modules.read().get(&job.module).cloned();
+        marks::mark(&mut marks, Mark::ModulesLockReleased);
+        let Some(entry) = entry else {
             let _ = job.responder.send(DispatchResult {
                 status: 404,
                 body: b"no such module".to_vec(),
@@ -2278,11 +2401,12 @@ impl Cell {
             return;
         };
 
+        marks::mark(&mut marks, Mark::InstanceAcquireBegan);
         let acquired;
         let slot = match &job.target {
             Target::Handler { .. } => {
                 let t0 = Instant::now();
-                match self.acquire_handler(&entry) {
+                match self.acquire_handler(&entry, &mut marks) {
                     Ok((s, src)) => {
                         acquired = match src {
                             AcquireSource::WarmParked => {
@@ -2320,6 +2444,8 @@ impl Cell {
             }
         };
 
+        marks::mark(&mut marks, Mark::InstanceAcquireEnded);
+
         let budget = CpuBudget {
             cpu_ms: job.rec.cpu_budget_ms,
             wall_ms_cap: self.cfg.wall_ms_cap,
@@ -2335,7 +2461,14 @@ impl Cell {
         // DI is addressed by identity and can. Refuse rather than overwrite the
         // in-flight request. Ordering and serialization of DI messages is the
         // single-writer inbox's job (§7.2), which lives in `wisp-durable`.
-        if self.active.contains_key(&slot.id) {
+        // A **pair**: 16.9 ns held, well under one mark. This and the insert
+        // thirty lines below are two separate acquisitions of the same lock on
+        // the same key, which is a thing the span names make visible and an
+        // `insert_if_absent` on the `ActiveMap` trait would collapse.
+        marks::mark(&mut marks, Mark::ActiveProbeWanted);
+        let already_in_flight = self.active.contains_key(&slot.id);
+        marks::mark(&mut marks, Mark::ActiveProbeReleased);
+        if already_in_flight {
             // §10: counted, because this refusal is one of the four legs the
             // density gate stands on and the only other count of it lives in
             // the load generator. Two independent counts of the same event is
@@ -2369,12 +2502,18 @@ impl Cell {
         // token at its next wake — which is the only channel there is, because
         // §5.4 makes cancellation deliberately *not* an entrancy.
         let mut job = job;
-        job.rec.cancel_future = self
-            .rt
-            .futures
-            .alloc_cancellation(slot.id, job.rec.dispatch_id);
+        // A **triple**: the hold is 60 ns and more — two map inserts and a set
+        // insert, any of which can grow — against a 40 ns mark, so the wait
+        // for this global table separates cleanly from the work under it.
+        marks::mark(&mut marks, Mark::CancelAllocWanted);
+        job.rec.cancel_future =
+            self.rt
+                .futures
+                .alloc_cancellation_marked(slot.id, job.rec.dispatch_id, &mut marks);
+        marks::mark(&mut marks, Mark::CancelAllocReleased);
         slot.ctx.set_cancel_future(job.rec.cancel_future);
 
+        marks::mark(&mut marks, Mark::ActiveInsertWanted);
         self.active.insert(
             slot.id,
             ActiveRequest {
@@ -2383,7 +2522,7 @@ impl Cell {
                 module: job.module.clone(),
                 route: job.target.route(),
                 responder: Some(job.responder),
-                started: job.enqueued,
+                started_ns: job.enqueued_ns,
                 cpu_ns: 0,
                 wall_ns: 0,
                 slices: 0,
@@ -2392,6 +2531,7 @@ impl Cell {
                 stamps: job.stamps,
             },
         );
+        marks::mark(&mut marks, Mark::ActiveInsertReleased);
 
         // From here the request is answerable, so from here a panic on this
         // thread can answer it. See `Cell::answer_after_panic`.
@@ -2404,8 +2544,16 @@ impl Cell {
             .begin_dispatch(crate::now_ms(), job.rec.dispatch_id);
 
         let outcome = {
-            let mut guard = match slot.enter() {
-                Ok(g) => g,
+            // A **triple**, and the first measurement this lock has ever had:
+            // `Slot::inner` is a plain `parking_lot::Mutex`, not a
+            // `CountedMutex`, so it is in no row of `Cell::lock_stats` — and
+            // every dispatch and every resumed slice takes it twice.
+            marks::mark(&mut marks, Mark::SlotEnterWanted);
+            let mut guard = match slot.enter_marked(&mut marks) {
+                Ok(g) => {
+                    marks::mark(&mut marks, Mark::SlotEnterReleased);
+                    g
+                }
                 Err(e) => {
                     // §5.4 refusing a reentrant call. For a Durable Instance
                     // this is §7.2's "strictly one dispatch at a time"; the
@@ -2425,21 +2573,36 @@ impl Cell {
                             body: b"instance busy".to_vec(),
                             ..DispatchResult::shed(did)
                         },
+                        &mut marks,
                     );
                     self.active.remove(&slot.id);
                     return;
                 }
             };
             self.hot.fetch_add(1, Ordering::Relaxed);
+            marks::mark(&mut marks, Mark::GuestEntered);
             let out = guard.instance().dispatch(&job.rec, budget);
+            // **The guest call, host seam included.** Strictly larger than the
+            // engine's own `DispatchOutcome::wall_ns`, which is taken inside
+            // the engine and misses `enter_hot`, `begin_slice`, the epoch
+            // deadline, trap classification and `exit_hot`. Both are published;
+            // their difference is the seam, and nothing measured it before.
+            marks::mark(&mut marks, Mark::GuestReturned);
             self.hot.fetch_sub(1, Ordering::Relaxed);
+            marks::mark(&mut marks, Mark::SlotReleaseWanted);
             out
         };
+        // The guard dropped at the close of the block above, taking
+        // `Slot::inner` a second time on its way out. A **pair**: the release
+        // path is reached through `impl Drop for CallGuard`, which takes no
+        // arguments and so cannot be handed a buffer to mark into — see the
+        // note in `crate::marks` about what that costs.
+        marks::mark(&mut marks, Mark::SlotReleaseReleased);
 
         // A completion can land while a dispatch is Hot; §5.4 made it wait, so
         // if one did, hand the instance to the wake lane rather than leaving a
         // result queued against a parked instance nobody will visit again.
-        if !self.settle(&slot, &entry, outcome) {
+        if !self.settle(&slot, &entry, outcome, &mut marks) {
             self.queue_wake(slot);
         }
     }
@@ -2452,9 +2615,9 @@ impl Cell {
     /// queue stamp. `CellWake::signal` is the fourth and cannot use this — it
     /// holds no cell — so it carries the same two lines against the same id.
     fn queue_wake(&self, slot: Arc<Slot>) {
-        let queued =
-            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every).then(Instant::now);
-        self.queue.push_wake(WakeItem { slot, queued });
+        let queued_ns =
+            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every).then(crate::mono_ns);
+        self.queue.push_wake(WakeItem { slot, queued_ns });
     }
 
     /// One woken slice, and every further slice the instance can take without
@@ -2465,7 +2628,7 @@ impl Cell {
     /// per-request sum across slices; the loop below does not re-queue, so the
     /// stamp is spent once and the later slices in this call queued for
     /// nothing and are charged nothing.
-    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, queued: Option<Instant>) {
+    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, queued_ns: Option<u64>) {
         // This slice's lane wait closes **here**, at the top, before the
         // `residents` lock — exactly where `run_dispatch` closes its own, and
         // for the same reason: everything below this line is work the cell
@@ -2477,7 +2640,7 @@ impl Cell {
         // the cell's own `lock_stats` puts at the top of its list. So the
         // *measurement* boundary is this line and the *store* is deferred,
         // which is the only way to have both.
-        let mut waited = queued.map(|t| t.elapsed().as_nanos() as u64);
+        let mut waited = queued_ns.map(|t| crate::mono_ns().saturating_sub(t));
         // A wake runs an existing request, which is therefore already in
         // `Cell::active` and already answerable. The id comes from the
         // instance's own context, which `begin_dispatch` set and every slice
@@ -2557,7 +2720,7 @@ impl Cell {
             drop(guard);
             self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
 
-            if self.settle(&slot, &entry, outcome) {
+            if self.settle(&slot, &entry, outcome, &mut None) {
                 return;
             }
         }
@@ -2570,22 +2733,30 @@ impl Cell {
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
         out: DispatchOutcome,
+        marks: &mut Option<RequestMarks>,
     ) -> bool {
         // §11.2: record the Hot interval. Nothing else is ever recorded — and on
         // a kill of either phase that interval *includes the overage*, because
         // the meter reads the thread clock and does not know what a budget is
         // (§6.4: "the overage CPU is recorded").
+        marks::mark(marks, Mark::TenantRecordWanted);
         entry.meters.record_cpu(&out);
         if out.grace_deferrals > 0 {
             self.metrics
                 .grace_deferrals
                 .fetch_add(out.grace_deferrals, Ordering::Relaxed);
         }
+        // A **pair**: 26.6 ns held at eight tenants, below one mark — though
+        // it allocates a `String` inside the hold and walks a `BTreeMap`, so it
+        // grows with the tenant count and is worth re-checking on a run with
+        // many. `Metrics::by_tenant` is not a `CountedMutex` and appears in no
+        // lock table.
         self.metrics.record_tenant(
             &entry.tenant,
             out.cpu_ns,
             !matches!(out.completion, Completion::Done | Completion::Parked),
         );
+        marks::mark(marks, Mark::TenantRecordReleased);
 
         // The vtable may owe the guest a trap it could not raise from an
         // import that returns a bare `i64` — §11.1's pending-futures cap, a
@@ -2612,9 +2783,16 @@ impl Cell {
             _ => out.completion,
         };
 
+        // A **triple**, and the only one `Cell::active` earns: this hold is
+        // ~65 ns because the module and the route are *cloned inside it*,
+        // against ~20 ns at every other site. If `Cell::active` is the cell's
+        // largest source of blocked time, this is the one critical section a
+        // shortening would actually pay for.
+        marks::mark(marks, Mark::ActiveUpdateWanted);
         let (lifecycle, module, route) = self
             .active
             .with_mut(&slot.id, |req| {
+                marks::mark(marks, Mark::ActiveUpdateAcquired);
                 req.cpu_ns += out.cpu_ns;
                 req.wall_ns += out.wall_ns;
                 req.slices += 1;
@@ -2627,6 +2805,7 @@ impl Cell {
                     String::new(),
                 )
             });
+        marks::mark(marks, Mark::ActiveUpdateReleased);
         let breaker_key = BreakerKey { module, route };
 
         match completion {
@@ -2651,27 +2830,47 @@ impl Cell {
                 // and are readable via `Cell::response_snapshot`, but the PoC
                 // does not pipe them to the requester. Streaming to the client
                 // is `wisp-proxy`'s half of §6.3 and is not wired.
+                // A **triple**, and conditional: only a dispatch that
+                // completed with a response handle reaches it. The hold can
+                // clone the whole response body, so its cost is the size of
+                // what the guest produced rather than a constant — which is
+                // exactly the shape worth separating from the wait.
                 let response = match out.status {
                     PollStatus::Done { response } if response != 0 => {
+                        marks::mark(marks, Mark::ResponseTableWanted);
                         let mut t = slot.ctx.responses.lock();
-                        match t.get(response) {
+                        marks::mark(marks, Mark::ResponseTableAcquired);
+                        let r = match t.get(response) {
                             Some(r) if r.head.streaming && !r.finished => Some(r.clone()),
                             _ => t.take(response),
-                        }
+                        };
+                        drop(t);
+                        marks::mark(marks, Mark::ResponseTableReleased);
+                        r
                     }
                     _ => None,
                 };
                 let streaming_open = response
                     .as_ref()
                     .is_some_and(|r| r.head.streaming && !r.finished);
-                let wait_until = self.rt.futures.wait_until_outstanding(slot.id) || streaming_open;
+                // A **triple**: the hold walks the `wait_until` set with a
+                // map lookup per element, so it is a function of what the guest
+                // did rather than a constant.
+                marks::mark(marks, Mark::WaitUntilCheckWanted);
+                let outstanding = self
+                    .rt
+                    .futures
+                    .wait_until_outstanding_marked(slot.id, marks);
+                marks::mark(marks, Mark::WaitUntilCheckReleased);
+                let wait_until = outstanding || streaming_open;
 
                 let (status, headers, body) = match &response {
                     Some(r) => (r.head.status, r.head.headers.clone(), r.body()),
                     None => (204, vec![], Vec::new()),
                 };
-                let result = self.build_result(slot, status, headers, body, completion, None);
-                self.respond(slot, result);
+                let result =
+                    self.build_result(slot, status, headers, body, completion, None, marks);
+                self.respond(slot, result, marks);
 
                 match decide(lifecycle, completion, wait_until) {
                     RequestEnd::RetainedForWaitUntil => {
@@ -2681,7 +2880,10 @@ impl Cell {
                         !self.rt.futures.has_ready(slot.id)
                     }
                     RequestEnd::Disposed(d) => {
+                        // A **pair**: ~34 ns held, hashing three strings.
+                        marks::mark(marks, Mark::BreakerSuccessWanted);
                         self.breaker.record_success(&breaker_key);
+                        marks::mark(marks, Mark::BreakerSuccessReleased);
                         self.finish_and_release(slot, entry, d);
                         true
                     }
@@ -2724,8 +2926,9 @@ impl Cell {
                     msg.clone().into_bytes(),
                     completion,
                     Some(msg),
+                    marks,
                 );
-                self.respond(slot, result);
+                self.respond(slot, result, marks);
                 match decide(lifecycle, completion, false) {
                     RequestEnd::Disposed(d) => {
                         // Note what is NOT here: no `breaker.record_kill`, and
@@ -2795,8 +2998,9 @@ impl Cell {
                     msg.clone().into_bytes(),
                     completion,
                     Some(msg),
+                    marks,
                 );
-                self.respond(slot, result);
+                self.respond(slot, result, marks);
                 // §13: traps are never retried on the same memory. §6.4: the
                 // slot is reset before reuse — and for a tombstone "reset"
                 // means the whole activation goes back to the kernel, not a
@@ -2815,7 +3019,13 @@ impl Cell {
         body: Vec<u8>,
         completion: Completion,
         trap: Option<String>,
+        marks: &mut Option<RequestMarks>,
     ) -> DispatchResult {
+        // A **pair**: the hold is ~20 ns, half what a mark costs. Note this is
+        // the *third* separate acquisition of `Cell::active` on the same key
+        // in one request — the probe, the update in `settle`, and this — which
+        // the span names make visible for the first time.
+        marks::mark(marks, Mark::ResultReadWanted);
         let (dispatch_id, cpu_ns, wall_ns, slices, acquired, stamps) = self
             .active
             .with(&slot.id, |r| {
@@ -2829,6 +3039,7 @@ impl Cell {
                 )
             })
             .unwrap_or((0, 0, 0, 0, "unknown", None));
+        marks::mark(marks, Mark::ResultReadReleased);
         DispatchResult {
             dispatch_id,
             status,
@@ -2845,10 +3056,11 @@ impl Cell {
             // so a dispatch that parked and was woken reports the guest time
             // of the whole request rather than of its first slice.
             stages: stamps.map(|s| StageTimings {
-                // No clock read: `queued` started life as the submit path's
-                // own `enqueued` instant and `admitted` keeps it, precisely so
-                // this can be expressed on the shared origin for free.
-                admitted_mono_ns: crate::mono_ns_at(s.admitted),
+                // No clock read: `queued_ns` started life as the submit
+                // path's own `enqueued_ns` reading and `admitted_ns` keeps it,
+                // so the opening bracket is a number already in hand rather
+                // than a second reading of the clock.
+                admitted_mono_ns: s.admitted_ns,
                 submit_ns: s.submit_ns,
                 queue_ns: s.queue_ns,
                 guest_ns: wall_ns,
@@ -2857,14 +3069,22 @@ impl Cell {
                 // never sent, which is not a path that answers anybody.
                 replied_mono_ns: 0,
             }),
+            // Filled by `Cell::respond`, which is the last thing to hold the
+            // buffer before it crosses the channel. A result built and never
+            // sent therefore carries no trace, which is the truthful state:
+            // nobody was answered.
+            marks: None,
         }
     }
 
-    fn respond(&self, slot: &Arc<Slot>, result: DispatchResult) {
+    fn respond(&self, slot: &Arc<Slot>, result: DispatchResult, marks: &mut Option<RequestMarks>) {
+        // A **pair**: ~18 ns held, and the fourth acquisition of `active`.
+        marks::mark(marks, Mark::ResponderTakenWanted);
         let tx = self
             .active
             .with_mut(&slot.id, |a| a.responder.take())
             .flatten();
+        marks::mark(marks, Mark::ResponderTakenReleased);
         if let Some(tx) = tx {
             // Stamped after the `active` shard is released and immediately
             // before the send, so the interval the caller reconstructs is the
@@ -2876,6 +3096,19 @@ impl Cell {
             if let Some(st) = &mut result.stages {
                 st.replied_mono_ns = crate::mono_ns();
             }
+            // The trace boards the result here, and `ReplyHandedOff` is taken
+            // once it has — after the `active` shard is released and
+            // immediately before the send, so the shard's own contention (which
+            // `lock_stats` reports under its own name) is not counted a second
+            // time inside the reply figure.
+            //
+            // Nothing marks the *return* from `send`. `SyncSender::send`
+            // blocks on a full channel and the buffer is inside the value being
+            // sent, so there is no owner left on this thread to mark with; that
+            // block is inside `reply.delivery` rather than beside it. See
+            // `crate::marks`.
+            result.marks = marks.take();
+            marks::mark(&mut result.marks, Mark::ReplyHandedOff);
             let _ = tx.send(result);
         }
     }
@@ -2891,7 +3124,7 @@ impl Cell {
             self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
             self.metrics
                 .request_us
-                .record(r.started.elapsed().as_micros() as u64);
+                .record(crate::mono_ns().saturating_sub(r.started_ns) / 1_000);
             self.metrics.park_ms.record(slot.parked_ms_total());
             entry.meters.record_park(slot.parked_ms_total());
         }
@@ -3064,16 +3297,21 @@ impl Cell {
     fn acquire_handler(
         self: &Arc<Self>,
         entry: &Arc<ModuleEntry>,
+        marks: &mut Option<RequestMarks>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
         let (slot, src) = entry.pool.acquire(|id| self.make_ctx(entry, id))?;
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
-        self.residents
-            .lock()
-            .entry(slot.id)
-            .or_insert_with(|| Resident {
-                slot: slot.clone(),
-                module: entry.activator.module().clone(),
-            });
+        // A **triple**: ~48 ns held, because a `ModuleId` — two `String`
+        // allocations — is cloned inside the hold.
+        marks::mark(marks, Mark::ResidentsLockWanted);
+        let mut residents = self.residents.lock();
+        marks::mark(marks, Mark::ResidentsLockAcquired);
+        residents.entry(slot.id).or_insert_with(|| Resident {
+            slot: slot.clone(),
+            module: entry.activator.module().clone(),
+        });
+        drop(residents);
+        marks::mark(marks, Mark::ResidentsLockReleased);
         Ok((slot, src))
     }
 
@@ -3240,8 +3478,9 @@ mod queue_tests {
                 now_ms: 0,
             },
             responder,
-            enqueued: Instant::now(),
+            enqueued_ns: crate::mono_ns(),
             stamps: None,
+            marks: None,
         })
     }
 
@@ -3273,7 +3512,7 @@ mod queue_tests {
     fn wake_of(slot: &Arc<Slot>) -> WakeItem {
         WakeItem {
             slot: slot.clone(),
-            queued: None,
+            queued_ns: None,
         }
     }
 
@@ -3318,13 +3557,13 @@ mod queue_tests {
     fn the_submit_stage_measures_the_interval_it_names() {
         const BACK: Duration = Duration::from_millis(50);
         let mut j = job();
-        let admitted = Instant::now()
-            .checked_sub(BACK)
+        let admitted_ns = crate::mono_ns()
+            .checked_sub(BACK.as_nanos() as u64)
             .expect("a monotonic clock past 50 ms");
-        j.enqueued = admitted;
+        j.enqueued_ns = admitted_ns;
         j.stamps = Some(StageStamps {
-            admitted,
-            queued: admitted,
+            admitted_ns,
+            queued_ns: admitted_ns,
             submit_ns: 0,
             queue_ns: 0,
         });
@@ -3345,7 +3584,7 @@ mod queue_tests {
         // The other half of the one clock read: the queue stage opens where
         // the submit stage closed, with nothing between them.
         assert!(
-            s.queued.duration_since(admitted).as_nanos() as u64 >= s.submit_ns,
+            s.queued_ns.saturating_sub(admitted_ns) >= s.submit_ns,
             "the queue stage opens before the submit stage closed, so the two overlap"
         );
     }

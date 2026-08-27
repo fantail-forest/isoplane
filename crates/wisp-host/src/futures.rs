@@ -154,7 +154,24 @@ impl FutureTable {
     /// allocate would be a dispatch that can only ever be hard-killed, which
     /// is precisely the outcome §6.4 is trying to make rare.
     pub fn alloc_cancellation(&self, owner: InstanceId, dispatch: u64) -> u64 {
+        self.alloc_cancellation_marked(owner, dispatch, &mut None)
+    }
+
+    /// [`FutureTable::alloc_cancellation`], marking the wait for the table's
+    /// lock separately from the work done under it.
+    ///
+    /// **A triple, not a pair.** The hold is 60 ns and more — two map inserts
+    /// and a set insert, any of which can grow — comfortably above the 40 ns a
+    /// mark costs on this machine, so the wait and the hold are separable and
+    /// worth separating. This is a global lock every dispatch takes.
+    pub fn alloc_cancellation_marked(
+        &self,
+        owner: InstanceId,
+        dispatch: u64,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) -> u64 {
         let mut g = self.inner.lock();
+        crate::marks::mark(marks, crate::marks::Mark::CancelAllocAcquired);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let owned = g.owned.entry(owner).or_default();
         owned.pending.insert(id);
@@ -222,6 +239,7 @@ impl FutureTable {
             .get(&owner)
             .is_some_and(|o| !o.ready.is_empty())
     }
+
 
 
 

@@ -63,6 +63,17 @@ pub fn try_read_process_cpu_ns() -> Option<u64> {
     read_clock_ns(libc::CLOCK_PROCESS_CPUTIME_ID)
 }
 
+/// `CLOCK_MONOTONIC`, **raw**, or `None` if the clock could not be read.
+///
+/// Raw is the point: no per-process origin is subtracted, so a reading taken
+/// here and a reading taken by any other crate in this process — notably
+/// `wisp_bench::schedule::mono_ns`, which is this same `clock_gettime` call —
+/// are on one epoch and may be subtracted from each other. See
+/// [`crate::mono_ns`] for what the origin used to be and why it had to go.
+pub fn try_read_mono_ns() -> Option<u64> {
+    read_clock_ns(libc::CLOCK_MONOTONIC)
+}
+
 /// [`try_read_thread_cpu_ns`] with the unreadable case flattened to `0`.
 ///
 /// Kept because callers outside this module read a bare `u64`, but the zero

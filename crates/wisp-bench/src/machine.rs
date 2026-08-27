@@ -468,6 +468,28 @@ impl Machine {
         Some(b as f64 / physical_cores.max(1) as f64 / (1u64 << 30) as f64)
     }
 
+    /// Read the processor socket for a logical CPU from `physical_package_id`.
+    pub fn socket_of_cpu(cpu: usize) -> Option<u32> {
+        read_trim(format!("/sys/devices/system/cpu/cpu{cpu}/topology/physical_package_id"))
+            .and_then(|v| v.parse::<u32>().ok())
+    }
+
+    /// Sockets containing the selected CPUs, together with CPUs whose socket
+    /// could not be read.
+    pub fn sockets_of(cpus: &[usize]) -> (std::collections::BTreeSet<u32>, Vec<usize>) {
+        let mut sockets = std::collections::BTreeSet::new();
+        let mut unknown = Vec::new();
+        for &c in cpus {
+            match Machine::socket_of_cpu(c) {
+                Some(s) => {
+                    sockets.insert(s);
+                }
+                None => unknown.push(c),
+            }
+        }
+        (sockets, unknown)
+    }
+
     pub fn node(&self, node: usize) -> Option<&NumaNode> {
         self.numa.iter().find(|n| n.node == node)
     }

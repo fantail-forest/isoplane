@@ -202,7 +202,17 @@ impl Slot {
     ///
     /// A second entry into this slot is refused while its guard is alive.
     pub fn enter(&self) -> Result<CallGuard<'_>, EnterError> {
+        self.enter_marked(&mut None)
+    }
+
+    /// [`Slot::enter`], marking the wait for the sandbox lock separately from
+    /// the work done under it.
+    pub fn enter_marked(
+        &self,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) -> Result<CallGuard<'_>, EnterError> {
         let mut g = self.inner.lock();
+        crate::marks::mark(marks, crate::marks::Mark::SlotEnterAcquired);
         if g.tombstoned {
             return Err(EnterError::Tombstoned);
         }
