@@ -277,7 +277,18 @@ impl FutureTable {
 
     /// Reclaim pending futures owned by the completed dispatch.
     pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) {
+        self.end_dispatch_marked(owner, dispatch, &None)
+    }
+
+    /// Reclaim pending futures owned by the completed dispatch.
+    pub fn end_dispatch_marked(
+        &self,
+        owner: InstanceId,
+        dispatch: u64,
+        marks: &Option<crate::marks::RequestMarks>,
+    ) {
         let mut g = self.inner.lock();
+        crate::marks::mark(marks, crate::marks::Mark::EndDispatchAcquired);
         let Some(o) = g.owned.get_mut(&owner) else {
             return;
         };
@@ -300,7 +311,17 @@ impl FutureTable {
     /// is the mechanical form of §2.5.8's "cleanup lives outside the sandbox
     /// lifetime".
     pub fn release_instance(&self, owner: InstanceId) {
+        self.release_instance_marked(owner, &None)
+    }
+
+    /// Release instance futures and record lock timing.
+    pub fn release_instance_marked(
+        &self,
+        owner: InstanceId,
+        marks: &Option<crate::marks::RequestMarks>,
+    ) {
         let mut g = self.inner.lock();
+        crate::marks::mark(marks, crate::marks::Mark::ReleaseInstanceAcquired);
         g.owned.remove(&owner);
         g.entries.retain(|_, e| e.owner != owner);
     }

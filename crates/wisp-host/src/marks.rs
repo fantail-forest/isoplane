@@ -287,9 +287,58 @@ pub enum Mark {
 
     // --- the caller's side again --------------------------------------------
     /// The reply crossing the channel and the collector being scheduled, plus
-    /// any time the cell was blocked on a full channel. **The last mark**;
-    /// `stop()` is taken here.
+    /// any time the cell was blocked on a full channel. **The last mark of the
+    /// request**; `stop()` is taken here.
     CallerReceived,
+
+    /// Start of post-response cleanup.
+    FinishBegan,
+    /// Nothing; the left edge of the in-flight record's removal.
+    ActiveRemoveWanted,
+    /// Taking the request out of `Cell::active`: wait and hold. A **pair** —
+    /// the hold is a hash and a `HashMap::remove` that *moves* the entry out,
+    /// with nothing cloned inside it, so it sits at about what one mark costs.
+    /// Note this is the fifth acquisition of the same lock on the same key.
+    ActiveRemoveReleased,
+    /// Nothing; the left edge of the future table.
+    EndDispatchWanted,
+    /// **Waiting for the global future table**, to reap the dispatch's
+    /// handles.
+    EndDispatchAcquired,
+    /// Holding it: a `BTreeSet` clone of the `wait_until` set, a `Vec` of
+    /// every pending id, a filtered pass over both and a removal per doomed
+    /// entry — two allocations and three structure walks, comfortably past a
+    /// mark.
+    EndDispatchReleased,
+    /// Disposition selection and, on eviction, `Cell::forget`.
+    ReleaseInstanceWanted,
+    /// **Waiting for the global future table**, to release the instance.
+    ReleaseInstanceAcquired,
+    /// Holding it — **and this is the most interesting figure in the tail.**
+    /// `FutureTable::release_instance` does `entries.retain(|_, e| e.owner !=
+    /// owner)`, which walks **every entry in the whole cell's future table**,
+    /// not just this instance's. Its cost is therefore a function of what
+    /// every *other* instance is doing, and it is paid by every dispatch that
+    /// ends. There is an ownership index right beside it (`owned`) that is
+    /// removed in the line above and would give the ids directly.
+    ReleaseInstanceReleased,
+    /// Nothing; the left edge of the return to the pool.
+    PoolReleaseWanted,
+    /// **Putting the sandbox back.** Not a lock pair: what happens in here is
+    /// the disposition's, and the three are not comparable. `Warm` is a park
+    /// and a `Vec` push under one mutex; `Reset` runs a whole
+    /// `Slot::reset` — the instance is re-sealed — *before* the mutex;
+    /// `Discard` hands the memory back to the kernel. One row over all three
+    /// is deliberate: the question this answers is "how long does the worker
+    /// spend not taking the next request", and the disposition is a property
+    /// of the app rather than of the moment.
+    PoolReleaseReleased,
+    /// The discarded-state check and a second `Cell::forget` if it fires.
+    FinishEnded,
+    /// The job's own unwind, clearing the in-flight slot, and
+    /// `WorkQueue::job_done` releasing the lane's load. **The last mark of the
+    /// tail**, and the point at which the worker can take another request.
+    JobDone,
 }
 
 /// Every mark, **in declaration order**, which is also discriminant order.
@@ -394,6 +443,19 @@ pub const ALL: &[Mark] = &[
     Mark::TombstoneRingAcquired,
     Mark::TombstoneRingReleased,
     Mark::CallerReceived,
+    Mark::FinishBegan,
+    Mark::ActiveRemoveWanted,
+    Mark::ActiveRemoveReleased,
+    Mark::EndDispatchWanted,
+    Mark::EndDispatchAcquired,
+    Mark::EndDispatchReleased,
+    Mark::ReleaseInstanceWanted,
+    Mark::ReleaseInstanceAcquired,
+    Mark::ReleaseInstanceReleased,
+    Mark::PoolReleaseWanted,
+    Mark::PoolReleaseReleased,
+    Mark::FinishEnded,
+    Mark::JobDone,
 ];
 
 impl Mark {
@@ -513,6 +575,19 @@ impl Mark {
             ReplyHandedOff => "reply.handoff",
             SendReturned => "reply.send.blocked",
             CallerReceived => "reply.delivery",
+            FinishBegan => "tail.finish.begin",
+            ActiveRemoveWanted => "tail.active.remove.wanted",
+            ActiveRemoveReleased => "tail.active.remove",
+            EndDispatchWanted => "tail.futures.end.wanted",
+            EndDispatchAcquired => "tail.futures.end.wait",
+            EndDispatchReleased => "tail.futures.end.hold",
+            ReleaseInstanceWanted => "tail.dispose.decide",
+            ReleaseInstanceAcquired => "tail.futures.release.wait",
+            ReleaseInstanceReleased => "tail.futures.release.hold",
+            PoolReleaseWanted => "tail.pool.release.wanted",
+            PoolReleaseReleased => "tail.pool.release",
+            FinishEnded => "tail.finish.end",
+            JobDone => "tail.job.done",
         }
     }
 
@@ -562,6 +637,19 @@ impl Mark {
             TombstoneRingWanted | TombstoneRingAcquired | TombstoneRingReleased => {
                 Structural::TombstonedRequest
             }
+            FinishBegan
+            | ActiveRemoveWanted
+            | ActiveRemoveReleased
+            | EndDispatchWanted
+            | EndDispatchAcquired
+            | EndDispatchReleased
+            | ReleaseInstanceWanted
+            | ReleaseInstanceAcquired
+            | ReleaseInstanceReleased
+            | PoolReleaseWanted
+            | PoolReleaseReleased
+            | FinishEnded
+            | JobDone => Structural::CellTail,
             _ => Structural::Always,
         }
     }
@@ -601,6 +689,17 @@ pub enum Structural {
     TombstonedRequest,
     /// The dispatch reaches its hard-budget termination path.
     HardKilledRequest,
+    /// **Not part of the request at all.** What the worker does after the
+    /// reply has gone: on its own trace, into its own sink, rendered in its
+    /// own table. These spans overlap the request in wall-clock time — the
+    /// caller is processing its reply while the worker is still releasing the
+    /// instance — so adding one of them to a request span produces a number
+    /// that is not a duration of anything.
+    ///
+    /// A request that **parked** has no tail: it ends its slice and hands the
+    /// worker back without going through `finish_and_release`, so a run of
+    /// nothing but parking guests observes none of these.
+    CellTail,
 }
 
 impl Structural {
@@ -635,6 +734,10 @@ impl Structural {
             Structural::HardKilledRequest => {
                 "only a dispatch killed at its hard budget reaches it: §6.4 keeps a clean kill \
                  and a trap away from the breaker"
+            }
+            Structural::CellTail => {
+                "runs after the reply, on the cell's own trace, and is reported apart from the \
+                 request it followed"
             }
         }
     }
@@ -724,6 +827,56 @@ pub fn begin(m: &Option<RequestMarks>) {
 #[inline(always)]
 pub fn stop(m: &Option<RequestMarks>, label: Mark) {
     mark(m, label)
+}
+
+/// How many marks the cell's tail can take.
+///
+/// Fifteen are placed and the sequence has no loop in it, so 32 is double what
+/// any tail can produce. It is a separate constant from [`MARKS_CAPACITY`]
+/// because it is a separate buffer with a separate lifetime: one per
+/// *execution thread* rather than one per request in flight, held for the few
+/// microseconds between the reply and the worker taking its next job.
+pub const TAIL_CAPACITY: usize = 32;
+
+/// Where a worker sends the tail it has just finished measuring.
+///
+/// The tail cannot come home the way a request's trace does. That one travels
+/// inside the reply, and the reply is exactly what has already left. So the
+/// cell hands the reduced trace to a sink the harness installed, which
+/// aggregates it into distributions the run reads at the end — the same shape
+/// `Cell::lock_stats` uses, and for the same reason.
+///
+/// Called on an execution thread, once per traced tail, **after** the tail's
+/// last mark, so nothing it does is inside a measured span. It is still that
+/// thread's time: an implementation that blocks here holds a worker.
+pub trait TailSink: Send + Sync + 'static {
+    /// One finished tail, already reduced to spans.
+    fn record(&self, tail: &Trace);
+}
+
+/// Buffers and sink for separate post-response cleanup measurements.
+pub struct CellTails {
+    /// One buffer per execution thread is the peak: a worker holds one from
+    /// `finish_and_release` to the top of its next `pop`.
+    pub pool: RequestMarksPool,
+    pub sink: std::sync::Arc<dyn TailSink>,
+}
+
+impl std::fmt::Debug for CellTails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CellTails({} buffers)", self.pool.size())
+    }
+}
+
+/// Build a pool for a cell's tails, sized to its execution threads.
+///
+/// The slack is not generosity. A worker holds its buffer across the whole
+/// tail, so `exec_threads` is the true peak — but a dry pool is a tail that
+/// goes untraced and the shortfall is counted in the same
+/// `pool_exhausted` figure the request pool reports, where it would read as a
+/// bias rather than as an off-by-one.
+pub fn tail_pool_for(cal: Calibration, exec_threads: usize) -> RequestMarksPool {
+    TracePool::new(cal, exec_threads + 2, TAIL_CAPACITY)
 }
 
 /// Build a pool sized to a cell's admission bound.

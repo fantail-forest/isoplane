@@ -1040,3 +1040,198 @@ fn a_hard_kill_takes_the_breaker_a_second_time_under_its_own_name() {
     );
     c.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// the cell's tail
+// ---------------------------------------------------------------------------
+
+/// A sink that keeps every tail it is handed.
+#[derive(Default)]
+struct CollectTails(std::sync::Mutex<Vec<wisp_host::marks::Trace>>);
+
+impl wisp_host::marks::TailSink for CollectTails {
+    fn record(&self, t: &wisp_host::marks::Trace) {
+        self.0.lock().unwrap().push(t.clone());
+    }
+}
+
+impl CollectTails {
+    fn takeall(&self) -> Vec<wisp_host::marks::Trace> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+/// **The cell's tail is measured, on a trace of its own, and it never touches
+/// the request's.**
+///
+/// After `Cell::respond` the request's buffer is inside the reply and gone
+/// from this thread, but the worker is not finished: it discards the outbox,
+/// removes the `active` entry, reaps the dispatch's futures, scans the whole
+/// cell's future table to release the instance's handles and returns the
+/// sandbox to its pool. That work holds an execution thread and is therefore
+/// capacity — it is simply not the request's latency, because the caller
+/// already has its answer.
+///
+/// Four claims, and they fail separately:
+///
+/// 1. The tail arrives, as an **exact ordered sequence** — which is what
+///    catches a mark placed around the wrong call, where "the label is
+///    present" would not.
+/// 2. Every label on it is `Structural::CellTail`. That is the property the
+///    report leans on to keep the two tables apart.
+/// 3. The **request's** trace carries none of them. If a tail mark ever
+///    reached the request's buffer, its spans would silently be added to the
+///    request's total, which is precisely the number that has to reconcile
+///    against the caller's own measurement.
+/// 4. Exactly **one tail per dispatch**. Two would mean a worker left a
+///    buffer behind and the next job appended to it.
+#[test]
+fn the_cells_tail_is_measured_on_a_trace_of_its_own() {
+    let mut cfg = CellConfig::for_test("marks-tail");
+    // Every dispatch, so the test is not waiting for id 128.
+    cfg.stage_sample_every = 1;
+    let c = cell(cfg);
+    let sink = Arc::new(CollectTails::default());
+    c.set_tail_traces(wisp_host::marks::CellTails {
+        pool: wisp_host::marks::tail_pool_for(calibration(), c.exec_threads()),
+        sink: sink.clone(),
+    });
+    let m = app(&c, "echo", FakeBehaviour::default());
+    let p = pool();
+
+    let (spans, _, _) = round_trip(&c, &p, &m, 0).expect("a traced reply");
+    assert!(
+        wait_for(|| !sink.0.lock().unwrap().is_empty(), T),
+        "the cell answered a request and never recorded a tail"
+    );
+    // The tail runs after the reply, so the reply can arrive first; give the
+    // worker a moment to finish before counting.
+    std::thread::sleep(Duration::from_millis(50));
+    let tails = sink.takeall();
+    assert_eq!(
+        tails.len(),
+        1,
+        "one dispatch, one tail — got {}",
+        tails.len()
+    );
+    let tail = &tails[0];
+    let got: Vec<Mark> = tail.spans.iter().map(|(l, _)| *l).collect();
+
+    // 1. The handler tail, in order.
+    assert_eq!(
+        got,
+        vec![
+            Mark::FinishBegan,
+            Mark::ActiveRemoveWanted,
+            Mark::ActiveRemoveReleased,
+            Mark::EndDispatchWanted,
+            Mark::EndDispatchAcquired,
+            Mark::EndDispatchReleased,
+            Mark::TailResidentsLockWanted,
+            Mark::TailResidentsLockReleased,
+            Mark::ReleaseInstanceWanted,
+            Mark::ReleaseInstanceAcquired,
+            Mark::ReleaseInstanceReleased,
+            Mark::PoolReleaseWanted,
+            Mark::PoolReleaseReleased,
+            Mark::FinishEnded,
+            Mark::JobDone,
+        ],
+        "the tail is not the sequence `finish_and_release` and `exec_loop` run: {:?}",
+        got.iter().map(|l| l.name()).collect::<Vec<_>>()
+    );
+
+    // 2. All of one class, which is what keeps the two tables apart.
+    for l in &got {
+        assert_eq!(
+            l.structural(),
+            wisp_host::marks::Structural::CellTail,
+            "`{}` is on the tail but is not classed as tail work, so the report would print \
+             it in the request's table",
+            l.name()
+        );
+    }
+    assert!(tail.span_ns > 0.0, "a tail of {} ns", tail.span_ns);
+    assert!(
+        !tail.truncated,
+        "the tail buffer is sized at double what a tail can take"
+    );
+    assert_eq!(tail.raced, 0, "one thread writes the whole tail");
+
+    // 3. And none of it is on the request.
+    let req = labels(&spans);
+    for l in &got {
+        assert!(
+            !req.contains(l),
+            "`{}` reached the request's own trace, where its span would be added into the \
+             request's total",
+            l.name()
+        );
+    }
+}
+
+/// **A request that parks has no tail until it finishes.**
+///
+/// `finish_and_release` is the only thing that opens one, and a parking slice
+/// does not go through it: it ends its slice and hands the worker back. So a
+/// guest that parks once produces **two** jobs — the dispatch and the wake —
+/// and exactly **one** tail, from the second. A tail per job would mean the
+/// worker was measuring a release that did not happen.
+#[test]
+fn a_parked_slice_produces_no_tail_and_the_resumed_one_produces_exactly_one() {
+    let mut cfg = CellConfig::for_test("marks-tail-park");
+    cfg.stage_sample_every = 1;
+    let c = cell(cfg);
+    let sink = Arc::new(CollectTails::default());
+    c.set_tail_traces(wisp_host::marks::CellTails {
+        pool: wisp_host::marks::tail_pool_for(calibration(), c.exec_threads()),
+        sink: sink.clone(),
+    });
+    let m = app(
+        &c,
+        "parker",
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    );
+    let p = pool();
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let mk = p.checkout();
+    marks::begin(&mk);
+    assert!(
+        c.submit_with_marks(&m, route("/x"), rec(0, "/x"), tx, mk)
+            .admitted
+    );
+    assert!(
+        wait_for(|| c.metrics().parked > 0, T),
+        "the guest never parked"
+    );
+    // The first job is over and the worker has moved on: no tail from it.
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(
+        sink.0.lock().unwrap().is_empty(),
+        "a slice that parked produced a tail; nothing was released, so there was nothing to \
+         measure"
+    );
+
+    let fid = c
+        .futures()
+        .live_future_ids()
+        .into_iter()
+        .next()
+        .expect("one pending future");
+    c.complete_future(fid, wisp_abi::result::ResultRecord::Ok(vec![]));
+    let _ = rx.recv_timeout(T).expect("a reply after the wake");
+    assert!(
+        wait_for(|| !sink.0.lock().unwrap().is_empty(), T),
+        "the resumed slice left no tail"
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        sink.takeall().len(),
+        1,
+        "two jobs ran and exactly one of them released the instance"
+    );
+    c.shutdown();
+}

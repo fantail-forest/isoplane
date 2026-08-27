@@ -1276,6 +1276,25 @@ struct ActiveRequest {
     marks: Option<RequestMarks>,
 }
 
+thread_local! {
+    /// **The tail this worker is measuring**, between the end of
+    /// `Cell::finish_and_release` and the top of the next `pop`.
+    ///
+    /// A thread-local rather than a parameter because the two ends of the tail
+    /// are in different functions with a `catch_unwind` between them:
+    /// `finish_and_release` opens it, four frames down inside `settle`, and
+    /// `exec_loop` closes it after `job_done`. Threading a buffer back up
+    /// through `settle`'s `bool` return would put the tail's storage in the
+    /// same variable as the request's, and the first mistake anybody made with
+    /// that would be a tail span filed into a request's trace — the one
+    /// outcome the whole separation exists to prevent.
+    ///
+    /// `None` on every job that was not sampled and on every job that parked,
+    /// so the common path is one TLS read and an `Option` check.
+    static TAIL: std::cell::RefCell<Option<RequestMarks>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Routes completions from reactor threads onto the exec pool (§6.1's wake
 /// router). Holds only weak references, so a discarded instance's late
 /// completion is a no-op rather than a resurrection.
@@ -1390,6 +1409,20 @@ pub struct Cell {
     /// Host panics caught at a thread boundary and contained. See
     /// [`Cell::caught_panics`].
     caught_panics: AtomicU64,
+    /// **Buffers and a sink for the cell's own tails**, or `None` in every
+    /// embedding that does not trace.
+    ///
+    /// Read behind the sampling predicate and nowhere else, so an untraced
+    /// dispatch never touches this lock: `stage_sampled` is an atomic load and
+    /// a modulo, and it is false for 127 jobs in 128 before anything here is
+    /// looked at. On the one that passes, a read guard is a few nanoseconds
+    /// against a tail that is about to take fifteen timestamps.
+    ///
+    /// Installed after construction rather than passed to [`Cell::new`]: the
+    /// exec pool starts inside the constructor, and a `Calibration` costs a
+    /// hundred milliseconds to measure and belongs to the harness that is
+    /// already holding one.
+    tails: parking_lot::RwLock<Option<Arc<crate::marks::CellTails>>>,
 }
 
 impl Cell {
@@ -1449,6 +1482,7 @@ impl Cell {
             shutdown: Arc::new(AtomicBool::new(false)),
             workers: Mutex::new(Vec::new()),
             caught_panics: AtomicU64::new(0),
+            tails: parking_lot::RwLock::new(None),
             cfg,
         });
 
@@ -1578,9 +1612,88 @@ impl Cell {
             // away. A push that is never released makes its lane look
             // permanently busy to every future placement decision.
             queue.job_done(worker);
+            // **After `job_done`, and on every job.** The span this closes is
+            // the job's unwind, the in-flight slot being cleared and the
+            // lane's load being released — everything between the cell having
+            // finished with the request and this worker being able to take
+            // another. A job that parked or was never sampled has no tail
+            // stashed and this is a thread-local read and an `Option` check.
+            if let Some(cell) = &cell {
+                cell.tail_close();
+            }
             if cell.is_none() {
                 return;
             }
+        }
+    }
+
+    /// **Install buffers and a sink for the cell's own tails.**
+    ///
+    /// What the cell does after answering — the outbox discard, the `active`
+    /// removal, reaping the dispatch's futures, the whole-table scan that
+    /// releases the instance's handles, the return to the pool — holds an
+    /// execution thread and is therefore capacity. It is *not* the request's
+    /// latency, because the caller already has its answer, and it cannot go on
+    /// the request's trace in any case: that buffer travels inside the reply.
+    ///
+    /// So it goes on a trace of its own, into a sink of its own, under labels
+    /// no request-side row shares. See `crate::marks` on where the trace ends.
+    pub fn set_tail_traces(&self, tails: crate::marks::CellTails) {
+        *self.tails.write() = Some(Arc::new(tails));
+    }
+
+    /// How many execution threads this cell is running, for sizing a tail
+    /// pool: a worker holds one buffer from `finish_and_release` until it
+    /// takes its next job, so the peak is one per thread.
+    pub fn exec_threads(&self) -> usize {
+        self.cfg.exec_threads
+    }
+
+    /// Open a tail trace, if this job's dispatch is one of the sampled ones
+    /// and the harness gave the cell somewhere to put it.
+    ///
+    /// The predicate is the same one the request's own trace was selected by,
+    /// on the same dispatch id, so a run's tails and its requests are the same
+    /// sample and the two tables rest on the same population.
+    fn tail_begin(&self, slot: &Arc<Slot>) -> Option<RequestMarks> {
+        if !stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every) {
+            return None;
+        }
+        let tails = self.tails.read().clone()?;
+        let t = tails.pool.checkout()?;
+        t.begin();
+        Some(t)
+    }
+
+    /// Park the tail on the worker's thread-local so `exec_loop` can close it.
+    fn tail_stash(t: Option<RequestMarks>) {
+        if t.is_some() {
+            TAIL.with(|c| *c.borrow_mut() = t);
+        }
+    }
+
+    /// **Close the tail and hand it over.** Called after `job_done` on every
+    /// job, so nothing can be left behind by a job that parked, panicked or
+    /// was never sampled.
+    ///
+    /// `JobDone` is taken *here* rather than at the end of
+    /// `finish_and_release`, so the span it closes is the job's own unwind,
+    /// the in-flight slot being cleared and the lane's load being released —
+    /// the last thing standing between this worker and the next request.
+    ///
+    /// Reducing the trace and handing it to the sink is real work on an
+    /// execution thread, and it is deliberately *after* the last mark, so it
+    /// is inside no span. At one job in `stage_sample_every` it is a sort of
+    /// fifteen entries per hundred-odd dispatches.
+    fn tail_close(&self) {
+        let t: Option<RequestMarks> = TAIL.with(|c| c.borrow_mut().take());
+        if t.is_none() {
+            return;
+        }
+        marks::mark(&t, Mark::JobDone);
+        let sink = self.tails.read().as_ref().map(|c| c.sink.clone());
+        if let (Some(sink), Some(t)) = (sink, t.as_ref()) {
+            sink.record(&marks::read(t));
         }
     }
 
@@ -3065,9 +3178,30 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         d: crate::instances::Disposition,
     ) {
+        // **The tail's own trace opens here.** The request's is gone — it
+        // travelled inside the reply `Cell::respond` has already sent — and
+        // everything below this line is work that holds an execution thread
+        // without being any part of the request's elapsed time. See
+        // `crate::marks` on where the trace ends, and on why these spans are
+        // reported somewhere a reader cannot add them to a request's.
+        let tail = self.tail_begin(slot);
+
+        marks::mark(&tail, Mark::FinishBegan);
+
+        // A **pair**, and the fifth acquisition of `Cell::active` on this key
+        // in one request: the hold is a hash and a `remove` that moves the
+        // entry out, cloning nothing, so it is at about what one mark costs.
+        marks::mark(&tail, Mark::ActiveRemoveWanted);
         let req = self.active.remove(&slot.id);
+        marks::mark(&tail, Mark::ActiveRemoveReleased);
         if let Some(r) = &req {
-            self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
+            // A **triple**: the hold clones a `BTreeSet`, allocates a `Vec` of
+            // every pending id and walks three structures.
+            marks::mark(&tail, Mark::EndDispatchWanted);
+            self.rt
+                .futures
+                .end_dispatch_marked(slot.id, r.dispatch_id, &tail);
+            marks::mark(&tail, Mark::EndDispatchReleased);
             self.metrics
                 .request_us
                 .record(crate::mono_ns().saturating_sub(r.started_ns) / 1_000);
@@ -3078,11 +3212,27 @@ impl Cell {
         if !d.is_warm() && !matches!(d.kind(), crate::instances::DispositionKind::Reset) {
             self.forget(slot);
         }
-        self.rt.futures.release_instance(slot.id);
+        // A **triple**, and the one worth reading. The hold is
+        // `entries.retain(|_, e| e.owner != owner)` — a walk of **every entry
+        // in the whole cell's future table**, not just this instance's — so
+        // what it costs is a function of what every *other* instance is doing,
+        // and every dispatch that ends pays it.
+        marks::mark(&tail, Mark::ReleaseInstanceWanted);
+        self.rt.futures.release_instance_marked(slot.id, &tail);
+        marks::mark(&tail, Mark::ReleaseInstanceReleased);
+        // A **pair**, and not a lock pair: what happens in here belongs to the
+        // disposition. `Warm` is a park and a push; `Reset` runs a whole
+        // `Slot::reset` before it reaches the mutex; `Discard` gives the
+        // memory back. One row over all three on purpose — the question is how
+        // long the worker spends not taking the next request.
+        marks::mark(&tail, Mark::PoolReleaseWanted);
         entry.pool.release(slot.clone(), d);
+        marks::mark(&tail, Mark::PoolReleaseReleased);
         if slot.state() == LifecycleTier::Discarded {
             self.forget(slot);
         }
+        marks::mark(&tail, Mark::FinishEnded);
+        Self::tail_stash(tail);
     }
 
     /// The books for a tombstone raised somewhere other than `settle`.
