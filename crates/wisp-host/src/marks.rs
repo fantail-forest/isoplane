@@ -139,7 +139,10 @@ pub enum Mark {
     /// `hot.fetch_sub`; the left edge of the sandbox lock's second
     /// acquisition.
     SlotReleaseWanted,
-    /// Releasing the sandbox: wait and hold together.
+    /// Releasing the sandbox: wait and hold together. A **pair**, and it stays
+    /// one deliberately — see "Two spans that were specified and are
+    /// deliberately not here" above for why a third mark inside
+    /// `impl Drop for CallGuard` costs more than the split is worth.
     SlotReleaseReleased,
 
     // --- settling -----------------------------------------------------------
