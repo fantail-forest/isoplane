@@ -1235,3 +1235,79 @@ fn a_parked_slice_produces_no_tail_and_the_resumed_one_produces_exactly_one() {
     );
     c.shutdown();
 }
+
+/// **A wake that runs nothing gives the parked request its trace back.**
+///
+/// `Cell::run_wake` reclaims the trace from `Cell::active` *before* it can know
+/// whether this wake will run a slice, and there are six ways it can then
+/// decide not to. Every one of them used to `return` with the trace in a local,
+/// which dropped it: the request stayed parked and untraced for the rest of its
+/// life, and the reply it eventually sent carried nothing. And it is not a rare
+/// path — several completions for one instance produce several wakes, and the
+/// first one's loop drains all of them, so every wake after the first arrives
+/// to an empty table.
+///
+/// The observable is the **pool**, which is what makes this checkable from
+/// outside the cell: a trace handed back to `Cell::active` is still checked
+/// out, and a trace dropped on the floor is a buffer back in the pool. The
+/// tombstone is used to force the early return because it is the one this test
+/// can arrange deterministically — `Slot::tombstone` is public and the refusal
+/// is the first thing `Slot::enter` checks.
+#[test]
+fn a_wake_that_runs_nothing_hands_the_trace_back() {
+    let mut cfg = CellConfig::for_test("marks-stale-wake");
+    cfg.stage_sample_every = 1;
+    let c = cell(cfg);
+    let m = app(
+        &c,
+        "parker",
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    );
+    let p = pool();
+    let free = p.available();
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let mk = p.checkout();
+    marks::begin(&mk);
+    assert!(
+        c.submit_with_marks(&m, route("/x"), rec(0, "/x"), tx, mk)
+            .admitted
+    );
+    assert!(
+        wait_for(|| c.metrics().parked > 0, T),
+        "the guest never parked"
+    );
+    assert_eq!(
+        p.available(),
+        free - 1,
+        "the parked request is holding its buffer, which is the premise of this test"
+    );
+
+    let id = c.resident_ids().into_iter().next().expect("one resident");
+    c.slot(id).expect("the slot").tombstone();
+
+    let fid = c
+        .futures()
+        .live_future_ids()
+        .into_iter()
+        .next()
+        .expect("one pending future");
+    c.complete_future(fid, wisp_abi::result::ResultRecord::Ok(vec![]));
+    assert!(
+        wait_for(|| c.metrics().tombstone_refusals > 0, T),
+        "the wake was never refused, so the early return this test is about did not happen"
+    );
+    // The wake ran nothing. The request is still parked, still in `active`, and
+    // must still own its trace.
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        p.available(),
+        free - 1,
+        "the wake dropped the parked request's trace: the buffer is back in the pool while the \
+         request is still in flight, so everything it does from here is unmeasured"
+    );
+    drop(rx);
+    c.shutdown();
+}

@@ -93,8 +93,32 @@ impl Inner {
     /// self-defeating. So the counter is read where the event happens, carried
     /// on the queued item as two plain integers, and filed here by the thread
     /// that picks the request up.
+    ///
+    /// **A reading taken before this trace began is not this trace's
+    /// reading.** It is the one way a foreign timestamp can get in: every
+    /// [`Inner::mark`] reads the counter on the spot, but a carried reading has
+    /// travelled, and the thing carrying it can outlive the request it was
+    /// taken for. `Cell::run_wake` reclaims a parked request's trace by
+    /// instance id, so a wake left over from an *earlier* dispatch on the same
+    /// instance files a reading older than the trace it lands in.
+    ///
+    /// The damage is not a slightly wrong span. `read` sorts by timestamp and
+    /// differences adjacent pairs, so an entry earlier than the origin sorts
+    /// first and its span is `t - start` on unsigned integers — a wrap, which
+    /// renders as about **8.4e12 ms**. That is what one of these looked like in
+    /// a real run's `park.wait` maximum before this guard existed, and it is
+    /// worth noticing that the failure was *loud*: the report printed a number
+    /// no one could mistake for a duration.
+    ///
+    /// Refused and counted rather than clamped to the origin. Clamping would
+    /// invent a span; refusing leaves the label absent for that request, which
+    /// is the report's existing way of saying it did not observe something.
     #[inline(always)]
-    fn mark_at(&self, label: u8, t: u64, core: u32) {
+    fn mark_at(&self, label: u8, t: u64, core: u32, stale: &AtomicU64) {
+        if t < self.start.load(Ordering::Relaxed) {
+            stale.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         let i = self.cursor.fetch_add(1, Ordering::Relaxed);
         if i >= self.ticks.len() {
             return;
@@ -203,7 +227,7 @@ impl Trace {
     #[inline(always)]
     pub fn mark_at(&self, label: u8, at: (u64, u32)) {
         if let Some(i) = &self.inner {
-            i.mark_at(label, at.0, at.1);
+            i.mark_at(label, at.0, at.1, &self.pool.stale_marks);
         }
     }
 
@@ -268,6 +292,7 @@ struct PoolInner {
     free: Mutex<Vec<usize>>,
     exhausted: AtomicU64,
     double_release: AtomicU64,
+    stale_marks: AtomicU64,
     cal: Calibration,
 }
 
@@ -298,6 +323,7 @@ impl TracePool {
                 slots,
                 exhausted: AtomicU64::new(0),
                 double_release: AtomicU64::new(0),
+                stale_marks: AtomicU64::new(0),
                 cal,
             }),
             capacity_per_trace,
@@ -332,6 +358,18 @@ impl TracePool {
     /// A nonzero count identifies inconsistent buffer ownership.
     pub fn double_release(&self) -> u64 {
         self.inner.double_release.load(Ordering::Relaxed)
+    }
+
+    /// Carried readings refused because they predate the trace they were
+    /// filed into. See [`Inner::mark_at`].
+    ///
+    /// Non-zero means a producer is holding a timestamp across the life of the
+    /// request it was taken for — on this cell, a wake left over from an
+    /// earlier dispatch on the same instance. It is a fault in the
+    /// *instrument*, not in the cell: the wake itself is handled correctly,
+    /// and what is lost is one span on one request.
+    pub fn stale_marks(&self) -> u64 {
+        self.inner.stale_marks.load(Ordering::Relaxed)
     }
 
     pub fn available(&self) -> usize {
@@ -617,6 +655,52 @@ mod tests {
             }
         }
         assert_eq!(unpack(0), None);
+    }
+
+    /// **A reading older than the trace it is filed into is refused.**
+    ///
+    /// The one way a foreign timestamp can reach a trace: `mark` reads the
+    /// counter on the spot, but `mark_at` files a reading that has travelled,
+    /// and the thing carrying it can outlive the request it was taken for.
+    ///
+    /// What makes this worth a guard rather than a shrug is what the arithmetic
+    /// does with it. `read` sorts by timestamp and differences adjacent pairs
+    /// against the origin, so an entry before the origin sorts first and its
+    /// span is an unsigned wrap — about 8.4e12 ms, which is what a real run's
+    /// `park.wait` maximum showed before this existed.
+    ///
+    /// Both halves are asserted: the stale reading is not in the spans, and a
+    /// reading taken *after* the origin still is. Without the second half this
+    /// would pass on an implementation that refused every carried reading, and
+    /// `park.wait` is a carried reading on every request that pauses.
+    #[test]
+    fn a_reading_older_than_the_trace_is_refused_and_counted() {
+        let pool = TracePool::new(cal(), 1, 16);
+        let before = now();
+        std::hint::black_box(spin(20_000));
+        let t = pool.checkout().unwrap();
+        t.begin();
+        std::hint::black_box(spin(20_000));
+        let after = now();
+
+        t.mark_at(1, before);
+        assert_eq!(pool.stale_marks(), 1, "a reading from before `begin` was accepted");
+        t.mark_at(2, after);
+        t.mark(3);
+
+        let s = read(&t).unwrap();
+        let labels: Vec<u8> = s.spans.iter().map(|(l, _)| *l).collect();
+        assert_eq!(
+            labels,
+            vec![2, 3],
+            "the stale reading is in the trace, where its span is a wrap"
+        );
+        assert!(
+            s.spans.iter().all(|(_, ns)| *ns >= 0.0 && *ns < 1e9),
+            "a span came back as {:?} ns, which is what an unsigned wrap looks like",
+            s.spans.iter().map(|(_, ns)| *ns).collect::<Vec<_>>()
+        );
+        assert_eq!(pool.stale_marks(), 1, "a reading taken after `begin` was refused too");
     }
 
     /// A reused buffer does not carry its previous run's marks. `begin` clears

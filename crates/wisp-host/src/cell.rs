@@ -2601,7 +2601,28 @@ impl Cell {
             return;
         }
         marks::mark(marks, Mark::SliceEnded);
-        let taken = marks.take();
+        self.stash_marks(slot, marks.take());
+    }
+
+    /// **Give a reclaimed trace back to the request it belongs to.**
+    ///
+    /// `Cell::run_wake` takes the parked request's trace out of `Cell::active`
+    /// before it knows whether this wake is going to run a slice, and there are
+    /// six ways it can then decide not to: the instance is busy, tombstoned,
+    /// gone from `residents`, its module has been deregistered, or the future
+    /// table has nothing ready for it. Every one of those used to `return` with
+    /// the trace in a local, which dropped it — so the request stayed parked
+    /// and **untraced for the rest of its life**, and the reply it eventually
+    /// sent carried nothing. A wake that runs nothing is common: several
+    /// completions for one instance produce several wakes, and the first one's
+    /// loop drains all of them.
+    ///
+    /// Costs one `Cell::active` acquisition on paths that are already the
+    /// expensive ones, and only for a traced request.
+    fn stash_marks(&self, slot: &Arc<Slot>, taken: Option<RequestMarks>) {
+        if taken.is_none() {
+            return;
+        }
         // A request whose `active` entry has already gone is one nobody will
         // wake; letting the trace drop returns its buffer rather than leaking
         // it, and the trace simply ends where the request did.
@@ -2675,10 +2696,17 @@ impl Cell {
         let module = residents.get(&slot.id).map(|r| r.module.clone());
         drop(residents);
         marks::mark(&marks, Mark::WakeResidentsLockReleased);
+        // **Every early return below hands the trace back.** It was taken out
+        // of `Cell::active` above, before this function could know whether it
+        // was going to run a slice at all; dropping it here would leave the
+        // request parked and untraced for the rest of its life, and the reply
+        // it eventually sends would carry nothing. See `Cell::stash_marks`.
         let Some(module) = module else {
+            self.stash_marks(&slot, marks);
             return;
         };
         let Some(entry) = self.modules.read().get(&module).cloned() else {
+            self.stash_marks(&slot, marks);
             return;
         };
 
@@ -2701,15 +2729,20 @@ impl Cell {
                     self.metrics
                         .reentrancy_refusals
                         .fetch_add(1, Ordering::Relaxed);
+                    self.stash_marks(&slot, marks);
                     return;
                 }
                 Err(e @ crate::instances::EnterError::Tombstoned) => {
                     // A wake queued for an instance that was tombstoned before
                     // the wake lane reached it. §6.4 refuses, and §10 counts.
                     self.count_enter_refusal(e);
+                    self.stash_marks(&slot, marks);
                     return;
                 }
-                Err(_) => return,
+                Err(_) => {
+                    self.stash_marks(&slot, marks);
+                    return;
+                }
             };
             // A **triple**: 80 ns and more — a loop popping and removing across
             // three structures — so the wait for the table and the work under
@@ -2717,7 +2750,16 @@ impl Cell {
             marks::mark(&marks, Mark::TakeReadyWanted);
             let ready = self.rt.futures.take_ready_marked(slot.id, &mut marks);
             marks::mark(&marks, Mark::TakeReadyReleased);
-            let Some((fid, res)) = ready else { return };
+            let Some((fid, res)) = ready else {
+                // **The common stale wake.** Several completions for one
+                // instance produce several wakes, and the first one's loop
+                // drains all of them; the rest arrive to an empty table. The
+                // instance is still parked and its request still needs its
+                // trace.
+                drop(guard);
+                self.stash_marks(&slot, marks);
+                return;
+            };
             // §6.4: B and B+G bind the **dispatch**, so a wake resumes with
             // what earlier slices already burned. Without this a guest could
             // park and be woken indefinitely, each slice getting a fresh 50 ms
