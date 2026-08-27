@@ -1946,6 +1946,11 @@ impl Cell {
         self.cfg.admission_capacity()
     }
 
+    /// Returns the configured hot-dispatch concurrency value.
+    pub fn max_hot(&self) -> usize {
+        self.cfg.max_hot
+    }
+
     /// Which structure `Cell::active` is, read from the map rather than from
     /// the config — the same reason [`Cell::queue_structure`] asks the queue.
     pub fn active_map(&self) -> crate::lockstats::ActiveMapKind {
