@@ -188,6 +188,8 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
     let m = app(&c, "echo", FakeBehaviour::default());
     let p = pool();
 
+    // Request 0 activates: nothing is in the pool yet, so this trace carries
+    // the cold path's marks as well.
     let (spans, span_ns, _) = round_trip(&c, &p, &m, 0).expect("a traced reply");
     let got = labels(&spans);
 
@@ -213,6 +215,16 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::ModulesLockAcquired,
         Mark::ModulesLockReleased,
         Mark::InstanceAcquireBegan,
+        // Getting a sandbox, subdivided. `acquire.rest` used to be all of
+        // this: consulting the idle lists, building a new instance, and the
+        // index insert are three different costs and the middle one is three
+        // orders of magnitude larger than the other two.
+        Mark::PoolLockWanted,
+        Mark::PoolLockReleased,
+        Mark::ActivationBegan,
+        Mark::ActivationEnded,
+        Mark::IndexLockWanted,
+        Mark::IndexLockReleased,
         Mark::ResidentsLockWanted,
         Mark::ResidentsLockAcquired,
         Mark::ResidentsLockReleased,
@@ -727,4 +739,125 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(2));
     }
     cond()
+}
+
+// ---------------------------------------------------------------------------
+// getting a sandbox
+// ---------------------------------------------------------------------------
+
+/// An activator that takes a visible amount of time to build an instance.
+///
+/// The fake one is a `Vec` clone and a struct literal, so against it an
+/// activation span and a lock span are the same size and a test asserting
+/// "the activation is separated out" would pass on a report that had silently
+/// folded it back into the remainder. Ten milliseconds cannot hide anywhere.
+struct SlowActivator {
+    inner: Arc<FakeActivator>,
+    delay: Duration,
+}
+
+impl Activator for SlowActivator {
+    fn module(&self) -> &ModuleId {
+        self.inner.module()
+    }
+    fn module_hash(&self) -> wisp_engine::ModuleHash {
+        self.inner.module_hash()
+    }
+    fn abi_rev(&self) -> u32 {
+        self.inner.abi_rev()
+    }
+    fn template_image(&self) -> Arc<Vec<u8>> {
+        self.inner.template_image()
+    }
+    fn activate(
+        &self,
+        bindings: Box<dyn wisp_engine::HostBindings>,
+    ) -> anyhow::Result<Box<dyn wisp_engine::InstanceOps + Send>> {
+        std::thread::sleep(self.delay);
+        self.inner.activate(bindings)
+    }
+}
+
+/// **The activation is its own span, and a warm request does not pay it.**
+///
+/// `acquire.rest` used to be the warm-pool pop, the hibernation wake *and* the
+/// activation. Those differ by three orders of magnitude, so one row over all
+/// three describes a distribution with no mode — and the p99 of a cell serving
+/// a million warm requests and a hundred cold ones is entirely the hundred.
+///
+/// Two claims, and they fail separately:
+///
+/// 1. A cold request reports `activation` and a warm one does not report it at
+///    all. Absent, not zero — a zero here would read exactly like an
+///    activation that took no time.
+/// 2. The ten milliseconds land **in** `activation` and not in `acquire.rest`
+///    or `pool.idle`. Without the second half the first would pass on an
+///    instrument that emitted the label and measured the wrong interval.
+#[test]
+fn the_activation_is_its_own_span_and_a_warm_request_does_not_pay_it() {
+    let c = cell(CellConfig::for_test("marks-activate"));
+    let act = Arc::new(SlowActivator {
+        inner: Arc::new(FakeActivator::named(
+            ModuleId::new("slow", "v1"),
+            FakeBehaviour::default(),
+        )),
+        delay: Duration::from_millis(10),
+    });
+    let m = act.module().clone();
+    c.register_module("acme", act, manifest("slow")).unwrap();
+    let p = pool();
+
+    let (cold, _, _) = round_trip(&c, &p, &m, 0).expect("a traced reply");
+    // The instance goes back to the pool in the cell's tail, *after* the reply
+    // was sent, so the second request has to wait for it or it activates too.
+    assert!(
+        wait_for(
+            || c.idle_instances(&m).map(|(w, f)| w + f).unwrap_or(0) > 0,
+            T
+        ),
+        "the instance never returned to its pool, so there was no warm request to compare"
+    );
+    let (warm, _, _) = round_trip(&c, &p, &m, 1).expect("a traced reply");
+
+    let span =
+        |spans: &[(Mark, f64)], l: Mark| spans.iter().find(|(k, _)| *k == l).map(|(_, ns)| *ns);
+
+    // 1. Present on the cold path, absent on the warm one.
+    let activation = span(&cold, Mark::ActivationEnded).expect("the cold request built a sandbox");
+    assert!(
+        span(&warm, Mark::ActivationEnded).is_none(),
+        "a warm request reported an activation span; a row here is indistinguishable from an \
+         activation that cost nothing"
+    );
+    // Both consult the pool, and both take the index lock.
+    for (which, spans) in [("cold", &cold), ("warm", &warm)] {
+        assert!(
+            span(spans, Mark::PoolLockReleased).is_some(),
+            "{which}: no pool consult"
+        );
+        assert!(
+            span(spans, Mark::IndexLockReleased).is_some(),
+            "{which}: no index insert"
+        );
+    }
+
+    // 2. The ten milliseconds are in the activation and nowhere else.
+    assert!(
+        activation > 8_000_000.0,
+        "the activator slept for 10 ms and `activation` reports {activation:.0} ns — the span \
+         does not bracket the engine call"
+    );
+    for l in [
+        Mark::InstanceAcquireEnded,
+        Mark::PoolLockReleased,
+        Mark::ActivationBegan,
+    ] {
+        let leaked = span(&cold, l).unwrap_or(0.0);
+        assert!(
+            leaked < activation / 10.0,
+            "`{}` reports {leaked:.0} ns against an activation of {activation:.0} ns, so the \
+             activation is still being counted somewhere it is not named",
+            l.name()
+        );
+    }
 }

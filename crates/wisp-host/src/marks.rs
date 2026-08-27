@@ -78,14 +78,31 @@ pub enum Mark {
     ModulesLockReleased,
     /// The 404 branch, where it is taken.
     InstanceAcquireBegan,
+    /// Nothing; the left edge of the handler pool's idle lists.
+    PoolLockWanted,
+    /// End of consulting the handler's reusable-instance pools.
+    PoolLockReleased,
+    /// Nothing; the left edge of a hibernated instance's rehydration.
+    HibernationWakeBegan,
+    /// End of snapshot loading and instance reconstruction, including any nested activation.
+    HibernationWakeEnded,
+    /// Allocating an `InstanceId`, building the `InstanceCtx` and the bindings
+    /// table — everything the cold path does *before* the engine is asked for
+    /// an instance.
+    ActivationBegan,
+    /// End of a fresh sandbox activation from its template.
+    ActivationEnded,
+    /// Nothing; the left edge of the cell's instance index.
+    IndexLockWanted,
+    /// End of updating the resident-instance index during handler acquisition.
+    IndexLockReleased,
     /// Nothing; the left edge of the live-sandbox table.
     ResidentsLockWanted,
     /// **Waiting for the live-sandbox table.**
     ResidentsLockAcquired,
     /// End of accessing the resident-instance table.
     ResidentsLockReleased,
-    /// Whatever of the acquisition was not separately marked: the warm-pool
-    /// pop, a hibernation wake, or a full activation.
+    /// End of acquiring the request's instance.
     InstanceAcquireEnded,
     /// Nothing; the left edge of the `active` probe.
     ActiveProbeWanted,
@@ -273,6 +290,14 @@ pub const ALL: &[Mark] = &[
     Mark::ModulesLockAcquired,
     Mark::ModulesLockReleased,
     Mark::InstanceAcquireBegan,
+    Mark::PoolLockWanted,
+    Mark::PoolLockReleased,
+    Mark::HibernationWakeBegan,
+    Mark::HibernationWakeEnded,
+    Mark::ActivationBegan,
+    Mark::ActivationEnded,
+    Mark::IndexLockWanted,
+    Mark::IndexLockReleased,
     Mark::ResidentsLockWanted,
     Mark::ResidentsLockAcquired,
     Mark::ResidentsLockReleased,
@@ -375,6 +400,14 @@ impl Mark {
             ModulesLockAcquired => "modules.read.wait",
             ModulesLockReleased => "modules.read.hold",
             InstanceAcquireBegan => "acquire.begin",
+            PoolLockWanted => "pool.idle.wanted",
+            PoolLockReleased => "pool.idle",
+            HibernationWakeBegan => "hibernation.wake.wanted",
+            HibernationWakeEnded => "hibernation.wake",
+            ActivationBegan => "activation.setup",
+            ActivationEnded => "activation",
+            IndexLockWanted => "index.lock.wanted",
+            IndexLockReleased => "index.lock",
             ResidentsLockWanted => "residents.lock.wanted",
             ResidentsLockAcquired => "residents.lock.wait",
             ResidentsLockReleased => "residents.lock.hold",
@@ -448,6 +481,11 @@ impl Mark {
                 Structural::MutexQueue
             }
             PushRegistered | ClosedChecked | RingPushed => Structural::LockFreeQueue,
+            PoolLockWanted | PoolLockReleased | IndexLockWanted | IndexLockReleased => {
+                Structural::HandlerTarget
+            }
+            HibernationWakeBegan | HibernationWakeEnded => Structural::HibernatedInstance,
+            ActivationBegan | ActivationEnded => Structural::ColdAcquire,
             ResponseTableWanted | ResponseTableAcquired | ResponseTableReleased => {
                 Structural::RespondingDispatch
             }
@@ -481,6 +519,14 @@ pub enum Structural {
     MutexQueue,
     /// [`crate::cell::QueueStructure::LockFree`].
     LockFreeQueue,
+    /// The request targets an ordinary HTTP handler.
+    HandlerTarget,
+    /// A dispatch that had to build a new sandbox because there was none to
+    /// reuse. On a steady-state run this is a handful of requests out of
+    /// millions, and the row is still worth having: it is the expensive one.
+    ColdAcquire,
+    /// Label for an instance selected for snapshot restoration before entry.
+    HibernatedInstance,
     /// A dispatch that completed with a response handle.
     RespondingDispatch,
     /// A request that paused and was resumed. Every span in this class repeats
@@ -499,6 +545,17 @@ impl Structural {
             Structural::MutexQueue => "does not exist under `lock-free`: there is no lane mutex",
             Structural::LockFreeQueue => {
                 "does not exist under `shared` or `per-worker`: there is no ring"
+            }
+            Structural::HandlerTarget => {
+                "only a handler dispatch reaches it: a durable instance is addressed by \
+                 identity and has no pool"
+            }
+            Structural::ColdAcquire => {
+                "only a dispatch that found nothing to reuse and had to build a sandbox \
+                 reaches it"
+            }
+            Structural::HibernatedInstance => {
+                "only a dispatch addressed to a hibernated instance reaches it"
             }
             Structural::RespondingDispatch => {
                 "only a dispatch that completed with a response handle reaches it"

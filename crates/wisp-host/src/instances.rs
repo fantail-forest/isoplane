@@ -538,19 +538,40 @@ impl InstancePool {
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
     {
-        if self.lifecycle == HandlerLifecycle::Reuse {
-            if let Some(s) = self.warm.lock().pop() {
-                return Ok((s, AcquireSource::WarmParked));
-            }
-        }
-        if let Some(s) = self.fresh.lock().pop() {
-            debug_assert!(s.is_pristine(), "a pooled-fresh instance carried residue");
-            return Ok((s, AcquireSource::PooledFresh));
+        self.acquire_marked(make_ctx, &mut None)
+    }
+
+    /// Acquire an instance, recording idle-pool lookup separately from activation.
+    pub fn acquire_marked<F>(
+        &self,
+        make_ctx: F,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
+    where
+        F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
+    {
+        use crate::marks::Mark;
+        crate::marks::mark(marks, Mark::PoolLockWanted);
+        let pooled = (self.lifecycle == HandlerLifecycle::Reuse)
+            .then(|| self.warm.lock().pop())
+            .flatten()
+            .map(|s| (s, AcquireSource::WarmParked))
+            .or_else(|| {
+                self.fresh.lock().pop().map(|s| {
+                    debug_assert!(s.is_pristine(), "a pooled-fresh instance carried residue");
+                    (s, AcquireSource::PooledFresh)
+                })
+            });
+        crate::marks::mark(marks, Mark::PoolLockReleased);
+        if let Some(hit) = pooled {
+            return Ok(hit);
         }
         let id = InstanceId::alloc();
         let ctx = make_ctx(id);
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
+        crate::marks::mark(marks, Mark::ActivationBegan);
         let inst = self.activator.activate(bindings)?;
+        crate::marks::mark(marks, Mark::ActivationEnded);
         self.live.fetch_add(1, Ordering::Relaxed);
         Ok((Arc::new(Slot::new(id, ctx, inst)), AcquireSource::Activated))
     }

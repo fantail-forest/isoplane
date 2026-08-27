@@ -3216,8 +3216,17 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         marks: &mut Option<RequestMarks>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
-        let (slot, src) = entry.pool.acquire(|id| self.make_ctx(entry, id))?;
+        let (slot, src) = entry
+            .pool
+            .acquire_marked(|id| self.make_ctx(entry, id), marks)?;
+        // A **pair**: one `Weak` downgrade and one map insert, about 20 ns,
+        // which is at or under what a mark costs. It is here rather than
+        // folded into `acquire.rest` because it is a per-cell singleton mutex
+        // taken on *every* handler acquisition, warm ones included, and it
+        // appears in no row of `Cell::lock_stats`.
+        marks::mark(marks, Mark::IndexLockWanted);
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
+        marks::mark(marks, Mark::IndexLockReleased);
         // A **triple**: ~48 ns held, because a `ModuleId` — two `String`
         // allocations — is cloned inside the hold.
         marks::mark(marks, Mark::ResidentsLockWanted);
