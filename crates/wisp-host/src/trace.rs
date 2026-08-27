@@ -26,6 +26,11 @@ fn unpack(v: u32) -> Option<(u8, u32)> {
 /// The storage one request's trace lives in.
 struct Inner {
     cal: Calibration,
+    /// **Which slot of the pool this is**, so returning it does not mean
+    /// moving the `Arc` back.
+    index: usize,
+    /// Number of live Trace and Writer handles. The last holder returns the pool slot.
+    holders: AtomicUsize,
     /// The origin: the caller releasing the request. Not a slot, because
     /// nothing ends at it.
     start: AtomicU64,
@@ -40,9 +45,11 @@ struct Inner {
 }
 
 impl Inner {
-    fn new(cal: Calibration, capacity: usize) -> Self {
+    fn new(cal: Calibration, capacity: usize, index: usize) -> Self {
         Self {
             cal,
+            index,
+            holders: AtomicUsize::new(0),
             start: AtomicU64::new(0),
             start_core: AtomicU32::new(0),
             cursor: AtomicUsize::new(0),
@@ -105,9 +112,25 @@ impl Inner {
         self.start_core.store(core, Ordering::Relaxed);
     }
 
-    fn writers_outstanding(&self) -> bool {
-        let claimed = self.cursor.load(Ordering::Relaxed).min(self.ticks.len());
-        (0..claimed).any(|i| self.tags[i].load(Ordering::Acquire) == 0)
+}
+
+/// One handle is done with `inner`. The last one out returns the slot.
+///
+/// `fetch_sub` returning 1 means this call took the count from one to zero, and
+/// exactly one caller can observe that — which is what makes the return happen
+/// once and only once without a lock, a spin, or a deadline.
+fn release(inner: &Arc<Inner>, pool: &Arc<PoolInner>) {
+    let was = inner.holders.fetch_sub(1, Ordering::AcqRel);
+    if was == 1 {
+        if let Ok(mut free) = pool.free.lock() {
+            free.push(inner.index);
+        }
+    } else if was == 0 {
+        // Impossible: a handle dropped when the count already said nobody held
+        // it. Counted rather than ignored, because the failure it would name —
+        // a slot returned twice and then handed to two requests at once — is
+        // one that produces plausible traces of the wrong request.
+        pool.double_release.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -150,7 +173,10 @@ impl Trace {
     /// Retains a write handle across a request handoff.
     #[inline(always)]
     pub fn writer(&self) -> Writer {
-        Writer(self.inner.clone())
+        if let Some(i) = &self.inner {
+            i.holders.fetch_add(1, Ordering::Relaxed);
+        }
+        Writer { inner: self.inner.clone(), pool: Arc::clone(&self.pool) }
     }
 
     /// The calibration these timestamps were taken against.
@@ -159,46 +185,51 @@ impl Trace {
     }
 }
 
-/// Write handle for a request shared timestamp buffer.
-pub struct Writer(Option<Arc<Inner>>);
+/// A write handle for a thread that has given the request away.
+///
+/// It holds the buffer open exactly as a [`Trace`] does, and if it happens to
+/// outlive the `Trace` — which it can, because the reply crosses to the
+/// collector before the sender has finished with it — **it is the one that
+/// returns the slot**.
+pub struct Writer {
+    inner: Option<Arc<Inner>>,
+    pool: Arc<PoolInner>,
+}
 
 impl Writer {
     #[inline(always)]
     pub fn mark(&self, label: u8) {
-        if let Some(i) = &self.0 {
+        if let Some(i) = &self.inner {
             i.mark(label);
         }
     }
 }
 
-/// Maximum spin attempts before abandoning a trace with outstanding writers.
-/// An abandoned buffer is not returned to the free list and increments the abandoned count.
-const RETURN_SPIN: usize = 4096;
+impl Drop for Writer {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            release(&inner, &self.pool);
+        }
+    }
+}
 
 impl Drop for Trace {
     fn drop(&mut self) {
-        let Some(inner) = self.inner.take() else { return };
-        // Two conditions before this buffer can be reused: no other handle
-        // exists, and every claimed slot has been written. The second is not
-        // implied by the first — a writer stores its tag and then drops, so
-        // there is an instant where the count is 1 and a slot is still blank.
-        for _ in 0..RETURN_SPIN {
-            if Arc::strong_count(&inner) == 1 && !inner.writers_outstanding() {
-                if let Ok(mut free) = self.pool.free.lock() {
-                    free.push(inner);
-                }
-                return;
-            }
-            std::hint::spin_loop();
+        if let Some(inner) = self.inner.take() {
+            release(&inner, &self.pool);
         }
-        self.pool.abandoned.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 struct PoolInner {
-    free: Mutex<Vec<Arc<Inner>>>,
+    /// Every buffer, allocated once and never moved. The free list holds
+    /// **indices** into this, so returning a slot is pushing a `usize` rather
+    /// than moving an `Arc` — which is what lets a `Writer` return it just as
+    /// easily as the `Trace` can.
+    slots: Box<[Arc<Inner>]>,
+    free: Mutex<Vec<usize>>,
     exhausted: AtomicU64,
-    abandoned: AtomicU64,
+    double_release: AtomicU64,
     cal: Calibration,
 }
 
@@ -220,13 +251,15 @@ impl Clone for TracePool {
 
 impl TracePool {
     pub fn new(cal: Calibration, pool_size: usize, capacity_per_trace: usize) -> Self {
-        let free: Vec<Arc<Inner>> =
-            (0..pool_size).map(|_| Arc::new(Inner::new(cal, capacity_per_trace))).collect();
+        let slots: Box<[Arc<Inner>]> = (0..pool_size)
+            .map(|i| Arc::new(Inner::new(cal, capacity_per_trace, i)))
+            .collect();
         Self {
             inner: Arc::new(PoolInner {
-                free: Mutex::new(free),
+                free: Mutex::new((0..pool_size).collect()),
+                slots,
                 exhausted: AtomicU64::new(0),
-                abandoned: AtomicU64::new(0),
+                double_release: AtomicU64::new(0),
                 cal,
             }),
             capacity_per_trace,
@@ -237,7 +270,11 @@ impl TracePool {
     pub fn checkout(&self) -> Option<Trace> {
         let got = self.inner.free.lock().ok().and_then(|mut f| f.pop());
         match got {
-            Some(inner) => Some(Trace { inner: Some(inner), pool: Arc::clone(&self.inner) }),
+            Some(i) => {
+                let inner = Arc::clone(&self.inner.slots[i]);
+                inner.holders.store(1, Ordering::Relaxed);
+                Some(Trace { inner: Some(inner), pool: Arc::clone(&self.inner) })
+            }
             None => {
                 self.inner.exhausted.fetch_add(1, Ordering::Relaxed);
                 None
@@ -253,15 +290,24 @@ impl TracePool {
         self.inner.exhausted.load(Ordering::Relaxed)
     }
 
-    /// How many buffers were given up on because a writer had not finished.
-    /// Each one permanently shrinks the pool, so a rising count and a rising
-    /// `exhausted_checkouts` are the same fault seen twice.
-    pub fn abandoned(&self) -> u64 {
-        self.inner.abandoned.load(Ordering::Relaxed)
+    /// Handles dropped when the holder count already indicated no holders.
+    /// A nonzero count identifies inconsistent buffer ownership.
+    pub fn double_release(&self) -> u64 {
+        self.inner.double_release.load(Ordering::Relaxed)
     }
 
     pub fn available(&self) -> usize {
         self.inner.free.lock().map(|f| f.len()).unwrap_or(0)
+    }
+
+    /// How many buffers this pool was built with.
+    ///
+    /// The number [`TracePool::available`] returns to once every request has
+    /// finished. Published because "did anything leak" is otherwise only
+    /// answerable against a snapshot taken while requests are in flight, which
+    /// is a moving baseline and not an invariant.
+    pub fn size(&self) -> usize {
+        self.inner.slots.len()
     }
 
     pub fn calibration(&self) -> Calibration {
@@ -447,8 +493,65 @@ mod tests {
             assert_eq!(pool.available(), 1, "it is checked out");
         }
         assert_eq!(pool.available(), 2, "and back");
-        assert_eq!(pool.abandoned(), 0);
+        assert_eq!(pool.double_release(), 0);
         assert_eq!(pool.exhausted_checkouts(), 0);
+    }
+
+    /// **The writer outlives the trace, and the buffer still comes back.**
+    ///
+    /// This is the case that was failing for real. `Cell::respond` takes a
+    /// writer, sends the result — which carries the `Trace` — and marks
+    /// afterwards. The collector can receive, read and drop that `Trace`
+    /// before the sending thread reaches its last mark, so on a loaded box the
+    /// writer routinely outlives the trace.
+    ///
+    /// The first version had the `Trace` spin waiting for the writers and give
+    /// up after a bound, which leaked the buffer: 13 runs in 60 of the
+    /// end-to-end test lost two buffers each. A bounded spin is microseconds
+    /// and a descheduled thread is away for milliseconds, so no bound was both
+    /// short enough not to block the collector and long enough to be correct.
+    /// Whoever is last returns it, so ordering does not matter at all.
+    #[test]
+    fn the_buffer_comes_back_even_when_the_writer_outlives_the_trace() {
+        let pool = TracePool::new(cal(), 1, 16);
+        for _ in 0..64 {
+            let t = pool.checkout().expect("a buffer");
+            t.begin();
+            let w = t.writer();
+            // The reply crossing to the collector: the trace is gone from this
+            // thread's hands while the writer is still in them.
+            drop(t);
+            assert_eq!(pool.available(), 0, "a writer still holds it");
+            w.mark(9);
+            drop(w);
+            assert_eq!(pool.available(), 1, "the last holder returns it");
+        }
+        assert_eq!(pool.double_release(), 0);
+        assert_eq!(pool.exhausted_checkouts(), 0);
+    }
+
+    /// The same, across threads and with the drop order genuinely racing.
+    ///
+    /// A pool of one means any leak at all wedges the next iteration, so this
+    /// fails loudly rather than degrading.
+    #[test]
+    fn a_racing_handoff_never_loses_a_buffer() {
+        let pool = TracePool::new(cal(), 1, 32);
+        for _ in 0..200 {
+            let t = pool.checkout().expect("the pool must never run dry here");
+            t.begin();
+            let w = t.writer();
+            let h = std::thread::spawn(move || {
+                w.mark(1);
+                drop(w);
+            });
+            t.mark(2);
+            drop(t);
+            h.join().unwrap();
+            assert_eq!(pool.available(), 1, "the buffer did not come back");
+        }
+        assert_eq!(pool.exhausted_checkouts(), 0, "a leak would show up here first");
+        assert_eq!(pool.double_release(), 0);
     }
 
     /// A dry pool hands back nothing and counts it, rather than blocking a
