@@ -328,8 +328,8 @@ impl FutureTable {
             return;
         };
         o.per_dispatch.remove(&dispatch);
-        let pending: Vec<u64> = o.pending.iter().copied().collect();
-        let doomed: Vec<u64> = pending
+        let undelivered: Vec<u64> = o.pending.iter().chain(o.ready.iter()).copied().collect();
+        let doomed: Vec<u64> = undelivered
             .into_iter()
             .filter(|id| g.entries.get(id).is_some_and(|e| e.dispatch == dispatch))
             .collect();
@@ -524,6 +524,40 @@ mod tests {
             WakeTarget::Instance(i)
         );
         t.take_ready(i);
+    }
+
+    /// Reclaim pending futures owned by the completed dispatch.
+    #[test]
+    fn a_completed_but_undelivered_result_does_not_outlive_its_dispatch() {
+        let t = table();
+        let i = InstanceId(1);
+        let doomed = t.alloc(i, 1, "kv_get", 64).unwrap();
+        let kept = t.alloc(i, 2, "queue_send", 64).unwrap();
+
+        // Both resolve while the dispatch is still running, and neither is
+        // collected: this is the race the hole was made of.
+        assert_eq!(
+            t.complete(doomed, ResultRecord::Ok(vec![1])),
+            WakeTarget::Instance(i)
+        );
+        assert_eq!(
+            t.complete(kept, ResultRecord::Ok(vec![2])),
+            WakeTarget::Instance(i)
+        );
+        assert!(t.has_ready(i), "both results are queued and undelivered");
+
+        t.end_dispatch(i, 1);
+
+        let served = t.take_ready(i);
+        assert_eq!(
+            served,
+            Some((kept, ResultRecord::Ok(vec![2]))),
+            "a result remains live only for its owning dispatch"
+        );
+        assert!(
+            !t.has_ready(i),
+            "a result outlived the dispatch that awaited it"
+        );
     }
 
     #[test]
