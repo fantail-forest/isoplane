@@ -217,7 +217,22 @@ impl FutureTable {
     /// is how a completion that lands mid-dispatch is delivered *after* the
     /// current call returns rather than reentrantly (§5.4).
     pub fn take_ready(&self, owner: InstanceId) -> Option<(u64, ResultRecord)> {
+        self.take_ready_marked(owner, &mut None)
+    }
+
+    /// [`FutureTable::take_ready`], marking the wait for the table separately
+    /// from the work done under it.
+    ///
+    /// **A triple.** The hold is 80 ns and more — a loop popping and removing
+    /// across three structures — and it is taken on every resumed slice, so
+    /// the wait and the hold are worth telling apart.
+    pub fn take_ready_marked(
+        &self,
+        owner: InstanceId,
+        marks: &mut Option<crate::marks::RequestMarks>,
+    ) -> Option<(u64, ResultRecord)> {
         let mut g = self.inner.lock();
+        crate::marks::mark(marks, crate::marks::Mark::TakeReadyAcquired);
         loop {
             let id = g.owned.get_mut(&owner)?.ready.pop_front()?;
             let Some(e) = g.entries.get_mut(&id) else {

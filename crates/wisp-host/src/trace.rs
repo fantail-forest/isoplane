@@ -83,6 +83,26 @@ impl Inner {
         (0, 0)
     }
 
+    /// Claim a slot and write a timestamp that was read **earlier**.
+    ///
+    /// For the case where the instant worth recording and the moment the trace
+    /// becomes reachable are not the same. A wake is enqueued by a reactor
+    /// thread that has the request's slot but not its trace — reaching the
+    /// trace from there would mean taking `Cell::active` on the wake path, and
+    /// adding a lock to the wake path in order to measure the wake path is
+    /// self-defeating. So the counter is read where the event happens, carried
+    /// on the queued item as two plain integers, and filed here by the thread
+    /// that picks the request up.
+    #[inline(always)]
+    fn mark_at(&self, label: u8, t: u64, core: u32) {
+        let i = self.cursor.fetch_add(1, Ordering::Relaxed);
+        if i >= self.ticks.len() {
+            return;
+        }
+        self.ticks[i].store(t, Ordering::Relaxed);
+        self.tags[i].store(pack(label, core), Ordering::Release);
+    }
+
     /// Claim a slot and write a timestamp into it.
     ///
     /// The counter is read **before** the slot is claimed, so the atomic add —
@@ -179,10 +199,28 @@ impl Trace {
         Writer { inner: self.inner.clone(), pool: Arc::clone(&self.pool) }
     }
 
+    /// Record a timestamp read earlier. See [`Inner::mark_at`].
+    #[inline(always)]
+    pub fn mark_at(&self, label: u8, at: (u64, u32)) {
+        if let Some(i) = &self.inner {
+            i.mark_at(label, at.0, at.1);
+        }
+    }
+
     /// The calibration these timestamps were taken against.
     pub fn calibration(&self) -> Option<Calibration> {
         self.inner.as_ref().map(|i| i.cal)
     }
+}
+
+/// Read the counter without a trace to put it in.
+///
+/// The same `RDTSCP` sequence every mark uses. For the two producers that know
+/// *when* something happened but cannot reach the trace to say so — see
+/// [`Inner::mark_at`].
+#[inline(always)]
+pub fn now() -> (u64, u32) {
+    Inner::read_counter()
 }
 
 /// A write handle for a thread that has given the request away.

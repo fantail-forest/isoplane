@@ -275,6 +275,17 @@ impl InstanceCtx {
     pub fn take_trap(&self) -> Option<TrapCode> {
         self.trap_latch.lock().take()
     }
+    /// Is a trap latched, without consuming it?
+    ///
+    /// [`InstanceCtx::take_trap`] is destructive, and the decision that needs
+    /// this is taken *before* the one that consumes it: the cell must know
+    /// whether this call is going to end in a tombstone while it still holds
+    /// the sandbox, because releasing the sandbox first opens a window in which
+    /// another thread can enter an instance that is about to be destroyed. See
+    /// `Cell::settle`.
+    pub fn has_trap(&self) -> bool {
+        self.trap_latch.lock().is_some()
+    }
     pub fn latch_trap(&self, code: TrapCode) {
         let mut g = self.trap_latch.lock();
         if g.is_none() {

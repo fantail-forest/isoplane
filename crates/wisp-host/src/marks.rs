@@ -181,6 +181,69 @@ pub enum Mark {
     /// nothing of its own left to mark with.
     SendReturned,
 
+    // --- pausing and resuming ------------------------------------------------
+    /// The guest returned `pending`: it is waiting for something and the
+    /// worker has been handed back. Marks the park transition itself.
+    Parked,
+    /// Nothing; the left edge of the future table's readiness check.
+    ReadyCheckWanted,
+    /// The future table: wait and hold. A **pair** — one map lookup and an
+    /// emptiness check.
+    ReadyCheckReleased,
+    /// **The request goes dormant.** The last mark of a slice that parked; the
+    /// worker is free from here.
+    SliceEnded,
+    /// **Waiting for the outside world, plus the completion's own path back
+    /// into the cell.**
+    ///
+    /// The single largest thing buried in the old instrument's residual, and
+    /// the reason a parking guest reported as the fastest thing in the
+    /// campaign: the old `guest_ns` timed the first slice only.
+    ///
+    /// The reading is taken where the wake is enqueued — on a reactor thread
+    /// that holds the request's slot but not its trace — and filed by the
+    /// worker that picks it up. Reaching the trace from the reactor would mean
+    /// taking `Cell::active` on the wake path, and adding a lock to the wake
+    /// path to measure the wake path is self-defeating.
+    WakeEnqueueBegan,
+    /// End of dequeueing a queued wake for execution.
+    WakeStarted,
+    /// Nothing; the left edge of the live-sandbox table on the wake path.
+    WakeResidentsLockWanted,
+    /// **Waiting for the live-sandbox table**, on the wake path.
+    WakeResidentsLockAcquired,
+    /// End of resident-instance access for a wake.
+    WakeResidentsLockReleased,
+    /// Nothing; the left edge of the future table.
+    TakeReadyWanted,
+    /// **Waiting for the future table** to hand over the completed result.
+    TakeReadyAcquired,
+    /// End of taking ready future completions.
+    TakeReadyReleased,
+    /// Nothing; the left edge of the budget read.
+    ActiveBudgetWanted,
+    /// End of reading the active request CPU budget.
+    ActiveBudgetReleased,
+
+    // --- refusals -------------------------------------------------------------
+    /// The hang breaker said no. Refused without ever reaching a queue.
+    BreakerRefused,
+    /// The queue was full. **Under a mutex structure this happens while
+    /// holding the lane lock, having already paid to acquire it** — a fact the
+    /// old instrument threw away entirely; under the lock-free one the ring
+    /// hands the job back and no lock is involved. Two different costs, and
+    /// the span before this mark is what tells them apart.
+    ShedDecided,
+    /// No such module. Refused **after** queueing and being given a worker.
+    ModuleMissing,
+    /// Building or finding a sandbox failed. Refused after the most expensive
+    /// part of setup was already paid for — possibly after a full activation.
+    AcquireFailed,
+    /// Label for a single-writer admission refusal.
+    SingleWriterRefused,
+    /// The sandbox refused entry: busy, or tombstoned and refusing everything.
+    EnterRefused,
+
     // --- the caller's side again --------------------------------------------
     /// The reply crossing the channel and the collector being scheduled, plus
     /// any time the cell was blocked on a full channel. **The last mark**;
@@ -255,6 +318,26 @@ pub const ALL: &[Mark] = &[
     Mark::ResponderTakenReleased,
     Mark::ReplyHandedOff,
     Mark::SendReturned,
+    Mark::Parked,
+    Mark::ReadyCheckWanted,
+    Mark::ReadyCheckReleased,
+    Mark::SliceEnded,
+    Mark::WakeEnqueueBegan,
+    Mark::WakeStarted,
+    Mark::WakeResidentsLockWanted,
+    Mark::WakeResidentsLockAcquired,
+    Mark::WakeResidentsLockReleased,
+    Mark::TakeReadyWanted,
+    Mark::TakeReadyAcquired,
+    Mark::TakeReadyReleased,
+    Mark::ActiveBudgetWanted,
+    Mark::ActiveBudgetReleased,
+    Mark::BreakerRefused,
+    Mark::ShedDecided,
+    Mark::ModuleMissing,
+    Mark::AcquireFailed,
+    Mark::SingleWriterRefused,
+    Mark::EnterRefused,
     Mark::CallerReceived,
 ];
 
@@ -338,6 +421,26 @@ impl Mark {
             ResultReadReleased => "active.read",
             ResponderTakenWanted => "active.responder.wanted",
             ResponderTakenReleased => "active.responder",
+            Parked => "park.enter",
+            ReadyCheckWanted => "futures.ready.wanted",
+            ReadyCheckReleased => "futures.ready",
+            SliceEnded => "slice.end",
+            WakeEnqueueBegan => "park.wait",
+            WakeStarted => "wake.queue.wait",
+            WakeResidentsLockWanted => "wake.residents.wanted",
+            WakeResidentsLockAcquired => "wake.residents.wait",
+            WakeResidentsLockReleased => "wake.residents.hold",
+            TakeReadyWanted => "futures.take.wanted",
+            TakeReadyAcquired => "futures.take.wait",
+            TakeReadyReleased => "futures.take.hold",
+            ActiveBudgetWanted => "active.budget.wanted",
+            ActiveBudgetReleased => "active.budget",
+            BreakerRefused => "refused.breaker",
+            ShedDecided => "refused.shed",
+            ModuleMissing => "refused.no_module",
+            AcquireFailed => "refused.acquire",
+            SingleWriterRefused => "refused.single_writer",
+            EnterRefused => "refused.enter",
             ReplyHandedOff => "reply.handoff",
             SendReturned => "reply.send.blocked",
             CallerReceived => "reply.delivery",
@@ -360,6 +463,22 @@ impl Mark {
             ResponseTableWanted | ResponseTableAcquired | ResponseTableReleased => {
                 Structural::RespondingDispatch
             }
+            Parked
+            | ReadyCheckWanted
+            | ReadyCheckReleased
+            | SliceEnded
+            | WakeEnqueueBegan
+            | WakeStarted
+            | WakeResidentsLockWanted
+            | WakeResidentsLockAcquired
+            | WakeResidentsLockReleased
+            | TakeReadyWanted
+            | TakeReadyAcquired
+            | TakeReadyReleased
+            | ActiveBudgetWanted
+            | ActiveBudgetReleased => Structural::ParkingRequest,
+            BreakerRefused | ShedDecided | ModuleMissing | AcquireFailed | SingleWriterRefused
+            | EnterRefused => Structural::RefusedRequest,
             _ => Structural::Always,
         }
     }
@@ -376,6 +495,12 @@ pub enum Structural {
     LockFreeQueue,
     /// A dispatch that completed with a response handle.
     RespondingDispatch,
+    /// A request that paused and was resumed. Every span in this class repeats
+    /// once per pause, and the ones inside `run_wake`'s own loop can repeat
+    /// several times per pause.
+    ParkingRequest,
+    /// A request that was refused rather than served.
+    RefusedRequest,
 }
 
 impl Structural {
@@ -390,6 +515,8 @@ impl Structural {
             Structural::RespondingDispatch => {
                 "only a dispatch that completed with a response handle reaches it"
             }
+            Structural::ParkingRequest => "only a request that paused and resumed reaches it",
+            Structural::RefusedRequest => "only a refused request reaches it",
         }
     }
 }
@@ -424,6 +551,24 @@ pub fn writer(m: &Option<RequestMarks>) -> Option<MarkWriter> {
 pub fn mark_after(w: &Option<MarkWriter>, label: Mark) {
     if let Some(w) = w {
         w.mark(label as u8);
+    }
+}
+
+/// A counter reading taken where an event happened, to be filed into a trace
+/// later by a thread that can reach it. See [`crate::trace::now`].
+pub type Stamp = (u64, u32);
+
+/// Read the counter now, for filing later.
+#[inline(always)]
+pub fn stamp() -> Stamp {
+    crate::trace::now()
+}
+
+/// File a reading taken earlier.
+#[inline(always)]
+pub fn mark_at(m: &Option<RequestMarks>, label: Mark, at: Stamp) {
+    if let Some(m) = m {
+        m.mark_at(label as u8, at);
     }
 }
 
@@ -606,13 +751,23 @@ mod tests {
     /// already had to be fixed for.
     #[test]
     fn every_structural_class_explains_its_own_absence() {
-        for s in [
-            Structural::Always,
-            Structural::MutexQueue,
-            Structural::LockFreeQueue,
-            Structural::RespondingDispatch,
-        ] {
-            assert!(!s.absence().is_empty());
+        // Every class every mark actually claims, taken from the marks
+        // themselves rather than from a list beside them — a class added to
+        // the enum and forgotten here would otherwise go unexplained, which is
+        // exactly the silence this test exists to prevent.
+        let mut classes: Vec<Structural> = ALL.iter().map(|m| m.structural()).collect();
+        classes.sort_unstable();
+        classes.dedup();
+        assert!(
+            classes.len() >= 5,
+            "only {} structural classes are reachable",
+            classes.len()
+        );
+        for s in classes {
+            assert!(
+                !s.absence().is_empty(),
+                "{s:?} cannot say why it is missing"
+            );
         }
     }
 

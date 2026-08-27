@@ -40,6 +40,9 @@ use wisp_host::{Activator, ModuleId, Resolver};
 // ---------------------------------------------------------------------------
 
 const T: Duration = Duration::from_secs(20);
+/// A host timer long enough that it never fires on its own, so a test that
+/// parks on it decides for itself when the wake happens.
+const PARK_MS: u64 = 600_000;
 
 struct Fixed(Vec<std::net::SocketAddr>);
 impl Resolver for Fixed {
@@ -140,8 +143,11 @@ fn round_trip(
 
     // `begin` *is* `CallerReleased`: the origin, not a span. See `Mark`.
     marks::begin(&m);
-    let admitted = cell.submit_with_marks(module, route("/x"), rec(id, "/x"), tx, m);
-    assert!(admitted, "the cell shed a request this test needs served");
+    let out = cell.submit_with_marks(module, route("/x"), rec(id, "/x"), tx, m);
+    assert!(
+        out.admitted,
+        "the cell shed a request this test needs served"
+    );
 
     let res = rx.recv_timeout(T).expect("a reply");
     marks::mark(&res.marks, Mark::CallerReceived);
@@ -466,6 +472,140 @@ fn the_two_queue_structures_report_different_spans_and_neither_reports_a_zero() 
 }
 
 // ---------------------------------------------------------------------------
+// pausing and resuming
+// ---------------------------------------------------------------------------
+
+/// **A request that pauses keeps its trace, and every pass is recorded.**
+///
+/// This is the half the old instrument could not see at all. `guest_ns` timed
+/// the first slice only, so a guest that awaited three times reported the guest
+/// time of one third of itself — and the stretch where it sat parked waiting on
+/// the outside world was inside the residual, unnamed and unbounded. A parking
+/// guest therefore reported as the fastest thing in the campaign.
+///
+/// Three claims:
+///
+/// 1. The trace **survives the park**. It lives on the execution thread while a
+///    thread is running the request and there is no thread while it is parked,
+///    so it is handed to `Cell::active` and reclaimed by whichever worker picks
+///    the wake up. Losing it there would silently truncate every parking
+///    request to its first slice — which is exactly what the old code did.
+/// 2. The wait for the outside world is **its own span**, separated from the
+///    wake's trip through the priority lane.
+/// 3. The guest span appears **once per pass**, not once per request.
+#[test]
+fn a_parking_request_keeps_its_trace_across_the_pause() {
+    let c = cell(CellConfig::for_test("marks-park"));
+    // One park on a host timer long enough that it will not fire on its own,
+    // so this test decides when the wake happens rather than racing a fake.
+    let m = app(
+        &c,
+        "parker",
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS)],
+        }]),
+    );
+    let p = pool();
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let mk = p.checkout();
+    marks::begin(&mk);
+    assert!(
+        c.submit_with_marks(&m, route("/x"), rec(0, "/x"), tx, mk)
+            .admitted
+    );
+
+    // Wait for the instance to actually be parked before completing, so the
+    // request really does go dormant rather than the completion racing the
+    // park and being drained in place.
+    assert!(
+        wait_for(|| c.metrics().parked > 0, T),
+        "the guest never parked, so nothing about resuming was measured"
+    );
+    // The one host future the guest is waiting on.
+    let fid = c
+        .futures()
+        .live_future_ids()
+        .into_iter()
+        .next()
+        .expect("one pending future");
+    std::thread::sleep(Duration::from_millis(20));
+    c.complete_future(fid, wisp_abi::result::ResultRecord::Ok(vec![]));
+
+    let res = rx.recv_timeout(T).expect("a reply after the wake");
+    marks::mark(&res.marks, Mark::CallerReceived);
+    let t = wisp_host::marks::read(res.marks.as_ref().expect("the trace survived the park"));
+    let got: Vec<Mark> = t.spans.iter().map(|(l, _)| *l).collect();
+    let names = || got.iter().map(|m| m.name()).collect::<Vec<_>>();
+
+    // 1. It survived.
+    assert!(
+        got.contains(&Mark::SliceEnded),
+        "the park was never marked: {:?}",
+        names()
+    );
+    assert!(
+        got.contains(&Mark::WakeStarted),
+        "the trace did not survive the park — it would have ended at the first slice: {:?}",
+        names()
+    );
+
+    // 2. The two halves of the pause are separate spans.
+    let ns = |l: Mark| {
+        t.spans
+            .iter()
+            .find(|(k, _)| *k == l)
+            .map(|(_, ns)| *ns)
+            .unwrap_or(-1.0)
+    };
+    let outside = ns(Mark::WakeEnqueueBegan);
+    let lane = ns(Mark::WakeStarted);
+    assert!(
+        outside >= 0.0 && lane >= 0.0,
+        "both halves must be present: {:?}",
+        names()
+    );
+    assert!(
+        outside > 15_000_000.0,
+        "the guest was left parked for 20 ms and the wait for the outside world reports \
+         {outside:.0} ns"
+    );
+    assert!(
+        lane < outside / 10.0,
+        "the priority lane's wait ({lane:.0} ns) moved with the park ({outside:.0} ns), which \
+         is what one span wearing two names looks like"
+    );
+
+    // 3. The guest ran twice and both passes are on the trace.
+    assert_eq!(
+        got.iter().filter(|l| **l == Mark::GuestReturned).count(),
+        2,
+        "one dispatch and one wake is two passes through the guest: {:?}",
+        names()
+    );
+    assert_eq!(
+        got.iter()
+            .filter(|l| **l == Mark::SlotEnterReleased)
+            .count(),
+        2,
+        "the sandbox is entered once per pass"
+    );
+    // The resume's own locks are named apart from the dispatch path's, so a
+    // row cannot pool two different contention regimes on the same lock.
+    assert!(got.contains(&Mark::WakeResidentsLockAcquired));
+    assert!(got.contains(&Mark::TakeReadyAcquired));
+
+    // And the whole thing still tiles: the total is the whole pause, not one
+    // slice of it.
+    assert!(
+        t.span_ns > 15_000_000.0,
+        "a request that was parked for 20 ms reports a total of {:.0} ns",
+        t.span_ns
+    );
+    assert!(!t.truncated, "one park cannot fill the buffer");
+}
+
+// ---------------------------------------------------------------------------
 // the pool
 // ---------------------------------------------------------------------------
 
@@ -539,7 +679,19 @@ fn a_refused_request_returns_its_buffer_rather_than_a_partial_trace() {
         marks::begin(&mk);
         let mut r = rec(id, "/x");
         r.cpu_budget_ms = 200;
-        if !c.submit_with_marks(&m, route("/x"), r, tx, mk) {
+        let out = c.submit_with_marks(&m, route("/x"), r, tx, mk);
+        if !out.admitted {
+            // **The shed's trace comes back through the return value**, which
+            // is the only channel a shed has: `submit_with` deliberately sends
+            // nothing on the reply channel, so a caller draining one shared
+            // receiver cannot count the same refusal twice.
+            let t = out.refused_marks.expect("a shed hands its trace back");
+            let read = wisp_host::marks::read(&t);
+            assert!(
+                read.spans.iter().any(|(l, _)| *l == Mark::ShedDecided),
+                "a shed trace must say it was shed: {:?}",
+                read.spans.iter().map(|(l, _)| l.name()).collect::<Vec<_>>()
+            );
             shed = true;
             break;
         }

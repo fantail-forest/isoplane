@@ -620,6 +620,51 @@ impl DispatchResult {
 // The work queues
 // ---------------------------------------------------------------------------
 
+/// **Does this outcome end in a tombstone?**
+///
+/// Asked while the sandbox lock is still held, because the answer decides
+/// whether the guard is *released* or *destroyed* — and those differ in
+/// ordering, which is the whole point. `CallGuard::destroy` sets the tombstone
+/// and then clears `in_call`; plain `Drop` clears `in_call` and leaves the
+/// tombstone to `settle`, hundreds of lines later.
+///
+/// **That gap was a real hole.** Between the guard dropping and `settle`
+/// tombstoning, `Slot::enter` still admitted callers: a second completion
+/// queued for the same instance would be taken by another execution thread,
+/// which would then run guest code on memory a trap abandoned mid-flight. The
+/// two `settle`s then raced, and the loser resurrected the tier from
+/// `Discarded` back to `Parked` permanently. Reproduced at 4 runs in 20 on an
+/// *idle* machine by `dispatcher.rs`'s reentrancy test, which is why that test
+/// was thought merely flaky. `instances.rs`'s claim that "the window between
+/// 'it was hard-killed' and 'its memory is gone' is not a window at all" was
+/// true only of the hibernation path, which is the one caller that already
+/// tombstoned first.
+///
+/// The latched case is included and is not decoration: `settle` promotes a
+/// latched trap into `Completion::Trapped` a few lines below, so a `Done` whose
+/// vtable owed the guest a trap tombstones exactly like an outright one — and
+/// asking `take_trap` here instead would consume the latch that promotion needs.
+fn ends_in_tombstone(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool {
+    matches!(out.completion, Completion::Trapped | Completion::BudgetKill)
+        || (matches!(out.completion, Completion::Done | Completion::Parked) && slot.ctx.has_trap())
+}
+
+/// What a submission did, and what it handed back.
+///
+/// [`Cell::submit_with_marks`] cannot answer with a bool alone once the caller
+/// owns the trace buffer: a shed sends nothing on the reply channel —
+/// deliberately, so a caller draining one shared receiver cannot count the same
+/// refusal twice — so the return value is the only route a shed's trace has
+/// home.
+pub struct SubmitOutcome {
+    /// `false` if the cell shed at admission (§6.4).
+    pub admitted: bool,
+    /// The trace of a **shed** request, handed back so the caller can close and
+    /// record it. `None` when the request was admitted (the cell kept it) or
+    /// when there was no trace.
+    pub refused_marks: Option<RequestMarks>,
+}
+
 enum Job {
     Dispatch(Box<DispatchJob>),
     /// A host future completed for this instance; deliver it.
@@ -644,6 +689,15 @@ struct WakeItem {
     /// It is the same predicate `Cell::new_stamps` used at admission and on
     /// the same id, so the two cannot disagree about which request this is.
     queued_ns: Option<u64>,
+    /// **A counter reading, taken where the wake was enqueued.**
+    ///
+    /// Not the trace itself: the reactor thread that completes a future holds
+    /// the request's slot but not its trace, and reaching the trace from there
+    /// would mean taking `Cell::active` on the wake path. Adding a lock to the
+    /// wake path in order to measure the wake path is self-defeating, so the
+    /// counter is read here — two integers, no lock — and filed into the trace
+    /// by the worker that picks the wake up.
+    enqueued_at: Option<crate::marks::Stamp>,
 }
 
 struct DispatchJob {
@@ -1487,6 +1541,14 @@ struct ActiveRequest {
     /// already closed. `wall_ns` beside it is the third, accumulated per slice
     /// by `settle`, so the guest stage costs no clock read of its own.
     stamps: Option<StageStamps>,
+    /// **Where the trace lives while the request is parked.**
+    ///
+    /// It is a local on the execution thread for as long as one is running the
+    /// request, because a local needs no lock. A parked request has no thread,
+    /// so between the park and the wake it lives here — reclaimed by whichever
+    /// worker picks the wake up. `None` while a thread holds it, which is the
+    /// common case and is why nothing reads this on the plain path.
+    marks: Option<RequestMarks>,
 }
 
 /// Routes completions from reactor threads onto the exec pool (§6.1's wake
@@ -1510,9 +1572,16 @@ impl WakeSink for CellWake {
             // The sampling decision, taken from the instance's own dispatch id
             // — an atomic load and a modulo, on a reactor thread, with no lock
             // taken. See `WakeItem::queued`.
-            let queued_ns =
-                stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every).then(crate::mono_ns);
-            self.queue.push_wake(WakeItem { slot: s, queued_ns });
+            let sampled = stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every);
+            let queued_ns = sampled.then(crate::mono_ns);
+            // The counter, read here and filed by whichever worker picks this
+            // wake up. See `WakeItem::enqueued_at`.
+            let enqueued_at = sampled.then(marks::stamp);
+            self.queue.push_wake(WakeItem {
+                slot: s,
+                queued_ns,
+                enqueued_at,
+            });
         }
     }
 }
@@ -1748,7 +1817,7 @@ impl Cell {
             if let Some(cell) = &cell {
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                     Job::Dispatch(j) => cell.run_dispatch(*j),
-                    Job::Wake(w) => cell.run_wake(w.slot, w.queued_ns),
+                    Job::Wake(w) => cell.run_wake(w.slot, w.queued_ns, w.enqueued_at),
                 }));
                 // Cleared either way, so a job that finished normally cannot
                 // leave a stale id for the next panic to answer.
@@ -2251,6 +2320,7 @@ impl Cell {
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
     ) -> bool {
         self.submit_with_marks(module, target, rec, responder, None)
+            .admitted
     }
 
     /// [`Cell::submit_with`], carrying a request's marks in with it.
@@ -2274,9 +2344,8 @@ impl Cell {
         rec: DispatchRecord,
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
         marks: Option<RequestMarks>,
-    ) -> bool {
-        let mut marks = marks;
-        marks::mark(&mut marks, Mark::CellEntered);
+    ) -> SubmitOutcome {
+        marks::mark(&marks, Mark::CellEntered);
         // **The submit stage opens above the breaker check**, which is where
         // [`StageTimings::submit_ns`] has always said it opens and where the
         // struct literal below — evaluated after the check, since that is a
@@ -2305,15 +2374,25 @@ impl Cell {
         // under it separate cleanly. It was briefly a pair, on the strength of
         // a calibration that measured the mark cost on a core fresh out of a
         // sleep and reported double.
-        marks::mark(&mut marks, Mark::BreakerLockWanted);
+        marks::mark(&marks, Mark::BreakerLockWanted);
+        let mut marks = marks;
         let refused = self.breaker.check_marked(&key, now, &mut marks).is_err();
-        marks::mark(&mut marks, Mark::BreakerChecked);
+        marks::mark(&marks, Mark::BreakerChecked);
         if refused {
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
-            let _ = responder.send(DispatchResult::breaker_open(dispatch_id));
-            return true;
+            marks::mark(&marks, Mark::BreakerRefused);
+            // The refusal carries the trace home the same way a completion
+            // does: the caller waited for this answer and the wait is real.
+            let mut r = DispatchResult::breaker_open(dispatch_id);
+            r.marks = marks;
+            marks::mark(&r.marks, Mark::ReplyHandedOff);
+            let _ = responder.send(r);
+            return SubmitOutcome {
+                admitted: true,
+                refused_marks: None,
+            };
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
@@ -2325,14 +2404,29 @@ impl Cell {
             marks,
         });
         marks::mark(&job.marks, Mark::JobBuilt);
-        if self.queue.push_dispatch(job).is_err() {
-            self.metrics.shed.fetch_add(1, Ordering::Relaxed);
-            if let Some(m) = self.meters(module) {
-                m.record_shed();
+        match self.queue.push_dispatch(job) {
+            Ok(()) => SubmitOutcome {
+                admitted: true,
+                refused_marks: None,
+            },
+            Err(mut j) => {
+                // **The shed's trace goes back to the caller**, not into the
+                // reply channel: `submit_with` deliberately sends nothing on a
+                // shed, because a caller draining one shared receiver cannot
+                // tell a synthesised refusal from a completion and would count
+                // it twice. So the buffer is handed back through the return
+                // value, which is the only channel a shed has.
+                marks::mark(&j.marks, Mark::ShedDecided);
+                self.metrics.shed.fetch_add(1, Ordering::Relaxed);
+                if let Some(m) = self.meters(module) {
+                    m.record_shed();
+                }
+                SubmitOutcome {
+                    admitted: false,
+                    refused_marks: j.marks.take(),
+                }
             }
-            return false;
         }
-        true
     }
 
     /// Async form, for callers already on a reactor.
@@ -2420,9 +2514,14 @@ impl Cell {
         drop(modules);
         marks::mark(&mut marks, Mark::ModulesLockReleased);
         let Some(entry) = entry else {
+            // Refused **after** queueing and being given a worker, which is
+            // what the span before this mark says and what no previous
+            // instrument could have said at all.
+            marks::mark(&marks, Mark::ModuleMissing);
             let _ = job.responder.send(DispatchResult {
                 status: 404,
                 body: b"no such module".to_vec(),
+                marks: marks.take(),
                 ..DispatchResult::shed(did)
             });
             return;
@@ -2460,9 +2559,13 @@ impl Cell {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "activation failed");
+                        // Refused after the most expensive part of setup is
+                        // already paid for — possibly after a whole activation.
+                        marks::mark(&marks, Mark::AcquireFailed);
                         let _ = job.responder.send(DispatchResult {
                             status: 500,
                             body: e.to_string().into_bytes(),
+                            marks: marks.take(),
                             ..DispatchResult::shed(did)
                         });
                         return;
@@ -2510,11 +2613,13 @@ impl Cell {
             self.metrics
                 .single_writer_refusals
                 .fetch_add(1, Ordering::Relaxed);
+            marks::mark(&marks, Mark::SingleWriterRefused);
             let _ = job.responder.send(DispatchResult {
                 status: 409,
                 body: "durable instance already has a dispatch in flight (§7.2)"
                     .as_bytes()
                     .to_vec(),
+                marks: marks.take(),
                 ..DispatchResult::shed(did)
             });
             return;
@@ -2556,6 +2661,7 @@ impl Cell {
                 acquired,
                 budget,
                 stamps: job.stamps,
+                marks: None,
             },
         );
         marks::mark(&mut marks, Mark::ActiveInsertReleased);
@@ -2593,6 +2699,7 @@ impl Cell {
                     // counter left `tombstone_refusals`, §10's negative
                     // control for the tombstone rule, permanently at zero.
                     self.count_enter_refusal(e);
+                    marks::mark(&marks, Mark::EnterRefused);
                     self.respond(
                         &slot,
                         DispatchResult {
@@ -2617,13 +2724,19 @@ impl Cell {
             marks::mark(&mut marks, Mark::GuestReturned);
             self.hot.fetch_sub(1, Ordering::Relaxed);
             marks::mark(&mut marks, Mark::SlotReleaseWanted);
+            // **Tombstone before releasing, or not at all.** See
+            // `ends_in_tombstone`: releasing first leaves a window in which
+            // another thread can enter an instance a trap has abandoned.
+            if ends_in_tombstone(&out, &slot) {
+                guard.destroy();
+            } else {
+                drop(guard);
+            }
             out
         };
-        // The guard dropped at the close of the block above, taking
-        // `Slot::inner` a second time on its way out. A **pair**: the release
-        // path is reached through `impl Drop for CallGuard`, which takes no
-        // arguments and so cannot be handed a buffer to mark into — see the
-        // note in `crate::marks` about what that costs.
+        // A **pair**: the release path is reached through `impl Drop for
+        // CallGuard`, which takes no arguments and so cannot be handed a
+        // buffer to mark into — see the note in `crate::marks`.
         marks::mark(&mut marks, Mark::SlotReleaseReleased);
 
         // A completion can land while a dispatch is Hot; §5.4 made it wait, so
@@ -2631,6 +2744,31 @@ impl Cell {
         // result queued against a parked instance nobody will visit again.
         if !self.settle(&slot, &entry, outcome, &mut marks) {
             self.queue_wake(slot);
+        }
+    }
+
+    /// **Hand the trace to the parked request**, since no thread will hold it
+    /// until a worker picks the wake up.
+    ///
+    /// `SliceEnded` is marked here rather than at the caller, so it is the last
+    /// thing on the trace before it goes dormant — the span that opens at it is
+    /// the wait for the outside world, and anything marked after it would be
+    /// inside that wait rather than before it.
+    ///
+    /// Costs one `Cell::active` acquisition, on the park path only, and only
+    /// for a traced request: an untraced one has nothing to stash and the
+    /// `Option` is empty before the lock is reached.
+    fn park_marks(&self, slot: &Arc<Slot>, marks: &mut Option<RequestMarks>) {
+        if marks.is_none() {
+            return;
+        }
+        marks::mark(marks, Mark::SliceEnded);
+        let taken = marks.take();
+        // A request whose `active` entry has already gone is one nobody will
+        // wake; letting the trace drop returns its buffer rather than leaking
+        // it, and the trace simply ends where the request did.
+        if let Some(orphan) = self.active.with_mut(&slot.id, |a| a.marks = taken) {
+            let _ = orphan;
         }
     }
 
@@ -2642,9 +2780,14 @@ impl Cell {
     /// queue stamp. `CellWake::signal` is the fourth and cannot use this — it
     /// holds no cell — so it carries the same two lines against the same id.
     fn queue_wake(&self, slot: Arc<Slot>) {
-        let queued_ns =
-            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every).then(crate::mono_ns);
-        self.queue.push_wake(WakeItem { slot, queued_ns });
+        let sampled = stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every);
+        let queued_ns = sampled.then(crate::mono_ns);
+        let enqueued_at = sampled.then(marks::stamp);
+        self.queue.push_wake(WakeItem {
+            slot,
+            queued_ns,
+            enqueued_at,
+        });
     }
 
     /// One woken slice, and every further slice the instance can take without
@@ -2655,7 +2798,12 @@ impl Cell {
     /// per-request sum across slices; the loop below does not re-queue, so the
     /// stamp is spent once and the later slices in this call queued for
     /// nothing and are charged nothing.
-    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, queued_ns: Option<u64>) {
+    fn run_wake(
+        self: &Arc<Self>,
+        slot: Arc<Slot>,
+        queued_ns: Option<u64>,
+        enqueued_at: Option<crate::marks::Stamp>,
+    ) {
         // This slice's lane wait closes **here**, at the top, before the
         // `residents` lock — exactly where `run_dispatch` closes its own, and
         // for the same reason: everything below this line is work the cell
@@ -2668,17 +2816,39 @@ impl Cell {
         // *measurement* boundary is this line and the *store* is deferred,
         // which is the only way to have both.
         let mut waited = queued_ns.map(|t| crate::mono_ns().saturating_sub(t));
+        // **Reclaim the trace the park left behind.**
+        //
+        // Guarded on the sampling predicate — one atomic load and a modulo,
+        // no lock — so an untraced wake does not take `Cell::active` here at
+        // all. A traced one does, and pays for it: this is a fifth lock on the
+        // wake path and the span it opens is charged with taking it.
+        let mut marks: Option<RequestMarks> =
+            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every)
+                .then(|| self.active.with_mut(&slot.id, |a| a.marks.take()).flatten())
+                .flatten();
+        // The wait for the outside world closes at the instant the wake was
+        // enqueued, which a reactor thread read for us; everything from there
+        // to here is the priority lane and the pop.
+        if let Some(at) = enqueued_at {
+            marks::mark_at(&marks, Mark::WakeEnqueueBegan, at);
+        }
+        marks::mark(&marks, Mark::WakeStarted);
         // A wake runs an existing request, which is therefore already in
         // `Cell::active` and already answerable. The id comes from the
         // instance's own context, which `begin_dispatch` set and every slice
         // of this request carries. See `Cell::answer_after_panic`.
         IN_FLIGHT.set(Some((slot.id, slot.ctx.dispatch_id())));
-        let Some(module) = self
-            .residents
-            .lock()
-            .get(&slot.id)
-            .map(|r| r.module.clone())
-        else {
+        // A **triple**: ~48 ns held, with a `ModuleId::clone` inside the hold.
+        // Deliberately its own label rather than sharing the dispatch path's:
+        // the two are the same lock under different contention, and one row
+        // covering both could not say which side was waiting.
+        marks::mark(&marks, Mark::WakeResidentsLockWanted);
+        let residents = self.residents.lock();
+        marks::mark(&marks, Mark::WakeResidentsLockAcquired);
+        let module = residents.get(&slot.id).map(|r| r.module.clone());
+        drop(residents);
+        marks::mark(&marks, Mark::WakeResidentsLockReleased);
+        let Some(module) = module else {
             return;
         };
         let Some(entry) = self.modules.read().get(&module).cloned() else {
@@ -2690,8 +2860,12 @@ impl Cell {
             // result out of the future table. The other order has a hole: a
             // result pulled out with nowhere to deliver it has been silently
             // dropped, and a dropped wake is a request that never finishes.
-            let mut guard = match slot.enter() {
-                Ok(g) => g,
+            marks::mark(&marks, Mark::SlotEnterWanted);
+            let mut guard = match slot.enter_marked(&mut marks) {
+                Ok(g) => {
+                    marks::mark(&marks, Mark::SlotEnterReleased);
+                    g
+                }
                 Err(crate::instances::EnterError::Busy) => {
                     // §5.4: a previous call into this instance has not
                     // returned. This is the reentrancy rule doing its job —
@@ -2710,9 +2884,13 @@ impl Cell {
                 }
                 Err(_) => return,
             };
-            let Some((fid, res)) = self.rt.futures.take_ready(slot.id) else {
-                return;
-            };
+            // A **triple**: 80 ns and more — a loop popping and removing across
+            // three structures — so the wait for the table and the work under
+            // it separate cleanly.
+            marks::mark(&marks, Mark::TakeReadyWanted);
+            let ready = self.rt.futures.take_ready_marked(slot.id, &mut marks);
+            marks::mark(&marks, Mark::TakeReadyReleased);
+            let Some((fid, res)) = ready else { return };
             // §6.4: B and B+G bind the **dispatch**, so a wake resumes with
             // what earlier slices already burned. Without this a guest could
             // park and be woken indefinitely, each slice getting a fresh 50 ms
@@ -2725,6 +2903,8 @@ impl Cell {
             // the same acquisition. `waited` is taken, so a loop that runs
             // several slices charges the one wait it actually had: the later
             // slices did not go back through a lane and are charged nothing.
+            // A **pair**: ~20 ns held.
+            marks::mark(&marks, Mark::ActiveBudgetWanted);
             let budget = self
                 .active
                 .with_mut(&slot.id, |a| {
@@ -2734,6 +2914,7 @@ impl Cell {
                     a.budget.after(a.cpu_ns)
                 })
                 .unwrap_or_else(CpuBudget::http);
+            marks::mark(&marks, Mark::ActiveBudgetReleased);
 
             // §8.5: a wake is a new slice, so the coarse clock advances here
             // and nowhere else.
@@ -2742,12 +2923,28 @@ impl Cell {
 
             let t0 = Instant::now();
             self.hot.fetch_add(1, Ordering::Relaxed);
+            marks::mark(&marks, Mark::GuestEntered);
             let outcome = guard.instance().wake(fid, &res, budget);
+            marks::mark(&marks, Mark::GuestReturned);
             self.hot.fetch_sub(1, Ordering::Relaxed);
-            drop(guard);
+            marks::mark(&marks, Mark::SlotReleaseWanted);
+            // Same ordering as the dispatch path, and for the same reason: a
+            // resumed slice that traps must not leave the sandbox enterable
+            // while `settle` is still on its way to the tombstone.
+            if ends_in_tombstone(&outcome, &slot) {
+                guard.destroy();
+            } else {
+                drop(guard);
+            }
+            marks::mark(&marks, Mark::SlotReleaseReleased);
             self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
 
-            if self.settle(&slot, &entry, outcome, &mut None) {
+            // **The loop may run the guest several times per wake**, without
+            // going back through a lane. Every pass marks its own group, which
+            // is the half the old instrument could not see at all: `waited` is
+            // taken once, correctly, but the second and later slices' entries,
+            // reads and settles were invisible.
+            if self.settle(&slot, &entry, outcome, &mut marks) {
                 return;
             }
         }
@@ -2840,9 +3037,15 @@ impl Cell {
         match completion {
             Completion::Parked => {
                 slot.park(crate::now_ms());
+                marks::mark(marks, Mark::Parked);
                 // A completion may have landed while we were Hot; §5.4 made it
-                // wait, so drain it now.
-                !self.rt.futures.has_ready(slot.id)
+                // wait, so drain it now. A **pair**: one map lookup and an
+                // emptiness check.
+                marks::mark(marks, Mark::ReadyCheckWanted);
+                let ready = self.rt.futures.has_ready(slot.id);
+                marks::mark(marks, Mark::ReadyCheckReleased);
+                self.park_marks(slot, marks);
+                !ready
             }
             Completion::Done => {
                 // §6.3: "the guest may return `done` with a body-stream handle
@@ -2906,7 +3109,12 @@ impl Cell {
                         // §2.2/§2.6: the instance lives past the response and,
                         // under `fresh`, the reset is still owed.
                         slot.park(crate::now_ms());
-                        !self.rt.futures.has_ready(slot.id)
+                        marks::mark(marks, Mark::Parked);
+                        marks::mark(marks, Mark::ReadyCheckWanted);
+                        let ready = self.rt.futures.has_ready(slot.id);
+                        marks::mark(marks, Mark::ReadyCheckReleased);
+                        self.park_marks(slot, marks);
+                        !ready
                     }
                     RequestEnd::Disposed(d) => {
                         // A **triple**: ~34 ns held, hashing three strings.
@@ -3550,6 +3758,7 @@ mod queue_tests {
         WakeItem {
             slot: slot.clone(),
             queued_ns: None,
+            enqueued_at: None,
         }
     }
 
