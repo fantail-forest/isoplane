@@ -239,20 +239,33 @@ pub enum Mark {
     WakeLaneLockAcquired,
     /// End of the mutex-backed wake queue critical section.
     WakeLaneLockReleased,
-    /// Waking a parked worker: free when none is parked, a futex wake when one
-    /// is. Split out for the same reason [`Mark::WaiterNotified`] is on the
-    /// dispatch path — a futex wake inside a "queue wait" is a queue wait that
-    /// is not one. **Mutex structures only.**
+    /// **From the wake being visible in its lane to a worker being awake and
+    /// holding the lane again** — the futex round trip, on the request's clock.
     ///
-    /// **This row does not cover every wake, and the ones it misses are the
-    /// slow ones.** See [`Mark::caveat`]: the reading is taken after
-    /// `Condvar::notify_one` returns, and the thread that call wakes is racing
-    /// to file the carrier. A run measured 80% coverage, which means the p50 is
-    /// a little short and the p99 and max are of a truncated distribution.
-    /// `lane.notify` on the dispatch path measures the same call with a
-    /// [`MarkWriter`] and has no such race; it is the figure to trust for what
-    /// a notify costs.
-    WakeNotified,
+    /// Read by the **consumer**, on its first instruction out of
+    /// `Condvar::wait`, and carried into whichever item it then pops.
+    ///
+    /// It was briefly the producer's `notify_one` *returning* instead, and that
+    /// was wrong twice over. It raced: the thread the call wakes starts running
+    /// while the producer is still returning from the syscall, and can pop,
+    /// reclaim the trace and file the carrier first — so the reading lands too
+    /// late and is dropped. And the readings it dropped were the *slow*
+    /// notifies, which made the row a distribution truncated at exactly the
+    /// tail it existed to show: 80% coverage, a p50 running short, a p99 of
+    /// nothing in particular.
+    ///
+    /// Reading it on the consumer removes the race outright — the thread that
+    /// takes the reading is the thread that files it — and it measures the
+    /// better quantity. The producer's syscall duration is what the *reactor*
+    /// pays; it overlaps the request's timeline without gating it. What gates
+    /// the request is how long until a worker is actually running, which is
+    /// this.
+    ///
+    /// **Absent when no worker had to be woken**, which is an honest zero and
+    /// not a lost observation: a busy cell's workers are already looping in
+    /// `pop` and never reach the condvar, and then the whole wait is
+    /// [`Mark::WakeTaken`]. See [`Mark::caveat`].
+    WorkerWoken,
     /// A worker takes a queued wake from a mutex-backed lane.
     WakeTaken,
     /// **The lock-free ring's push and its wait, together.**
@@ -479,7 +492,7 @@ pub const ALL: &[Mark] = &[
     Mark::WakeLaneLockWanted,
     Mark::WakeLaneLockAcquired,
     Mark::WakeLaneLockReleased,
-    Mark::WakeNotified,
+    Mark::WorkerWoken,
     Mark::WakeTaken,
     Mark::WakeRingTaken,
     Mark::WakeStarted,
@@ -619,7 +632,7 @@ impl Mark {
             WakeLaneLockWanted => "wake.lane.lock.wanted",
             WakeLaneLockAcquired => "wake.lane.lock.wait",
             WakeLaneLockReleased => "wake.lane.lock.hold",
-            WakeNotified => "wake.notify",
+            WorkerWoken => "wake.worker.woke",
             WakeTaken => "wake.queue.wait",
             WakeRingTaken => "wake.ring.wait",
             WakeStarted => "wake.pop",
@@ -676,14 +689,16 @@ impl Mark {
     /// who compares it against a neighbour. This says what the shortfall is.
     pub fn caveat(self) -> Option<&'static str> {
         match self {
-            Mark::WakeNotified => Some(
-                "the reading is taken after `Condvar::notify_one` returns, and the worker it \
-                 wakes is racing to file the carrier — so a notify that takes longer than the \
-                 woken worker takes to reach its trace is lost. Coverage measured at ~80%, and \
-                 the losses are the *slow* notifies: this p50 runs a little short and the p99 \
-                 and max are of a truncated tail. `lane.notify` measures the same call on the \
-                 dispatch path through a mark writer, with no race, and is the figure to trust \
-                 for what a notify costs",
+            Mark::WorkerWoken => Some(
+                "only a wake that had to wake a *parked* worker has this span. A busy cell's \
+                 workers are already looping in `pop` and never reach the condvar, so they \
+                 contribute nothing here and their whole wait is `wake.queue.wait` or \
+                 `wake.ring.wait`. The shortfall against those rows' counts is the number of \
+                 wakes taken by a worker that was already awake — a fact about the load rather \
+                 than a gap in the instrument, and it does not bias what is here. Under \
+                 `lock-free` only, the reading can also land *before* the push it is paired \
+                 with: a mutex lane's consumer holds the lane lock from waking to popping, so \
+                 nothing can be pushed in between, and a ring's consumer holds nothing",
             ),
             _ => None,
         }
@@ -719,6 +734,7 @@ impl Mark {
             | FutureCompleteReleased
             | WakeIndexWanted
             | WakeIndexReleased
+            | WorkerWoken
             | WakeStarted
             | WakeResidentsLockWanted
             | WakeResidentsLockAcquired
@@ -728,8 +744,9 @@ impl Mark {
             | TakeReadyReleased
             | ActiveBudgetWanted
             | ActiveBudgetReleased => Structural::ParkingRequest,
-            WakeLaneLockWanted | WakeLaneLockAcquired | WakeLaneLockReleased | WakeNotified
-            | WakeTaken => Structural::ParkingMutexQueue,
+            WakeLaneLockWanted | WakeLaneLockAcquired | WakeLaneLockReleased | WakeTaken => {
+                Structural::ParkingMutexQueue
+            }
             WakeRingTaken => Structural::ParkingLockFreeQueue,
             BreakerRefused | ShedDecided | ModuleMissing | AcquireFailed | SingleWriterRefused
             | EnterRefused => Structural::RefusedRequest,
@@ -988,23 +1005,24 @@ impl StampCell {
 /// `lock-free`, and the whole completion prefix on a wake that came from
 /// `Cell::queue_wake` rather than from a reactor.
 ///
-/// **The producer finishes writing after the consumer has started reading, and
-/// that had to be handled rather than tolerated.** `lane_released` and
-/// `notified` are written after the push, and `notified` in particular is
-/// written after a `Condvar::notify_one` that is a futex syscall when a worker
-/// is parked — microseconds, which is longer than the consumer takes to pop the
-/// item, reclaim the trace and file. Left alone, the readings that arrive late
-/// are lost, and the ones that arrive late are exactly the *slow* notifies: the
-/// row would be biased short at precisely the tail it exists to show. Measured
-/// on a real run before this was fixed, `wake.notify` landed on 77% of wakes
-/// and reported a median of 2.5 µs against the 4.3 µs the same notify reads on
-/// the dispatch path, where a [`MarkWriter`] makes the race impossible.
+/// **The producer can still be writing when the consumer starts reading**, so
+/// [`WakeStamps::file`] clears each reading as it files it and the worker calls
+/// it twice: once when it picks the wake up, and again just before it hands the
+/// request to `settle`, several microseconds later with the guest's own slice
+/// in between. Whatever had not landed on the first pass is picked up on the
+/// second, and nothing is filed twice. That covers `lane_released`, which the
+/// producer writes a few nanoseconds after the push.
 ///
-/// So [`WakeStamps::file`] **clears each reading as it files it**, and the
-/// worker calls it twice: once when it picks the wake up, and again just before
-/// it hands the request to `settle` — several microseconds later, with the
-/// guest's own slice in between. Whatever the producer had not finished writing
-/// on the first pass is picked up on the second, and nothing is filed twice.
+/// It did **not** cover the futex wake, and the attempt is worth recording
+/// because the fix was to measure a different thing rather than to synchronise.
+/// Reading the counter after `Condvar::notify_one` returned put the producer in
+/// a race it usually lost — the thread the call wakes starts running while the
+/// producer is still returning from the syscall — and the readings it lost were
+/// the *slow* notifies, so the row was truncated at exactly the tail it existed
+/// to show: 80% coverage even with the second pass. The reading is now taken by
+/// the **consumer**, on its first instruction out of `Condvar::wait`, which has
+/// no race at all and measures what actually gates the request. See
+/// [`Mark::WorkerWoken`].
 #[derive(Debug, Default)]
 pub struct WakeStamps {
     /// The outside world's answer reaching the cell.
@@ -1019,8 +1037,9 @@ pub struct WakeStamps {
     pub lane_wanted: StampCell,
     pub lane_acquired: StampCell,
     pub lane_released: StampCell,
-    /// The notify that follows it — a futex wake when a worker is parked.
-    pub notified: StampCell,
+    /// **Written by the consumer, not the producer**: the instant a worker came
+    /// out of `Condvar::wait`. Unset when no worker was parked.
+    pub woke: StampCell,
     /// The instant a consumer took the item off the lane.
     pub taken: StampCell,
     /// Whether the lane was a ring, which decides **which label** `taken` is
@@ -1058,7 +1077,7 @@ impl WakeStamps {
         f(Mark::WakeLaneLockWanted, &self.lane_wanted);
         f(Mark::WakeLaneLockAcquired, &self.lane_acquired);
         f(Mark::WakeLaneLockReleased, &self.lane_released);
-        f(Mark::WakeNotified, &self.notified);
+        f(Mark::WorkerWoken, &self.woke);
         let ring = self.lock_free.load(std::sync::atomic::Ordering::Relaxed);
         f(
             if ring {

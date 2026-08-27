@@ -604,7 +604,7 @@ fn a_parking_request_keeps_its_trace_across_the_pause() {
         Mark::WakeLaneLockWanted,
         Mark::WakeLaneLockAcquired,
         Mark::WakeLaneLockReleased,
-        Mark::WakeNotified,
+        Mark::WorkerWoken,
         Mark::WakeTaken,
         Mark::WakeStarted,
     ] {
@@ -1399,7 +1399,6 @@ fn the_wake_lane_reports_different_spans_under_each_structure() {
         Mark::WakeLaneLockWanted,
         Mark::WakeLaneLockAcquired,
         Mark::WakeLaneLockReleased,
-        Mark::WakeNotified,
         Mark::WakeTaken,
     ] {
         assert!(
@@ -1430,6 +1429,10 @@ fn the_wake_lane_reports_different_spans_under_each_structure() {
         Mark::FutureCompleteReleased,
         Mark::WakeIndexWanted,
         Mark::WakeIndexReleased,
+        // Read by the *consumer* on its way out of `Condvar::wait`, so it
+        // belongs to neither structure's lane: both park a worker and both
+        // wake one, and the reading is taken in the same place either way.
+        Mark::WorkerWoken,
         Mark::WakeStarted,
     ] {
         assert!(

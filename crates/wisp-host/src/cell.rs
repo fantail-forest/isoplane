@@ -1076,13 +1076,22 @@ impl WorkQueue {
         if let Some(st) = &tail {
             st.lane_released.take();
         }
-        // Free when no worker is parked, a futex wake when one is. On the
-        // dispatch side of this same sequence that span reads 3.8 µs at the
-        // median, which is why it is not allowed to hide inside the queue wait.
+        // **Nothing is read after this call.** The futex round trip is worth
+        // its own span — on the dispatch side of the same sequence it reads
+        // 3.8 µs at the median, which is far too large to hide inside a queue
+        // wait — but it is not measurable from *here*. `notify_one` wakes a
+        // thread that starts running while this one is still returning from the
+        // syscall, and that thread can pop the item, reclaim the trace and file
+        // the carrier before a reading taken on the next line lands. The
+        // readings lost that way are the slow notifies, which is the worst
+        // possible bias for the row.
+        //
+        // So the consumer takes it instead, on its first instruction out of
+        // `Condvar::wait` — no race, and a better quantity: what this thread
+        // pays for the syscall is the *reactor's* cost and overlaps the
+        // request's timeline without gating it, where the wait for a worker to
+        // actually be running is what gates it. See `Mark::WorkerWoken`.
         lane.cv.notify_one();
-        if let Some(st) = &tail {
-            st.notified.take();
-        }
     }
 
     /// Take the next job for `worker`.
@@ -1101,11 +1110,16 @@ impl WorkQueue {
     /// The lane's load is deliberately *not* decremented here; the worker
     /// releases it in [`WorkQueue::job_done`] once the job has actually run.
     fn pop(&self, worker: usize) -> Option<Job> {
+        // **Set only when this thread actually had to be woken**, and cleared
+        // by `pop` returning: a worker already looping never reaches the
+        // condvar, and for that wake there is no futex round trip to report.
+        // See `Mark::WorkerWoken`.
+        let mut woke: Option<crate::marks::Stamp> = None;
         if let Some(f) = &self.free {
             loop {
                 // Fast path: no lock, no atomics beyond the queue's own.
                 if let Some(j) = Self::free_try_pop(f) {
-                    return Some(Self::stamp_taken(j));
+                    return Some(Self::stamp_taken(j, woke));
                 }
                 if f.closed.load(Ordering::SeqCst) {
                     return None;
@@ -1122,11 +1136,16 @@ impl WorkQueue {
                 if missed.is_some() || f.closed.load(Ordering::SeqCst) {
                     f.parked.fetch_sub(1, Ordering::SeqCst);
                     if let Some(j) = missed {
-                        return Some(Self::stamp_taken(j));
+                        return Some(Self::stamp_taken(j, woke));
                     }
                     return None;
                 }
                 f.cv.wait(&mut g);
+                // First instruction after the wait: this thread is awake
+                // because a producer's notify reached it. Overwritten on a
+                // second pass, so a spurious wake-up does not leave a stale
+                // reading for whatever is popped later.
+                woke = Some(marks::stamp());
                 f.parked.fetch_sub(1, Ordering::SeqCst);
             }
         }
@@ -1147,10 +1166,7 @@ impl WorkQueue {
                 // held, for the same reason `JobTaken` does on the dispatch
                 // side: this is the first instant this thread owns the item.
                 // Free for an untraced wake — one `Option` check.
-                if let Some(st) = &s.stamps {
-                    st.taken.take();
-                }
-                return Some(Job::Wake(s));
+                return Some(Self::stamp_taken(Job::Wake(s), woke));
             }
             if let Some(d) = g.dispatches.pop_front() {
                 // **The queue wait closes here**, while the lane lock is still
@@ -1167,18 +1183,33 @@ impl WorkQueue {
                 return None;
             }
             lane.cv.wait(&mut g);
+            // See the note on `woke` above: taken here, on the way out of the
+            // wait and with the lane lock already back in hand, because a
+            // producer cannot measure its own notify without racing the thread
+            // it wakes.
+            woke = Some(marks::stamp());
         }
     }
 
-    /// Close a traced wake's lane wait at the instant a consumer owns it.
+    /// Close a traced wake's lane wait at the instant a consumer owns it, and
+    /// file the wake-up this thread was given if it had to be woken at all.
     ///
-    /// One place rather than three: the lock-free `pop` has three returns that
-    /// can hand back an item, and a reading taken at only two of them would
-    /// make the third's wakes report a lane wait that ran to the *next* mark.
+    /// One place rather than four: `pop` has four returns that can hand back an
+    /// item, and a reading taken at only some of them would make the rest
+    /// report a lane wait that ran to the *next* mark.
+    ///
+    /// `woke` is the consumer's own reading of when it came out of
+    /// `Condvar::wait`, which is where the futex round trip has to be measured
+    /// — a producer cannot time its own `notify_one` without racing the thread
+    /// it wakes, and losing the slow ones. `None` when this worker was already
+    /// running, which is not a lost observation: there was no round trip.
     #[inline]
-    fn stamp_taken(j: Job) -> Job {
+    fn stamp_taken(j: Job, woke: Option<crate::marks::Stamp>) -> Job {
         if let Job::Wake(w) = &j {
             if let Some(st) = &w.stamps {
+                if let Some(at) = woke {
+                    st.woke.set(at);
+                }
                 st.taken.take();
             }
         }
