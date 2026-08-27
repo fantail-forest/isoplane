@@ -98,7 +98,8 @@ impl CallGuard<'_> {
             .as_deref_mut()
             .expect("CallGuard without an instance")
     }
-    /// Drop the instance and mark its slot discarded.
+    /// Drop the instance and tombstone its slot before releasing the call guard,
+    /// preventing another entry while the discarded state is published.
     pub fn destroy(mut self) {
         self.inst = None;
         self.slot.tombstone();
@@ -149,10 +150,8 @@ struct SlotInner {
     shed_on_capture: Vec<u64>,
     /// Set on entry or rehydration and cleared by reset.
     dirty: bool,
-    /// Once set, nothing enters this slot again: not a dispatch,
-    /// not a wake, not a `gc-hint` on the hibernation path. It is set *before*
-    /// the instance is dropped, so the window between "it was hard-killed" and
-    /// "its memory is gone" is not a window at all.
+    /// `CallGuard::destroy` sets this before Drop clears `in_call`, so no
+    /// caller can enter between discarding the instance and publishing that state.
     tombstoned: bool,
 }
 
