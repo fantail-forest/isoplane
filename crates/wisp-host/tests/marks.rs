@@ -570,7 +570,10 @@ fn a_parking_request_keeps_its_trace_across_the_pause() {
         names()
     );
 
-    // 2. The two halves of the pause are separate spans.
+    // 2. **The pause is now six spans, not two**, and the wait for the outside
+    //    world is only the first of them. Everything after `park.wait` is the
+    //    cell's own doing: the future table on the completion path, the wake
+    //    router's index, the lane, and the pop.
     let ns = |l: Mark| {
         t.spans
             .iter()
@@ -578,11 +581,10 @@ fn a_parking_request_keeps_its_trace_across_the_pause() {
             .map(|(_, ns)| *ns)
             .unwrap_or(-1.0)
     };
-    let outside = ns(Mark::WakeEnqueueBegan);
-    let lane = ns(Mark::WakeStarted);
+    let outside = ns(Mark::CompletionArrived);
     assert!(
-        outside >= 0.0 && lane >= 0.0,
-        "both halves must be present: {:?}",
+        outside >= 0.0,
+        "the wait for the outside world is missing: {:?}",
         names()
     );
     assert!(
@@ -590,11 +592,36 @@ fn a_parking_request_keeps_its_trace_across_the_pause() {
         "the guest was left parked for 20 ms and the wait for the outside world reports \
          {outside:.0} ns"
     );
-    assert!(
-        lane < outside / 10.0,
-        "the priority lane's wait ({lane:.0} ns) moved with the park ({outside:.0} ns), which \
-         is what one span wearing two names looks like"
-    );
+    // Every span of the completion's path into the cell is present, and every
+    // one of them is small beside the park. If any of them moved with the park
+    // it would mean the reading that closes `park.wait` is not the one taken
+    // where the completion arrived.
+    for l in [
+        Mark::FutureCompleteAcquired,
+        Mark::FutureCompleteReleased,
+        Mark::WakeIndexWanted,
+        Mark::WakeIndexReleased,
+        Mark::WakeLaneLockWanted,
+        Mark::WakeLaneLockAcquired,
+        Mark::WakeLaneLockReleased,
+        Mark::WakeNotified,
+        Mark::WakeTaken,
+        Mark::WakeStarted,
+    ] {
+        let v = ns(l);
+        assert!(
+            v >= 0.0,
+            "`{}` is missing from the pause: {:?}",
+            l.name(),
+            names()
+        );
+        assert!(
+            v < outside / 10.0,
+            "`{}` reports {v:.0} ns against a park of {outside:.0} ns — it moved with the \
+             wait for the outside world, which is what one span wearing two names looks like",
+            l.name()
+        );
+    }
 
     // 3. The guest ran twice and both passes are on the trace.
     assert_eq!(
@@ -1310,4 +1337,105 @@ fn a_wake_that_runs_nothing_hands_the_trace_back() {
     );
     drop(rx);
     c.shutdown();
+}
+
+/// **The two queue structures do not report the same wake spans, and neither
+/// reports a zero for the other's.**
+///
+/// A wake enqueued under a mutex lane and one pushed into a ring are not the
+/// same quantity, and the difference is not only the lock. Under a mutex the
+/// producer keeps a handle across the handoff and can close its critical
+/// section and its notify as spans of their own, so `wake.queue.wait` is the
+/// pure wait for a consumer. Under `lock-free` it cannot: the readings travel
+/// on the item and `push` takes the item by value, so the ring's push and its
+/// notify are inside `wake.ring.wait` along with the wait. One label over both
+/// would put a compare-and-swap into the same distribution as a mutex wait, in
+/// a table that exists to compare the two designs.
+#[test]
+fn the_wake_lane_reports_different_spans_under_each_structure() {
+    let mut seen: Vec<(QueueStructure, Vec<Mark>)> = Vec::new();
+    for structure in [QueueStructure::Shared, QueueStructure::LockFree] {
+        let mut cfg = CellConfig::for_test("marks-wake-structure");
+        cfg.queue_structure = structure;
+        cfg.queue_placement = QueuePlacement::PowerOfTwo;
+        cfg.stage_sample_every = 1;
+        let c = cell(cfg);
+        let m = app(
+            &c,
+            "parker",
+            FakeBehaviour::program([Step::Park {
+                imports: vec![("clock_deadline_in", PARK_MS)],
+            }]),
+        );
+        let p = pool();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let mk = p.checkout();
+        marks::begin(&mk);
+        assert!(
+            c.submit_with_marks(&m, route("/x"), rec(0, "/x"), tx, mk)
+                .admitted
+        );
+        assert!(
+            wait_for(|| c.metrics().parked > 0, T),
+            "{structure:?}: the guest never parked"
+        );
+        let fid = c
+            .futures()
+            .live_future_ids()
+            .into_iter()
+            .next()
+            .expect("one pending future");
+        c.complete_future(fid, wisp_abi::result::ResultRecord::Ok(vec![]));
+        let res = rx.recv_timeout(T).expect("a reply after the wake");
+        marks::mark(&res.marks, Mark::CallerReceived);
+        let t = wisp_host::marks::read(res.marks.as_ref().expect("a trace"));
+        seen.push((structure, t.spans.iter().map(|(l, _)| *l).collect()));
+        c.shutdown();
+    }
+
+    let (_, mutex) = &seen[0];
+    let (_, ring) = &seen[1];
+    for l in [
+        Mark::WakeLaneLockWanted,
+        Mark::WakeLaneLockAcquired,
+        Mark::WakeLaneLockReleased,
+        Mark::WakeNotified,
+        Mark::WakeTaken,
+    ] {
+        assert!(
+            mutex.contains(&l),
+            "a mutex lane did not report `{}`",
+            l.name()
+        );
+        assert!(
+            !ring.contains(&l),
+            "a ring reported `{}`, a lane mutex it does not have — and a zero there reads \
+             exactly like a lock that was watched and never blocked",
+            l.name()
+        );
+    }
+    assert!(
+        ring.contains(&Mark::WakeRingTaken),
+        "a ring did not report `wake.ring.wait`"
+    );
+    assert!(
+        !mutex.contains(&Mark::WakeRingTaken),
+        "a mutex lane reported the ring's span"
+    );
+    // The spans either structure can produce mean the same thing under both,
+    // which is what makes the two tables comparable at all.
+    for l in [
+        Mark::CompletionArrived,
+        Mark::FutureCompleteAcquired,
+        Mark::FutureCompleteReleased,
+        Mark::WakeIndexWanted,
+        Mark::WakeIndexReleased,
+        Mark::WakeStarted,
+    ] {
+        assert!(
+            mutex.contains(&l) && ring.contains(&l),
+            "`{}` is structure-dependent",
+            l.name()
+        );
+    }
 }

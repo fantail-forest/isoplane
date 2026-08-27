@@ -204,20 +204,71 @@ pub enum Mark {
     /// **The request goes dormant.** The last mark of a slice that parked; the
     /// worker is free from here.
     SliceEnded,
-    /// **Waiting for the outside world, plus the completion's own path back
-    /// into the cell.**
+    /// Timestamp when a host future completion reaches the cell.
+    /// The wake worker later attaches this reading to its request trace.
+    CompletionArrived,
+    /// **Waiting for the global future table on the completion path.**
     ///
-    /// The single largest thing buried in the old instrument's residual, and
-    /// the reason a parking guest reported as the fastest thing in the
-    /// campaign: the old `guest_ns` timed the first slice only.
+    /// The reactor's own contribution to the lock `FutureTable` calls "the
+    /// binding one" — 91–99% of everything the execution threads waited on —
+    /// measured from the other side for the first time.
+    FutureCompleteAcquired,
+    /// Holding it: a lookup, the state and result writes, a `pending` removal,
+    /// a per-dispatch decrement and a `ready` push. Comfortably past a mark,
+    /// which is what makes this a triple.
+    FutureCompleteReleased,
+    /// The sampling decision and building the carrier the readings travel on —
+    /// **the instrument's own allocation, inside a span rather than hidden in
+    /// one**. One `Box` per sampled wake, on the reactor thread.
+    WakeIndexWanted,
+    /// **The wake router's index**: wait and hold, as a **pair**. The hold is
+    /// one hash, one lookup and a `Weak::upgrade`, at about what a mark costs.
+    /// Every completion in the cell passes through this one mutex, and it
+    /// appears in no row of `Cell::lock_stats`.
+    WakeIndexReleased,
+    /// The `wakes` counter and building the `WakeItem`, then choosing a lane.
+    /// **Mutex structures only.**
+    WakeLaneLockWanted,
+    /// **The wake lane's lock, waited for on the reactor thread.** A wake is
+    /// never shed, so unlike a dispatch it cannot leave here empty-handed — it
+    /// waits however long the lane's consumers make it wait. **Mutex
+    /// structures only.**
+    WakeLaneLockAcquired,
+    /// End of the mutex-backed wake queue critical section.
+    WakeLaneLockReleased,
+    /// Waking a parked worker: free when none is parked, a futex wake when one
+    /// is. Split out for the same reason [`Mark::WaiterNotified`] is on the
+    /// dispatch path — a futex wake inside a "queue wait" is a queue wait that
+    /// is not one. **Mutex structures only.**
     ///
-    /// The reading is taken where the wake is enqueued — on a reactor thread
-    /// that holds the request's slot but not its trace — and filed by the
-    /// worker that picks it up. Reaching the trace from the reactor would mean
-    /// taking `Cell::active` on the wake path, and adding a lock to the wake
-    /// path to measure the wake path is self-defeating.
-    WakeEnqueueBegan,
-    /// End of dequeueing a queued wake for execution.
+    /// **This row does not cover every wake, and the ones it misses are the
+    /// slow ones.** See [`Mark::caveat`]: the reading is taken after
+    /// `Condvar::notify_one` returns, and the thread that call wakes is racing
+    /// to file the carrier. A run measured 80% coverage, which means the p50 is
+    /// a little short and the p99 and max are of a truncated distribution.
+    /// `lane.notify` on the dispatch path measures the same call with a
+    /// [`MarkWriter`] and has no such race; it is the figure to trust for what
+    /// a notify costs.
+    WakeNotified,
+    /// A worker takes a queued wake from a mutex-backed lane.
+    WakeTaken,
+    /// **The lock-free ring's push and its wait, together.**
+    ///
+    /// Its own label rather than a second observation of [`Mark::WakeTaken`],
+    /// because it is not the same quantity: it contains the ring's push and its
+    /// notify as well as the wait for a consumer. Under a mutex lane those two
+    /// are `wake.lane.lock.hold` and `wake.notify` and they are separate rows;
+    /// here they are not, and the label says which it is rather than letting a
+    /// column compare a lane wait against a ring's compare-and-swap.
+    ///
+    /// The merge is a property of the ring, not of the instrument: the
+    /// producer's `pushing` guard has to be released *after* the push, the item
+    /// is what carries the readings, and there is no point between the push and
+    /// the release at which the producer still knows which slot it wrote.
+    /// **[`crate::cell::QueueStructure::LockFree`] only.**
+    WakeRingTaken,
+    /// The pop's remainder, the `catch_unwind` and `Weak::upgrade` in
+    /// `exec_loop`, and the reclaim of the parked request's trace.
     WakeStarted,
     /// Nothing; the left edge of the live-sandbox table on the wake path.
     WakeResidentsLockWanted,
@@ -417,7 +468,17 @@ pub const ALL: &[Mark] = &[
     Mark::ReadyCheckWanted,
     Mark::ReadyCheckReleased,
     Mark::SliceEnded,
-    Mark::WakeEnqueueBegan,
+    Mark::CompletionArrived,
+    Mark::FutureCompleteAcquired,
+    Mark::FutureCompleteReleased,
+    Mark::WakeIndexWanted,
+    Mark::WakeIndexReleased,
+    Mark::WakeLaneLockWanted,
+    Mark::WakeLaneLockAcquired,
+    Mark::WakeLaneLockReleased,
+    Mark::WakeNotified,
+    Mark::WakeTaken,
+    Mark::WakeRingTaken,
     Mark::WakeStarted,
     Mark::WakeResidentsLockWanted,
     Mark::WakeResidentsLockAcquired,
@@ -547,8 +608,18 @@ impl Mark {
             ReadyCheckWanted => "futures.ready.wanted",
             ReadyCheckReleased => "futures.ready",
             SliceEnded => "slice.end",
-            WakeEnqueueBegan => "park.wait",
-            WakeStarted => "wake.queue.wait",
+            CompletionArrived => "park.wait",
+            FutureCompleteAcquired => "futures.complete.wait",
+            FutureCompleteReleased => "futures.complete.hold",
+            WakeIndexWanted => "wake.index.wanted",
+            WakeIndexReleased => "wake.index",
+            WakeLaneLockWanted => "wake.lane.lock.wanted",
+            WakeLaneLockAcquired => "wake.lane.lock.wait",
+            WakeLaneLockReleased => "wake.lane.lock.hold",
+            WakeNotified => "wake.notify",
+            WakeTaken => "wake.queue.wait",
+            WakeRingTaken => "wake.ring.wait",
+            WakeStarted => "wake.pop",
             WakeResidentsLockWanted => "wake.residents.wanted",
             WakeResidentsLockAcquired => "wake.residents.wait",
             WakeResidentsLockReleased => "wake.residents.hold",
@@ -591,6 +662,30 @@ impl Mark {
         }
     }
 
+    /// **What is wrong with this row that its numbers cannot show.**
+    ///
+    /// `None` for almost every mark, and that is the point of it existing: a
+    /// span whose population is not the whole of what it claims to measure has
+    /// to say so *in the report*, beside its own numbers, or a reader quotes
+    /// the p99 of a distribution that was truncated before they saw it.
+    ///
+    /// The per-row sample count already makes the shortfall visible to someone
+    /// who compares it against a neighbour. This says what the shortfall is.
+    pub fn caveat(self) -> Option<&'static str> {
+        match self {
+            Mark::WakeNotified => Some(
+                "the reading is taken after `Condvar::notify_one` returns, and the worker it \
+                 wakes is racing to file the carrier — so a notify that takes longer than the \
+                 woken worker takes to reach its trace is lost. Coverage measured at ~80%, and \
+                 the losses are the *slow* notifies: this p50 runs a little short and the p99 \
+                 and max are of a truncated tail. `lane.notify` measures the same call on the \
+                 dispatch path through a mark writer, with no race, and is the figure to trust \
+                 for what a notify costs",
+            ),
+            _ => None,
+        }
+    }
+
     /// Which queue structures this mark exists under.
     ///
     /// **Absent is not zero.** A `Shared` run has no `ring.push` observations
@@ -616,7 +711,11 @@ impl Mark {
             | ReadyCheckWanted
             | ReadyCheckReleased
             | SliceEnded
-            | WakeEnqueueBegan
+            | CompletionArrived
+            | FutureCompleteAcquired
+            | FutureCompleteReleased
+            | WakeIndexWanted
+            | WakeIndexReleased
             | WakeStarted
             | WakeResidentsLockWanted
             | WakeResidentsLockAcquired
@@ -626,6 +725,9 @@ impl Mark {
             | TakeReadyReleased
             | ActiveBudgetWanted
             | ActiveBudgetReleased => Structural::ParkingRequest,
+            WakeLaneLockWanted | WakeLaneLockAcquired | WakeLaneLockReleased | WakeNotified
+            | WakeTaken => Structural::ParkingMutexQueue,
+            WakeRingTaken => Structural::ParkingLockFreeQueue,
             BreakerRefused | ShedDecided | ModuleMissing | AcquireFailed | SingleWriterRefused
             | EnterRefused => Structural::RefusedRequest,
             ShedMetersLockWanted | ShedMetersLockAcquired | ShedMetersLockReleased => {
@@ -678,6 +780,14 @@ pub enum Structural {
     /// once per pause, and the ones inside `run_wake`'s own loop can repeat
     /// several times per pause.
     ParkingRequest,
+    /// A request that paused, in a cell whose lanes are mutexes. Two
+    /// conditions rather than one, and it needs both: under `lock-free` the
+    /// wake lane has no mutex, and in a run where nothing pauses there is no
+    /// wake at all — and a reader told only the first would go looking for a
+    /// lane that was there the whole time.
+    ParkingMutexQueue,
+    /// A request that paused, in a cell whose lanes are rings.
+    ParkingLockFreeQueue,
     /// A request that was refused rather than served.
     RefusedRequest,
     /// A request the queue shed at admission. Narrower than
@@ -726,6 +836,14 @@ impl Structural {
                 "only a dispatch that completed with a response handle reaches it"
             }
             Structural::ParkingRequest => "only a request that paused and resumed reaches it",
+            Structural::ParkingMutexQueue => {
+                "only a request that paused reaches it, and only under `shared` or \
+                 `per-worker`: the wake lane is a ring under `lock-free`"
+            }
+            Structural::ParkingLockFreeQueue => {
+                "only a request that paused reaches it, and only under `lock-free`: the wake \
+                 lane is a mutex under `shared` and `per-worker`"
+            }
             Structural::RefusedRequest => "only a refused request reaches it",
             Structural::ShedRequest => "only a request the queue shed at admission reaches it",
             Structural::TombstonedRequest => {
@@ -786,11 +904,167 @@ pub fn stamp() -> Stamp {
     crate::trace::now()
 }
 
+/// A reading that was never taken. Zero cannot be a real `RDTSCP` value on a
+/// machine that has been up for any time at all.
+pub const NO_STAMP: Stamp = (0, 0);
+
 /// File a reading taken earlier.
 #[inline(always)]
 pub fn mark_at(m: &Option<RequestMarks>, label: Mark, at: Stamp) {
     if let Some(m) = m {
         m.mark_at(label as u8, at);
+    }
+}
+
+/// One carried reading, writable by whichever thread reaches its event.
+///
+/// Two atomics rather than a plain pair because a `WakeStamps` is written by
+/// **three** threads: a reactor completing the future, whichever thread pushes
+/// the wake, and the consumer that pops it. Each writes different fields, so
+/// there is nothing to synchronise beyond the store itself.
+///
+/// Zero is "not taken". A real `RDTSCP` on a machine that has been up for any
+/// time at all is never zero, and [`WakeStamps::file`] skips a zero rather than
+/// filing it — which matters, because a zero would be a timestamp older than
+/// any trace and [`crate::trace::Trace::mark_at`] would count it as a stale
+/// reading.
+#[derive(Debug, Default)]
+pub struct StampCell {
+    t: std::sync::atomic::AtomicU64,
+    core: std::sync::atomic::AtomicU32,
+}
+
+impl StampCell {
+    /// Record a reading taken earlier.
+    #[inline(always)]
+    pub fn set(&self, at: Stamp) {
+        use std::sync::atomic::Ordering;
+        self.core.store(at.1, Ordering::Relaxed);
+        self.t.store(at.0, Ordering::Release);
+    }
+    /// Read the counter and record it here, in one call.
+    #[inline(always)]
+    pub fn take(&self) {
+        self.set(stamp());
+    }
+    /// Read the reading **and clear it**, so it is filed once however many
+    /// times [`WakeStamps::file`] is called.
+    ///
+    /// That is what lets the worker file the same carrier twice — once when it
+    /// picks the wake up and once when it is about to hand the request to
+    /// `settle` — and pick up on the second pass whatever the producer had not
+    /// finished writing on the first. See [`WakeStamps`].
+    #[inline(always)]
+    fn take_reading(&self) -> Stamp {
+        use std::sync::atomic::Ordering;
+        let t = self.t.swap(0, Ordering::AcqRel);
+        (t, self.core.load(Ordering::Relaxed))
+    }
+}
+
+/// **Everything the completion path measured, on its way to the worker that
+/// can file it.**
+///
+/// A parked request's trace lives in `Cell::active`, and no thread on this path
+/// can reach it — the reactor completing the future, whoever pushes the wake,
+/// the worker that pops it. Taking `Cell::active` on the wake path in order to
+/// measure the wake path is self-defeating, so each reading is taken where its
+/// event happens and the carrier travels with the queued wake.
+///
+/// **Shared, not owned, and for the reason [`crate::trace`] exists.** Pushing
+/// the wake is a handoff: `VecDeque::push_back` and the ring's `push` both take
+/// the item by value, so the instant the push lands the producer has nothing
+/// left to write into — and it still has to release the lane lock and wake a
+/// worker, which is a futex call and the single largest thing on the dispatch
+/// side of the same sequence. The dispatch path answers this with a
+/// [`MarkWriter`] on the request's trace; a reactor thread has no trace to take
+/// one from, so the carrier itself is shared instead and the producer keeps a
+/// handle across the handoff.
+///
+/// A field left at zero is a reading that did not happen: the lane fields under
+/// `lock-free`, and the whole completion prefix on a wake that came from
+/// `Cell::queue_wake` rather than from a reactor.
+///
+/// **The producer finishes writing after the consumer has started reading, and
+/// that had to be handled rather than tolerated.** `lane_released` and
+/// `notified` are written after the push, and `notified` in particular is
+/// written after a `Condvar::notify_one` that is a futex syscall when a worker
+/// is parked — microseconds, which is longer than the consumer takes to pop the
+/// item, reclaim the trace and file. Left alone, the readings that arrive late
+/// are lost, and the ones that arrive late are exactly the *slow* notifies: the
+/// row would be biased short at precisely the tail it exists to show. Measured
+/// on a real run before this was fixed, `wake.notify` landed on 77% of wakes
+/// and reported a median of 2.5 µs against the 4.3 µs the same notify reads on
+/// the dispatch path, where a [`MarkWriter`] makes the race impossible.
+///
+/// So [`WakeStamps::file`] **clears each reading as it files it**, and the
+/// worker calls it twice: once when it picks the wake up, and again just before
+/// it hands the request to `settle` — several microseconds later, with the
+/// guest's own slice in between. Whatever the producer had not finished writing
+/// on the first pass is picked up on the second, and nothing is filed twice.
+#[derive(Debug, Default)]
+pub struct WakeStamps {
+    /// The outside world's answer reaching the cell.
+    pub arrived: StampCell,
+    /// The future table's lock, taken on the reactor thread.
+    pub complete_acquired: StampCell,
+    pub complete_released: StampCell,
+    /// The wake router's index.
+    pub index_wanted: StampCell,
+    pub index_released: StampCell,
+    /// The wake lane's mutex. Unset under `lock-free`.
+    pub lane_wanted: StampCell,
+    pub lane_acquired: StampCell,
+    pub lane_released: StampCell,
+    /// The notify that follows it — a futex wake when a worker is parked.
+    pub notified: StampCell,
+    /// The instant a consumer took the item off the lane.
+    pub taken: StampCell,
+    /// Whether the lane was a ring, which decides **which label** `taken` is
+    /// filed under: under `lock-free` the span it closes also contains the
+    /// ring's push and its notify, and that is not the same quantity as a mutex
+    /// lane's wait.
+    pub lock_free: std::sync::atomic::AtomicBool,
+}
+
+impl WakeStamps {
+    /// Note that this wake went through a ring rather than a lane mutex.
+    #[inline(always)]
+    pub fn ring(&self) {
+        self.lock_free
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// File every reading that was taken, in the order the request met them.
+    ///
+    /// Order is for legibility only — [`crate::trace::read`] sorts by
+    /// timestamp — but filing in event order is what makes a truncated trace
+    /// lose the end of the pause rather than a hole in the middle of it.
+    pub fn file(&self, m: &Option<RequestMarks>) {
+        let f = |label: Mark, c: &StampCell| {
+            let at = c.take_reading();
+            if at.0 != 0 {
+                mark_at(m, label, at);
+            }
+        };
+        f(Mark::CompletionArrived, &self.arrived);
+        f(Mark::FutureCompleteAcquired, &self.complete_acquired);
+        f(Mark::FutureCompleteReleased, &self.complete_released);
+        f(Mark::WakeIndexWanted, &self.index_wanted);
+        f(Mark::WakeIndexReleased, &self.index_released);
+        f(Mark::WakeLaneLockWanted, &self.lane_wanted);
+        f(Mark::WakeLaneLockAcquired, &self.lane_acquired);
+        f(Mark::WakeLaneLockReleased, &self.lane_released);
+        f(Mark::WakeNotified, &self.notified);
+        let ring = self.lock_free.load(std::sync::atomic::Ordering::Relaxed);
+        f(
+            if ring {
+                Mark::WakeRingTaken
+            } else {
+                Mark::WakeTaken
+            },
+            &self.taken,
+        );
     }
 }
 
@@ -1005,18 +1279,30 @@ mod tests {
     /// mutex against a ring compare-and-swap.
     #[test]
     fn the_two_queue_structures_do_not_share_a_span() {
-        let mutex: Vec<Mark> = every_mark()
-            .into_iter()
-            .filter(|m| m.structural() == Structural::MutexQueue)
-            .collect();
-        let free: Vec<Mark> = every_mark()
-            .into_iter()
-            .filter(|m| m.structural() == Structural::LockFreeQueue)
-            .collect();
-        assert!(!mutex.is_empty() && !free.is_empty());
-        for a in &mutex {
-            for b in &free {
-                assert_ne!(a.name(), b.name());
+        // Both lanes, dispatch and wake. The wake lane's labels were the easy
+        // ones to get wrong: under `lock-free` the ring's push cannot be
+        // separated from the wait for a consumer, so its closing span contains
+        // one more thing than the mutex lane's does — and a shared label there
+        // would put a compare-and-swap into the same distribution as a mutex
+        // wait, in a table read as a comparison between the two designs.
+        let of = |c: Structural| -> Vec<Mark> {
+            every_mark()
+                .into_iter()
+                .filter(|m| m.structural() == c)
+                .collect()
+        };
+        for (m, f) in [
+            (of(Structural::MutexQueue), of(Structural::LockFreeQueue)),
+            (
+                of(Structural::ParkingMutexQueue),
+                of(Structural::ParkingLockFreeQueue),
+            ),
+        ] {
+            assert!(!m.is_empty() && !f.is_empty());
+            for a in &m {
+                for b in &f {
+                    assert_ne!(a.name(), b.name(), "{a:?} and {b:?} share a span name");
+                }
             }
         }
     }

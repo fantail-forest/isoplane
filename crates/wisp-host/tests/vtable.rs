@@ -53,6 +53,10 @@ fn vtable(limits: Limits, resolve_to: &str, allowlist: Option<Vec<String>>) -> V
         metrics: Arc::new(Metrics::new()),
         wake: wake.clone(),
         reactor: tokio::runtime::Handle::current(),
+        // The vtable's semantics do not depend on tracing, and a non-zero here
+        // would put two clock reads on every completion this file makes for no
+        // reading anybody looks at.
+        stage_sample_every: 0,
     });
     let ctx = Arc::new(InstanceCtx::new(
         InstanceId(1),

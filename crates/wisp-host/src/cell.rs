@@ -456,24 +456,26 @@ enum Job {
 /// request. See [`crate::marks::Mark::WakeStarted`].
 struct WakeItem {
     slot: Arc<Slot>,
+    /// **Everything the completion path measured, on its way to a worker that
+    /// can file it.**
+    ///
     /// `Some` only for a request that [`CellConfig::stage_sample_every`]
-    /// selected, so an unsampled wake costs no clock read.
+    /// selected, so an unsampled wake carries eight bytes and a `None`.
     ///
-    /// The producer decides, because only the producer can: the predicate is
-    /// `stage_sampled(slot.ctx.dispatch_id(), …)`, which is one atomic load
-    /// and one modulo and takes no lock — where asking the request itself
-    /// would mean taking `Cell::active`, on the reactor thread, for telemetry.
-    /// It is the same predicate `Cell::new_stamps` used at admission and on
-    /// the same id, so the two cannot disagree about which request this is.
-    /// **A counter reading, taken where the wake was enqueued.**
+    /// Not the trace itself: a parked request's trace lives in `Cell::active`,
+    /// and no thread on this path can reach it — the reactor completing the
+    /// future, whoever pushes the wake, the worker that pops it. Taking
+    /// `Cell::active` on the wake path in order to measure the wake path is
+    /// self-defeating, so each event's reading is taken where it happens, as
+    /// plain integers, and the whole carrier is filed by the worker that picks
+    /// the wake up. See [`crate::marks::WakeStamps`].
     ///
-    /// Not the trace itself: the reactor thread that completes a future holds
-    /// the request's slot but not its trace, and reaching the trace from there
-    /// would mean taking `Cell::active` on the wake path. Adding a lock to the
-    /// wake path in order to measure the wake path is self-defeating, so the
-    /// counter is read here — two integers, no lock — and filed into the trace
-    /// by the worker that picks the wake up.
-    enqueued_at: Option<crate::marks::Stamp>,
+    /// Behind an `Arc` for two reasons. There are ten readings and this rides
+    /// inside a `Job`, which every dispatch is moved through as well, so inline
+    /// it would make the dispatch path pay 160 bytes a move to measure the wake
+    /// path. And the producer keeps a handle across the push, because pushing
+    /// is a handoff and it still has a lock to release and a worker to wake.
+    stamps: Option<Arc<crate::marks::WakeStamps>>,
 }
 
 struct DispatchJob {
@@ -1019,7 +1021,28 @@ impl WorkQueue {
     /// hundred wakes is the busiest lane in the cell, and a placer that could
     /// not see them was choosing it on purpose.
     fn push_wake(&self, item: WakeItem) {
+        // **Kept across the handoff.** The push moves the item into a queue a
+        // worker may pop on the next instruction, and this thread still has to
+        // release the lane lock and wake a worker — a futex call, and the
+        // largest thing on the dispatch side of the same sequence. The carrier
+        // is shared for exactly the reason `crate::trace` is: see
+        // `marks::WakeStamps`.
+        let tail = item.stamps.clone();
         if let Some(f) = &self.free {
+            // **The ring's push and the wait for a consumer cannot be told
+            // apart here**, and the reason is the handoff: the readings ride
+            // *on* the item, and `push` takes the item by value, so the instant
+            // the compare-and-swap lands this thread has nothing left to write
+            // into. The dispatch path solves the same problem with a
+            // `MarkWriter` — a second handle on the request's trace — and a
+            // reactor thread has no trace to take one from, which is the whole
+            // reason these readings are carried at all. So `taken` closes a
+            // span that contains the push as well as the wait, under
+            // `Mark::WakeRingTaken`, which is a different label from the mutex
+            // lane's for exactly that reason.
+            if let Some(st) = &tail {
+                st.ring();
+            }
             f.pushing.fetch_add(1, Ordering::SeqCst);
             if f.closed.load(Ordering::SeqCst) {
                 f.pushing.fetch_sub(1, Ordering::SeqCst);
@@ -1030,15 +1053,36 @@ impl WorkQueue {
             Self::free_notify(f);
             return;
         }
+        // A **triple**, and the lane's own hold is expected to read as noise —
+        // a `closed` check, a `push_back` and a `fetch_add`, about 4 ns against
+        // a 10 ns counter step. It is here for what it does to its neighbour:
+        // closing the lock at this line is what makes `wake.queue.wait` the
+        // pure wait for a worker rather than that wait plus a producer's tail.
+        // Exactly the argument `push_dispatch` makes for the dispatch lane.
+        if let Some(st) = &tail {
+            st.lane_wanted.take();
+        }
         let lane = &self.lanes[self.pick()];
         let mut g = lane.inner.lock();
+        if let Some(st) = &tail {
+            st.lane_acquired.take();
+        }
         if g.closed {
             return;
         }
         g.wakes.push_back(item);
         lane.load.fetch_add(1, Ordering::Relaxed);
         drop(g);
+        if let Some(st) = &tail {
+            st.lane_released.take();
+        }
+        // Free when no worker is parked, a futex wake when one is. On the
+        // dispatch side of this same sequence that span reads 3.8 µs at the
+        // median, which is why it is not allowed to hide inside the queue wait.
         lane.cv.notify_one();
+        if let Some(st) = &tail {
+            st.notified.take();
+        }
     }
 
     /// Take the next job for `worker`.
@@ -1061,7 +1105,7 @@ impl WorkQueue {
             loop {
                 // Fast path: no lock, no atomics beyond the queue's own.
                 if let Some(j) = Self::free_try_pop(f) {
-                    return Some(j);
+                    return Some(Self::stamp_taken(j));
                 }
                 if f.closed.load(Ordering::SeqCst) {
                     return None;
@@ -1077,8 +1121,8 @@ impl WorkQueue {
                 let missed = Self::free_try_pop(f);
                 if missed.is_some() || f.closed.load(Ordering::SeqCst) {
                     f.parked.fetch_sub(1, Ordering::SeqCst);
-                    if missed.is_some() {
-                        return missed;
+                    if let Some(j) = missed {
+                        return Some(Self::stamp_taken(j));
                     }
                     return None;
                 }
@@ -1099,6 +1143,13 @@ impl WorkQueue {
         let mut g = lane.inner.lock_bare();
         loop {
             if let Some(s) = g.wakes.pop_front() {
+                // **The lane wait closes here**, while the lane lock is still
+                // held, for the same reason `JobTaken` does on the dispatch
+                // side: this is the first instant this thread owns the item.
+                // Free for an untraced wake — one `Option` check.
+                if let Some(st) = &s.stamps {
+                    st.taken.take();
+                }
                 return Some(Job::Wake(s));
             }
             if let Some(d) = g.dispatches.pop_front() {
@@ -1117,6 +1168,21 @@ impl WorkQueue {
             }
             lane.cv.wait(&mut g);
         }
+    }
+
+    /// Close a traced wake's lane wait at the instant a consumer owns it.
+    ///
+    /// One place rather than three: the lock-free `pop` has three returns that
+    /// can hand back an item, and a reading taken at only two of them would
+    /// make the third's wakes report a lane wait that ran to the *next* mark.
+    #[inline]
+    fn stamp_taken(j: Job) -> Job {
+        if let Job::Wake(w) = &j {
+            if let Some(st) = &w.stamps {
+                st.taken.take();
+            }
+        }
+        j
     }
 
     /// Stop accepting work, and answer whatever the close raced.
@@ -1302,15 +1368,25 @@ struct CellWake {
     queue: Arc<WorkQueue>,
     index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
     metrics: Arc<Metrics>,
-    /// A copy of [`CellConfig::stage_sample_every`], so a reactor thread can
-    /// decide whether this wake's lane wait is worth a clock read without
-    /// reaching back into the cell for the answer.
-    stage_sample_every: u64,
 }
 
 impl WakeSink for CellWake {
     fn signal(&self, owner: InstanceId) {
+        self.signal_traced(owner, None)
+    }
+
+    fn signal_traced(&self, owner: InstanceId, stamps: Option<Arc<marks::WakeStamps>>) {
+        // The index is a **pair**: the hold is one hash, one lookup and a
+        // `Weak::upgrade`, at about what a mark costs. Every completion in the
+        // cell passes through this one mutex and it appears in no row of
+        // `Cell::lock_stats`.
+        if let Some(st) = &stamps {
+            st.index_wanted.take();
+        }
         let slot = self.index.lock().get(&owner).and_then(Weak::upgrade);
+        if let Some(st) = &stamps {
+            st.index_released.take();
+        }
         let Some(s) = slot else {
             // **The completion is already in the future table** — `complete`
             // wrote it Ready and pushed it onto the owner's `ready` queue
@@ -1333,20 +1409,8 @@ impl WakeSink for CellWake {
             );
             return;
         };
-        {
-            self.metrics.wakes.fetch_add(1, Ordering::Relaxed);
-            // The sampling decision, taken from the instance's own dispatch id
-            // — an atomic load and a modulo, on a reactor thread, with no lock
-            // taken. See `WakeItem::queued`.
-            // The counter, read here and filed by whichever worker picks this
-            // wake up. See `WakeItem::enqueued_at`.
-            let enqueued_at =
-                stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every).then(marks::stamp);
-            self.queue.push_wake(WakeItem {
-                slot: s,
-                enqueued_at,
-            });
-        }
+        self.metrics.wakes.fetch_add(1, Ordering::Relaxed);
+        self.queue.push_wake(WakeItem { slot: s, stamps });
     }
 }
 
@@ -1456,9 +1520,9 @@ impl Cell {
                 queue: queue.clone(),
                 index: index.clone(),
                 metrics: metrics.clone(),
-                stage_sample_every: cfg.stage_sample_every,
             }),
             reactor: runtime.handle().clone(),
+            stage_sample_every: cfg.stage_sample_every,
         });
 
         let cell = Arc::new(Cell {
@@ -1596,7 +1660,7 @@ impl Cell {
             if let Some(cell) = &cell {
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                     Job::Dispatch(j) => cell.run_dispatch(*j),
-                    Job::Wake(w) => cell.run_wake(w.slot, w.enqueued_at),
+                    Job::Wake(w) => cell.run_wake(w.slot, w.stamps),
                 }));
                 // Cleared either way, so a job that finished normally cannot
                 // leave a stale id for the next panic to answer.
@@ -2292,9 +2356,12 @@ impl Cell {
     /// the control plane, a socket frame at the proxy and a DI reply all
     /// arrive this way, and in the PoC so do tests.
     pub fn complete_future(&self, id: u64, result: wisp_abi::result::ResultRecord) {
-        if let crate::futures::WakeTarget::Instance(owner) = self.rt.futures.complete(id, result) {
-            self.rt.wake.signal(owner);
-        }
+        // Through the runtime rather than inline, because the vtable's own
+        // `settle` is the *other* door and is the one every guest-awaited
+        // future comes through. They were two copies of the same three lines,
+        // and instrumenting only this one measured 1% of a real run's pauses.
+        // See `CellRuntime::settle_future`.
+        self.rt.settle_future(id, result);
     }
 
     /// Build a plain HTTP dispatch record with this app's budget (§11.1).
@@ -2639,9 +2706,24 @@ impl Cell {
     /// queue stamp. `CellWake::signal` is the fourth and cannot use this — it
     /// holds no cell — so it carries the same two lines against the same id.
     fn queue_wake(&self, slot: Arc<Slot>) {
-        let enqueued_at =
-            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every).then(marks::stamp);
-        self.queue.push_wake(WakeItem { slot, enqueued_at });
+        // `arrived` is *now* on this path, and that is the truthful reading:
+        // the completion landed while the dispatch was still Hot, so by the
+        // time the request parked there was nothing left to wait for. The
+        // request's `park.wait` is then a handful of nanoseconds, which is what
+        // it should say.
+        //
+        // The completion-path fields stay unset. This wake did not come from a
+        // reactor and there is no future-table acquisition or index lookup to
+        // attribute to it; `WakeStamps::file` skips a reading that was never
+        // taken rather than filing a zero, which would be a foreign timestamp
+        // and would be refused anyway.
+        let stamps =
+            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every).then(|| {
+                let st = Arc::new(marks::WakeStamps::default());
+                st.arrived.take();
+                st
+            });
+        self.queue.push_wake(WakeItem { slot, stamps });
     }
 
     /// One woken slice, and every further slice the instance can take without
@@ -2652,7 +2734,7 @@ impl Cell {
     /// per-request sum across slices; the loop below does not re-queue, so the
     /// stamp is spent once and the later slices in this call queued for
     /// nothing and are charged nothing.
-    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, enqueued_at: Option<crate::marks::Stamp>) {
+    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, stamps: Option<Arc<crate::marks::WakeStamps>>) {
         // This slice's lane wait closes **here**, at the top, before the
         // `residents` lock — exactly where `run_dispatch` closes its own, and
         // for the same reason: everything below this line is work the cell
@@ -2674,11 +2756,23 @@ impl Cell {
             stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every)
                 .then(|| self.active.with_mut(&slot.id, |a| a.marks.take()).flatten())
                 .flatten();
-        // The wait for the outside world closes at the instant the wake was
-        // enqueued, which a reactor thread read for us; everything from there
-        // to here is the priority lane and the pop.
-        if let Some(at) = enqueued_at {
-            marks::mark_at(&marks, Mark::WakeEnqueueBegan, at);
+        // **Everything the completion path measured, filed at last.** Ten
+        // readings taken on three threads that could none of them reach this
+        // trace: the reactor that completed the future, whoever pushed the
+        // wake, and whichever consumer popped it. See `marks::WakeStamps`.
+        //
+        // Filed *after* the reclaim above, because the reclaim is what makes
+        // the trace reachable at all; the readings carry their own timestamps
+        // and `trace::read` sorts, so where they are filed does not move them.
+        // Filed here **and again below**, just before the request is handed to
+        // `settle`. `file` clears each reading as it takes it, so nothing lands
+        // twice; the second pass exists because the producer is still writing
+        // when this one runs. `notified` in particular is written after a
+        // `notify_one` that is a futex syscall — microseconds, longer than this
+        // thread takes to get here — and the readings that would be lost are
+        // exactly the slow ones. See `marks::WakeStamps`.
+        if let Some(st) = &stamps {
+            st.file(&marks);
         }
         marks::mark(&marks, Mark::WakeStarted);
         // A wake runs an existing request, which is therefore already in
@@ -2803,6 +2897,14 @@ impl Cell {
             marks::mark(&marks, Mark::SlotReleaseReleased);
             self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
 
+            // **The second pass over the carried readings**, and the last
+            // point at which the trace is still on this thread: `settle` can
+            // reach `respond`, which moves the buffer into the reply. By now
+            // the guest's own slice has run, so anything the producer wrote
+            // after the push has certainly landed.
+            if let Some(st) = &stamps {
+                st.file(&marks);
+            }
             // **The loop may run the guest several times per wake**, without
             // going back through a lane. Every pass marks its own group, which
             // is the half the old instrument could not see at all: `waited` is
@@ -3665,7 +3767,7 @@ mod queue_tests {
     fn wake_of(slot: &Arc<Slot>) -> WakeItem {
         WakeItem {
             slot: slot.clone(),
-            enqueued_at: None,
+            stamps: None,
         }
     }
 

@@ -65,6 +65,22 @@ fn scalar_count(def: &imports::ImportDef) -> usize {
 /// Implemented by [`crate::Cell`]; a no-op in unit tests.
 pub trait WakeSink: Send + Sync + 'static {
     fn signal(&self, owner: InstanceId);
+
+    /// [`WakeSink::signal`], carrying the readings the completion path took
+    /// before it got here.
+    ///
+    /// A separate method with a default rather than a second parameter on
+    /// `signal`, so that a sink which has nothing to do with tracing — and
+    /// there are three — does not have to mention the instrument at all. Only
+    /// the cell's own sink overrides it.
+    fn signal_traced(
+        &self,
+        owner: InstanceId,
+        stamps: Option<std::sync::Arc<crate::marks::WakeStamps>>,
+    ) {
+        let _ = stamps;
+        self.signal(owner);
+    }
 }
 
 pub struct NoWake;
@@ -106,6 +122,59 @@ pub struct CellRuntime {
     /// The reactor. §6.1: reactor threads own **all** I/O; an execution-pool
     /// thread never awaits anything, it only returns.
     pub reactor: tokio::runtime::Handle,
+    /// A copy of [`crate::cell::CellConfig::stage_sample_every`], so a reactor
+    /// thread can decide whether this completion's path into the cell is worth
+    /// measuring without reaching back into the cell for the answer.
+    ///
+    /// Zero is off, and off is the common case: this is the only thing between
+    /// an untraced cell and two `RDTSCP`s on every completion.
+    pub stage_sample_every: u64,
+}
+
+impl CellRuntime {
+    /// **A host future has completed; route the wake, and time the path.**
+    ///
+    /// One function rather than two, and that is the point of it existing.
+    /// There are two ways a completion reaches the cell — the vtable's own
+    /// `settle`, which is every future a guest awaits, and
+    /// `Cell::complete_future`, which is the control plane, the proxy and the
+    /// tests — and they used to be two copies of the same three lines. The
+    /// first version of this instrument measured only the second, so a real
+    /// run reported the pause's internals on 94 requests out of 9,310 and the
+    /// rest arrived carrying nothing. Nothing about that looked wrong in the
+    /// table; the counts simply differed.
+    ///
+    /// **The two readings before the sampling decision are unavoidable.** The
+    /// predicate runs on a dispatch id and the dispatch id is inside the future
+    /// table, under the lock the second reading brackets — so while
+    /// `stage_sample_every` is non-zero, every completion pays two `RDTSCP`s,
+    /// about 40 ns. At zero it pays one relaxed load and a branch.
+    pub fn settle_future(&self, id: u64, res: wisp_abi::result::ResultRecord) {
+        let taking = self.stage_sample_every != 0;
+        // The wait for the outside world closes at this instruction, not three
+        // locks later where the wake is enqueued.
+        let arrived = if taking {
+            crate::marks::stamp()
+        } else {
+            crate::marks::NO_STAMP
+        };
+        let done = self.futures.complete_marked(id, res, taking);
+        let WakeTarget::Instance(owner) = done.target else {
+            return;
+        };
+        // The dispatch id is known now, so the readings can be kept or thrown
+        // away. The allocation below is the instrument's own and lands inside
+        // the span ending at `WakeIndexWanted`, which says so.
+        let stamps = (taking && crate::cell::stage_sampled(done.dispatch, self.stage_sample_every))
+            .then(|| {
+                let st = Arc::new(crate::marks::WakeStamps::default());
+                st.arrived.set(arrived);
+                st.complete_acquired.set(done.acquired);
+                st.complete_released.take();
+                st
+            });
+        self.wake.signal_traced(owner, stamps);
+    }
 }
 
 /// The per-instance half of the vtable's state.
@@ -352,10 +421,13 @@ impl CellBindings {
     }
 
     /// Complete a future from a reactor thread and signal the wake router.
+    ///
+    /// **The** completion path for everything a guest awaits, and the reason
+    /// [`CellRuntime::settle_future`] exists rather than three lines here: this
+    /// and `Cell::complete_future` were two copies, and instrumenting only the
+    /// second measured 1% of the pauses in a real run.
     fn settle(rt: &Arc<CellRuntime>, id: u64, res: ResultRecord) {
-        if let WakeTarget::Instance(owner) = rt.futures.complete(id, res) {
-            rt.wake.signal(owner);
-        }
+        rt.settle_future(id, res);
     }
 
     /// Resolve a future immediately, without touching the reactor. Used for

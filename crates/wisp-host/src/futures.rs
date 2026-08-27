@@ -191,12 +191,43 @@ impl FutureTable {
     /// A reactor thread completed a host future. Maps id → owning instance and
     /// makes the result deliverable; the caller enqueues the wake (§6.1).
     pub fn complete(&self, id: u64, result: ResultRecord) -> WakeTarget {
+        self.complete_marked(id, result, false).target
+    }
+
+    /// [`FutureTable::complete`], reading the counter after the lock and
+    /// handing back the dispatch the future belonged to.
+    ///
+    /// **Both extras are needed before the caller can decide anything.** The
+    /// sampling predicate runs on a dispatch id, and the dispatch id is inside
+    /// this table under this lock — so a reading of the wait for the lock has
+    /// to be taken before the cell knows whether it wants one. `taking` is
+    /// therefore "is this cell tracing at all", not "is this request sampled",
+    /// and while it is true every completion pays one `RDTSCP`. At zero
+    /// sampling it is false and the cost is a branch.
+    ///
+    /// **A triple**, with [`crate::marks::Mark::CompletionArrived`] as the left
+    /// edge: the hold is a lookup, two writes, a `pending` removal, a
+    /// per-dispatch decrement and a `ready` push, comfortably past a mark.
+    pub fn complete_marked(&self, id: u64, result: ResultRecord, taking: bool) -> Completed {
         let mut g = self.inner.lock();
+        let acquired = if taking {
+            crate::marks::stamp()
+        } else {
+            crate::marks::NO_STAMP
+        };
         let Some(e) = g.entries.get_mut(&id) else {
-            return WakeTarget::Orphan;
+            return Completed {
+                target: WakeTarget::Orphan,
+                dispatch: 0,
+                acquired,
+            };
         };
         if e.state != State::Pending {
-            return WakeTarget::Duplicate;
+            return Completed {
+                target: WakeTarget::Duplicate,
+                dispatch: e.dispatch,
+                acquired,
+            };
         }
         e.state = State::Ready;
         e.result = Some(result);
@@ -209,7 +240,11 @@ impl FutureTable {
             }
             o.ready.push_back(id);
         }
-        WakeTarget::Instance(owner)
+        Completed {
+            target: WakeTarget::Instance(owner),
+            dispatch,
+            acquired,
+        }
     }
 
     /// Pull the next deliverable result for `owner`. The exec-pool thread calls
@@ -362,6 +397,19 @@ impl FutureTable {
     pub fn live_futures(&self) -> usize {
         self.inner.lock().entries.len()
     }
+}
+
+/// What [`FutureTable::complete_marked`] found, plus what it measured.
+#[derive(Debug, Clone, Copy)]
+pub struct Completed {
+    pub target: WakeTarget,
+    /// The dispatch the future was registered against. `0` when the id was not
+    /// in the table at all — which is also not a dispatch, so nothing that
+    /// reads this can be confused by it.
+    pub dispatch: u64,
+    /// The counter, read immediately after the table's lock was acquired.
+    /// [`crate::marks::NO_STAMP`] when the cell is not tracing.
+    pub acquired: crate::marks::Stamp,
 }
 
 
