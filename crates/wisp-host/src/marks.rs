@@ -1,7 +1,8 @@
 //! Labelled timestamp boundaries for dispatch and queue measurements.
 //! Labels identify stage and queue boundaries. Available labels depend on the
 //! request path and queue implementation; absent labels are not zero intervals.
-use crate::tsc_marks::{Calibration, Marks, MarksPool, PooledMarks};
+use crate::trace::{Spans, TracePool};
+use crate::tsc_marks::Calibration;
 
 /// The marks a request can carry, in the order a plain request meets them.
 ///
@@ -43,17 +44,21 @@ pub enum Mark {
     /// **The lane lock's wait, isolated.** The number the whole exercise
     /// exists to separate from the queue wait.
     LaneLockAcquired,
+    /// End of the producer queue critical section.
+    LaneLockReleased,
+    /// Waking a parked worker. Free when none is parked; a futex wake when one
+    /// is, which is the case worth being able to see.
+    WaiterNotified,
 
     // --- the enqueue, lock-free structure -----------------------------------
     /// One `SeqCst` read-modify-write on a cacheline every producer touches.
     PushRegistered,
-    /// The `closed` check. **The ring's compare-and-swap is not marked**, for
-    /// the same reason the lane's critical section is not: `ArrayQueue::push`
-    /// takes the job by value and a consumer may pop it before the next
-    /// instruction, so there is nothing left on this thread to mark. Its cost
-    /// falls into `JobTaken`. That asymmetry with the mutex path is the honest
-    /// statement — a lock-free queue has no lock wait to isolate.
+    /// The `closed` check.
     ClosedChecked,
+    /// The bounded ring's compare-and-swap, and the `SeqCst` decrement after
+    /// it. A shed is decided inside this span — `push` hands the job straight
+    /// back when the ring is full.
+    RingPushed,
 
     // --- the queue ---------------------------------------------------------
     /// **The queue wait**, plus the producer's critical section and the
@@ -166,12 +171,104 @@ pub enum Mark {
     /// released and **before** the send, so the shard's own contention — which
     /// `lock_stats` reports separately — is not counted twice.
     ReplyHandedOff,
+    /// **Time the cell was blocked because the reply channel was full.**
+    ///
+    /// `SyncSender::send` on a depth-one channel blocks, and the sender is an
+    /// execution-pool thread — so a caller that stops draining stops the cell,
+    /// and a caller that drains slowly holds a worker. This span was invisible
+    /// to both ends until the trace stopped having a single owner: the buffer
+    /// travels *inside* the result, so the thread doing the sending has
+    /// nothing of its own left to mark with.
+    SendReturned,
 
     // --- the caller's side again --------------------------------------------
     /// The reply crossing the channel and the collector being scheduled, plus
     /// any time the cell was blocked on a full channel. **The last mark**;
     /// `stop()` is taken here.
     CallerReceived,
+}
+
+/// Every mark, **in declaration order**, which is also discriminant order.
+///
+/// One list rather than several: the storage writes a label as a `u8` and the
+/// reader turns it back, the report iterates the whole set to say which spans a
+/// run did not observe, and the tests walk it to check the invariants. Three
+/// separate lists would drift, and the way they would drift is a mark that
+/// silently stops being reported.
+pub const ALL: &[Mark] = &[
+    Mark::CallerReleased,
+    Mark::CellEntered,
+    Mark::BreakerLockWanted,
+    Mark::BreakerLockAcquired,
+    Mark::BreakerChecked,
+    Mark::JobBuilt,
+    Mark::PlacementDecided,
+    Mark::LaneLockWanted,
+    Mark::LaneLockAcquired,
+    Mark::LaneLockReleased,
+    Mark::WaiterNotified,
+    Mark::PushRegistered,
+    Mark::ClosedChecked,
+    Mark::RingPushed,
+    Mark::JobTaken,
+    Mark::DispatchStarted,
+    Mark::ModulesLockWanted,
+    Mark::ModulesLockAcquired,
+    Mark::ModulesLockReleased,
+    Mark::InstanceAcquireBegan,
+    Mark::ResidentsLockWanted,
+    Mark::ResidentsLockAcquired,
+    Mark::ResidentsLockReleased,
+    Mark::InstanceAcquireEnded,
+    Mark::ActiveProbeWanted,
+    Mark::ActiveProbeReleased,
+    Mark::CancelAllocWanted,
+    Mark::CancelAllocAcquired,
+    Mark::CancelAllocReleased,
+    Mark::ActiveInsertWanted,
+    Mark::ActiveInsertReleased,
+    Mark::SlotEnterWanted,
+    Mark::SlotEnterAcquired,
+    Mark::SlotEnterReleased,
+    Mark::GuestEntered,
+    Mark::GuestReturned,
+    Mark::SlotReleaseWanted,
+    Mark::SlotReleaseReleased,
+    Mark::TenantRecordWanted,
+    Mark::TenantRecordAcquired,
+    Mark::TenantRecordReleased,
+    Mark::ActiveUpdateWanted,
+    Mark::ActiveUpdateAcquired,
+    Mark::ActiveUpdateReleased,
+    Mark::ResponseTableWanted,
+    Mark::ResponseTableAcquired,
+    Mark::ResponseTableReleased,
+    Mark::WaitUntilCheckWanted,
+    Mark::WaitUntilCheckAcquired,
+    Mark::WaitUntilCheckReleased,
+    Mark::BreakerSuccessWanted,
+    Mark::BreakerSuccessAcquired,
+    Mark::BreakerSuccessReleased,
+    Mark::ResultReadWanted,
+    Mark::ResultReadReleased,
+    Mark::ResponderTakenWanted,
+    Mark::ResponderTakenReleased,
+    Mark::ReplyHandedOff,
+    Mark::SendReturned,
+    Mark::CallerReceived,
+];
+
+impl Mark {
+    /// Recover a mark from the byte the trace stored.
+    ///
+    /// Indexing [`ALL`] rather than transmuting: `ALL` is checked against the
+    /// discriminants by [`tests::the_label_table_matches_the_discriminants`],
+    /// so a variant added without updating the list fails a test instead of
+    /// silently renaming every span after it.
+    #[inline]
+    pub fn from_u8(v: u8) -> Option<Mark> {
+        ALL.get(v as usize).copied()
+    }
 }
 
 impl Mark {
@@ -193,8 +290,11 @@ impl Mark {
             PlacementDecided => "queue.placement",
             LaneLockWanted => "lane.lock.wanted",
             LaneLockAcquired => "lane.lock.wait",
+            LaneLockReleased => "lane.lock.hold",
+            WaiterNotified => "lane.notify",
             PushRegistered => "ring.pushing.enter",
             ClosedChecked => "ring.closed.check",
+            RingPushed => "ring.push",
             JobTaken => "queue.wait",
             DispatchStarted => "worker.start",
             ModulesLockWanted => "modules.read.wanted",
@@ -239,6 +339,7 @@ impl Mark {
             ResponderTakenWanted => "active.responder.wanted",
             ResponderTakenReleased => "active.responder",
             ReplyHandedOff => "reply.handoff",
+            SendReturned => "reply.send.blocked",
             CallerReceived => "reply.delivery",
         }
     }
@@ -252,8 +353,10 @@ impl Mark {
     pub fn structural(self) -> Structural {
         use Mark::*;
         match self {
-            LaneLockWanted | LaneLockAcquired => Structural::MutexQueue,
-            PushRegistered | ClosedChecked => Structural::LockFreeQueue,
+            LaneLockWanted | LaneLockAcquired | LaneLockReleased | WaiterNotified => {
+                Structural::MutexQueue
+            }
+            PushRegistered | ClosedChecked | RingPushed => Structural::LockFreeQueue,
             ResponseTableWanted | ResponseTableAcquired | ResponseTableReleased => {
                 Structural::RespondingDispatch
             }
@@ -300,10 +403,29 @@ pub const MARKS_CAPACITY: usize = 256;
 /// `None` on every request the sampler did not select and on every request
 /// that arrived when the pool was empty, so the cost on the common path is one
 /// `Option` discriminant.
-pub type RequestMarks = PooledMarks<Mark>;
+pub type RequestMarks = crate::trace::Trace;
 
 /// The pool a cell's requests check marks out of.
-pub type RequestMarksPool = MarksPool<Mark>;
+pub type RequestMarksPool = TracePool;
+
+/// A handle for a thread that is about to give the request away and still has
+/// timestamps to record. See [`crate::trace::Writer`].
+pub type MarkWriter = crate::trace::Writer;
+
+/// The handle for the enqueue's and the reply's tails, or `None` when the
+/// request is untraced.
+#[inline(always)]
+pub fn writer(m: &Option<RequestMarks>) -> Option<MarkWriter> {
+    m.as_ref().map(|t| t.writer())
+}
+
+/// Record a mark through a [`MarkWriter`].
+#[inline(always)]
+pub fn mark_after(w: &Option<MarkWriter>, label: Mark) {
+    if let Some(w) = w {
+        w.mark(label as u8);
+    }
+}
 
 /// Take a mark, if this request is carrying any.
 ///
@@ -311,15 +433,9 @@ pub type RequestMarksPool = MarksPool<Mark>;
 /// each of the fifty-odd places it appears, and `#[inline(always)]` so an
 /// unsampled request pays a predictable branch and no call.
 #[inline(always)]
-pub fn mark(m: &mut Option<RequestMarks>, label: Mark) {
-    if let Some(m) = m.as_mut() {
-        // Truncate rather than reallocate. `Marks::mark` debug-asserts on a
-        // full buffer and would reallocate in release — inside the timed
-        // region, on the dispatch path. Stopping at the cap costs this request
-        // its tail and costs the run nothing.
-        if m.len() < MARKS_CAPACITY {
-            m.mark(label);
-        }
+pub fn mark(m: &Option<RequestMarks>, label: Mark) {
+    if let Some(m) = m {
+        m.mark(label as u8);
     }
 }
 
@@ -330,20 +446,20 @@ pub fn mark(m: &mut Option<RequestMarks>, label: Mark) {
 /// request's origin, and the first *span* is the one ending at
 /// [`Mark::CellEntered`].
 #[inline(always)]
-pub fn begin(m: &mut Option<RequestMarks>) {
-    if let Some(m) = m.as_mut() {
-        m.start();
+pub fn begin(m: &Option<RequestMarks>) {
+    if let Some(m) = m {
+        m.begin();
     }
 }
 
 /// End a request's trace.
+///
+/// The same operation as [`mark`] — the shared storage has no distinguished
+/// last slot, because it cannot know which thread will write it. Kept as its
+/// own name so a call site says which of the two it is.
 #[inline(always)]
-pub fn stop(m: &mut Option<RequestMarks>, label: Mark) {
-    if let Some(m) = m.as_mut() {
-        if m.len() < MARKS_CAPACITY {
-            m.stop(label);
-        }
-    }
+pub fn stop(m: &Option<RequestMarks>, label: Mark) {
+    mark(m, label)
 }
 
 /// Build a pool sized to a cell's admission bound.
@@ -360,7 +476,7 @@ pub fn pool_for(
     admission: usize,
     slack: usize,
 ) -> RequestMarksPool {
-    MarksPool::new(cal, max_hot + admission + slack, MARKS_CAPACITY)
+    TracePool::new(cal, max_hot + admission + slack, MARKS_CAPACITY)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +487,7 @@ pub fn pool_for(
 ///
 /// Produced on the collector thread, off the dispatch path, once per traced
 /// request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Trace {
     /// `(label, nanoseconds)` in the order the marks were taken.
     pub spans: Vec<(Mark, f64)>,
@@ -385,6 +501,11 @@ pub struct Trace {
     pub crossed_cores: bool,
     /// True if the buffer filled and the tail was dropped.
     pub truncated: bool,
+    /// Slots claimed but not yet written when the trace was read — a writer
+    /// from the far side of a handoff still in flight. Distinct from
+    /// truncation, and counted separately because it has a different cause and
+    /// a different fix.
+    pub raced: usize,
 }
 
 /// Trace conditions counted independently so incomplete samples remain distinguishable.
@@ -419,13 +540,26 @@ impl MarkFaults {
 
 /// Reduces finished marks to stage intervals.
 /// The uncorrected end-to-end interval is kept separately from overhead-corrected spans.
-pub fn read(m: &Marks<Mark>) -> Trace {
-    let r = m.report();
+pub fn read(m: &RequestMarks) -> Trace {
+    let Some(Spans {
+        spans,
+        span_ns,
+        crossed_cores,
+        truncated,
+        raced,
+    }) = crate::trace::read(m)
+    else {
+        return Trace::default();
+    };
     Trace {
-        spans: r.intervals.iter().map(|iv| (iv.label, iv.nanos)).collect(),
-        span_ns: m.span_nanos(),
-        crossed_cores: r.crossed_cores,
-        truncated: m.len() >= MARKS_CAPACITY,
+        spans: spans
+            .into_iter()
+            .filter_map(|(l, ns)| Mark::from_u8(l).map(|m| (m, ns)))
+            .collect(),
+        span_ns,
+        crossed_cores,
+        truncated,
+        raced,
     }
 }
 
@@ -483,93 +617,61 @@ mod tests {
     }
 
     fn every_mark() -> Vec<Mark> {
-        use Mark::*;
-        vec![
-            CallerReleased,
-            CellEntered,
-            BreakerLockWanted,
-            BreakerLockAcquired,
-            BreakerChecked,
-            JobBuilt,
-            PlacementDecided,
-            LaneLockWanted,
-            LaneLockAcquired,
-            PushRegistered,
-            ClosedChecked,
-            JobTaken,
-            DispatchStarted,
-            ModulesLockWanted,
-            ModulesLockAcquired,
-            ModulesLockReleased,
-            InstanceAcquireBegan,
-            ResidentsLockWanted,
-            ResidentsLockAcquired,
-            ResidentsLockReleased,
-            InstanceAcquireEnded,
-            ActiveProbeWanted,
-            ActiveProbeReleased,
-            CancelAllocWanted,
-            CancelAllocAcquired,
-            CancelAllocReleased,
-            ActiveInsertWanted,
-            ActiveInsertReleased,
-            SlotEnterWanted,
-            SlotEnterAcquired,
-            SlotEnterReleased,
-            GuestEntered,
-            GuestReturned,
-            SlotReleaseWanted,
-            SlotReleaseReleased,
-            TenantRecordWanted,
-            TenantRecordAcquired,
-            TenantRecordReleased,
-            ActiveUpdateWanted,
-            ActiveUpdateAcquired,
-            ActiveUpdateReleased,
-            ResponseTableWanted,
-            ResponseTableAcquired,
-            ResponseTableReleased,
-            WaitUntilCheckWanted,
-            WaitUntilCheckAcquired,
-            WaitUntilCheckReleased,
-            BreakerSuccessWanted,
-            BreakerSuccessAcquired,
-            BreakerSuccessReleased,
-            ResultReadWanted,
-            ResultReadReleased,
-            ResponderTakenWanted,
-            ResponderTakenReleased,
-            ReplyHandedOff,
-            CallerReceived,
-        ]
+        ALL.to_vec()
     }
 
-    /// A trace that fills the buffer stops marking rather than reallocating.
+    /// **The byte the trace stores is an index into `ALL`.**
     ///
-    /// **The failure this prevents is invisible in the output.** `Marks::mark`
-    /// pushes into a `Vec` sized once at pool construction; past its capacity
-    /// it reallocates — inside the timed region, on the dispatch path — and
-    /// the run that happens in reports a plausible number with a memcpy in the
-    /// middle of it. A `debug_assert` catches that in a build the campaign
-    /// never runs.
+    /// A variant inserted in the middle of the enum without being added to the
+    /// list would shift every discriminant past it, and every span after that
+    /// point would come back under its neighbour's name — a whole report,
+    /// internally consistent, describing the wrong things.
+    #[test]
+    fn the_label_table_matches_the_discriminants() {
+        for (i, m) in ALL.iter().enumerate() {
+            assert_eq!(
+                *m as u8 as usize, i,
+                "`ALL[{i}]` is {m:?}, whose discriminant is not {i}"
+            );
+            assert_eq!(Mark::from_u8(i as u8), Some(*m));
+        }
+        assert_eq!(
+            Mark::from_u8(ALL.len() as u8),
+            None,
+            "past the end is not a mark"
+        );
+    }
+
+    /// A trace that fills the buffer stops marking rather than reallocating,
+    /// and **says which** happened.
+    ///
+    /// The failure this prevents is invisible in the output: past its capacity
+    /// a growable buffer reallocates inside the timed region, on the dispatch
+    /// path, and the run that happens in reports a plausible number with a
+    /// memcpy in the middle of it. Here the slots are fixed and the overflow is
+    /// a counter, so a workload that pauses more than the buffer allows is
+    /// reported as truncated rather than as fast.
     #[test]
     fn a_full_buffer_truncates_instead_of_growing() {
         let cal = Calibration::measure_for(std::time::Duration::from_millis(50));
         let pool = pool_for(cal, 1, 0, 0);
-        let mut m = pool.checkout();
+        let m = pool.checkout();
         assert!(m.is_some(), "a pool of one hands out one");
-        begin(&mut m);
-        let cap = m.as_ref().unwrap().capacity();
-        for _ in 0..cap * 2 {
-            mark(&mut m, Mark::GuestReturned);
+        begin(&m);
+        for _ in 0..MARKS_CAPACITY * 2 {
+            mark(&m, Mark::GuestReturned);
         }
-        let g = m.as_ref().unwrap();
-        assert!(g.len() <= cap, "the buffer grew: {} past {cap}", g.len());
-        assert_eq!(
-            g.len(),
-            MARKS_CAPACITY,
-            "it should have filled exactly to the cap"
+        let t = read(m.as_ref().unwrap());
+        assert!(
+            t.truncated,
+            "twice the capacity is a truncation and must say so"
         );
+        assert_eq!(
+            t.spans.len(),
+            MARKS_CAPACITY,
+            "it kept exactly the slots it had"
+        );
+        assert_eq!(t.raced, 0, "one thread wrote every slot it claimed");
     }
 
     /// The pool is sized to what can be in flight, and running it dry is

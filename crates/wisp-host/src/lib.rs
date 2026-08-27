@@ -80,6 +80,7 @@ pub mod meters;
 pub mod metrics;
 pub mod net;
 pub mod response;
+pub mod trace;
 /// Timestamp samples on x86-64, with an empty interface on other architectures.
 #[cfg(target_arch = "x86_64")]
 pub mod tsc_marks;

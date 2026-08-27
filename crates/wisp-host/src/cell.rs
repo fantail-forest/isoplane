@@ -1043,10 +1043,10 @@ impl WorkQueue {
         if let Some(s) = f.wakes.pop() {
             return Some(Job::Wake(s));
         }
-        f.dispatches.pop().map(|mut d| {
+        f.dispatches.pop().map(|d| {
             // The queue wait closes at the pop, on the thread that now owns
             // the job. See the mutex arm of `pop` for what this span contains.
-            marks::mark(&mut d.marks, Mark::JobTaken);
+            marks::mark(&d.marks, Mark::JobTaken);
             Job::Dispatch(d)
         })
     }
@@ -1158,24 +1158,32 @@ impl WorkQueue {
             // producer did between building the job and beginning the enqueue.
             // Under one ring that is `pick`'s early return and nothing else,
             // which is the honest reading rather than a missing row.
-            marks::mark(&mut j.marks, Mark::PlacementDecided);
+            marks::mark(&j.marks, Mark::PlacementDecided);
             Self::stamp_queued(&mut j);
             // Announce before the check, release after the push. See
             // `LockFreeLanes::pushing`: without this pair the check and the
             // push are two steps and a job can land in a ring that every
             // worker has already left.
             f.pushing.fetch_add(1, Ordering::SeqCst);
-            marks::mark(&mut j.marks, Mark::PushRegistered);
+            marks::mark(&j.marks, Mark::PushRegistered);
             let closed = f.closed.load(Ordering::SeqCst);
-            marks::mark(&mut j.marks, Mark::ClosedChecked);
+            marks::mark(&j.marks, Mark::ClosedChecked);
             if closed {
                 f.pushing.fetch_sub(1, Ordering::SeqCst);
                 return Err(j);
             }
+            // Same reasoning as the mutex arm: the ring takes the job by
+            // value and a consumer may pop it immediately, so the tail is
+            // marked through a handle taken while the job is still here.
+            let tail = marks::writer(&j.marks);
             // A full ring hands the job straight back, which is exactly the
             // shed the mutex version does at `dispatches.len() >= cap`.
             let pushed = f.dispatches.push(j);
             f.pushing.fetch_sub(1, Ordering::SeqCst);
+            // The compare-and-swap and the matching `SeqCst` decrement, which
+            // is where this structure spends what the mutex one spends on the
+            // lane lock. A shed is decided inside this span.
+            marks::mark_after(&tail, Mark::RingPushed);
             pushed?;
             Self::free_notify(f);
             return Ok(());
@@ -1184,7 +1192,7 @@ impl WorkQueue {
         // the lane lock below is not. That pairs with the lock-free branch
         // above, which stamps at the same point in its own sequence.
         let lane = &self.lanes[self.pick()];
-        marks::mark(&mut j.marks, Mark::PlacementDecided);
+        marks::mark(&j.marks, Mark::PlacementDecided);
         Self::stamp_queued(&mut j);
         // **The two marks this whole exercise exists for.** Everything between
         // them is the wait for the lane's mutex and nothing else — no
@@ -1193,23 +1201,32 @@ impl WorkQueue {
         // those have different fixes: a lock wait wants a shorter critical
         // section or more lanes, a queue wait wants more workers.
         //
-        // There is deliberately no third mark after the release, and this is
-        // the one classification the corrected mark cost does *not* move. The
-        // critical section is a `len()` check, a `push_back` and a
-        // `fetch_add` — about 4 ns, which is below the counter's own 10 ns
-        // step and therefore unmeasurable at any mark cost. The job is gone
-        // the instant the guard drops in any case; its cost falls into
-        // `queue.wait`, which `crate::marks` states.
-        marks::mark(&mut j.marks, Mark::LaneLockWanted);
+        marks::mark(&j.marks, Mark::LaneLockWanted);
         let mut g = lane.inner.lock();
-        marks::mark(&mut j.marks, Mark::LaneLockAcquired);
+        marks::mark(&j.marks, Mark::LaneLockAcquired);
         if g.closed || g.dispatches.len() >= self.cap {
             return Err(j);
         }
+        // **Taken before the job is given away, used after.** The push moves
+        // the job into a queue a worker may pop on the next instruction, so
+        // from here this thread has no job to mark through — but it does still
+        // have work to do, and that work is on the request's critical path.
+        // See `crate::trace` for why the storage is shared.
+        let tail = marks::writer(&j.marks);
         g.dispatches.push_back(j);
         lane.load.fetch_add(1, Ordering::Relaxed);
         drop(g);
+        // The critical section: a `len()` check, a `push_back` and a
+        // `fetch_add`, about 4 ns — below the counter's own 10 ns step, so
+        // this row is expected to read as noise. It is here for what it does
+        // to its neighbour: closing the lock *here* is what makes `queue.wait`
+        // the pure wait for a worker rather than that wait plus a producer's
+        // tail.
+        marks::mark_after(&tail, Mark::LaneLockReleased);
         lane.cv.notify_one();
+        // Free when no worker is parked, a futex wake when one is. The second
+        // case is the one worth being able to see.
+        marks::mark_after(&tail, Mark::WaiterNotified);
         Ok(())
     }
 
@@ -1301,7 +1318,7 @@ impl WorkQueue {
             if let Some(s) = g.wakes.pop_front() {
                 return Some(Job::Wake(s));
             }
-            if let Some(mut d) = g.dispatches.pop_front() {
+            if let Some(d) = g.dispatches.pop_front() {
                 // **The queue wait closes here**, while the lane lock is still
                 // held — which is where it has to close, because this is the
                 // first instant this thread owns the job. The span running
@@ -1309,7 +1326,7 @@ impl WorkQueue {
                 // section, the notify, the wait in the lane, and this thread's
                 // own acquisition. Everything that stretches it is a worker
                 // being busy.
-                marks::mark(&mut d.marks, Mark::JobTaken);
+                marks::mark(&d.marks, Mark::JobTaken);
                 return Some(Job::Dispatch(d));
             }
             if g.closed {
@@ -2293,7 +2310,7 @@ impl Cell {
             let _ = responder.send(DispatchResult::breaker_open(dispatch_id));
             return true;
         }
-        let mut job = Box::new(DispatchJob {
+        let job = Box::new(DispatchJob {
             module: module.clone(),
             target,
             rec,
@@ -2302,7 +2319,7 @@ impl Cell {
             stamps: self.new_stamps(dispatch_id, enqueued_ns),
             marks,
         });
-        marks::mark(&mut job.marks, Mark::JobBuilt);
+        marks::mark(&job.marks, Mark::JobBuilt);
         if self.queue.push_dispatch(job).is_err() {
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
             if let Some(m) = self.meters(module) {
@@ -3115,8 +3132,16 @@ impl Cell {
             // block is inside `reply.delivery` rather than beside it. See
             // `crate::marks`.
             result.marks = marks.take();
-            marks::mark(&mut result.marks, Mark::ReplyHandedOff);
+            marks::mark(&result.marks, Mark::ReplyHandedOff);
+            // **The reply channel is depth one and `send` blocks.** The sender
+            // is an execution-pool thread, so a caller that drains slowly
+            // holds a worker, and the request pays that as latency. The trace
+            // travels *inside* the result, so this thread keeps a handle to
+            // mark through once the send returns — the span this recovers was
+            // invisible to both ends before the storage was shared.
+            let tail = marks::writer(&result.marks);
             let _ = tx.send(result);
+            marks::mark_after(&tail, Mark::SendReturned);
         }
     }
 

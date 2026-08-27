@@ -129,26 +129,26 @@ fn round_trip(
     id: u64,
 ) -> Option<(Vec<(Mark, f64)>, f64, f64)> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let mut m = pool.checkout();
+    let m = pool.checkout();
     assert!(m.is_some(), "the pool was sized for this");
 
-    let outer = pool
-        .checkout()
-        .expect("a second buffer, for the caller's own bracket");
-    let mut outer = Some(outer);
-    marks::begin(&mut outer);
+    let outer = Some(
+        pool.checkout()
+            .expect("a second buffer, for the caller's own bracket"),
+    );
+    marks::begin(&outer);
 
     // `begin` *is* `CallerReleased`: the origin, not a span. See `Mark`.
-    marks::begin(&mut m);
+    marks::begin(&m);
     let admitted = cell.submit_with_marks(module, route("/x"), rec(id, "/x"), tx, m);
     assert!(admitted, "the cell shed a request this test needs served");
 
-    let mut res = rx.recv_timeout(T).expect("a reply");
-    marks::mark(&mut res.marks, Mark::CallerReceived);
-    marks::stop(&mut outer, Mark::CallerReceived);
+    let res = rx.recv_timeout(T).expect("a reply");
+    marks::mark(&res.marks, Mark::CallerReceived);
+    marks::stop(&outer, Mark::CallerReceived);
 
-    let trace = res.marks.as_ref().map(|m| wisp_host::marks::read(m))?;
-    let outer_ns = outer.as_ref().unwrap().span_nanos();
+    let trace = res.marks.as_ref().map(wisp_host::marks::read)?;
+    let outer_ns = wisp_host::marks::read(outer.as_ref().unwrap()).span_ns;
     Some((trace.spans, trace.span_ns, outer_ns))
 }
 
@@ -197,6 +197,10 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::PlacementDecided,
         Mark::LaneLockWanted,
         Mark::LaneLockAcquired,
+        // The producer's tail, written after the job was handed over — the
+        // three spans a single-owner buffer had to merge away.
+        Mark::LaneLockReleased,
+        Mark::WaiterNotified,
         Mark::JobTaken,
         Mark::DispatchStarted,
         Mark::ModulesLockWanted,
@@ -238,6 +242,9 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::ResponderTakenWanted,
         Mark::ResponderTakenReleased,
         Mark::ReplyHandedOff,
+        // Time the cell was blocked on a full reply channel, which used to be
+        // inside the reply's flight and indistinguishable from it.
+        Mark::SendReturned,
         Mark::CallerReceived,
     ];
     assert_eq!(
@@ -528,8 +535,8 @@ fn a_refused_request_returns_its_buffer_rather_than_a_partial_trace() {
     for id in 0..64u64 {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         keep.push(rx);
-        let mut mk = p.checkout();
-        marks::begin(&mut mk);
+        let mk = p.checkout();
+        marks::begin(&mk);
         let mut r = rec(id, "/x");
         r.cpu_budget_ms = 200;
         if !c.submit_with_marks(&m, route("/x"), r, tx, mk) {
