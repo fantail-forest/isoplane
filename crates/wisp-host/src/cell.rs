@@ -476,6 +476,28 @@ struct WakeItem {
     /// path. And the producer keeps a handle across the push, because pushing
     /// is a handoff and it still has a lock to release and a worker to wake.
     stamps: Option<Arc<crate::marks::WakeStamps>>,
+    /// **The dispatch this wake belongs to**, which is not the same thing as
+    /// the instance it is addressed to.
+    ///
+    /// A wake is routed by instance id, because that is what owns the future
+    /// table and the slot. But the readings above were taken on behalf of the
+    /// request that *awaited* the completion, and `Cell::active` holds one
+    /// entry per instance — so if that request has finished and another has
+    /// begun on the same instance by the time a worker pops this, the trace
+    /// found there belongs to somebody else. Comparing this against
+    /// `Slot::ctx`'s current dispatch id is what tells the two apart.
+    ///
+    /// Set from the **future's** dispatch on the completion path
+    /// (`CellRuntime::settle_future`), and from the slot's current dispatch on
+    /// the cell's own re-queue — see `Cell::queue_wake` for why those are both
+    /// the same rule rather than two.
+    ///
+    /// `None` is "no dispatch was named", which only [`WakeSink::signal`] can
+    /// produce — the tracing-free entry point, which no caller in this crate
+    /// uses. It is judged **fresh**: a guard that cannot tell must not refuse,
+    /// or a sink that opted out of the instrument would silently lose traces
+    /// to it.
+    dispatch: Option<u64>,
 }
 
 struct DispatchJob {
@@ -1257,6 +1279,20 @@ impl WorkQueue {
         }
     }
 
+    /// What each lane still owes, in the order [`WorkQueue::pop`] serves them:
+    /// lane `i` is worker `i`'s, and no worker steals.
+    ///
+    /// [`Lane::load`], not queue length — it counts the job a worker has taken
+    /// and not finished as well as everything still queued, which is the
+    /// difference that makes it usable as a "this lane is occupied" signal.
+    /// Empty under `LockFree`, which has no lanes.
+    fn lane_loads(&self) -> Vec<usize> {
+        self.lanes
+            .iter()
+            .map(|l| l.load.load(Ordering::Relaxed))
+            .collect()
+    }
+
     fn depth(&self) -> usize {
         if let Some(f) = &self.free {
             return f.dispatches.len() + f.wakes.len();
@@ -1403,10 +1439,34 @@ struct CellWake {
 
 impl WakeSink for CellWake {
     fn signal(&self, owner: InstanceId) {
-        self.signal_traced(owner, None)
+        self.signal_untraced(owner)
     }
 
-    fn signal_traced(&self, owner: InstanceId, stamps: Option<Arc<marks::WakeStamps>>) {
+    fn signal_traced(
+        &self,
+        owner: InstanceId,
+        dispatch: u64,
+        stamps: Option<Arc<marks::WakeStamps>>,
+    ) {
+        self.push(owner, Some(dispatch), stamps)
+    }
+}
+
+impl CellWake {
+    /// The [`WakeSink::signal`] path: a completion with no dispatch named and
+    /// nothing measured. Nothing in this crate reaches it — every completion
+    /// goes through `CellRuntime::settle_future` — but it is public API and it
+    /// has to route the wake, so it pushes one that names no dispatch.
+    fn signal_untraced(&self, owner: InstanceId) {
+        self.push(owner, None, None)
+    }
+
+    fn push(
+        &self,
+        owner: InstanceId,
+        dispatch: Option<u64>,
+        stamps: Option<Arc<marks::WakeStamps>>,
+    ) {
         // The index is a **pair**: the hold is one hash, one lookup and a
         // `Weak::upgrade`, at about what a mark costs. Every completion in the
         // cell passes through this one mutex and it appears in no row of
@@ -1441,7 +1501,11 @@ impl WakeSink for CellWake {
             return;
         };
         self.metrics.wakes.fetch_add(1, Ordering::Relaxed);
-        self.queue.push_wake(WakeItem { slot: s, stamps });
+        self.queue.push_wake(WakeItem {
+            slot: s,
+            stamps,
+            dispatch,
+        });
     }
 }
 
@@ -1691,7 +1755,7 @@ impl Cell {
             if let Some(cell) = &cell {
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                     Job::Dispatch(j) => cell.run_dispatch(*j),
-                    Job::Wake(w) => cell.run_wake(w.slot, w.stamps),
+                    Job::Wake(w) => cell.run_wake(w.slot, w.stamps, w.dispatch),
                 }));
                 // Cleared either way, so a job that finished normally cannot
                 // leave a stale id for the next panic to answer.
@@ -2119,6 +2183,20 @@ impl Cell {
     /// admission cap is [`Cell::admission_capacity`].
     pub fn queue_depth(&self) -> usize {
         self.queue.depth()
+    }
+    /// What each lane still owes, worker by worker.
+    ///
+    /// Coarser than [`Cell::queue_depth`] on purpose: a lane's load includes
+    /// the job its worker is *running*, so a zero here means that worker has
+    /// finished everything it was given rather than merely that its queue is
+    /// empty. That distinction is the only way to tell, from outside, that a
+    /// dispatch has run to the end of `run_dispatch` and not just to the end
+    /// of the guest — which is what a test placing work into a specific lane
+    /// has to know before it counts on where the next push lands.
+    ///
+    /// Empty under `LockFree`: there are no lanes to report.
+    pub fn lane_loads(&self) -> Vec<usize> {
+        self.queue.lane_loads()
     }
     pub fn hot_count(&self) -> usize {
         self.hot.load(Ordering::Relaxed)
@@ -2754,7 +2832,23 @@ impl Cell {
                 st.arrived.take();
                 st
             });
-        self.queue.push_wake(WakeItem { slot, stamps });
+        // **The slot's current dispatch, and that is the same rule the
+        // completion path uses rather than a second one.** The wake the
+        // reactor pushes names the dispatch that *created the future*, because
+        // that is whose wait the readings measure. Here there is no future and
+        // no wait: this wake exists because the slice that just ran left ready
+        // work behind, and the only reading on it was taken on this thread a
+        // few instructions ago. Both name the dispatch the readings belong to.
+        //
+        // It can still go stale, and by the same route: this is pushed while
+        // the dispatch is on the slot, and a lane can hold it past the end of
+        // that dispatch. Naming it here is what lets `run_wake` notice.
+        let dispatch = Some(slot.ctx.dispatch_id());
+        self.queue.push_wake(WakeItem {
+            slot,
+            stamps,
+            dispatch,
+        });
     }
 
     /// One woken slice, and every further slice the instance can take without
@@ -2765,7 +2859,12 @@ impl Cell {
     /// per-request sum across slices; the loop below does not re-queue, so the
     /// stamp is spent once and the later slices in this call queued for
     /// nothing and are charged nothing.
-    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, stamps: Option<Arc<crate::marks::WakeStamps>>) {
+    fn run_wake(
+        self: &Arc<Self>,
+        slot: Arc<Slot>,
+        stamps: Option<Arc<crate::marks::WakeStamps>>,
+        dispatch: Option<u64>,
+    ) {
         // This slice's lane wait closes **here**, at the top, before the
         // `residents` lock — exactly where `run_dispatch` closes its own, and
         // for the same reason: everything below this line is work the cell
@@ -2777,16 +2876,55 @@ impl Cell {
         // the cell's own `lock_stats` puts at the top of its list. So the
         // *measurement* boundary is this line and the *store* is deferred,
         // which is the only way to have both.
+
+        // **Is this wake still about the request on the slot?**
+        //
+        // It is routed by instance, and `Cell::active` holds one entry per
+        // instance — so the trace reclaimed below is whoever is in flight
+        // *now*, not whoever awaited this completion. Those are the same
+        // request almost always, and §7.2's single-writer refusal is why:
+        // a second dispatch cannot begin while the first is still in `active`.
+        // But a lane holds a wake for as long as its worker is busy and
+        // `WorkQueue::pop` serves `lanes[worker % n]` with no stealing, so a
+        // wake pushed during one dispatch can be popped after that dispatch
+        // has finished, the instance has been handed to the next request, and
+        // that request has parked on the same slot.
+        //
+        // Everything after this point is then a stranger's: the ten carried
+        // readings measure a wait the new request never had, and the readings
+        // taken before its trace began wrap when `read` differences them
+        // against its origin. `Trace::mark_at` stops the wrap, which is what
+        // makes this survivable; it does not stop the rest.
+        //
+        // One `u64` compare against a field already in hand, on every wake.
+        let current = slot.ctx.dispatch_id();
+        let fresh = dispatch.is_none_or(|d| d == current);
+        if !fresh {
+            // §10, and named beside the other instrument faults: a run that
+            // loses a request's spans this way says how many rather than
+            // publishing somebody else's.
+            self.metrics.stale_wakes.fetch_add(1, Ordering::Relaxed);
+        }
         // **Reclaim the trace the park left behind.**
         //
         // Guarded on the sampling predicate — one atomic load and a modulo,
         // no lock — so an untraced wake does not take `Cell::active` here at
         // all. A traced one does, and pays for it: this is a fifth lock on the
         // wake path and the span it opens is charged with taking it.
-        let mut marks: Option<RequestMarks> =
-            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every)
-                .then(|| self.active.with_mut(&slot.id, |a| a.marks.take()).flatten())
-                .flatten();
+        //
+        // **A stale wake reclaims nothing, and so marks nothing.** Every
+        // `marks::mark` below is a no-op on a `None`, which is what makes
+        // refusing the trace enough on its own: the wake still runs, the
+        // instance still gets its result, and the request on the slot keeps a
+        // trace with no foreign spans in it. Refused rather than re-labelled,
+        // for the reason `Trace::mark_at` refuses: the labels are positional —
+        // a span takes the name of the mark that *ends* it — so a trace joined
+        // half way through does not merely gain spans, it renames the ones it
+        // already had.
+        let mut marks: Option<RequestMarks> = (fresh
+            && stage_sampled(current, self.cfg.stage_sample_every))
+        .then(|| self.active.with_mut(&slot.id, |a| a.marks.take()).flatten())
+        .flatten();
         // **Everything the completion path measured, filed at last.** Ten
         // readings taken on three threads that could none of them reach this
         // trace: the reactor that completed the future, whoever pushed the
@@ -3799,6 +3937,7 @@ mod queue_tests {
         WakeItem {
             slot: slot.clone(),
             stamps: None,
+            dispatch: None,
         }
     }
 

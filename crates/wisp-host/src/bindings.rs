@@ -67,18 +67,25 @@ pub trait WakeSink: Send + Sync + 'static {
     fn signal(&self, owner: InstanceId);
 
     /// [`WakeSink::signal`], carrying the readings the completion path took
-    /// before it got here.
+    /// before it got here **and the dispatch they belong to**.
     ///
-    /// A separate method with a default rather than a second parameter on
+    /// A separate method with a default rather than extra parameters on
     /// `signal`, so that a sink which has nothing to do with tracing — and
     /// there are three — does not have to mention the instrument at all. Only
     /// the cell's own sink overrides it.
+    ///
+    /// `dispatch` is the dispatch that **created the future**, not the one
+    /// running when it completed. Those differ, and the difference is the
+    /// point: a wake is addressed to an instance, but the readings it carries
+    /// — and the trace they would be filed into — belong to the request that
+    /// awaited it. See [`crate::metrics::Metrics::stale_wakes`].
     fn signal_traced(
         &self,
         owner: InstanceId,
+        dispatch: u64,
         stamps: Option<std::sync::Arc<crate::marks::WakeStamps>>,
     ) {
-        let _ = stamps;
+        let _ = (dispatch, stamps);
         self.signal(owner);
     }
 }
@@ -173,7 +180,12 @@ impl CellRuntime {
                 st.complete_released.take();
                 st
             });
-        self.wake.signal_traced(owner, stamps);
+        // `done.dispatch` travels with the wake from here. It was already read
+        // — the sampling predicate above runs on it — and it is the only place
+        // it can be read: the future table knows which dispatch registered the
+        // future, and by the time a worker pops the wake the instance may be
+        // running a different one.
+        self.wake.signal_traced(owner, done.dispatch, stamps);
     }
 }
 

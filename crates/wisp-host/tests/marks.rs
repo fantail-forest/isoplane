@@ -20,6 +20,8 @@
 //! | [`the_two_queue_structures_report_different_spans_and_neither_reports_a_zero`] | flattening two designs into one shape, and absent-as-zero |
 //! | [`an_untraced_request_carries_no_marks_and_the_buffer_goes_back`] | the pool leaking, which shows up hours later as an untraced run |
 //! | [`a_refused_request_returns_its_buffer_rather_than_a_partial_trace`] | a shed's six marks pooling into the same distributions as a served request's fifty |
+//! | [`a_wake_that_outlived_its_dispatch_keeps_out_of_the_next_request`] | one request's wake marking spans on the trace of the request that came after it |
+//! | [`a_stale_wake_that_runs_nothing_leaves_the_next_request_whole`] | that refusal costing a trace it did not have to cost — the common stale wake must be free |
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

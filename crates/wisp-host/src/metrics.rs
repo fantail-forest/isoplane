@@ -152,6 +152,36 @@ pub struct Metrics {
     /// no metric, logged nothing, and left `dispatches` claiming the request
     /// was still in flight.
     pub wakes_dropped: AtomicU64,
+    /// **Wakes that reached a worker after the dispatch they belonged to had
+    /// ended**, and were therefore run without a trace.
+    ///
+    /// A wake is queued for an *instance* but its readings belong to a
+    /// *dispatch*: the completion it carries was awaited by whichever dispatch
+    /// created the future. `Cell::active` holds one entry per instance, so if
+    /// that dispatch has finished and a new one has begun on the same
+    /// instance, the trace `Cell::run_wake` finds there belongs to a request
+    /// that never waited for this completion. Filing the wake's readings into
+    /// it invents spans for the new request — and readings taken before that
+    /// request's trace began wrap when they are differenced against its
+    /// origin, which is the 8,384,783,978,118.09 ms `park.wait` that found
+    /// this.
+    ///
+    /// The wake still runs: the result is real and the instance is the right
+    /// one to deliver it to. Only the trace is refused.
+    ///
+    /// **What that costs depends on what the wake then does, and mostly it is
+    /// nothing.** The common stale wake finds an empty table and runs no slice
+    /// at all — several completions for one instance produce several wakes and
+    /// the first one's loop drains them — and for that one the refusal is free:
+    /// the request on the slot keeps its trace untouched and comes home with a
+    /// full set of spans. Only a stale wake that finds ready work *and* answers
+    /// the request with it costs anything, and then it costs that request all
+    /// of its spans, because the slice that replied ran untraced.
+    ///
+    /// So this counts wakes refused, which is an upper bound on traces lost and
+    /// usually far above it. An instrument fault, beside
+    /// [`Metrics::wakes_dropped`] and `SpanBreakdown::stale_marks`.
+    pub stale_wakes: AtomicU64,
     pub traps: AtomicU64,
     /// Every CPU-budget kill, clean and hard. Kept as the total so a dashboard
     /// built against v1.1 still reads something true.
@@ -413,6 +443,7 @@ impl Metrics {
             dispatches: l(&self.dispatches),
             wakes: l(&self.wakes),
             wakes_dropped: l(&self.wakes_dropped),
+            stale_wakes: l(&self.stale_wakes),
             traps: l(&self.traps),
             budget_kills: l(&self.budget_kills),
             clean_kills: l(&self.clean_kills),
@@ -526,6 +557,9 @@ pub struct MetricsSnapshot {
     /// Completions whose owning instance could not be reached, so no wake was
     /// enqueued. See [`Metrics::wakes_dropped`].
     pub wakes_dropped: u64,
+    /// Wakes served after their dispatch had ended, and so run untraced. See
+    /// [`Metrics::stale_wakes`].
+    pub stale_wakes: u64,
     pub traps: u64,
     pub budget_kills: u64,
     pub clean_kills: u64,
@@ -585,6 +619,7 @@ impl MetricsSnapshot {
             ("dispatches", self.dispatches.to_string()),
             ("wakes", self.wakes.to_string()),
             ("wakes_dropped", self.wakes_dropped.to_string()),
+            ("stale_wakes", self.stale_wakes.to_string()),
             ("traps", self.traps.to_string()),
             ("budget_kills", self.budget_kills.to_string()),
             ("clean_kills", self.clean_kills.to_string()),
