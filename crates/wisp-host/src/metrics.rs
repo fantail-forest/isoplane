@@ -178,13 +178,22 @@ pub struct Metrics {
     /// (`Mark::WakeAdopted`), because that slice is the current request's guest
     /// time and CPU whatever rang the doorbell.
     ///
-    /// What is lost is the wake path's *breakdown* for that one resumption:
-    /// the lane wait, the futex round trip and the completion's arrival are
-    /// readings from a dispatch that has already answered, so they are refused
-    /// and the pause they would have closed is reported as
-    /// `park.wait.unattributed` instead of `park.wait`. So a non-zero here is
-    /// "this many requests were resumed by something that could not be
-    /// attributed to them", not "this many traces are missing".
+    /// **What this counts is wakes, and only some of them cost a report
+    /// anything.** Every mismatch increments it, including the common one that
+    /// runs nothing — and that one changes no trace at all: the request on the
+    /// slot is resumed later by a wake of its own and closes its pause under an
+    /// ordinary `park.wait`, exactly as if this had never happened. Only the
+    /// second shape shows up in a table, and what it costs there is the wake
+    /// path's *breakdown* for that one resumption: the lane wait, the futex
+    /// round trip and the completion's arrival are readings from a dispatch
+    /// that has already answered, so they are refused and the pause they would
+    /// have closed is reported as `park.wait.unattributed` instead.
+    ///
+    /// So this is an **upper bound on the number of `park.wait.unattributed`
+    /// pauses, not a count of them**, and not a count of traces lost — that
+    /// number is zero. Distinguishing the two shapes would need a second
+    /// counter incremented where the adoption happens; there is no way to
+    /// recover the split from this one.
     ///
     /// An instrument fault all the same, beside [`Metrics::wakes_dropped`] and
     /// `SpanBreakdown::stale_marks`: two labels over one pause is a thing a
