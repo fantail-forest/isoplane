@@ -153,12 +153,6 @@ pub enum Mark {
     WaitUntilCheckAcquired,
     /// Walking the `wait_until` set, one map lookup per element.
     WaitUntilCheckReleased,
-    /// Building the result and the response.
-    BreakerSuccessWanted,
-    /// **Waiting for the hang breaker's lock a second time.**
-    BreakerSuccessAcquired,
-    /// End of recording success in the hang breaker.
-    BreakerSuccessReleased,
     /// Nothing; the left edge of `build_result`'s read.
     ResultReadWanted,
     /// End of reading the active request result.
@@ -309,9 +303,6 @@ pub const ALL: &[Mark] = &[
     Mark::WaitUntilCheckWanted,
     Mark::WaitUntilCheckAcquired,
     Mark::WaitUntilCheckReleased,
-    Mark::BreakerSuccessWanted,
-    Mark::BreakerSuccessAcquired,
-    Mark::BreakerSuccessReleased,
     Mark::ResultReadWanted,
     Mark::ResultReadReleased,
     Mark::ResponderTakenWanted,
@@ -414,9 +405,6 @@ impl Mark {
             WaitUntilCheckWanted => "futures.waituntil.wanted",
             WaitUntilCheckAcquired => "futures.waituntil.wait",
             WaitUntilCheckReleased => "futures.waituntil.hold",
-            BreakerSuccessWanted => "breaker.success.wanted",
-            BreakerSuccessAcquired => "breaker.success.wait",
-            BreakerSuccessReleased => "breaker.success.hold",
             ResultReadWanted => "active.read.wanted",
             ResultReadReleased => "active.read",
             ResponderTakenWanted => "active.responder.wanted",

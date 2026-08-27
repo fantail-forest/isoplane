@@ -135,19 +135,13 @@ impl HangBreaker {
 
     /// A dispatch completed normally. Success closes the breaker: the tenant
     /// pushed a fix, or the hang was input-dependent.
+    /// **Deliberately unmarked.** It runs after `Cell::respond` has sent the
+    /// reply, and the trace travels inside the reply — so there is nothing
+    /// left on this thread to mark with, and the work is past the request's
+    /// own elapsed time in any case. See `crate::marks` on where the trace
+    /// ends.
     pub fn record_success(&self, key: &BreakerKey) {
-        self.record_success_marked(key, &mut None)
-    }
-
-    /// [`HangBreaker::record_success`], marking the wait for `entries`
-    /// separately. A **triple**, for the same reason as `check_marked`.
-    pub fn record_success_marked(
-        &self,
-        key: &BreakerKey,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) {
         let mut g = self.entries.lock();
-        crate::marks::mark(marks, crate::marks::Mark::BreakerSuccessAcquired);
         if let Some(e) = g.get_mut(key) {
             e.kills = 0;
             e.open_until_ms = 0;

@@ -280,14 +280,22 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         );
     }
 
-    // **`BreakerSuccessWanted` is deliberately absent above**, and this is the
-    // reason: a `Reuse` handler that completes cleanly is disposed, and only a
-    // disposed request records success against the breaker. Asserting its
-    // absence here rather than leaving it out silently is what stops a future
-    // reader reading the missing row as a lock that never blocked.
-    assert!(
-        !got.contains(&Mark::BreakerSuccessWanted) || got.contains(&Mark::BreakerSuccessReleased),
-        "the breaker's success pair is half present, which is worse than either"
+    // **The trace ends at the reply, and that is the boundary.** Everything
+    // the cell does after answering — recording success against the breaker,
+    // releasing the instance's futures, returning the sandbox to its pool —
+    // is past `ReplyHandedOff` and is not on this trace, because the trace
+    // travels inside the reply. `reply.delivery` is therefore the last span
+    // the cell contributes to, and the only mark after it is the caller's own.
+    let after_handoff: Vec<Mark> = got
+        .iter()
+        .skip_while(|m| **m != Mark::ReplyHandedOff)
+        .skip(1)
+        .copied()
+        .collect();
+    assert_eq!(
+        after_handoff,
+        vec![Mark::SendReturned, Mark::CallerReceived],
+        "something the cell does after answering ended up inside the request's own span"
     );
 }
 

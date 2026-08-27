@@ -173,29 +173,20 @@ pub struct CellConfig {
     /// and means keep working, only percentiles stop — because §10 asks for
     /// them and a run without them still has to be comparable to a run with.
     pub telemetry_sample_every: u64,
-    /// How densely [`StageTimings`] is collected: `N` times one request in `N`,
-    /// `0` or `1` — `1` meaning every request — with `0` switching it off.
+    /// How densely a request's [`crate::marks`] trace is collected: `N` times
+    /// one request in `N`, `0` or `1` — `1` meaning every request — with `0`
+    /// switching it off.
     ///
-    /// **Sampled rather than always-on because the clock is the cost.** Three
-    /// extra `clock_gettime` calls per request at 300,000 requests a second is
-    /// close to a million vDSO reads a second across the pool, on the one path
-    /// whose timing is the measurement.
+    /// **Sampled rather than always-on because the instrument is the cost.**
+    /// At 300,000 requests a second, tracing every one would be 0.5 s of
+    /// `RDTSCP` per second across the pool — on the one path whose timing is
+    /// the measurement.
     ///
-    /// **Three, counted rather than asserted.** They are `WorkQueue::
-    /// stamp_queued`, closing the submit stage and opening the queue one;
-    /// `run_dispatch`, closing the queue stage; and `Cell::respond`, stamping
-    /// the reply. Nothing else on a request that never parks reads a clock for
-    /// this mechanism — `enqueued` is read for every request, sampled or not,
-    /// because `ActiveRequest::started` needs it, and `guest_ns` is the
-    /// engine's own per-slice wall time. It was four until `Cell::new_stamps`
-    /// stopped reading the clock into a field that `stamp_queued` overwrote
-    /// before anything could read it.
-    ///
-    /// A request that **parks** pays two more per wake — one where the wake
-    /// enters its lane and one where the execution thread takes it out — which
-    /// is the price of `StageTimings::queue_ns` covering the priority lane
-    /// rather than only the first admission. Both are conditional on the same
-    /// sample.
+    /// **Eighty-odd counter reads, not three clock calls.** The mechanism is
+    /// no longer `clock_gettime`: a mark is one `RDTSCP`, 20 ns on the part
+    /// this suite targets, and a plain request takes about eighty of them —
+    /// roughly 1.6 µs of instrument. A request that **parks** takes more, once
+    /// per pass. All of it is conditional on this sample.
     ///
     /// At the default it is one request in
     /// 128: still 2,300 samples a second, which is 70,000 over a thirty-second
@@ -352,13 +343,6 @@ pub struct DispatchResult {
     /// Where this request's time went inside the cell, if it was one of the
     /// sampled ones. `None` on every other request and on every refusal.
     ///
-    /// See [`StageTimings`]. It rides back on the result rather than being
-    /// accumulated cell-side because the caller already owns a histogram per
-    /// distribution, already scopes it to a hold by differencing two
-    /// snapshots, and already reads percentiles off it — a second set of
-    /// histograms inside the cell would be a second implementation of all
-    /// three, on the one path that must not grow a lock.
-    pub stages: Option<StageTimings>,
     /// The request's labelled timestamps, if it was one of the traced ones.
     ///
     /// Rides home for the same reason `stages` does, and returns itself to
@@ -371,211 +355,6 @@ pub struct DispatchResult {
     /// never reaches most of the marks, and a partial trace pooled with whole
     /// ones would shorten every span it appears in.
     pub marks: Option<RequestMarks>,
-}
-
-/// Where one request's time went between `submit` and the reply landing.
-///
-/// **Why this exists.** The harness had exactly three timings — scheduled
-/// arrival to reply, actual release to reply, and the generator's own lateness
-/// — so everything the cell did was one opaque block. A p99 of 13.8 ms at
-/// sixty-four execution threads against 98 mu-s at eight is a fact about
-/// queueing, and nothing in the record could say *which* queue: the intake
-/// lane's lock, the wait for a worker, the guest itself, or the reply channel
-/// backing up behind a collector that lost its cpu. Those four have different
-/// fixes and the difference between them was being inferred from a thread
-/// count.
-///
-/// **The shape: two stamps bracketing three durations, and a residual.** Not
-/// four addable stages — that claim used to stand here and it was false.
-/// `replied_mono_ns` is an *instant* on [`crate::mono_ns`]'s scale, not a
-/// duration; it cannot be summed with anything, and the one test that checked
-/// the arithmetic quietly summed three and called them "the three closed
-/// stages". So, precisely:
-///
-/// ```text
-///  admitted_mono_ns                                      replied_mono_ns
-///        |                                                      |
-///        |<- submit_ns ->|<- queue_ns ->|   ...   |<- guest_ns ->|
-///        |<---------------- service_ns (the difference) -------->|
-/// ```
-///
-/// * `submit_ns` and `queue_ns` are **contiguous**: one clock read closes the
-///   first and opens the second (`WorkQueue::stamp_queued`), so there is no
-///   gap between them and no overlap.
-/// * `guest_ns` is disjoint from both — it is the engine's own per-slice wall
-///   time, summed by `settle`, and the guest cannot be inside a queue.
-/// * Everything else the cell did is the **residual**, and it is now
-///   arithmetic rather than an admission: `service_ns - submit_ns - queue_ns -
-///   guest_ns`, computable from this struct alone. That is module lookup,
-///   instance acquisition, the `active` insert, `slot.enter`, `settle`, the
-///   response table — real work, not measured, and not hidden.
-///
-/// **Not measured is not zero.** Nothing here is left at a zero initialiser
-/// and then averaged in as though it were a reading: a request that was not
-/// sampled carries `None` for the whole struct rather than a zeroed one, and a
-/// request that never reached the guest — shed, breaker-refused, no such
-/// module, reentrancy-refused — also carries `None`, because its stages would
-/// be a partial decomposition of a request that has none. Every field of every
-/// `Some` was written by a clock.
-///
-/// **The residual is deliberately not named as a stage.** Widening a stage to
-/// swallow it would produce a decomposition that appears to account for
-/// everything, which is the one nobody checks. Publishing it as a difference
-/// keeps it visible and keeps it honest about never having been timed.
-///
-/// **All of it describes one request.** The sampling decision is taken once,
-/// at admission, and carried on the job. Sampling each stage independently
-/// would give distributions over different populations, which cannot be
-/// combined and would look exactly the same in the report.
-///
-/// **Every figure means the same thing under every queue configuration.**
-/// `submit_ns` and `queue_ns` are defined by where the stamp sits relative to
-/// the *enqueue*, which is a point that exists in all three structures — see
-/// `WorkQueue::stamp_queued` for what that cost and why the alternative was
-/// not implementable. A column comparing structures is therefore comparing one
-/// quantity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct StageTimings {
-    /// [`crate::mono_ns`] at the instant the cell accepted this request.
-    ///
-    /// The opening bracket, and the reason the residual is computable rather
-    /// than merely acknowledged: with only `replied_mono_ns` a reader has an
-    /// end and no beginning, and has to reconstruct the start from its own
-    /// clock — which a report reading an archived record cannot do at all.
-    ///
-    /// Costs no clock read. The submit path already reads the clock for
-    /// `ActiveRequest::started_ns`, and this is that same reading.
-    ///
-    /// It used to be an opaque `Instant` converted here onto a per-process
-    /// origin, which is what made this number incomparable with any reading
-    /// the caller took for itself. [`crate::mono_ns`] is now a raw
-    /// `CLOCK_MONOTONIC` read on one scale with every other crate's, so the
-    /// stamp travels as a plain number and needs no conversion at either end.
-    pub admitted_mono_ns: u64,
-    /// Entering the submit path to the instant the cell has decided where the
-    /// job goes and is about to enqueue it: the breaker check, the job
-    /// allocation, and — where there is more than one queue — the placement
-    /// decision.
-    ///
-    /// **The breaker check really is inside it**, as of the fix to the struct
-    /// literal that used to stamp `enqueued` after it. It takes
-    /// `HangBreaker::entries`, which this cell's own `Cell::lock_stats` names
-    /// as one of its seven contention suspects, so a submit stage that opened
-    /// below it would have put that lock's cost in no stage at all. It is also
-    /// the only lock in this stage, and it is there under every queue
-    /// configuration — which is what makes the figure comparable between them.
-    ///
-    /// **The enqueue itself is not inside it**, and neither is what the
-    /// enqueue costs: acquiring an intake lane's lock, or the ring's
-    /// compare-and-swap, is charged to [`StageTimings::queue_ns`]. The text
-    /// that used to stand here named the lane lock as the contended half and
-    /// said it was inside — structure-specific prose on a field that also
-    /// exists under `LockFree`, where no such lock exists to be inside
-    /// anything. `WorkQueue::stamp_queued` carries the reasoning.
-    pub submit_ns: u64,
-    /// Getting into a lane and waiting there for an execution thread to pop
-    /// it, summed over every slice of the dispatch.
-    ///
-    /// The queueing delay proper. Under [`QueueStructure::PerWorker`] it is a
-    /// wait on one lane rather than on the pool, which is the whole point of
-    /// that structure and the number that shows whether it worked.
-    ///
-    /// **The enqueue is inside it**, which is the half a reader arriving here
-    /// from a report will not expect: acquiring the intake lane's lock — or
-    /// the ring's compare-and-swap under [`QueueStructure::LockFree`] — and
-    /// the push itself are charged here and not to
-    /// [`StageTimings::submit_ns`], which stops just before them. So this is
-    /// where the `Shared` structure's one contended mutex shows up, and it is
-    /// deliberately the same definition under all three so that a column
-    /// comparing them compares one quantity. `WorkQueue::stamp_queued` carries
-    /// the reasoning and what the alternative would have cost.
-    ///
-    /// **Every slice, for the same reason as `guest_ns`.** A dispatch that
-    /// parks goes back through a lane on its wake and waits there exactly as
-    /// it did at admission — §6.3 makes that one request, and the wake lane is
-    /// the *priority* lane, so how long a request waits in it is the sharpest
-    /// question the two-lane design has to answer. Charging only the first
-    /// wait reported the workload that queues most as the one that queues
-    /// least, and left the priority lane with no measurement at all.
-    pub queue_ns: u64,
-    /// Inside the guest, summed over every slice of the dispatch.
-    ///
-    /// Every slice, not the first: a dispatch that parks and is woken runs the
-    /// guest again, and §6.3 makes that one request. Timing only the first
-    /// slice would report a `chatty` guest as faster than an `echo` one.
-    pub guest_ns: u64,
-    /// [`crate::mono_ns`] at the instant the cell handed the reply to the
-    /// responder channel.
-    ///
-    /// A stamp rather than a duration, because the interval worth having runs
-    /// from here to the caller *receiving* it and the cell is not present for
-    /// the second half. Timing `SyncSender::send` alone would measure only the
-    /// case where the channel is already full — it is the queueing in front of
-    /// that, on a collector thread that lost its cpu, that shows up as
-    /// platform latency in the report.
-    pub replied_mono_ns: u64,
-}
-
-impl StageTimings {
-    /// The whole interval the cell had this request, end to end.
-    ///
-    /// The difference between the two stamps, which is why both exist. A
-    /// reader with only the three durations cannot get here: they do not add
-    /// up to it, and they are not supposed to.
-    pub fn service_ns(&self) -> u64 {
-        self.replied_mono_ns.saturating_sub(self.admitted_mono_ns)
-    }
-
-    /// What the cell spent on this request outside the three named stages.
-    ///
-    /// Module lookup, instance acquisition, the `active` insert, `slot.enter`,
-    /// `settle`, the response table. **Never measured** — it is this
-    /// subtraction and nothing else, which is exactly why it is a method and
-    /// not a field: a field would look like a reading.
-    ///
-    /// Saturating, and a zero is worth looking at rather than rounding past.
-    /// The three stages are bounded by the bracket by construction, so a
-    /// saturated zero means one of them was written from a different clock or
-    /// a stamp was not taken — see [`StageTimings::is_coherent`].
-    pub fn residual_ns(&self) -> u64 {
-        self.service_ns()
-            .saturating_sub(self.submit_ns)
-            .saturating_sub(self.queue_ns)
-            .saturating_sub(self.guest_ns)
-    }
-
-    /// Whether this decomposition is internally consistent: the three
-    /// durations fit inside the bracket, and the bracket runs forwards.
-    ///
-    /// A cheap invariant a reader can apply to every record without a second
-    /// source. It is what catches a unit error, two stages that overlap, and a
-    /// stamp taken at the wrong end — the three failures a stage table has no
-    /// other way to be wrong against.
-    pub fn is_coherent(&self) -> bool {
-        self.replied_mono_ns >= self.admitted_mono_ns
-            && self.submit_ns + self.queue_ns + self.guest_ns <= self.service_ns()
-    }
-}
-
-/// The stamps a sampled request carries while it is in flight.
-///
-/// Absent on every unsampled request, so the cost of the whole mechanism on
-/// the common path is one `Option` discriminant and the modulo that set it.
-#[derive(Debug, Clone, Copy)]
-struct StageStamps {
-    /// When the cell accepted the request — the submit path's `enqueued`,
-    /// kept so it can be published as [`StageTimings::admitted_mono_ns`]
-    /// without reading the clock again.
-    ///
-    /// Distinct from `queued` below, which moves: this one never does, and
-    /// conflating the two is what would make the opening bracket drift to
-    /// wherever the last stage boundary happened to fall.
-    admitted_ns: u64,
-    /// Where the submit stage ended and the queue stage began. Set by
-    /// `WorkQueue::stamp_queued`, once, immediately before the enqueue.
-    queued_ns: u64,
-    submit_ns: u64,
-    queue_ns: u64,
 }
 
 impl DispatchResult {
@@ -592,7 +371,6 @@ impl DispatchResult {
             instance: InstanceId(0),
             acquired: "none",
             slices: 0,
-            stages: None,
             marks: None,
         }
     }
@@ -610,7 +388,6 @@ impl DispatchResult {
             instance: InstanceId(0),
             acquired: "none",
             slices: 0,
-            stages: None,
             marks: None,
         }
     }
@@ -673,10 +450,10 @@ enum Job {
 
 /// A queued wake, and when it was queued.
 ///
-/// The instant is here rather than derived at the pop because the interval
+/// The reading is taken here rather than at the pop because the interval
 /// wanted is the one *before* the pop — a woken slice waits for an execution
 /// thread exactly as a new dispatch does, and §6.3 makes both of them the same
-/// request. See [`StageTimings::queue_ns`].
+/// request. See [`crate::marks::Mark::WakeStarted`].
 struct WakeItem {
     slot: Arc<Slot>,
     /// `Some` only for a request that [`CellConfig::stage_sample_every`]
@@ -688,7 +465,6 @@ struct WakeItem {
     /// would mean taking `Cell::active`, on the reactor thread, for telemetry.
     /// It is the same predicate `Cell::new_stamps` used at admission and on
     /// the same id, so the two cannot disagree about which request this is.
-    queued_ns: Option<u64>,
     /// **A counter reading, taken where the wake was enqueued.**
     ///
     /// Not the trace itself: the reactor thread that completes a future holds
@@ -714,9 +490,6 @@ struct DispatchJob {
     /// after. `Marks` is single-owner, and this is the only field in the cell
     /// with the same lifetime.
     marks: Option<RequestMarks>,
-    /// `Some` on the one request in [`CellConfig::stage_sample_every`] that
-    /// was chosen for stage timing, at admission and once.
-    stamps: Option<StageStamps>,
 }
 
 thread_local! {
@@ -1157,51 +930,9 @@ impl WorkQueue {
             });
     }
 
-    /// Close the submit stage and open the queue stage, on a sampled job.
-    ///
-    /// One clock read produces both: the instant the two stages meet is the
-    /// end of one interval and the start of the next, and reading it twice
-    /// would leave a gap between them that belongs to neither.
-    ///
-    /// **The boundary is: placement decided, enqueue not yet begun.** Called
-    /// at that point in *every* structure, which is the whole reason it is
-    /// where it is.
-    ///
-    /// It used to sit after the lane lock was acquired on the mutex path and
-    /// before the ring's compare-and-swap on the lock-free one — so `Shared`
-    /// and `PerWorker` charged the contended lock acquisition to `submit_ns`
-    /// and `LockFree` charged its contended CAS to nobody. A report column
-    /// comparing `submit` across structures was comparing two different
-    /// quantities, and it flattered `LockFree` at precisely the stage meant to
-    /// show what the lock costs.
-    ///
-    /// **Why the boundary went before the enqueue rather than after it.**
-    /// After it is not implementable: the enqueue moves the job out of the
-    /// producer's hands — into a `VecDeque` behind a lock, or into a ring a
-    /// consumer may pop before the next instruction — so there is no job left
-    /// to stamp. Before it is implementable identically in both, so that is
-    /// the boundary both can share.
-    ///
-    /// **Where the enqueue's cost goes, then: into `queue_ns`.** Not into a
-    /// gap — the two stages still meet at one instant, with nothing between
-    /// them. And it belongs there on the merits: from the request's point of
-    /// view, time spent waiting for the intake lock is time it is not being
-    /// served, which is what queueing is. The lock's cost has not gone
-    /// missing, it has moved to the stage that is defined the same way under
-    /// every structure — and `Cell::lock_stats` measures the same lock a
-    /// second, independent way.
-    #[inline]
-    fn stamp_queued(j: &mut DispatchJob) {
-        if let Some(s) = &mut j.stamps {
-            let now = crate::mono_ns();
-            s.submit_ns = now.saturating_sub(j.enqueued_ns);
-            s.queued_ns = now;
-        }
-    }
-
     /// `Err` means shed (§6.4).
     fn push_dispatch(&self, j: Box<DispatchJob>) -> Result<(), Box<DispatchJob>> {
-        let mut j = j;
+        let j = j;
         if let Some(f) = &self.free {
             // There is no placement to make here — one ring — so the boundary
             // is simply "before the enqueue", above the `pushing` bookkeeping
@@ -1213,7 +944,6 @@ impl WorkQueue {
             // Under one ring that is `pick`'s early return and nothing else,
             // which is the honest reading rather than a missing row.
             marks::mark(&j.marks, Mark::PlacementDecided);
-            Self::stamp_queued(&mut j);
             // Announce before the check, release after the push. See
             // `LockFreeLanes::pushing`: without this pair the check and the
             // push are two steps and a job can land in a ring that every
@@ -1247,7 +977,6 @@ impl WorkQueue {
         // above, which stamps at the same point in its own sequence.
         let lane = &self.lanes[self.pick()];
         marks::mark(&j.marks, Mark::PlacementDecided);
-        Self::stamp_queued(&mut j);
         // **The two marks this whole exercise exists for.** Everything between
         // them is the wait for the lane's mutex and nothing else — no
         // placement above it, no queueing below it. The old `queue_ns`
@@ -1537,10 +1266,6 @@ struct ActiveRequest {
     slices: u32,
     acquired: &'static str,
     budget: CpuBudget,
-    /// Carried from the job so the reply can report the two stages that were
-    /// already closed. `wall_ns` beside it is the third, accumulated per slice
-    /// by `settle`, so the guest stage costs no clock read of its own.
-    stamps: Option<StageStamps>,
     /// **Where the trace lives while the request is parked.**
     ///
     /// It is a local on the execution thread for as long as one is running the
@@ -1572,14 +1297,12 @@ impl WakeSink for CellWake {
             // The sampling decision, taken from the instance's own dispatch id
             // — an atomic load and a modulo, on a reactor thread, with no lock
             // taken. See `WakeItem::queued`.
-            let sampled = stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every);
-            let queued_ns = sampled.then(crate::mono_ns);
             // The counter, read here and filed by whichever worker picks this
             // wake up. See `WakeItem::enqueued_at`.
-            let enqueued_at = sampled.then(marks::stamp);
+            let enqueued_at =
+                stage_sampled(s.ctx.dispatch_id(), self.stage_sample_every).then(marks::stamp);
             self.queue.push_wake(WakeItem {
                 slot: s,
-                queued_ns,
                 enqueued_at,
             });
         }
@@ -1817,7 +1540,7 @@ impl Cell {
             if let Some(cell) = &cell {
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                     Job::Dispatch(j) => cell.run_dispatch(*j),
-                    Job::Wake(w) => cell.run_wake(w.slot, w.queued_ns, w.enqueued_at),
+                    Job::Wake(w) => cell.run_wake(w.slot, w.enqueued_at),
                 }));
                 // Cleared either way, so a job that finished normally cannot
                 // leave a stale id for the next panic to answer.
@@ -1969,7 +1692,7 @@ impl Cell {
         self.modules.read().get(module).map(|m| m.meters.clone())
     }
 
-    /// How densely this cell is collecting [`StageTimings`].
+    /// How densely this cell is tracing requests. See [`crate::marks`].
     ///
     /// Published so a reader can tell how many observations a stage percentile
     /// rests on. A percentile with no sample count beside it is a number
@@ -2024,34 +1747,6 @@ impl Cell {
     /// the config — the same reason [`Cell::queue_structure`] asks the queue.
     pub fn active_map(&self) -> crate::lockstats::ActiveMapKind {
         self.active.kind()
-    }
-
-    /// The sampling decision, taken once per request at admission.
-    ///
-    /// **Once, and carried**, rather than re-derived at each of the four
-    /// stamping points. Re-deriving would be three more integer divisions per
-    /// request on the dispatch path, and — the part that actually matters —
-    /// would let the four stages disagree about which requests they describe
-    /// if the configuration were ever changed mid-run.
-    /// `enqueued` is the caller's own admission stamp, reused rather than
-    /// re-read. It used to be `Instant::now()` here, which was a clock read on
-    /// the sampled path whose value was overwritten by `stamp_queued` before
-    /// anything could observe it — dead, and the fourth of the "three extra
-    /// `clock_gettime` calls per request" the field's own doc promises. Taking
-    /// the caller's instant costs nothing and, if `stamp_queued` were ever
-    /// skipped, degrades to a `queue_ns` that includes the submit rather than
-    /// to a reading off an unrelated origin.
-    #[inline]
-    fn new_stamps(&self, dispatch_id: u64, enqueued_ns: u64) -> Option<StageStamps> {
-        // `then_some`, not `then`: with the clock read gone there is nothing
-        // left to defer — the value is three words copied from arguments the
-        // caller already has.
-        stage_sampled(dispatch_id, self.cfg.stage_sample_every).then_some(StageStamps {
-            admitted_ns: enqueued_ns,
-            queued_ns: enqueued_ns,
-            submit_ns: 0,
-            queue_ns: 0,
-        })
     }
 
     pub fn metrics(&self) -> MetricsSnapshot {
@@ -2247,7 +1942,6 @@ impl Cell {
             rec,
             responder: tx,
             enqueued_ns,
-            stamps: self.new_stamps(dispatch_id, enqueued_ns),
             // `dispatch_blocking` is the one-thread-per-request form used by
             // tests and the control plane, never by the load generator, so it
             // has no pool to check a buffer out of and carries no trace.
@@ -2400,7 +2094,6 @@ impl Cell {
             rec,
             responder,
             enqueued_ns,
-            stamps: self.new_stamps(dispatch_id, enqueued_ns),
             marks,
         });
         marks::mark(&job.marks, Mark::JobBuilt);
@@ -2498,9 +2191,6 @@ impl Cell {
         // every span below.
         let mut marks = job.marks.take();
         marks::mark(&mut marks, Mark::DispatchStarted);
-        if let Some(s) = &mut job.stamps {
-            s.queue_ns += crate::mono_ns().saturating_sub(s.queued_ns);
-        }
         let job = job;
         let did = job.rec.dispatch_id;
         // A **triple**: ~34 ns held, hashing a `ModuleId` and cloning an
@@ -2660,7 +2350,6 @@ impl Cell {
                 slices: 0,
                 acquired,
                 budget,
-                stamps: job.stamps,
                 marks: None,
             },
         );
@@ -2780,14 +2469,9 @@ impl Cell {
     /// queue stamp. `CellWake::signal` is the fourth and cannot use this — it
     /// holds no cell — so it carries the same two lines against the same id.
     fn queue_wake(&self, slot: Arc<Slot>) {
-        let sampled = stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every);
-        let queued_ns = sampled.then(crate::mono_ns);
-        let enqueued_at = sampled.then(marks::stamp);
-        self.queue.push_wake(WakeItem {
-            slot,
-            queued_ns,
-            enqueued_at,
-        });
+        let enqueued_at =
+            stage_sampled(slot.ctx.dispatch_id(), self.cfg.stage_sample_every).then(marks::stamp);
+        self.queue.push_wake(WakeItem { slot, enqueued_at });
     }
 
     /// One woken slice, and every further slice the instance can take without
@@ -2798,12 +2482,7 @@ impl Cell {
     /// per-request sum across slices; the loop below does not re-queue, so the
     /// stamp is spent once and the later slices in this call queued for
     /// nothing and are charged nothing.
-    fn run_wake(
-        self: &Arc<Self>,
-        slot: Arc<Slot>,
-        queued_ns: Option<u64>,
-        enqueued_at: Option<crate::marks::Stamp>,
-    ) {
+    fn run_wake(self: &Arc<Self>, slot: Arc<Slot>, enqueued_at: Option<crate::marks::Stamp>) {
         // This slice's lane wait closes **here**, at the top, before the
         // `residents` lock — exactly where `run_dispatch` closes its own, and
         // for the same reason: everything below this line is work the cell
@@ -2815,7 +2494,6 @@ impl Cell {
         // the cell's own `lock_stats` puts at the top of its list. So the
         // *measurement* boundary is this line and the *store* is deferred,
         // which is the only way to have both.
-        let mut waited = queued_ns.map(|t| crate::mono_ns().saturating_sub(t));
         // **Reclaim the trace the park left behind.**
         //
         // Guarded on the sampling predicate — one atomic load and a modulo,
@@ -2907,12 +2585,7 @@ impl Cell {
             marks::mark(&marks, Mark::ActiveBudgetWanted);
             let budget = self
                 .active
-                .with_mut(&slot.id, |a| {
-                    if let (Some(ns), Some(s)) = (waited.take(), a.stamps.as_mut()) {
-                        s.queue_ns += ns;
-                    }
-                    a.budget.after(a.cpu_ns)
-                })
+                .with_mut(&slot.id, |a| a.budget.after(a.cpu_ns))
                 .unwrap_or_else(CpuBudget::http);
             marks::mark(&marks, Mark::ActiveBudgetReleased);
 
@@ -3117,10 +2790,14 @@ impl Cell {
                         !ready
                     }
                     RequestEnd::Disposed(d) => {
-                        // A **triple**: ~34 ns held, hashing three strings.
-                        marks::mark(marks, Mark::BreakerSuccessWanted);
-                        self.breaker.record_success_marked(&breaker_key, marks);
-                        marks::mark(marks, Mark::BreakerSuccessReleased);
+                        // **Not marked, and it cannot be**: `respond` above has
+                        // already sent the reply, and the trace travels inside
+                        // it. Everything from here is the cell's tail — real
+                        // work that holds the worker, but not part of the
+                        // request's elapsed time, because the caller already
+                        // has its answer. See `crate::marks` on where the
+                        // trace ends.
+                        self.breaker.record_success(&breaker_key);
                         self.finish_and_release(slot, entry, d);
                         true
                     }
@@ -3263,19 +2940,12 @@ impl Cell {
         // in one request — the probe, the update in `settle`, and this — which
         // the span names make visible for the first time.
         marks::mark(marks, Mark::ResultReadWanted);
-        let (dispatch_id, cpu_ns, wall_ns, slices, acquired, stamps) = self
+        let (dispatch_id, cpu_ns, wall_ns, slices, acquired) = self
             .active
             .with(&slot.id, |r| {
-                (
-                    r.dispatch_id,
-                    r.cpu_ns,
-                    r.wall_ns,
-                    r.slices,
-                    r.acquired,
-                    r.stamps,
-                )
+                (r.dispatch_id, r.cpu_ns, r.wall_ns, r.slices, r.acquired)
             })
-            .unwrap_or((0, 0, 0, 0, "unknown", None));
+            .unwrap_or((0, 0, 0, 0, "unknown"));
         marks::mark(marks, Mark::ResultReadReleased);
         DispatchResult {
             dispatch_id,
@@ -3289,23 +2959,6 @@ impl Cell {
             instance: slot.id,
             acquired,
             slices,
-            // `wall_ns` is the guest stage: `settle` accumulates it per slice,
-            // so a dispatch that parked and was woken reports the guest time
-            // of the whole request rather than of its first slice.
-            stages: stamps.map(|s| StageTimings {
-                // No clock read: `queued_ns` started life as the submit
-                // path's own `enqueued_ns` reading and `admitted_ns` keeps it,
-                // so the opening bracket is a number already in hand rather
-                // than a second reading of the clock.
-                admitted_mono_ns: s.admitted_ns,
-                submit_ns: s.submit_ns,
-                queue_ns: s.queue_ns,
-                guest_ns: wall_ns,
-                // Overwritten by `Cell::respond` at the send. A zero that
-                // escaped to a reader would mean the result was built and
-                // never sent, which is not a path that answers anybody.
-                replied_mono_ns: 0,
-            }),
             // Filled by `Cell::respond`, which is the last thing to hold the
             // buffer before it crosses the channel. A result built and never
             // sent therefore carries no trace, which is the truthful state:
@@ -3330,9 +2983,6 @@ impl Cell {
             // its own name — one cost, counted twice, in two tables that are
             // read together.
             let mut result = result;
-            if let Some(st) = &mut result.stages {
-                st.replied_mono_ns = crate::mono_ns();
-            }
             // The trace boards the result here, and `ReplyHandedOff` is taken
             // once it has — after the `active` shard is released and
             // immediately before the send, so the shard's own contention (which
@@ -3724,7 +3374,6 @@ mod queue_tests {
             },
             responder,
             enqueued_ns: crate::mono_ns(),
-            stamps: None,
             marks: None,
         })
     }
@@ -3757,7 +3406,6 @@ mod queue_tests {
     fn wake_of(slot: &Arc<Slot>) -> WakeItem {
         WakeItem {
             slot: slot.clone(),
-            queued_ns: None,
             enqueued_at: None,
         }
     }
@@ -3785,55 +3433,6 @@ mod queue_tests {
     // -----------------------------------------------------------------------
     // the submit stage, measured directly
     // -----------------------------------------------------------------------
-
-    /// **`submit_ns` is the interval it names, in the unit it names.**
-    ///
-    /// The lower bound the stage never had, and the one that needs no threads,
-    /// no contention and no wall-clock luck: backdate `enqueued` by a known 50
-    /// ms and require the stamp to report it. Every assertion on `submit_ns`
-    /// in `tests/stages.rs` is one-sided the other way — it appears only
-    /// inside `submit + queue + guest <= observed` — so replacing the whole
-    /// computation with a literal `0` passed that entire file.
-    ///
-    /// A magnitude and not just a non-zero, because the two failures worth
-    /// separating fail differently: a stage that is never stamped reads 0, and
-    /// a stage recorded in the wrong unit reads 50,000 or 50 rather than
-    /// 50,000,000. Only a bound with a number in it catches the second.
-    #[test]
-    fn the_submit_stage_measures_the_interval_it_names() {
-        const BACK: Duration = Duration::from_millis(50);
-        let mut j = job();
-        let admitted_ns = crate::mono_ns()
-            .checked_sub(BACK.as_nanos() as u64)
-            .expect("a monotonic clock past 50 ms");
-        j.enqueued_ns = admitted_ns;
-        j.stamps = Some(StageStamps {
-            admitted_ns,
-            queued_ns: admitted_ns,
-            submit_ns: 0,
-            queue_ns: 0,
-        });
-
-        WorkQueue::stamp_queued(&mut j);
-
-        let s = j.stamps.expect("the stamps survive the call");
-        assert!(
-            s.submit_ns >= BACK.as_nanos() as u64 * 9 / 10,
-            "the job entered the submit path {BACK:?} ago and the stage reports {} ns",
-            s.submit_ns
-        );
-        assert!(
-            s.submit_ns < BACK.as_nanos() as u64 * 4,
-            "the stage reports {} ns for a {BACK:?} interval, which is not a slow machine",
-            s.submit_ns
-        );
-        // The other half of the one clock read: the queue stage opens where
-        // the submit stage closed, with nothing between them.
-        assert!(
-            s.queued_ns.saturating_sub(admitted_ns) >= s.submit_ns,
-            "the queue stage opens before the submit stage closed, so the two overlap"
-        );
-    }
 
     // -----------------------------------------------------------------------
     // structure and depth are two settings, and neither derives the other
@@ -4799,447 +4398,92 @@ mod cell_tests {
         v
     }
 
-    /// **The stage decomposition holds under every queue configuration, and
-    /// every stage is a reading rather than an initialiser.**
+    // -----------------------------------------------------------------------
+    // the trace, across every queue configuration
+    // -----------------------------------------------------------------------
+
+    /// **Every queue configuration produces a trace that tiles the request,
+    /// and no two of them claim the same spans.**
     ///
-    /// Before this, stage timing had only ever run under the default `Shared`:
-    /// every test in `tests/stages.rs` takes the default, so the lock-free
-    /// branch of `stamp_queued` — which stamps at a different point in the
-    /// sequence from the mutex branch — had never once executed in a test.
-    /// That is how a `submit_ns` meaning two different intervals survived.
+    /// This replaces the old decomposition test, which asked whether four
+    /// numbers summed to a bracket. The stronger question now is whether the
+    /// spans *cover* the request and whether the set of them is honest about
+    /// which structure produced it: a lock-free queue has no lane mutex to
+    /// wait on, and a row of dashes under `lane.lock.wait` would read exactly
+    /// like a lock that was watched and never blocked.
     ///
-    /// What is asserted here is the whole shape at once, per configuration:
-    ///
-    /// * the bracket runs forwards and contains the caller's own view of the
-    ///   call, so the two stamps are on the clock the caller reads;
-    /// * the three durations fit inside the bracket — `is_coherent`, which is
-    ///   the no-overlap and no-unit-error check;
-    /// * each of the three is **strictly positive**. This is the lower bound
-    ///   `submit_ns` never had: it spans a mutex acquisition in the hang
-    ///   breaker and a heap allocation, so zero nanoseconds is not a
-    ///   measurement of it, it is the absence of one. `queue_ns` had such a
-    ///   guard already and `submit_ns` did not, which is exactly why replacing
-    ///   the latter with a literal `0` used to pass the entire suite.
+    /// All nine combinations run, including the four where placement is inert,
+    /// because "setting a placement under `Shared` does nothing" is itself
+    /// part of what is under test — doing nothing *quietly* would look the
+    /// same from outside.
     #[test]
-    fn every_queue_configuration_produces_a_coherent_decomposition() {
+    fn every_queue_configuration_traces_a_request_that_tiles() {
+        use crate::marks::Mark;
+
         for (structure, placement) in every_queue_configuration() {
-            let what = format!("{}/{}", structure.label(), placement.label());
-            let cell = Cell::new(
-                CellConfig {
-                    exec_threads: 2,
-                    stage_sample_every: 1,
-                    queue_structure: structure,
-                    queue_placement: placement,
-                    ..CellConfig::for_test("stage-combo")
-                },
-                services(),
-            );
-            let m = app(
-                &cell,
-                "quick",
-                FakeBehaviour::program([Step::Log {
-                    bytes: 512,
-                    times: 2_000,
-                }]),
+            let mut cfg = CellConfig::for_test("marks-cfg");
+            cfg.queue_structure = structure;
+            cfg.queue_placement = placement;
+            let cell = Cell::new(cfg, services());
+            let m = app(&cell, "echo", FakeBehaviour::default());
+            let pool = crate::marks::pool_for(
+                crate::tsc_marks::Calibration::measure_for(Duration::from_millis(50)),
+                8,
+                16,
+                4,
             );
 
-            for id in 1..=3u64 {
-                let before = crate::mono_ns();
-                let out = cell
-                    .dispatch_blocking(
-                        &m,
-                        Target::Handler {
-                            route: "/go".into(),
-                        },
-                        http(id),
-                        Duration::from_secs(20),
-                    )
-                    .unwrap_or_else(|e| panic!("{what}: dispatch {id} lost: {e:?}"));
-                let after = crate::mono_ns();
-                assert!((200..300).contains(&out.status), "{what}: {out:?}");
-                let s = out.stages.unwrap_or_else(|| {
-                    panic!("{what}: every request is sampled at 1 and this one carried nothing")
-                });
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let t = pool.checkout();
+            crate::marks::begin(&t);
+            let out =
+                cell.submit_with_marks(&m, Target::Handler { route: "/x".into() }, http(0), tx, t);
+            assert!(
+                out.admitted,
+                "{structure:?}/{placement:?} shed a single request"
+            );
+            let res = rx.recv_timeout(Duration::from_secs(20)).expect("a reply");
+            crate::marks::mark(&res.marks, Mark::CallerReceived);
+            let trace = crate::marks::read(res.marks.as_ref().expect("a trace"));
+            let has = |l: Mark| trace.spans.iter().any(|(k, _)| *k == l);
 
+            // Covered: the request has a beginning, a guest, and an end, and
+            // nothing in between ran backwards.
+            for l in [Mark::CellEntered, Mark::GuestReturned, Mark::CallerReceived] {
+                assert!(has(l), "{structure:?}/{placement:?} lost `{}`", l.name());
+            }
+            for (l, ns) in &trace.spans {
                 assert!(
-                    s.admitted_mono_ns >= before && s.replied_mono_ns <= after,
-                    "{what}: the cell bracketed the request [{}, {}] outside the caller's own \
-                     [{before}, {after}] — the two ends are not reading the same clock",
-                    s.admitted_mono_ns,
-                    s.replied_mono_ns
-                );
-                assert!(
-                    s.is_coherent(),
-                    "{what}: submit {} + queue {} + guest {} exceeds the {} ns the cell held \
-                     the request for — the stages overlap, or one is in the wrong unit",
-                    s.submit_ns,
-                    s.queue_ns,
-                    s.guest_ns,
-                    s.service_ns()
-                );
-                assert!(
-                    s.submit_ns > 0,
-                    "{what}: submit_ns is zero. It spans the hang breaker's mutex and a heap \
-                     allocation; zero nanoseconds is not a reading of that, it is a stage that \
-                     was never stamped"
-                );
-                assert!(s.queue_ns > 0, "{what}: queue_ns is zero");
-                assert!(s.guest_ns > 0, "{what}: guest_ns is zero");
-                // The residual is the point of publishing both stamps: it is
-                // real work, and it must come out as a number rather than as
-                // an acknowledgement in a doc comment.
-                assert!(
-                    s.residual_ns() < s.service_ns(),
-                    "{what}: the residual is the whole request, so nothing was attributed"
+                    *ns >= 0.0,
+                    "{structure:?}/{placement:?}: `{}` is {ns} ns",
+                    l.name()
                 );
             }
+            assert!(
+                trace.span_ns > 0.0,
+                "{structure:?}/{placement:?} reports no elapsed time"
+            );
+            assert!(!trace.truncated, "one echo request cannot fill the buffer");
+
+            // …and the set of spans names the structure that produced it.
+            let mutexed = structure != QueueStructure::LockFree;
+            assert_eq!(
+                has(Mark::LaneLockAcquired),
+                mutexed,
+                "{structure:?}/{placement:?} and `lane.lock.wait` disagree about whether \
+                 there is a lane mutex"
+            );
+            assert_eq!(
+                has(Mark::PushRegistered),
+                !mutexed,
+                "{structure:?}/{placement:?} and `ring.pushing.enter` disagree about whether \
+                 there is a ring"
+            );
+            // The span before the enqueue exists under all of them, which is
+            // what makes a table comparing structures compare one quantity.
+            assert!(has(Mark::PlacementDecided), "{structure:?}/{placement:?}");
             cell.shutdown();
         }
-    }
-
-    /// **`submit_ns` names the same interval under every structure.**
-    ///
-    /// The mutex branch used to stamp *after* acquiring the lane lock and the
-    /// lock-free branch *before* its compare-and-swap, so `Shared` charged its
-    /// contended acquisition to `submit` and `LockFree` charged its contended
-    /// CAS to nothing at all. A report column comparing `submit` across
-    /// structures compared two different quantities, and flattered the
-    /// structure whose contention it was silently dropping.
-    ///
-    /// Equivalence of a *definition* is not something an assertion on two
-    /// numbers can establish — the numbers legitimately differ, that is what
-    /// measuring is for. What is checkable, and what this checks, is the
-    /// consequence the mismatch had: no structure may report a submit stage
-    /// that is structurally absent while another reports a real one. So the
-    /// stage is required to be present, positive, and inside the bracket in
-    /// all three, and it is required to be *small* relative to the whole
-    /// request in all three — a submit stage that had swallowed a lock
-    /// acquisition on one structure and not another shows up as exactly that
-    /// asymmetry.
-    #[test]
-    fn submit_names_the_same_interval_under_every_structure() {
-        for structure in [
-            QueueStructure::Shared,
-            QueueStructure::PerWorker,
-            QueueStructure::LockFree,
-        ] {
-            let cell = Cell::new(
-                CellConfig {
-                    exec_threads: 2,
-                    stage_sample_every: 1,
-                    queue_structure: structure,
-                    ..CellConfig::for_test("stage-submit")
-                },
-                services(),
-            );
-            let m = app(
-                &cell,
-                "quick",
-                FakeBehaviour::program([Step::Log {
-                    bytes: 512,
-                    times: 4_000,
-                }]),
-            );
-            let out = cell
-                .dispatch_blocking(
-                    &m,
-                    Target::Handler {
-                        route: "/go".into(),
-                    },
-                    http(1),
-                    Duration::from_secs(20),
-                )
-                .expect("dispatch");
-            let s = out.stages.expect("sampled");
-            assert!(
-                s.submit_ns > 0,
-                "{}: no submit stage at all",
-                structure.label()
-            );
-            assert!(
-                s.submit_ns < s.service_ns(),
-                "{}: submit_ns is {} of the {} ns the cell held the request — the stage stops \
-                 before the enqueue in every structure, so it cannot be most of a request that \
-                 ran a guest",
-                structure.label(),
-                s.submit_ns,
-                s.service_ns()
-            );
-            cell.shutdown();
-        }
-    }
-
-    /// **The enqueue is charged to `queue_ns`, and never to `submit_ns`.**
-    ///
-    /// This is the boundary decision made observable. `submit_ns` stops once
-    /// placement is decided and before the enqueue begins, because that is the
-    /// only point all three structures share — the enqueue moves the job out
-    /// of the producer's hands, so no structure can be stamped after it. The
-    /// consequence is that acquiring the intake lane's lock is queueing, not
-    /// submitting.
-    ///
-    /// So the test takes that lock and holds it. A submit stage that still
-    /// ended inside the lock — which is where it used to end, and is why
-    /// `Shared` and `LockFree` were reporting different quantities under one
-    /// column heading — puts the whole 300 ms into `submit_ns` and fails here.
-    #[test]
-    fn the_enqueue_is_charged_to_the_queue_stage_and_not_to_submit() {
-        const HELD: Duration = Duration::from_millis(300);
-        let cell = Cell::new(
-            CellConfig {
-                exec_threads: 1,
-                max_hot: 1,
-                stage_sample_every: 1,
-                queue_structure: QueueStructure::Shared,
-                ..CellConfig::for_test("stage-enqueue")
-            },
-            services(),
-        );
-        let m = app(&cell, "quick", FakeBehaviour::done());
-        // Let the one worker reach `cv.wait`, which releases the lane lock, so
-        // the hold below contends with the producer and not with the consumer.
-        assert!(wait_for(|| cell.queue_depth() == 0, Duration::from_secs(5)));
-        std::thread::sleep(Duration::from_millis(20));
-
-        let held = cell.queue.lanes[0].inner.lock();
-        let c2 = cell.clone();
-        let m2 = m.clone();
-        let submitting = std::thread::spawn(move || {
-            c2.dispatch_blocking(
-                &m2,
-                Target::Handler {
-                    route: "/go".into(),
-                },
-                http(1),
-                Duration::from_secs(30),
-            )
-        });
-        std::thread::sleep(HELD);
-        drop(held);
-
-        let out = super::queue_tests::join_before(
-            submitting,
-            Duration::from_secs(30),
-            "held-lane dispatch",
-        )
-        .expect("dispatch");
-        let s = out.stages.expect("sampled");
-        assert!(
-            s.queue_ns >= (HELD.as_nanos() as u64) * 2 / 3,
-            "the producer waited {HELD:?} for the intake lane and the request reports {} ns of \
-             queueing; waiting to get into a lane is waiting for a worker",
-            s.queue_ns
-        );
-        assert!(
-            s.submit_ns < HELD.as_nanos() as u64 / 3,
-            "submit_ns is {} ns against a {HELD:?} lane hold — the stage is ending inside the \
-             enqueue again, which is the asymmetry that made `submit` mean one thing under a \
-             mutex and another under a ring",
-            s.submit_ns
-        );
-        assert!(s.is_coherent(), "{s:?}");
-        cell.shutdown();
-    }
-
-    /// **`submit_ns` responds to work done inside the submit stage.**
-    ///
-    /// The lower bound `submit_ns` never had. Every assertion on it in
-    /// `tests/stages.rs` was one-sided the other way — it appears only inside
-    /// `submit + queue + guest <= observed` — so a `submit_ns` that was
-    /// structurally zero passed the whole file, which is how the original
-    /// review proved the defect by replacing the computation with a literal
-    /// `0`. `queue_ns` had a guard against exactly this and `submit_ns` did
-    /// not.
-    ///
-    /// A bare `> 0` would catch the literal zero and nothing subtler, so this
-    /// makes the stage respond to a *cause*: the submit path clones the route
-    /// twice and hashes it into the hang breaker's key, all before the stamp,
-    /// so a megabyte of route is real work inside the stage and nowhere else.
-    /// Requiring the stage to grow with it pins both ends — a stage that is
-    /// never stamped cannot grow, and a stage whose opening bracket has
-    /// drifted past the work reports it outside `service_ns` and fails
-    /// `is_coherent`.
-    #[test]
-    fn the_submit_stage_responds_to_work_done_inside_it() {
-        let cell = Cell::new(
-            CellConfig {
-                stage_sample_every: 1,
-                ..CellConfig::for_test("stage-submit-cause")
-            },
-            services(),
-        );
-        let m = app(&cell, "quick", FakeBehaviour::done());
-        // The caller's own reading immediately before the call, so the test
-        // can see *where* the cell's admission stamp falls relative to the
-        // work the submit stage claims to contain.
-        let go = |route: String, id: u64| -> (u64, StageTimings) {
-            let before = crate::mono_ns();
-            let out = cell
-                .dispatch_blocking(
-                    &m,
-                    Target::Handler { route },
-                    http(id),
-                    Duration::from_secs(30),
-                )
-                .expect("dispatch");
-            (before, out.stages.expect("sampled"))
-        };
-
-        // **Minimum over trials, not a single reading.** Both quantities below
-        // are wall-clock intervals on a machine running the rest of the test
-        // suite, and a preemption inside the short control's submit path
-        // inflates it by milliseconds — which is enough to break a ratio
-        // against it. The minimum is the least-perturbed sample of a quantity
-        // that noise can only add to, and each is minimised independently
-        // because they are perturbed independently.
-        const TRIALS: u64 = 5;
-        let big = format!("/{}", "x".repeat(2 << 20));
-        let short = (0..TRIALS)
-            .map(|i| go("/go".into(), 1 + i).1.submit_ns)
-            .min()
-            .unwrap();
-        let longs: Vec<(u64, StageTimings)> =
-            (0..TRIALS).map(|i| go(big.clone(), 100 + i)).collect();
-        let long_submit = longs.iter().map(|(_, s)| s.submit_ns).min().unwrap();
-        let gap = longs
-            .iter()
-            .map(|(before, s)| s.admitted_mono_ns.saturating_sub(*before))
-            .min()
-            .unwrap();
-        let long = longs[0].1;
-
-        assert!(
-            long_submit > short * 10,
-            "a route two megabytes longer moved submit_ns from {short} ns to {long_submit} ns. \
-             The submit path clones that route twice and hashes it before the stamp, so a stage \
-             that cannot see the difference is not measuring the submit path"
-        );
-        // **The bracket opens before the stage, not after it.** This is the
-        // assertion that pins `admitted_mono_ns` to admission rather than to
-        // whichever stage boundary happens to be nearest: with two megabytes
-        // of work inside the submit stage, an admission stamp that had drifted
-        // to the *end* of that stage would sit a full `submit_ns` after the
-        // caller's own reading. Coherence alone cannot catch that — the cell
-        // clones this route again in `run_dispatch` and in `settle`, so the
-        // residual grows with it and absorbs the discrepancy.
-        assert!(
-            gap < long_submit / 2,
-            "the cell's admission stamp lands {gap} ns after the caller's own reading, against \
-             a submit stage of {long_submit} ns — the opening bracket is sitting after work the \
-             stage it opens is supposed to contain"
-        );
-        assert!(long.is_coherent(), "{long:?}");
-        assert!(
-            short > 0,
-            "even the short route spans a mutex and an allocation"
-        );
-        cell.shutdown();
-    }
-
-    // -----------------------------------------------------------------------
-    // the queue stage, across slices
-    // -----------------------------------------------------------------------
-
-    /// **A woken slice's wait for a worker is queueing, and it is counted.**
-    ///
-    /// `queue_ns` was written once, at the top of `run_dispatch`, so it
-    /// covered the first admission and nothing else. A woken slice goes
-    /// through `run_wake`, which touched no stamp at all — so a request that
-    /// parked ten times and waited behind a busy pool on every wake reported
-    /// the queueing of its first admission and no more. The wake lane is the
-    /// *priority* lane, which makes it the one waiting time most needs to be
-    /// visible in.
-    ///
-    /// One execution thread, and the wake deliberately queued behind a long
-    /// dispatch: the parker's own admission was into an empty queue, so
-    /// essentially all of its `queue_ns` has to be the wake's wait or the
-    /// stage is not looking at the wake lane.
-    #[test]
-    fn the_queue_stage_covers_the_wake_lane_as_well_as_admission() {
-        let cell = Cell::new(
-            CellConfig {
-                exec_threads: 1,
-                max_hot: 1,
-                stage_sample_every: 1,
-                ..CellConfig::for_test("stage-wake")
-            },
-            services(),
-        );
-        // A timer long enough that it never fires on its own, so the test
-        // decides when the wake happens.
-        let parker = app(
-            &cell,
-            "parker",
-            FakeBehaviour::program([Step::Park {
-                imports: vec![("clock_deadline_in", 600_000)],
-            }]),
-        );
-        let slow = app(
-            &cell,
-            "slow",
-            FakeBehaviour::program([Step::Log {
-                bytes: 4096,
-                times: 60_000,
-            }]),
-        );
-
-        let route = |p: &str| Target::Handler { route: p.into() };
-        let before: Vec<u64> = cell.futures().live_future_ids();
-        let parked = cell
-            .submit(&parker, route("/park"), http(1))
-            .expect("admitted");
-
-        let mut fid = None;
-        assert!(
-            wait_for(
-                || {
-                    fid = cell
-                        .futures()
-                        .live_future_ids()
-                        .into_iter()
-                        .find(|i| !before.contains(i));
-                    fid.is_some()
-                },
-                Duration::from_secs(10)
-            ),
-            "the first dispatch never parked, so there is no wake to queue"
-        );
-
-        // Occupy the one execution thread, and wait until it is genuinely
-        // inside the guest: the wake has to arrive *behind* this, not race it.
-        let busy = cell
-            .submit(&slow, route("/slow"), http(2))
-            .expect("admitted");
-        assert!(
-            wait_for(|| cell.hot_count() > 0, Duration::from_secs(10)),
-            "the long dispatch never reached the guest, so nothing was occupying the pool"
-        );
-
-        cell.complete_future(
-            fid.unwrap(),
-            wisp_abi::result::ResultRecord::Ok(b"v".to_vec()),
-        );
-
-        let long = busy
-            .recv_timeout(Duration::from_secs(30))
-            .expect("the long dispatch never finished")
-            .stages
-            .expect("sampled");
-        let woken = parked
-            .recv_timeout(Duration::from_secs(30))
-            .expect("the parked dispatch never woke")
-            .stages
-            .expect("sampled");
-
-        assert!(
-            woken.queue_ns >= long.guest_ns / 2,
-            "the wake waited for a thread that spent {} ns inside the guest, and the request \
-             reports {} ns of queueing — a queue stage that stops at admission cannot see the \
-             wake lane at all",
-            long.guest_ns,
-            woken.queue_ns
-        );
-        cell.shutdown();
     }
 
     // -----------------------------------------------------------------------
