@@ -169,18 +169,26 @@ pub struct Metrics {
     /// The wake still runs: the result is real and the instance is the right
     /// one to deliver it to. Only the trace is refused.
     ///
-    /// **What that costs depends on what the wake then does, and mostly it is
-    /// nothing.** The common stale wake finds an empty table and runs no slice
-    /// at all — several completions for one instance produce several wakes and
-    /// the first one's loop drains them — and for that one the refusal is free:
-    /// the request on the slot keeps its trace untouched and comes home with a
-    /// full set of spans. Only a stale wake that finds ready work *and* answers
-    /// the request with it costs anything, and then it costs that request all
-    /// of its spans, because the slice that replied ran untraced.
+    /// **No request loses a trace to this, in either of the two shapes it
+    /// takes.** The common stale wake finds an empty table and runs no slice at
+    /// all — several completions for one instance produce several wakes and
+    /// the first one's loop drains them — so the request on the slot never
+    /// notices it. One that finds ready work goes on to run a slice for
+    /// whoever holds the instance now, and picks the trace up at that point
+    /// (`Mark::WakeAdopted`), because that slice is the current request's guest
+    /// time and CPU whatever rang the doorbell.
     ///
-    /// So this counts wakes refused, which is an upper bound on traces lost and
-    /// usually far above it. An instrument fault, beside
-    /// [`Metrics::wakes_dropped`] and `SpanBreakdown::stale_marks`.
+    /// What is lost is the wake path's *breakdown* for that one resumption:
+    /// the lane wait, the futex round trip and the completion's arrival are
+    /// readings from a dispatch that has already answered, so they are refused
+    /// and the pause they would have closed is reported as
+    /// `park.wait.unattributed` instead of `park.wait`. So a non-zero here is
+    /// "this many requests were resumed by something that could not be
+    /// attributed to them", not "this many traces are missing".
+    ///
+    /// An instrument fault all the same, beside [`Metrics::wakes_dropped`] and
+    /// `SpanBreakdown::stale_marks`: two labels over one pause is a thing a
+    /// reader has to be told about before adding the rows up.
     pub stale_wakes: AtomicU64,
     pub traps: AtomicU64,
     /// Every CPU-budget kill, clean and hard. Kept as the total so a dashboard

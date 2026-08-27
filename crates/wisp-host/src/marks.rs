@@ -298,6 +298,37 @@ pub enum Mark {
     TakeReadyAcquired,
     /// End of taking ready future completions.
     TakeReadyReleased,
+    /// **The pause ended, and what ended it was not measured on this request's
+    /// behalf.**
+    ///
+    /// Taken only by a *stale* wake — one whose dispatch had already finished
+    /// when a worker got to it — at the instant it finds ready work and
+    /// commits to running a slice. See [`crate::metrics::Metrics::stale_wakes`].
+    ///
+    /// A wake carries no future id: it is a doorbell, and `take_ready`
+    /// collects whatever the instance has ready. So a stale doorbell answered
+    /// during someone else's request delivers *that* request's completion, and
+    /// the slice which follows is genuinely theirs — their guest time, their
+    /// CPU, their response. It has to be measured. What cannot be measured is
+    /// the road the doorbell took to get here: the lane wait, the futex, the
+    /// completion's own arrival are all readings from a request that has
+    /// already gone home, and [`WakeStamps::file`] refuses them.
+    ///
+    /// Which leaves a stretch with nothing to name it, and that is what this
+    /// is for. Span labels are **positional** — a span takes the name of the
+    /// mark that ends it — so without a mark here the request's whole pause
+    /// would be absorbed into whichever mark landed next and reported under
+    /// *its* name: a multi-second park filed as `active.budget.wanted`. The
+    /// span closing here says what is actually known, which is that the
+    /// request was paused until this instant and the reason it stopped being
+    /// paused belongs to somebody else's accounting.
+    ///
+    /// It therefore sits where [`Mark::CompletionArrived`] sits on the ordinary
+    /// path and carries the same left edge, [`Mark::SliceEnded`] — but under a
+    /// different name, because it is a different quantity: this one includes
+    /// the foreign wake's own overhead, and a reader adding it to `park.wait`
+    /// would be adding two differently-sourced numbers.
+    WakeAdopted,
     /// Nothing; the left edge of the budget read.
     ActiveBudgetWanted,
     /// End of reading the active request CPU budget.
@@ -502,6 +533,7 @@ pub const ALL: &[Mark] = &[
     Mark::TakeReadyWanted,
     Mark::TakeReadyAcquired,
     Mark::TakeReadyReleased,
+    Mark::WakeAdopted,
     Mark::ActiveBudgetWanted,
     Mark::ActiveBudgetReleased,
     Mark::BreakerRefused,
@@ -642,6 +674,7 @@ impl Mark {
             TakeReadyWanted => "futures.take.wanted",
             TakeReadyAcquired => "futures.take.wait",
             TakeReadyReleased => "futures.take.hold",
+            WakeAdopted => "park.wait.unattributed",
             ActiveBudgetWanted => "active.budget.wanted",
             ActiveBudgetReleased => "active.budget",
             BreakerRefused => "refused.breaker",
@@ -742,6 +775,7 @@ impl Mark {
             | TakeReadyWanted
             | TakeReadyAcquired
             | TakeReadyReleased
+            | WakeAdopted
             | ActiveBudgetWanted
             | ActiveBudgetReleased => Structural::ParkingRequest,
             WakeLaneLockWanted | WakeLaneLockAcquired | WakeLaneLockReleased | WakeTaken => {

@@ -2940,6 +2940,13 @@ impl Cell {
         // `notify_one` that is a futex syscall — microseconds, longer than this
         // thread takes to get here — and the readings that would be lost are
         // exactly the slow ones. See `marks::WakeStamps`.
+        //
+        // **Deliberately not guarded on `fresh`, unlike its twin below.** For a
+        // stale wake `marks` is `None` here, and filing into a `None` is how
+        // these readings are *discarded* — `file` takes each one and drops it.
+        // That is the refusal doing its job, and the pass below depends on it:
+        // guard this and every reading survives to be filed into the trace the
+        // adoption picks up.
         if let Some(st) = &stamps {
             st.file(&marks);
         }
@@ -3023,6 +3030,33 @@ impl Cell {
                 self.stash_marks(&slot, marks);
                 return;
             };
+            // **A stale wake that is going to run a slice picks the trace up
+            // here, having refused it at the top.**
+            //
+            // The refusal above is about the wake's *own* readings and its own
+            // path, which belong to a dispatch that has gone home. This is a
+            // different claim: the instance has ready work, and whatever is on
+            // the slot now is what a slice will advance — its guest time, its
+            // CPU, its response. That is the current request's cost however
+            // stale the doorbell that produced it, and leaving it unmeasured
+            // does not make the request cheaper, it makes it invisible. Before
+            // this, a stale wake that answered a request took that request's
+            // whole trace down with it: `respond` builds the reply from the
+            // local hand, so an empty hand ships an empty reply while the real
+            // trace sits in `Cell::active` waiting to be dropped by
+            // `finish_and_release`.
+            //
+            // `Mark::WakeAdopted` is taken with it and is not optional: labels
+            // are positional, so a trace rejoined without one has its pause
+            // absorbed into the next mark's name.
+            //
+            // Costs one `Cell::active` acquisition, on the stale-and-running
+            // path only — which `Metrics::stale_wakes` says is rare, and which
+            // was already the expensive one.
+            if !fresh && marks.is_none() && stage_sampled(current, self.cfg.stage_sample_every) {
+                marks = self.active.with_mut(&slot.id, |a| a.marks.take()).flatten();
+                marks::mark(&marks, Mark::WakeAdopted);
+            }
             // §6.4: B and B+G bind the **dispatch**, so a wake resumes with
             // what earlier slices already burned. Without this a guest could
             // park and be woken indefinitely, each slice getting a fresh 50 ms
@@ -3071,8 +3105,31 @@ impl Cell {
             // reach `respond`, which moves the buffer into the reply. By now
             // the guest's own slice has run, so anything the producer wrote
             // after the push has certainly landed.
-            if let Some(st) = &stamps {
-                st.file(&marks);
+            //
+            // **`fresh` guards a race, and only a race.** At the top of this
+            // function a stale wake holds no trace, and filing into a `None`
+            // is how its readings are discarded — taken and dropped. By this
+            // line it may hold one, adopted at the `take_ready` above, so the
+            // question is whether anything is left to file into it. Almost
+            // always nothing is: the pass at the top emptied every cell.
+            //
+            // What can still be here is exactly what this second pass exists
+            // for — a reading the *producer* wrote after that first pass, on
+            // the other side of the handoff, which is why it keeps a handle
+            // across the push at all. Those are lane readings from a dispatch
+            // that has already answered, and the adopted trace must not have
+            // them.
+            //
+            // So this is a guard against an interleaving no test here can
+            // force, kept because the alternative is a foreign
+            // `wake.lane.lock.hold` appearing on one request in a thousand
+            // with nothing to explain it. Removing it does not fail the suite;
+            // that is a statement about what is reproducible, not about
+            // whether it can happen.
+            if fresh {
+                if let Some(st) = &stamps {
+                    st.file(&marks);
+                }
             }
             // **The loop may run the guest several times per wake**, without
             // going back through a lane. Every pass marks its own group, which
