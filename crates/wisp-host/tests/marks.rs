@@ -289,9 +289,11 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::ResponderTakenWanted,
         Mark::ResponderTakenReleased,
         Mark::ReplyHandedOff,
-        // Time the cell was blocked on a full reply channel, which used to be
-        // inside the reply's flight and indistinguishable from it.
-        Mark::SendReturned,
+        // `reply.send.blocked` is **not** here, and its absence is the point.
+        // `respond` tries a non-blocking send first and only marks when the
+        // channel comes back full; this caller is sitting in `recv` with an
+        // empty channel, so there was no block and there is nothing to report.
+        // The case where there is one has its own test.
         Mark::CallerReceived,
     ];
     assert_eq!(
@@ -335,9 +337,91 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         .collect();
     assert_eq!(
         after_handoff,
-        vec![Mark::SendReturned, Mark::CallerReceived],
+        vec![Mark::CallerReceived],
         "something the cell does after answering ended up inside the request's own span"
     );
+}
+
+/// **A reply that could not be delivered reports the block, and one that could
+/// reports nothing.**
+///
+/// The second half is asserted by the coverage test above, whose expected
+/// sequence deliberately has no `reply.send.blocked` in it. This is the first
+/// half, and without it that absence would be indistinguishable from a label
+/// nothing can emit — which the module's own rule forbids.
+///
+/// The setup is the smallest thing that makes a worker block: one execution
+/// thread, a reply channel of depth one, and two requests. The worker answers
+/// A into the empty channel, comes back for B, and finds the channel still
+/// holding A because nothing has drained it.
+///
+/// **Both waits are on `lane_loads`, and neither is a sleep-and-hope.** A
+/// lane's load is released in `WorkQueue::job_done`, which the worker reaches
+/// only after `finish_and_release`, which it reaches only after `respond`
+/// returns — so a load that will not fall to zero is a worker stuck in `send`,
+/// and a load that has fallen to zero is a `respond` that has already taken its
+/// last mark. The second is what makes reading B's trace safe at depth one,
+/// where the item that unblocks the send is the very item the receiver just
+/// took and there is otherwise no gap to rely on.
+#[test]
+fn a_reply_that_blocks_on_a_full_channel_says_so_and_one_that_does_not_is_silent() {
+    let mut cfg = CellConfig::for_test("marks-blocked-reply");
+    cfg.exec_threads = 1;
+    let c = cell(cfg);
+    let m = app(&c, "echo", FakeBehaviour::default());
+    let p = pool();
+
+    // Depth one, and nothing drains it until this test says so.
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    for id in 0..2u64 {
+        let mk = p.checkout();
+        marks::begin(&mk);
+        assert!(
+            c.submit_with_marks(&m, route("/x"), rec(id, "/x"), tx.clone(), mk)
+                .admitted,
+            "the cell shed a request this test needs served"
+        );
+    }
+
+    // **The premise.** One worker, so A is answered first and B's reply finds
+    // the channel still full. B's job never completes while its `send` blocks,
+    // so the lane's load cannot reach zero. If this ever *does* reach zero the
+    // rest of the test is meaningless, so it is asserted rather than assumed.
+    assert!(
+        !wait_for(
+            || c.lane_loads().iter().sum::<usize>() == 0,
+            Duration::from_millis(300)
+        ),
+        "no worker blocked, so there is no full channel to measure: lanes {:?}",
+        c.lane_loads()
+    );
+
+    // Draining A is what releases B's `send`.
+    let first = rx.recv_timeout(T).expect("the first reply");
+    assert!(
+        wait_for(|| c.lane_loads().iter().sum::<usize>() == 0, T),
+        "the worker never finished B after the channel drained: lanes {:?}",
+        c.lane_loads()
+    );
+    let second = rx.recv_timeout(T).expect("the second reply");
+
+    // A went into an empty channel and has no block to report; B waited for A
+    // to be taken and does.
+    let a = labels(&wisp_host::marks::read(first.marks.as_ref().expect("A's trace")).spans);
+    let b = labels(&wisp_host::marks::read(second.marks.as_ref().expect("B's trace")).spans);
+    assert!(
+        !a.contains(&Mark::SendReturned),
+        "the reply that found room reported a block it never paid: {:?}",
+        a.iter().map(|l| l.name()).collect::<Vec<_>>()
+    );
+    assert!(
+        b.contains(&Mark::SendReturned),
+        "the reply that waited for the caller to drain reported no block, so \
+         `reply.send.blocked` is a label nothing can emit: {:?}",
+        b.iter().map(|l| l.name()).collect::<Vec<_>>()
+    );
+
+    c.shutdown();
 }
 
 /// **The two ends agree, which is what one clock epoch buys.**

@@ -3608,22 +3608,58 @@ impl Cell {
             // `lock_stats` reports under its own name) is not counted a second
             // time inside the reply figure.
             //
-            // Nothing marks the *return* from `send`. `SyncSender::send`
-            // blocks on a full channel and the buffer is inside the value being
-            // sent, so there is no owner left on this thread to mark with; that
-            // block is inside `reply.delivery` rather than beside it. See
-            // `crate::marks`.
             result.marks = marks.take();
             marks::mark(&result.marks, Mark::ReplyHandedOff);
-            // **The reply channel is depth one and `send` blocks.** The sender
-            // is an execution-pool thread, so a caller that drains slowly
-            // holds a worker, and the request pays that as latency. The trace
-            // travels *inside* the result, so this thread keeps a handle to
-            // mark through once the send returns — the span this recovers was
-            // invisible to both ends before the storage was shared.
-            let tail = marks::writer(&result.marks);
-            let _ = tx.send(result);
-            marks::mark_after(&tail, Mark::SendReturned);
+            // **Non-blocking first, and the fallback is the whole measurement.**
+            //
+            // `SyncSender::send` blocks when the channel is full, the sender is
+            // an execution-pool thread, and that block is latency the request
+            // really pays — so it is worth a span. But a mark taken after an
+            // unconditional `send` measures the wrong thing and races the
+            // reader for it.
+            //
+            // Wrong thing: on a channel with room, `send` does not block at
+            // all, and what the mark then times is this thread's own wake-up of
+            // a parked receiver — the *answerer's* cost, exactly the quantity
+            // `Mark::WorkerWoken` was moved off the producer to avoid.
+            //
+            // Races: the trace travels *inside* the result, and the collector's
+            // very next actions after `recv` are its own last mark and
+            // `marks::read`. There is no guest call between the handoff and the
+            // read the way there is on the queue handoffs, so a reading taken
+            // here can land after the trace has already been reduced — and the
+            // ones it loses are the slow sends, which is the worst possible
+            // bias for a row about blocking.
+            //
+            // `try_send` first removes both. When it succeeds nothing is
+            // marked and there was nothing to measure — which is the common
+            // case and the whole of the fix for the second problem, since a
+            // reading that is never taken cannot be lost. When it comes back
+            // `Full` the channel really is full, which is the case the row
+            // exists for.
+            //
+            // **The residual, stated rather than glossed.** On a channel
+            // deeper than one the race is gone by construction: a blocked send
+            // returns when the receiver takes the *head*, and this result is at
+            // the tail behind everything already queued, so the collector has a
+            // whole channel to drain before it can reach this trace. At depth
+            // one there is no such gap — the item taken is the only item, and
+            // ours becomes the head immediately. No traced path has one:
+            // `wisp-bench` gives the collector `sync_channel(1 << 16)` and
+            // `Cell::submit_with`'s depth-one channel passes `marks: None`. The
+            // tests that do pair a depth-one channel with a trace wait for the
+            // worker to finish rather than assuming the ordering.
+            match tx.try_send(result) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::TrySendError::Full(result)) => {
+                    let tail = marks::writer(&result.marks);
+                    let _ = tx.send(result);
+                    marks::mark_after(&tail, Mark::SendReturned);
+                }
+                // Nobody is listening. Same outcome as the `let _ = send(..)`
+                // this replaces: the result is dropped.
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {}
+            }
         }
     }
 

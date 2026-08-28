@@ -216,12 +216,28 @@ pub enum Mark {
     ReplyHandedOff,
     /// **Time the cell was blocked because the reply channel was full.**
     ///
-    /// `SyncSender::send` on a depth-one channel blocks, and the sender is an
+    /// `SyncSender::send` blocks on a full channel, and the sender is an
     /// execution-pool thread — so a caller that stops draining stops the cell,
     /// and a caller that drains slowly holds a worker. This span was invisible
     /// to both ends until the trace stopped having a single owner: the buffer
     /// travels *inside* the result, so the thread doing the sending has
     /// nothing of its own left to mark with.
+    ///
+    /// **Present only when the channel really was full**, because `respond`
+    /// tries a non-blocking send first and only marks when that comes back
+    /// `Full`. The row's *presence* is therefore the finding, and its count is
+    /// how often the caller was too slow to keep up — where an unconditional
+    /// mark produced a row on every reply whose value was usually this
+    /// thread's own wake-up of a parked receiver, which is the answerer's cost
+    /// rather than the request's.
+    ///
+    /// That is also what makes the reading safe to take. The trace travels
+    /// inside the result and the collector reads it immediately on `recv`, with
+    /// no guest call in between the way the queue handoffs have — so an
+    /// unconditional mark here races the reader and loses the slow sends
+    /// first. A blocked `send` returns when the receiver takes the *head* of
+    /// the channel, and this result is at the tail behind everything already
+    /// queued, so the reader cannot be about to read this trace.
     SendReturned,
 
     // --- pausing and resuming ------------------------------------------------
@@ -828,6 +844,7 @@ impl Mark {
                 Structural::ParkingMutexQueue
             }
             WakeRingTaken => Structural::ParkingLockFreeQueue,
+            SendReturned => Structural::BlockedReply,
             WorkerWoken => Structural::WokenWorker,
             BreakerRefused | ShedDecided | ModuleMissing | AcquireFailed | SingleWriterRefused
             | EnterRefused => Structural::RefusedRequest,
@@ -877,6 +894,14 @@ pub enum Structural {
     HibernatedInstance,
     /// A dispatch that completed with a response handle.
     RespondingDispatch,
+    /// A reply that found the caller's channel full, so the answering worker
+    /// blocked in `send` until the caller drained.
+    ///
+    /// Like [`Structural::WokenWorker`], a property of the load rather than of
+    /// the request — here of the *caller's* load, which is the point: a
+    /// non-empty count is the finding, and it says the harness could not keep
+    /// up with the cell.
+    BlockedReply,
     /// An item that found no worker running and had to wake one out of
     /// `Condvar::wait`.
     ///
@@ -950,6 +975,11 @@ impl Structural {
             }
             Structural::RespondingDispatch => {
                 "only a dispatch that completed with a response handle reaches it"
+            }
+            Structural::BlockedReply => {
+                "only a reply that found the caller's channel full reaches it: the answering \
+                 worker tries a non-blocking send first, and a caller keeping up never makes \
+                 it block"
             }
             Structural::WokenWorker => {
                 "only an item that had to wake a parked worker reaches it: a busy cell's \
