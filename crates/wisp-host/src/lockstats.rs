@@ -1122,8 +1122,14 @@ pub enum ActiveMapKind {
     Plain,
     /// One mutex per shard, indexed by the key's low bits — [`ShardedMap`].
     ///
-    /// What this branch ran before [`ActiveMapKind::LockFree`] existed, and
-    /// the thing it has to beat. One flag away.
+    /// What this branch ran before [`ActiveMapKind::LockFree`] existed.
+    ///
+    /// **`#[default]` because that is what a record without this field ran**,
+    /// not because it is what a new run gets — the CLI picks that, and picks
+    /// this too. The two defaults answer different questions and were briefly
+    /// conflated: flipping this one would have made every archived record
+    /// claim a cell it never had.
+    #[default]
     Sharded,
     /// An open-addressed table with lock-free lookup — [`LockFreeMap`].
     ///
@@ -1134,7 +1140,11 @@ pub enum ActiveMapKind {
     /// question, and the other two arms are here to answer it — the module
     /// header's warning about contention that turns into false sharing reads
     /// on this arm exactly as it does on `Sharded`.
-    #[default]
+    ///
+    /// **Measured and beaten.** At 1728 instances on 16 exec threads, `sharded`
+    /// held 172k rps at p99 40 µs where this shed 48-81% of its offered load;
+    /// the arm stays because it is a real third design and the record has to be
+    /// able to name it, but nothing should select it without a reason.
     LockFree,
 }
 
