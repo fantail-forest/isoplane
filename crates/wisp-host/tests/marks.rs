@@ -534,6 +534,23 @@ fn the_two_queue_structures_report_different_spans_and_neither_reports_a_zero() 
          reads exactly like a lock that was watched and never blocked"
     );
 
+    // **The wait itself is a different quantity under each, so it is a
+    // different label.** Under a mutex lane the critical section, the futex and
+    // the wait are three spans; a ring's producer has no instant after the push
+    // at which it still owns the job, so a mark taken there races the consumer
+    // and its wait necessarily contains the push and the notify as well. One
+    // label over both would put a compare-and-swap into the same distribution
+    // as a mutex lane's wait, in a table that is read as a comparison between
+    // the two designs.
+    assert!(
+        mutex.contains(&Mark::JobTaken) && !mutex.contains(&Mark::RingTaken),
+        "a mutex lane must report `queue.wait` and not the ring's"
+    );
+    assert!(
+        lockfree.contains(&Mark::RingTaken) && !lockfree.contains(&Mark::JobTaken),
+        "a ring must report `ring.wait` and not the mutex lane's"
+    );
+
     // The span *before* the enqueue means the same thing under both, which is
     // what makes the two tables comparable at all.
     assert!(mutex.contains(&Mark::PlacementDecided) && lockfree.contains(&Mark::PlacementDecided));

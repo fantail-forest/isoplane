@@ -906,9 +906,12 @@ impl WorkQueue {
             return Some(Job::Wake(s));
         }
         f.dispatches.pop().map(|d| {
-            // The queue wait closes at the pop, on the thread that now owns
-            // the job. See the mutex arm of `pop` for what this span contains.
-            marks::mark(&d.marks, Mark::JobTaken);
+            // The wait closes at the pop, on the thread that now owns the job.
+            // Its own label, not the mutex lane's: under a ring this span also
+            // contains the push and the notify, because a ring's producer has
+            // no instant after the push at which it still owns the job. See
+            // `Mark::RingTaken`.
+            marks::mark(&d.marks, Mark::RingTaken);
             Job::Dispatch(d)
         })
     }
@@ -991,27 +994,35 @@ impl WorkQueue {
                 f.pushing.fetch_sub(1, Ordering::SeqCst);
                 return Err(j);
             }
-            // Same reasoning as the mutex arm: the ring takes the job by
-            // value and a consumer may pop it immediately, so the tail is
-            // marked through a handle taken while the job is still here.
-            let tail = marks::writer(&j.marks);
-            // Stamped before the push, and only when this job is traced. It is
-            // not a mark: nothing in the report closes a span here. It is the
-            // left edge the consumer needs to decide whether its own
-            // `Condvar::wait` reading belongs to this job. See
-            // `marks::woke_belongs`.
+            // **Nothing is marked after the push, and nothing can be.** The
+            // ring takes the job by value and the `pushing` guard has to be
+            // released afterwards, so there is no instant at which this thread
+            // still owns the job and has work left to record. The mutex arm
+            // answers that with a `MarkWriter` held across the handoff; here
+            // the mark it would take races the consumer, and a mark that
+            // arrives out of order does not go missing — it renames the pair it
+            // falls between.
+            //
+            // So the compare-and-swap, the `SeqCst` decrement and the notify
+            // all sit inside the span the *consumer* closes, under
+            // `Mark::RingTaken`, which is a different label from the mutex
+            // lane's `queue.wait` for exactly that reason. This is the same
+            // trade `push_wake` makes, and it is made in the same place.
+            //
+            // Stamped before the push, and only when this job is traced. Not a
+            // mark: nothing in the report closes a span here. It is the left
+            // edge the consumer needs to decide whether its own `Condvar::wait`
+            // reading belongs to this job. See `marks::woke_belongs`.
             let mut j = j;
             if j.marks.is_some() {
                 j.pushed = marks::stamp();
             }
             // A full ring hands the job straight back, which is exactly the
-            // shed the mutex version does at `dispatches.len() >= cap`.
+            // shed the mutex version does at `dispatches.len() >= cap`. That
+            // shed is decided inside the same span, and closes at
+            // `Mark::ShedDecided`.
             let pushed = f.dispatches.push(j);
             f.pushing.fetch_sub(1, Ordering::SeqCst);
-            // The compare-and-swap and the matching `SeqCst` decrement, which
-            // is where this structure spends what the mutex one spends on the
-            // lane lock. A shed is decided inside this span.
-            marks::mark_after(&tail, Mark::RingPushed);
             pushed?;
             Self::free_notify(f);
             return Ok(());

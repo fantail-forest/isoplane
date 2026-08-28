@@ -51,11 +51,15 @@ pub enum Mark {
     /// One `SeqCst` read-modify-write on a cacheline every producer touches.
     PushRegistered,
     /// The `closed` check.
+    ///
+    /// **The producer's last mark on this path.** Everything after it — the
+    /// ring's compare-and-swap, the `SeqCst` decrement and the notify — is
+    /// inside the span that closes at [`Mark::RingTaken`], because a ring's
+    /// producer has no instant after the push at which it still knows which
+    /// slot it wrote. A shed is decided in there too: `push` hands the job
+    /// straight back when the ring is full, and then the span closes at
+    /// [`Mark::ShedDecided`] instead.
     ClosedChecked,
-    /// The bounded ring's compare-and-swap, and the `SeqCst` decrement after
-    /// it. A shed is decided inside this span — `push` hands the job straight
-    /// back when the ring is full.
-    RingPushed,
 
     // --- the queue ---------------------------------------------------------
     /// **The queue wait**: the job sitting in its lane until an execution
@@ -67,7 +71,29 @@ pub enum Mark {
     /// pop — tens of nanoseconds. If no worker had to be woken there is no
     /// round trip, `WorkerWoken` is absent, and this is the whole wait. Adding
     /// the two rows is therefore meaningful and subtracting them is not.
+    ///
+    /// **Mutex structures only.** A ring's wait is [`Mark::RingTaken`], and it
+    /// is not the same quantity.
     JobTaken,
+    /// **The lock-free ring's push and its wait, together.**
+    ///
+    /// Its own label rather than a second observation of [`Mark::JobTaken`],
+    /// for the reason [`Mark::WakeRingTaken`] is its own label on the wake
+    /// lane: it is not the same quantity. It contains the ring's
+    /// compare-and-swap and its notify as well as the wait for a worker, where
+    /// a mutex lane has those in `lane.lock.hold` and `wake.worker.woke`
+    /// beside `queue.wait` rather than inside it.
+    ///
+    /// The merge is a property of the ring, not of the instrument. The
+    /// producer's `pushing` guard has to be released *after* the push, and
+    /// there is no instant between the push and the release at which the
+    /// producer still owns the job to mark through — so a mark taken there
+    /// races the consumer, and a mark that arrives out of order does not go
+    /// missing, it renames the pair it falls between. One honest span beats
+    /// two that sometimes swap names.
+    ///
+    /// **[`crate::cell::QueueStructure::LockFree`] only.**
+    RingTaken,
     /// The rest of the pop, the previous job's `job_done`, and the
     /// `catch_unwind` and `Weak::upgrade` in `exec_loop`.
     DispatchStarted,
@@ -279,7 +305,8 @@ pub enum Mark {
     /// **Absent when no worker had to be woken**, which is an honest zero and
     /// not a lost observation: a busy cell's workers are already looping in
     /// `pop` and never reach the condvar, and then the whole wait is
-    /// [`Mark::JobTaken`], [`Mark::WakeTaken`] or [`Mark::WakeRingTaken`].
+    /// [`Mark::JobTaken`], [`Mark::RingTaken`], [`Mark::WakeTaken`] or
+    /// [`Mark::WakeRingTaken`].
     /// Also absent when the reading is refused as not belonging to the item it
     /// would have been filed on — see [`woke_belongs`] and [`Mark::caveat`].
     WorkerWoken,
@@ -476,8 +503,8 @@ pub const ALL: &[Mark] = &[
     Mark::LaneLockReleased,
     Mark::PushRegistered,
     Mark::ClosedChecked,
-    Mark::RingPushed,
     Mark::JobTaken,
+    Mark::RingTaken,
     Mark::DispatchStarted,
     Mark::ModulesLockWanted,
     Mark::ModulesLockAcquired,
@@ -618,8 +645,8 @@ impl Mark {
             LaneLockReleased => "lane.lock.hold",
             PushRegistered => "ring.pushing.enter",
             ClosedChecked => "ring.closed.check",
-            RingPushed => "ring.push",
             JobTaken => "queue.wait",
+            RingTaken => "ring.wait",
             DispatchStarted => "worker.start",
             ModulesLockWanted => "modules.read.wanted",
             ModulesLockAcquired => "modules.read.wait",
@@ -759,15 +786,17 @@ impl Mark {
 
     /// Which queue structures this mark exists under.
     ///
-    /// **Absent is not zero.** A `Shared` run has no `ring.push` observations
+    /// **Absent is not zero.** A `Shared` run has no `ring.wait` observations
     /// and a `LockFree` run has no `lane.lock.wait` observations, and the
     /// report has to be able to say which of those it is looking at without
     /// inferring it from a missing row.
     pub fn structural(self) -> Structural {
         use Mark::*;
         match self {
-            LaneLockWanted | LaneLockAcquired | LaneLockReleased => Structural::MutexQueue,
-            PushRegistered | ClosedChecked | RingPushed => Structural::LockFreeQueue,
+            LaneLockWanted | LaneLockAcquired | LaneLockReleased | JobTaken => {
+                Structural::MutexQueue
+            }
+            PushRegistered | ClosedChecked | RingTaken => Structural::LockFreeQueue,
             PoolLockWanted | PoolLockReleased | IndexLockWanted | IndexLockReleased => {
                 Structural::HandlerTarget
             }
