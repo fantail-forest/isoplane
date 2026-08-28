@@ -42,9 +42,9 @@ internal sealed class DispatchRecord
                 break;
 
             default:
-                // Every other trigger is one this guest does not export a
-                // handler for. A host that sends one is misrouting, and that
-                // must surface as Protocol rather than as silent misbehaviour.
+                
+                
+                // An unsupported dispatch kind is a protocol error.
                 throw new PostcardException();
         }
 
