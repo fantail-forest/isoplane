@@ -25,6 +25,7 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 rand = { workspace = true }
 crossbeam-queue = { workspace = true }
+scc = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

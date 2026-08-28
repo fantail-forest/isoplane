@@ -567,26 +567,6 @@ thread_local! {
 /// does and does not lose.
 const ACTIVE_SHARDS: usize = 256;
 
-/// How many entries [`crate::lockstats::LockFreeMap`] is sized for.
-///
-/// **An estimate of a bound the config does not carry, which is why the table
-/// has an overflow.** An entry lives from the insert at dispatch to the remove
-/// at completion, so the live count is the dispatches that have been admitted
-/// and not yet finished — the Concurrently-Hot ones plus every one parked
-/// mid-flight waiting on a future. `max_hot` bounds the first and
-/// `admission_capacity` the work that can be queued behind it; nothing here
-/// bounds the parked, whose real limit is §11.2's structural one and lives in
-/// the engine.
-///
-/// So this is deliberately loose — four times a bound that is already a sum of
-/// two, floored well above either — and `LockFreeMap` falls back to a shared
-/// map rather than failing if it is still wrong. The floor matters more than
-/// the factor: a small cell's `max_hot` is a handful, and a table sized on
-/// that alone would overflow on the first burst.
-fn active_table_capacity(cfg: &CellConfig) -> usize {
-    4 * (cfg.max_hot + cfg.admission_capacity()).max(1024)
-}
-
 /// **How many work queues the cell has**, and of what kind.
 ///
 /// This is one of the two decisions that used to be welded into a single
@@ -1733,11 +1713,7 @@ impl Cell {
             // and calls `socket_send(0, ..)` must get `NotFound`, not
             // somebody's chat room.
             residents: CountedMutex::new(HashMap::new()),
-            active: crate::lockstats::ActiveMapImpl::new(
-                cfg.active_map,
-                ACTIVE_SHARDS,
-                active_table_capacity(&cfg),
-            ),
+            active: crate::lockstats::ActiveMapImpl::new(cfg.active_map, ACTIVE_SHARDS),
             metrics,
             hot: AtomicUsize::new(0),
             next_dispatch: AtomicU64::new(1),
