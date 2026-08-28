@@ -27,9 +27,21 @@ public sealed class Response
 {
     internal ushort Status { get; }
     internal byte[] Body { get; }
-    internal string ContentType { get; }
+    /// <summary>
+    /// <c>null</c> means the encoded <c>ResponseHead</c> carries an EMPTY
+    /// header list, not a header with an empty value.
+    ///
+    /// The distinction is on the wire and it is why this is nullable rather
+    /// than defaulted: a Durable Instance reply rides the response handle
+    /// (there is no typed DI reply import), and the Rust SDK's
+    /// <c>Response::new(status, body)</c> builds one with no headers at all.
+    /// A C# guest that always emitted a <c>content-type</c> would put ~30
+    /// extra bytes through <c>resp_new</c> on every dispatch, on one side of
+    /// a language comparison only.
+    /// </summary>
+    internal string? ContentType { get; }
 
-    private Response(ushort status, byte[] body, string contentType)
+    private Response(ushort status, byte[] body, string? contentType)
     {
         Status = status;
         Body = body;
@@ -41,6 +53,14 @@ public sealed class Response
 
     public static Response Json(string json, ushort status = 200) =>
         new(status, System.Text.Encoding.UTF8.GetBytes(json), "application/json");
+
+    /// <summary>
+    /// Bytes with no headers — the shape a DI reply takes (§7.2). The array is
+    /// taken by reference and handed to the host as-is; callers that reuse a
+    /// buffer must copy before passing it here.
+    /// </summary>
+    public static Response Raw(byte[] body, ushort status = 200) =>
+        new(status, body, null);
 }
 
 /// <summary>

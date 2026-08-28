@@ -6,7 +6,11 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="$HERE/out"
+# Where the module lands. Defaults to this directory's `out/`; the throughput
+# suite's flavour overrides it to `guests/out`, which is the directory
+# `wisp-bench --guest-dir` reads and where the Rust bench guests already are.
+# See build-bench-echo.sh.
+OUT="${WISP_OUT_DIR:-$HERE/out}"
 
 # Output basename. Distinct flavours must land at distinct paths so they can be
 # compared against each other — `bench/dotnet-sharing` needs two materially
@@ -15,20 +19,34 @@ OUT="$HERE/out"
 #   WISP_OUT=wisp_guest_dotnet_compat guests/dotnet/build.sh -p:WispCompatProbe=true
 NAME="${WISP_OUT:-wisp_guest_dotnet}"
 
-# NativeAOT-LLVM shells out to the WASI SDK's clang for the final link. The
-# ILCompiler package pins an expected version (29.0 as of the pinned build) and
-# warns on anything else, so we install exactly that one.
+# NativeAOT-LLVM shells out to the WASI SDK's clang for the final link, and the
+# PAL shim below is compiled with the same clang. The ILCompiler package pins
+# an expected version (29.0 as of the pinned build) and warns on anything else.
+#
+# It comes from the IMAGE (see the Dockerfile), not from here. This script used
+# to install it on first run, which could never work: `scripts/dev` runs the
+# container as the invoking uid (ground rule 1) and /opt is root-owned, so the
+# untar emitted two hundred lines of "Cannot mkdir: Permission denied" and then
+# -- because the failure was inside a pipeline whose exit status belonged to
+# something else -- carried on to a link failure that named neither the missing
+# sysroot nor the reason. Refusing here, with the fix, is the whole of the
+# improvement.
 WASI_SDK_VERSION="${WASI_SDK_VERSION:-29.0}"
 WASI_SDK_PATH="${WASI_SDK_PATH:-/opt/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux}"
 
-if [ ! -d "$WASI_SDK_PATH" ]; then
-  echo "==> installing wasi-sdk ${WASI_SDK_VERSION} into ${WASI_SDK_PATH}"
-  tag="wasi-sdk-${WASI_SDK_VERSION%%.*}"
-  curl -sSL -o /tmp/wasi-sdk.tar.gz \
-    "https://github.com/WebAssembly/wasi-sdk/releases/download/${tag}/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux.tar.gz"
-  mkdir -p "$(dirname "$WASI_SDK_PATH")"
-  tar xzf /tmp/wasi-sdk.tar.gz -C "$(dirname "$WASI_SDK_PATH")"
-  rm -f /tmp/wasi-sdk.tar.gz
+if [ ! -x "$WASI_SDK_PATH/bin/clang" ]; then
+  {
+    echo "FAIL: no wasi-sdk at $WASI_SDK_PATH (looked for bin/clang)."
+    echo
+    echo "It ships in the wisp-dev image alongside .NET and wasm-tools. If this"
+    echo "is the sandbox, the image predates the layer that adds it:"
+    echo "    docker build --build-arg HOST_UID=\$(id -u) --build-arg HOST_GID=\$(id -g) \\"
+    echo "        -t wisp-dev:latest ."
+    echo "    scripts/dev --stop      # so the next run picks the new image up"
+    echo
+    echo "Outside the sandbox, point WASI_SDK_PATH at your own ${WASI_SDK_VERSION} install."
+  } >&2
+  exit 1
 fi
 export WASI_SDK_PATH
 

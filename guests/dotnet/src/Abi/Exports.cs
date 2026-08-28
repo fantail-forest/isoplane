@@ -91,14 +91,14 @@ public static unsafe class Exports
                 return PollStatus.Trapped(TrapCode.Protocol);
             }
 
-            Log(1, "wisp_handle enter: " + d.Method + " " + d.Path);
+            TraceDispatch(d);
 
             _ctx = new Ctx((long)d.NowMs, d.CpuBudgetMs);
             FutureTable.Reset();
 
             // Kicking the handler off runs it synchronously up to its first
             // incomplete await, exactly as .NET always has.
-            _root = _app!.HandleAsync(new Request(d.Method, d.Path), _ctx);
+            _root = Route(d, _ctx);
 
             return Settle();
         }
@@ -106,10 +106,25 @@ public static unsafe class Exports
         {
             return PollStatus.Trapped(TrapCode.TooManyFutures);
         }
+        catch (PostcardException)
+        {
+            // A trigger this module exports no handler for. It decoded
+            // cleanly, so the host is misrouting rather than corrupting, and
+            // Protocol is the code that says so — reached from `Route`, which
+            // is outside the decode-only catch above.
+            return PollStatus.Trapped(TrapCode.Protocol);
+        }
         catch (Exception e)
         {
             return Panic(e);
         }
+    }
+
+    /// <summary>Routes a decoded HTTP dispatch to the handler.</summary>
+    private static Task<Response> Route(DispatchRecord d, Ctx ctx)
+    {
+        if (d.Kind != DispatchKind.Http) throw new PostcardException();
+        return _app!.HandleAsync(new Request(d.Method, d.Path), ctx);
     }
 
     // -----------------------------------------------------------------------
@@ -239,11 +254,21 @@ public static unsafe class Exports
 
         // ResponseHead { status: u16, headers: Vec<(String,String)>, body,
         //                streaming: bool }
+        //
+        // `headers` is length-prefixed, so "no headers" is a 0 and not an
+        // omission. A response without a content type uses the empty header list.
         var w = new PostcardWriter(resp.Body.Length + 64);
         w.Varint(resp.Status);
-        w.Varint(1);
-        w.Str("content-type");
-        w.Str(resp.ContentType);
+        if (resp.ContentType is null)
+        {
+            w.Varint(0);
+        }
+        else
+        {
+            w.Varint(1);
+            w.Str("content-type");
+            w.Str(resp.ContentType);
+        }
         w.Bytes(resp.Body);
         w.Bool(false);
 
@@ -273,6 +298,12 @@ public static unsafe class Exports
             // Never let diagnosis be the thing that breaks the trap path.
         }
         return PollStatus.Trapped(TrapCode.Panic);
+    }
+
+    /// <summary>Records entry into a managed dispatch.</summary>
+    private static void TraceDispatch(DispatchRecord d)
+    {
+        Log(1, "wisp_handle enter: " + d.Method + " " + d.Path);
     }
 
     /// <summary>

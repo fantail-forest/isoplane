@@ -296,7 +296,26 @@ while :; do
   exit 72
 done
 
+# Forward the caller's `WISP_*` environment into the container.
+#
+# `docker exec` inherits nothing from this shell, so the flavour switches the
+# guest builders document -- `WISP_OUT=... scripts/dev guests/dotnet/build.sh`
+# in guests/dotnet/README.md, `WISP_OFFLINE=1` in guests/build.sh -- silently
+# did nothing: the variable was set on THIS process and the build inside the
+# container used its default. The failure mode is the worst kind, a build that
+# succeeds and writes the wrong file, which is how a "flavour" comparison ends
+# up comparing a module against itself.
+#
+# The script's own control variables are excluded: they configure the
+# container, and passing them inward would let a nested `scripts/dev` inherit a
+# name or an image it was not asked for.
 EXEC=(docker exec)
+for v in "${!WISP_@}"; do
+  case "$v" in
+    WISP_IMAGE|WISP_CONTAINER_NAME|WISP_RUN_ARGS|WISP_PORTS|WISP_PROBE_TIMEOUT|WISP_DOCKER_TIMEOUT|WISP_START_WAIT) continue ;;
+  esac
+  EXEC+=(-e "$v=${!v}")
+done
 [ -t 0 ] && EXEC+=(-it)
 EXEC+=("$NAME")
 [ $# -eq 0 ] && set -- bash

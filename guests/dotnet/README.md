@@ -46,8 +46,12 @@ scripts/dev cargo run --release --bin wisp-dotnet-hostcheck \
 ```
 
 
-`build.sh` installs wasi-sdk 29.0 on first run if it is missing. NuGet packages
-live in the `wisp-nuget` docker volume, so only the first build pays restore.
+wasi-sdk 29.0 ships in the `wisp-dev` image alongside .NET and wasm-tools;
+`build.sh` refuses with the rebuild command if it is not there. (It used to
+install it itself, which could not work: the container runs as the invoking uid
+and `/opt` is root-owned, so the untar failed and the build carried on to a
+confusing failure further down.) NuGet packages live in the `wisp-nuget` docker
+volume, so only the first build pays restore.
 
 Enable the optional LINQ, generated Regex and generated JSON probe with:
 

@@ -41,6 +41,26 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
 # --- wasm tooling ----------------------------------------------------------
 RUN cargo install --locked wasm-tools@1.244.0 || cargo install --locked wasm-tools
 
+# --- wasi-sdk (the C# guest's linker and PAL compiler) ----------------------
+# NativeAOT-LLVM shells out to the WASI SDK's clang for the final link, and
+# `guests/dotnet/build.sh` compiles `native/wisp_pal.c` with the same clang.
+# The ILCompiler package pins an expected version and warns on anything else,
+# so this is the version that package wants -- see guests/dotnet/README.md.
+#
+# It lives in the IMAGE rather than being fetched on first use, for the same
+# reason .NET and wasm-tools do. `build.sh` used to install it itself into
+# /opt, which cannot work: the container runs as the invoking uid (rule 1) and
+# /opt is root-owned, so the untar failed with two hundred lines of
+# "Cannot mkdir: Permission denied" and the build carried on to a confusing
+# failure further down.
+ARG WASI_SDK_VERSION=29.0
+RUN curl -sSL -o /tmp/wasi-sdk.tar.gz \
+      "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux.tar.gz" \
+    && tar xzf /tmp/wasi-sdk.tar.gz -C /opt \
+    && rm /tmp/wasi-sdk.tar.gz \
+    && /opt/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux/bin/clang --version | head -1
+ENV WASI_SDK_PATH=/opt/wasi-sdk-29.0-x86_64-linux
+
 # Cargo/NuGet caches and the container-side target dir are docker volumes.
 # Docker creates a volume's mountpoint root:root when the path does not exist
 # in the image, and sysbox then re-chowns volume contents into the container's

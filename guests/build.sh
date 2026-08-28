@@ -11,7 +11,6 @@ PROFILE=release
 # container builds cannot leave root-owned artifacts in the working tree.
 TDIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 mkdir -p "$OUT"
-rm -f "$OUT"/*.wasm
 cd "$ROOT"
 
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
@@ -20,13 +19,16 @@ CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
 # `undeclared-import` is built twice, once per variant.
 GUESTS=(quotes-api misbehaver bigheap impure-cctor undeclared-import)
 
+# Remove only outputs owned by this script; other toolchains share the directory.
 echo "==> building guests for $TARGET ($PROFILE)"
 for g in "${GUESTS[@]}"; do
+  rm -f "$OUT/$g.wasm"
   cargo build -p "$g" "${CARGO_FLAGS[@]}"
   cp "$TDIR/$TARGET/$PROFILE/${g//-/_}.wasm" "$OUT/$g.wasm"
 done
 
 # V1 fixture, variant 2: an undeclared MODULE rather than an undeclared field.
+rm -f "$OUT/foreign-module.wasm"
 cargo build -p undeclared-import --features foreign-module "${CARGO_FLAGS[@]}"
 cp "$TDIR/$TARGET/$PROFILE/undeclared_import.wasm" "$OUT/foreign-module.wasm"
 

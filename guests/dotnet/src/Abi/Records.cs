@@ -40,8 +40,11 @@ internal sealed class DispatchRecord
                 r.SkipStringPairs();    // headers
                 r.SkipBytes();          // body
                 break;
+
             default:
-                // An unsupported dispatch kind is a protocol error.
+                // Every other trigger is one this guest does not export a
+                // handler for. A host that sends one is misrouting, and that
+                // must surface as Protocol rather than as silent misbehaviour.
                 throw new PostcardException();
         }
 
