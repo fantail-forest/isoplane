@@ -1046,6 +1046,315 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ShardedMap<K, V> {
     }
 }
 
+/// Open-addressed storage with atomic primary-table key probes and per-entry value access.
+/// Structural changes use key-selected stripe locks.
+/// Overflow storage handles a full primary table.
+pub struct LockFreeMap<K, V> {
+    slots: Box<[LockFreeSlot<K, V>]>,
+    mask: u64,
+    stripes: Box<[Mutex<()>]>,
+    overflow: Mutex<HashMap<K, V>>,
+    overflow_len: AtomicU64,
+    overflowed: AtomicU64,
+}
+
+/// A held entry: the slot's index, and its value under the entry's lock.
+///
+/// The index travels with the guard because `remove` needs both — it takes the
+/// value and then has to write the tombstone into the very slot it took it
+/// from, before releasing. Re-probing for the index instead would be a second
+/// lookup for something already known, and one that reads a key word the
+/// caller is in the middle of changing.
+type LockFreeEntry<'a, K, V> = MutexGuard<'a, Option<(K, V)>>;
+
+/// One table entry: a key word that can be read without locking, and a value
+/// that cannot.
+struct LockFreeSlot<K, V> {
+    /// [`LF_EMPTY`], [`LF_TOMB`], or a live key's [`ShardKey::shard_key`].
+    ///
+    /// Published with `Release` *after* the value is in place, and moved to
+    /// `LF_TOMB` before the entry lock is dropped, so a lookup that sees a key
+    /// can lock the entry and be certain of finding the value that key names.
+    key: AtomicU64,
+    val: Mutex<Option<(K, V)>>,
+}
+
+/// A slot that has never held a key. A probe stops here: nothing beyond it on
+/// this path can be the key being looked for.
+const LF_EMPTY: u64 = 0;
+/// A slot whose key was removed. A probe must **continue past it** — the key it
+/// wants may have been claimed beyond it while this slot was still occupied —
+/// and a claim may reuse it.
+const LF_TOMB: u64 = u64::MAX;
+
+/// Whether a key's word is one this table spends on saying "no key here".
+///
+/// **Two key values cannot live in the table, and pretending otherwise is a
+/// silent wrong answer rather than an error.** A key of `0` stored in a slot
+/// reads back as [`LF_EMPTY`]: the entry becomes invisible to every probe,
+/// `len` undercounts it, and `remove` cannot find it — while the value sits
+/// there holding a responder nobody will ever call. Caught by the shared
+/// agreement test, which starts its key space at zero.
+///
+/// `InstanceId::alloc` counts up from 1 and would need the age of the universe
+/// to reach `u64::MAX`, so `Cell::active` never takes this path. It exists
+/// because a map that is correct only for the key space its current caller
+/// happens to use is not correct, and the next caller does not read this file.
+/// Such keys go to the same fallback a full table uses — which is slower, and
+/// is the one place in this structure where being slower is the right answer.
+#[inline]
+fn lf_reserved(want: u64) -> bool {
+    want == LF_EMPTY || want == LF_TOMB
+}
+
+/// Key-selected locks for structural table updates.
+/// Updates acquire a stripe before entry access, so claims of the same key serialize.
+const LF_STRIPES: usize = 64;
+
+/// Mixes sequential keys before open-addressed table indexing.
+#[inline]
+fn lf_mix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+impl<K: Hash + Eq + ShardKey, V> LockFreeMap<K, V> {
+    /// `capacity` is rounded up to a power of two and then doubled: an
+    /// open-addressed table's probe length is a function of its load factor
+    /// rather than its size, and at 50% the expected probe is under two slots
+    /// where at 90% it is ten.
+    pub fn new(capacity: usize) -> LockFreeMap<K, V> {
+        let n = capacity.max(64).next_power_of_two() * 2;
+        LockFreeMap {
+            slots: (0..n)
+                .map(|_| LockFreeSlot { key: AtomicU64::new(LF_EMPTY), val: Mutex::new(None) })
+                .collect(),
+            mask: (n - 1) as u64,
+            stripes: (0..LF_STRIPES).map(|_| Mutex::new(())).collect(),
+            overflow: Mutex::new(HashMap::new()),
+            overflow_len: AtomicU64::new(0),
+            overflowed: AtomicU64::new(0),
+        }
+    }
+
+    /// Entries that have had to take the shared fallback.
+    ///
+    /// Zero in a run whose table was sized correctly. Non-zero says this map
+    /// spent part of the run behaving like [`PlainMap`], which is the one way a
+    /// figure taken from it could mislead.
+    pub fn overflowed(&self) -> u64 {
+        self.overflowed.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn home(&self, want: u64) -> usize {
+        (lf_mix(want) & self.mask) as usize
+    }
+
+    #[inline]
+    fn stripe(&self, want: u64) -> &Mutex<()> {
+        &self.stripes[lf_mix(want) as usize % LF_STRIPES]
+    }
+
+    #[inline]
+    fn next(&self, i: usize) -> usize {
+        (i + 1) & (self.mask as usize)
+    }
+
+    /// The slot holding `k`, by atomic loads alone.
+    ///
+    /// `None` on reaching an [`LF_EMPTY`] slot, which is proof of absence: a
+    /// claim never skips an empty slot, so a key in the table is always found
+    /// before one.
+    #[inline]
+    fn find(&self, k: &K) -> Option<usize> {
+        let want = k.shard_key();
+        if lf_reserved(want) {
+            // Never in the table by construction — see `lf_reserved`. Without
+            // this, `LF_TOMB` would scan every slot to conclude the same thing.
+            return None;
+        }
+        let mut i = self.home(want);
+        for _ in 0..self.slots.len() {
+            match self.slots[i].key.load(Ordering::Acquire) {
+                LF_EMPTY => return None,
+                x if x == want => return Some(i),
+                _ => i = self.next(i),
+            }
+        }
+        None
+    }
+
+    /// [`Self::find`], the entry's lock, and the re-check that makes the pair
+    /// mean something.
+    ///
+    /// A slot can be removed and re-claimed by another key between the probe
+    /// and the lock, so the key word is read again under the lock and the
+    /// stored key compared: `shard_key` is not required to be injective, and a
+    /// map that trusted it would hand back one key's value for another's.
+    ///
+    /// **The retry is on the key word changing, never on the value.** Once the
+    /// word still reads `want` under the lock this returns an answer either
+    /// way, so a caller cannot spin against a state that a writer is not
+    /// actively leaving.
+    fn locked(&self, k: &K) -> Option<(usize, LockFreeEntry<'_, K, V>)> {
+        let want = k.shard_key();
+        loop {
+            let i = self.find(k)?;
+            let g = self.slots[i].val.lock();
+            if self.slots[i].key.load(Ordering::Acquire) != want {
+                continue;
+            }
+            return g.as_ref().is_some_and(|(have, _)| have == k).then_some((i, g));
+        }
+    }
+
+    /// Whether anything is in the fallback, as one load.
+    ///
+    /// **This is what keeps a lookup lock-free.** The fallback is a shared map
+    /// behind a mutex, and consulting it on every miss would put that mutex
+    /// back on the path this structure exists to take one off. In a correctly
+    /// sized run it is empty throughout and every miss pays one atomic load.
+    #[inline]
+    fn overflow_occupied(&self) -> bool {
+        self.overflow_len.load(Ordering::Acquire) != 0
+    }
+
+    fn publish_overflow_len(&self, m: &HashMap<K, V>) {
+        self.overflow_len.store(m.len() as u64, Ordering::Release);
+    }
+
+    /// Place a key the table will not hold. Does not touch `overflowed`: the
+    /// two callers count for different reasons and only one is about capacity.
+    fn insert_overflow(&self, k: K, v: V) -> Option<V> {
+        let mut m = self.overflow.lock();
+        let old = m.insert(k, v);
+        self.publish_overflow_len(&m);
+        old
+    }
+
+    /// This backend does not collect lock counters.
+    /// The returned default sample is not a measurement.
+    pub fn lock_stats(&self) -> LockSample {
+        LockSample::default()
+    }
+
+    /// Not on any dispatch path. Scans every key word.
+    pub fn len(&self) -> usize {
+        let in_table = self
+            .slots
+            .iter()
+            .filter(|s| !matches!(s.key.load(Ordering::Acquire), LF_EMPTY | LF_TOMB))
+            .count();
+        in_table + self.overflow_len.load(Ordering::Acquire) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<K: Hash + Eq + ShardKey, V> ActiveMap<K, V> for LockFreeMap<K, V> {
+    /// Checks key presence at this instant.
+    /// This read does not reserve the key or make a following insertion atomic with it.
+    fn contains_key(&self, k: &K) -> bool {
+        if self.find(k).is_some() {
+            return true;
+        }
+        self.overflow_occupied() && self.overflow.lock().contains_key(k)
+    }
+
+    fn insert(&self, k: K, v: V) -> Option<V> {
+        let want = k.shard_key();
+        // Stripe first, entry second, everywhere. See `LF_STRIPES`.
+        let _claim = self.stripe(want).lock();
+
+        // A key the table cannot represent goes to the fallback and is **not**
+        // counted as an overflow: `overflowed` answers "was this table too
+        // small", and a reserved key says nothing about its size.
+        if lf_reserved(want) {
+            return self.insert_overflow(k, v);
+        }
+
+        if let Some((_, mut g)) = self.locked(&k) {
+            return g.replace((k, v)).map(|(_, old)| old);
+        }
+
+        // An `Option` rather than the values themselves: the payload is placed
+        // inside a loop, and the borrow checker is right that a value moved in
+        // a loop body has to be gone by the next iteration.
+        let mut payload = Some((k, v));
+        let mut i = self.home(want);
+        for _ in 0..self.slots.len() {
+            if matches!(self.slots[i].key.load(Ordering::Acquire), LF_EMPTY | LF_TOMB) {
+                let mut g = self.slots[i].val.lock();
+                // Re-read under the entry lock: another key's claim, on a
+                // different stripe, may have taken this slot since the load.
+                if matches!(self.slots[i].key.load(Ordering::Acquire), LF_EMPTY | LF_TOMB) {
+                    *g = payload.take();
+                    // **Value first, key second.** A lookup that sees the key
+                    // must find the value it names; publishing the key first
+                    // would let one arrive at an entry holding `None`.
+                    self.slots[i].key.store(want, Ordering::Release);
+                    return None;
+                }
+            }
+            i = self.next(i);
+        }
+
+        let (k, v) = payload.take().expect("the loop either places the payload or leaves it");
+        self.overflowed.fetch_add(1, Ordering::Relaxed);
+        self.insert_overflow(k, v)
+    }
+
+    fn remove(&self, k: &K) -> Option<V> {
+        let want = k.shard_key();
+        let _claim = self.stripe(want).lock();
+        if let Some((i, mut g)) = self.locked(k) {
+            let taken = g.take();
+            // **Under the entry lock, before it is dropped.** A lookup that
+            // held the key word valid while the value was already gone would
+            // be the one state `locked` cannot tell from a live entry.
+            self.slots[i].key.store(LF_TOMB, Ordering::Release);
+            drop(g);
+            return taken.map(|(_, v)| v);
+        }
+        if !self.overflow_occupied() {
+            return None;
+        }
+        let mut m = self.overflow.lock();
+        let old = m.remove(k);
+        self.publish_overflow_len(&m);
+        old
+    }
+
+    /// Runs the read closure within this key's scoped value access.
+    fn with<R, F: FnOnce(&V) -> R>(&self, k: &K, f: F) -> Option<R> {
+        match self.locked(k) {
+            Some((_, g)) => g.as_ref().map(|(_, v)| f(v)),
+            None if self.overflow_occupied() => self.overflow.lock().get(k).map(f),
+            None => None,
+        }
+    }
+
+    fn with_mut<R, F: FnOnce(&mut V) -> R>(&self, k: &K, f: F) -> Option<R> {
+        match self.locked(k) {
+            Some((_, mut g)) => g.as_mut().map(|(_, v)| f(v)),
+            None if self.overflow_occupied() => self.overflow.lock().get_mut(k).map(f),
+            None => None,
+        }
+    }
+
+    fn lock_stats(&self) -> LockSample {
+        LockFreeMap::lock_stats(self)
+    }
+
+    fn len(&self) -> usize {
+        LockFreeMap::len(self)
+    }
+}
+
 /// Selects the storage backend for the active-instance index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ActiveMapKind {
@@ -1053,10 +1362,20 @@ pub enum ActiveMapKind {
     Plain,
     /// One mutex per shard, indexed by the key's low bits — [`ShardedMap`].
     ///
-    /// The default because it is what this branch already runs; the baseline
-    /// is one flag away, which is the whole point of the flag.
-    #[default]
+    /// What this branch ran before [`ActiveMapKind::LockFree`] existed, and
+    /// the thing it has to beat. One flag away.
     Sharded,
+    /// An open-addressed table with lock-free lookup — [`LockFreeMap`].
+    ///
+    /// **The default, which is a claim and should be read as one.** Sharding
+    /// split the lock that carried 48.8% of the execution pool's blocked time;
+    /// this removes it from the lookups altogether and narrows it to one entry
+    /// for the rest. Whether that is a win end to end is a throughput
+    /// question, and the other two arms are here to answer it — the module
+    /// header's warning about contention that turns into false sharing reads
+    /// on this arm exactly as it does on `Sharded`.
+    #[default]
+    LockFree,
 }
 
 /// The runtime selection, as one concrete type a struct can hold.
@@ -1077,14 +1396,24 @@ pub enum ActiveMapKind {
 pub enum ActiveMapImpl<K, V> {
     Plain(PlainMap<K, V>),
     Sharded(ShardedMap<K, V>),
+    LockFree(LockFreeMap<K, V>),
 }
 
-impl<K: Hash + Eq, V> ActiveMapImpl<K, V> {
-    /// `shards` is ignored by [`ActiveMapKind::Plain`], which has one lock.
-    pub fn new(kind: ActiveMapKind, shards: usize) -> ActiveMapImpl<K, V> {
+impl<K: Hash + Eq + ShardKey, V> ActiveMapImpl<K, V> {
+    /// `shards` sizes [`ActiveMapKind::Sharded`] and `capacity` sizes
+    /// [`ActiveMapKind::LockFree`]; [`ActiveMapKind::Plain`] has one lock and
+    /// one map and ignores both.
+    ///
+    /// Two numbers rather than one because they are not the same quantity: a
+    /// shard count is chosen against the *thread* count, to make collisions
+    /// unlikely, and a table capacity against the *entry* count, to keep the
+    /// load factor low. Passing one for the other silently gives a table that
+    /// fills.
+    pub fn new(kind: ActiveMapKind, shards: usize, capacity: usize) -> ActiveMapImpl<K, V> {
         match kind {
             ActiveMapKind::Plain => ActiveMapImpl::Plain(PlainMap::new()),
             ActiveMapKind::Sharded => ActiveMapImpl::Sharded(ShardedMap::new(shards)),
+            ActiveMapKind::LockFree => ActiveMapImpl::LockFree(LockFreeMap::new(capacity)),
         }
     }
 
@@ -1092,6 +1421,16 @@ impl<K: Hash + Eq, V> ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(_) => ActiveMapKind::Plain,
             ActiveMapImpl::Sharded(_) => ActiveMapKind::Sharded,
+            ActiveMapImpl::LockFree(_) => ActiveMapKind::LockFree,
+        }
+    }
+
+    /// Entries that took [`LockFreeMap`]'s shared fallback. `0` under the two
+    /// structures that have none.
+    pub fn overflowed(&self) -> u64 {
+        match self {
+            ActiveMapImpl::LockFree(m) => m.overflowed(),
+            _ => 0,
         }
     }
 }
@@ -1101,6 +1440,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => m.contains_key(k),
             ActiveMapImpl::Sharded(m) => m.contains_key(k),
+            ActiveMapImpl::LockFree(m) => m.contains_key(k),
         }
     }
 
@@ -1108,6 +1448,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => m.insert(k, v),
             ActiveMapImpl::Sharded(m) => m.insert(k, v),
+            ActiveMapImpl::LockFree(m) => m.insert(k, v),
         }
     }
 
@@ -1115,6 +1456,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => m.remove(k),
             ActiveMapImpl::Sharded(m) => m.remove(k),
+            ActiveMapImpl::LockFree(m) => m.remove(k),
         }
     }
 
@@ -1122,6 +1464,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => m.with(k, f),
             ActiveMapImpl::Sharded(m) => m.with(k, f),
+            ActiveMapImpl::LockFree(m) => m.with(k, f),
         }
     }
 
@@ -1129,6 +1472,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => m.with_mut(k, f),
             ActiveMapImpl::Sharded(m) => m.with_mut(k, f),
+            ActiveMapImpl::LockFree(m) => m.with_mut(k, f),
         }
     }
 
@@ -1136,6 +1480,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => PlainMap::lock_stats(m),
             ActiveMapImpl::Sharded(m) => ShardedMap::lock_stats(m),
+            ActiveMapImpl::LockFree(m) => LockFreeMap::lock_stats(m),
         }
     }
 
@@ -1143,6 +1488,7 @@ impl<K: ShardKey + Hash + Eq, V> ActiveMap<K, V> for ActiveMapImpl<K, V> {
         match self {
             ActiveMapImpl::Plain(m) => ActiveMap::len(m),
             ActiveMapImpl::Sharded(m) => ShardedMap::len(m),
+            ActiveMapImpl::LockFree(m) => LockFreeMap::len(m),
         }
     }
 }
@@ -1242,8 +1588,156 @@ mod sharded_tests {
         }
         exercise(&PlainMap::<u64, u32>::new(), "plain");
         exercise(&ShardedMap::<u64, u32>::new(16), "sharded");
-        exercise(&ActiveMapImpl::<u64, u32>::new(ActiveMapKind::Plain, 16), "impl/plain");
-        exercise(&ActiveMapImpl::<u64, u32>::new(ActiveMapKind::Sharded, 16), "impl/sharded");
+        exercise(&LockFreeMap::<u64, u32>::new(64), "lock-free");
+        // **And once at a capacity too small to hold the keys**, which is the
+        // only way the shared fallback is ever reached and therefore the only
+        // way it is ever tested. `new` floors the table at 64 entries, so the
+        // overflow is exercised by the dedicated test below rather than here;
+        // this pins that a small table still answers identically.
+        exercise(&LockFreeMap::<u64, u32>::new(1), "lock-free/small");
+        exercise(&ActiveMapImpl::<u64, u32>::new(ActiveMapKind::Plain, 16, 64), "impl/plain");
+        exercise(&ActiveMapImpl::<u64, u32>::new(ActiveMapKind::Sharded, 16, 64), "impl/sharded");
+        exercise(&ActiveMapImpl::<u64, u32>::new(ActiveMapKind::LockFree, 16, 64), "impl/lock-free");
+    }
+
+    /// **The overflow is reachable, correct, and counted.**
+    ///
+    /// It is the arm of `LockFreeMap` that nothing exercises in a
+    /// correctly-sized run, which is exactly why it needs a test: a fallback
+    /// that only runs when the table is full is a fallback that first runs in
+    /// production, on the largest population anyone has tried.
+    #[test]
+    fn a_full_lock_free_table_falls_back_without_losing_a_key() {
+        // 128 slots, and deliberately more keys than that.
+        let m = LockFreeMap::<u64, u32>::new(1);
+        let n = 400u64;
+        for k in 0..n {
+            assert_eq!(m.insert(k, k as u32), None, "key {k} was not already present");
+        }
+        assert!(m.overflowed() > 0, "400 keys into a 128-slot table must have overflowed");
+        assert_eq!(m.len() as u64, n, "every key is somewhere");
+
+        // Every key reads back its own value, whichever side of the fallback
+        // it landed on — the failure this guards against is a lookup that
+        // finds the table empty of a key and stops, never consulting the map
+        // it was put in.
+        for k in 0..n {
+            assert!(m.contains_key(&k), "key {k} is not findable");
+            assert_eq!(m.with(&k, |v| *v), Some(k as u32), "key {k} reads back wrong");
+        }
+        for k in 0..n {
+            assert_eq!(m.remove(&k), Some(k as u32), "key {k} did not come back out");
+        }
+        assert!(m.is_empty(), "left over: {}", m.len());
+    }
+
+    /// **The two key values the table spends on its own bookkeeping.**
+    ///
+    /// A key of `0` written into a slot reads back as an empty slot: the entry
+    /// goes invisible to every probe, `len` undercounts it, and `remove`
+    /// cannot find it — while the value sits there holding a responder nobody
+    /// will call. That is a hung request, surfacing far from its cause.
+    ///
+    /// It was a real bug in this map, and three unrelated tests failed on it
+    /// at once because all three happened to start counting at zero. A caller
+    /// whose key space starts at one — which `Cell::active`'s does — would not
+    /// have found it at all.
+    #[test]
+    fn the_sentinel_key_values_are_stored_and_read_like_any_other() {
+        for k in [0u64, u64::MAX] {
+            let m = LockFreeMap::<u64, u32>::new(64);
+            assert!(!m.contains_key(&k), "{k}: empty to begin with");
+            assert_eq!(m.insert(k, 7), None, "{k}: first insert");
+            assert!(m.contains_key(&k), "{k}: a reserved key must still be findable");
+            assert_eq!(m.with(&k, |v| *v), Some(7), "{k}: reads back");
+            assert_eq!(m.with_mut(&k, |v| { *v += 1; *v }), Some(8), "{k}: mutates");
+            assert_eq!(m.len(), 1, "{k}: counted");
+            assert_eq!(m.insert(k, 9), Some(8), "{k}: overwrite returns the old value");
+            assert_eq!(m.remove(&k), Some(9), "{k}: comes back out");
+            assert!(m.is_empty(), "{k}: and is gone");
+
+            // It takes the fallback, but it is **not** an overflow: that
+            // counter answers "was this table too small", and a reserved key
+            // says nothing about its size. Conflating them would make every
+            // run using such a key look like one that had outgrown its table.
+            assert_eq!(m.overflowed(), 0, "{k}: a reserved key is not a capacity failure");
+        }
+    }
+
+    /// **Tombstones do not hide a key that was inserted past them.**
+    ///
+    /// The bug this exists for is the one an open-addressed table gets wrong
+    /// by default: a `remove` that writes EMPTY rather than a tombstone
+    /// truncates every probe path running through that slot, and the keys
+    /// beyond it become invisible while still occupying the table. It shows up
+    /// as a request that never completes, long after the removal that caused
+    /// it, and only when two keys happened to collide.
+    #[test]
+    fn a_removal_does_not_hide_the_keys_probed_past_it() {
+        let m = LockFreeMap::<u64, u32>::new(64);
+        // Enough keys that some share a home slot, then churn them: every
+        // removal leaves a tombstone that later probes must run through.
+        for k in 0..200u64 {
+            m.insert(k, k as u32);
+        }
+        for k in (0..200u64).step_by(2) {
+            assert_eq!(m.remove(&k), Some(k as u32));
+        }
+        for k in (1..200u64).step_by(2) {
+            assert_eq!(m.with(&k, |v| *v), Some(k as u32), "key {k} was hidden by a tombstone");
+        }
+        // And the freed slots are reusable rather than lost.
+        for k in 200..300u64 {
+            assert_eq!(m.insert(k, k as u32), None);
+        }
+        for k in 200..300u64 {
+            assert_eq!(m.with(&k, |v| *v), Some(k as u32));
+        }
+    }
+
+    /// **Sixty-four threads, disjoint keys, the whole operation set.**
+    ///
+    /// The reason a structure like this gets a stress test rather than only
+    /// unit cases: every hazard in it is a window between two instructions —
+    /// a slot claimed between a probe and a lock, a key published before its
+    /// value, a tombstone written before a reader has finished with the entry
+    /// — and none of them is reachable by a single thread. This will not prove
+    /// the map correct, but each of those windows is one it can fall into.
+    #[test]
+    fn concurrent_keys_do_not_cross() {
+        use std::sync::Arc;
+        let m = Arc::new(LockFreeMap::<u64, u64>::new(1024));
+        let threads = 64u64;
+        let per = 200u64;
+        let start = Arc::new(std::sync::Barrier::new(threads as usize));
+
+        let hs: Vec<_> = (0..threads)
+            .map(|t| {
+                let m = m.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    for i in 0..per {
+                        // Disjoint by construction: a key belongs to exactly
+                        // one thread, so any value another thread's key could
+                        // return is a crossed entry rather than a race the
+                        // caller was asking for.
+                        let k = t * per + i;
+                        assert_eq!(m.insert(k, k * 3), None, "t{t} k{k} was already present");
+                        assert!(m.contains_key(&k));
+                        assert_eq!(m.with(&k, |v| *v), Some(k * 3), "t{t} k{k} read back wrong");
+                        assert_eq!(m.with_mut(&k, |v| { *v += 1; *v }), Some(k * 3 + 1));
+                        assert_eq!(m.remove(&k), Some(k * 3 + 1), "t{t} k{k} came back wrong");
+                        assert!(!m.contains_key(&k), "t{t} k{k} outlived its removal");
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().expect("no thread panicked");
+        }
+        assert!(m.is_empty(), "{} entries outlived the run", m.len());
+        assert_eq!(m.overflowed(), 0, "a 2048-slot table must hold 64 live keys without spilling");
     }
 
     /// A collision through the map API reaches the map's own figures.
@@ -1254,8 +1748,12 @@ mod sharded_tests {
     /// forgotten call goes unnoticed.
     #[test]
     fn contention_inside_a_shard_reaches_the_map_figures() {
+        // **The two counted structures only.** `LockFree` reports no sample at
+        // all and `Cell` omits its row — see `LockFreeMap::lock_stats` — so
+        // asserting a figure from it here would be asserting the zero this
+        // module exists to keep out of tables.
         for (kind, name) in [(ActiveMapKind::Plain, "plain"), (ActiveMapKind::Sharded, "sharded")] {
-            let m = std::sync::Arc::new(ActiveMapImpl::<u64, u32>::new(kind, 16));
+            let m = std::sync::Arc::new(ActiveMapImpl::<u64, u32>::new(kind, 16, 64));
             m.insert(3, 0);
             assert_eq!(m.lock_stats(), LockSample::default(), "{name}: uncontended is free");
 
