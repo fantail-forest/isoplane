@@ -16,3 +16,6 @@ bench/out/**/*.wasm
 .scratch-*
 wispd-data/
 .wisp-data/
+
+# benchmark outputs
+bench/out
