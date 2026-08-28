@@ -62,6 +62,48 @@ pub enum Mark {
     ClosedChecked,
 
     // --- the queue ---------------------------------------------------------
+    /// **From the item being visible in its lane to a worker being awake and
+    /// holding the lane again** — the futex round trip, on the request's clock.
+    ///
+    /// Read by the **consumer**, on its first instruction out of
+    /// `Condvar::wait`, and carried into whichever item it then pops.
+    ///
+    /// **On both job kinds.** A dispatch parks a worker and wakes one exactly
+    /// as a wake does, and the reading is taken in the same place either way —
+    /// so this is one row over both rather than a wake-only row beside a
+    /// dispatch-only one. What differs is only how the reading travels: a wake
+    /// has no trace on the pushing thread and rides a
+    /// [`WakeStamps`] carrier, where a dispatch carries its own trace and the
+    /// reading is filed straight into it.
+    ///
+    /// It was briefly the producer's `notify_one` *returning* instead, on both
+    /// paths, and that was wrong twice over. It raced: the thread the call
+    /// wakes starts running while the producer is still returning from the
+    /// syscall, and can pop, reclaim the trace and file first — so the reading
+    /// lands too late. Sometimes it is simply dropped, and sometimes it lands
+    /// after its neighbour, which is worse: the trace is one timeline sorted by
+    /// timestamp and each span is named after the mark that *ends* it, so a
+    /// late mark does not go missing, it renames the pair it falls between.
+    /// And the readings it lost were the *slow* notifies, which made the row a
+    /// distribution truncated at exactly the tail it existed to show: 80%
+    /// coverage on the wake lane, a p50 running short, a p99 of nothing in
+    /// particular.
+    ///
+    /// Reading it on the consumer removes the race outright — the thread that
+    /// takes the reading is the thread that files it — and it measures the
+    /// better quantity. The producer's syscall duration is what the
+    /// *submitter* pays; it overlaps the request's timeline without gating it.
+    /// What gates the request is how long until a worker is actually running,
+    /// which is this.
+    ///
+    /// **Absent when no worker had to be woken**, which is an honest zero and
+    /// not a lost observation: a busy cell's workers are already looping in
+    /// `pop` and never reach the condvar, and then the whole wait is
+    /// [`Mark::JobTaken`], [`Mark::RingTaken`], [`Mark::WakeTaken`] or
+    /// [`Mark::WakeRingTaken`].
+    /// Also absent when the reading is refused as not belonging to the item it
+    /// would have been filed on — see [`woke_belongs`] and [`Mark::caveat`].
+    WorkerWoken,
     /// **The queue wait**: the job sitting in its lane until an execution
     /// thread owns it. Workers being busy is the thing that stretches it.
     ///
@@ -284,48 +326,6 @@ pub enum Mark {
     WakeLaneLockAcquired,
     /// End of the mutex-backed wake queue critical section.
     WakeLaneLockReleased,
-    /// **From the item being visible in its lane to a worker being awake and
-    /// holding the lane again** — the futex round trip, on the request's clock.
-    ///
-    /// Read by the **consumer**, on its first instruction out of
-    /// `Condvar::wait`, and carried into whichever item it then pops.
-    ///
-    /// **On both job kinds.** A dispatch parks a worker and wakes one exactly
-    /// as a wake does, and the reading is taken in the same place either way —
-    /// so this is one row over both rather than a wake-only row beside a
-    /// dispatch-only one. What differs is only how the reading travels: a wake
-    /// has no trace on the pushing thread and rides a
-    /// [`WakeStamps`] carrier, where a dispatch carries its own trace and the
-    /// reading is filed straight into it.
-    ///
-    /// It was briefly the producer's `notify_one` *returning* instead, on both
-    /// paths, and that was wrong twice over. It raced: the thread the call
-    /// wakes starts running while the producer is still returning from the
-    /// syscall, and can pop, reclaim the trace and file first — so the reading
-    /// lands too late. Sometimes it is simply dropped, and sometimes it lands
-    /// after its neighbour, which is worse: the trace is one timeline sorted by
-    /// timestamp and each span is named after the mark that *ends* it, so a
-    /// late mark does not go missing, it renames the pair it falls between.
-    /// And the readings it lost were the *slow* notifies, which made the row a
-    /// distribution truncated at exactly the tail it existed to show: 80%
-    /// coverage on the wake lane, a p50 running short, a p99 of nothing in
-    /// particular.
-    ///
-    /// Reading it on the consumer removes the race outright — the thread that
-    /// takes the reading is the thread that files it — and it measures the
-    /// better quantity. The producer's syscall duration is what the
-    /// *submitter* pays; it overlaps the request's timeline without gating it.
-    /// What gates the request is how long until a worker is actually running,
-    /// which is this.
-    ///
-    /// **Absent when no worker had to be woken**, which is an honest zero and
-    /// not a lost observation: a busy cell's workers are already looping in
-    /// `pop` and never reach the condvar, and then the whole wait is
-    /// [`Mark::JobTaken`], [`Mark::RingTaken`], [`Mark::WakeTaken`] or
-    /// [`Mark::WakeRingTaken`].
-    /// Also absent when the reading is refused as not belonging to the item it
-    /// would have been filed on — see [`woke_belongs`] and [`Mark::caveat`].
-    WorkerWoken,
     /// A worker takes a queued wake from a mutex-backed lane.
     WakeTaken,
     /// **The lock-free ring's push and its wait, together.**
@@ -519,6 +519,7 @@ pub const ALL: &[Mark] = &[
     Mark::LaneLockReleased,
     Mark::PushRegistered,
     Mark::ClosedChecked,
+    Mark::WorkerWoken,
     Mark::JobTaken,
     Mark::RingTaken,
     Mark::DispatchStarted,
@@ -582,7 +583,6 @@ pub const ALL: &[Mark] = &[
     Mark::WakeLaneLockWanted,
     Mark::WakeLaneLockAcquired,
     Mark::WakeLaneLockReleased,
-    Mark::WorkerWoken,
     Mark::WakeTaken,
     Mark::WakeRingTaken,
     Mark::WakeStarted,
