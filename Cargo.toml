@@ -72,4 +72,9 @@ debug = false
 debug = false
 
 [profile.release]
-debug = "line-tables-only"
+# debug = "line-tables-only"
+
+# lto = "fat" # way longer compile
+lto = "thin"
+strip = "debuginfo"
+panic = "abort"
