@@ -1271,8 +1271,15 @@ impl WorkQueue {
         match &j {
             Job::Wake(w) => {
                 if let Some(st) = &w.stamps {
+                    // Guarded exactly as the dispatch arm below is, against the
+                    // last reading the producer took before letting the item go.
+                    // The carrier always has one — both push sites stamp
+                    // `arrived` — so this refuses a reading rather than every
+                    // reading.
                     if let Some(at) = woke {
-                        st.woke.set(at);
+                        if marks::woke_belongs(at, st.enqueued_at()) {
+                            st.woke.set(at);
+                        }
                     }
                     st.taken.take();
                 }
@@ -1281,9 +1288,9 @@ impl WorkQueue {
             // straight into it rather than onto a carrier: there is no handoff
             // left to cross, this thread owns the job.
             //
-            // Guarded, where the wake above is not yet. `pushed` is the
-            // instant the producer handed this job to a lane, so the
-            // comparison asks the only question that matters — was this job
+            // Guarded the same way, against `pushed`: the instant the
+            // producer handed this job to a lane. The comparison asks the only
+            // question that matters — was this job
             // already queued when this worker woke? Under a mutex lane it
             // always was, because the wait returns holding the lane lock and
             // the pop happens before it is released. Under a ring it need not

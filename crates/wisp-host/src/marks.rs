@@ -1086,6 +1086,20 @@ impl StampCell {
         let t = self.t.swap(0, Ordering::AcqRel);
         (t, self.core.load(Ordering::Relaxed))
     }
+    /// Read **without** clearing.
+    ///
+    /// Its own method rather than a flag on [`StampCell::take_reading`],
+    /// because the two have opposite obligations: `take_reading` is for a
+    /// caller that is about to file the reading and must not file it twice,
+    /// and this is for a caller that only wants to compare against it and must
+    /// leave it for the filer. Getting that backwards would drop a reading
+    /// rather than a comparison.
+    #[inline(always)]
+    fn peek(&self) -> Stamp {
+        use std::sync::atomic::Ordering;
+        let t = self.t.load(Ordering::Acquire);
+        (t, self.core.load(Ordering::Relaxed))
+    }
 }
 
 /// **Everything the completion path measured, on its way to the worker that
@@ -1144,7 +1158,11 @@ pub struct WakeStamps {
     pub lane_acquired: StampCell,
     pub lane_released: StampCell,
     /// **Written by the consumer, not the producer**: the instant a worker came
-    /// out of `Condvar::wait`. Unset when no worker was parked.
+    /// out of `Condvar::wait`.
+    ///
+    /// Unset when no worker was parked, and unset when the reading did not
+    /// belong to this item — see [`WakeStamps::enqueued_at`] and
+    /// [`woke_belongs`].
     pub woke: StampCell,
     /// The instant a consumer took the item off the lane.
     pub taken: StampCell,
@@ -1156,6 +1174,43 @@ pub struct WakeStamps {
 }
 
 impl WakeStamps {
+    /// **The last reading the producer took before it let this item go**, or
+    /// [`NO_STAMP`] if it took none.
+    ///
+    /// The fields are written in the order a wake meets them, by threads that
+    /// hand off in that order, so the newest of the pre-push readings is the
+    /// closest thing to "when this item was enqueued" the carrier holds. That
+    /// is what a consumer's `Condvar::wait` reading has to postdate in order to
+    /// belong to this item — see [`woke_belongs`].
+    ///
+    /// Checked newest-first, so the common case is one load: a wake from a
+    /// reactor has `index_released`, and one on a mutex lane has
+    /// `lane_acquired`.
+    ///
+    /// **`lane_released` is deliberately not among them.** It is written
+    /// *after* the push, on the far side of the handoff, and is precisely the
+    /// reading `run_wake`'s second `file` pass exists to collect. Comparing
+    /// against it would let a producer that has not reached it yet make a
+    /// perfectly good wake-up reading look stale.
+    #[inline]
+    pub fn enqueued_at(&self) -> Stamp {
+        for c in [
+            &self.lane_acquired,
+            &self.lane_wanted,
+            &self.index_released,
+            &self.index_wanted,
+            &self.complete_released,
+            &self.complete_acquired,
+            &self.arrived,
+        ] {
+            let at = c.peek();
+            if at.0 != 0 {
+                return at;
+            }
+        }
+        NO_STAMP
+    }
+
     /// Note that this wake went through a ring rather than a lane mutex.
     #[inline(always)]
     pub fn ring(&self) {
@@ -1493,6 +1548,94 @@ mod tests {
             !woke_belongs(NO_STAMP, pushed),
             "a reading nobody took is not a reading"
         );
+    }
+
+    /// **A carrier can say when its item was enqueued, and saying so does not
+    /// spend the reading.**
+    ///
+    /// Two claims, and the second is the one that would fail silently. The
+    /// readings this compares against are the same ones `WakeStamps::file` has
+    /// to file later; if the comparison cleared them the guard would work
+    /// perfectly and quietly delete `futures.complete.*` and `wake.index.*`
+    /// from every traced pause.
+    #[test]
+    fn a_carrier_reports_its_enqueue_without_consuming_it() {
+        let st = WakeStamps::default();
+        assert_eq!(
+            st.enqueued_at(),
+            NO_STAMP,
+            "an empty carrier has no enqueue to report"
+        );
+
+        // The trace is opened first and the readings are built on top of a real
+        // counter value, because `Trace::mark_at` refuses anything older than
+        // the trace's own origin — a synthetic `(10, 1)` is refused as stale
+        // and the second half of this test would then pass for the wrong
+        // reason.
+        let pool = pool_for(
+            Calibration::measure_for(std::time::Duration::from_millis(50)),
+            1,
+            0,
+            0,
+        );
+        let m = pool.checkout();
+        begin(&m);
+        let t0 = stamp().0;
+
+        // A wake raised inside the cell sets only `arrived`, and that is then
+        // the whole of what it can be compared against.
+        st.arrived.set((t0 + 10, 1));
+        assert_eq!(st.enqueued_at(), (t0 + 10, 1));
+
+        // A reactor's wake gets further, and the newest pre-push reading wins.
+        st.complete_acquired.set((t0 + 20, 1));
+        st.complete_released.set((t0 + 30, 1));
+        st.index_wanted.set((t0 + 40, 1));
+        st.index_released.set((t0 + 50, 1));
+        assert_eq!(
+            st.enqueued_at(),
+            (t0 + 50, 1),
+            "the newest reading before the push"
+        );
+
+        // On a mutex lane the lane's own readings are newer still.
+        st.lane_wanted.set((t0 + 60, 1));
+        st.lane_acquired.set((t0 + 70, 1));
+        assert_eq!(st.enqueued_at(), (t0 + 70, 1));
+
+        // `lane_released` is written *after* the push and must not count: a
+        // producer that has not reached it yet would otherwise make a good
+        // wake-up reading look stale.
+        st.lane_released.set((t0 + 80, 1));
+        assert_eq!(
+            st.enqueued_at(),
+            (t0 + 70, 1),
+            "a post-push reading is not an enqueue"
+        );
+
+        // And nothing above was spent: every reading is still there to file.
+        st.file(&m);
+        let got: Vec<Mark> = read(m.as_ref().unwrap())
+            .spans
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect();
+        for l in [
+            Mark::CompletionArrived,
+            Mark::FutureCompleteAcquired,
+            Mark::FutureCompleteReleased,
+            Mark::WakeIndexWanted,
+            Mark::WakeIndexReleased,
+            Mark::WakeLaneLockWanted,
+            Mark::WakeLaneLockAcquired,
+            Mark::WakeLaneLockReleased,
+        ] {
+            assert!(
+                got.contains(&l),
+                "`{}` was consumed by the comparison",
+                l.name()
+            );
+        }
     }
 
     #[test]

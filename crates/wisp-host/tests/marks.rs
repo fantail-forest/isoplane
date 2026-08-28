@@ -640,6 +640,29 @@ fn a_parking_request_keeps_its_trace_across_the_pause() {
         "the guest was left parked for 20 ms and the wait for the outside world reports \
          {outside:.0} ns"
     );
+    // **The wake woke a worker, and this is the assertion that says so.**
+    //
+    // `ns` finds the *first* span with a label, and `wake.worker.woke` is now
+    // taken on both job kinds — so the one it finds is the dispatch's, and the
+    // completion path's own reading has to be looked for after the park.
+    // Without this, refusing every wake-side reading passes the whole suite,
+    // which is what happened when the guard below was first written.
+    //
+    // Deterministic rather than load-dependent: the guest sat parked for 20 ms,
+    // so every worker in this cell is in `Condvar::wait` by the time the
+    // completion lands and one of them has to be woken.
+    let woke_for_the_wake = got
+        .iter()
+        .skip_while(|l| **l != Mark::SliceEnded)
+        .filter(|l| **l == Mark::WorkerWoken)
+        .count();
+    assert_eq!(
+        woke_for_the_wake,
+        1,
+        "the wake's own futex round trip is missing from the pause — a reading refused, or \
+         never taken: {:?}",
+        names()
+    );
     // Every span of the completion's path into the cell is present, and every
     // one of them is small beside the park. If any of them moved with the park
     // it would mean the reading that closes `park.wait` is not the one taken
