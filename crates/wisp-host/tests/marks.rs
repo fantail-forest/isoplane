@@ -195,6 +195,32 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
     let (spans, span_ns, _) = round_trip(&c, &p, &m, 0).expect("a traced reply");
     let got = labels(&spans);
 
+    // **`wake.worker.woke` is conditional on the load, not on the request**, so
+    // it is checked for *position* and then set aside rather than written into
+    // the sequence below. A worker that was already looping in `pop` never
+    // reaches the condvar and the row is legitimately absent; on a quiet cell
+    // like this one it is normally present. Asserting its presence in the
+    // sequence would make a coverage test fail on a busy machine for a reason
+    // that has nothing to do with coverage — which is the shape this file has
+    // had to be fixed for before.
+    //
+    // Position is worth asserting because it is the whole reason the reading
+    // moved to the consumer: taken on the producer it could sort *after*
+    // `JobTaken`, and a mark that lands out of order does not go missing, it
+    // renames the pair it falls between.
+    if let Some(i) = got.iter().position(|m| *m == Mark::WorkerWoken) {
+        assert_eq!(
+            (i.checked_sub(1).and_then(|j| got.get(j)), got.get(i + 1)),
+            (Some(&Mark::LaneLockReleased), Some(&Mark::JobTaken)),
+            "the futex round trip must sit between the producer's last mark and the pop: {:?}",
+            got.iter().map(|m| m.name()).collect::<Vec<_>>(),
+        );
+    }
+    let got: Vec<Mark> = got
+        .into_iter()
+        .filter(|m| *m != Mark::WorkerWoken)
+        .collect();
+
     // The plain handler path, in order. Written out rather than checked
     // loosely, because "the marks that happen to be there are in order" is
     // true of any prefix and would pass with half the request unmeasured.
@@ -208,9 +234,10 @@ fn a_traced_request_comes_home_with_its_whole_life_accounted_for() {
         Mark::LaneLockWanted,
         Mark::LaneLockAcquired,
         // The producer's tail, written after the job was handed over — the
-        // three spans a single-owner buffer had to merge away.
+        // span a single-owner buffer had to merge away. Its `notify_one` is
+        // not marked here; the thread it wakes reports that. See
+        // `Mark::WorkerWoken`, handled below.
         Mark::LaneLockReleased,
-        Mark::WaiterNotified,
         Mark::JobTaken,
         Mark::DispatchStarted,
         Mark::ModulesLockWanted,
@@ -373,14 +400,33 @@ fn the_lane_lock_wait_is_separate_from_the_queue_wait() {
         Mark::JobTaken.name(),
         "two quantities under one name is the merge this replaces"
     );
-    // On an idle cell the lock is uncontended, so its wait is at or under the
-    // measurement floor while the queue wait is a real scheduling delay. That
-    // ordering is the cheapest possible evidence that they are not the same
-    // reading printed twice.
-    let floor = calibration().ticks_to_nanos(calibration().mark_overhead_ticks()) * 2.0;
+    // On an idle cell the lock is uncontended, so its wait is at the
+    // measurement floor, while getting the job to a worker means waking one —
+    // a futex round trip, orders of magnitude larger. That ordering is the
+    // cheapest possible evidence that these are not one reading printed twice.
+    //
+    // **Stated as a ratio, not a ceiling.** This assertion used to be
+    // `lock < 1 µs`, which is a claim about the machine rather than about the
+    // instrument: it failed on a loaded box, and on this one it failed at
+    // 1120 ns on an *idle* box, reporting a bare nanosecond count that reads
+    // like a regression in the queue. Under contention both numbers grow
+    // together and the ratio survives; a lock wait that had swallowed the
+    // wait for a worker would not.
+    //
+    // The two terms are summed because the split between them depends on
+    // whether a worker had to be woken: `wake.worker.woke` carries the round
+    // trip when one was parked and is absent when none was, and in the second
+    // case the whole wait is in `queue.wait`. Summing asks the question the
+    // test actually means — how long until a worker owned this job — without
+    // depending on which of the two rows holds it.
+    let waking = by(Mark::WorkerWoken).unwrap_or(0.0);
+    let to_a_worker = waking + queue;
     assert!(
-        lock < floor.max(1_000.0),
-        "an uncontended lane lock reports a {lock:.0} ns wait against a {floor:.0} ns floor"
+        to_a_worker > lock * 4.0,
+        "getting the job to a worker took {to_a_worker:.0} ns ({waking:.0} ns waking one, \
+         {queue:.0} ns in the lane) against a {lock:.0} ns wait for an uncontended lane \
+         lock; these are supposed to differ by orders of magnitude, and one number wearing \
+         both names is what this test exists to catch"
     );
 }
 

@@ -46,9 +46,6 @@ pub enum Mark {
     LaneLockAcquired,
     /// End of the producer queue critical section.
     LaneLockReleased,
-    /// Waking a parked worker. Free when none is parked; a futex wake when one
-    /// is, which is the case worth being able to see.
-    WaiterNotified,
 
     // --- the enqueue, lock-free structure -----------------------------------
     /// One `SeqCst` read-modify-write on a cacheline every producer touches.
@@ -61,9 +58,15 @@ pub enum Mark {
     RingPushed,
 
     // --- the queue ---------------------------------------------------------
-    /// **The queue wait**, plus the producer's critical section and the
-    /// consumer's own lock acquisition — see the module docs on handoffs.
-    /// Workers being busy is the thing that stretches it.
+    /// **The queue wait**: the job sitting in its lane until an execution
+    /// thread owns it. Workers being busy is the thing that stretches it.
+    ///
+    /// What it contains depends on whether a worker had to be woken. If one
+    /// did, [`Mark::WorkerWoken`] splits the futex round trip out in front of
+    /// this and what remains here is the consumer's own lane acquisition and
+    /// pop — tens of nanoseconds. If no worker had to be woken there is no
+    /// round trip, `WorkerWoken` is absent, and this is the whole wait. Adding
+    /// the two rows is therefore meaningful and subtracting them is not.
     JobTaken,
     /// The rest of the pop, the previous job's `job_done`, and the
     /// `catch_unwind` and `Weak::upgrade` in `exec_loop`.
@@ -239,32 +242,46 @@ pub enum Mark {
     WakeLaneLockAcquired,
     /// End of the mutex-backed wake queue critical section.
     WakeLaneLockReleased,
-    /// **From the wake being visible in its lane to a worker being awake and
+    /// **From the item being visible in its lane to a worker being awake and
     /// holding the lane again** — the futex round trip, on the request's clock.
     ///
     /// Read by the **consumer**, on its first instruction out of
     /// `Condvar::wait`, and carried into whichever item it then pops.
     ///
-    /// It was briefly the producer's `notify_one` *returning* instead, and that
-    /// was wrong twice over. It raced: the thread the call wakes starts running
-    /// while the producer is still returning from the syscall, and can pop,
-    /// reclaim the trace and file the carrier first — so the reading lands too
-    /// late and is dropped. And the readings it dropped were the *slow*
-    /// notifies, which made the row a distribution truncated at exactly the
-    /// tail it existed to show: 80% coverage, a p50 running short, a p99 of
-    /// nothing in particular.
+    /// **On both job kinds.** A dispatch parks a worker and wakes one exactly
+    /// as a wake does, and the reading is taken in the same place either way —
+    /// so this is one row over both rather than a wake-only row beside a
+    /// dispatch-only one. What differs is only how the reading travels: a wake
+    /// has no trace on the pushing thread and rides a
+    /// [`WakeStamps`] carrier, where a dispatch carries its own trace and the
+    /// reading is filed straight into it.
+    ///
+    /// It was briefly the producer's `notify_one` *returning* instead, on both
+    /// paths, and that was wrong twice over. It raced: the thread the call
+    /// wakes starts running while the producer is still returning from the
+    /// syscall, and can pop, reclaim the trace and file first — so the reading
+    /// lands too late. Sometimes it is simply dropped, and sometimes it lands
+    /// after its neighbour, which is worse: the trace is one timeline sorted by
+    /// timestamp and each span is named after the mark that *ends* it, so a
+    /// late mark does not go missing, it renames the pair it falls between.
+    /// And the readings it lost were the *slow* notifies, which made the row a
+    /// distribution truncated at exactly the tail it existed to show: 80%
+    /// coverage on the wake lane, a p50 running short, a p99 of nothing in
+    /// particular.
     ///
     /// Reading it on the consumer removes the race outright — the thread that
     /// takes the reading is the thread that files it — and it measures the
-    /// better quantity. The producer's syscall duration is what the *reactor*
-    /// pays; it overlaps the request's timeline without gating it. What gates
-    /// the request is how long until a worker is actually running, which is
-    /// this.
+    /// better quantity. The producer's syscall duration is what the
+    /// *submitter* pays; it overlaps the request's timeline without gating it.
+    /// What gates the request is how long until a worker is actually running,
+    /// which is this.
     ///
     /// **Absent when no worker had to be woken**, which is an honest zero and
     /// not a lost observation: a busy cell's workers are already looping in
     /// `pop` and never reach the condvar, and then the whole wait is
-    /// [`Mark::WakeTaken`]. See [`Mark::caveat`].
+    /// [`Mark::JobTaken`], [`Mark::WakeTaken`] or [`Mark::WakeRingTaken`].
+    /// Also absent when the reading is refused as not belonging to the item it
+    /// would have been filed on — see [`woke_belongs`] and [`Mark::caveat`].
     WorkerWoken,
     /// A worker takes a queued wake from a mutex-backed lane.
     WakeTaken,
@@ -457,7 +474,6 @@ pub const ALL: &[Mark] = &[
     Mark::LaneLockWanted,
     Mark::LaneLockAcquired,
     Mark::LaneLockReleased,
-    Mark::WaiterNotified,
     Mark::PushRegistered,
     Mark::ClosedChecked,
     Mark::RingPushed,
@@ -600,7 +616,6 @@ impl Mark {
             LaneLockWanted => "lane.lock.wanted",
             LaneLockAcquired => "lane.lock.wait",
             LaneLockReleased => "lane.lock.hold",
-            WaiterNotified => "lane.notify",
             PushRegistered => "ring.pushing.enter",
             ClosedChecked => "ring.closed.check",
             RingPushed => "ring.push",
@@ -723,15 +738,20 @@ impl Mark {
     pub fn caveat(self) -> Option<&'static str> {
         match self {
             Mark::WorkerWoken => Some(
-                "only a wake that had to wake a *parked* worker has this span. A busy cell's \
-                 workers are already looping in `pop` and never reach the condvar, so they \
-                 contribute nothing here and their whole wait is `wake.queue.wait` or \
-                 `wake.ring.wait`. The shortfall against those rows' counts is the number of \
-                 wakes taken by a worker that was already awake — a fact about the load rather \
-                 than a gap in the instrument, and it does not bias what is here. Under \
-                 `lock-free` only, the reading can also land *before* the push it is paired \
-                 with: a mutex lane's consumer holds the lane lock from waking to popping, so \
-                 nothing can be pushed in between, and a ring's consumer holds nothing",
+                "only an item that had to wake a *parked* worker has this span, and that is \
+                 true of dispatches and wakes alike. A busy cell's workers are already looping \
+                 in `pop` and never reach the condvar, so they contribute nothing here and \
+                 their whole wait is `queue.wait`, `wake.queue.wait` or `wake.ring.wait`. The \
+                 shortfall against those rows' counts is the number of items taken by a worker \
+                 that was already awake — a fact about the load rather than a gap in the \
+                 instrument, and it does not bias what is here. A second, smaller shortfall is \
+                 the instrument's own: under `lock-free` the reading can be taken before the \
+                 item it ends up on was even pushed, because the rings are not covered by the \
+                 park mutex and a worker can leave with something that arrived after it woke. \
+                 Those readings are refused rather than filed — see `marks::woke_belongs` — so \
+                 they are missing rows and never wrong ones. A mutex lane cannot do this: its \
+                 consumer holds the lane lock from waking to popping, so nothing can be pushed \
+                 in between",
             ),
             _ => None,
         }
@@ -746,9 +766,7 @@ impl Mark {
     pub fn structural(self) -> Structural {
         use Mark::*;
         match self {
-            LaneLockWanted | LaneLockAcquired | LaneLockReleased | WaiterNotified => {
-                Structural::MutexQueue
-            }
+            LaneLockWanted | LaneLockAcquired | LaneLockReleased => Structural::MutexQueue,
             PushRegistered | ClosedChecked | RingPushed => Structural::LockFreeQueue,
             PoolLockWanted | PoolLockReleased | IndexLockWanted | IndexLockReleased => {
                 Structural::HandlerTarget
@@ -767,7 +785,6 @@ impl Mark {
             | FutureCompleteReleased
             | WakeIndexWanted
             | WakeIndexReleased
-            | WorkerWoken
             | WakeStarted
             | WakeResidentsLockWanted
             | WakeResidentsLockAcquired
@@ -782,6 +799,7 @@ impl Mark {
                 Structural::ParkingMutexQueue
             }
             WakeRingTaken => Structural::ParkingLockFreeQueue,
+            WorkerWoken => Structural::WokenWorker,
             BreakerRefused | ShedDecided | ModuleMissing | AcquireFailed | SingleWriterRefused
             | EnterRefused => Structural::RefusedRequest,
             ShedMetersLockWanted | ShedMetersLockAcquired | ShedMetersLockReleased => {
@@ -830,6 +848,21 @@ pub enum Structural {
     HibernatedInstance,
     /// A dispatch that completed with a response handle.
     RespondingDispatch,
+    /// An item that found no worker running and had to wake one out of
+    /// `Condvar::wait`.
+    ///
+    /// **A property of the load, not of the request.** The same guest at higher
+    /// concurrency reaches it less often, because a busy cell's workers never
+    /// park — so unlike every other class here, whether a request is in this
+    /// one is decided by what the rest of the cell happened to be doing. It is
+    /// a class rather than a caveat on [`Structural::Always`] because a row
+    /// that is legitimately absent from most requests must not be described by
+    /// `absence()` as one that should have been present under every
+    /// configuration.
+    ///
+    /// Both job kinds are in it: a dispatch parks and wakes a worker exactly as
+    /// a wake does.
+    WokenWorker,
     /// A request that paused and was resumed. Every span in this class repeats
     /// once per pause, and the ones inside `run_wake`'s own loop can repeat
     /// several times per pause.
@@ -888,6 +921,10 @@ impl Structural {
             }
             Structural::RespondingDispatch => {
                 "only a dispatch that completed with a response handle reaches it"
+            }
+            Structural::WokenWorker => {
+                "only an item that had to wake a parked worker reaches it: a busy cell's \
+                 workers are already looping in `pop` and never reach the condvar"
             }
             Structural::ParkingRequest => "only a request that paused and resumed reaches it",
             Structural::ParkingMutexQueue => {
@@ -968,6 +1005,41 @@ pub fn mark_at(m: &Option<RequestMarks>, label: Mark, at: Stamp) {
     if let Some(m) = m {
         m.mark_at(label as u8, at);
     }
+}
+
+/// **Does a worker's wake-up reading belong to the item it is about to be
+/// filed against?**
+///
+/// A worker reads the counter as it comes out of `Condvar::wait` and then goes
+/// looking for something to do. Under a mutex lane those are one step: the
+/// wait returns holding the lane lock and the pop happens before it is
+/// released, so nothing can be enqueued in between and the answer is always
+/// yes. Under a lock-free ring they are not one step. The rings are not
+/// covered by the park mutex, so between the reading and the pop another
+/// producer can push, another worker can take the item this one was woken for,
+/// and this worker can leave holding something that did not exist when it
+/// woke.
+///
+/// **Filing it anyway is worse than dropping it.** [`crate::trace::read`] sorts
+/// by timestamp and names each span after the mark that *ends* it, so a
+/// reading older than the item does not merely add a wrong row — it lands in
+/// front of the item's own marks and renames the pair it falls between. A
+/// reading that predates the enqueue can land ahead of the whole admission
+/// sequence, where the span it closes is a stretch of a *previous* thread's
+/// work.
+///
+/// So the reading is kept only when it postdates the item's own enqueue.
+/// Equality is kept: the counter steps by about 22 ticks, so two events inside
+/// one step are indistinguishable and refusing them would drop honest
+/// readings.
+///
+/// `pushed` is [`NO_STAMP`] on an item nobody stamped, and then there is
+/// nothing to check against and the reading is refused rather than assumed
+/// good. An absent row is this report's existing way of saying it did not
+/// observe something; a wrong one has no such convention.
+#[inline(always)]
+pub fn woke_belongs(woke: Stamp, pushed: Stamp) -> bool {
+    pushed.0 != 0 && woke.0 >= pushed.0
 }
 
 /// One carried reading, writable by whichever thread reaches its event.
@@ -1384,6 +1456,45 @@ mod tests {
     /// memcpy in the middle of it. Here the slots are fixed and the overflow is
     /// a counter, so a workload that pauses more than the buffer allows is
     /// reported as truncated rather than as fast.
+    #[test]
+    /// **A wake-up reading is kept only when the item it lands on was already
+    /// queued**, and both halves are asserted.
+    ///
+    /// Without the second half this would pass on an implementation that
+    /// refused every reading, and `wake.worker.woke` is a reading on every
+    /// item whose worker had to be woken — which is most of them on a quiet
+    /// cell.
+    ///
+    /// The refused case is the one that costs a row rather than corrupting
+    /// one. A reading older than the item sorts *before* the item's own marks,
+    /// and since a span is named after the mark that ends it, filing it would
+    /// not add a wrong row — it would rename a right one.
+    #[test]
+    fn a_wake_up_reading_older_than_its_item_is_refused() {
+        let pushed = (1_000_u64, 3_u32);
+        assert!(
+            woke_belongs((1_001, 3), pushed),
+            "a worker woken after the push owns the reading"
+        );
+        assert!(
+            woke_belongs(pushed, pushed),
+            "one counter step is not a violation"
+        );
+        assert!(
+            !woke_belongs((999, 3), pushed),
+            "a reading from before the push cannot belong to the item pushed after it"
+        );
+        assert!(
+            !woke_belongs((1_001, 3), NO_STAMP),
+            "an item nobody stamped has nothing to check against, so the reading is refused \
+             rather than assumed good"
+        );
+        assert!(
+            !woke_belongs(NO_STAMP, pushed),
+            "a reading nobody took is not a reading"
+        );
+    }
+
     #[test]
     fn a_full_buffer_truncates_instead_of_growing() {
         let cal = Calibration::measure_for(std::time::Duration::from_millis(50));

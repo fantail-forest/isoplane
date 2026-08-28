@@ -514,6 +514,17 @@ struct DispatchJob {
     /// after. `Marks` is single-owner, and this is the only field in the cell
     /// with the same lifetime.
     marks: Option<RequestMarks>,
+    /// **The instant this job was handed to a lane**, or
+    /// [`marks::NO_STAMP`] when it is untraced.
+    ///
+    /// Written by the producer *before* the push — so it is not a handoff and
+    /// needs no shared storage — and read by the consumer, which is the only
+    /// party with a use for it. It exists for one comparison: a worker's
+    /// `Condvar::wait` reading is this job's wake-up only if this job was
+    /// already queued when the worker woke, and under a lock-free ring that is
+    /// not something the consumer can otherwise know. See
+    /// [`marks::woke_belongs`] and `WorkQueue::stamp_taken`.
+    pushed: crate::marks::Stamp,
 }
 
 thread_local! {
@@ -984,6 +995,15 @@ impl WorkQueue {
             // value and a consumer may pop it immediately, so the tail is
             // marked through a handle taken while the job is still here.
             let tail = marks::writer(&j.marks);
+            // Stamped before the push, and only when this job is traced. It is
+            // not a mark: nothing in the report closes a span here. It is the
+            // left edge the consumer needs to decide whether its own
+            // `Condvar::wait` reading belongs to this job. See
+            // `marks::woke_belongs`.
+            let mut j = j;
+            if j.marks.is_some() {
+                j.pushed = marks::stamp();
+            }
             // A full ring hands the job straight back, which is exactly the
             // shed the mutex version does at `dispatches.len() >= cap`.
             let pushed = f.dispatches.push(j);
@@ -1020,6 +1040,11 @@ impl WorkQueue {
         // have work to do, and that work is on the request's critical path.
         // See `crate::trace` for why the storage is shared.
         let tail = marks::writer(&j.marks);
+        // See the lock-free arm: taken before the push, for the consumer.
+        let mut j = j;
+        if j.marks.is_some() {
+            j.pushed = marks::stamp();
+        }
         g.dispatches.push_back(j);
         lane.load.fetch_add(1, Ordering::Relaxed);
         drop(g);
@@ -1030,10 +1055,26 @@ impl WorkQueue {
         // the pure wait for a worker rather than that wait plus a producer's
         // tail.
         marks::mark_after(&tail, Mark::LaneLockReleased);
+        // **Nothing is read after this call**, for the reason `push_wake` gives
+        // at the same line. `notify_one` wakes a thread that starts running
+        // while this one is still returning from the syscall, and that thread
+        // can pop the job and mark `JobTaken` before a reading taken on the
+        // next line lands. Sometimes that reading is simply lost; sometimes it
+        // lands *after* its neighbour, which is worse, because the trace is one
+        // timeline sorted by timestamp and every span is named after the mark
+        // that ends it — so a late mark renames the pair it falls between,
+        // cutting `queue.wait` on one request and `worker.start` on the next
+        // with nothing in the report to say which.
+        //
+        // The consumer takes it instead, on its first instruction out of
+        // `Condvar::wait`. That has no race at all — the thread that reads the
+        // counter is the thread that files it — and it is the better quantity:
+        // what this thread pays for the syscall is the *submitter's* cost and
+        // overlaps the request's timeline without gating it, where the wait
+        // until a worker is actually running is what gates it. See
+        // `Mark::WorkerWoken`, which is one row over both job kinds because
+        // both park a worker and both wake one.
         lane.cv.notify_one();
-        // Free when no worker is parked, a futex wake when one is. The second
-        // case is the one worth being able to see.
-        marks::mark_after(&tail, Mark::WaiterNotified);
         Ok(())
     }
 
@@ -1199,7 +1240,7 @@ impl WorkQueue {
                 // own acquisition. Everything that stretches it is a worker
                 // being busy.
                 marks::mark(&d.marks, Mark::JobTaken);
-                return Some(Job::Dispatch(d));
+                return Some(Self::stamp_taken(Job::Dispatch(d), woke));
             }
             if g.closed {
                 return None;
@@ -1227,12 +1268,33 @@ impl WorkQueue {
     /// running, which is not a lost observation: there was no round trip.
     #[inline]
     fn stamp_taken(j: Job, woke: Option<crate::marks::Stamp>) -> Job {
-        if let Job::Wake(w) = &j {
-            if let Some(st) = &w.stamps {
-                if let Some(at) = woke {
-                    st.woke.set(at);
+        match &j {
+            Job::Wake(w) => {
+                if let Some(st) = &w.stamps {
+                    if let Some(at) = woke {
+                        st.woke.set(at);
+                    }
+                    st.taken.take();
                 }
-                st.taken.take();
+            }
+            // **A dispatch carries its own trace**, so the reading goes
+            // straight into it rather than onto a carrier: there is no handoff
+            // left to cross, this thread owns the job.
+            //
+            // Guarded, where the wake above is not yet. `pushed` is the
+            // instant the producer handed this job to a lane, so the
+            // comparison asks the only question that matters — was this job
+            // already queued when this worker woke? Under a mutex lane it
+            // always was, because the wait returns holding the lane lock and
+            // the pop happens before it is released. Under a ring it need not
+            // have been, and filing the reading then would put it in front of
+            // the job's own marks and rename them. See `marks::woke_belongs`.
+            Job::Dispatch(d) => {
+                if let Some(at) = woke {
+                    if marks::woke_belongs(at, d.pushed) {
+                        marks::mark_at(&d.marks, Mark::WorkerWoken, at);
+                    }
+                }
             }
         }
         j
@@ -2254,6 +2316,8 @@ impl Cell {
             // tests and the control plane, never by the load generator, so it
             // has no pool to check a buffer out of and carries no trace.
             marks: None,
+            // Filled by `WorkQueue::push_dispatch`, and only on a traced job.
+            pushed: marks::NO_STAMP,
         });
         if self.queue.push_dispatch(job).is_err() {
             // §6.4: overflow queues at admission; the cell sheds rather than
@@ -2403,6 +2467,9 @@ impl Cell {
             responder,
             enqueued_ns,
             marks,
+            // Filled by `WorkQueue::push_dispatch`, immediately before the job
+            // is handed to a lane. See `DispatchJob::pushed`.
+            pushed: marks::NO_STAMP,
         });
         marks::mark(&job.marks, Mark::JobBuilt);
         match self.queue.push_dispatch(job) {
@@ -3962,6 +4029,7 @@ mod queue_tests {
             responder,
             enqueued_ns: crate::mono_ns(),
             marks: None,
+            pushed: marks::NO_STAMP,
         })
     }
 
