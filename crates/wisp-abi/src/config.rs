@@ -70,7 +70,7 @@ impl Default for Limits {
         Self {
             module_bytes_compressed: 20971520,
             instance_memory_max: 134217728,
-            cpu_ms_per_http_dispatch: 50,
+            cpu_ms_per_http_dispatch: 30000,
             subrequests_per_dispatch: 200,
             pending_futures_per_dispatch: 64,
         }

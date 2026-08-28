@@ -356,7 +356,7 @@ fn main() -> Result<()> {
         }),
         trace: TraceContext::default(),
         cancel_future: 0xC0FFEE,
-        cpu_budget_ms: 50,
+        cpu_budget_ms: 30_000,
         now_ms: 1_724_000_000_000,
     };
     let encoded = wisp_abi::encode(&dispatch)?;

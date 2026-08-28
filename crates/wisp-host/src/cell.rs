@@ -4133,7 +4133,7 @@ mod queue_tests {
                 kind: crate::cell::cell_tests::http(dispatch_id).kind,
                 trace: Default::default(),
                 cancel_future: 0,
-                cpu_budget_ms: 50,
+                cpu_budget_ms: 30_000,
                 now_ms: 0,
             },
             responder,

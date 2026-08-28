@@ -152,8 +152,6 @@ fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
     // Baseline: how fast is a wake with nobody spinning?
     let baseline = measure_wake(&r, &victim_mod);
 
-    // Now saturate two of the four execution-pool threads with spinners, each
-    // burning its full 50 ms budget before being killed.
     let mut spins = Vec::new();
     for i in 0..2 {
         let mut rec = http(&r.cell, &spin_mod, "/spin");
@@ -935,6 +933,9 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let (tx, rx) = std::sync::mpsc::sync_channel::<wisp_host::DispatchResult>(128);
     let mut rec = http(&r.cell, &module, "/spin");
     rec.dispatch_id = 0;
+    // Test-local, for the reason above: this needs a spinner that holds the one
+    // Hot slot and then dies, not one that runs for the plan's whole budget.
+    rec.cpu_budget_ms = 50;
     assert!(r.cell.submit_with(
         &module,
         Target::Handler {
@@ -953,6 +954,11 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     for i in 1..64u64 {
         let mut rec = http(&r.cell, &module, "/spin");
         rec.dispatch_id = i;
+        // **Every one of them, not just the first.** The one that gets queued
+        // behind the Hot spinner runs too, and the drain below waits two
+        // seconds for its result — so a record left on the plan's budget makes
+        // this test fail on a timeout rather than on anything it asserts.
+        rec.cpu_budget_ms = 50;
         if r.cell.submit_with(
             &module,
             Target::Handler {

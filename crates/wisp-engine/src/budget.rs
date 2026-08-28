@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn configured_cpu_budgets_get_deliverable_grace_windows() {
         let tick_ns = crate::EngineConfig::default().epoch_tick_us * 1_000;
-        for budget_ms in [10, 50, 300000] {
+        for budget_ms in [10, 30000, 300000] {
             let b = CpuBudget {
                 cpu_ms: budget_ms,
                 ..CpuBudget::http()
