@@ -2,6 +2,9 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use wisp_abi::result::{ResultRecord};
 
@@ -50,9 +53,11 @@ enum State {
     Delivered,
 }
 
+
 #[derive(Debug)]
 struct Entry {
-    owner: InstanceId,
+    /// Owner for completion routing.
+    owner: Arc<OwnedFutures>,
     dispatch: u64,
     import: &'static str,
     state: State,
@@ -71,15 +76,36 @@ struct Owned {
     per_dispatch: HashMap<u64, u32>,
 }
 
-struct Inner {
-    entries: HashMap<u64, Entry>,
-    owned: HashMap<InstanceId, Owned>,
+/// Per-instance future ownership and pending counts.
+#[derive(Debug)]
+pub struct OwnedFutures {
+    /// The instance this belongs to **now**. §6.8 wakes an instance under a
+    /// new `InstanceId` (§8.2.4: portable memory, non-portable identity), and
+    /// `complete` has to name the current one for the wake it returns.
+    instance: AtomicU64,
+    inner: Mutex<Owned>,
+}
+
+impl OwnedFutures {
+    pub fn new(instance: InstanceId) -> Arc<OwnedFutures> {
+        Arc::new(OwnedFutures {
+            instance: AtomicU64::new(instance.0),
+            inner: Mutex::new(Owned::default()),
+        })
+    }
+
+    pub fn instance(&self) -> InstanceId {
+        InstanceId(self.instance.load(Ordering::Acquire))
+    }
+
 }
 
 pub struct FutureTable {
     next: AtomicU64,
-    /// Synchronized future records and owner indexes.
-    inner: crate::lockstats::CountedMutex<Inner>,
+    /// Future records keyed by allocated identifier.
+    entries: scc::HashMap<u64, Entry>,
+    /// Owner lookup keyed by instance identifier.
+    by_instance: scc::HashMap<InstanceId, Arc<OwnedFutures>>,
 }
 
 impl Default for FutureTable {
@@ -89,9 +115,34 @@ impl Default for FutureTable {
 }
 
 impl FutureTable {
-    /// What waiting for the future table cost. See `lockstats`.
+    /// **Nothing to report: there is no longer a lock here to wait for.**
+    ///
+    /// The table was one `CountedMutex` over two maps and this returned its
+    /// sample. Both maps are `scc` now and the only remaining exclusion is one
+    /// instance's own, which §7.2 keeps uncontended. `Cell::lock_stats` omits
+    /// the row rather than printing this zero — a zero is a measurement and
+    /// "there is nothing here to measure" is not one.
     pub fn lock_stats(&self) -> crate::lockstats::LockSample {
-        self.inner.stats().snapshot()
+        crate::lockstats::LockSample::default()
+    }
+
+    /// This instance's future state, creating it on first use.
+    fn owned_of(&self, owner: InstanceId) -> Arc<OwnedFutures> {
+        // Cloned out and the bucket released before any caller locks it: the
+        // one ordering rule in this file is **never acquire an `OwnedFutures`
+        // lock while holding an `scc` bucket**. `take_ready` and
+        // `end_dispatch` nest owned-then-entries; `complete` releases entries
+        // before it touches owned. One direction only, so no cycle.
+        self.by_instance
+            .entry_sync(owner)
+            .or_insert_with(|| OwnedFutures::new(owner))
+            .get()
+            .clone()
+    }
+
+    /// The same, without creating one.
+    fn existing(&self, owner: InstanceId) -> Option<Arc<OwnedFutures>> {
+        self.by_instance.read_sync(&owner, |_, a| a.clone())
     }
 
     /// Create an empty host future table.
@@ -99,10 +150,8 @@ impl FutureTable {
         Self {
             // Start at 1: id 0 is reserved as INVALID_FUTURE.
             next: AtomicU64::new(1),
-            inner: crate::lockstats::CountedMutex::new(Inner {
-                entries: HashMap::new(),
-                owned: HashMap::new(),
-            }),
+            entries: scc::HashMap::new(),
+            by_instance: scc::HashMap::new(),
         }
     }
 
@@ -118,19 +167,24 @@ impl FutureTable {
         import: &'static str,
         limit: u32,
     ) -> Result<u64, PendingCapError> {
-        let mut g = self.inner.lock();
-        let owned = g.owned.entry(owner).or_default();
-        let outstanding = *owned.per_dispatch.get(&dispatch).unwrap_or(&0);
+        let arc = self.owned_of(owner);
+        // **The cap is still a check-then-act, and it is still atomic** — but
+        // against this instance's lock rather than the whole cell's. §7.2
+        // allows one dispatch per instance, so the only contender for it is
+        // this instance's own park/wake.
+        let mut o = arc.inner.lock();
+        let outstanding = *o.per_dispatch.get(&dispatch).unwrap_or(&0);
         if outstanding >= limit {
             return Err(PendingCapError { limit, outstanding });
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        owned.pending.insert(id);
-        *owned.per_dispatch.entry(dispatch).or_insert(0) += 1;
-        g.entries.insert(
+        o.pending.insert(id);
+        *o.per_dispatch.entry(dispatch).or_insert(0) += 1;
+        drop(o);
+        let _ = self.entries.insert_sync(
             id,
             Entry {
-                owner,
+                owner: arc,
                 dispatch,
                 import,
                 state: State::Pending,
@@ -170,15 +224,14 @@ impl FutureTable {
         dispatch: u64,
         marks: &mut Option<crate::marks::RequestMarks>,
     ) -> u64 {
-        let mut g = self.inner.lock();
+        let arc = self.owned_of(owner);
         crate::marks::mark(marks, crate::marks::Mark::CancelAllocAcquired);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let owned = g.owned.entry(owner).or_default();
-        owned.pending.insert(id);
-        g.entries.insert(
+        arc.inner.lock().pending.insert(id);
+        let _ = self.entries.insert_sync(
             id,
             Entry {
-                owner,
+                owner: arc,
                 dispatch,
                 import: "ctx_cancel",
                 state: State::Pending,
@@ -209,39 +262,49 @@ impl FutureTable {
     /// edge: the hold is a lookup, two writes, a `pending` removal, a
     /// per-dispatch decrement and a `ready` push, comfortably past a mark.
     pub fn complete_marked(&self, id: u64, result: ResultRecord, taking: bool) -> Completed {
-        let mut g = self.inner.lock();
         let acquired = if taking {
             crate::marks::stamp()
         } else {
             crate::marks::NO_STAMP
         };
-        let Some(e) = g.entries.get_mut(&id) else {
-            return Completed {
-                target: WakeTarget::Orphan,
-                dispatch: 0,
-                acquired,
-            };
-        };
-        if e.state != State::Pending {
-            return Completed {
-                target: WakeTarget::Duplicate,
-                dispatch: e.dispatch,
-                acquired,
-            };
-        }
-        e.state = State::Ready;
-        e.result = Some(result);
-        let owner = e.owner;
-        let dispatch = e.dispatch;
-        if let Some(o) = g.owned.get_mut(&owner) {
-            o.pending.remove(&id);
-            if let Some(n) = o.per_dispatch.get_mut(&dispatch) {
-                *n = n.saturating_sub(1);
+        // **One hop, no owner lookup.** The entry carries its owner, which is
+        // the whole reason this path stopped being the hard one.
+        let mut result = Some(result);
+        let found = self.entries.update_sync(&id, |_, e| {
+            if e.state != State::Pending {
+                return Err(e.dispatch);
             }
-            o.ready.push_back(id);
+            e.state = State::Ready;
+            e.result = result.take();
+            Ok((e.owner.clone(), e.dispatch))
+        });
+        let (arc, dispatch) = match found {
+            None => {
+                return Completed {
+                    target: WakeTarget::Orphan,
+                    dispatch: 0,
+                    acquired,
+                }
+            }
+            Some(Err(dispatch)) => {
+                return Completed {
+                    target: WakeTarget::Duplicate,
+                    dispatch,
+                    acquired,
+                }
+            }
+            Some(Ok(pair)) => pair,
+        };
+        // The bucket is released before this lock is taken — see `owned_of`.
+        let mut o = arc.inner.lock();
+        o.pending.remove(&id);
+        if let Some(n) = o.per_dispatch.get_mut(&dispatch) {
+            *n = n.saturating_sub(1);
         }
+        o.ready.push_back(id);
+        drop(o);
         Completed {
-            target: WakeTarget::Instance(owner),
+            target: WakeTarget::Instance(arc.instance()),
             dispatch,
             acquired,
         }
@@ -266,48 +329,43 @@ impl FutureTable {
         owner: InstanceId,
         marks: &mut Option<crate::marks::RequestMarks>,
     ) -> Option<(u64, ResultRecord)> {
-        let mut g = self.inner.lock();
+        let arc = self.existing(owner)?;
+        let mut o = arc.inner.lock();
         crate::marks::mark(marks, crate::marks::Mark::TakeReadyAcquired);
         loop {
-            let id = g.owned.get_mut(&owner)?.ready.pop_front()?;
-            let Some(e) = g.entries.get_mut(&id) else {
+            let id = o.ready.pop_front()?;
+            // Owned held across an `entries` op: the one nesting direction
+            // this file allows. `complete` releases its bucket before locking
+            // owned, so the pair cannot cycle.
+            let Some(result) = self.entries.update_sync(&id, |_, e| {
+                e.state = State::Delivered;
+                e.result.take()
+            }) else {
                 continue;
             };
-            let Some(result) = e.result.take() else {
-                continue;
-            };
-            e.state = State::Delivered;
-            g.entries.remove(&id);
+            let Some(result) = result else { continue };
+            self.entries.remove_sync(&id);
             return Some((id, result));
         }
     }
 
     pub fn has_ready(&self, owner: InstanceId) -> bool {
-        self.inner
-            .lock()
-            .owned
-            .get(&owner)
-            .is_some_and(|o| !o.ready.is_empty())
+        self.existing(owner)
+            .is_some_and(|a| !a.inner.lock().ready.is_empty())
     }
 
 
 
 
     pub fn pending_for_dispatch(&self, owner: InstanceId, dispatch: u64) -> u32 {
-        let g = self.inner.lock();
-        g.owned
-            .get(&owner)
-            .and_then(|o| o.per_dispatch.get(&dispatch))
-            .copied()
+        self.existing(owner)
+            .and_then(|a| a.inner.lock().per_dispatch.get(&dispatch).copied())
             .unwrap_or(0)
     }
 
     pub fn pending_total(&self, owner: InstanceId) -> usize {
-        self.inner
-            .lock()
-            .owned
-            .get(&owner)
-            .map_or(0, |o| o.pending.len())
+        self.existing(owner)
+            .map_or(0, |a| a.inner.lock().pending.len())
     }
 
     /// Reclaim pending futures owned by the completed dispatch.
@@ -322,23 +380,25 @@ impl FutureTable {
         dispatch: u64,
         marks: &Option<crate::marks::RequestMarks>,
     ) {
-        let mut g = self.inner.lock();
-        crate::marks::mark(marks, crate::marks::Mark::EndDispatchAcquired);
-        let Some(o) = g.owned.get_mut(&owner) else {
+        let Some(arc) = self.existing(owner) else {
             return;
         };
+        let mut o = arc.inner.lock();
+        crate::marks::mark(marks, crate::marks::Mark::EndDispatchAcquired);
         o.per_dispatch.remove(&dispatch);
         let undelivered: Vec<u64> = o.pending.iter().chain(o.ready.iter()).copied().collect();
         let doomed: Vec<u64> = undelivered
             .into_iter()
-            .filter(|id| g.entries.get(id).is_some_and(|e| e.dispatch == dispatch))
+            .filter(|id| {
+                self.entries
+                    .read_sync(id, |_, e| e.dispatch == dispatch)
+                    .unwrap_or(false)
+            })
             .collect();
         for id in doomed {
-            g.entries.remove(&id);
-            if let Some(o) = g.owned.get_mut(&owner) {
-                o.pending.remove(&id);
-                o.ready.retain(|r| *r != id);
-            }
+            self.entries.remove_sync(&id);
+            o.pending.remove(&id);
+            o.ready.retain(|r| *r != id);
         }
     }
 
@@ -355,10 +415,12 @@ impl FutureTable {
         owner: InstanceId,
         marks: &Option<crate::marks::RequestMarks>,
     ) {
-        let mut g = self.inner.lock();
         crate::marks::mark(marks, crate::marks::Mark::ReleaseInstanceAcquired);
-        g.owned.remove(&owner);
-        g.entries.retain(|_, e| e.owner != owner);
+        let Some(arc) = self.by_instance.remove_sync(&owner).map(|(_, a)| a) else {
+            return;
+        };
+        self.entries
+            .retain_sync(|_, e| !Arc::ptr_eq(&e.owner, &arc));
     }
 
 
@@ -368,8 +430,11 @@ impl FutureTable {
     /// Every live future id, ascending. For tests and the `wisp dev`
     /// inspector.
     pub fn live_future_ids(&self) -> Vec<u64> {
-        let g = self.inner.lock();
-        let mut v: Vec<u64> = g.entries.keys().copied().collect();
+        let mut v = Vec::new();
+        self.entries.retain_sync(|id, _| {
+            v.push(*id);
+            true
+        });
         v.sort_unstable();
         v
     }
@@ -382,20 +447,20 @@ impl FutureTable {
     /// [`FutureTable::live_future_ids`] is the whole table, cancellation
     /// included.
     pub fn live_guest_future_ids(&self) -> Vec<u64> {
-        let g = self.inner.lock();
-        let mut v: Vec<u64> = g
-            .entries
-            .iter()
-            .filter(|(_, e)| e.import != "ctx_cancel")
-            .map(|(id, _)| *id)
-            .collect();
+        let mut v = Vec::new();
+        self.entries.retain_sync(|id, e| {
+            if e.import != "ctx_cancel" {
+                v.push(*id);
+            }
+            true
+        });
         v.sort_unstable();
         v
     }
 
 
     pub fn live_futures(&self) -> usize {
-        self.inner.lock().entries.len()
+        self.entries.len()
     }
 }
 

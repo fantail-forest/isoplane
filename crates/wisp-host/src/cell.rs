@@ -2173,9 +2173,12 @@ impl Cell {
             crate::lockstats::ActiveMapKind::Sharded => Some("Cell::active[sharded]"),
             crate::lockstats::ActiveMapKind::LockFree => None,
         };
-        let mut rows = vec![("FutureTable::inner", self.rt.futures.lock_stats())];
+        // `FutureTable::inner` is gone from this list for the same reason —
+        // the table is two `scc` maps and a per-instance lock now, so there is
+        // no cell-wide mutex left to report. See `FutureTable::lock_stats`.
+        let mut rows: Vec<(&'static str, crate::lockstats::LockSample)> = Vec::new();
         if let Some(name) = active_row {
-            rows.insert(0, (name, self.active.lock_stats()));
+            rows.push((name, self.active.lock_stats()));
         }
         // Omitted entirely under a structure that has no such lock — rule 2
         // above. See `WorkQueue::lock_stats`.
