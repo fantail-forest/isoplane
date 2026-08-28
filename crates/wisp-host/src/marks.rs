@@ -1226,14 +1226,8 @@ pub fn pool_for(
     TracePool::new(cal, max_hot + admission + slack, MARKS_CAPACITY)
 }
 
-// ---------------------------------------------------------------------------
-// Reading a finished trace
-// ---------------------------------------------------------------------------
-
-/// One finished request, reduced to spans.
-///
-/// Produced on the collector thread, off the dispatch path, once per traced
-/// request.
+/// A finished request reduced to stage intervals and trace fault flags.
+/// Pool-level sampling and ownership counters are recorded separately.
 #[derive(Debug, Clone, Default)]
 pub struct Trace {
     /// `(label, nanoseconds)` in the order the marks were taken.
@@ -1253,39 +1247,6 @@ pub struct Trace {
     /// truncation, and counted separately because it has a different cause and
     /// a different fix.
     pub raced: usize,
-}
-
-/// Trace conditions counted independently so incomplete samples remain distinguishable.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MarkFaults {
-    /// The buffer filled and the tail was dropped. Raise [`MARKS_CAPACITY`],
-    /// or accept that this workload parks more than the buffer allows.
-    pub truncated: u64,
-    /// The sequence of labels is not a legal path: a mark appeared out of the
-    /// order the code can produce.
-    pub malformed: u64,
-    /// Intervals flagged as having out-of-order timestamps.
-    pub out_of_order: u64,
-    /// A trace that never reached its final mark. The wake path can drop a
-    /// wake when a `Weak::upgrade` fails, which strands the request that was
-    /// awaiting it; the platform now counts that as
-    /// [`crate::metrics::Metrics::wakes_dropped`], and this is the same event
-    /// seen from the instrument's side.
-    pub abandoned: u64,
-    /// Checkouts that found the pool empty, so the request went untraced.
-    /// Non-zero means the pool is smaller than the real in-flight peak, and
-    /// that the sample thinned out exactly when the cell was busiest.
-    pub pool_exhausted: u64,
-}
-
-impl MarkFaults {
-    pub fn any(&self) -> bool {
-        self.truncated > 0
-            || self.malformed > 0
-            || self.out_of_order > 0
-            || self.abandoned > 0
-            || self.pool_exhausted > 0
-    }
 }
 
 /// Reduces finished marks to stage intervals.
