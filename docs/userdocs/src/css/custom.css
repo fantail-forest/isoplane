@@ -1,0 +1,33 @@
+:root {
+  --ifm-color-primary: #2b6a8f;
+  --ifm-color-primary-dark: #275f81;
+  --ifm-color-primary-darker: #245a7a;
+  --ifm-color-primary-darkest: #1e4a64;
+  --ifm-color-primary-light: #2f759d;
+  --ifm-color-primary-lighter: #317aa4;
+  --ifm-color-primary-lightest: #388abb;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #7fc4e8;
+  --ifm-color-primary-dark: #5fb5e2;
+  --ifm-color-primary-darker: #4fadde;
+  --ifm-color-primary-darkest: #2492c9;
+  --ifm-color-primary-light: #9fd3ee;
+  --ifm-color-primary-lighter: #afdbf1;
+  --ifm-color-primary-lightest: #dcf0f9;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+}
+
+/* Reference tables are wide and dense; let them scroll rather than squeeze. */
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.markdown table code {
+  white-space: nowrap;
+}
