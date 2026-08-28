@@ -2892,6 +2892,35 @@ impl Cell {
         }
     }
 
+    /// **Close a wake that is not going to run a slice**: file whatever the
+    /// carrier has collected, then hand the trace back.
+    ///
+    /// One place rather than six, for the reason `WorkQueue::stamp_taken` is
+    /// one place rather than four. `run_wake` reclaims the trace before it can
+    /// know whether it will run anything, and there are six ways it can then
+    /// decide not to; a path that stashed without filing would lose whatever
+    /// the producer wrote after this thread's first pass, and it would lose it
+    /// only on the paths nobody thought about.
+    ///
+    /// **No `fresh` guard, and it does not need one.** Every one of these
+    /// returns is above the adoption at `take_ready`, so a stale wake's `marks`
+    /// is still `None` here — and filing into a `None` is exactly how a stale
+    /// wake's readings are discarded, which is what the unguarded pass at the
+    /// top of `run_wake` is for. Filing again costs one pass over ten cleared
+    /// cells and cannot resurrect anything: `file` takes each reading as it
+    /// files it.
+    fn bail_wake(
+        &self,
+        slot: &Arc<Slot>,
+        marks: Option<RequestMarks>,
+        stamps: &Option<Arc<crate::marks::WakeStamps>>,
+    ) {
+        if let Some(st) = stamps {
+            st.file(&marks);
+        }
+        self.stash_marks(slot, marks);
+    }
+
     /// Put an instance in the wake lane, stamped if its request is one of the
     /// sampled ones.
     ///
@@ -3051,17 +3080,18 @@ impl Cell {
         let module = residents.get(&slot.id).map(|r| r.module.clone());
         drop(residents);
         marks::mark(&marks, Mark::WakeResidentsLockReleased);
-        // **Every early return below hands the trace back.** It was taken out
-        // of `Cell::active` above, before this function could know whether it
-        // was going to run a slice at all; dropping it here would leave the
-        // request parked and untraced for the rest of its life, and the reply
-        // it eventually sends would carry nothing. See `Cell::stash_marks`.
+        // **Every early return below goes through `bail_wake`**, which files
+        // the carrier and hands the trace back. The trace was taken out of
+        // `Cell::active` above, before this function could know whether it was
+        // going to run a slice at all; dropping it here would leave the request
+        // parked and untraced for the rest of its life, and the reply it
+        // eventually sends would carry nothing. See `Cell::bail_wake`.
         let Some(module) = module else {
-            self.stash_marks(&slot, marks);
+            self.bail_wake(&slot, marks, &stamps);
             return;
         };
         let Some(entry) = self.modules.read().get(&module).cloned() else {
-            self.stash_marks(&slot, marks);
+            self.bail_wake(&slot, marks, &stamps);
             return;
         };
 
@@ -3084,18 +3114,18 @@ impl Cell {
                     self.metrics
                         .reentrancy_refusals
                         .fetch_add(1, Ordering::Relaxed);
-                    self.stash_marks(&slot, marks);
+                    self.bail_wake(&slot, marks, &stamps);
                     return;
                 }
                 Err(e @ crate::instances::EnterError::Tombstoned) => {
                     // A wake queued for an instance that was tombstoned before
                     // the wake lane reached it. §6.4 refuses, and §10 counts.
                     self.count_enter_refusal(e);
-                    self.stash_marks(&slot, marks);
+                    self.bail_wake(&slot, marks, &stamps);
                     return;
                 }
                 Err(_) => {
-                    self.stash_marks(&slot, marks);
+                    self.bail_wake(&slot, marks, &stamps);
                     return;
                 }
             };
@@ -3112,7 +3142,7 @@ impl Cell {
                 // instance is still parked and its request still needs its
                 // trace.
                 drop(guard);
-                self.stash_marks(&slot, marks);
+                self.bail_wake(&slot, marks, &stamps);
                 return;
             };
             // **A stale wake that is going to run a slice picks the trace up
