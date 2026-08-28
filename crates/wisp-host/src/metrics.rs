@@ -135,6 +135,26 @@ impl Default for Histogram {
 pub struct Metrics {
     pub dispatches: AtomicU64,
     pub wakes: AtomicU64,
+    /// **Wakes raised inside the cell rather than by a reactor**, which is the
+    /// shape with no completion path to measure.
+    ///
+    /// `Cell::queue_wake` is used when a completion lands while the dispatch is
+    /// still Hot: by the time the request parks there is nothing left to wait
+    /// for, so the wake is queued directly rather than routed through
+    /// `CellWake::signal_traced`. It never passes the future table's completion
+    /// lock or the wake router's index, so a traced one of these carries
+    /// `park.wait` and nothing before it — no `futures.complete.wait`, no
+    /// `wake.index`.
+    ///
+    /// **It is not counted in [`Metrics::wakes`]**, which counts what the wake
+    /// router handled; before this counter these were invisible in the metrics
+    /// entirely.
+    ///
+    /// Read it as *how common that shape is*, not as a reconciliation of the
+    /// span table's row counts. It is over every wake, and the span rows are
+    /// over the sampled ones, so the two do not subtract — the same trap
+    /// `Metrics::stale_wakes` had to have its prose corrected for three times.
+    pub in_cell_wakes: AtomicU64,
     /// **Completions that arrived for an instance nobody could hand them to.**
     ///
     /// `CellWake::signal` maps an instance id through a table of `Weak<Slot>`
@@ -459,6 +479,7 @@ impl Metrics {
         MetricsSnapshot {
             dispatches: l(&self.dispatches),
             wakes: l(&self.wakes),
+            in_cell_wakes: l(&self.in_cell_wakes),
             wakes_dropped: l(&self.wakes_dropped),
             stale_wakes: l(&self.stale_wakes),
             traps: l(&self.traps),
@@ -571,6 +592,9 @@ impl Metrics {
 pub struct MetricsSnapshot {
     pub dispatches: u64,
     pub wakes: u64,
+    /// Wakes raised inside the cell, which have no completion path to measure.
+    /// See [`Metrics::in_cell_wakes`].
+    pub in_cell_wakes: u64,
     /// Completions whose owning instance could not be reached, so no wake was
     /// enqueued. See [`Metrics::wakes_dropped`].
     pub wakes_dropped: u64,
@@ -635,6 +659,7 @@ impl MetricsSnapshot {
         vec![
             ("dispatches", self.dispatches.to_string()),
             ("wakes", self.wakes.to_string()),
+            ("in_cell_wakes", self.in_cell_wakes.to_string()),
             ("wakes_dropped", self.wakes_dropped.to_string()),
             ("stale_wakes", self.stale_wakes.to_string()),
             ("traps", self.traps.to_string()),

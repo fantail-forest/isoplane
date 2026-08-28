@@ -2887,6 +2887,18 @@ impl Cell {
         // A request whose `active` entry has already gone is one nobody will
         // wake; letting the trace drop returns its buffer rather than leaking
         // it, and the trace simply ends where the request did.
+        //
+        // **Not counted, because of how narrow it is.** Reaching here with a
+        // trace in hand means one was reclaimed, which means the wake was
+        // fresh, which means the entry existed a moment ago — so the entry has
+        // to be removed *between* the reclaim and this line, and only
+        // `finish_and_release` and `answer_after_panic` remove one. Both run on
+        // the thread that answered the request, and this request is parked. The
+        // way it happens is the race `c7d7730` describes from the other side: a
+        // second wake adopts and answers the same parked request while this
+        // thread is still deciding not to run a slice. A counter here would be
+        // a number nobody could make move on purpose, which is the shape this
+        // codebase has had to delete once already.
         if let Some(orphan) = self.active.with_mut(&slot.id, |a| a.marks = taken) {
             let _ = orphan;
         }
@@ -2958,6 +2970,11 @@ impl Cell {
         // the dispatch is on the slot, and a lane can hold it past the end of
         // that dispatch. Naming it here is what lets `run_wake` notice.
         let dispatch = Some(slot.ctx.dispatch_id());
+        // Counted because it is otherwise invisible: this path does not go
+        // through `CellWake::signal_traced`, so it bumps neither `wakes` nor
+        // anything else, and it is the shape whose traces have no completion
+        // prefix. See `Metrics::in_cell_wakes`.
+        self.metrics.in_cell_wakes.fetch_add(1, Ordering::Relaxed);
         self.queue.push_wake(WakeItem {
             slot,
             stamps,

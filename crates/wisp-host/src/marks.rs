@@ -796,6 +796,23 @@ impl Mark {
                  consumer holds the lane lock from waking to popping, so nothing can be pushed \
                  in between",
             ),
+            // **The completion path's four spans, and why their counts fall
+            // short of `park.wait`'s.** Not every wake comes from a reactor.
+            Mark::FutureCompleteAcquired
+            | Mark::FutureCompleteReleased
+            | Mark::WakeIndexWanted
+            | Mark::WakeIndexReleased => Some(
+                "only a wake raised by a *reactor* has this span. A completion that lands \
+                 while its dispatch is still running is queued directly by `Cell::queue_wake` \
+                 instead, which passes neither the future table's completion lock nor the \
+                 wake router's index — so those requests carry `park.wait` and nothing before \
+                 it, and it is a handful of nanoseconds, because by the time they parked there \
+                 was nothing left to wait for. The shortfall against `park.wait`'s count is \
+                 that population, and `Metrics::in_cell_wakes` says how common the shape is on \
+                 the run as a whole. It is a fact about when completions arrive rather than a \
+                 gap in the instrument, and it does not bias what is here — but it does mean \
+                 `park.wait` and these four are not populations you can difference",
+            ),
             _ => None,
         }
     }
