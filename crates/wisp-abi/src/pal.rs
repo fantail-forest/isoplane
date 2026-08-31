@@ -63,7 +63,7 @@ pub struct PalDef {
     /// The canonical-ABI core signature, **checked only for delegated
     /// entries**.
     ///
-    /// For a delegated import the shape is load-bearing: the adapter runs a
+    /// For a delegated import the shape matters: the adapter runs a
     /// body against it, and a mismatch would be a type confusion reaching
     /// host code — the same argument `wisp_control::validator` makes for the
     /// `wisp` table. For a `TrapOnCall` entry it is not: the stub is
@@ -151,7 +151,7 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         "§2.5.4: there is no ambient environment, so the empty list is the \
          same-fidelity answer for a capability the platform does not have",
     ),
-    // §8.4/§8.5. THE load-bearing delegation. `clock_now_coarse` is
+    // §8.4/§8.5. THE critical delegation. `clock_now_coarse` is
     // millisecond-granular and frozen for the dispatch slice, and this import
     // inherits both properties: the value is the coarse clock multiplied into
     // nanoseconds, so the low 6 decimal digits are always zero and two calls

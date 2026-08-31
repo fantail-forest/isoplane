@@ -4703,7 +4703,7 @@ mod queue_tests {
     /// productive-round accounting — was red in about 9 runs of 10, and a
     /// whole run passing with the defect present is what the accounting fixes.
     /// At 1,000 productive rounds it falls back to 18 of 20, so the count is
-    /// load-bearing and not padding.
+    /// critical and not padding.
     #[test]
     fn a_lock_free_dispatch_is_either_shed_or_answered_and_never_stranded() {
         // Counted in **productive** rounds — rounds in which at least one push
@@ -4736,7 +4736,7 @@ mod queue_tests {
                 QueuePlacement::PowerOfTwo,
             ));
             let (tx, rx) = std::sync::mpsc::sync_channel(PRODUCERS * PER_PRODUCER * 2);
-            // A `Barrier`, and **the gate is not the load-bearing part** —
+            // A `Barrier`, and **the gate is not the part that matters** —
             // measured, because a comment written to stop the next person
             // simplifying this had better say what actually matters.
             // Substituting the tightest release available (an arrival counter
@@ -4744,7 +4744,7 @@ mod queue_tests {
             // catches the guard-removed mutation 12 times in 12, which is the
             // barrier's own rate. Simplify the gate if you like.
             //
-            // What *is* load-bearing, in order: the productive-round
+            // What *does* matter, in order: the productive-round
             // accounting above, the producer count, and closing here rather
             // than later. Deferring the close until the ring is non-empty —
             // so the drain lands mid-burst — drops it to 6 in 12, because the

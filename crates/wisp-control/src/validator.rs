@@ -249,7 +249,7 @@ fn group_label(d: &ImportDef) -> &'static str {
 /// `wasmtime::Config` (§8.2.2, defense in depth — same rule, two places, one
 /// definition).
 ///
-/// Every subtraction below is load-bearing:
+/// Every subtraction below matters:
 ///
 /// * `threads` / `shared_everything_threads` — §4.3 V2 and §8.4. No threads
 ///   means no shared memory, no atomics, and therefore **no counting thread**:

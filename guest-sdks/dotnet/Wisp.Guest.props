@@ -1,5 +1,5 @@
 <!--
-  The load-bearing build settings every C# WISP guest needs, in one place.
+  The critical build settings every C# WISP guest needs, in one place.
 
   Import this from a guest's .csproj. It exists because these settings are not
   stylistic: three of them decide whether NativeAOT-LLVM produces a flat core

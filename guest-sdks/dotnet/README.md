@@ -5,7 +5,7 @@ The shared C# guest SDK supplies host bindings, async execution and managed APIs
 | | |
 |---|---|
 | `Wisp.Sdk.csproj` | The library. Compiles to IL and names no tenant type. |
-| `Wisp.Guest.props` | Every load-bearing guest build setting, imported by each guest's `.csproj`. |
+| `Wisp.Guest.props` | Every critical guest build setting, imported by each guest's `.csproj`. |
 | `build-guest.sh` | The one build driver. A guest's `build.sh` is a two-line wrapper. |
 | `native/wisp_pal.c` | The PAL shim. Read it before touching the build. |
 | `Abi/` | The `wisp` imports, the five exports, the postcard codec, the records. |

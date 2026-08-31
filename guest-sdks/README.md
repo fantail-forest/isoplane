@@ -33,5 +33,5 @@ guests embed in panic locations. It is not worth it: root `cargo test
 --workspace` would then try to compile this crate's tests without the `json`
 feature they need, and break.
 
-`dotnet/` has the equivalent in `Wisp.Guest.props` — the load-bearing MSBuild
+`dotnet/` has the equivalent in `Wisp.Guest.props` — the critical MSBuild
 settings a guest imports rather than copies.

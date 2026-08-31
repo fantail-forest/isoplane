@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The reference C# guest. Everything load-bearing about HOW a C# guest is
+    The reference C# guest. Everything critical about HOW a C# guest is
     built lives in the SDK's Wisp.Guest.props, which every guest imports; this
     file holds only what is this guest's own — its name, and the three build
     flavours that exist to measure things.

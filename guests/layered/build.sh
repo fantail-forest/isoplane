@@ -30,7 +30,7 @@ TDIR="${CARGO_TARGET_DIR:-$ROOT/../target}"
 REL="$TDIR/$TARGET/release"
 APPS=(quotes chat etl hello audit search)
 
-# The app window. Both numbers are load-bearing and both are asserted at
+# The app window. Both numbers are critical and both are asserted at
 # measurement time by `wisp-dotnet-sharing layered`.
 APP_BASE=4194304          # 4 MiB — where an app layer's static data starts
 APP_STACK=262144          # 256 KiB shadow stack, inside the window

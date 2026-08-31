@@ -95,7 +95,7 @@ guests/your-guest/
   src/App/YourClass.cs    implements the HTTP handler
 ```
 
-The `.csproj` is short because everything load-bearing lives in the SDK's
+The `.csproj` is short because everything critical lives in the SDK's
 `Wisp.Guest.props`, which you import:
 
 ```xml

@@ -11,7 +11,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
-# `default-features = false` is load-bearing, not tidiness: the default feature
+# `default-features = false` is critical, not tidiness: the default feature
 # set pulls in `async`, which is wasmtime's fiber-based stack switching. §6.1 is
 # explicit that the engine runs in synchronous mode on pool threads "deliberately
 # not the engine's async mode, whose epoch-*yielding* is implemented with fibers,

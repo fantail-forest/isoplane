@@ -164,7 +164,7 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
             delta_storage_bytes: m.delta_bytes,
             traps_total: m.traps,
             breaker_trips: m.breaker_rejections,
-            // The load-bearing bit: these are measurements, not a demo.
+            // The critical bit: these are measurements, not a demo.
         }
     }
 }

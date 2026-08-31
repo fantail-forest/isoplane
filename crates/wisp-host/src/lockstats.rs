@@ -332,7 +332,7 @@ impl Drop for RecordOnRelease<'_> {
 
 /// A `parking_lot::RwLockReadGuard` that settles its wait on the way out.
 ///
-/// Field order is load-bearing: `inner` releases first, `record` fires second.
+/// Field order is critical: `inner` releases first, `record` fires second.
 pub struct CountedReadGuard<'a, T> {
     inner: RwLockReadGuard<'a, T>,
     /// Never read, and that is the point: it is here for its `Drop`, which
@@ -351,7 +351,7 @@ impl<T> std::ops::Deref for CountedReadGuard<'_, T> {
 
 /// A `parking_lot::RwLockWriteGuard` that settles its wait on the way out.
 ///
-/// Field order is load-bearing: `inner` releases first, `record` fires second.
+/// Field order is critical: `inner` releases first, `record` fires second.
 pub struct CountedWriteGuard<'a, T> {
     inner: RwLockWriteGuard<'a, T>,
     /// Never read, and that is the point: it is here for its `Drop`, which
