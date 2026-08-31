@@ -1,10 +1,20 @@
 [package]
 name = "wisp-guest"
-# The guest workspace, named explicitly. Cargo finds a workspace root by walking
-# UP from the crate, which from here reaches the repo root — and that one
-# excludes `guest-sdks`, so the inherited fields below would fail to resolve
-# against it. Naming the root is what lets this crate sit beside the C# SDK in
-# `guest-sdks/` while still building under the guest workspace's wasm32 profile.
+# This crate lives beside the C# SDK in `guest-sdks/`, and belongs to the
+# `guests/` Cargo workspace. Those are separate things: the directory is where
+# the source is, the workspace is where its build settings come from.
+#
+# It wants the guest workspace's, not the root one's:
+#   * `[profile.release]` there is the size-tuned one (`opt-level = "z"`, LTO,
+#     `panic = "abort"`, strip) used to build the guests linking this crate.
+#   * `[workspace.dependencies]` there pins `wisp-abi` with
+#     `default-features = false`. Inert today (`default = []`), and a guard
+#     worth keeping: a guest must not pick up a host-shaped feature by default.
+#
+# Naming the root is required because Cargo finds one by walking UP, which from
+# here reaches the repo root — whose explicit `members` list does not include
+# this crate, so the inherited fields below would have nothing to resolve
+# against.
 workspace = "../../guests"
 version.workspace = true
 edition.workspace = true

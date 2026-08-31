@@ -18,10 +18,20 @@ several readings of a document.
 
 ## A note on the Rust SDK's workspace
 
-`rust/` is a member of the **`guests/`** Cargo workspace, not the root one: it
-targets wasm32 under the size-tuned release profile the guests that link it
-use. Its `Cargo.toml` names that root explicitly, because Cargo would otherwise
-walk up to the repo root, which excludes this directory for the same reason.
+Both SDKs live here. `rust/` additionally *belongs to* the **`guests/`** Cargo
+workspace — a different question from where the directory is. It wants that
+workspace's size-tuned wasm32 release profile and its `wisp-abi` features,
+which are the ones the guests linking it are built with; the root workspace
+builds host crates for the native target and has neither.
+
+Its `Cargo.toml` names that root explicitly, because Cargo finds a workspace
+root by walking up and would otherwise reach the repo root.
+
+Moving it to the root workspace does work, and produces functionally identical
+modules — the only byte difference is the workspace-relative source paths the
+guests embed in panic locations. It is not worth it: root `cargo test
+--workspace` would then try to compile this crate's tests without the `json`
+feature they need, and break.
 
 `dotnet/` has the equivalent in `Wisp.Guest.props` — the load-bearing MSBuild
 settings a guest imports rather than copies.

@@ -36,12 +36,18 @@ scripts/dev bash -lc 'cd /wisp/guests && cargo test -p wisp-guest --features jso
 
 ## Workspace
 
-This crate is a member of the **`guests/`** workspace, not the root one: it is
-built for wasm32 under that workspace's size-tuned release profile
-(`opt-level = "z"`, LTO, `panic = "abort"`), the same profile as the guests that
-link it. `Cargo.toml` names that root explicitly with `workspace = "../../guests"`,
-because Cargo finds a root by walking up — which from here reaches the repo
-root, and that one excludes `guest-sdks`.
+The source lives here, beside the C# SDK. The *workspace* is **`guests/`** —
+a separate question, and the one that decides how this crate is built.
+
+It wants that workspace because that is where the guest-shaped settings are:
+the size-tuned release profile (`opt-level = "z"`, LTO, `panic = "abort"`,
+strip) that the guests linking this crate are built with, and `wisp-abi` pinned
+with `default-features = false`. The root workspace builds host crates for the
+native target and has neither.
+
+`Cargo.toml` names that root explicitly with `workspace = "../../guests"`,
+because Cargo finds a root by walking up and would otherwise reach the repo
+root, whose explicit `members` list does not include this crate.
 
 `crate-type = ["rlib"]` keeps the helpers in the guest library.
 `export_handler!` emits the host-facing exports into the fixture crate. Use one

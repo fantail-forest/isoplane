@@ -5,10 +5,11 @@
 [workspace]
 resolver = "2"
 members = [
-    # The Rust guest SDK. It lives outside this directory, beside the C# one in
-    # `guest-sdks/`, but it stays a member of THIS workspace: it is built for
-    # wasm32 under the size-tuned release profile below, same as the guests
-    # that link it.
+    # The Rust guest SDK. Its source lives beside the C# SDK in `guest-sdks/`;
+    # its build settings come from here, because it is compiled for wasm32
+    # under the size-tuned release profile below and against the same
+    # `wisp-abi` features as the guests that link it. Its own manifest names
+    # this workspace, since Cargo would otherwise walk up to the repo root.
     "../guest-sdks/rust",
     "quotes-api",
     "misbehaver",
