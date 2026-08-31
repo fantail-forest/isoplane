@@ -15,6 +15,8 @@ before=$(du -sm . 2>/dev/null | cut -f1)
 # anything; the worst case is a slower next build.
 JUNK="target/debug/incremental target/release/incremental
       guests/target guests/dotnet/src/obj guests/dotnet/src/bin
+      guests/dotnet/obj
+      guest-sdks/dotnet/obj guest-sdks/dotnet/bin
       crates/spike/target"
 
 # A container build that wrote into the bind mount leaves root-owned trees the

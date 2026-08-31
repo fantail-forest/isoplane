@@ -83,29 +83,59 @@ that is [the gate working](#why-the-pal-shim-exists), not a bug.
 
 ## Starting a project from scratch
 
-Copy `guests/dotnet/` and keep its shape. Three `.csproj` settings look
-eccentric and each one is critical; removing any of them breaks the build in a way
-that is hard to diagnose:
+The SDK is a library under `guest-sdks/dotnet/`. A NativeAOT guest supplies
+its project, handler and export entrypoint. The reference guest shows this
+layout:
 
-| Setting | Why |
-|---|---|
-| **No `<PublishAot>`** | NativeAOT-LLVM is not integrated into the .NET SDK. `PublishAot` sends the build down the shipping NativeAOT path, which looks for a package that does not exist. `PublishTrimmed` + `SelfContained` is the documented entry point. |
-| `<MSBuildEnableWorkloadResolver>false</…>` | The `wasi-experimental` (Mono) workload claims the `wasi-wasm` RID and injects a 12 MB Mono interpreter. |
-| `<LinkerFlavor>lld</LinkerFlavor>` | The default linker componentizes the output and then rejects named host imports for not being a WIT interface. Plain `wasm-ld` gives the flat core module WISP loads. |
-
-Plus one linker argument:
-
-```xml
-<LinkerArg Include="-Wl,--max-memory=$(WispMemoryMaxBytes)" />
+```
+guests/your-guest/
+  build.sh                invokes ../../guest-sdks/dotnet/build-guest.sh
+  src/YourGuest.csproj    imports Wisp.Guest.props and references Wisp.Sdk.csproj
+  src/Entrypoint.cs       declares the HTTP HandlerRouter and five exports
+  src/App/YourClass.cs    implements the HTTP handler
 ```
 
-The toolchain's own link line declares a 2 GiB memory maximum, which can
-exceed the configured validator ceiling. Set `-p:WispMemoryMaxBytes=67108864`
-for a 64 MiB maximum. The declared maximum is a limit, not a measurement of occupied memory.
+The `.csproj` is short because everything load-bearing lives in the SDK's
+`Wisp.Guest.props`, which you import:
 
-Versions are pinned in `Directory.Build.props` on purpose — the experimental
-feed publishes builds that are not mutually compatible. The full pin table is
-in [C# SDK reference](../reference/sdk-csharp.md#pinned-versions).
+```xml
+<Import Project="../../../guest-sdks/dotnet/Wisp.Guest.props" />
+
+<PropertyGroup>
+  <AssemblyName>your_guest</AssemblyName>
+</PropertyGroup>
+
+<ItemGroup>
+  <ProjectReference Include="../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
+</ItemGroup>
+```
+
+That props file is where the three eccentric-looking settings live — no
+`<PublishAot>`, `<MSBuildEnableWorkloadResolver>false</...>`,
+`<LinkerFlavor>lld</LinkerFlavor>` — along with the two linker arguments that
+decide whether the module passes validator rule V3. They are documented in
+[C# SDK reference](../reference/sdk-csharp.md).
+Importing them rather than copying them is the point: a correction lands once.
+
+To set a 64 MiB maximum, build with `-p:WispMemoryMaxBytes=67108864`.
+The declared maximum bounds memory growth; it is not occupied-memory measurement.
+
+### Shipping a front end
+
+An `EmbeddedResource` survives NativeAOT-LLVM and `TrimMode=full`, so a guest
+can carry a real front-end bundle and hand it back from a trigger:
+
+```xml
+<ItemGroup>
+  <EmbeddedResource Include="../web/dist/index.html" LogicalName="app.index.html" />
+</ItemGroup>
+```
+
+```csharp
+using Stream? st = typeof(YourClass).Assembly.GetManifestResourceStream("app.index.html");
+```
+
+A handler can return an embedded asset in its HTTP response.
 
 ## Why the PAL shim exists
 
@@ -115,7 +145,7 @@ Every one of them is an undeclared capability, and the validator rejects all
 32 under rule V1. Three are genuinely called, so trapping them is not an
 option either.
 
-`guests/dotnet/native/wisp_pal.c` defines the `__wasm_import_*` symbols that
+`guest-sdks/dotnet/native/wisp_pal.c` defines the `__wasm_import_*` symbols that
 wasi-libc leaves undefined, so `wasm-ld` resolves them locally and emits **no**
 wasi import. The three live ones are re-expressed as `wisp::clock_now_coarse`,
 `wisp::entropy_fill`, and a locally computed empty environment — all already
@@ -132,7 +162,7 @@ name and signature:
 ./scripts/dev bash -lc "wasm-tools print guests/dotnet/out/wisp_guest_dotnet.wasm | grep '(import \"wasi'"
 ```
 
-Then define that symbol in `native/wisp_pal.c`.
+Then define that symbol in `guest-sdks/dotnet/native/wisp_pal.c`.
 
 ## Where next
 

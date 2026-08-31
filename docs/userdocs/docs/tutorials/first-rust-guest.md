@@ -8,7 +8,7 @@ sidebar_position: 3
 
 :::info Internal fixture support
 WISP targets .NET applications; see [Your first C# guest](first-csharp-guest.md).
-The Rust SDK in `guests/wisp-guest` supports repository fixtures. It has no customer SDK
+The Rust SDK in `guest-sdks/rust` supports repository fixtures. It has no customer SDK
 compatibility or feature-parity commitment.
 :::
 
@@ -116,7 +116,7 @@ bounds.
 
 ## Read the implementation
 
-The fixture SDK definitions and helpers are in `guests/wisp-guest`.
+The fixture SDK definitions and helpers are in `guest-sdks/rust`.
 `crates/wisp-abi/src/imports.rs` defines host imports and guest export
 signatures. `dispatch.rs`, `result.rs` and `status.rs` in the same crate define
 the records and entrypoint outcomes used by this example.

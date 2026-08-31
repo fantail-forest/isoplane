@@ -1,0 +1,100 @@
+<!--
+  The load-bearing build settings every C# WISP guest needs, in one place.
+
+  Import this from a guest's .csproj. It exists because these settings are not
+  stylistic: three of them decide whether NativeAOT-LLVM produces a flat core
+  module at all, and the two linker arguments decide whether the module passes
+  validator rule V3. Before this file each guest carried its own copy, so a
+  correction had to be made once per guest and a guest that missed one failed
+  in a way that names nothing useful.
+
+  Guest-specific settings — AssemblyName, the entrypoint, embedded resources —
+  stay in the guest's own .csproj.
+-->
+<Project>
+  <PropertyGroup>
+    <!-- Pinned deliberately. The experimental feed publishes several builds a
+         week and they are not all mutually compatible; an unpinned float here
+         is a build that breaks on someone else's machine on a different day.
+         It lives here rather than in a Directory.Build.props because this file
+         is imported by path: a directory-scoped one only reaches guests that
+         happen to sit underneath it. -->
+    <ILCompilerVersion Condition="'$(ILCompilerVersion)' == ''">10.0.0-rc.1.26357.1</ILCompilerVersion>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- library, not Exe: a WISP guest is a reactor with named exports, not a
+         command. Gets us `-mexec-model=reactor` and `_initialize` (§4.4). -->
+    <OutputType>library</OutputType>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <RootNamespace>Wisp</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>false</ImplicitUsings>
+
+    <PublishTrimmed>true</PublishTrimmed>
+    <SelfContained>true</SelfContained>
+    <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
+    <LinkerFlavor>lld</LinkerFlavor>
+    <DebugType>none</DebugType>
+
+    <!-- §4.2's feature switches, verbatim. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <NullabilityInfoContextSupport>false</NullabilityInfoContextSupport>
+    <UseNativeHttpHandler>true</UseNativeHttpHandler>
+    <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
+    <TrimMode>full</TrimMode>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <IlcFoldVTables>true</IlcFoldVTables>
+    <StackTraceSupport>false</StackTraceSupport>
+
+    <!-- §4.3 rule V3 rejects a declared memory maximum above the plan's
+         ceiling, and `wisp_abi::config` caps plans at 64 / 128 / 512 MB. The
+         toolchain's own link line declares 2 GiB, so this must be set or the
+         module is rejected on every plan. 134217728 is §5.5's 128 MB default
+         (the Standard plan); build with -p:WispMemoryMaxBytes=67108864 to
+         target Free. Note that .NET runtime startup alone reserves ~50 MB, so
+         a Free-plan guest runs with very little headroom. -->
+    <WispMemoryMaxBytes Condition="'$(WispMemoryMaxBytes)' == ''">134217728</WispMemoryMaxBytes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
+    <PackageReference Include="runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exported so the host harness can assert invariant 3 numerically:
+         the shadow stack pointer at the moment `wisp_handle` returns `pending`
+         must equal its value before the dispatch started. -->
+    <LinkerArg Include="-Wl,--export=__stack_pointer" />
+
+    <!-- §4.3 rule V3 rejects "a declared memory maximum exceeding the plan's
+         ceiling". NativeAOT-LLVM's own link line passes
+         a 2 GiB max-memory, which exceeds every plan in
+         `wisp-abi::config` (64/128/512 MB) — so the stock toolchain output is
+         V3-rejected as built. wasm-ld honours the last max-memory flag, and
+         ours is appended after the toolchain's. 134217728 = the 128 MB
+         standard-plan ceiling of §5.5. -->
+    <LinkerArg Include="-Wl,--max-memory=$(WispMemoryMaxBytes)" />
+
+    <!-- The PAL shim, compiled by build.sh with the WASI SDK's clang. It
+         defines the `__wasm_import_*` symbols wasi-libc leaves undefined, so
+         wasm-ld resolves them here instead of emitting `wasi:*` imports. Order
+         does not matter: an explicit object file always participates in
+         resolution, and libc.a is searched after it. -->
+    <LinkerArg Condition="'$(WispPalObject)' != ''" Include="&quot;$(WispPalObject)&quot;" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The runtime cannot read the environment (§2.5.4: no ambient state,
+         and the host stubs `wasi:cli/environment` to empty), so every GC knob
+         has to be baked in at build time. -->
+    <RuntimeHostConfigurationOption Include="System.GC.Server" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="System.GC.Concurrent" Value="false" Trim="true" />
+  </ItemGroup>
+
+</Project>

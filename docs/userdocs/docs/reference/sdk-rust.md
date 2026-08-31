@@ -6,7 +6,7 @@ sidebar_position: 11
 
 # Rust guest helpers
 
-`guests/wisp-guest` supports internal fixtures, hostile guests and runtime
+`guest-sdks/rust` supports internal fixtures, hostile guests and runtime
 measurements. It has no customer SDK compatibility or feature-parity commitment.
 The application SDK is described in [C# SDK](sdk-csharp.md).
 
@@ -31,5 +31,5 @@ owns the operation and schedules its wake. Guest memory and host-owned resources
 remain live while the operation is pending.
 
 The supported interfaces and their contracts are documented beside their
-implementations in `guests/wisp-guest`. Use the fixture source at the same checkout
+implementations in `guest-sdks/rust`. Use the fixture source at the same checkout
 for examples of the entrypoint macros, async helpers and capability bindings.

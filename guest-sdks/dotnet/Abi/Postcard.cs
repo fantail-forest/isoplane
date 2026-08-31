@@ -132,7 +132,7 @@ internal sealed class PostcardWriter
     internal ReadOnlySpan<byte> Span => _buf.AsSpan(0, _len);
 }
 
-internal sealed class PostcardException : Exception
+public sealed class PostcardException : Exception
 {
     // §12.3: UseSystemResourceKeys=true means exception messages are resource
     // keys anyway, so carrying a message here would buy nothing.

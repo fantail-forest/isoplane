@@ -1,67 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The C# WISP guest (spec.md §1.3 G4, §4.2; PoC claim C10).
-
-    Codegen is NativeAOT-LLVM, which is what §4.2 specifies. Three settings
-    below are load-bearing and are NOT stylistic:
-
-      * No <PublishAot>. NativeAOT-LLVM is not integrated into the .NET SDK;
-        the SDK's PublishAot path resolves `Microsoft.NETCore.App.Runtime.
-        NativeAOT.wasi-wasm`, which does not exist. The documented entry point
-        is PublishTrimmed + SelfContained + the two ILCompiler.LLVM packages.
-      * <MSBuildEnableWorkloadResolver>false</...>. The wasi-experimental
-        (Mono) workload claims the wasi-wasm RID and injects the 12 MB Mono
-        interpreter; NativeAOT-LLVM must not see it.
-      * <LinkerFlavor>lld</LinkerFlavor>. The default linker for wasip2 is
-        wasm-component-ld, which componentizes the output and then rejects our
-        `wisp` imports because they are not a WIT interface. plan.md's
-        "core-wasm ABI, not the component model" deviation is implemented here:
-        plain wasm-ld emits the flat core module the PoC host loads.
+    The reference C# guest. Everything load-bearing about HOW a C# guest is
+    built lives in the SDK's Wisp.Guest.props, which every guest imports; this
+    file holds only what is this guest's own — its name, and the three build
+    flavours that exist to measure things.
   -->
+  <Import Project="../../../guest-sdks/dotnet/Wisp.Guest.props" />
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <!-- library, not Exe: a WISP guest is a reactor with named exports, not a
-         command. Gets us `-mexec-model=reactor` and `_initialize` (§4.4). -->
-    <OutputType>library</OutputType>
-    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
     <AssemblyName>wisp_guest_dotnet</AssemblyName>
-    <RootNamespace>Wisp</RootNamespace>
-    <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <ImplicitUsings>false</ImplicitUsings>
-
-    <PublishTrimmed>true</PublishTrimmed>
-    <SelfContained>true</SelfContained>
-    <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
-    <LinkerFlavor>lld</LinkerFlavor>
-    <DebugType>none</DebugType>
-
-    <!-- §4.2's feature switches, verbatim. -->
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <UseSystemResourceKeys>true</UseSystemResourceKeys>
-    <EventSourceSupport>false</EventSourceSupport>
-    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
-    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
-    <NullabilityInfoContextSupport>false</NullabilityInfoContextSupport>
-    <UseNativeHttpHandler>true</UseNativeHttpHandler>
-    <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
-    <TrimMode>full</TrimMode>
-    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
-    <IlcFoldVTables>true</IlcFoldVTables>
-    <StackTraceSupport>false</StackTraceSupport>
-
-    <!-- §4.3 rule V3 rejects a declared memory maximum above the plan's
-         ceiling, and `wisp_abi::config` caps plans at 64 / 128 / 512 MB. The
-         toolchain's own link line declares 2 GiB, so this must be set or the
-         module is rejected on every plan. 134217728 is §5.5's 128 MB default
-         (the Standard plan); build with -p:WispMemoryMaxBytes=67108864 to
-         target Free. Note that .NET runtime startup alone reserves ~50 MB, so
-         a Free-plan guest runs with very little headroom. -->
-    <WispMemoryMaxBytes Condition="'$(WispMemoryMaxBytes)' == ''">134217728</WispMemoryMaxBytes>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
+  </ItemGroup>
 
   <!-- The §12.1 compatibility probe (App/Compat.cs). Off by default: the
        shipped guest is a hello-world Handler so its size is comparable to
@@ -74,41 +27,5 @@
   <PropertyGroup Condition="'$(WispEntropyProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_ENTROPY_PROBE</DefineConstants>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
-    <PackageReference Include="runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Exported so the host harness can assert invariant 3 numerically:
-         the shadow stack pointer at the moment `wisp_handle` returns `pending`
-         must equal its value before the dispatch started. -->
-    <LinkerArg Include="-Wl,--export=__stack_pointer" />
-
-    <!-- §4.3 rule V3 rejects "a declared memory maximum exceeding the plan's
-         ceiling". NativeAOT-LLVM's own link line passes
-         a 2 GiB max-memory, which exceeds every plan in
-         `wisp-abi::config` (64/128/512 MB) — so the stock toolchain output is
-         V3-rejected as built. wasm-ld honours the last max-memory flag, and
-         ours is appended after the toolchain's. 134217728 = the 128 MB
-         standard-plan ceiling of §5.5. -->
-    <LinkerArg Include="-Wl,--max-memory=$(WispMemoryMaxBytes)" />
-
-    <!-- The PAL shim, compiled by build.sh with the WASI SDK's clang. It
-         defines the `__wasm_import_*` symbols wasi-libc leaves undefined, so
-         wasm-ld resolves them here instead of emitting `wasi:*` imports. Order
-         does not matter: an explicit object file always participates in
-         resolution, and libc.a is searched after it. -->
-    <LinkerArg Condition="'$(WispPalObject)' != ''" Include="&quot;$(WispPalObject)&quot;" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- The runtime cannot read the environment (§2.5.4: no ambient state,
-         and the host stubs `wasi:cli/environment` to empty), so every GC knob
-         has to be baked in at build time. -->
-    <RuntimeHostConfigurationOption Include="System.GC.Server" Value="false" Trim="true" />
-    <RuntimeHostConfigurationOption Include="System.GC.Concurrent" Value="false" Trim="true" />
-  </ItemGroup>
 
 </Project>

@@ -57,7 +57,7 @@ Fixes:
 | Cause | Fix |
 |---|---|
 | A Rust guest pulled in `std::fs`, `std::net`, or a crate that did | Remove it; the SDK deliberately offers no equivalent |
-| A C# guest dragged in a new BCL surface | Define the `__wasm_import_*` symbol in `native/wisp_pal.c` — see [below](#the-c-case-a-new-wasi-import-appeared) |
+| A C# guest dragged in a new BCL surface | Define the `__wasm_import_*` symbol in `guest-sdks/dotnet/native/wisp_pal.c` — see [below](#the-c-case-a-new-wasi-import-appeared) |
 | A hand-written module | Check the name against [Capabilities](../reference/capabilities.md); typos land here |
 
 ### V2 — the binary requires a disabled engine feature
@@ -112,7 +112,7 @@ Find the symbol name and signature:
 ./scripts/dev bash -lc "wasm-tools print guests/dotnet/out/wisp_guest_dotnet.wasm | grep '(import \"wasi'"
 ```
 
-Then define its `__wasm_import_*` symbol in `guests/dotnet/native/wisp_pal.c`
+Then define its `__wasm_import_*` symbol in `guest-sdks/dotnet/native/wisp_pal.c`
 so `wasm-ld` resolves it locally and emits no import.
 
 To find out whether a stubbed import is ever actually *reached* — an

@@ -61,6 +61,17 @@ public sealed class Response
     /// </summary>
     public static Response Raw(byte[] body, ushort status = 200) =>
         new(status, body, null);
+
+    /// <summary>
+    /// Bytes with an explicit content type. <c>Raw</c> is the right default for
+    /// a benchmark guest, where ~30 extra bytes through <c>resp_new</c> on
+    /// every dispatch would land on one side of a language comparison only.
+    /// This guest serves a page to a browser, so the header has to be real: a
+    /// reply with no <c>content-type</c> leaves the browser to MIME-sniff, and
+    /// a sniff is a guess.
+    /// </summary>
+    public static Response Bytes(byte[] body, string? contentType, ushort status = 200) =>
+        new(status, body, contentType);
 }
 
 /// <summary>

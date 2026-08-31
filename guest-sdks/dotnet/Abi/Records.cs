@@ -8,7 +8,7 @@ namespace Wisp.Abi;
 /// order because postcard writes structs as bare, unframed field sequences —
 /// the order IS the format.
 /// </summary>
-internal sealed class DispatchRecord
+public sealed class DispatchRecord
 {
     internal ulong DispatchId;
     internal DispatchKind Kind;
@@ -61,7 +61,7 @@ internal sealed class DispatchRecord
 }
 
 /// <summary>Discriminant order of <c>wisp-abi::dispatch::DispatchKind</c>.</summary>
-internal enum DispatchKind : uint
+public enum DispatchKind : uint
 {
     Http = 0,
 

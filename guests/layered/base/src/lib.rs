@@ -14,7 +14,7 @@
 //!   `wisp_rtabi::rt_surface_list!`, the same list the tenant side imports
 //!   from, so the two halves cannot drift. They live in *this* crate rather
 //!   than in `wisp-rtlib` because `#[no_mangle]` in a dependency rlib is not
-//!   reliably retained — the same reason `guests/wisp-guest` is rlib-only.
+//!   reliably retained — the same reason `guest-sdks/rust` is rlib-only.
 //! * **It is un-trimmable, on purpose.** Every entry point is a root, so fat
 //!   LTO cannot delete anything reachable from the full surface. That is
 //!   §4.6's stated cost — "no trimming or devirtualization through the

@@ -12,7 +12,7 @@ members = [
     "crates/wisp-bench",
     "tests",
 ]
-exclude = ["crates/spike", "guests"]
+exclude = ["crates/spike", "guests", "guest-sdks"]
 
 [workspace.package]
 version = "0.1.0"

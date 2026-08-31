@@ -109,6 +109,6 @@ Two rules follow from that:
 
 When you need to check a claim before writing it down, the tree is the source:
 `crates/wisp-abi` for the wire contract and the capability list,
-`guests/dotnet/src` and `guests/wisp-guest/src` for the SDK surfaces,
+`guest-sdks/dotnet` and `guest-sdks/rust/src` for the SDK surfaces,
 `crates/wispd/src/config.rs` for node configuration, and the CLI sources for
 flags. Read the code, then write what a user needs to know.

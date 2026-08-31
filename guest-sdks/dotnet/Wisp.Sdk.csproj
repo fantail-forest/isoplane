@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The C# WISP guest SDK: the ABI, the async runtime, and the bindings.
+
+    ONE copy, referenced by every guest. It names no tenant type — a guest
+    supplies an `IWispRouter` (see Sdk/Routers.cs) and the entrypoint in
+    Abi/Exports.cs is generic over it. That indirection is the whole reason
+    this can be a library instead of a directory each guest copies.
+
+    No RuntimeIdentifier and no ILCompiler reference here: this compiles to
+    IL, and the guest that references it is what gets published to wasm. ILC
+    links the closure into one module, so the assembly boundary costs nothing
+    at runtime.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Wisp</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>false</ImplicitUsings>
+    <DebugType>none</DebugType>
+    <!-- The guest publishes; this project never does. -->
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Abi/**/*.cs" />
+    <Compile Include="Runtime/**/*.cs" />
+    <Compile Include="Sdk/**/*.cs" />
+  </ItemGroup>
+
+</Project>

@@ -31,6 +31,10 @@ Read the two SDK pages with that asymmetry in mind:
 | [C# SDK](reference/sdk-csharp.md) | **The target.** What a tenant writes. |
 | [Rust SDK](reference/sdk-rust.md) | The reference implementation of the contract and its fixture guests. |
 
+Where a mechanism is currently more complete on the Rust side, this
+documentation says so on the page that documents it rather than implying
+parity.
+
 ## Where to go
 
 This documentation follows the [Diátaxis](https://diataxis.fr) framework. The

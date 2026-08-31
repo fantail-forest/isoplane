@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Wisp.App;
 using Wisp.Runtime;
 
 namespace Wisp.Abi;
@@ -12,10 +11,11 @@ namespace Wisp.Abi;
 /// Core WebAssembly entrypoints for host allocation, dispatch, wake and GC hints.
 /// Dispatch and wake convert managed failures to protocol trap results.
 /// </summary>
-public static unsafe class Exports
+public static unsafe class Exports<TRouter>
+    where TRouter : IWispRouter, new()
 {
     private static bool _booted;
-    private static Api? _app;
+    private static TRouter? _router;
     private static Task<Response>? _root;
     private static Ctx? _ctx;
 
@@ -25,7 +25,8 @@ public static unsafe class Exports
         if (_booted) return;
         _booted = true;
         SynchronizationContext.SetSynchronizationContext(WispSynchronizationContext.Instance);
-        _app = new Api();
+        _router = new TRouter();
+        _router.Boot();
     }
 
     // -----------------------------------------------------------------------
@@ -41,7 +42,6 @@ public static unsafe class Exports
     /// <c>wisp_handle</c> / <c>wisp_wake</c> came from here, because those
     /// entrypoints free it once they have copied it onto the GC heap.
     /// </summary>
-    [UnmanagedCallersOnly(EntryPoint = "wisp_alloc")]
     public static int Alloc(int size, int align)
     {
         if (size <= 0) return 0;
@@ -73,7 +73,6 @@ public static unsafe class Exports
     /// A new top-level work item. Returns <c>done</c>, <c>pending</c> or
     /// <c>trapped</c>.
     /// </summary>
-    [UnmanagedCallersOnly(EntryPoint = "wisp_handle")]
     public static long Handle(int ptr, int len)
     {
         try
@@ -98,7 +97,7 @@ public static unsafe class Exports
 
             // Kicking the handler off runs it synchronously up to its first
             // incomplete await, exactly as .NET always has.
-            _root = Route(d, _ctx);
+            _root = _router!.Route(d, _ctx);
 
             return Settle();
         }
@@ -120,13 +119,6 @@ public static unsafe class Exports
         }
     }
 
-    /// <summary>Routes a decoded HTTP dispatch to the handler.</summary>
-    private static Task<Response> Route(DispatchRecord d, Ctx ctx)
-    {
-        if (d.Kind != DispatchKind.Http) throw new PostcardException();
-        return _app!.HandleAsync(new Request(d.Method, d.Path), ctx);
-    }
-
     // -----------------------------------------------------------------------
     // wisp_wake(future, ptr, len) -> poll-status
     // -----------------------------------------------------------------------
@@ -136,7 +128,6 @@ public static unsafe class Exports
     /// unspecified and the guest must not assume one — the .NET Task model
     /// already does not.
     /// </summary>
-    [UnmanagedCallersOnly(EntryPoint = "wisp_wake")]
     public static long Wake(long future, int ptr, int len)
     {
         try
@@ -173,7 +164,6 @@ public static unsafe class Exports
     }
 
     /// <summary>Initializes guest state for a preparation attempt. A failed attempt may be retried; prior external effects are not undone.</summary>
-    [UnmanagedCallersOnly(EntryPoint = "wisp_initialize")]
     public static void Initialize()
     {
         try
@@ -206,7 +196,6 @@ public static unsafe class Exports
     /// Requests a best-effort compacting collection; pressure of two or more selects
     /// aggressive collection. This does not guarantee that unused memory is zeroed.
     /// </summary>
-    [UnmanagedCallersOnly(EntryPoint = "wisp_gc_hint")]
     public static void GcHint(int pressure)
     {
         try
