@@ -20,3 +20,6 @@ wispd-data/
 # benchmark outputs
 bench/out
 wispd-data-todo/
+
+# local .data output for manual testing
+.data/
