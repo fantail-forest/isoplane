@@ -34,6 +34,23 @@ libc = { workspace = true }
 parking_lot = { workspace = true }
 postcard = { workspace = true }
 blake3 = { workspace = true }
+# Heap profiler for `examples/template_heap`. Optional rather than a
+# dev-dependency because cargo has no optional dev-dependencies and this must
+# not be linked into anything that is not explicitly asking to be profiled.
+dhat = { version = "0.3", optional = true }
+# Also for `examples/template_heap`, and for one question only: glibc's malloc
+# does not return cranelift's freed compilation working set to the kernel, and
+# "is that the allocator or is it wasmtime?" is answerable by swapping the
+# allocator and re-measuring. Never linked unless asked for.
+mimalloc = { version = "0.1", default-features = false, optional = true }
+
+[features]
+# Compiles dhat's global allocator into `examples/template_heap` so the
+# per-template heap can be attributed by callsite. Off by default and never on
+# in a data-plane build: it replaces the global allocator for the whole binary.
+dhat-heap = ["dep:dhat"]
+# Runs `examples/template_heap` on mimalloc instead of glibc malloc.
+mimalloc-alloc = ["dep:mimalloc"]
 
 [dev-dependencies]
 # Engine unit tests use hand-written .wat fixtures rather than real guests, so a

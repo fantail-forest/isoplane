@@ -4895,8 +4895,8 @@ mod cell_tests {
         fn abi_rev(&self) -> u32 {
             wisp_abi::ABI_REV
         }
-        fn template_image(&self) -> Arc<Vec<u8>> {
-            self.template.clone()
+        fn template_image(&self) -> Arc<wisp_engine::MemoryImage> {
+            Arc::new(wisp_engine::MemoryImage::from_dense(&self.template))
         }
         fn activate(
             &self,

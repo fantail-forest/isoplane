@@ -56,10 +56,13 @@
 //!   fairness §6.4 promises — but the *weighting* half is absent. See
 //!   [`cell::CellConfig::exec_threads`].
 
-// Two places in this crate are `unsafe`, and both are excused by name rather
-// than by relaxing the rule: `meters::read_clock_ns`, for `clock_gettime`, and
-// the whole of `tsc_marks`, which is supplied code reading the CPU's timestamp
-// counter through the `RDTSCP` intrinsic. Everything else is denied.
+// Three places in this crate are `unsafe`, and all three are excused by name
+// rather than by relaxing the rule: `meters::read_clock_ns`, for
+// `clock_gettime`; the whole of `tsc_marks`, which is supplied code reading the
+// CPU's timestamp counter through the `RDTSCP` intrinsic; and
+// `activator::EngineActivator::load_mapped`, which maps a compiled artifact
+// from a file and therefore carries wasmtime's own `deserialize_file`
+// contract. Everything else is denied.
 #![deny(unsafe_code)]
 
 use std::fmt;

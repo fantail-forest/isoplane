@@ -965,7 +965,7 @@ impl Activator for SlowActivator {
     fn abi_rev(&self) -> u32 {
         self.inner.abi_rev()
     }
-    fn template_image(&self) -> Arc<Vec<u8>> {
+    fn template_image(&self) -> Arc<wisp_engine::MemoryImage> {
         self.inner.template_image()
     }
     fn activate(

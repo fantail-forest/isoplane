@@ -109,7 +109,9 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
     let wasm = big::big_guest(MEM_PAGES, dirty);
     let t = e.load_template(&wasm).expect("template");
     assert_eq!(t.memory_pages(), MEM_PAGES);
-    assert_eq!(&t.memory_image()[0..4], b"WISP", "the template image must be non-zero");
+    let mut head = [0u8; 4];
+    t.memory_image().read_at(0, &mut head);
+    assert_eq!(&head, b"WISP", "the template image must be non-zero");
 
     // Warm everything that is not per-instance — compile, the pool's address
     // reservation, the linker — before the baseline is taken, so the baseline

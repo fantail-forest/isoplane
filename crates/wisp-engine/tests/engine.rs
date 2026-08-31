@@ -113,7 +113,7 @@ fn a_module_missing_a_required_export_cannot_activate() {
 fn reset_restores_template_contents_byte_exactly() {
     let e = test_engine();
     let t = e.load_template(&echo_guest()).unwrap();
-    let image = t.memory_image().to_vec();
+    let image = t.memory_image().to_dense();
 
     let mut i = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
@@ -206,7 +206,7 @@ fn activation_seals_globals_and_tables_from_the_template() {
         format!("{:?}", fresh.globals),
         format!("{:?}", baseline.globals)
     );
-    assert_eq!(b.memory(), t.memory_image());
+    assert_eq!(b.memory(), t.memory_image().to_dense());
     // The table is re-sealed too: capture would have failed if any slot's
     // nullness differed from the template baseline.
     assert!(fresh.table_mutations.is_empty());
@@ -255,6 +255,92 @@ fn a_serialized_template_round_trips_and_is_engine_pinned() {
     let err =
         unsafe { other.deserialize(&bytes) }.expect_err("cross-engine artifact must be refused");
     assert!(format!("{err:#}").contains("engine"), "{err:#}");
+}
+
+/// The activator's baseline must be the engine's, not a copy of it.
+///
+/// `wisp-host`'s `EngineActivator` holds the template image for §6.6's
+/// page-diff. It used to take `memory_image().to_vec()` — a second full copy
+/// per module per cell, which for a pre-initialized .NET template is 53 MB.
+/// `memory_image_arc` hands out the engine's own allocation instead, and
+/// pointer equality is the only assertion that actually proves no copy
+/// happened: comparing contents would pass just as happily for a clone.
+#[test]
+fn the_template_image_is_shared_not_copied() {
+    let e = test_engine();
+    let t = e.load_template(&echo_guest()).unwrap();
+    let a = t.memory_image_arc();
+    let b = t.memory_image_arc();
+    assert!(
+        std::sync::Arc::ptr_eq(&a, &b),
+        "two holders must share one allocation"
+    );
+    assert!(
+        std::ptr::eq(std::sync::Arc::as_ptr(&a), t.memory_image() as *const _),
+        "the shared allocation must be the template's own, not a clone of it"
+    );
+}
+
+/// The mapped load path has to be *equivalent*, not merely cheaper: same
+/// template, same image, same dispatch, and the same refusal when the engine
+/// does not match.
+#[test]
+fn a_mapped_artifact_is_equivalent_to_a_copied_one() {
+    let e = test_engine();
+    let dir = std::env::temp_dir().join(format!("wisp-artifact-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let wasm = echo_guest();
+    let t = e.load_template(&wasm).unwrap();
+
+    // First load compiles into the cache; the second must map what the first
+    // wrote. If `compiled` were true both times the cache would be doing
+    // nothing, which is exactly the failure the flag exists to catch.
+    // SAFETY: a fresh directory this test owns, written only by this engine.
+    let (a, compiled_a) = unsafe { e.load_mapped(&wasm, &dir) }.unwrap();
+    let (b, compiled_b) = unsafe { e.load_mapped(&wasm, &dir) }.unwrap();
+    assert!(
+        compiled_a,
+        "the first load has nothing to map and must compile"
+    );
+    assert!(
+        !compiled_b,
+        "the second load must map the artifact the first wrote"
+    );
+
+    for m in [&a, &b] {
+        assert_eq!(m.hash, t.hash);
+        assert_eq!(m.abi_rev, t.abi_rev);
+        assert_eq!(m.memory_image(), t.memory_image());
+        assert_eq!(m.memory_pages(), t.memory_pages());
+        assert_eq!(e.artifact_key(m), e.artifact_key(&t));
+    }
+
+    let mut i = e
+        .activate(&b, Box::new(TestBindings::new(Recorder::default())))
+        .unwrap();
+    assert_eq!(
+        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        Completion::Done
+    );
+
+    // §4.4/§9.3 again, on the mapped path: a differently configured engine
+    // must refuse the file rather than map code it cannot run.
+    let other = WispEngine::new(EngineConfig {
+        max_instances: 8,
+        max_memory_bytes: 8 << 20,
+        epoch_tick_us: 200,
+        pooling: true,
+        spectre_mitigations: false,
+        guard_size_bytes: 2 << 20,
+    })
+    .unwrap();
+    let paths = wisp_engine::ArtifactPaths::new(&dir, &e.artifact_key(&t));
+    let meta = std::fs::read(&paths.meta).unwrap();
+    let err = unsafe { other.deserialize_file(&meta, &paths.cwasm) }
+        .expect_err("cross-engine artifact must be refused");
+    assert!(format!("{err:#}").contains("engine"), "{err:#}");
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

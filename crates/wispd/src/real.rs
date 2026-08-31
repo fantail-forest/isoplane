@@ -37,12 +37,23 @@ pub struct RealCells {
 pub struct RealPaths {
     /// Private local preparation output.
     pub registry: std::path::PathBuf,
+    /// Compiled template artifacts, one `.meta` + `.cwasm` pair per
+    /// `(module hash, engine version, µarch)`.
+    ///
+    /// Separate from `registry` because these are *mapped*, not read: a cell
+    /// loads a template with `Module::deserialize_file`, so the bytes have to
+    /// be a bare `.cwasm` starting at offset 0 of a file this node owns and
+    /// never rewrites. The registry's blobs are enveloped and content-checked
+    /// on every read, which is the right shape for distribution and the wrong
+    /// shape for a mapping.
+    pub artifacts: std::path::PathBuf,
 }
 
 impl RealPaths {
     pub fn under(root: &Path) -> Self {
         RealPaths {
             registry: root.join("registry"),
+            artifacts: root.join("artifacts"),
         }
     }
 }

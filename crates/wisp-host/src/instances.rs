@@ -27,8 +27,8 @@ pub trait Activator: Send + Sync + 'static {
     fn module(&self) -> &ModuleId;
     fn module_hash(&self) -> ModuleHash;
     fn abi_rev(&self) -> u32;
-    /// Baseline memory bytes exposed to capture and restore callers.
-    fn template_image(&self) -> Arc<Vec<u8>>;
+    /// Baseline memory image exposed to capture and restore callers.
+    fn template_image(&self) -> Arc<wisp_engine::MemoryImage>;
     /// Create an instance using the supplied host bindings.
     fn activate(
         &self,

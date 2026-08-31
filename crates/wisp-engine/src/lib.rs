@@ -44,6 +44,7 @@ use wisp_abi::result::ResultRecord;
 use wisp_abi::status::PollStatus;
 
 pub mod bindings;
+pub mod image;
 pub mod budget;
 pub mod instance;
 pub mod pal;
@@ -58,6 +59,7 @@ mod watchdog;
 mod wtconfig;
 
 pub use bindings::{HostBindings, ImportCall};
+pub use image::{MemoryImage, PAGE};
 pub use budget::{CpuBudget, DispatchOutcome, KillPhase, TrapInfo, TrapKind};
 pub use instance::Instance;
 pub use meter::{
@@ -168,7 +170,11 @@ impl WispEngine {
             .serialize()
             .map_err(anyhow::Error::from)
             .context("serializing compiled template")?;
-        let meta = template::ArtifactMeta {
+        template::encode_artifact(&self.artifact_meta(t), &cwasm)
+    }
+
+    fn artifact_meta(&self, t: &Template) -> template::ArtifactMeta {
+        template::ArtifactMeta {
             magic: template::ARTIFACT_MAGIC,
             format: template::ARTIFACT_FORMAT,
             abi_rev: t.abi_rev,
@@ -178,8 +184,61 @@ impl WispEngine {
             deferred: t.inner.deferred.clone(),
             mut_global_names: t.inner.mut_globals.iter().map(|(n, _)| n.clone()).collect(),
             table_names: t.inner.tables.iter().map(|(n, _)| n.clone()).collect(),
-        };
-        template::encode_artifact(&meta, &cwasm)
+        }
+    }
+
+    /// The same artifact, as the two files a cell should actually hold: the
+    /// metadata sidecar, and the bare `.cwasm`.
+    ///
+    /// ## Why this exists, and why the single-blob form cannot be mapped
+    ///
+    /// [`WispEngine::serialize`] prefixes the compiled module with a metadata
+    /// header, so the blob's byte 0 is not the `.cwasm`'s byte 0. That is fine
+    /// for [`WispEngine::deserialize`], which takes a slice — and fatal for
+    /// [`WispEngine::deserialize_file`], which hands wasmtime a *path* so the
+    /// code can be mapped from the page cache instead of copied into anonymous
+    /// memory. `Module::deserialize_file` requires the artifact to start at
+    /// offset 0 of the file it maps.
+    ///
+    /// Splitting them is worth a two-file artifact. Measured on the C# bench
+    /// guest's pre-initialized template (a 56 MB artifact, of which 53 MB is
+    /// the memory image and almost none of it is ever read):
+    ///
+    /// | arrival | resident per template | memfd shmem per template |
+    /// |---|---:|---:|
+    /// | `deserialize(&[u8])` | 55,105 kB | 53,084,160 B |
+    /// | `deserialize_file(path)` | 1,262 kB | **0** |
+    ///
+    /// The memfd goes to zero because wasmtime sources §6.2's CoW image from
+    /// the file mapping rather than minting one, and per-instance sharing is
+    /// unchanged by that: 44.3 kB/instance marginal PSS over 400 live
+    /// instances, on both paths.
+    pub fn serialize_parts(&self, t: &Template) -> Result<(Vec<u8>, Vec<u8>)> {
+        let cwasm = t
+            .inner
+            .module
+            .serialize()
+            .map_err(anyhow::Error::from)
+            .context("serializing compiled template")?;
+        let meta = postcard::to_allocvec(&self.artifact_meta(t))
+            .context("encoding artifact metadata")?;
+        Ok((meta, cwasm))
+    }
+
+    /// Compile a template's wasm straight to the two artifact parts, without
+    /// building a [`Template`] and without keeping the compiled module.
+    ///
+    /// This is the call a deploy step wants: it produces exactly what
+    /// [`WispEngine::deserialize_file`] consumes, under *this* engine's
+    /// configuration, so the artifact is loadable by the cells this engine
+    /// describes. Compiling with a differently configured `wasmtime::Engine`
+    /// produces a `.cwasm` that `deserialize` refuses — which is the check
+    /// working, not a bug, and is why the compile belongs here rather than
+    /// beside a second `Config`.
+    pub fn precompile(&self, template_wasm: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+        template::structural_check(template_wasm)?;
+        let t = self.load_template(template_wasm)?;
+        self.serialize_parts(&t)
     }
 
     /// # Safety
@@ -188,6 +247,78 @@ impl WispEngine {
     /// this compiler origin before passing them to Wasmtime.
     pub unsafe fn deserialize(&self, bytes: &[u8]) -> Result<Template> {
         let (meta, cwasm) = template::decode_artifact(bytes)?;
+        self.check_artifact_meta(&meta)?;
+        // SAFETY: delegated to the caller's contract above.
+        let module = unsafe { wasmtime::Module::deserialize(&self.inner.wasmtime, cwasm) }
+            .map_err(anyhow::Error::from)
+            .context("deserializing precompiled template")?;
+        self.finish_template(
+            module,
+            ModuleHash(meta.module_hash),
+            meta.deferred,
+            meta.mut_global_names,
+            meta.table_names,
+        )
+    }
+
+    /// Load a template by **mapping** its compiled artifact from a file.
+    ///
+    /// The counterpart to [`WispEngine::serialize_parts`], and the load path a
+    /// cell should use. `deserialize` copies the whole artifact into anonymous
+    /// memory and makes every byte of it resident whether or not anything ever
+    /// executes it; this maps the file, so the code and §6.2's memory image are
+    /// page cache — demand-paged, evictable under pressure, and shared by every
+    /// mapping of the same artifact rather than duplicated per tenant.
+    ///
+    /// The numbers, and the reason this is not merely tidier, are on
+    /// [`WispEngine::serialize_parts`].
+    ///
+    /// # Safety
+    /// `meta` and the file at `cwasm_path` must be unmodified output of
+    /// [`WispEngine::serialize_parts`] from the same engine version and
+    /// configuration.
+    ///
+    /// The file is *mapped*, not read, so it must also not be modified while
+    /// this template is alive — a truncation under the mapping is a SIGBUS in
+    /// the middle of guest code, not an error return. A content-addressed
+    /// store never rewrites a blob in place, which is what makes this safe
+    /// where it is used; a caller pointing this at a mutable path is the one
+    /// introducing the hazard.
+    pub unsafe fn deserialize_file(
+        &self,
+        meta: &[u8],
+        cwasm_path: &std::path::Path,
+    ) -> Result<Template> {
+        let meta: template::ArtifactMeta =
+            postcard::from_bytes(meta).context("decoding artifact metadata")?;
+        self.check_artifact_meta(&meta)?;
+        // SAFETY: delegated to the caller's contract above.
+        let module = unsafe { wasmtime::Module::deserialize_file(&self.inner.wasmtime, cwasm_path) }
+            .map_err(anyhow::Error::from)
+            .with_context(|| format!("mapping precompiled template {}", cwasm_path.display()))?;
+        self.finish_template(
+            module,
+            ModuleHash(meta.module_hash),
+            meta.deferred,
+            meta.mut_global_names,
+            meta.table_names,
+        )
+    }
+
+    /// The two checks that stand between a cell and mapping code it cannot
+    /// run: the engine that built the artifact, and the ABI rev the delta
+    /// format is bound to.
+    fn check_artifact_meta(&self, meta: &template::ArtifactMeta) -> Result<()> {
+        if meta.magic != template::ARTIFACT_MAGIC {
+            bail!("not a WISP template artifact");
+        }
+        if meta.format != template::ARTIFACT_FORMAT {
+            bail!(
+                "template artifact format {} is not {}",
+                meta.format,
+                template::ARTIFACT_FORMAT
+            );
+        }
         if meta.engine_fingerprint != self.inner.fingerprint {
             bail!(
                 "template artifact was built by engine {} but this cell is {} — artifacts are \
@@ -203,23 +334,81 @@ impl WispEngine {
                 wisp_abi::ABI_REV
             );
         }
-        // SAFETY: delegated to the caller's contract above.
-        let module = unsafe { wasmtime::Module::deserialize(&self.inner.wasmtime, cwasm) }
-            .map_err(anyhow::Error::from)
-            .context("deserializing precompiled template")?;
-        self.finish_template(
-            module,
-            ModuleHash(meta.module_hash),
-            meta.deferred,
-            meta.mut_global_names,
-            meta.table_names,
-        )
+        Ok(())
     }
 
     /// The artifact-cache key for a template on this engine (§4.4, §9.3):
     /// `(module hash, engine version, µarch)`.
     pub fn artifact_key(&self, t: &Template) -> String {
         format!("{}-{}", t.hash.hex(), self.inner.fingerprint)
+    }
+
+    /// The same key from the template *wasm*, without compiling it.
+    ///
+    /// The point of the cache is to answer "do I already have this?" before
+    /// paying for a compile, which a key that needs a `Template` cannot do.
+    pub fn artifact_key_for(&self, template_wasm: &[u8]) -> String {
+        format!("{}-{}", ModuleHash::of(template_wasm).hex(), self.inner.fingerprint)
+    }
+
+    /// Compile a template's wasm to the two artifact files, and drop the
+    /// compiled module before returning.
+    ///
+    /// Dropping it is the point. Cranelift does not give its working set back:
+    /// compiling the C# bench guest's pre-initialized template leaves ~27 MB of
+    /// anonymous memory per module resident in the process **after the template
+    /// is dropped**, and `malloc_trim` recovers none of it. A process that
+    /// compiles N templates carries N times that for its whole life. So the
+    /// intended caller is a *short-lived* one — `wispd --precompile`, or a
+    /// deploy step — after which the cell maps the result and never runs the
+    /// compiler at all.
+    pub fn precompile_to_files(
+        &self,
+        template_wasm: &[u8],
+        dir: &std::path::Path,
+    ) -> Result<ArtifactPaths> {
+        let paths = ArtifactPaths::new(dir, &self.artifact_key_for(template_wasm));
+        let (meta, cwasm) = self.precompile(template_wasm)?;
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("creating artifact cache {}", dir.display()))?;
+        // Written to a temporary name and renamed, because the `.cwasm` is
+        // *mapped* by whoever loads it: a reader that opens a half-written file
+        // does not get an error, it gets a SIGBUS later. `rename` within a
+        // directory is atomic, so a reader sees the whole file or no file.
+        write_atomic(&paths.meta, &meta)?;
+        write_atomic(&paths.cwasm, &cwasm)?;
+        Ok(paths)
+    }
+
+    /// Load a template by mapping its artifact, compiling one first only if the
+    /// cache does not have it.
+    ///
+    /// See [`WispEngine::serialize_parts`] for the shared file representation
+    /// and [`WispEngine::precompile_to_files`] for cache population.
+    ///
+    /// # Safety
+    /// The cache directory must contain only artifacts this engine produced,
+    /// and nothing may rewrite a file in it while a template is alive. Both
+    /// hold for a directory the process owns and writes through
+    /// [`WispEngine::precompile_to_files`], which is content-addressed and
+    /// writes by atomic rename. A cache writable by an untrusted actor does
+    /// not meet these compiler-origin and immutable-backing preconditions.
+    pub unsafe fn load_mapped(
+        &self,
+        template_wasm: &[u8],
+        dir: &std::path::Path,
+    ) -> Result<(Template, bool)> {
+        let paths = ArtifactPaths::new(dir, &self.artifact_key_for(template_wasm));
+        let mut compiled = false;
+        if !(paths.meta.exists() && paths.cwasm.exists()) {
+            self.precompile_to_files(template_wasm, dir)?;
+            compiled = true;
+        }
+        let meta = std::fs::read(&paths.meta)
+            .with_context(|| format!("reading {}", paths.meta.display()))?;
+        // SAFETY: delegated to this function's contract.
+        let t = unsafe { self.deserialize_file(&meta, &paths.cwasm) }?;
+        Ok((t, compiled))
     }
 
     /// §6.2 step 1-3: map the template CoW, seal globals/tables, bind the
@@ -317,7 +506,10 @@ impl WispEngine {
         let memory = inst
             .get_memory(&mut store, guest_exports::MEMORY)
             .with_context(|| format!("template does not export `{}`", guest_exports::MEMORY))?;
-        let image = memory.data(&store).to_vec();
+        // Scanned into runs rather than copied: see `image::MemoryImage`. The
+        // dense borrow lives only for this statement, so a 53 MB .NET template
+        // is never *held* densely, only read once.
+        let image = Arc::new(crate::image::MemoryImage::from_dense(memory.data(&store)));
         let memory_pages = memory.size(&store) as u32;
 
         let mut mut_globals = Vec::with_capacity(mut_names.len());
@@ -382,6 +574,41 @@ fn instance_global_value(v: wasmtime::Val, store: impl wasmtime::AsContext) -> R
         wasmtime::Val::F64(x) => G::F64(x),
         other => bail!("template mutable global of type {:?} is not capturable", other.ty(store)),
     })
+}
+
+/// Where one template's two artifact files live.
+///
+/// Two files rather than one because `Module::deserialize_file` maps a path and
+/// therefore needs the `.cwasm` to start at byte 0 — see
+/// [`WispEngine::serialize_parts`].
+#[derive(Debug, Clone)]
+pub struct ArtifactPaths {
+    pub meta: std::path::PathBuf,
+    pub cwasm: std::path::PathBuf,
+}
+
+impl ArtifactPaths {
+    pub fn new(dir: &std::path::Path, key: &str) -> Self {
+        ArtifactPaths {
+            meta: dir.join(format!("{key}.meta")),
+            cwasm: dir.join(format!("{key}.cwasm")),
+        }
+    }
+}
+
+/// Write, then rename. A partially written `.cwasm` cannot be distinguished
+/// from a whole one by a reader that maps it — the failure arrives later, as a
+/// fault in the middle of guest code.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!(
+        "{}.tmp{}",
+        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
+    Ok(())
 }
 
 /// Bindings for the probe instantiation in `load_template`. Nothing may be

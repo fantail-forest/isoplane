@@ -96,11 +96,12 @@ impl Instance {
         let mut n = 0;
         let pages = data.len() / PAGE_SIZE;
         for p in 0..pages {
-            let cur = &data[p * PAGE_SIZE..(p + 1) * PAGE_SIZE];
-            let base = image
-                .get(p * PAGE_SIZE..(p + 1) * PAGE_SIZE)
-                .unwrap_or(&ZERO_PAGE);
-            if cur != base {
+            // `page_eq` carries the zero-extension rule this loop used to spell
+            // out with `ZERO_PAGE`: memory the guest grew into past the end of
+            // the template reads as zero by WASM's own rules, so a page beyond
+            // the image is compared against zeros rather than treated as an
+            // error.
+            if !image.page_eq(p, &data[p * PAGE_SIZE..(p + 1) * PAGE_SIZE]) {
                 n += 1;
             }
         }
@@ -371,8 +372,6 @@ impl Instance {
         }
     }
 }
-
-const ZERO_PAGE: [u8; PAGE_SIZE] = [0u8; PAGE_SIZE];
 
 fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
     match entry {

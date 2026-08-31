@@ -76,7 +76,16 @@ pub(crate) struct TemplateInner {
     /// The post-init linear memory as laid down at deploy time. This is the
     /// baseline the hibernation page-diff is taken against (§6.6) and the
     /// oracle for "reset restores template contents".
-    pub image: Vec<u8>,
+    ///
+    /// Stored as its non-zero runs, not as the memory. A pre-initialized .NET
+    /// template declares 53,084,160 bytes of which 147,207 are content; a
+    /// `Vec<u8>` here charged every cell 53 MB per template for that, and
+    /// `wisp-host`'s activator then copied it again. See `image::MemoryImage`.
+    ///
+    /// Its own `Arc` rather than a plain field, so `wisp-host`'s activator can
+    /// hold the baseline for §6.6 by bumping a refcount instead of taking the
+    /// second copy it used to take.
+    pub image: Arc<crate::image::MemoryImage>,
     pub memory_pages: u32,
     pub deferred: Vec<u32>,
     /// Exported mutable globals in module-global-index order, with the values
@@ -101,8 +110,18 @@ pub(crate) struct TemplateInner {
 impl Template {
     /// The pre-initialized linear memory, as laid down at deploy time. This
     /// is the baseline the hibernation page-diff is taken against.
-    pub fn memory_image(&self) -> &[u8] {
+    pub fn memory_image(&self) -> &crate::image::MemoryImage {
         &self.inner.image
+    }
+
+    /// The image as an `Arc` a consumer can hold without copying it.
+    ///
+    /// `wisp-host`'s activator needs the baseline on an execution-pool thread
+    /// for §6.6's page-diff. It used to take `memory_image().to_vec()`, which
+    /// for a .NET template was a second 53 MB allocation per module per cell;
+    /// the template is already an `Arc`, so sharing it costs a refcount.
+    pub fn memory_image_arc(&self) -> Arc<crate::image::MemoryImage> {
+        Arc::clone(&self.inner.image)
     }
 
     pub fn memory_pages(&self) -> u32 {

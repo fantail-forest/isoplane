@@ -8,7 +8,7 @@ sidebar_position: 1
 
 The host library separates HTTP routing, execution cells and the WebAssembly
 engine. A cell uses host threads; the WebAssembly sandbox is the guest
-isolation boundary. The `wispd` command inspects local configuration; it does not start the HTTP listeners.
+isolation boundary. The `wispd` command inspects local configuration and precompiles modules; it does not start the HTTP listeners.
 
 ```mermaid
 flowchart TB
