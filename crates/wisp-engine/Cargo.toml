@@ -53,6 +53,7 @@ dhat-heap = ["dep:dhat"]
 mimalloc-alloc = ["dep:mimalloc"]
 
 [dev-dependencies]
+tempfile = { workspace = true }
 # Engine unit tests use hand-written .wat fixtures rather than real guests, so a
 # guest-SDK bug can never be mistaken for an engine bug.
 wat = "1"
