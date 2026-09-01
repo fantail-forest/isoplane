@@ -1,7 +1,5 @@
-//! **Claim C1** — isolate economics (spec.md G1, §6.2).
-//!
-//! > *≥ 5,000 resident instances per commodity server; marginal memory per
-//! > instance = dirtied pages only.*
+//! Isolate economics: marginal memory per resident instance should be the
+//! pages that instance dirtied, and nothing else.
 //!
 //! One `#[test]` in one binary, because the measurement is process RSS and any
 //! concurrently running test would be counted as an instance's cost.
@@ -39,12 +37,13 @@ fn marginal_instance_cost_is_dirty_pages() {
 
     let scenarios = [
         Scenario { n: 2_000 * scale, dirty: 16, label: "64 KiB dirty set" },
-        // The case the claim is actually about: §6.2 says G1's >= 5,000
-        // instances/server "follows from typical dirty sets of 1-8 MB".
-        Scenario { n: 5_000 * scale, dirty: 256, label: "1 MiB dirty set (§6.2 typical, low end)" },
+        // A larger population with a realistic dirty set, where the marginal
+        // slope dominates the fixed baseline and a sharing regression is
+        // impossible to miss.
+        Scenario { n: 5_000 * scale, dirty: 256, label: "1 MiB dirty set" },
     ];
 
-    eprintln!("\n=== C1: instance density (spec G1, §6.2) ===");
+    eprintln!("\n=== instance density ===");
     if cfg!(debug_assertions) {
         eprintln!("  *** DEBUG BUILD — re-run with --release for numbers worth quoting. ***");
     }
@@ -55,7 +54,7 @@ fn marginal_instance_cost_is_dirty_pages() {
         summary.push((s.n, s.dirty, s.label, per_inst_kb));
     }
 
-    eprintln!("\n  --- C1 summary ---");
+    eprintln!("\n  --- density summary ---");
     for (n, dirty, label, per_inst_kb) in &summary {
         let dirty_kb = *dirty as f64 * 4.0;
         eprintln!(
@@ -65,16 +64,13 @@ fn marginal_instance_cost_is_dirty_pages() {
         );
     }
 
-    // §6.2 sizes the claim off "typical dirty sets of 1-8 MB". Turn the measured
-    // per-instance overhead into the residency the spec is actually claiming.
+    // Turn the measured per-instance overhead into residency, projected across
+    // a range of plausible dirty sets and host memory budgets.
     let overhead_kb = summary
         .iter()
         .map(|(_, d, _, p)| p - *d as f64 * 4.0)
         .fold(f64::MIN, f64::max);
-    eprintln!(
-        "\n  measured overhead beyond the dirty set: {overhead_kb:.1} kB/instance \
-         (§6.2 targets <= 64 kB)"
-    );
+    eprintln!("\n  measured overhead beyond the dirty set: {overhead_kb:.1} kB/instance");
     for host_gib in [32.0f64, 64.0, 128.0] {
         let line: Vec<String> = [1.0f64, 4.0, 8.0]
             .iter()
@@ -86,10 +82,12 @@ fn marginal_instance_cost_is_dirty_pages() {
         eprintln!("  instances in a {host_gib:>5.0} GiB budget: {}", line.join("   "));
     }
 
+    // A regression fence, not a target: the measured overhead sits an order of
+    // magnitude under this, and a sharing regression blows past it immediately.
     assert!(
         overhead_kb < 64.0,
-        "§6.2 targets <= 64 kB of fixed per-instance overhead beyond the dirty set, \
-         measured {overhead_kb:.1} kB"
+        "fixed per-instance overhead beyond the dirty set measured {overhead_kb:.1} kB, \
+         far above where page sharing puts it — sharing is not working"
     );
 }
 
@@ -183,10 +181,10 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
             r.saturating_sub(base_rss) as f64 / *i as f64
         );
     }
-    // `docs/spike-findings.md` §2 is emphatic that PSS, not RSS, is the metric
-    // to size a machine from: RSS counts a shared template page once per
-    // mapping, so anyone provisioning off RSS over-provisions by roughly the
-    // fault-around region times the instance count.
+    // PSS, not RSS, is the metric to size a machine from: RSS counts a shared
+    // template page once per mapping, so anyone provisioning off RSS
+    // over-provisions by roughly the fault-around region times the instance
+    // count.
     let pss_per_inst = end_pss.saturating_sub(base_pss) as f64 / n as f64;
     eprintln!(
         "  Pss           {base_pss} -> {end_pss} kB (+{pss_per_inst:.1} kB/instance)  <== size machines from this"
@@ -224,12 +222,12 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
     assert!(
         per_inst_kb < dirty_kb + 64.0,
         "marginal cost {per_inst_kb:.1} kB/instance exceeds the {dirty_kb:.0} kB dirty set by more \
-         than §6.2's 64 kB bookkeeping target — page sharing is not working"
+         than 64 kB of bookkeeping — page sharing is not working"
     );
 
     drop(live);
     // Report PSS, assert on RSS: RSS is the pessimistic of the two, so the
-    // §6.2 overhead bound is held against the number that cannot flatter us.
+    // overhead bound is held against the number that cannot flatter us.
     let _ = pss_per_inst;
     per_inst_kb
 }

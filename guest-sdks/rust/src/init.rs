@@ -39,12 +39,13 @@ pub struct LazyInit<T: 'static> {
     slot: UnsafeCell<Option<T>>,
     init: fn() -> T,
     /// How many times the initializer has actually executed *in this
-    /// instance*. §2.6 makes reuse-vs-fresh observable and this is the number
-    /// that shows it: under `reuse` it stays at 1, under `fresh` it climbs.
+    /// instance*. This is the number that makes reuse-vs-fresh observable:
+    /// under `reuse` it stays at 1, under `fresh` it climbs.
     runs: Cell<u32>,
 }
 
-// Single logical thread (§4.3 V2 turns threads/atomics off at the engine).
+// Single logical thread: the engine has no threads and no atomics, and the
+// validator rejects a module that declares them.
 unsafe impl<T> Sync for LazyInit<T> {}
 
 impl<T: 'static> LazyInit<T> {
@@ -99,7 +100,7 @@ impl<T: 'static> core::ops::Deref for LazyInit<T> {
     }
 }
 
-/// Declare a value whose initializer may be deferred to first touch (§4.4).
+/// Declare a value whose initializer may be deferred to first touch.
 ///
 /// ```ignore
 /// deferred_lazy! {
@@ -132,8 +133,8 @@ macro_rules! init_units {
 
 /// Runs units in slice order with stable positional IDs, skipping units the host deferred.
 pub fn run_init_units(units: &[InitUnit]) {
-    // `abort` is one of the five init-visible imports precisely so that a
-    // failed pre-init reports usefully (§4.4).
+    // `abort` is init-visible precisely so that a failed pre-init reports
+    // usefully.
     #[cfg(target_arch = "wasm32")]
     crate::install_panic_hook();
     for (index, u) in units.iter().enumerate() {
@@ -154,9 +155,9 @@ pub fn run_init_units(units: &[InitUnit]) {
         // which would defer a pure unit forever and never converge.
         unsafe { abi::init_unit_begin(NO_UNIT) };
     }
-    // §4.4: init-only imports stay DECLARED in the template (wizer does not
-    // strip the import section) but the host binds them to traps at runtime as
-    // a tripwire. From here on the SDK must not call any of them.
+    // Init-only imports stay DECLARED in the template -- wizer does not strip
+    // the import section -- but the host binds them to traps at runtime as a
+    // tripwire. From here on the SDK must not call any of them.
     state().init_complete = true;
 }
 
@@ -206,7 +207,7 @@ pub fn hash_seed_is_bound() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Init-visible config (§4.4, §9.5)
+// Init-visible config
 // ---------------------------------------------------------------------------
 
 /// Reads initialization configuration for this preparation and caches it in guest state.
@@ -284,13 +285,13 @@ mod tests {
         assert!(PURE.is_initialized());
         assert_eq!(PURE.run_count(), 1);
         assert_eq!(*PURE.get(), 42);
-        assert_eq!(PURE.run_count(), 1, "reuse amortizes a deferred initializer (§2.6)");
+        assert_eq!(PURE.run_count(), 1, "reuse amortizes a deferred initializer");
     }
 
     /// The unit list is index-addressed because the host records unit *ids*
     /// when one traps. Reordering it silently re-points the host's deferral
-    /// record, so this asserts the macro preserves order -- and that the ids
-    /// start at 1, because 0 is the host's sentinel.
+    /// record, so this asserts the macro preserves order -- and that id 0 is a
+    /// real unit, distinct from the [`NO_UNIT`] sentinel.
     #[test]
     fn unit_ids_are_stable_declaration_order() {
         static A: LazyInit<u8> = LazyInit::new("A", || 1);

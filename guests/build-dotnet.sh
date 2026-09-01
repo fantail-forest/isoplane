@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build every C# guest fixture, in parallel.
+# Build every C# guest fixture, one at a time.
 #
 #   scripts/dev guests/build-dotnet.sh            # build all six
 #   scripts/dev guests/build-dotnet.sh --if-stale # only what is out of date
@@ -18,7 +18,7 @@
 # So: one command, same contract as `guests/build.sh`, and the tests invoke it
 # themselves rather than asserting against a binary nobody rebuilt.
 #
-# ## Serial, deliberately, and it was measured before it was decided
+# ## Serial, deliberately
 #
 # Five of the six are the SAME .csproj with different properties, sharing
 # `src/obj`, `src/bin`, `obj/wisp_pal.o` and a ProjectReference to
@@ -32,9 +32,9 @@
 #   3. with that fixed, all six restore the shared SDK into one `obj/` at once
 #      and race there instead -> NETSDK1047 again, intermittently.
 #
-# The cost of serial is 47 s on a cold checkout and nothing at all when the
-# fixtures are fresh, since `--if-stale` is a 39 ms no-op. A flaky build script
-# invoked from `cargo test` is far more expensive than 47 seconds.
+# Serial costs one cold-checkout build and nothing at all when the fixtures are
+# fresh, since `--if-stale` then does no work. A flaky build script invoked from
+# `cargo test` is far more expensive than that.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,7 +64,7 @@ fi
 # name | output path | guest dir | extra dotnet publish args | expect-gate-fail
 #
 # `_stock` means "without the PAL shim object", i.e. the raw NativeAOT-LLVM
-# import surface — 32 `wasi:*` imports that V1 rejects. `dotnet_pal.rs` reads
+# import surface — a large `wasi:*` set that V1 rejects. `dotnet_pal.rs` reads
 # it to assert the adapter composes them down to exactly two capabilities, so
 # it is a fixture whose whole value is that it is NOT import-gate-clean.
 FIXTURES=(
@@ -116,10 +116,10 @@ for spec in "${FIXTURES[@]}"; do
   built=$((built + 1))
 
   # The two `_stock` fixtures are built WITHOUT the PAL shim object, so they
-  # carry the ~32 raw `wasi:*` imports NativeAOT-LLVM emits — and
+  # carry the raw `wasi:*` imports NativeAOT-LLVM emits — and
   # `build-guest.sh`'s import gate rejects exactly that, by design (invariant 4,
   # rule V1). Their whole value to `dotnet_pal.rs` is being the thing the gate
-  # refuses: it asserts the adapter composes those 32 declarations down to two
+  # refuses: it asserts the adapter composes those declarations down to two
   # capabilities. So for them a non-zero exit is expected and a *clean* build is
   # the failure. The module is on disk either way; the gate runs after the copy.
   if [ "$gate" = "gate-fails" ]; then

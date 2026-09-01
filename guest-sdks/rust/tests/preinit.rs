@@ -1,5 +1,5 @@
-//! §4.4 pre-initialization: which initializers run inside the sealed init
-//! sandbox, and what happens to the ones that cannot.
+//! Pre-initialization: which initializers run inside the sealed init sandbox,
+//! and what happens to the ones that cannot.
 //!
 //! The protocol under test is the replay handshake:
 //!
@@ -96,8 +96,8 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         assert_eq!(IMPURE_RAN.load(Ordering::Relaxed), 1);
         assert_eq!(IMPURE.run_count(), 1);
 
-        // §2.6: under `reuse` that cost is paid once per instance, not once
-        // per dispatch. Touching it again must not re-run it.
+        // Under `lifecycle = "reuse"` that cost is paid once per instance,
+        // not once per dispatch. Touching it again must not re-run it.
         assert_eq!(*IMPURE.get(), 11);
         assert_eq!(IMPURE.run_count(), 1);
 
@@ -106,9 +106,9 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         // surfaces exactly this number.
         assert_eq!(PURE.run_count(), 1, "this test IS the init sandbox pass");
 
-        // §4.4: init-only imports stay declared in the template but the
-        // runtime linker binds them to traps. After `wisp_initialize` the SDK
-        // must serve the captured seed rather than call the import again.
+        // Init-only imports stay declared in the template but the runtime
+        // linker binds them to traps. After `wisp_initialize` the SDK must
+        // serve the captured seed rather than call the import again.
         let before = host.calls().iter().filter(|(n, _)| *n == "init_hash_seed").count();
         let _ = wisp_guest::init::hash_seed();
         let after = host.calls().iter().filter(|(n, _)| *n == "init_hash_seed").count();
@@ -116,11 +116,11 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
     });
 }
 
-/// §4.4: "config parse (already ran)". The blob is tenant-authored deploy
-/// input, so parsing it inside an init unit is safe to pre-run and the
-/// *parsed* result is what lands in the template. This drives the real
-/// probe-then-fill idiom against a host stub that mirrors
-/// `wisp_control::preinit`.
+/// Config parsing is one of the things a template deletes from cold
+/// activation. The blob is tenant-authored deploy input, so parsing it inside
+/// an init unit is safe to pre-run and the *parsed* result is what lands in the
+/// template. This drives the real probe-then-fill idiom against a host stub
+/// that mirrors `wisp_control::preinit`.
 #[test]
 fn config_is_readable_at_init_and_only_at_init() {
     with_stub_host(|host| {
@@ -150,7 +150,7 @@ fn config_is_readable_at_init_and_only_at_init() {
         assert!(calls[1] > 0);
 
         // Cached: later reads must not touch the import again, because the
-        // runtime linker binds init-only imports to traps (§4.4).
+        // runtime linker binds init-only imports to traps.
         let before = host.calls().iter().filter(|(n, _)| *n == "init_config_get").count();
         let _ = wisp_guest::init::config_vars();
         let after = host.calls().iter().filter(|(n, _)| *n == "init_config_get").count();

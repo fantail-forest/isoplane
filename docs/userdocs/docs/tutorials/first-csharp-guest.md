@@ -114,11 +114,11 @@ That props file is where the three eccentric-looking settings live — no
 `<PublishAot>`, `<MSBuildEnableWorkloadResolver>false</...>`,
 `<LinkerFlavor>lld</LinkerFlavor>` — along with the two linker arguments that
 decide whether the module passes validator rule V3. They are documented in
-[C# SDK reference](../reference/sdk-csharp.md).
+[build guide](../how-to/build-a-csharp-guest.md#three-settings-you-must-not-clean-up).
 Importing them rather than copying them is the point: a correction lands once.
 
 To set a 64 MiB maximum, build with `-p:WispMemoryMaxBytes=67108864`.
-The declared maximum bounds memory growth; it is not occupied-memory measurement.
+The sample harness reports its initialized linear-memory size.
 
 ### Shipping a front end
 

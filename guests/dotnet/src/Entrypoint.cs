@@ -5,7 +5,7 @@ using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.Api>>;
 namespace Wisp;
 
 /// <summary>
-/// This module's five core-wasm exports (§5.2), each delegating to the SDK's
+/// This module's five core-wasm exports, each delegating to the SDK's
 /// generic implementation. The `using Guest = …` alias above is the whole
 /// declaration; it is the C# analogue of the Rust SDK's
 /// <c>export_handler!(Api)</c>.

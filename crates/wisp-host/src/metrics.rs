@@ -1,13 +1,14 @@
-//! Cell metrics (spec.md §10).
+//! Cell metrics: what one cell exposes per app, to a scrape and to a
+//! dashboard.
 //!
-//! > **Metrics (per app, exported + dashboard):** dispatches, CPU-ms, p50/p99
-//! > activation & wake, live/parked/hibernated instance counts, dirty-set size
-//! > distribution, delta storage bytes, GC time share, trap rate.
+//! Dispatches, CPU-ms, p50/p99 activation and wake, live/parked/hibernated
+//! instance counts, dirty-set size distribution, delta storage bytes, GC time
+//! share, trap rate.
 //!
-//! The point of §10 is stated a line earlier and is worth keeping in view:
-//! *"the lifecycle is visible, so 'why was this request 12 ms' decomposes into
-//! '9 ms hibernation wake' rather than mystery."* So the histograms here are
-//! per lifecycle transition, not one blended request timer.
+//! The point is that the lifecycle stays visible, so "why was this request
+//! slow" decomposes into a named transition rather than a mystery. The
+//! histograms here are therefore per lifecycle transition, not one blended
+//! request timer.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,7 +31,7 @@ pub struct Histogram {
     /// execution thread on every dispatch. At the densities the campaign runs
     /// that is not free, and "the cell's knee is lock contention" is a claim
     /// the telemetry itself can manufacture. This knob makes the claim
-    /// testable by difference: run the same point with the two §10 per-dispatch
+    /// testable by difference: run the same point with the two per-dispatch
     /// histograms unsampled and see whether the knee moves.
     ///
     /// `count` and `sum` are updated regardless of the setting, so turning
@@ -130,7 +131,7 @@ impl Default for Histogram {
     }
 }
 
-/// Everything §10 asks a cell to expose.
+/// Everything a cell exposes.
 #[derive(Debug, Default)]
 pub struct Metrics {
     pub dispatches: AtomicU64,
@@ -224,26 +225,28 @@ pub struct Metrics {
     /// built against v1.1 still reads something true.
     pub budget_kills: AtomicU64,
 
-    // -- §6.4's two-phase kill, and the SLI it produces --------------------
+    // -- the two-phase kill, and the SLI it produces -----------------------
     /// Dispatches that entered grace and **returned inside it**: `finally`
     /// ran, the instance stayed consistent, the slot was reused.
     pub clean_kills: AtomicU64,
-    /// Dispatches still executing at **B+G**. Terminated without unwinding,
-    /// instance tombstoned. These are the ones the hang breaker counts.
+    /// Dispatches still executing at the end of the grace window. Terminated
+    /// without unwinding, instance tombstoned. These are the ones the hang
+    /// breaker counts.
     pub hard_kills: AtomicU64,
-    /// Dispatches that crossed B at all — clean, hard, or still unwinding.
-    /// `grace_entries - clean_kills - hard_kills` is the number that parked
-    /// mid-unwind and are being driven to completion by their own poisoned
-    /// futures.
+    /// Dispatches that crossed the budget at all — clean, hard, or still
+    /// unwinding. `grace_entries - clean_kills - hard_kills` is the number
+    /// that parked mid-unwind and are being driven to completion by their own
+    /// poisoned futures.
     pub grace_entries: AtomicU64,
-    /// §4.6: epoch ticks that found the runtime layer's *unsafe-to-trap* bit
-    /// set and deferred grace entry. A guest pinning the bit shows up here and
-    /// still dies at B+G, which is the property worth being able to see.
+    /// Epoch ticks that found the runtime layer's *unsafe-to-trap* bit set and
+    /// deferred grace entry. A guest pinning the bit shows up here and still
+    /// dies at the hard deadline, which is the property worth being able to
+    /// see.
     pub grace_deferrals: AtomicU64,
-    /// Instances §6.4 required the platform to tombstone. Equal to
-    /// `hard_kills + traps` in a correct implementation; counted separately
-    /// because "the platform must enforce it" is exactly the claim, and a
-    /// divergence between these two is the bug Appendix C F2 describes.
+    /// Instances the platform tombstoned. Equal to `hard_kills + traps` in a
+    /// correct implementation; counted separately because "the platform
+    /// enforces it" is exactly the claim, and a divergence between these two
+    /// is the bug where a killed instance stayed callable.
     ///
     /// The invariant is only checkable because `traps` and `hard_kills` are
     /// **disjoint**: a hard budget kill is not a trap. They shared an
@@ -252,7 +255,7 @@ pub struct Metrics {
     /// `tombstones` rows double-count. See [`Metrics::tombstone_invariant`],
     /// which is the assertion this sentence promises.
     pub tombstones: AtomicU64,
-    /// Host calls refused because the target was a tombstone. §10's negative
+    /// Host calls refused because the target was a tombstone. The negative
     /// control for the rule: a green dashboard with this permanently at zero
     /// and no failing probe is unfalsifiable.
     ///
@@ -262,25 +265,27 @@ pub struct Metrics {
     /// instances and was never asked to call one again reads zero here and is
     /// healthy.
     pub tombstone_refusals: AtomicU64,
-    /// CPU recorded **past B** on kills of either phase (§6.4: "the overage CPU
-    /// is recorded"). Already inside the tenant's `cpu_ns`; broken out so the
-    /// share is visible.
+    /// CPU recorded **past the budget** on kills of either phase — the overage
+    /// is recorded like any other CPU. Already inside the tenant's `cpu_ns`;
+    /// broken out so the share is visible.
     pub overage_ns: AtomicU64,
 
     pub shed: AtomicU64,
     pub breaker_rejections: AtomicU64,
-    /// §5.4's rule biting. Mostly benign: two wake jobs for one instance, the
+    /// The reentrancy rule biting. Mostly benign: two wake jobs for one
+    /// instance, the
     /// second finding the first still inside the guest and leaving the result
     /// queued for it to drain. A non-zero value is the reentrancy guard
     /// working, not a fault — the fault it prevents would not be counted here,
     /// it would be unrepresentable.
     pub reentrancy_refusals: AtomicU64,
-    /// §7.2's single-writer rule refusing a second concurrent dispatch to one
+    /// The single-writer rule refusing a second concurrent dispatch to one
     /// Durable Instance — the 409 raised *before* the guest is entered,
     /// because the identity already has a request in flight.
     ///
-    /// Distinct from [`Metrics::reentrancy_refusals`], which is §5.4's rule
-    /// biting at the slot door once a dispatch has already been admitted. Both
+    /// Distinct from [`Metrics::reentrancy_refusals`], which is the reentrancy
+    /// rule biting at the slot door once a dispatch has already been admitted.
+    /// Both
     /// answer with 409 and neither reaches guest code, and telling them apart
     /// is the difference between "the caller is racing itself" and "a wake and
     /// a dispatch collided inside the cell".
@@ -292,8 +297,8 @@ pub struct Metrics {
     /// is what makes a counting error on either side visible.
     pub single_writer_refusals: AtomicU64,
     pub pending_cap_rejections: AtomicU64,
-    /// §8.6 refusals plus §11.1 subrequest-cap refusals — every outbound call
-    /// the host declined to make on the tenant's behalf.
+    /// Egress-policy refusals plus subrequest-cap refusals — every outbound
+    /// call the host declined to make on the tenant's behalf.
     pub egress_denials: AtomicU64,
 
     pub live: AtomicU64,
@@ -306,7 +311,7 @@ pub struct Metrics {
     /// [`Metrics::capture_write_failures`].
     pub captures: AtomicU64,
     /// Delta bytes actually written. Same rule as `captures`: bytes that never
-    /// landed are not counted, because `delta_bytes` is what §11.2 prices.
+    /// landed are not counted, because `delta_bytes` records stored bytes.
     pub delta_bytes: AtomicU64,
     /// Hibernation captures whose store write failed. The instance is left
     /// Parked and capturable rather than marked Hibernated, so nothing later
@@ -321,8 +326,9 @@ pub struct Metrics {
     pub capture_write_failures: AtomicU64,
     pub hibernation_wakes: AtomicU64,
     pub delta_fallbacks: AtomicU64,
-    /// Futures shed at **capture time** (§6.8): Unbounded host futures that
-    /// could not be carried across a hibernation, plus §8.6's sensitive ones.
+    /// Futures shed at **capture time**: Unbounded host futures that could not
+    /// be carried across a hibernation, plus the ones the egress policy calls
+    /// sensitive.
     ///
     /// **This is not a load signal.** It moves when hibernation *works*, on an
     /// instance that was idle enough to be captured, and on the hibernation
@@ -330,7 +336,7 @@ pub struct Metrics {
     /// for the rest of the run. The load-path questions have their own
     /// counters and a bottleneck attributor wants those instead:
     ///
-    /// * "the cell refused to register more futures" — §11.1's
+    /// * "the cell refused to register more futures" — the
     ///   simultaneous-pending cap — is [`Metrics::pending_cap_rejections`];
     /// * "the cell refused work at admission" is [`Metrics::shed`].
     ///
@@ -344,23 +350,22 @@ pub struct Metrics {
     pub futures_shed_capture: AtomicU64,
     pub futures_buffered: AtomicU64,
 
-    /// §6.5's target latencies. Microseconds.
+    /// The lifecycle transitions, in microseconds.
     pub activation_us: Histogram,
     pub wake_us: Histogram,
     pub hibernation_wake_us: Histogram,
     pub capture_us: Histogram,
-    /// End-to-end request latency, admission to final response — the thing
-    /// §10 wants to decompose into "9 ms hibernation wake" rather than leave
-    /// as mystery.
+    /// End-to-end request latency, admission to final response — the thing the
+    /// per-transition histograms above exist to decompose.
     pub request_us: Histogram,
     pub park_ms: Histogram,
-    /// §6.6 telemetry: "your instance dirties 60 MB".
+    /// How much of its memory an instance dirties, which is what a capture has
+    /// to carry.
     pub dirty_pages: Histogram,
-    /// §10 GC time share — the `wisp-gc-hint(snapshot)` call before capture.
+    /// GC time share — the `wisp-gc-hint(snapshot)` call before capture.
     pub gc_hint_us: Histogram,
 
-    /// §9.2 `tier=fast` visibility: how many dispatches were served without
-    /// paying for an activation.
+    /// How many dispatches were served without paying for an activation.
     ///
     /// Counted for **both** instance kinds. A Durable Instance acquisition is
     /// a lookup by identity rather than a pool draw, and for a long stretch
@@ -374,11 +379,11 @@ pub struct Metrics {
     /// `served_warm + served_pooled_fresh + served_hibernation_wake +
     /// served_activated == dispatches`.
     pub served_warm: AtomicU64,
-    /// Handler-only: a reset instance drawn from the pool (§6.3).
+    /// Handler-only: a reset instance drawn from the pool.
     pub served_pooled_fresh: AtomicU64,
     /// Durable-only: the identity was Hibernated and the dispatch paid for a
     /// wake from its delta. Not "warm" (it cost a wake) and not "activated"
-    /// (it did not cost a cold activation), which is exactly why §9.2 wants it
+    /// (it did not cost a cold activation), which is exactly why it is
     /// separable rather than folded into either.
     pub served_hibernation_wake: AtomicU64,
     pub served_activated: AtomicU64,
@@ -431,7 +436,7 @@ impl Metrics {
         self.by_tenant.lock().get(tenant).copied().unwrap_or_default()
     }
 
-    /// §6.4's tombstone identity, as an assertion rather than a comment.
+    /// The tombstone identity, as an assertion rather than a comment.
     ///
     /// `tombstones == hard_kills + traps`. It holds only because the two
     /// terms on the right are disjoint — a hard budget kill is not a trap —
@@ -445,25 +450,24 @@ impl Metrics {
         } else {
             Err(format!(
                 "tombstones ({t}) != hard_kills ({h}) + traps ({tr}); if traps overshoots by \
-                 exactly hard_kills the two are sharing an increment again (Appendix C F2)"
+                 exactly hard_kills the two are sharing an increment again"
             ))
         }
     }
 
-    /// §10/H7: how densely the two **per-dispatch** histograms sample.
+    /// How densely the two **per-dispatch** histograms sample.
     ///
     /// `request_us` and `park_ms` are recorded on every completed dispatch and
-    /// each takes a per-cell mutex shared by every execution thread. At ~126k
-    /// dispatches/second that is two of the eight or so lock acquisitions a
-    /// dispatch pays, and "the cell's knee is lock contention" is a claim the
-    /// telemetry can manufacture for itself. Setting this to `0` removes both
-    /// locks from the dispatch path — the counts, rates and means survive,
-    /// only the percentiles stop — so the claim can be tested by difference
-    /// instead of assumed.
+    /// each takes a per-cell mutex shared by every execution thread — two of
+    /// the eight or so lock acquisitions a dispatch pays. "The cell's knee is
+    /// lock contention" is a claim the telemetry can manufacture for itself.
+    /// Setting this to `0` removes both locks from the dispatch path — the
+    /// counts, rates and means survive, only the percentiles stop — so the
+    /// claim can be tested by difference instead of assumed.
     ///
-    /// Deliberately not a removal and not a compile-time feature: §10 wants
-    /// these metrics, and a run without them has to be a *run*, comparable
-    /// against one with them, not a different binary.
+    /// Deliberately not a removal and not a compile-time feature: these
+    /// metrics are wanted, and a run without them has to be a *run*,
+    /// comparable against one with them, not a different binary.
     pub fn set_per_dispatch_sampling(&self, n: u64) {
         self.request_us.set_sample_every(n);
         self.park_ms.set_sample_every(n);
@@ -491,14 +495,14 @@ impl Metrics {
             tombstones: l(&self.tombstones),
             tombstone_refusals: l(&self.tombstone_refusals),
             overage_ns: l(&self.overage_ns),
-            // §6.4: **the clean:hard ratio is a first-class SLI** — "a healthy
-            // fleet runs in the thousands". It is a metric and not a log line
-            // precisely because it is a ratio: no single kill event tells you
-            // anything, and the number only means something aggregated and
-            // watched over time. A fleet whose ratio collapses has guests that
-            // stopped cooperating, or a runtime layer that stopped raising
-            // `BudgetExceededException` at its natural boundaries — neither is
-            // visible in any per-request signal.
+            // **The clean:hard ratio is a first-class SLI.** It is a metric
+            // and not a log line precisely because it is a ratio: no single
+            // kill event tells you anything, and the number only means
+            // something aggregated and watched over time. A fleet whose ratio
+            // collapses has guests that stopped cooperating, or a runtime
+            // layer that stopped raising `BudgetExceededException` at its
+            // natural boundaries — neither is visible in any per-request
+            // signal.
             //
             // Zero hard kills is not "infinite", it is "no evidence yet": the
             // ratio is reported as the clean count in that case, which is the
@@ -542,12 +546,12 @@ impl Metrics {
             dirty_pages_p50: self.dirty_pages.p50(),
             dirty_pages_p99: self.dirty_pages.p99(),
             park_p50_ms: self.park_ms.p50(),
-            // §11.2/H8. A process-wide floor, not a per-cell number: the
-            // clock read is a vDSO call with no cell to attribute it to. Zero
-            // is the answer that says "every recorded interval was measured";
-            // anything else says some CPU was spent and not recorded, which is
-            // the flattering direction (Appendix C, F4) and must not be
-            // indistinguishable from a genuinely idle meter.
+            // A process-wide floor, not a per-cell number: the clock read is
+            // a vDSO call with no cell to attribute it to. Zero is the answer
+            // that says "every recorded interval was measured"; anything else
+            // says some CPU was spent and not recorded, which is the flattering
+            // direction and must not be indistinguishable from a genuinely
+            // idle meter.
             //
             // Both meters, summed, because a reader of this number wants one
             // question answered — "is any recorded interval a floor rather than
@@ -610,7 +614,7 @@ pub struct MetricsSnapshot {
     pub tombstones: u64,
     pub tombstone_refusals: u64,
     pub overage_ns: u64,
-    /// §6.4's first-class SLI. See the note in [`Metrics::snapshot`].
+    /// The clean:hard ratio. See the note in [`Metrics::snapshot`].
     pub clean_hard_ratio: f64,
     pub shed: u64,
     pub breaker_rejections: u64,
@@ -647,7 +651,7 @@ pub struct MetricsSnapshot {
     pub dirty_pages_p50: u64,
     pub dirty_pages_p99: u64,
     pub park_p50_ms: u64,
-    /// §11.2/H8: thread- or process-CPU clock reads that failed, process-wide.
+    /// Thread- or process-CPU clock reads that failed, process-wide.
     /// See [`crate::meters::clock_read_failures`].
     pub clock_read_failures: u64,
     pub trap_rate: f64,
@@ -765,9 +769,8 @@ mod tests {
         assert_eq!(h.mean(), 0.0);
     }
 
-    /// §6.4: *"the clean:hard ratio is a first-class SLI — a healthy fleet
-    /// runs in the thousands"*. It has to be a number on the scrape, not a
-    /// sentence in a log.
+    /// The clean:hard ratio has to be a number on the scrape, not a sentence
+    /// in a log: it only means anything aggregated over many kills.
     #[test]
     fn the_clean_hard_ratio_is_a_scraped_metric() {
         let m = Metrics::new();
@@ -776,18 +779,17 @@ mod tests {
         }
         m.hard_kills.fetch_add(1, Ordering::Relaxed);
         let s = m.snapshot();
-        assert_eq!(s.clean_hard_ratio, 3_000.0, "a healthy fleet runs in the thousands");
+        assert_eq!(s.clean_hard_ratio, 3_000.0, "3,000 clean against 1 hard is 3,000");
         assert!(m.to_text().contains("wisp_cell_clean_hard_ratio 3000.000000"));
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).unwrap();
         assert_eq!(json["clean_kills"], 3_000);
         assert_eq!(json["hard_kills"], 1);
     }
 
-    /// **Negative control** (§10). The ratio must be able to say "unhealthy".
-    /// A denominator guard that silently reported a large number whenever
-    /// hard kills were rare would make the SLI unfalsifiable — which is the
-    /// exact failure mode §10's negative-control rule was written for
-    /// (Appendix C, F4: measurement bugs run in the flattering direction).
+    /// **Negative control.** The ratio must be able to say "unhealthy". A
+    /// denominator guard that silently reported a large number whenever hard
+    /// kills were rare would make the SLI unfalsifiable — and measurement bugs
+    /// run in the flattering direction.
     #[test]
     fn the_clean_hard_ratio_can_report_an_unhealthy_fleet() {
         let m = Metrics::new();
@@ -803,7 +805,7 @@ mod tests {
         assert_eq!(Metrics::new().snapshot().clean_hard_ratio, 0.0);
     }
 
-    /// **§6.4's tombstone identity, as a check that can fail.**
+    /// **The tombstone identity, as a check that can fail.**
     ///
     /// The doc on [`Metrics::tombstones`] promised `tombstones ==
     /// hard_kills + traps`, and for a long time that was false by
@@ -848,7 +850,7 @@ mod tests {
         assert!(e.contains("traps (4)"), "{e}");
     }
 
-    /// **§10/H7: sampling costs percentiles and nothing else.**
+    /// **Sampling costs percentiles and nothing else.**
     ///
     /// `request_us` and `park_ms` are recorded on every completed dispatch,
     /// and each `record` takes a per-cell mutex shared by every execution
@@ -885,8 +887,8 @@ mod tests {
         assert_eq!(off.p50(), 0, "no window, no percentile — and 0 is what an empty window reads");
     }
 
-    /// §10's list, present and scrapeable. The harness reads this endpoint, so
-    /// a rename is a breaking change to it.
+    /// Every metric is present and scrapeable. The harness reads this
+    /// endpoint, so a rename is a breaking change to it.
     #[test]
     fn the_scrape_carries_every_metric_section_10_names() {
         let m = Metrics::new();

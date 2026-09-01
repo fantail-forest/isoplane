@@ -1,4 +1,4 @@
-//! `result-record` — how a host future completes (spec.md §5.2, §6.8).
+//! `result-record` — how a host future completes.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ pub enum ResultRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FutureError {
     Timeout,
-    /// The dispatch's implicit cancellation future completed (§5.4).
+    /// The dispatch's implicit cancellation future completed.
     Cancelled,
     /// Host capability policy refused the call, such as a denied egress target.
     Denied(String),
@@ -29,7 +29,7 @@ impl std::fmt::Display for FutureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FutureError::Timeout => write!(f, "deadline elapsed"),
-            FutureError::Cancelled => write!(f, "dispatch cancelled (§5.4)"),
+            FutureError::Cancelled => write!(f, "dispatch cancelled"),
             FutureError::Denied(why) => write!(f, "capability denied: {why}"),
             FutureError::NotFound => write!(f, "not found"),
             FutureError::Io(e) => write!(f, "io error: {e}"),

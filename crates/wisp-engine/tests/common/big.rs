@@ -1,15 +1,15 @@
 //! A template with a genuinely large, genuinely non-zero pre-initialized image.
 //!
 //! The density claim is meaningless against an all-zero template: zero pages
-//! are shared by the kernel whatever the engine does. C1 says *marginal cost =
-//! dirty pages*, so the template has to have real content that a naive
+//! are shared by the kernel whatever the engine does. Marginal cost is meant
+//! to be *dirty pages*, so the template has to have real content that a naive
 //! implementation would have to copy per instance.
 
 #![allow(dead_code)]
 
 /// Bytes of non-zero initialized data in the template image. This stands in for
-/// what §4.4 pre-initialization actually bakes: a DI container, an interned
-/// string table, parsed config.
+/// what pre-initialization actually bakes: a DI container, an interned string
+/// table, parsed config.
 pub const IMAGE_BYTES: usize = 8 << 20;
 
 /// A guest with `pages * 64 KiB` of linear memory, `IMAGE_BYTES` of it
@@ -31,7 +31,7 @@ pub fn big_guest(pages: u32, dirty_pages: u32) -> Vec<u8> {
     // genuinely private page rather than a copy of a shared one... except that
     // is the *easy* case. Start inside the image instead: writing to a
     // CoW-mapped page is what actually forces a private copy, and that is the
-    // cost C1 is about.
+    // cost the density claim is about.
     let src = format!(
         r#"
 (module

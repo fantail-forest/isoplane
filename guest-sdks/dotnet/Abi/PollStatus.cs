@@ -1,8 +1,8 @@
 namespace Wisp.Abi;
 
 /// <summary>
-/// The packed <c>u64</c> that every guest entrypoint returns
-/// (spec.md §5.2; mirrors <c>wisp-abi::status::PollStatus</c>).
+/// The packed <c>u64</c> that every guest entrypoint returns; mirrors
+/// <c>wisp-abi::status::PollStatus</c>.
 ///
 /// <code>
 ///   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped
@@ -10,10 +10,10 @@ namespace Wisp.Abi;
 ///                          trapped -> trap code
 /// </code>
 ///
-/// <see cref="Pending"/> is the whole of invariant 3. It is a <em>return
-/// value</em>, not a yield: producing it unwinds the wasm stack all the way
-/// back to the host, which is why a parked instance is at a serializable
-/// point by construction rather than by convention.
+/// <see cref="Pending"/> is the whole of the suspension mechanism. It is a
+/// <em>return value</em>, not a yield: producing it unwinds the wasm stack all
+/// the way back to the host, which is why a parked instance is at a
+/// serializable point by construction rather than by convention.
 /// </summary>
 internal static class PollStatus
 {

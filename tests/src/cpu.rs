@@ -13,7 +13,7 @@ pub fn process_cpu_ns() -> u64 {
     clock_ns(libc::CLOCK_PROCESS_CPUTIME_ID)
 }
 
-/// `CLOCK_THREAD_CPUTIME_ID` — the dispatch CPU clock (§6.4). Mirrors
+/// `CLOCK_THREAD_CPUTIME_ID` — the dispatch CPU clock. Mirrors
 /// `wisp_host::meters::read_thread_cpu_ns`; duplicated here deliberately so
 /// that a bug in the platform's meter cannot also be a bug in the instrument
 /// measuring the meter.
@@ -132,7 +132,7 @@ impl CpuUsage {
         self.cores() / parked as f64
     }
 
-    /// Total CPU-ms over the window, which is the unit §11.2 bills in.
+    /// Total dispatch CPU-ms over the window.
     pub fn cpu_ms(&self) -> f64 {
         self.cpu_ns as f64 / 1e6
     }

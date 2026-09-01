@@ -230,7 +230,7 @@ fn v2_atomics_and_threads() {
         V::V2ForbiddenFeature,
     );
     assert_violates(
-        "memory.atomic.wait32 — the blocking primitive, inexpressible (§4.5)",
+        "memory.atomic.wait32 — the blocking primitive, inexpressible",
         &clean_wat().replace(
             "(func $use",
             r#"(func $block (result i32)
@@ -498,12 +498,12 @@ fn engine_profile_has_the_dangerous_proposals_off() {
     let f = validator::ENGINE_FEATURES;
     assert!(
         !f.threads(),
-        "threads on would give the guest a counting thread (§8.4)"
+        "threads on would give the guest a counting thread"
     );
     assert!(!f.shared_everything_threads());
     assert!(
         !f.relaxed_simd(),
-        "relaxed SIMD is host-dependent, which breaks replay (§10)"
+        "relaxed SIMD is outside the supported execution profile"
     );
     assert!(!f.exceptions());
     assert!(

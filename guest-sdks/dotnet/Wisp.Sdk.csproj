@@ -23,6 +23,30 @@
     <DebugType>none</DebugType>
     <!-- The guest publishes; this project never does. -->
     <IsPackable>false</IsPackable>
+
+    <!--
+      The XML doc file is a first-class output, not a nicety: `wisp-docs`
+      reads it to generate `reference/sdk-csharp.md`, so the reference page
+      IS these doc comments rather than a second description of them.
+
+      Setting it here rather than passing it on the docs generator's command
+      line is deliberate — CS1591 ("missing XML comment for publicly visible
+      member") then fires in an ordinary `dotnet build`, where the person
+      adding the member is standing, instead of only when somebody remembers
+      to regenerate the docs.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!--
+      And it is an error, not a warning. A public member with no summary is a
+      hole in the reference page that nothing else will catch: the generator
+      can only render what the compiler gives it, so an undocumented member
+      renders as a blank cell that reads like an oversight nobody owns. Making
+      it fail the build puts the cost on the change that caused it.
+
+      This is the C# half of the guarantee `imp!`'s required `why` parameter
+      gives the capability table.
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 

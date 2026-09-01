@@ -16,14 +16,14 @@
     <ProjectReference Include="../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
   </ItemGroup>
 
-  <!-- The §12.1 compatibility probe (App/Compat.cs). Off by default: the
-       shipped guest is a hello-world Handler so its size is comparable to
-       §4.2's 2.5 MB target. `-p:WispCompatProbe=true` turns it on. -->
+  <!-- The BCL compatibility probe (App/Compat.cs). Off by default: the
+       shipped guest is a hello-world Handler and its size stays comparable to
+       one. `-p:WispCompatProbe=true` turns it on. -->
   <PropertyGroup Condition="'$(WispCompatProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_COMPAT_PROBE</DefineConstants>
   </PropertyGroup>
 
-  <!-- The §4.4 clone-uniqueness probe (App/Entropy.cs). Off by default. -->
+  <!-- The clone-uniqueness probe (App/Entropy.cs). Off by default. -->
   <PropertyGroup Condition="'$(WispEntropyProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_ENTROPY_PROBE</DefineConstants>
   </PropertyGroup>

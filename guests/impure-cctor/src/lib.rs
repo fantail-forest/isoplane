@@ -1,5 +1,5 @@
-//! `impure-cctor` — the §4.4 deferral fixture, built to `control`'s spec:
-//! three init units, two pure and one that touches `clock_now_coarse`.
+//! `impure-cctor` — the pre-init deferral fixture: three init units, two pure
+//! and one that touches `clock_now_coarse`.
 //!
 //! Unit ids are the **0-based position** in `init_units!`; the "no unit in
 //! scope" sentinel is `-1` (`u32::MAX` host-side), not 0. The impure unit sits
@@ -12,8 +12,8 @@
 //!                                      -> clock_now_coarse is not
 //!                                         init_visible -> TRAP
 //!   host:    current unit was 1. Add 1 to the deferred set, throw the
-//!            instance away, replay pre-init from scratch. Rollback by replay
-//!            (§4.4) -- nothing outside the sandbox was touched.
+//!            instance away, replay pre-init from scratch. Rollback is by
+//!            replay -- nothing outside the sandbox was touched.
 //!   pass 2:  begin(0) deferred(0)=0  run PURE_TABLE  ok   begin(-1)
 //!            begin(1) deferred(1)=1  SKIP
 //!            begin(2) deferred(2)=0  run ROUTES      ok   begin(-1)

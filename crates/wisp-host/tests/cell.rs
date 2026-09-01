@@ -105,8 +105,28 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
 
 const T: Duration = Duration::from_secs(10);
 
+/// A host timer long enough that it will not fire during any test. Parking on
+/// it is how a test holds an instance in the Parked tier long enough to look
+/// at it. Timers are host futures, not guest loops, so the instance costs
+/// nothing while it waits, which is the point of most of these tests.
 const PARK_MS: u64 = 600_000;
 
+// ---------------------------------------------------------------------------
+// Kills are abrupt and self-limiting
+// ---------------------------------------------------------------------------
+
+/// **A budget-killed spinner does not delay other tenants' wakes.**
+///
+/// The intended blast radius: a spinner occupies only its own execution-pool
+/// thread, kernel preemption means no other tenant's dispatches or wakes are
+/// blocked, and the CPU budget then kills it without unwinding. What suffers
+/// is the offender's own requests.
+///
+/// The spinner here is real: [`Step::Spin`] burns CPU on the execution-pool
+/// thread it was scheduled on and is terminated when its thread CPU clock
+/// passes the budget. The victim is a different tenant whose instance parks on
+/// a host future; we complete that future and measure how long the wake takes
+/// to be delivered.
 #[test]
 fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
     let r = rig(CellConfig {
@@ -128,6 +148,9 @@ fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
         )
         .unwrap();
 
+    // `fresh` so every request gets a pristine clone and therefore a fresh
+    // copy of the park-then-respond program — which is also the `fresh` reset
+    // path being exercised incidentally.
     let victim = Arc::new(FakeActivator::named(
         ModuleId::new("victim", "v1"),
         FakeBehaviour::program([
@@ -152,6 +175,13 @@ fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
     // Baseline: how fast is a wake with nobody spinning?
     let baseline = measure_wake(&r, &victim_mod);
 
+    // Now saturate two of the four execution-pool threads with spinners, each
+    // burning its full budget before being killed.
+    //
+    // **The budget is the test's, not the plan's.** What this needs is a
+    // spinner that occupies a thread and then dies inside the test's own
+    // timeout; how long a plan gives a real dispatch is a different question
+    // and this must not move when that answer does.
     let mut spins = Vec::new();
     for i in 0..2 {
         let mut rec = http(&r.cell, &spin_mod, "/spin");
@@ -186,6 +216,7 @@ fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
         assert_eq!(out.status, 503);
         let trap = out.trap.unwrap();
         assert!(trap.starts_with("budget_exceeded"), "wrong trap: {trap}");
+        // No unwinding, no `finally`, no finalizers, no cleanup quantum.
         assert!(
             trap.contains("without unwinding"),
             "kill was not abrupt: {trap}"
@@ -199,15 +230,21 @@ fn a_budget_killed_spinner_does_not_delay_another_tenants_wakes() {
     }
 
     eprintln!(
-        "C7: victim wake {} µs idle -> {} µs while two tenants spin at their budget",
+        "victim wake {} µs idle -> {} µs while two tenants spin at their budget",
         baseline.as_micros(),
         under_load.as_micros()
     );
+    // The claim is not "identical" — fairness here is statistical and
+    // kernel-grade, not a deterministic slice. It is that the offender does not
+    // *block* the victim. A wake that still lands in single-digit milliseconds
+    // while other threads are pinned is that promise kept.
     assert!(
         under_load < Duration::from_millis(25),
         "wake took {under_load:?} while a neighbour spun; the spinner is blocking other tenants"
     );
 
+    // The other half: the offender's own requests are what suffer. The
+    // victim tenant recorded no traps at all.
     let m = r.cell.metrics();
     assert_eq!(m.tenants["quiet"].traps, 0, "the victim tenant was harmed");
     assert_eq!(m.tenants["noisy"].traps, 2);
@@ -263,6 +300,22 @@ fn measure_wake(r: &Rig, module: &ModuleId) -> Duration {
     elapsed
 }
 
+// ---------------------------------------------------------------------------
+// Residue
+// ---------------------------------------------------------------------------
+
+/// **`fresh` guarantees no residue; `reuse` allows it.**
+///
+/// The fake guest carries a deferred-lazy-initializer probe: on each dispatch
+/// it checks a flag in linear memory, initialises if unset, and reports the
+/// value it *observed*. `0` means it saw a pristine instance; `1` means it saw
+/// a previous request's residue.
+///
+/// The claim for `fresh` is strong — no request can observe residue of any
+/// prior request, which is what turns "tenant code shouldn't leak state
+/// between its own users" from a code-review hope into a structural
+/// impossibility — so the assertion is a universal over many requests, not a
+/// spot check.
 #[test]
 fn fresh_leaves_no_residue_reuse_does() {
     let r = rig(CellConfig::for_test("residue"));
@@ -303,8 +356,9 @@ fn fresh_leaves_no_residue_reuse_does() {
             HandlerLifecycle::Fresh => {
                 assert!(
                     observed.iter().all(|v| *v == 0),
-                    "§2.6: a `fresh` dispatch observed residue: {observed:?}"
+                    "a `fresh` dispatch observed residue: {observed:?}"
                 );
+                // And it recorded 1.5x per request for the privilege.
                 let m = r.cell.meters(&module).unwrap();
                 assert_eq!(m.dispatches(), 25);
             }
@@ -312,7 +366,7 @@ fn fresh_leaves_no_residue_reuse_does() {
                 assert_eq!(observed[0], 0, "the first dispatch cannot observe residue");
                 assert!(
                     observed[1..].iter().any(|v| *v == 1),
-                    "§2.6: `reuse` must let per-instance memoization pay off: {observed:?}"
+                    "`reuse` must let per-instance memoization pay off: {observed:?}"
                 );
                 let m = r.cell.meters(&module).unwrap();
             }
@@ -321,6 +375,20 @@ fn fresh_leaves_no_residue_reuse_does() {
     r.cell.shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Future classes across hibernation
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The pending-futures cap
+// ---------------------------------------------------------------------------
+
+/// **The simultaneous-pending-futures cap is enforced.**
+///
+/// Bounded pending futures are one of the three factors in the *structural*
+/// anti-abuse residency bound — memory ceiling × bounded pending
+/// futures × evictability — which is what lets the platform never meter
+/// wall-clock time. So exceeding it is a trap, not a warning.
 #[test]
 fn the_pending_futures_cap_traps_the_guest() {
     let free = rig(CellConfig {
@@ -432,6 +500,15 @@ fn the_pending_futures_cap_traps_the_guest() {
     paid.cell.shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Admission
+// ---------------------------------------------------------------------------
+
+/// **Overflow queues at admission; the cell sheds before it saturates, and the
+/// hang breaker fails repeat offenders fast.**
 #[test]
 fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     let r = rig(CellConfig {
@@ -503,6 +580,7 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     r.cell.shutdown();
 }
 
+/// **The scrape the harness reads.**
 #[test]
 fn the_metrics_endpoint_decomposes_the_lifecycle() {
     let r = rig(CellConfig::for_test("metrics"));
@@ -524,6 +602,17 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         r.cell
             .dispatch_blocking(&module, Target::Handler { route: "/".into() }, rec, T)
             .unwrap();
+        // `dispatch_blocking` returns when the RESPONSE is sent, which comes
+        // before the instance goes back to the pool — the tenant is not
+        // made to wait for the platform's bookkeeping. So a client that fires
+        // the next request the instant the last one lands can genuinely race
+        // the release and pay for a second activation, on four exec threads.
+        //
+        // That race is a real property of the system and not a bug; what it
+        // is not is the subject of this test, which is about the steady state:
+        // only the first request paid for an activation. Waiting
+        // for the instance to be parked makes the assertion measure that
+        // rather than the scheduler.
         assert!(
             wait_for(
                 || r.cell
@@ -554,11 +643,24 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
     }
     let json: serde_json::Value = serde_json::from_str(&r.cell.metrics_json()).unwrap();
     assert_eq!(json["dispatches"], 5);
+    // Acquisition-source visibility: only the first request paid for an
+    // activation; the rest were served warm.
     assert_eq!(json["served_activated"], 1);
     assert_eq!(json["served_warm"], 4);
     r.cell.shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// WaitUntil, logging and egress through a whole request
+// ---------------------------------------------------------------------------
+
+/// **`WaitUntil` work outlives the response, and under `fresh` the reset is
+/// owed only after it finishes.**
+///
+/// The guarantee is worded "after the response **and any `WaitUntil` work**
+/// completes" precisely because the two are not the same moment. The
+/// response here comes back at 202 while a 10-minute host timer is still
+/// outstanding, and the instance is still alive.
 #[test]
 fn wait_until_keeps_the_instance_alive_past_the_response() {
     let r = rig(CellConfig::for_test("waituntil"));
@@ -602,7 +704,7 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
     let instance = out.instance;
     assert!(
         r.cell.futures().wait_until_outstanding(instance),
-        "§2.2: the WaitUntil work was dropped"
+        "the WaitUntil work was dropped"
     );
     assert_eq!(
         r.cell.instance_state(instance),
@@ -611,6 +713,12 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
     r.cell.shutdown();
 }
 
+/// **Log CPU counts against the dispatch budget.**
+///
+/// Not a separate accounting pass — `log_emit` runs on the execution-pool
+/// thread inside the dispatch's Hot interval, so the tenant's own CPU meter
+/// is already ticking while it formats. A guest that logs ten thousand lines
+/// pays for ten thousand lines, which is what makes log-as-compute pointless.
 #[test]
 fn logging_is_charged_to_the_dispatch_that_logs() {
     let r = rig(CellConfig::for_test("logcpu"));
@@ -666,7 +774,7 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
         .unwrap();
 
     eprintln!(
-        "§10: 1 log line = {} µs CPU, 2000 = {} µs",
+        "log cost: 1 line = {} µs CPU, 2000 = {} µs",
         q.cpu_ns / 1000,
         l.cpu_ns / 1000
     );
@@ -680,6 +788,9 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
     r.cell.shutdown();
 }
 
+/// **Egress policy through a whole request: the guest cannot reach an RFC1918
+/// address, and the refusal arrives as a typed future error rather than a
+/// hang.**
 #[test]
 fn a_guest_cannot_fetch_a_private_address() {
     let r = rig_resolving(CellConfig::for_test("ssrf"), "169.254.169.254:80");
@@ -729,6 +840,8 @@ fn a_guest_cannot_fetch_a_private_address() {
     r.cell.shutdown();
 }
 
+/// Instances cloned from the same template make fresh host entropy requests.
+/// These checks concern the host calls, not arbitrary guest-owned RNG state.
 #[test]
 fn clones_of_one_template_never_share_entropy() {
     let r = rig(CellConfig::for_test("entropy"));
@@ -776,6 +889,24 @@ fn clones_of_one_template_never_share_entropy() {
     r.cell.shutdown();
 }
 
+/// `submit_with` puts many dispatches on one channel, and each result is
+/// matchable to its request.
+///
+/// Both halves matter and the second is the one that needs a test.
+/// [`Cell::submit`] hands back a receiver per request, which is right for a
+/// test holding a few dozen parked instances and unusable for a load
+/// generator: a hundred thousand requests a second is a hundred thousand
+/// allocations and a hundred thousand receivers to poll, and a generator built
+/// that way measures itself rather than the cell. So the shared-channel form
+/// exists — and the moment results share a channel, arrival order stops
+/// carrying any information about which request each one answers, because a
+/// wake may land on any pool thread.
+///
+/// The test forces exactly that: one slow dispatch is submitted **first** and
+/// fifty fast ones behind it, so the first result off the channel is provably
+/// not the first request in. Without `DispatchResult::dispatch_id` there is
+/// nothing to correlate on and every latency figure built this way would be
+/// attributed to the wrong request.
 #[test]
 fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {
@@ -975,7 +1106,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     drop(tx);
     assert_eq!(
         accepted, 2,
-        "one Hot and one queued; everything else must shed at admission (§6.4)"
+        "one Hot and one queued; everything else must shed at admission"
     );
     assert_eq!(shed, 62);
     assert!(

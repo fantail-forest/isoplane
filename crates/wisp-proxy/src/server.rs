@@ -118,7 +118,7 @@ impl Proxy {
             .unwrap_or_default();
         let path = req.uri().path().to_string();
 
-        // Admission happens before
+        // Shed before the cells saturate. Note this happens *before*
         // route resolution, because an overloaded node should spend as little
         // as possible on a request it is about to refuse.
         let _permit = match self.admission.admit().await {
@@ -186,7 +186,7 @@ impl Proxy {
                     }
                     b = b.header(k, v);
                 }
-                // Report the selected execution tier to the client,
+                // The tenant should be able to see the perf ramp too,
                 // not just our dashboards.
                 b = b.header("x-wisp-tier", tier_str(target.tier));
                 b = b.header("x-wisp-version", target.version.clone());

@@ -826,10 +826,11 @@ impl ShardKey for crate::InstanceId {
 /// The keyed map behind `Cell::active`, with the structure left open.
 ///
 /// **Why a trait and not just the sharded map.** Sharding is a hypothesis:
-/// 48.8% of the time the execution threads spent blocked was on `Cell::active`,
-/// every one of its uses is a single-key operation, so splitting the lock
-/// should remove that. "Should" is the word behind most of the claims on this
-/// branch that turned out to be wrong. The queue strategies are selectable at
+/// about half the time the execution threads spent blocked was on
+/// `Cell::active`, every one of its uses is a single-key operation, so
+/// splitting the lock should remove that. "Should" is the word behind most of
+/// the claims here that turned out to be wrong. The queue strategies are
+/// selectable at
 /// runtime so that three designs can be compared under load rather than argued
 /// about, and this is the same device for the same reason — with the extra
 /// force that, per the module header, this module *cannot itself* tell a
@@ -944,8 +945,38 @@ struct Shard<K, V> {
     map: CountedMutex<HashMap<K, V>>,
 }
 
-/// Keyed storage with one lock per shard.
-/// Single-key operations acquire only the selected shard.
+/// A keyed map split across many locks instead of one.
+///
+/// **Why this exists, and what it can and cannot fix.** Measured on a loaded
+/// cell, `Cell::active` and `WorkQueue::inner` between them accounted for
+/// essentially all the time the execution threads spent blocked, and the other
+/// eight locks were noise. Every one of `Cell::active`'s uses is a single-key
+/// operation on an `InstanceId`: `contains_key`, `insert`, `remove`,
+/// `get_mut`, `get`. Nothing iterates it, takes its length, or holds an
+/// invariant across two keys. So the single mutex was serialising operations
+/// that never needed to see each other.
+///
+/// It cannot fix the other half. `WorkQueue::inner` is *not* this shape: it
+/// carries ordering and the shed policy, in which wakes jump ahead of
+/// dispatches, so splitting it means per-thread queues and work stealing — a
+/// different admission design rather than the same one spread out.
+///
+/// **Those measurements were taken before the sampler was fixed**, with the
+/// clock read and both `fetch_add`s happening under the guard, which inflates
+/// `blocked_ns` by an amount that differs per lock. So "these two are
+/// essentially all of the blocking" survives the correction and "this one
+/// leads" does not — the two were close, and they are inflated by different
+/// fractions. Re-measuring both with the sampler as it now stands is the first
+/// thing to do with it.
+///
+/// **Shards are indexed by the low bits of the key, deliberately** — see
+/// [`ShardKey`], which is where that assumption now lives and where a key type
+/// that does not satisfy it says so.
+///
+/// **And it is not self-evidently a win.** Read the module header's last
+/// section before quoting a fall in `blocked_ns` as proof that it was:
+/// contention that turns into false sharing leaves this instrument reading
+/// zero. Compare it against [`PlainMap`] end to end.
 pub struct ShardedMap<K, V> {
     shards: Box<[Shard<K, V>]>,
     mask: u64,
@@ -1079,8 +1110,9 @@ impl<K: Hash + Eq, V> LockFreeMap<K, V> {
 }
 
 impl<K: Hash + Eq, V> ActiveMap<K, V> for LockFreeMap<K, V> {
-    /// Checks key presence at this instant.
-    /// This read does not reserve the key or make a following insertion atomic with it.
+    /// **Lock-free**, and the reason this structure exists: it carries the
+    /// single-writer refusal check, taken on every dispatch before anything
+    /// else.
     fn contains_key(&self, k: &K) -> bool {
         self.inner.contains_sync(k)
     }
@@ -1133,18 +1165,14 @@ pub enum ActiveMapKind {
     Sharded,
     /// An open-addressed table with lock-free lookup — [`LockFreeMap`].
     ///
-    /// **The default, which is a claim and should be read as one.** Sharding
-    /// split the lock that carried 48.8% of the execution pool's blocked time;
-    /// this removes it from the lookups altogether and narrows it to one entry
-    /// for the rest. Whether that is a win end to end is a throughput
-    /// question, and the other two arms are here to answer it — the module
-    /// header's warning about contention that turns into false sharing reads
-    /// on this arm exactly as it does on `Sharded`.
-    ///
-    /// **Measured and beaten.** At 1728 instances on 16 exec threads, `sharded`
-    /// held 172k rps at p99 40 µs where this shed 48-81% of its offered load;
-    /// the arm stays because it is a real third design and the record has to be
-    /// able to name it, but nothing should select it without a reason.
+    /// **Not the default any more, and the reason is a measurement.** Sharding
+    /// split the lock that carried about half of the execution pool's blocked
+    /// time; this removes it from the lookups altogether and narrows it to one
+    /// entry for the rest. Run end to end against `Sharded`, it lost badly —
+    /// it shed a large fraction of its offered load at a point `Sharded` held
+    /// comfortably. The arm stays because it is a real third design and a
+    /// record has to be able to name it, but nothing should select it without
+    /// a reason.
     LockFree,
 }
 

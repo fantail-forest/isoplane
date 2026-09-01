@@ -1,5 +1,5 @@
-//! The runtime layer's exported ABI — §4.6's "tenant modules compile against
-//! the runtime component's exported ABI and link at instantiation".
+//! The runtime layer's exported ABI. Tenant modules compile against it and
+//! link against it at instantiation.
 //!
 //! Everything is C ABI over `(ptr, len)` in the shared linear memory, with one
 //! out-channel (`rt_out_ptr`/`rt_out_len`) instead of multi-value returns, so
@@ -82,7 +82,7 @@ rt! { pub fn rt_heap_used() -> u32 { crate::heap::heap_used() as u32 } }
 rt! { pub fn rt_memory_bytes() -> u32 { crate::heap::memory_bytes() as u32 } }
 rt! { pub fn rt_allocs() -> u64 { crate::heap::heap_allocs() } }
 
-// §4.4 pre-initialization entry for the base layer: everything the runtime
+// Pre-initialization entry for the base layer: everything the runtime
 // can compute once per machine, computed once per machine. Wizer calls this
 // and freezes the result as the base template.
 rt! { pub fn wisp_initialize() {
@@ -449,8 +449,9 @@ rt! { pub fn rt_map_keys(h: i32) -> i32 {
 
 // ---------------------------------------------------------------------------
 // 10. the wisp:platform dispatch codec + future table
-//     (§4.6: "GC, scheduler and wake machinery" — this is the wake machinery's
-//     serialization half, which is the part a Rust stand-in can carry.)
+//     A real runtime layer carries GC, scheduler and wake machinery; this is
+//     the wake machinery's serialization half, the part a Rust stand-in can
+//     carry.
 // ---------------------------------------------------------------------------
 
 rt! { pub fn rt_dispatch_kind(p: *const u8, l: u32) -> i32 {
@@ -501,8 +502,8 @@ rt! { pub fn rt_response(status: u32, body: *const u8, bl: u32) -> i32 {
     };
     match wisp_abi::encode(&head) { Ok(v) => put(&v), Err(_) => -2 } } }
 
-// The future table §4.2 puts in the runtime layer: the app never sees an id
-// it did not get from here.
+// The future table lives in the runtime layer: the app never sees an id it did
+// not get from here.
 rt! { pub fn rt_future_next() -> u64 { FUTURE_SEQ += 1; FUTURE_SEQ } }
 
 rt! { pub fn rt_status_done(response: u32) -> u64 {

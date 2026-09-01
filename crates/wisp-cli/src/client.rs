@@ -2,8 +2,8 @@
 
 use serde_json::Value;
 
-/// Renders one structured log line the way §10 wants it read: the lifecycle
-/// event first, then the fields that explain it.
+/// Renders one structured log line so it reads in the useful order: the
+/// lifecycle event first, then the fields that explain it.
 pub fn format_log_line(line: &str, color: bool) -> String {
     let st = crate::render::Style::new(color);
     let Ok(v) = serde_json::from_str::<Value>(line) else {

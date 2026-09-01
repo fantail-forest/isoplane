@@ -5,24 +5,39 @@ using Wisp.Runtime;
 
 namespace Wisp;
 
+/// <summary>
+/// A capability call the host refused or could not complete.
+///
+/// <see cref="WispError"/> carries which, so a caller can tell a stale fencing
+/// epoch from an I/O failure — the two mean opposite things about whether to retry.
+/// </summary>
 public sealed class BindingException : Exception
 {
     internal BindingException(FutureError e) => WispError = (int)e;
+    /// <summary>
+    /// The <c>wisp-abi::result::FutureError</c> discriminant the host returned.
+    /// </summary>
     public int WispError { get; }
 }
 
 /// <summary>
 /// The request as the handler sees it. Only the fields the PoC handler needs
-/// are decoded; §12's HTTP surface is far larger and out of scope here.
+/// are decoded; the full HTTP surface is out of scope here.
 /// </summary>
 public sealed class Request
 {
+    /// <summary>
+    /// The HTTP method, upper-cased.
+    /// </summary>
     public string Method { get; }
+    /// <summary>
+    /// The request path, without the query string.
+    /// </summary>
     public string Path { get; }
     internal Request(string method, string path) { Method = method; Path = path; }
 }
 
-/// <summary>The §2.2 response builder. Handed to the host via <c>resp_new</c>.</summary>
+/// <summary>The response builder. Handed to the host via <c>resp_new</c>.</summary>
 public sealed class Response
 {
     internal ushort Status { get; }
@@ -35,9 +50,9 @@ public sealed class Response
     /// than defaulted: a Durable Instance reply rides the response handle
     /// (there is no typed DI reply import), and the Rust SDK's
     /// <c>Response::new(status, body)</c> builds one with no headers at all.
-    /// A C# guest that always emitted a <c>content-type</c> would put ~30
-    /// extra bytes through <c>resp_new</c> on every dispatch, on one side of
-    /// a language comparison only.
+    /// A C# guest that always emitted a <c>content-type</c> would put extra
+    /// bytes through <c>resp_new</c> on every dispatch, on one side of a
+    /// language comparison only.
     /// </summary>
     internal string? ContentType { get; }
 
@@ -48,14 +63,20 @@ public sealed class Response
         ContentType = contentType;
     }
 
+    /// <summary>
+    /// A UTF-8 text response, with <c>text/plain; charset=utf-8</c>.
+    /// </summary>
     public static Response Text(string body, ushort status = 200) =>
         new(status, System.Text.Encoding.UTF8.GetBytes(body), "text/plain; charset=utf-8");
 
+    /// <summary>
+    /// A UTF-8 JSON response, with <c>application/json</c>. The body is not validated.
+    /// </summary>
     public static Response Json(string json, ushort status = 200) =>
         new(status, System.Text.Encoding.UTF8.GetBytes(json), "application/json");
 
     /// <summary>
-    /// Bytes with no headers — the shape a DI reply takes (§7.2). The array is
+    /// Bytes with no headers — the shape a DI reply takes. The array is
     /// taken by reference and handed to the host as-is; callers that reuse a
     /// buffer must copy before passing it here.
     /// </summary>
@@ -64,7 +85,7 @@ public sealed class Response
 
     /// <summary>
     /// Bytes with an explicit content type. <c>Raw</c> is the right default for
-    /// a benchmark guest, where ~30 extra bytes through <c>resp_new</c> on
+    /// a benchmark guest, where the extra bytes through <c>resp_new</c> on
     /// every dispatch would land on one side of a language comparison only.
     /// This guest serves a page to a browser, so the header has to be real: a
     /// reply with no <c>content-type</c> leaves the browser to MIME-sniff, and
@@ -75,15 +96,18 @@ public sealed class Response
 }
 
 /// <summary>
-/// §2.2 <c>Ctx</c>. <c>WaitUntil</c> extends the instance's life past the
-/// response for fire-and-forget work, bounded by the CPU budget — exactly as
-/// in Workers.
+/// The per-dispatch context. <c>WaitUntil</c> extends the instance's life past
+/// the response for fire-and-forget work, bounded by the CPU budget — exactly
+/// as in Workers.
 /// </summary>
 public sealed class Ctx
 {
-    /// <summary>§8.5: coarse, and frozen for the whole dispatch slice. Code
-    /// MUST NOT assume high-resolution timing.</summary>
+    /// <summary>Millisecond granularity, and frozen for the whole dispatch
+    /// slice. Code MUST NOT assume high-resolution timing.</summary>
     public long NowMs { get; }
+    /// <summary>
+    /// CPU-ms this dispatch may use before it is killed. See the plan limits.
+    /// </summary>
     public uint CpuBudgetMs { get; }
 
     internal Ctx(long nowMs, uint cpuBudgetMs)

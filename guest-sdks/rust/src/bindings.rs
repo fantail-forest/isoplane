@@ -1,4 +1,4 @@
-//! Typed async wrappers over the raw capability imports (spec.md §5.3).
+//! Typed async wrappers over the raw capability imports.
 //!
 //! Every binding here is a thin shape over `abi::*`. The pattern is always the
 //! same and is worth stating once: **encode, call, wrap the returned id, and
@@ -46,8 +46,8 @@ use crate::future::{call, decode_postcard, decode_unit, HostFuture};
 pub struct HttpFetch;
 
 impl HttpFetch {
-    /// SSRF policy is enforced host-side (§8.6); an RFC1918 target comes back
-    /// as `WispError::Denied`.
+    /// SSRF policy is enforced host-side; an RFC1918 target comes back as
+    /// `WispError::Denied`.
     pub fn fetch(req: FetchRequest) -> HostFuture<FetchResponse> {
         call(abi::http_fetch, &req, decode_postcard::<FetchResponse>)
     }
@@ -124,10 +124,10 @@ pub async fn fetch_bytes(url: &str) -> Result<(u16, Vec<u8>)> {
 pub struct Clock;
 
 impl Clock {
-    /// Coarse (1 ms) and FROZEN for the dispatch slice (§8.5). Do not build a
-    /// timer out of this: it does not advance inside a slice, so a spin loop
-    /// on it can never terminate -- it just burns the CPU budget and dies
-    /// (§8.3, and see `guests/misbehaver`).
+    /// Millisecond granularity, and FROZEN for the dispatch slice. Do not
+    /// build a timer out of this: it does not advance inside a slice, so a spin
+    /// loop on it can never terminate -- it just burns the CPU budget and dies
+    /// (see `guests/misbehaver`).
     pub fn now_ms() -> u64 {
         unsafe { abi::clock_now_coarse() as u64 }
     }
@@ -180,8 +180,9 @@ pub fn log(level: Level, msg: &str) {
 }
 
 /// RAII span. `end` runs on drop -- which is fine for hygiene but is NOT a
-/// correctness mechanism: §2.5.8 says a budget kill does not unwind, so this
-/// drop may simply never happen. The host closes spans on instance death.
+/// correctness mechanism: a dispatch that runs past the hard deadline at B+G
+/// is trapped mid-frame with no unwinding, so this drop may simply never
+/// happen. The host closes spans on instance death.
 pub struct Span(i32);
 
 impl Span {

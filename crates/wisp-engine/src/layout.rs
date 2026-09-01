@@ -3,8 +3,8 @@
 //! **Where the buffer is, and which way it flows, is not decided here.** It is
 //! `wisp_abi::imports::BufSpec` on each `ImportDef`, alongside `sensitive` and
 //! `init_visible`, because the validator, the linker and the guest SDK all key
-//! off it and `docs/plan.md` ground rule 2 is explicit that duplicating
-//! contract data is a real bug. This module only does the part that is genuinely
+//! off it, and a second copy of contract data is a bug waiting to happen.
+//! This module only does the part that is genuinely
 //! the engine's: turning the remaining parameters into the fixed-size scalar
 //! array the binding vtable takes.
 //!

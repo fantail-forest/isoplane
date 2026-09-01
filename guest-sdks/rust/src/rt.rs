@@ -1,13 +1,12 @@
-//! **The wisp scheduler** (spec.md §4.2): a single-threaded, non-concurrent
-//! executor that owns a continuation queue and a future table mapping host
-//! future ids to waker slots.
+//! **The wisp scheduler**: a single-threaded, non-concurrent executor that
+//! owns a continuation queue and a future table mapping host future ids to
+//! waker slots.
 //!
-//! # How parking works, precisely (invariant 3)
+//! # How parking works, precisely
 //!
-//! This module is where the third invariant is either true or a slogan:
-//!
-//! > *Suspension implies an empty stack. The only way for guest code to wait
-//! > is to return control to the host with a "pending" status.*
+//! This module is where the platform's central invariant is either true or a
+//! slogan: *suspension implies an empty stack*. The only way for guest code to
+//! wait is to return control to the host with a "pending" status.
 //!
 //! There is one code path and it is a chain of ordinary `return`s:
 //!
@@ -25,13 +24,13 @@
 //!      <- run()              the ready queue is empty, so the loop EXITS
 //!    <- handle_dispatch      returns PollStatus::Pending.encode()
 //!  host sees `pending`; the wasm stack is now empty and the instance is
-//!  Parked (§6.5): evictable, snapshotable, relocatable.
+//!  Parked: evictable, snapshotable, relocatable.
 //! ```
 //!
 //! Later, `wisp_wake(future_id, result)` writes the result into the slot,
 //! pushes the owning task back onto the ready queue and calls `run()` again --
 //! a *fresh* stack, not a resumed one. That is the whole mechanism. There is
-//! no Asyncify, no stack switching (§5.1), no thread, and nothing that spins:
+//! no Asyncify, no stack switching, no thread, and nothing that spins:
 //! `run()` polls only tasks that something has explicitly made ready, and when
 //! the ready queue drains it returns rather than looping.
 //!
@@ -54,7 +53,7 @@ use std::collections::{BTreeMap, VecDeque};
 /// What a top-level task hands back when it finishes.
 pub enum TaskOutcome {
     /// The dispatch is complete. Carries the response handle, or 0 for
-    /// trigger types that have no response (an alarm does not, §5.2).
+    /// trigger types that have no response (an alarm does not).
     Response(u32),
     /// A `wait_until` / background task finished. Does not complete a dispatch.
     Done,
@@ -68,16 +67,17 @@ struct Task {
     fut: BoxTask,
 }
 
-/// One entry of the future table (§4.2): a host future id, the task waiting on
-/// it, and the result once `wisp_wake` delivers one.
+/// One entry of the future table: a host future id, the task waiting on it,
+/// and the result once `wisp_wake` delivers one.
 struct FutureSlot {
     owner: u32,
     result: Option<ResultRecord>,
 }
 
-/// §11.1 caps simultaneous pending futures per dispatch; the host enforces the
-/// plan value. The guest keeps its own ceiling so a runaway fan-out surfaces as
-/// a clean `TooManyFutures` trap rather than as unbounded table growth.
+/// The host caps simultaneous pending futures per dispatch at the plan's
+/// `pending_futures_per_dispatch`. The guest keeps its own ceiling so a runaway
+/// fan-out surfaces as a clean `TooManyFutures` trap rather than as unbounded
+/// table growth.
 const MAX_PENDING_FUTURES: usize = 4096;
 
 pub(crate) struct Runtime {
@@ -181,11 +181,12 @@ impl Runtime {
 // ---------------------------------------------------------------------------
 // Single-threaded global access.
 //
-// §4.3 rule V2 turns threads, shared memory and atomics off at the engine, so
-// the module cannot express a second thread; §5.4 forbids the host from
-// re-entering an instance while a call into it is outstanding. Together those
-// make an `UnsafeCell` global the honest representation. The one hazard left
-// is *self*-nesting, so `with` refuses it in debug builds.
+// The engine builds wasmtime without threads, shared memory or atomics and the
+// validator rejects a module that declares them, so the module cannot express a
+// second thread; and both `wisp-host` and the engine refuse a reentrant call
+// into an instance while one is outstanding. Together those make an
+// `UnsafeCell` global the honest representation. The one hazard left is
+// *self*-nesting, so `with` refuses it in debug builds.
 // ---------------------------------------------------------------------------
 
 struct Cell<T>(UnsafeCell<T>);
@@ -260,7 +261,7 @@ pub(crate) fn run() -> PollStatus {
     with(|rt| rt.status())
 }
 
-/// Spawn background work that outlives the response (§2.2 `ctx.WaitUntil`).
+/// Spawn background work that outlives the response (`ctx.WaitUntil`).
 /// The host keeps the instance alive because the task still holds registered
 /// host futures, not because of anything the guest does after returning.
 pub fn spawn(fut: impl Future<Output = ()> + 'static) {
@@ -304,8 +305,8 @@ pub(crate) fn take_result(id: u64) -> Option<ResultRecord> {
 /// forgotten locally so a late `wisp_wake` for it is a no-op.
 ///
 /// CONTRACT GAP: there is no `future_cancel` import, so the host is not told,
-/// and the abandoned future keeps counting against the §11.1 pending-futures
-/// cap until the dispatch ends. See guests/README.md.
+/// and the abandoned future keeps counting against the pending-futures cap
+/// until the dispatch ends. See guests/README.md.
 pub(crate) fn forget(id: u64) {
     with(|rt| {
         rt.futures.remove(&id);
@@ -324,7 +325,8 @@ pub(crate) fn deliver(id: u64, res: ResultRecord) {
     });
 }
 
-/// Futures registered and not yet delivered. Bounded by §11.1.
+/// Futures registered and not yet delivered. Bounded by the plan's
+/// `pending_futures_per_dispatch`.
 pub fn pending_futures() -> usize {
     with(|rt| rt.futures.len())
 }
@@ -339,12 +341,13 @@ pub fn park_count() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// Export bodies (§5.2). The `export_*!` macros emit thin `#[no_mangle]`
-// wrappers in the guest crate that call straight into these.
+// Export bodies. The `export_*!` macros emit thin `#[no_mangle]` wrappers in
+// the guest crate that call straight into these.
 // ---------------------------------------------------------------------------
 
-/// `wisp_alloc(size, align) -> ptr`: the host->guest buffer handoff (§5.5).
-/// The guest frees the buffer when the host hands it back.
+/// `wisp_alloc(size, align) -> ptr`: the host->guest buffer handoff. No host
+/// pointer ever enters guest memory; the host copies into this buffer, and the
+/// guest frees it when the host hands it back.
 pub fn export_alloc(size: usize, align: usize) -> usize {
     let size = size.max(1);
     let align = align.max(1).next_power_of_two();
@@ -414,8 +417,8 @@ mod tests {
     use crate::future::HostFuture;
     use crate::testing;
 
-    /// **The park test (claim C4).** A dispatch that awaits a host future must
-    /// cost exactly one poll and then RETURN. If parking were implemented by
+    /// **The park test.** A dispatch that awaits a host future must cost
+    /// exactly one poll and then RETURN. If parking were implemented by
     /// waiting, this would either never return or the poll count would climb.
     #[test]
     fn parking_is_one_poll_and_a_return() {
@@ -454,7 +457,7 @@ mod tests {
         });
     }
 
-    /// §2.2: two concurrent host futures awaited together, ZERO threads. Both
+    /// Two concurrent host futures awaited together, ZERO threads. Both
     /// register on the first poll; the task parks once and is re-polled once
     /// per wake.
     #[test]
@@ -483,7 +486,7 @@ mod tests {
         });
     }
 
-    /// §2.2 `ctx.WaitUntil`: the response is `done` immediately, and the
+    /// `ctx.WaitUntil`: the response is `done` immediately, and the
     /// background task keeps being driven by later wakes.
     #[test]
     fn wait_until_work_outlives_the_response() {

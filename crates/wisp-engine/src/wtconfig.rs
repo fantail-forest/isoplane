@@ -65,7 +65,9 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     c.guard_before_linear_memory(false);
     c.cranelift_opt_level(OptLevel::Speed);
     if cfg.spectre_mitigations {
-        // Explicit options keep these mitigations enabled when requested.
+        // Bounds-check masking and pointer sanitization on loads. These
+        // default to on in Cranelift; setting them explicitly means a future
+        // default flip cannot silently disarm a security control.
         // SAFETY: both are recognised Cranelift settings with boolean values;
         // an unknown name or bad value would be caught by `Engine::new` below.
         unsafe {

@@ -1,4 +1,7 @@
-//! Behavioral tests for the sandbox boundary.
+//! Behavioural tests for the sandbox boundary.
+//!
+//! Each test names the property it is holding the engine to. A claim without a
+//! test is a claim.
 
 mod common;
 
@@ -37,7 +40,7 @@ fn echo_guest() -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// §4.3 V1 / invariant 4 — imports are the complete capability surface
+// V1 / invariant 4 — imports are the complete capability surface
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -65,7 +68,7 @@ fn an_import_outside_the_table_fails_to_load() {
         "must cite the rule it is enforcing: {msg}"
     );
 
-    // Right field, wrong module: `wisp` is the only host module (§5.3).
+    // Right field, wrong module: `wisp` is the only host module.
     let wasm = guest(
         4,
         r#"(import "wasi_snapshot_preview1" "fd_write" (func $x (param i32) (result i32)))"#,
@@ -101,12 +104,12 @@ fn a_module_missing_a_required_export_cannot_activate() {
     let t = e.load_template(&wat::parse_str(src).unwrap()).unwrap();
     let err = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .expect_err("a module without wisp_wake is not deployable (§5.2)");
+        .expect_err("a module without wisp_wake is not deployable");
     assert!(format!("{err:#}").contains("wisp_wake"), "{err:#}");
 }
 
 // ---------------------------------------------------------------------------
-// §6.2 — activation and reset
+// activation and reset
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -140,7 +143,7 @@ fn reset_restores_template_contents_byte_exactly() {
     assert_eq!(
         i.memory(),
         image.as_slice(),
-        "§6.2: reset restores template contents — byte for byte, not approximately"
+        "reset restores template contents — byte for byte, not approximately"
     );
     assert_eq!(i.dirty_page_count(), 0);
 }
@@ -196,8 +199,8 @@ fn activation_seals_globals_and_tables_from_the_template() {
     );
 
     // ...and a fresh activation of the same template must not see any of it.
-    // §6.2 step 2: globals and tables are initialized from the template's
-    // sealed values, which wasmtime instantiation performs.
+    // Globals and tables are initialized from the template's sealed values,
+    // which wasmtime instantiation performs.
     let mut b = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
         .unwrap();
@@ -241,8 +244,8 @@ fn a_serialized_template_round_trips_and_is_engine_pinned() {
         Completion::Done
     );
 
-    // §4.4/§9.3: artifacts are content-addressed by (module hash, engine
-    // version, µarch). An engine configured differently must refuse them.
+    // Artifacts are content-addressed by (module hash, engine version,
+    // µarch). An engine configured differently must refuse them.
     let other = WispEngine::new(EngineConfig {
         max_instances: 8,
         max_memory_bytes: 8 << 20,
@@ -259,9 +262,9 @@ fn a_serialized_template_round_trips_and_is_engine_pinned() {
 
 /// The activator's baseline must be the engine's, not a copy of it.
 ///
-/// `wisp-host`'s `EngineActivator` holds the template image for §6.6's
-/// page-diff. It used to take `memory_image().to_vec()` — a second full copy
-/// per module per cell, which for a pre-initialized .NET template is 53 MB.
+/// `wisp-host`'s `EngineActivator` holds the template image for the page-diff.
+/// It used to take `memory_image().to_vec()` — a second full copy per module
+/// per cell, which for a pre-initialized .NET template is tens of megabytes.
 /// `memory_image_arc` hands out the engine's own allocation instead, and
 /// pointer equality is the only assertion that actually proves no copy
 /// happened: comparing contents would pass just as happily for a clone.
@@ -323,7 +326,7 @@ fn a_mapped_artifact_is_equivalent_to_a_copied_one() {
         Completion::Done
     );
 
-    // §4.4/§9.3 again, on the mapped path: a differently configured engine
+    // Content-addressing again, on the mapped path: a differently configured engine
     // must refuse the file rather than map code it cannot run.
     let other = WispEngine::new(EngineConfig {
         max_instances: 8,
@@ -347,7 +350,7 @@ fn a_mapped_artifact_is_equivalent_to_a_copied_one() {
 fn deferred_init_units_travel_in_the_template() {
     let e = test_engine();
     let mut wasm = echo_guest();
-    // The section `wisp-control` pre-init is expected to emit (§4.4).
+    // The section `wisp-control` pre-init is expected to emit.
     let mut payload = 3u32.to_le_bytes().to_vec();
     for id in [7u32, 11, 13] {
         payload.extend_from_slice(&id.to_le_bytes());
@@ -385,19 +388,19 @@ fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
 }
 
 // ---------------------------------------------------------------------------
-// §6.4 / §2.5.8 / C7 — budget kills are abrupt and self-limiting
+// budget kills are abrupt and self-limiting
 // ---------------------------------------------------------------------------
 
-/// §6.4/§2.5.8, and the sharper form the spec took in v1.4: an *uncooperative*
-/// spinner is killed at **B+G**, not at B, and only then is the kill abrupt.
+/// An *uncooperative* spinner is killed at **B+G**, not at B, and only then is
+/// the kill abrupt.
 #[test]
 fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
     let e = test_engine();
     // A tight back-edge loop: epoch checks are Cranelift-inserted at back-edges.
     // The guest marks memory before it starts spinning and would mark it again
-    // on the way out. §2.5.8: a budget kill is "not unwound: no `finally`
-    // blocks, no finalizers, no cleanup quantum", so the second marker must
-    // never appear.
+    // on the way out. A hard budget kill is not unwound — no `finally` blocks,
+    // no finalizers, no cleanup quantum — so the second marker must never
+    // appear.
     let wasm = guest(
         4,
         "",
@@ -446,7 +449,7 @@ fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
         cpu_ms < hard_ms + 8.0,
         "killed after {cpu_ms:.2} ms against a {hard_ms:.0} ms hard deadline"
     );
-    // §6.4: the overage is recorded, and it is the CPU past B — grace included.
+    // The overage is recorded, and it is the CPU past B — grace included.
     assert!(
         out.overage_ns >= budget.grace_ns(),
         "a dispatch that ran the whole grace window must be recorded at least G of overage; \
@@ -464,10 +467,10 @@ fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
         cpu_ms - hard_ms
     );
 
-    // §2.5.8, checked rather than asserted in prose: the guest was inside the
+    // Checked rather than asserted in prose: the guest was inside the
     // dispatch, and the code after the loop never ran. There is no unwinding
-    // to run it — which is exactly why §5.4 can say "the host reclaims all of
-    // the dispatch's handles on kill; invariant 2 *is* the cleanup story".
+    // to run it — which is why the host reclaims all of the dispatch's handles
+    // on kill; invariant 2 *is* the cleanup story.
     let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
     let (entered, cleaned_up) = {
         let m = i.memory();
@@ -476,10 +479,10 @@ fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
     assert_eq!(entered, 1, "the guest must actually have been running");
     assert_eq!(
         cleaned_up, 0,
-        "§2.5.8: no `finally`-equivalent may run after a budget kill"
+        "no `finally`-equivalent may run after a hard budget kill"
     );
 
-    // §6.4: the instance is a TOMBSTONE. Not "discarded by convention" —
+    // The instance is a TOMBSTONE. Not "discarded by convention" —
     // every host-side operation on it fails, and a call into the guest is a
     // hard assertion failure. Kill-then-call is checked in its own
     // conformance test below; here it is enough that the state is set and the
@@ -493,12 +496,12 @@ fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
     );
     assert!(
         i.capture_mutable_state().is_err(),
-        "§6.4: deltas are never captured from a tombstone"
+        "deltas are never captured from a tombstone"
     );
 }
 
 // ---------------------------------------------------------------------------
-// §6.4 — the three CONFORMANCE TESTS, named in the spec
+// the three CONFORMANCE TESTS for the two-phase kill
 //
 //   1. kill-then-call MUST observe refusal;
 //   2. a dispatch that yields during grace MUST be observed clean;
@@ -513,11 +516,10 @@ fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
 
 /// **Conformance 1: kill-then-call MUST observe refusal.**
 ///
-/// This is the test Appendix C F2 asked for. The finding was that wasmtime
-/// does *not* poison a store after a budget trap — a killed instance answered
-/// a later exported call correctly, globals intact — so "the instance is
-/// discarded" is an invariant the platform has to enforce rather than one the
-/// engine provides.
+/// wasmtime does *not* poison a store after a budget trap — a killed instance
+/// has been observed answering a later exported call correctly, globals intact
+/// — so "the instance is discarded" is an invariant the platform has to
+/// enforce rather than one the engine provides.
 ///
 /// The refusal is a panic, which is what "hard assertion failure" means, so
 /// the test has to catch it. That is the point: an `Err` could be ignored by
@@ -548,13 +550,13 @@ fn conformance_kill_then_call_is_refused() {
     assert_eq!(out.completion, Completion::BudgetKill);
     assert!(i.is_poisoned(), "a hard kill must tombstone");
 
-    // The call that F2 watched succeed. It must now be refused.
+    // The call that used to succeed. It must now be refused.
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         i.dispatch(&http_dispatch(2), budget)
     }));
     let payload = refused.expect_err(
-        "a tombstoned instance answered a second dispatch — this is exactly Appendix C F2, and \
-         §6.4 makes it a hard assertion failure",
+        "a tombstoned instance answered a second dispatch, which must be a hard assertion \
+         failure",
     );
     let msg = payload
         .downcast_ref::<String>()
@@ -583,10 +585,10 @@ fn conformance_kill_then_call_is_refused() {
 ///
 /// The fixture is the negative control's twin: the identical spin loop, plus
 /// a `budget_remaining_ns` check every 4096 iterations. When the check goes
-/// non-positive it stores a marker — the `finally` §2.5.8 says a *hard* kill
-/// never runs — and returns `done`.
+/// non-positive it stores a marker — the `finally` a *hard* kill never runs —
+/// and returns `done`.
 ///
-/// Everything the spec promises a clean kill is asserted here: the completion
+/// Everything a clean kill promises is asserted here: the completion
 /// is `CleanKill`, the instance is NOT tombstoned, `reset` works, the slot is
 /// reusable for a subsequent dispatch, and the overage is recorded.
 #[test]
@@ -597,8 +599,8 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
         &import("budget_remaining_ns", "", "(result i64)"),
         r#"
   ;; The cooperative loop: a slab of pure arithmetic, then one read of the
-  ;; host-published remaining budget, repeat. §4.6's runtime layer does the
-  ;; same thing at its allocation slow path, GC entry and task switch.
+  ;; host-published remaining budget, repeat. A runtime layer does the same
+  ;; thing at its allocation slow path, GC entry and task switch.
   ;;
   ;; The slab size is the interesting parameter and it is what the third
   ;; conformance test is really about: cooperation is only cooperation if the
@@ -651,13 +653,10 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
     );
     assert_eq!(out.completion, Completion::CleanKill);
     assert_eq!(out.kill, Some(KillPhase::Clean));
-    assert!(
-        out.completion.instance_survives(),
-        "§6.4: the slot is reusable"
-    );
+    assert!(out.completion.instance_survives(), "the slot is reusable");
     assert!(!out.completion.tombstones());
 
-    // §2.5.8's difference, made visible: on a clean kill the code after the
+    // The difference, made visible: on a clean kill the code after the
     // loop DOES run. The hard-kill test above asserts the same address stays
     // zero, and the two fixtures differ only in the budget check.
     let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
@@ -666,7 +665,7 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
         (read(m, 3000), read(m, 3008))
     };
     assert_eq!(entered, 1);
-    assert_eq!(cleaned_up, 1, "§6.4: on a clean kill `finally` runs");
+    assert_eq!(cleaned_up, 1, "on a clean kill `finally` runs");
 
     // The overage is real and is recorded: it ran past B, inside G, and stopped.
     let cpu_ms = out.cpu_ns as f64 / 1e6;
@@ -680,7 +679,7 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
          deadline",
         budget.hard_ns() as f64 / 1e6
     );
-    assert!(out.overage_ns > 0, "§6.4: the overage CPU is recorded");
+    assert!(out.overage_ns > 0, "the overage CPU is recorded");
     eprintln!(
         "CLEAN KILL: B=20 ms G={:.0} ms; returned after {:.3} ms CPU ({:.3} ms overage, \
          {:.1}% of G used)",
@@ -694,8 +693,7 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
     // economic point of the grace window.
     assert!(!i.is_poisoned());
     assert!(i.tombstone_reason().is_none());
-    i.reset()
-        .expect("§6.4: the slot is reusable after a clean kill");
+    i.reset().expect("the slot is reusable after a clean kill");
     let again = i.dispatch(
         &http_dispatch(2),
         CpuBudget {
@@ -720,14 +718,15 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
 /// early (that would mean grace was not really offered) and must not come
 /// late (that would mean the deadline is soft).
 ///
-/// It also runs the pinned-bit case, because §4.6's *unsafe-to-trap* bit is
-/// the one mechanism that could turn the hard deadline into a negotiation.
+/// It also runs the pinned-bit case, because the runtime layer's
+/// *unsafe-to-trap* bit is the one mechanism that could turn the hard deadline
+/// into a negotiation.
 #[test]
 fn conformance_a_genuine_spin_tombstones_at_exactly_b_plus_g() {
     let e = test_engine();
     let spin = "(func $spin (loop $l (br $l)))";
     let plain = guest(4, "", spin, "(call $spin) (i64.const 0)", DONE);
-    // The same spin, with §4.6's bit pinned before it starts. A pinned bit
+    // The same spin, with the unsafe-to-trap bit pinned before it starts. A pinned bit
     // buys exactly G, nothing more.
     let pinned = guest(
         4,
@@ -762,7 +761,7 @@ fn conformance_a_genuine_spin_tombstones_at_exactly_b_plus_g() {
             );
             assert_eq!(out.kill, Some(KillPhase::Hard));
             assert_eq!(out.trap.as_ref().unwrap().kind, TrapKind::BudgetExceeded);
-            assert!(i.is_poisoned(), "[{label}] §6.4: a hard kill tombstones");
+            assert!(i.is_poisoned(), "[{label}] a hard kill tombstones");
             assert!(
                 !i.is_capture_eligible(),
                 "[{label}] no delta from a tombstone"
@@ -916,7 +915,7 @@ fn a_failed_wisp_alloc_is_out_of_memory() {
 }
 
 // ---------------------------------------------------------------------------
-// §11.2 / G2 / C3 — the meter
+// the meter
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -969,7 +968,7 @@ fn metered_cpu_is_stable_and_excludes_time_spent_parked() {
     assert_eq!(a.completion, Completion::Parked);
     assert!(
         i.is_parked(),
-        "§6.6: an instance that returned `pending` is Parked"
+        "an instance that returned `pending` is Parked"
     );
 
     std::thread::sleep(std::time::Duration::from_millis(250));
@@ -987,13 +986,13 @@ fn metered_cpu_is_stable_and_excludes_time_spent_parked() {
     );
     assert!(
         recorded < 250_000_000,
-        "§11.2: park time is never metered, but {recorded} ns was recorded over a 250 ms park"
+        "park time is never metered, but {recorded} ns was recorded over a 250 ms park"
     );
     assert!(total_wall > 250_000_000);
 }
 
 // ---------------------------------------------------------------------------
-// §8.4 / §8.5 — the frozen clock is a security control
+// the frozen clock is a security control
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1004,7 +1003,7 @@ fn the_coarse_clock_does_not_advance_within_a_dispatch_slice() {
         &import("clock_now_coarse", "", "(result i64)"),
         "",
         // Read, burn, read, burn, read. If the clock were a timer, these would
-        // differ and the guest would have the measurement primitive §8.4 exists
+        // differ and the guest would have the measurement primitive the freeze exists
         // to remove.
         r#"
     (i64.store (i32.const 0) (call $clock_now_coarse))
@@ -1065,7 +1064,7 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
         r#"
     (i64.store (i32.const 0) (call $clock_now_coarse))
     ;; A synchronous import is not a host-call boundary for clock purposes:
-    ;; otherwise `log_emit` in a loop would be a stopwatch (§8.4).
+    ;; otherwise `log_emit` in a loop would be a stopwatch.
     (call $log_emit (i32.const 1) (i32.const 2048) (i32.const 4))
     (i64.store (i32.const 8) (call $clock_now_coarse))
     ;; A future-returning import is one: control genuinely left the guest.
@@ -1103,7 +1102,7 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
 }
 
 // ---------------------------------------------------------------------------
-// §5.5 — buffers, in both directions
+// buffers, in both directions
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1195,7 +1194,7 @@ fn the_default_host_bindings_deny_out_buffer_fills() {
 }
 
 // ---------------------------------------------------------------------------
-// §6.6 / §4.5 / C4 — "checked, not assumed"
+// "checked, not assumed"
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1208,7 +1207,7 @@ fn park_state_is_checked_against_the_real_wasm_stack_depth() {
         .unwrap();
 
     // Never dispatched: an empty stack, but no futures — not Parked.
-    assert!(!i.is_parked(), "a fresh instance is not Parked (§6.5)");
+    assert!(!i.is_parked(), "a fresh instance is not Parked");
     assert_eq!(i.max_wasm_depth_observed(), 0, "no wasm frame has ever run");
 
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
@@ -1224,7 +1223,7 @@ fn park_state_is_checked_against_the_real_wasm_stack_depth() {
         "a wasm frame must have been observed on the stack during the dispatch"
     );
 
-    // §5.4's single-caller rule, observed from inside: the host never re-enters
+    // The single-caller rule, observed from inside: the host never re-enters
     // a running instance, so the depth never exceeds one.
     i.wake(1, &ResultRecord::Ok(vec![]), CpuBudget::http());
     assert_eq!(i.max_wasm_depth_observed(), 1);
@@ -1285,7 +1284,7 @@ fn capture_and_restore_round_trip_mutable_globals() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.4 — the sealed init sandbox
+// the sealed init sandbox
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1304,7 +1303,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
   (func (export "wisp_initialize")
     (call $init_unit_begin (i32.const 4))
     ;; Pure so far. This one is not: reading the clock makes the cctor impure
-    ;; and it must be deferred to lazy per-instance execution (§4.4).
+    ;; and it must be deferred to lazy per-instance execution.
     (i64.store (i32.const 0) (call $clock_now_coarse)))"#,
         DONE,
         DONE,
@@ -1351,7 +1350,7 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
 #[test]
 fn the_init_sandbox_permits_exactly_the_init_visible_set() {
     let e = test_engine();
-    // §4.4: the escrowed hash seed is the one *externally sourced* value; the
+    // The escrowed hash seed is the one *externally sourced* value; the
     // config blob is tenant-authored deploy input, which is why pre-running a
     // config parse bakes no shared secret.
     let imports = format!(
@@ -1442,10 +1441,23 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
 }
 
 // ---------------------------------------------------------------------------
-// §6.2 bookkeeping
+// per-activation bookkeeping
 // ---------------------------------------------------------------------------
 
-
+/// Fixed bookkeeping per instance is a claim about **residency**, and this
+/// test cannot see residency. `tests/bench_density.rs` owns that against a
+/// measured number; this owns the one thing it can establish.
+///
+/// It used to also assert a bound on the pooling allocator's per-slot
+/// reservation, derived from the two caps in `wtconfig`. That assertion is gone
+/// with the constant it read: the reservation is address space, it grew by
+/// orders of magnitude across four cap raises without residency moving at all,
+/// and a tripwire that fires on a change costing no RAM trains people to raise
+/// the bound rather than think. The address-space arithmetic that actually
+/// matters (`max_instances × per-slot`) now lives in `MAX_CORE_INSTANCE_SIZE`'s
+/// doc comment, where the caps are.
+///
+/// What remains is a genuine per-activation heap allocation.
 #[test]
 fn host_side_per_activation_structures_stay_near_their_observed_size() {
     let e = test_engine();
@@ -1454,15 +1466,15 @@ fn host_side_per_activation_structures_stay_near_their_observed_size() {
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
         .unwrap();
     let host = i.host_bookkeeping_bytes();
-    eprintln!("HOST STRUCTS: {host} B/activation (S01 measures residency at ~9.8 kB)");
+    eprintln!("HOST STRUCTS: {host} B/activation (the density test measures residency)");
 
-    // The bound is 4 KB rather than §6.2's 64 KB, and deliberately so. This
-    // term is observed at ~1.1 KB on a fresh activation, so a 64 KB bound has
-    // 57x of headroom and cannot fail for any change anyone would plausibly
-    // make — it would be decoration wearing a tripwire's name, which is the
-    // same category of error as the ceiling-as-measurement one this test was
-    // rewritten to stop making. Set it close enough to the observed value that
-    // inlining a buffer into `StoreState` or `Live` trips it.
+    // The bound is close to the observed size on purpose. This term is around
+    // a kilobyte on a fresh activation, so a bound tens of times larger could
+    // not fail for any change anyone would plausibly make — it would be
+    // decoration wearing a tripwire's name, which is the same category of
+    // error as the ceiling-as-measurement one this test was rewritten to stop
+    // making. Set it close enough that inlining a buffer into `StoreState` or
+    // `Live` trips it.
     //
     // Safe *here* because this instance has been activated and never
     // dispatched: `StoreState::scratch` is the one dynamic term in the sum and
@@ -1476,7 +1488,7 @@ fn host_side_per_activation_structures_stay_near_their_observed_size() {
 }
 
 // ---------------------------------------------------------------------------
-// §5.5 / §6.6 — the pre-capture GC hint
+// the pre-capture GC hint
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1511,7 +1523,7 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
     // The whole point of the hint is that capture happens next.
     assert!(
         i.is_parked(),
-        "§6.6 calls gc-hint on a Parked instance immediately before capture; \
+        "gc-hint is called on a Parked instance immediately before capture; \
          the hint must not clear park state"
     );
     i.capture_mutable_state()
@@ -1520,8 +1532,8 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
 
 #[test]
 fn gc_hint_is_optional() {
-    // §5.5: "a guest that ignores the hint is correct but stores a larger delta
-    // (and pays for it)". Not exporting it at all is the same choice, earlier.
+    // A guest that ignores the hint is correct but stores a larger delta and
+    // pays for it. Not exporting it at all is the same choice, earlier.
     let e = test_engine();
     let t = e.load_template(&guest(4, "", "", PENDING, DONE)).unwrap();
     assert!(!t.has_gc_hint());
@@ -1534,7 +1546,7 @@ fn gc_hint_is_optional() {
 }
 
 // ---------------------------------------------------------------------------
-// §6.4 — the wall-clock backstop is a guard, not a meter
+// the wall-clock backstop is a guard, not a meter
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1566,7 +1578,7 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
     assert!(
         trap.message.contains("wall-clock backstop"),
         "the message must distinguish the backstop from the CPU meter, since \
-         §11.2 says wall time is excluded from execution CPU accounting: {}",
+         wall time is excluded from execution CPU accounting: {}",
         trap.message
     );
     assert!(
@@ -1586,12 +1598,12 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.3 V2 / §8.2 — the features that make blocking inexpressible
+// the features that make blocking inexpressible
 // ---------------------------------------------------------------------------
 
 /// V2 is the rule that makes "no blocking" structural rather than advisory: with
 /// threads and shared memory off, `memory.atomic.wait*`/`notify` fail bytecode
-/// validation and a guest cannot express a wait at all (§4.5).
+/// validation and a guest cannot express a wait at all.
 ///
 /// This is asserted empirically because arguing it from cargo features is not
 /// safe: cargo unifies features across a workspace, `wisp-control` depends on
@@ -1656,7 +1668,7 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
         }
     }
 
-    // Relaxed SIMD is off too (§4.3 V2: "deterministic SIMD subset only"), while
+    // Relaxed SIMD is off too — only the deterministic subset — while
     // the deterministic subset still works.
     let relaxed = r#"(module (memory (export "memory") 1)
         (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
@@ -1688,14 +1700,14 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.3 — the WASI PAL adapter, at RUNTIME
+// the WASI PAL adapter, at RUNTIME
 //
 // `wisp-control` proves the adapter validates and pre-initializes. These
 // prove the other half: that a module carrying `wasi:*` imports now
 // *instantiates in a cell*, and that the two channel properties survive the
 // trip through the data plane's linker. Both properties fail silently if
 // broken — the module still runs, every other test still passes, and a
-// channel §8 closed is quietly open again — which is exactly why they are
+// channel the platform closed is quietly open again — which is why they are
 // asserted here and not assumed from the deploy-time tests.
 // ---------------------------------------------------------------------------
 
@@ -1726,7 +1738,7 @@ fn pal_guest(handle: &str) -> Vec<u8> {
     guest(4, &imports, funcs, handle, DONE)
 }
 
-/// §4.3: a module declaring `wasi:*` imports **instantiates**. Before the
+/// A module declaring `wasi:*` imports **instantiates**. Before the
 /// adapter reached the data plane's linker it could pass validation and
 /// pre-initialization and then fail at activation, which is the worst place
 /// for a capability decision to surface.
@@ -1745,7 +1757,7 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
     let composed: Vec<String> = t.pal_composed().iter().map(|d| d.full_name()).collect();
     assert_eq!(composed.len(), 4, "composed: {composed:?}");
 
-    // §4.3's audit trail: a capability that came in through a WASI door must
+    // The audit trail: a capability that came in through a WASI door must
     // be nameable as the `wisp:platform` capability it resolves to, or "no new
     // channels" is a promise nobody can check.
     let caps: Vec<&str> = t
@@ -1770,14 +1782,14 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
     );
 }
 
-/// §8.4/§8.5, through the runtime linker: `monotonic-clock::now` is
+/// Through the runtime linker: `monotonic-clock::now` is
 /// **quantized to the coarse clock and frozen intra-slice**.
 ///
 /// The negative control is the whole test. A real nanosecond monotonic clock
 /// — which is what `wasmtime-wasi` would hand you, and the obvious thing to
 /// reach for — passes "the guest can read the time" and fails both assertions
-/// below. §8.4 denies guests a fine timer because it is the measurement
-/// primitive most Spectre-class attacks need.
+/// below. Guests get no fine timer because it is the measurement primitive
+/// most Spectre-class attacks need.
 #[test]
 fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     let e = test_engine();
@@ -1806,12 +1818,12 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     let (a, b) = (read(&mut i, 3000), read(&mut i, 3008));
     assert_eq!(
         a, b,
-        "§8.5: the clock is FROZEN within a slice — two reads cannot differ"
+        "the clock is FROZEN within a slice — two reads cannot differ"
     );
     assert_eq!(
         a % 1_000_000,
         0,
-        "§8.4/§4.3: the delegated clock must be quantized to the coarse clock's 1 ms, so no \
+        "the delegated clock must be quantized to the coarse clock's 1 ms, so no \
          sub-millisecond bit exists to leak; got {a} ns"
     );
 
@@ -1834,7 +1846,7 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     );
 }
 
-/// §8.5, through the runtime linker: `random::get-random-bytes` reaches the
+/// Through the runtime linker: `random::get-random-bytes` reaches the
 /// host CSPRNG **per call and caches nothing**.
 ///
 /// Entropy captured into a
@@ -1886,21 +1898,21 @@ fn the_pal_entropy_delegation_draws_per_call_and_never_caches() {
     // anywhere on the path — makes these equal.
     assert_ne!(
         first, second,
-        "§8.5/§4.4: two draws in one dispatch returned identical bytes, so something on the \
+        "two draws in one dispatch returned identical bytes, so something on the \
          delegation path cached the CSPRNG output; clones of this template would share an RNG \
          stream and nothing else in the suite would notice"
     );
 }
 
-/// §4.3: a `TrapOnCall` entry **traps when called**, and does not quietly
+/// A `TrapOnCall` entry **traps when called**, and does not quietly
 /// return zero.
 ///
 /// This is the negative control for the whitelist itself. A silent
 /// zero-returning stub really does succeed — the guest carries on, the
 /// dispatch returns 200, and a denied capability has become a supported one
-/// that happens to answer badly. §13's disposition for a trap (fail the
-/// dispatch, discard the instance) is the honest answer for a declaration
-/// that is toolchain residue.
+/// that happens to answer badly. A trap fails the dispatch and discards the
+/// instance, which is the honest answer for a declaration that is toolchain
+/// residue.
 #[test]
 fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
     let e = test_engine();
@@ -1930,10 +1942,10 @@ fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
         msg.contains("wasi:cli/exit") && msg.contains("trap-on-call"),
         "the trap must name the import and say why: {msg}"
     );
-    assert!(i.is_poisoned(), "§13: a trapped instance is discarded");
+    assert!(i.is_poisoned(), "a trapped instance is discarded");
 }
 
-/// §2.5.4, through the runtime linker: `get-environment` answers the **empty
+/// Through the runtime linker: `get-environment` answers the **empty
 /// list**, which is the same fidelity as absent.
 #[test]
 fn the_pal_environment_delegation_answers_empty() {
@@ -1961,6 +1973,6 @@ fn the_pal_environment_delegation_answers_empty() {
     assert_eq!(
         (ptr, len),
         (0, 0),
-        "§2.5.4: there is no ambient environment, so the list is empty"
+        "there is no ambient environment, so the list is empty"
     );
 }

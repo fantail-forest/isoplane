@@ -1,4 +1,4 @@
-//! Request and response shapes for the Handler entrypoint (spec.md §2.2, §5.2).
+//! Request and response shapes for the Handler entrypoint.
 
 use serde::Serialize;
 use wisp_abi::dispatch::ResponseHead;
@@ -89,7 +89,7 @@ impl Response {
     }
 }
 
-/// A streaming response. `write` is an **UNBOUNDED** future (§6.8): a stream in
+/// A streaming response. `write` is an **UNBOUNDED** future: a stream in
 /// flight is not preserved across hibernation, so a write can fail with
 /// `WispError::Lost` and only the app knows whether resuming is meaningful.
 pub struct ResponseStream {

@@ -3,10 +3,10 @@
 # Runs INSIDE the wisp-dev container:  scripts/dev guests/dotnet/check.sh
 #
 #   --wasi=pal    (default) implement only the measured runtime-PAL set;
-#                 the other 29 wasi imports trap if called
+#                 every other wasi import traps if called
 #   --wasi=trap   every non-`wisp` import traps — for this fixture execution
 #   --wasi=stub   nothing traps; enumerate which imports are reachable
-#   --density N   activate N instances and report marginal RSS (§6.2)
+#   --density N   activate N instances and report marginal RSS
 #   --compat      expect the compatibility probe response; build with the probe enabled
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

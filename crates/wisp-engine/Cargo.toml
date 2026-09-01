@@ -12,18 +12,18 @@ serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 # `default-features = false` is critical, not tidiness: the default feature
-# set pulls in `async`, which is wasmtime's fiber-based stack switching. §6.1 is
-# explicit that the engine runs in synchronous mode on pool threads "deliberately
-# not the engine's async mode, whose epoch-*yielding* is implemented with fibers,
-# i.e. hidden native stacks, which invariant 3 forbids". With the feature off the
+# set pulls in `async`, which is wasmtime's fiber-based stack switching. The
+# engine runs in synchronous mode on execution-pool threads, deliberately not in
+# the engine's async mode, whose epoch-*yielding* is implemented with fibers —
+# hidden native stacks, which invariant 3 forbids. With the feature off the
 # fiber code is not merely unused, it is not compiled in.
 wasmtime = { version = "48", default-features = false, features = [
     "anyhow",               # makes `wasmtime::Error` *be* `anyhow::Error`
     "runtime",              # the JIT runtime itself
     "std",
-    "cranelift",            # AOT compile (§4.4)
-    "pooling-allocator",    # §6.2 instance slots, adopted wholesale
-    "call-hook",            # §6.6 "checked, not assumed": genuine wasm-frame depth
+    "cranelift",            # AOT compile
+    "pooling-allocator",    # instance slots, adopted wholesale
+    "call-hook",            # checked, not assumed: genuine wasm-frame depth
     "backtrace",            # trap classification wants a message
     "demangle",
     "parallel-compilation",

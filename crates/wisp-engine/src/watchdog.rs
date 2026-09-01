@@ -1,9 +1,9 @@
-//! The epoch watchdog (spec.md §6.4).
+//! The epoch watchdog.
 //!
-//! > *The engine's epoch counter (bumped every 200 µs; checks Cranelift-inserted
-//! > at back-edges/calls) exists to **deliver** deadline kills, not to
-//! > deschedule-and-resume: a dispatch over budget is trapped and terminated
-//! > without unwinding.*
+//! The engine's epoch counter — bumped every `epoch_tick_us`, with the checks
+//! Cranelift-inserted at back-edges and calls — exists to **deliver** deadline
+//! kills, not to deschedule-and-resume: a dispatch over budget is trapped and
+//! terminated without unwinding.
 //!
 //! Two design points that are easy to get wrong:
 //!
@@ -11,10 +11,10 @@
 //!   running guest and resume it later, but that is implemented with fibers —
 //!   hidden native stacks — which invariant 3 forbids. The `async` feature is
 //!   not even compiled in (see `Cargo.toml`), so the option does not exist.
-//! * **The watchdog sleeps when nothing is Hot.** A free-running 200 µs ticker
-//!   burns a fraction of a core forever, which would put a floor under the
-//!   cell's idle CPU and quietly contradict G2 ("an instance parked on I/O
-//!   consumes zero CPU"). The ticker therefore blocks on a condvar whenever no
+//! * **The watchdog sleeps when nothing is Hot.** A free-running ticker burns
+//!   a fraction of a core forever, which would put a floor under the cell's
+//!   idle CPU and quietly contradict the claim that an instance parked on I/O
+//!   consumes zero CPU. The ticker therefore blocks on a condvar whenever no
 //!   dispatch is in flight and is woken by the first dispatch to go Hot.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -103,7 +103,7 @@ impl Drop for Watchdog {
 fn run(engine: wasmtime::Engine, shared: Arc<Shared>) {
     while !shared.stop.load(Ordering::Acquire) {
         // Park until something goes Hot. This is what keeps an idle cell's CPU
-        // at zero (G2) instead of at "one spinning watchdog".
+        // at zero instead of at "one spinning watchdog".
         {
             let mut hot = shared.hot.lock();
             while *hot == 0 && !shared.stop.load(Ordering::Acquire) {
@@ -114,11 +114,11 @@ fn run(engine: wasmtime::Engine, shared: Arc<Shared>) {
             break;
         }
 
-        // Tick on an absolute schedule so error does not accumulate. The spike
-        // (`q3_epoch.rs`) established that `thread::sleep` alone cannot hold a
-        // 200 µs cadence; sleeping to just short of the deadline and spinning
-        // the remainder does, at a small and bounded CPU cost that is only paid
-        // while a dispatch is actually Hot.
+        // Tick on an absolute schedule so error does not accumulate.
+        // `thread::sleep` alone cannot hold a sub-millisecond cadence; sleeping
+        // to just short of the deadline and spinning the remainder does, at a
+        // small and bounded CPU cost that is only paid while a dispatch is
+        // actually Hot.
         let mut next = Instant::now() + shared.tick;
         while *shared.hot.lock() > 0 && !shared.stop.load(Ordering::Acquire) {
             let now = Instant::now();

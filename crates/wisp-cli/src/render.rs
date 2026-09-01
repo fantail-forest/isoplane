@@ -92,9 +92,7 @@ pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
     let _ = writeln!(
         o,
         "  {}",
-        st.dim(
-            "§4.3 / invariant 4 — the complete, auditable list. Anything not below is unreachable."
-        )
+        st.dim("the complete, auditable list. Anything not below is unreachable.")
     );
     if r.declared.is_empty() {
         let _ = writeln!(o, "    {}", st.dim("(no platform imports at all)"));
@@ -134,6 +132,27 @@ pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
         }
     }
 
+    if !r.pal.is_empty() {
+        let _ = writeln!(o, "\n  {}", st.bold("WASI PAL ADAPTER"));
+        for line in [
+            "`wasi:*` imports the BCL emits, satisfied at deploy by composition. A delegated",
+            "one IS the capability it names; a stubbed one is nothing. Neither adds a channel.",
+        ] {
+            let _ = writeln!(o, "  {}", st.dim(line));
+        }
+        for p in &r.pal {
+            let (mark, note) = match p.disposition.capability() {
+                Some(cap) => (st.green("→"), format!("delegates to wisp.{cap}")),
+                None if p.disposition.is_delegated() => (
+                    st.dim("∅"),
+                    "returns the empty value — the platform has no such state".into(),
+                ),
+                None => (st.yellow("!"), "stub: traps when called".into()),
+            };
+            let _ = writeln!(o, "    {} {:<66} {}", mark, p.full_name(), st.dim(&note));
+        }
+    }
+
     let _ = writeln!(o, "\n  {}", st.bold("SO: THIS CODE CAN"));
     for line in r.plain_english() {
         let _ = writeln!(o, "    • {line}");
@@ -141,9 +160,7 @@ pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
     let _ = writeln!(
         o,
         "  {}",
-        st.dim(
-            "  and nothing else — no threads, no files, no ambient sockets, no syscalls (§8.2.1)."
-        )
+        st.dim("  and nothing else — no threads, no files, no ambient sockets, no syscalls.")
     );
 
     let _ = writeln!(o, "\n  {}", st.bold("EXPORTS"));

@@ -3,7 +3,7 @@ name = "wisp-rtabi"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
-description = "The tenant-facing view of the §4.6 runtime layer. One source, two link strategies: `layered` turns every runtime entry point into a wasm import satisfied at instantiation by the shared base; `selfcontained` links the identical code in and lets LTO trim it."
+description = "The tenant-facing view of the shared runtime layer. One source, two link strategies: `layered` turns every runtime entry point into a wasm import satisfied at instantiation by the shared base; `selfcontained` links the identical code in and lets LTO trim it."
 
 [lib]
 crate-type = ["rlib"]
@@ -13,9 +13,9 @@ wisp-rtlib = { path = "../rtlib", optional = true }
 
 [features]
 default = []
-# §4.6: "tenant modules compile against the runtime component's exported ABI
-# and link at instantiation".
+# Tenant modules compile against the runtime component's exported ABI and link
+# against it at instantiation.
 layered = []
-# §4.2: whole-program compilation with whole-program trimming — the status quo
-# this is being compared against.
+# Whole-program compilation with whole-program trimming — the status quo this is
+# being compared against.
 selfcontained = ["dep:wisp-rtlib"]

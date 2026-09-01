@@ -23,9 +23,9 @@ pub struct MemSample {
     /// once. Growth here as N grows is the sharing working.
     pub shared_clean_bytes: u64,
     pub shared_dirty_bytes: u64,
-    /// `VmSize` — address space. Large and mostly meaningless under a 2 GiB
-    /// guard region per slot (§8.2.1); recorded so nobody mistakes it for a
-    /// memory cost later.
+    /// `VmSize` — address space. Large and mostly meaningless under a big
+    /// per-slot guard region; recorded so nobody mistakes it for a memory cost
+    /// later.
     pub vsize_bytes: u64,
 }
 
@@ -65,7 +65,7 @@ impl MemSample {
     }
 
     /// Whether `smaps_rollup` was readable. The C1 verdict depends on it, so a
-    /// scenario that cannot read it must report a GAP rather than fall back to
+    /// scenario that cannot read it must fail rather than fall back to
     /// `VmRSS` and pretend the fallback answers the same question.
     pub fn has_rollup(&self) -> bool {
         self.pss_bytes > 0 || self.private_dirty_bytes > 0
@@ -178,7 +178,7 @@ impl DensityCurve {
 
     /// RSS growth from zero instances to one: the one-time cost of the first
     /// activation of a template in this process. Paid once, shared by every
-    /// instance after it, and therefore not part of the marginal cost §6.2
+    /// instance after it, and therefore not part of the marginal cost C1
     /// makes its claim about.
     pub fn first_activation_bytes(&self) -> Option<i64> {
         let zero = self.points.iter().find(|(n, _)| *n == 0)?;
@@ -186,8 +186,8 @@ impl DensityCurve {
         Some(one.1.rss_bytes as i64 - zero.1.rss_bytes as i64)
     }
 
-    /// §6.2's "fixed bookkeeping ≤ 64 KB" target: marginal cost *above* what
-    /// the guest itself dirtied. If each instance is asked to dirty
+    /// The platform's own fixed per-instance bookkeeping: marginal cost
+    /// *above* what the guest itself dirtied. If each instance is asked to dirty
     /// `guest_dirty_bytes` and the marginal cost is more than that, the excess
     /// is the platform's per-instance bookkeeping.
     pub fn bookkeeping_per_instance(&self, guest_dirty_bytes: u64) -> Option<f64> {
@@ -197,13 +197,13 @@ impl DensityCurve {
     /// Marginal PSS per instance.
     ///
     /// PSS is the number a capacity planner should size from: it divides each
-    /// shared page by the number of mappers, so a template page mapped by
-    /// 5,000 instances is charged 1/5000 to each rather than once to the
-    /// process (RSS) or not at all. `docs/spike-findings.md` measured the two
-    /// diverging by ~64 kB/instance at N=2000 — the kernel's fault-around
-    /// pulling a 64 kB region of shared template in whenever an instance reads
-    /// a page it never wrote — so quoting RSS where PSS was meant overstates
-    /// marginal cost, and quoting it the other way understates it.
+    /// shared page by the number of mappers, so a template page mapped by many
+    /// instances is charged a fraction to each rather than once to the process
+    /// (RSS) or not at all. The two diverge as the instance count rises —
+    /// the kernel's fault-around pulls a whole region of shared template in
+    /// whenever an instance reads a page it never wrote — so quoting RSS where
+    /// PSS was meant overstates marginal cost, and quoting it the other way
+    /// understates it.
     pub fn marginal_pss(&self) -> Option<f64> {
         let pts: Vec<(f64, f64)> =
             self.steady_state().iter().map(|(n, m)| (*n as f64, m.pss_bytes as f64)).collect();

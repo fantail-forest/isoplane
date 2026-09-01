@@ -30,6 +30,21 @@ single `.csproj`, and then **fails the build** if the module imports anything
 outside module `wisp` — the import list is the capability manifest, and a new
 BCL reference can pull in a new wasi import.
 
+## The module is judged by the build that produced it
+
+The SDK publish integration configures validation of the linked module.
+Its diagnostics distinguish rejection from a missing verdict. Keep the module
+memory maximum within the application's configured runtime limits.
+
+This is the **publish** pipeline, not `Build`: NativeAOT compilation hangs off
+`Publish`, so `dotnet build` on a guest compiles to IL and produces no module
+at all. It says so rather than passing quietly.
+
+
+Errors are verdicts and warnings are the absence of one: a developer who has
+the SDK and not yet the CLI gets a module and a loud warning, not a failed
+build. `-warnaserror:WISP0002` makes it a hard gate for CI.
+
 ## The other SDK
 
 [The Rust helpers](../rust) support internal fixtures. They

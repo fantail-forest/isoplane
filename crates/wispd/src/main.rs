@@ -2,31 +2,8 @@
 
 use clap::Parser;
 
+use wispd::cli::Args;
 use wispd::config::NodeConfig;
-
-#[derive(Parser, Debug)]
-#[command(name="wispd", version, about="Inspect local configuration and compile WebAssembly modules", group=clap::ArgGroup::new("mode").required(true).multiple(false).args(["precompile","check","print_config"]))]
-struct Args {
-    /// Configuration file; otherwise local defaults are used.
-    #[arg(long)]
-    config: Option<std::path::PathBuf>,
-
-    /// Directory used for local compilation artifacts.
-    #[arg(long)]
-    data_dir: Option<std::path::PathBuf>,
-
-    /// Compile a WebAssembly module into the local artifact directory and exit.
-    #[arg(long, value_name = "TEMPLATE_WASM")]
-    precompile: Option<std::path::PathBuf>,
-
-    /// Validate the configuration and exit.
-    #[arg(long)]
-    check: bool,
-
-    /// Print the effective configuration as TOML and exit.
-    #[arg(long)]
-    print_config: bool,
-}
 
 fn effective_config(args: &Args) -> anyhow::Result<NodeConfig> {
     let mut cfg = match &args.config {
@@ -43,10 +20,11 @@ fn effective_config(args: &Args) -> anyhow::Result<NodeConfig> {
 ///
 /// The engine is built from the *node's* configuration, because a `.cwasm` is
 /// only loadable by an engine whose fingerprint matches the one that produced
-/// it — `(module hash, engine version, µarch)`, §4.4. Compiling with a
+/// it — `(module hash, engine version, µarch)`. Compiling with a
 /// differently configured engine writes a file every cell will refuse, which is
 /// the check working rather than a bug, and is why this lives in `wispd` rather
 /// than in a standalone tool.
+#[cfg(feature = "real-backends")]
 fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<()> {
     let wasm = std::fs::read(wasm_path)
         .map_err(|e| anyhow::anyhow!("reading {}: {e}", wasm_path.display()))?;
@@ -67,6 +45,16 @@ fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<(
         t0.elapsed().as_secs_f64() * 1e3,
     );
     Ok(())
+}
+
+/// Report that this build has no compiler.
+#[cfg(not(feature = "real-backends"))]
+fn precompile(_cfg: &NodeConfig, _wasm_path: &std::path::Path) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "--precompile needs the wasm compiler, and this build has none: it was \
+         built with `--no-default-features`, which drops `wisp-engine`. Rebuild \
+         with the default features to precompile."
+    )
 }
 
 fn main() -> anyhow::Result<()> {

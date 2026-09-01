@@ -6,7 +6,8 @@ name = "wisp-guest"
 #
 # It wants the guest workspace's, not the root one's:
 #   * `[profile.release]` there is the size-tuned one (`opt-level = "z"`, LTO,
-#     `panic = "abort"`, strip) used to build the guests linking this crate.
+#     `panic = "abort"`, strip) that the guests linking this crate are built
+#     with.
 #   * `[workspace.dependencies]` there pins `wisp-abi` with
 #     `default-features = false`. Inert today (`default = []`), and a guard
 #     worth keeping: a guest must not pick up a host-shaped feature by default.

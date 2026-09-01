@@ -43,7 +43,7 @@ fn guest(head: &ResponseHead) -> Vec<u8> {
                (i32.const -16)))
     (local.get $p))
 
-  ;; PollStatus::Done {{ response: h }} packs as (h as u64) << 32 (§5.2).
+  ;; PollStatus::Done {{ response: h }} packs as (h as u64) << 32.
   (func (export "wisp_handle") (param $ptr i32) (param $len i32) (result i64)
     (i64.shl
       (i64.extend_i32_u (call $resp_new (i32.const 4096) (i32.const {len})))
@@ -66,10 +66,10 @@ fn config(dir: &std::path::Path) -> NodeConfig {
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
     // Several of these tests build a node each, concurrently, in one process.
-    // At the default sizing each engine reserves ~21 TiB of virtual address
-    // space and a 47-bit address space holds about six — so the tests would
-    // fail on the sixth with a message about the pooling allocator rather than
-    // about anything they are testing.
+    // At the default sizing each engine's up-front address-space reservation
+    // is large enough that only a handful fit at once, so a later one would
+    // fail with a message about the pooling allocator rather than about
+    // anything it is testing.
     cfg.engine = wispd::config::EngineLimits {
         max_instances: 64,
         max_memory_mib: 32,
@@ -140,10 +140,10 @@ async fn start(head: ResponseHead) -> Rig {
         .real
         .clone()
         .expect("the node has its execution backend");
-    // Through the real pipeline (§4.1), like every other deploy on this node:
-    // the .wat fixture is validated, compiled, sealed into the registry and
-    // pulled back out before a cell ever sees it. It exports no
-    // `wisp_initialize`, so §4.4 builds no template — which the record says.
+    // Through the real pipeline, like every other deploy on this node: the
+    // .wat fixture is validated, compiled, sealed into the registry and pulled
+    // back out before a cell ever sees it. It exports no `wisp_initialize`, so
+    // pre-init builds no template — which the record says.
     real.deploy_version(
         "quotes",
         "v1",
@@ -224,7 +224,7 @@ async fn an_http_request_runs_real_guest_wasm_end_to_end() {
         "text/plain",
         "and so did the headers"
     );
-    // Platform headers are still the platform's (§9.3).
+    // Platform headers are still the platform's.
     assert_eq!(r.headers.get("x-wisp-version").unwrap(), "v1");
     assert_eq!(r.headers.get("x-wisp-tier").unwrap(), "fast");
     rig.shutdown().await;
@@ -293,11 +293,11 @@ async fn a_node_reports_measurements_from_served_requests() {
 }
 
 // ---------------------------------------------------------------------------
-// Durable Instances on a real cell (§7).
+// Durable Instances on a real cell.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// §4.4 end to end: the daemon runs the deploy pipeline, so a real guest's
+// Pre-init end to end: the daemon runs the deploy pipeline, so a real guest's
 // init-visible imports are consumed at pre-init instead of trapping at runtime.
 // ---------------------------------------------------------------------------
 
@@ -318,7 +318,7 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     let Some(path) = quotes_api_path() else {
         eprintln!(
             "NOT PROVEN: guests/out/quotes-api.wasm is absent, so this test asserted nothing \
-             about §4.4. Build it with `scripts/dev guests/build.sh`, or read S13's verdict \
+             about pre-init. Build it with `scripts/dev guests/build.sh`, or read S13's verdict \
              (`scripts/dev cargo test -p wisp-acceptance --release --test s13_deploy`), which \
              reports the same claim as a GAP rather than passing quietly."
         );
@@ -366,7 +366,7 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     );
     assert!(
         rec.within_slo,
-        "§9.3: routes live in < 60 s (took {} ms)",
+        "the startup deploy must land inside the deploy budget (took {} ms)",
         rec.total_ms
     );
     let pre = rec
@@ -384,7 +384,7 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     assert_eq!(
         reasons,
         vec!["clock_now_coarse".to_string()],
-        "exactly the clock-reading initializer defers (§4.4 impure-cctor deferral)"
+        "exactly the clock-reading initializer defers"
     );
     assert_eq!(
         pre["init_pal"], "sealed",

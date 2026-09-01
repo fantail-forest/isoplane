@@ -1,7 +1,7 @@
 //! Postcard-encoded argument payloads for the buffer-passing imports.
 //!
 //! Guest -> host data crosses as a `(ptr, len)` pair that is valid only for
-//! the duration of the import call (§5.5). No host pointer ever enters guest
+//! the duration of the import call. No host pointer ever enters guest
 //! memory, and the host copies out before returning.
 
 use serde::{Deserialize, Serialize};

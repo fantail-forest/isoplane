@@ -177,9 +177,8 @@ fn labels(spans: &[(Mark, f64)]) -> Vec<Mark> {
 ///    which is the whole reason the residual was replaced.
 /// 2. The span from the first mark to the last is the request. It is read as
 ///    `last - first` rather than as the sum of the parts — those differ by one
-///    calibrated mark cost per span, about 2 µs over fifty marks, and a report
-///    that published the sum would under-state the request by exactly the
-///    amount of its own instrument.
+///    calibrated mark cost per span, and a report that published the sum would
+///    under-state the request by exactly the amount of its own instrument.
 /// 3. Nothing is negative. On one core that is impossible; across the three
 ///    threads a request visits it is the detector for the counters not being
 ///    synchronised after all, which is the failure the startup guard's
@@ -489,10 +488,10 @@ fn the_lane_lock_wait_is_separate_from_the_queue_wait() {
     // a futex round trip, orders of magnitude larger. That ordering is the
     // cheapest possible evidence that these are not one reading printed twice.
     //
-    // **Stated as a ratio, not a ceiling.** This assertion used to be
-    // `lock < 1 µs`, which is a claim about the machine rather than about the
-    // instrument: it failed on a loaded box, and on this one it failed at
-    // 1120 ns on an *idle* box, reporting a bare nanosecond count that reads
+    // **Stated as a ratio, not a ceiling.** This assertion used to be a fixed
+    // microsecond ceiling, which is a claim about the machine rather than about
+    // the instrument: it failed on a loaded box and it failed on an idle one,
+    // reporting a bare nanosecond count that reads
     // like a regression in the queue. Under contention both numbers grow
     // together and the ratio survives; a lock wait that had swallowed the
     // wait for a worker would not.
@@ -1134,6 +1133,18 @@ fn a_shed_pays_for_the_module_table_and_the_span_says_so() {
     c.shutdown();
 }
 
+/// **A trap tombstones, and the tombstone ring is a linear scan.**
+///
+/// `Cell::remember_tombstone` holds a mutex while scanning up to 256 entries
+/// for a duplicate before pushing. That is a few hundred nanoseconds at a full
+/// ring, taken by every trap and every hard kill — which is exactly the
+/// traffic a cell under stress produces — and nothing measured it.
+///
+/// The other half of the claim is what is **absent**. A trap is kept away from
+/// the hang breaker — only hard kills trip it — so a trapped request
+/// must show no `breaker.kill.*` at all. A zero there would read exactly like
+/// a breaker acquisition that never blocked, which is the opposite of the
+/// fact.
 #[test]
 fn a_trap_reports_the_tombstone_ring_and_never_touches_the_breaker() {
     let c = cell(CellConfig::for_test("marks-trap"));
@@ -1168,7 +1179,7 @@ fn a_trap_reports_the_tombstone_ring_and_never_touches_the_breaker() {
     );
     assert!(
         !got.contains(&Mark::BreakerKillWanted),
-        "a trap recorded a kill against the hang breaker; §6.4 says only hard kills do: {:?}",
+        "a trap recorded a kill against the hang breaker; only hard kills do: {:?}",
         names()
     );
     c.shutdown();
@@ -1484,6 +1495,9 @@ fn a_wake_that_runs_nothing_hands_the_trace_back() {
         "the parked request is holding its buffer, which is the premise of this test"
     );
 
+    // The tombstone at the slot door: the wake will be refused before it can
+    // take anything out of the future table, which is the shape of every stale
+    // wake.
     let id = c.resident_ids().into_iter().next().expect("one resident");
     c.slot(id).expect("the slot").tombstone();
 

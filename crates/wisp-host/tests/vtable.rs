@@ -1,4 +1,16 @@
-//! Exercises the import vtable one host call at a time.
+//! The import vtable end to end.
+//!
+//! [`super`]'s `cell.rs` drives whole requests; this file drives the *imports*,
+//! because several of the rules are properties of a single host call rather
+//! than of a request:
+//!
+//! * The SSRF policy has to be enforced on the way out of `http_fetch`, on
+//!   the address that was pinned, with no second DNS lookup anywhere.
+//! * The subrequest cap is per dispatch, so it has to reset per dispatch.
+//! * "Log CPU counts against the dispatch budget" has to be *measurable*
+//!   or it is not a control.
+//! * `WaitUntil` has to actually extend the instance's life past the
+//!   response.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -101,6 +113,11 @@ async fn settle(v: &Vt, id: u64) -> ResultRecord {
     panic!("future {id} never settled");
 }
 
+/// **`http_fetch` enforces SSRF policy host-side.**
+///
+/// The guest asks for an RFC1918 address and gets a typed `Denied` — through
+/// the future, because there is no import that waits, so even a refusal is
+/// delivered asynchronously.
 #[tokio::test]
 async fn fetch_to_a_private_address_is_denied_through_the_future() {
     let mut v = vtable(Limits::default(), "10.0.0.5:80", None);
@@ -113,7 +130,10 @@ async fn fetch_to_a_private_address_is_denied_through_the_future() {
     match settle(&v, id).await {
         ResultRecord::Err(FutureError::Denied(msg)) => {
             assert!(msg.contains("10.0.0.5"), "{msg}");
-            assert!(msg.contains("private/link-local"), "the denial should say why: {msg}");
+            assert!(
+                msg.contains("private/link-local"),
+                "the denial should say why: {msg}"
+            );
         }
         other => panic!("SSRF target was not denied: {other:?}"),
     }
@@ -124,6 +144,9 @@ async fn fetch_to_a_private_address_is_denied_through_the_future() {
     );
 }
 
+/// **Resolve-then-pin.** The fetch path is handed a `SocketAddr` and
+/// never sees the hostname again, so a DNS answer that changes after the
+/// check has nothing left to influence.
 #[tokio::test]
 async fn the_fetch_connects_to_the_pinned_address() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -145,6 +168,7 @@ async fn the_fetch_connects_to_the_pinned_address() {
     );
 }
 
+/// **The optional per-app allowlist.**
 #[tokio::test]
 async fn a_host_off_the_allowlist_is_refused() {
     let mut v = vtable(
@@ -163,6 +187,10 @@ async fn a_host_off_the_allowlist_is_refused() {
     }
 }
 
+/// **Subrequests are capped per dispatch.**
+///
+/// Per *dispatch*: the allowance has to come back when the next work item
+/// starts, or a long-lived Durable Instance would run out of egress forever.
 #[tokio::test]
 async fn the_subrequest_cap_is_per_dispatch() {
     let mut v = vtable(
@@ -245,6 +273,13 @@ async fn the_subrequest_cap_is_per_dispatch() {
     assert!(matches!(settle(&v, id).await, ResultRecord::Ok(_)));
 }
 
+/// **Log CPU counts against the dispatch budget.**
+///
+/// The mechanism is not a separate accounting pass: `log_emit` runs on the
+/// execution-pool thread inside the dispatch's Hot interval, so
+/// `CLOCK_THREAD_CPUTIME_ID` is already ticking and the tenant is already
+/// paying. This asserts the cost is real and attributed, which is what makes
+/// log-as-compute pointless rather than merely discouraged.
 #[tokio::test]
 async fn logging_costs_the_tenant_cpu() {
     let output = TestLogCapture::default();
@@ -279,6 +314,7 @@ async fn logging_costs_the_tenant_cpu() {
     );
 }
 
+/// **`wait_until` extends the instance's lifetime past the response.**
 #[tokio::test]
 async fn wait_until_keeps_work_alive_past_the_response() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -301,7 +337,7 @@ async fn wait_until_keeps_work_alive_past_the_response() {
     v.futures.end_dispatch(v.ctx.instance, 1);
     assert!(
         v.futures.wait_until_outstanding(v.ctx.instance),
-        "§2.2: WaitUntil work must survive the end of the dispatch"
+        "WaitUntil work must survive the end of the dispatch"
     );
 
     // Marking an unknown future is refused rather than silently accepted.
@@ -316,6 +352,8 @@ async fn wait_until_keeps_work_alive_past_the_response() {
 }
 
 
+/// **The wake router is told about every completion, and only about
+/// completions that have an owner.**
 #[tokio::test]
 async fn completions_signal_the_wake_router() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -334,6 +372,8 @@ async fn completions_signal_the_wake_router() {
     assert!(matches!(settle(&v, id).await, ResultRecord::Ok(_)));
 }
 
+/// Entropy requests from different calls and instances reach the host generator
+/// without reusing a cached answer.
 #[tokio::test]
 async fn entropy_is_never_reused_across_calls_or_instances() {
     let mut a = vtable(Limits::default(), "93.184.216.34:80", None);

@@ -1,4 +1,4 @@
-//! The cell (spec.md §6.1, §6.3, §6.4, §8.2.4).
+//! The cell: reactor threads, the execution pool, and the instance lifecycle.
 //!
 //! ```text
 //! ┌─ cell ────────────────────────────────────────────────────┐
@@ -10,38 +10,36 @@
 //!
 //! ## Two thread classes, and why the split matters
 //!
-//! *Reactor threads own all I/O* (§6.1). A completion arrives, the future
+//! *Reactor threads own all I/O.* A completion arrives, the future
 //! table maps its id to the owning instance, and a wake is enqueued.
 //! *Execution-pool threads run Hot dispatches as **synchronous** calls into
 //! the engine.* This is deliberately not the engine's async mode, whose
-//! epoch-*yielding* is implemented with fibers — hidden native stacks, which
-//! invariant 3 forbids. A native stack exists in this crate only for the
-//! duration of one `dispatch`/`wake` call, and a Parked instance holds no
-//! thread at all.
+//! epoch-*yielding* is implemented with fibers — hidden native stacks, which a
+//! parked instance could not be captured out of. A native stack exists in this
+//! crate only for the duration of one `dispatch`/`wake` call, and a Parked
+//! instance holds no thread at all.
 //!
 //! ## There is no scheduler here, on purpose
 //!
-//! §6.4: *"**Fairness is the kernel's job:** concurrently Hot dispatches are
-//! preempted and time-shared by the OS scheduler, so a CPU-bound tenant
-//! occupies only its own thread and cannot head-of-line-block other tenants'
-//! wakes. The platform makes no deterministic slice promise — fairness is
-//! statistical and kernel-grade, which is also the incumbent's real
-//! contract."*
+//! Fairness is the kernel's job: concurrently Hot dispatches are preempted and
+//! time-shared by the OS scheduler, so a CPU-bound tenant occupies only its own
+//! thread and cannot head-of-line-block other tenants' wakes. There is no
+//! deterministic slice promise here — fairness is statistical and kernel-grade.
 //!
 //! So this module does **not** time-slice guests, does not run a run-queue
 //! with priorities, and does not preempt anybody. What it does control is
-//! *admission*: a per-cell cap on concurrently Hot dispatches, an overflow
-//! queue, and shedding before saturation. A spinner burns its own thread until
-//! the CPU budget kills it, and §8.3's blast radius — "the offender's own
-//! requests" — is a consequence of that arrangement rather than a feature
-//! bolted on top.
+//! *admission*: a bounded queue and a shed when it is full. Concurrency is
+//! bounded by the size of the execution pool rather than by any admission
+//! check — `CellConfig::max_hot` is configured and never enforced. A spinner
+//! burns its own thread until the CPU budget kills it, and the blast radius —
+//! the offender's own requests — is a consequence of that arrangement rather
+//! than a feature bolted on top.
 //!
-//! **Not implemented (PoC gap):** §6.4's per-tenant CPU weighting via cgroup v2
-//! threaded `cpu` controllers, and §8.4's core-scheduling cookies that keep
-//! trust tiers from SMT-pairing. Both need a real cgroup hierarchy and a
-//! process-per-cell, which docs/plan.md's "one process, many cells" deviation
-//! removes. Fairness here is therefore *equal-weight* kernel fairness, not
-//! Thread scheduling follows the operating system's fairness rules.
+//! **Not built here:** per-tenant CPU weighting via cgroup v2 threaded `cpu`
+//! controllers, and core-scheduling cookies that would keep trust tiers from
+//! SMT-pairing. Both need a real cgroup hierarchy and a process per cell, and
+//! this runs one process with many cells in it. Fairness is therefore
+//! Equal-weight kernel scheduling across execution threads.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -52,9 +50,9 @@ use crate::marks::{self, Mark, RequestMarks};
 
 use parking_lot::{Condvar, Mutex};
 
-// The seven locks a dispatch takes most often are wrapped so a run can say
-// which of them the execution threads lost time to. `lock()`/`read()` keep
-// their signatures, so no call site below changes. See `lockstats`.
+// The locks a dispatch takes most often are wrapped so a run can say which of
+// them the execution threads lost time to. `lock()`/`read()` keep their
+// signatures, so no call site below changes. See `lockstats`.
 use crate::lockstats::{ActiveMap, CountedMutex, CountedRwLock};
 
 use wisp_abi::config::{AppManifest, HandlerLifecycle, Limits};
@@ -76,14 +74,14 @@ use crate::{InstanceId, ModuleId};
 #[derive(Debug, Clone)]
 pub struct CellConfig {
     pub name: String,
-    /// §6.1: default 4× cores, growable to a hard cap.
+    /// Execution-pool threads. Defaults to 4x the cell's logical cpus.
     pub exec_threads: usize,
     /// Reactor worker threads. These own all I/O.
     pub reactor_threads: usize,
     /// Configured hot-dispatch concurrency value.
     pub max_hot: usize,
-    /// §6.4: overflow queues at admission; beyond this the cell sheds, which
-    /// is the backstop for "the proxy sheds before cells saturate".
+    /// Work queues at admission; beyond this the cell sheds, so a saturated
+    /// cell refuses new work rather than accepting an unbounded backlog.
     ///
     /// The depth of **one** dispatch queue, and under
     /// [`QueueStructure::Shared`] and [`QueueStructure::LockFree`] — where
@@ -93,7 +91,7 @@ pub struct CellConfig {
     /// read; [`CellConfig::admission_capacity`] is the number that is
     /// comparable across all three.
     pub admission_queue: usize,
-    /// **How many queues there are** (§6.4). One decision.
+    /// **How many queues there are.** One decision.
     ///
     /// Defaults to [`QueueStructure::Shared`], which is what this cell has
     /// always done. See that type for what the alternatives buy and why.
@@ -148,12 +146,12 @@ pub struct CellConfig {
     /// this cell already ran, so nothing moves unless it is asked to.
     pub active_map: crate::lockstats::ActiveMapKind,
     pub max_idle_per_module: usize,
-    /// Wall-clock backstop for a dispatch. Not a meter (§11.2).
+    /// Wall-clock backstop for a dispatch; reported separately from active execution time.
     pub wall_ms_cap: u32,
     pub breaker: BreakerConfig,
-    /// How often the idle trajectory sweeps (§6.6).
+    /// How often the idle trajectory sweeps.
     pub sweep_interval_ms: u64,
-    /// §10/H7: how densely the two **per-dispatch** histograms (`request_us`,
+    /// How densely the two **per-dispatch** histograms (`request_us`,
     /// `park_ms`) keep samples. `1` — the default — keeps every one; `N` keeps
     /// one in N; `0` keeps none and takes no lock at all on the dispatch path.
     ///
@@ -162,37 +160,29 @@ pub struct CellConfig {
     /// dispatch takes through `run_dispatch` → `settle` — the work queue's
     /// push and pop, `modules`, `durables` + `residents`, `active` three
     /// times, and these two — gives at least eight, six of them per-cell
-    /// singletons shared by all execution threads. The campaign publishes
-    /// "the cell's knee is lock contention, not CPU" and names the work queue
-    /// as the prime suspect; that inference is equally consistent with
-    /// contention on `active`, on `durables`, or on these two histograms.
+    /// singletons shared by all execution threads. "The cell's knee is lock
+    /// contention, not CPU" is a claim the telemetry can manufacture for
+    /// itself, and naming the work queue as the culprit is equally consistent
+    /// with contention on `active`, on `durables`, or on these two histograms.
     ///
     /// So this exists to let the claim be **tested by difference** rather than
     /// assumed: run the same point at `1` and at `0` and see whether the knee
     /// moves. Setting it to `0` does not remove the metrics — counts, rates
-    /// and means keep working, only percentiles stop — because §10 asks for
-    /// them and a run without them still has to be comparable to a run with.
+    /// and means keep working, only percentiles stop — so a run without
+    /// percentiles is still comparable to a run with them.
     pub telemetry_sample_every: u64,
     /// How densely a request's [`crate::marks`] trace is collected: `N` times
     /// one request in `N`, `0` or `1` — `1` meaning every request — with `0`
     /// switching it off.
     ///
     /// **Sampled rather than always-on because the instrument is the cost.**
-    /// At 300,000 requests a second, tracing every one would be 0.5 s of
-    /// `RDTSCP` per second across the pool — on the one path whose timing is
-    /// the measurement.
+    /// A mark is one `RDTSCP` and a plain request takes about eighty of them;
+    /// a request that **parks** takes more, once per pass. Tracing every
+    /// request would put all of that on the one path whose timing is the
+    /// measurement, so it is conditional on this sample.
     ///
-    /// **Eighty-odd counter reads, not three clock calls.** The mechanism is
-    /// no longer `clock_gettime`: a mark is one `RDTSCP`, 20 ns on the part
-    /// this suite targets, and a plain request takes about eighty of them —
-    /// roughly 1.6 µs of instrument. A request that **parks** takes more, once
-    /// per pass. All of it is conditional on this sample.
-    ///
-    /// At the default it is one request in
-    /// 128: still 2,300 samples a second, which is 70,000 over a thirty-second
-    /// hold and enough for a p99.9 by the same ten-observations-past-the-
-    /// quantile rule the rest of the suite uses, while 0.8% of requests pay
-    /// anything at all.
+    /// The default keeps one request in 128, which is enough observations for
+    /// a far tail over a run of any length while the other 127 pay nothing.
     ///
     /// **Whether a request is sampled is `dispatch_id % N == 0`.** Stateless,
     /// so no counter is shared between submitting threads; deterministic, so a
@@ -230,7 +220,7 @@ impl Default for CellConfig {
 }
 
 /// One request in 128 carries stage timings. See
-/// [`CellConfig::stage_sample_every`] for the arithmetic behind the number.
+/// [`CellConfig::stage_sample_every`] for why it is sampled at all.
 pub const DEFAULT_STAGE_SAMPLE_EVERY: u64 = 128;
 
 /// Is this the one request in `every` that gets timed?
@@ -288,8 +278,8 @@ impl CellConfig {
         }
     }
 
-    /// How many queued dispatches the cell will hold before §6.4's shed —
-    /// across every queue, so the number is comparable between structures.
+    /// How many queued dispatches the cell will hold before it sheds — across
+    /// every queue, so the number is comparable between structures.
     pub fn admission_capacity(&self) -> usize {
         self.depth_per_queue() * self.queue_count()
     }
@@ -298,7 +288,7 @@ impl CellConfig {
 /// What a top-level work item is addressed to.
 #[derive(Debug, Clone)]
 pub enum Target {
-    /// Any instance of the module — §6.3's Handler path.
+    /// Any instance of the module — the Handler path.
     Handler { route: String },
 }
 
@@ -322,20 +312,20 @@ pub struct DispatchResult {
     /// completion channel — which is what any load generator must do, since a
     /// channel and a thread per outstanding request measures the caller — has
     /// no other way to match a result to the request it belongs to.
-    /// Completions arrive out of order by design (§6.1: a wake may land on any
-    /// pool thread), so arrival order carries no information.
+    /// Completions arrive out of order by design — a wake may land on any pool
+    /// thread — so arrival order carries no information.
     pub dispatch_id: u64,
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub completion: Completion,
-    /// The recorded meter, and nothing else (§11.2).
+    /// The recorded meter, and nothing else.
     pub cpu_ns: u64,
     /// Observability only; reported separately from active execution time.
     pub wall_ns: u64,
     pub trap: Option<String>,
     pub instance: InstanceId,
-    /// §9.2 `tier=fast` visibility: did this request pay for an activation?
+    /// Did this request pay for an activation?
     pub acquired: &'static str,
     /// Slices this request took: 1 for a dispatch that never parked, more if
     /// it awaited.
@@ -379,7 +369,7 @@ impl DispatchResult {
             dispatch_id,
             status: 503,
             headers: vec![],
-            // §6.4: fail fast, without entering the guest at all.
+            // Fail fast, without entering the guest at all.
             body: b"hang breaker open".to_vec(),
             completion: Completion::Trapped,
             cpu_ns: 0,
@@ -410,12 +400,10 @@ impl DispatchResult {
 /// queued for the same instance would be taken by another execution thread,
 /// which would then run guest code on memory a trap abandoned mid-flight. The
 /// two `settle`s then raced, and the loser resurrected the tier from
-/// `Discarded` back to `Parked` permanently. Reproduced at 4 runs in 20 on an
-/// *idle* machine by `dispatcher.rs`'s reentrancy test, which is why that test
-/// was thought merely flaky. `instances.rs`'s claim that "the window between
-/// 'it was hard-killed' and 'its memory is gone' is not a window at all" was
-/// true only of the hibernation path, which is the one caller that already
-/// tombstoned first.
+/// `Discarded` back to `Parked` permanently. It surfaced as an intermittent
+/// test failure and was taken for flakiness. The window was never as narrow as
+/// `instances.rs` once claimed: that claim held only of the hibernation path,
+/// which is the one caller that already tombstoned first.
 ///
 /// The latched case is included and is not decoration: `settle` promotes a
 /// latched trap into `Completion::Trapped` a few lines below, so a `Done` whose
@@ -434,7 +422,7 @@ fn ends_in_tombstone(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool {
 /// refusal twice — so the return value is the only route a shed's trace has
 /// home.
 pub struct SubmitOutcome {
-    /// `false` if the cell shed at admission (§6.4).
+    /// `false` if the cell shed at admission.
     pub admitted: bool,
     /// The trace of a **shed** request, handed back so the caller can close and
     /// record it. `None` when the request was admitted (the cell kept it) or
@@ -452,7 +440,7 @@ enum Job {
 ///
 /// The reading is taken here rather than at the pop because the interval
 /// wanted is the one *before* the pop — a woken slice waits for an execution
-/// thread exactly as a new dispatch does, and §6.3 makes both of them the same
+/// thread exactly as a new dispatch does, and both are slices of the same
 /// request. See [`crate::marks::Mark::WakeStarted`].
 struct WakeItem {
     slot: Arc<Slot>,
@@ -554,17 +542,13 @@ thread_local! {
 /// Shards for `Cell::active`.
 ///
 /// Sized above the execution pool so a collision is unlikely rather than
-/// certain: §6.1's default is 4x the cell's logical cpus, which is 64 on a
-/// sixteen-core cell and 256 on the widest this box can build. 256 against a
-/// 64-thread pool leaves a 1-in-4 chance that two threads pick the same shard.
+/// certain: the pool defaults to 4x the cell's logical cpus, so with fewer
+/// shards than threads two threads are guaranteed to share one.
 ///
 /// **What that costs.** A shard is a mutex byte, an empty `HashMap` and two
-/// 128-byte-padded counters, rounded up to the alignment: 384 bytes measured,
-/// so 256 of them are 96 KiB per cell. The arithmetic that used to stand here
-/// — "an empty `HashMap` is three words, so 256 of them cost less than one
-/// instance" — was both stale and answering the wrong question; `ShardedMap::
-/// new` carries the worked version and the reasoning about what the padding
-/// does and does not lose.
+/// 128-byte-padded counters, rounded up to the alignment. `ShardedMap::new`
+/// carries the worked version and the reasoning about what the padding does
+/// and does not lose.
 const ACTIVE_SHARDS: usize = 256;
 
 /// **How many work queues the cell has**, and of what kind.
@@ -580,11 +564,9 @@ pub enum QueueStructure {
     /// One queue, every worker pops from it.
     ///
     /// Simple and correct, and it does not scale: every producer and every
-    /// worker takes the same lock on every operation. Measured at 89,600
-    /// req/s with a 64-thread pool, this lock accounted for 99.5% of all the
-    /// time the workers spent blocked — 365 seconds of it inside a 30 second
-    /// hold — and its cost is superlinear in the pool size (1.1 µs per
-    /// dispatch at 8 threads, 133 µs at 64).
+    /// worker takes the same lock on every operation, so its cost grows faster
+    /// than the pool does. On a wide pool it has measured as nearly all of the
+    /// time the workers spent blocked.
     #[default]
     Shared,
     /// One queue per worker. Where the new work goes is [`QueuePlacement`]'s
@@ -601,7 +583,7 @@ pub enum QueueStructure {
     /// One shared pair of lock-free queues, and no mutex on the data at all.
     ///
     /// Keeps the two lanes and their priority — a bounded ring for dispatches,
-    /// so a full ring hands the job back and that *is* §6.4's shed, and an
+    /// so a full ring hands the job back and that *is* the shed, and an
     /// unbounded queue for wakes, which are never shed.
     ///
     /// **This removes blocking, not sharing.** Every thread still does
@@ -660,9 +642,9 @@ impl QueueStructure {
 /// and none of them is reachable on top of a single queue because there is
 /// nothing to choose between.
 ///
-/// Every policy preserves the two-lane wake-before-dispatch priority (§6.4).
-/// That is a property of what a *worker pops out of* a lane, not of which lane
-/// a producer put the item in, so nothing here can affect it.
+/// Every policy preserves the two-lane wake-before-dispatch priority. That is
+/// a property of what a *worker pops out of* a lane, not of which lane a
+/// producer put the item in, so nothing here can affect it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum QueuePlacement {
     /// Sample two lanes at random, push to the less loaded.
@@ -716,7 +698,7 @@ impl QueuePlacement {
 /// structure or placement.** Wakes jump ahead of new dispatches, and wakes are
 /// never shed: overflow queues at admission and sheds *new* work, so work
 /// already in flight keeps making progress and a saturated cell does not turn
-/// itself into a pile of half-finished requests (§6.4).
+/// itself into a pile of half-finished requests.
 ///
 /// `lanes` is one entry under [`QueueStructure::Shared`] — in which case this
 /// is exactly the structure it replaces — and one per worker under
@@ -777,7 +759,7 @@ struct Lane {
 struct LockFreeLanes {
     /// Bounded: `push` returns the job back when full, which is the shed.
     dispatches: crossbeam_queue::ArrayQueue<Box<DispatchJob>>,
-    /// Unbounded: §6.4 never sheds a wake.
+    /// Unbounded: a wake is never shed.
     wakes: crossbeam_queue::SegQueue<WakeItem>,
     closed: AtomicBool,
     /// How many producers are between their `closed` check and their push.
@@ -968,7 +950,7 @@ impl WorkQueue {
             });
     }
 
-    /// `Err` means shed (§6.4).
+    /// `Err` means shed.
     fn push_dispatch(&self, j: Box<DispatchJob>) -> Result<(), Box<DispatchJob>> {
         let j = j;
         if let Some(f) = &self.free {
@@ -1060,11 +1042,10 @@ impl WorkQueue {
         lane.load.fetch_add(1, Ordering::Relaxed);
         drop(g);
         // The critical section: a `len()` check, a `push_back` and a
-        // `fetch_add`, about 4 ns — below the counter's own 10 ns step, so
-        // this row is expected to read as noise. It is here for what it does
-        // to its neighbour: closing the lock *here* is what makes `queue.wait`
-        // the pure wait for a worker rather than that wait plus a producer's
-        // tail.
+        // `fetch_add`. Shorter than the counter's own step, so this row is
+        // expected to read as noise. It is here for what it does to its
+        // neighbour: closing the lock *here* is what makes `queue.wait` the
+        // pure wait for a worker rather than that wait plus a producer's tail.
         marks::mark_after(&tail, Mark::LaneLockReleased);
         // **Nothing is read after this call**, for the reason `push_wake` gives
         // at the same line. `notify_one` wakes a thread that starts running
@@ -1128,8 +1109,8 @@ impl WorkQueue {
             return;
         }
         // A **triple**, and the lane's own hold is expected to read as noise —
-        // a `closed` check, a `push_back` and a `fetch_add`, about 4 ns against
-        // a 10 ns counter step. It is here for what it does to its neighbour:
+        // a `closed` check, a `push_back` and a `fetch_add`, all of it shorter
+        // than one counter step. It is here for what it does to its neighbour:
         // closing the lock at this line is what makes `wake.queue.wait` the
         // pure wait for a worker rather than that wait plus a producer's tail.
         // Exactly the argument `push_dispatch` makes for the dispatch lane.
@@ -1151,9 +1132,8 @@ impl WorkQueue {
             st.lane_released.take();
         }
         // **Nothing is read after this call.** The futex round trip is worth
-        // its own span — on the dispatch side of the same sequence it reads
-        // 3.8 µs at the median, which is far too large to hide inside a queue
-        // wait — but it is not measurable from *here*. `notify_one` wakes a
+        // its own span — it is far too large to hide inside a queue wait — but
+        // it is not measurable from *here*. `notify_one` wakes a
         // thread that starts running while this one is still returning from the
         // syscall, and that thread can pop the item, reclaim the trace and file
         // the carrier before a reading taken on the next line lands. The
@@ -1177,9 +1157,9 @@ impl WorkQueue {
     /// would put every idle worker back on every other worker's lock — the
     /// sharing per-worker lanes exist to remove.
     ///
-    /// **Wakes before dispatches, in every structure.** That is §6.4's
-    /// admission story and it is a property of this function, not of where a
-    /// producer put the item, which is why no placement policy can weaken it.
+    /// **Wakes before dispatches, in every structure.** That is the admission
+    /// story and it is a property of this function, not of where a producer
+    /// put the item, which is why no placement policy can weaken it.
     ///
     /// The lane's load is deliberately *not* decremented here; the worker
     /// releases it in [`WorkQueue::job_done`] once the job has actually run.
@@ -1226,12 +1206,11 @@ impl WorkQueue {
         // `lock_bare`, and only here: `parking_lot::Condvar::wait` takes a
         // `parking_lot::MutexGuard` and nothing else, so this one call site
         // needs the bare guard. Splitting it out is what lets `lock` become a
-        // release-then-record wrapper for every *other* caller — the ten
-        // `Cell::active` sites, `durables`, `residents`, the breaker, the
-        // future table — and lifts the in-hold `fetch_add` off all of them.
-        // "Bare" is about the guard, not the accounting: this is instrumented
-        // exactly as `lock` is, and `WorkQueue::inner` is one of the two locks
-        // the whole exercise is about, so it has to be.
+        // release-then-record wrapper for every *other* caller — `durables`,
+        // `residents`, the breaker — and lifts the in-hold `fetch_add` off all
+        // of them. "Bare" is about the guard, not the accounting: this is
+        // instrumented exactly as `lock` is, and `WorkQueue::inner` is one of
+        // the two locks the whole exercise is about, so it has to be.
         let lane = &self.lanes[worker % self.lanes.len()];
         let mut g = lane.inner.lock_bare();
         loop {
@@ -1426,12 +1405,12 @@ impl WorkQueue {
     /// The name this queue's contention row goes by in [`Cell::lock_stats`].
     ///
     /// The structure is in the name because the row means different things
-    /// under each: 365 s of blocked time under `shared` is one mutex every
-    /// thread queued on, the same figure under `per-worker` is that time
-    /// spread over `exec_threads` locks, and a zero under `lock-free` is "no
-    /// lock to block on" rather than "nothing blocked". A reader comparing two
-    /// runs' tables needs to know which of the three produced the row, and the
-    /// row is the only place the answer travels with the number.
+    /// under each: blocked time under `shared` is one mutex every thread
+    /// queued on, the same figure under `per-worker` is that time spread over
+    /// `exec_threads` locks, and a zero under `lock-free` is "no lock to block
+    /// on" rather than "nothing blocked". A reader comparing two runs' tables
+    /// needs to know which of the three produced the row, and the row is the
+    /// only place the answer travels with the number.
     fn row_name(&self) -> &'static str {
         match self.structure {
             QueueStructure::Shared => "WorkQueue::inner[shared]",
@@ -1457,8 +1436,8 @@ struct ModuleEntry {
     meters: Arc<Meters>,
 }
 
-/// The cell's view of one resident instance. This is the "bookkeeping" half of
-/// §6.2's *slot = reserved virtual address range + bookkeeping*.
+/// The cell's view of one resident instance. This is the bookkeeping half of a
+/// slot; the other half is the reserved virtual address range the engine owns.
 struct Resident {
     slot: Arc<Slot>,
     module: ModuleId,
@@ -1508,9 +1487,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Routes completions from reactor threads onto the exec pool (§6.1's wake
-/// router). Holds only weak references, so a discarded instance's late
-/// completion is a no-op rather than a resurrection.
+/// Routes completions from reactor threads onto the exec pool. Holds only weak
+/// references, so a discarded instance's late completion is a no-op rather than
+/// a resurrection.
 struct CellWake {
     queue: Arc<WorkQueue>,
     index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
@@ -1566,9 +1545,10 @@ impl CellWake {
             // the result stays queued against an instance nobody will visit
             // again and the request that awaited it is never answered.
             //
-            // For a genuinely discarded instance that is right: §6.1 holds
-            // only `Weak` references precisely so a late completion is a no-op
-            // rather than a resurrection. For a live one it is a lost request.
+            // For a genuinely discarded instance that is right: the router
+            // holds only `Weak` references precisely so a late completion is a
+            // no-op rather than a resurrection. For a live one it is a lost
+            // request.
             // Nothing distinguished the two, and nothing counted either, so
             // the symptom was a request that simply stopped — `dispatches`
             // still claiming it was in flight, no trap, no refusal, no log.
@@ -1576,7 +1556,7 @@ impl CellWake {
             tracing::debug!(
                 instance = %owner,
                 "a completion arrived for an instance that is no longer resident; the wake \
-                 is dropped and any dispatch awaiting it will not be answered (§6.1)"
+                 is dropped and any dispatch awaiting it will not be answered"
             );
             return;
         };
@@ -1598,9 +1578,9 @@ pub struct Cell {
     /// A weak self-reference, set once at construction.
     ///
     /// `Dispatcher`'s methods take `&self`, but every path from the proxy into
-    /// a guest has to hand the dispatch to a blocking task — §6.1 puts guest
-    /// execution on the exec pool and never on a reactor thread — and that
-    /// needs an owned `Arc`. Weak, not strong, for the same reason the exec
+    /// a guest has to hand the dispatch to a blocking task — guest execution
+    /// runs on the exec pool and never on a reactor thread — and that needs an
+    /// owned `Arc`. Weak, not strong, for the same reason the exec
     /// threads hold a `Weak`: a cell that keeps itself alive is a cell that
     /// leaks its threads in every test and every embedding.
     me: std::sync::OnceLock<Weak<Cell>>,
@@ -1608,40 +1588,38 @@ pub struct Cell {
     runtime: Option<tokio::runtime::Runtime>,
     queue: Arc<WorkQueue>,
     index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
-    /// §6.4: **the tombstone ring.**
+    /// **The tombstone ring.**
     ///
     /// A hard-killed instance's memory goes back to the kernel immediately —
     /// that part is not negotiable, it is arbitrary state — but the *slot*
     /// is kept for a while, holding nothing but its id and its tombstone
-    /// flag. Without it, "any subsequent host call into it is a hard
-    /// assertion failure" degrades to "the id is unknown", and those are very
-    /// different answers to give an operator: the first says *this instance
-    /// was killed and you may not talk to it*, the second says *never heard
-    /// of it*, which is what a use-after-free looks like from the outside.
+    /// flag. Without it, "a subsequent host call into it is refused" degrades
+    /// to "the id is unknown", and those are very different answers to give an
+    /// operator: the first says *this instance was killed and you may not talk
+    /// to it*, the second says *never heard of it*, which is what a
+    /// use-after-free looks like from the outside.
     ///
-    /// Appendix C F2 is the reason it is worth the bytes: the engine will
-    /// happily answer a call on a killed store, so the refusal has to come
+    /// It is worth the bytes because the engine will happily answer a call on
+    /// a killed store — that has been observed — so the refusal has to come
     /// from a platform structure that outlives the instance.
     ///
     /// Bounded, because an unbounded record of every kill a long-lived cell
-    /// ever took is a leak with a spec citation. The oldest entry is dropped
-    /// when the ring is full, and a call for an id older than that gets
-    /// `None` — the honest answer, since nothing about it is remembered.
+    /// ever took is a leak. The oldest entry is dropped when the ring is full,
+    /// and a call for an id older than that gets `None` — the honest answer,
+    /// since nothing about it is remembered.
     tombstoned: Mutex<std::collections::VecDeque<Arc<Slot>>>,
     modules: CountedRwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: CountedMutex<HashMap<InstanceId, Resident>>,
-    /// **Sharded, and measured before it was.** One mutex here cost the
-    /// execution threads 160 s of blocked time over a 30 s hold at 896
-    /// instances — 48.8% of everything they waited on, across 3.2 million
-    /// contended acquisitions — while every use of it is a single-key
-    /// operation on an `InstanceId`. See `lockstats::ShardedMap`.
+    /// **Sharded, and measured before it was.** One mutex here was about half
+    /// of everything the execution threads waited on, while every use of it is
+    /// a single-key operation on an `InstanceId`. See `lockstats::ShardedMap`.
     active: crate::lockstats::ActiveMapImpl<InstanceId, ActiveRequest>,
     breaker: HangBreaker,
     metrics: Arc<Metrics>,
     hot: AtomicUsize,
     next_dispatch: AtomicU64,
-    /// Tenants that have been unilaterally moved to a quarantine cell (§8.2.4)
-    /// and may no longer be admitted here.
+    /// Tenants that have been unilaterally moved to a quarantine cell and may
+    /// no longer be admitted here.
     quarantined: Mutex<Vec<String>>,
     shutdown: Arc<AtomicBool>,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
@@ -1653,14 +1631,14 @@ pub struct Cell {
     ///
     /// Read behind the sampling predicate and nowhere else, so an untraced
     /// dispatch never touches this lock: `stage_sampled` is an atomic load and
-    /// a modulo, and it is false for 127 jobs in 128 before anything here is
-    /// looked at. On the one that passes, a read guard is a few nanoseconds
-    /// against a tail that is about to take fifteen timestamps.
+    /// a modulo, and at the default it is false for 127 jobs in 128 before
+    /// anything here is looked at. On the one that passes, a read guard is a
+    /// few nanoseconds against a tail that is about to take fifteen timestamps.
     ///
     /// Installed after construction rather than passed to [`Cell::new`]: the
-    /// exec pool starts inside the constructor, and a `Calibration` costs a
-    /// hundred milliseconds to measure and belongs to the harness that is
-    /// already holding one.
+    /// exec pool starts inside the constructor, and a `Calibration` takes real
+    /// time to measure and belongs to the harness that is already holding
+    /// one.
     tails: parking_lot::RwLock<Option<Arc<crate::marks::CellTails>>>,
 }
 
@@ -1674,8 +1652,8 @@ impl Cell {
             .expect("reactor runtime");
 
         let metrics = Arc::new(Metrics::new());
-        // §10/H7. Applied once, here, so every metrics reader sees the same
-        // setting the dispatch path is running under.
+        // Applied once, here, so every metrics reader sees the same setting
+        // the dispatch path is running under.
         metrics.set_per_dispatch_sampling(cfg.telemetry_sample_every);
         let queue = Arc::new(WorkQueue::new(
             cfg.depth_per_queue(),
@@ -1739,8 +1717,8 @@ impl Cell {
         self.me.get().and_then(Weak::upgrade)
     }
 
-    /// §6.1: execution-pool threads run Hot dispatches as synchronous calls
-    /// into the engine, and **the kernel preempts them**.
+    /// Execution-pool threads run Hot dispatches as synchronous calls into the
+    /// engine, and **the kernel preempts them**.
     fn start_exec_pool(self: &Arc<Self>) {
         let mut handles = Vec::new();
         for i in 0..self.cfg.exec_threads {
@@ -1761,7 +1739,7 @@ impl Cell {
         *self.workers.lock() = handles;
     }
 
-    /// §6.6's idle trajectory, running with no tenant involvement.
+    /// The idle trajectory, running with no tenant involvement.
     fn start_idle_sweeper(self: &Arc<Self>) {
         let me = Arc::downgrade(self);
         let interval = Duration::from_millis(self.cfg.sweep_interval_ms.max(1));
@@ -1773,10 +1751,10 @@ impl Cell {
                 while !stop.load(Ordering::Relaxed) {
                     std::thread::sleep(interval);
                     let Some(cell) = me.upgrade() else { return };
-                    // One sweep's worth of blast radius. §6.6's idle
-                    // trajectory runs "with no tenant involvement", which is
-                    // exactly what makes a panic here so expensive: nothing
-                    // restarts this thread, and the loss is silent — captures
+                    // One sweep's worth of blast radius. The idle trajectory
+                    // runs with no tenant involvement, which is exactly what
+                    // makes a panic here so expensive: nothing restarts this
+                    // thread, and the loss is silent — captures
                     // simply stop happening and every DI in the cell stays
                     // resident for as long as the process lives.
                     let swept = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1793,7 +1771,7 @@ impl Cell {
 
     /// One execution thread: take a job, run it, release the lane, repeat.
     ///
-    /// **The job body is caught.** A host assertion inside a dispatch — §6.4's
+    /// **The job body is caught.** A host assertion inside a dispatch — the
     /// tombstone assertion is the one that has actually fired — used to take
     /// the whole thread with it, and nothing brings an execution thread back.
     /// A cell that loses one silently gets `1/exec_threads` slower and keeps
@@ -2020,14 +1998,14 @@ impl Cell {
     ///
     /// **Not zero is a host bug**, always: a guest fault arrives as a trap and
     /// never as a panic. It lives here rather than on [`Metrics`] because
-    /// `Metrics` is §10's tenant-facing surface and this is not a fact about
-    /// any tenant; it is a fact about this build.
+    /// `Metrics` is the tenant-facing surface and this is not a fact about any
+    /// tenant; it is a fact about this build.
     pub fn caught_panics(&self) -> u64 {
         self.caught_panics.load(Ordering::Relaxed)
     }
 
     // -----------------------------------------------------------------------
-    // Registration and trust tiers (§8.2.4)
+    // Registration and trust tiers
     // -----------------------------------------------------------------------
 
     /// Whether this owner is permitted by the cell's quarantine state.
@@ -2070,9 +2048,9 @@ impl Cell {
     ///
     /// Published so a reader can tell how many observations a stage percentile
     /// rests on. A percentile with no sample count beside it is a number
-    /// wearing a quantile's name, and at one request in 128 the count is not
-    /// something a reader can derive from the request total either — sheds and
-    /// refusals never reach the stamping points.
+    /// wearing a quantile's name, and under sampling the count is not something
+    /// a reader can derive from the request total either — sheds and refusals
+    /// never reach the stamping points.
     pub fn stage_sample_every(&self) -> u64 {
         self.cfg.stage_sample_every
     }
@@ -2100,7 +2078,7 @@ impl Cell {
     /// The depth of one dispatch queue, and how many of them there are.
     ///
     /// Published as a pair because neither half is meaningful alone: the
-    /// product is what the cell will hold before §6.4's shed, and it is
+    /// product is what the cell will hold before it sheds, and it is
     /// `admission_queue` only under a single-queue structure.
     pub fn queue_shape(&self) -> (usize, usize) {
         (self.cfg.depth_per_queue(), self.cfg.queue_count())
@@ -2135,13 +2113,15 @@ impl Cell {
     /// field paths rather than prose, because the next step after reading this
     /// table is opening that field.
     ///
-    /// **Seven of the ten, not all ten.** The two §10 telemetry histograms
-    /// already have a way to be measured — `CellConfig::telemetry_sample_every
-    /// = 0` takes both off the dispatch path while leaving counts and means
-    /// intact, so their cost is a difference between two runs — and
-    /// `Metrics::by_tenant` is taken once on a path that also takes `active`
-    /// six times. Instrumenting a lock is not free of judgement either: each
-    /// wrapper adds a counter pair that the contending threads share.
+    /// **Not every lock a dispatch takes.** The two per-dispatch telemetry
+    /// histograms already have a way to be measured —
+    /// `CellConfig::telemetry_sample_every = 0` takes both off the dispatch
+    /// path while leaving counts and means intact, so their cost is a
+    /// difference between two runs — and `Metrics::by_tenant` is taken once on
+    /// a path that also takes `active` six times. The future table has no
+    /// cell-wide lock left to report at all. Instrumenting a lock is not free
+    /// of judgement either: each wrapper adds a counter pair that the
+    /// contending threads share.
     ///
     /// **Two rules govern the rows, and they are rules rather than a list of
     /// exceptions**, so a reader or a report writes one piece of logic for
@@ -2150,8 +2130,8 @@ impl Cell {
     /// 1. *A row name may carry a `[configuration]` suffix* — as in
     ///    `WorkQueue::inner[per-worker]` — naming which form of a
     ///    runtime-selectable structure produced it. The same figure means
-    ///    different things under different forms: 365 s of blocked time on one
-    ///    shared mutex is not 365 s spread across `exec_threads` separate
+    ///    different things under different forms: blocked time on one shared
+    ///    mutex is not the same time spread across `exec_threads` separate
     ///    ones, and a table being compared with another run's needs to know
     ///    which it is looking at.
     /// 2. *A lock that does not exist under the current configuration produces
@@ -2194,7 +2174,7 @@ impl Cell {
     }
     /// The live counters, not a snapshot of them.
     ///
-    /// A snapshot flattens histograms to the percentiles §10 exports, which is
+    /// A snapshot flattens histograms to the exported percentiles, which is
     /// the right shape for a scrape and the wrong one for asking whether a
     /// histogram is still *recording* — the question
     /// `CellConfig::telemetry_sample_every` exists to answer. Also carries
@@ -2238,7 +2218,7 @@ impl Cell {
         self.metrics.hot.store(hot, Ordering::Relaxed);
     }
 
-    /// §6.4/§9.4: clear the hang breaker for a module.
+    /// Clear the hang breaker for a module.
     ///
     /// A new version deploys and the breaker is gone for free — the key
     /// carries the version — so this exists for the operator's manual
@@ -2250,14 +2230,14 @@ impl Cell {
 
     /// Idle instances a module's pool is holding: `(warm, pooled-fresh)`.
     ///
-    /// §6.3's acquisition order is "warm-parked > pooled-fresh > activate", so
-    /// this is the difference between a request that pays for an activation
-    /// and one that does not. Exposed because a *parked* instance and a
-    /// *pooled* one are different things and the gauges cannot tell them
+    /// The acquisition order is warm-parked, then pooled-fresh, then
+    /// activate, so this is the difference between a request that pays for an
+    /// activation and one that does not. Exposed because a *parked* instance
+    /// and a *pooled* one are different things and the gauges cannot tell them
     /// apart: an instance is Parked from the moment the guest returns, but it
     /// is not acquirable until `finish_and_release` puts it back — a window
-    /// the response has already left through (§6.3 responds first, on
-    /// purpose).
+    /// the response has already left through, because the cell responds before
+    /// it releases.
     pub fn idle_instances(&self, module: &ModuleId) -> Option<(usize, usize)> {
         self.modules
             .read()
@@ -2293,7 +2273,7 @@ impl Cell {
     pub fn futures(&self) -> &Arc<FutureTable> {
         &self.rt.futures
     }
-    /// The cell's reactor (§6.1). Reactor threads own all I/O, so anything
+    /// The cell's reactor. Reactor threads own all I/O, so anything
     /// that touches the network — the metrics endpoint, the proxy's listener —
     /// belongs here rather than on an execution-pool thread.
     pub fn reactor(&self) -> &tokio::runtime::Handle {
@@ -2301,14 +2281,14 @@ impl Cell {
     }
 
     // -----------------------------------------------------------------------
-    // Admission (§6.4)
+    // Admission
     // -----------------------------------------------------------------------
 
     /// Submit a top-level work item and block until the response is final.
     ///
     /// "Final" means Done or a fault — a dispatch that parks and is later woken
-    /// keeps this call outstanding, because §6.3's lifecycle is one request
-    /// spanning many slices.
+    /// keeps this call outstanding, because one request is a lifecycle spanning
+    /// many slices.
     pub fn dispatch_blocking(
         &self,
         module: &ModuleId,
@@ -2347,8 +2327,8 @@ impl Cell {
             pushed: marks::NO_STAMP,
         });
         if self.queue.push_dispatch(job).is_err() {
-            // §6.4: overflow queues at admission; the cell sheds rather than
-            // saturating. The proxy is supposed to shed before this point.
+            // Overflow queues at admission; the cell sheds rather than
+            // saturating.
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
             if let Some(m) = self.meters(module) {
                 m.record_shed();
@@ -2362,8 +2342,8 @@ impl Cell {
     /// Submit without waiting, handing back the channel the final response
     /// will arrive on.
     ///
-    /// This is the shape the C3 measurement needs: a thousand dispatches that
-    /// *park* and stay parked. `dispatch_blocking` would hold a thread per
+    /// This is the shape a parked-density measurement needs: many dispatches
+    /// that *park* and stay parked. `dispatch_blocking` would hold a thread per
     /// outstanding request, which would measure the test harness rather than
     /// the cell.
     pub fn submit(
@@ -2381,15 +2361,15 @@ impl Cell {
     ///
     /// [`Cell::submit`] allocates one channel per request, which is right for
     /// a test holding a few dozen parked instances and wrong for anything
-    /// offering sustained load: at a hundred thousand requests a second it is
-    /// a hundred thousand allocations a second on the caller's path, and —
-    /// worse — leaves the caller holding a hundred thousand receivers to poll.
-    /// A load generator built that way measures itself.
+    /// offering sustained load: it is one allocation per request on the
+    /// caller's path, and — worse — leaves the caller holding one receiver per
+    /// outstanding request to poll. A load generator built that way measures
+    /// itself.
     ///
     /// The result carries [`DispatchResult::dispatch_id`], so a caller
     /// draining one shared channel can match each completion to its request.
     ///
-    /// Returns `false` if the cell shed at admission (§6.4). **Nothing is sent
+    /// Returns `false` if the cell shed at admission. **Nothing is sent
     /// on `responder` in that case** — the shed is reported by the return
     /// value alone, and the caller owns counting it.
     ///
@@ -2445,8 +2425,8 @@ impl Cell {
         // statement and this is an expression — quietly did not.
         //
         // Resolved in favour of the doc rather than the code, because the
-        // check takes `HangBreaker::entries`, one of the seven locks this
-        // cell's own `lock_stats` names as its contention suspects. A submit
+        // check takes `HangBreaker::entries`, one of the locks this cell's own
+        // `lock_stats` names as its contention suspects. A submit
         // stage that started underneath it would leave that lock's cost
         // outside every named stage and inside the residual the caller
         // computes — which is exactly where a contended lock goes unnoticed,
@@ -2462,11 +2442,11 @@ impl Cell {
             module: module.clone(),
             route: target.route(),
         };
-        // A **triple**. The hold is ~34 ns of hashing three strings against a
-        // mark that costs 20 ns here, so the wait for `entries` and the work
-        // under it separate cleanly. It was briefly a pair, on the strength of
-        // a calibration that measured the mark cost on a core fresh out of a
-        // sleep and reported double.
+        // A **triple**. The hold hashes three strings, which is more than a
+        // mark costs, so the wait for `entries` and the work under it separate
+        // cleanly. It was briefly a pair, on the strength of a calibration
+        // that measured the mark cost on a core fresh out of a sleep and
+        // reported double.
         marks::mark(&marks, Mark::BreakerLockWanted);
         let mut marks = marks;
         let refused = self.breaker.check_marked(&key, now, &mut marks).is_err();
@@ -2517,10 +2497,11 @@ impl Cell {
                 // surprises.** Recording the shed to the tenant needs `Meters`,
                 // which lives behind the module table — a read lock this
                 // request has otherwise never touched, because it is refused
-                // here and never reaches `run_dispatch`. A **triple**: ~34 ns
-                // held, hashing a `ModuleId` and cloning an `Arc`, against a
-                // 20 ns mark. Inlined rather than calling `Cell::meters` so
-                // the acquisition can be marked from inside.
+                // here and never reaches `run_dispatch`. A **triple**: the
+                // hold hashes a `ModuleId` and clones an `Arc`, which is more
+                // than a mark costs. Inlined rather than calling
+                // `Cell::meters` so the acquisition can be marked from
+                // inside.
                 marks::mark(&j.marks, Mark::ShedMetersLockWanted);
                 let modules = self.modules.read();
                 marks::mark(&j.marks, Mark::ShedMetersLockAcquired);
@@ -2553,21 +2534,21 @@ impl Cell {
     }
 
     /// What a reactor thread does when a host future completes: map the id to
-    /// its owning instance and enqueue the wake (§6.1's wake router).
+    /// its owning instance and enqueue the wake.
     ///
     /// Public because the reactor is not the only completer — an alarm from
-    /// the control plane, a socket frame at the proxy and a DI reply all
-    /// arrive this way, and in the PoC so do tests.
+    /// the control plane, a socket frame at the proxy, a DI reply and a test
+    /// all arrive this way.
     pub fn complete_future(&self, id: u64, result: wisp_abi::result::ResultRecord) {
         // Through the runtime rather than inline, because the vtable's own
         // `settle` is the *other* door and is the one every guest-awaited
         // future comes through. They were two copies of the same three lines,
-        // and instrumenting only this one measured 1% of a real run's pauses.
-        // See `CellRuntime::settle_future`.
+        // and instrumenting only this one left almost every real pause
+        // unmeasured. See `CellRuntime::settle_future`.
         self.rt.settle_future(id, result);
     }
 
-    /// Build a plain HTTP dispatch record with this app's budget (§11.1).
+    /// Build a plain HTTP dispatch record with this app's budget.
     pub fn http_record(&self, module: &ModuleId, req: wisp_abi::HttpRequest) -> DispatchRecord {
         let limits = self
             .modules
@@ -2585,7 +2566,7 @@ impl Cell {
     }
 
     // -----------------------------------------------------------------------
-    // §6.3 request lifecycle
+    // The request lifecycle
     // -----------------------------------------------------------------------
 
     fn run_dispatch(self: &Arc<Self>, job: DispatchJob) {
@@ -2595,9 +2576,9 @@ impl Cell {
         // delay would charge a lock the request needed to the lane it was
         // waiting in.
         //
-        // `+=`, not `=`, and the same reasoning as `guest_ns`: §6.3 makes one
-        // request a lifecycle spanning many slices, and a woken slice queues
-        // for a worker exactly as this one did. `run_wake` adds its own wait
+        // `+=`, not `=`, and the same reasoning as `guest_ns`: one request is
+        // a lifecycle spanning many slices, and a woken slice queues for a
+        // worker exactly as this one did. `run_wake` adds its own wait
         // to the same field. A `queue_ns` that stopped here would report the
         // workload that queues most — the one that parks and is woken — as the
         // one that queues least.
@@ -2612,10 +2593,10 @@ impl Cell {
         marks::mark(&mut marks, Mark::DispatchStarted);
         let job = job;
         let did = job.rec.dispatch_id;
-        // A **triple**: ~34 ns held, hashing a `ModuleId` and cloning an
-        // `Arc`, against a 20 ns mark. Bound to a local first so the read
-        // guard is dropped before the closing mark rather than at the end of a
-        // `let ... else`.
+        // A **triple**: the hold hashes a `ModuleId` and clones an `Arc`,
+        // which is comfortably more than a mark costs, so the wait and the
+        // hold separate. Bound to a local first so the read guard is dropped
+        // before the closing mark rather than at the end of a `let ... else`.
         marks::mark(&mut marks, Mark::ModulesLockWanted);
         let modules = self.modules.read();
         marks::mark(&mut marks, Mark::ModulesLockAcquired);
@@ -2689,18 +2670,18 @@ impl Cell {
             cpu_ms: job.rec.cpu_budget_ms,
             wall_ms_cap: self.cfg.wall_ms_cap,
             // First slice of this dispatch: nothing burned yet. Later slices
-            // carry what earlier ones spent, so B and B+G bind the dispatch
-            // rather than each wake (§6.4).
+            // carry what earlier ones spent, so the budget and the hard
+            // deadline bind the dispatch rather than each wake.
             spent_ns: 0,
         };
-        // §5.2/§7.2: "One instance MAY have multiple in-flight dispatches only
-        // for read-only Handler reuse; DIs are strictly one dispatch at a
-        // time." A Handler never reaches this branch — a parked instance is
-        // not in the pool, so a second dispatch gets a different one — but a
-        // DI is addressed by identity and can. Refuse rather than overwrite the
+        // An instance may have several dispatches in flight only for
+        // read-only Handler reuse; a durable instance takes strictly one at a
+        // time. A Handler never reaches this branch — a parked instance is not
+        // in the pool, so a second dispatch gets a different one — but a DI is
+        // addressed by identity and can. Refuse rather than overwrite the
         // in-flight request. Ordering and serialization of DI messages is the
-        // single-writer inbox's job (§7.2), which lives in `wisp-durable`.
-        // A **pair**: 16.9 ns held, well under one mark. This and the insert
+        // single-writer inbox's job, which lives in `wisp-durable`.
+        // A **pair**: the hold is well under one mark. This and the insert
         // thirty lines below are two separate acquisitions of the same lock on
         // the same key, which is a thing the span names make visible and an
         // `insert_if_absent` on the `ActiveMap` trait would collapse.
@@ -2708,8 +2689,7 @@ impl Cell {
         let already_in_flight = self.active.contains_key(&slot.id);
         marks::mark(&mut marks, Mark::ActiveProbeReleased);
         if already_in_flight {
-            // §10: counted, because this refusal is one of the four legs the
-            // density gate stands on and the only other count of it lives in
+            // Counted, because the only other count of this refusal lives in
             // the load generator. Two independent counts of the same event is
             // the whole point — a counting error on either side is otherwise
             // undetectable.
@@ -2725,7 +2705,7 @@ impl Cell {
             marks::mark(&marks, Mark::SingleWriterRefused);
             let _ = job.responder.send(DispatchResult {
                 status: 409,
-                body: "durable instance already has a dispatch in flight (§7.2)"
+                body: "durable instance already has a dispatch in flight"
                     .as_bytes()
                     .to_vec(),
                 marks: marks.take(),
@@ -2733,19 +2713,19 @@ impl Cell {
             });
             return;
         }
-        // §5.4: *"every dispatch carries an implicit cancellation future; the
-        // host cancels by completing it"*. It is allocated here, before the
-        // guest is entered, because the epoch callback that completes it at B
+        // Every dispatch carries an implicit cancellation future, and the host
+        // cancels by completing it. It is allocated here, before the guest is
+        // entered, because the epoch callback that completes it at the budget
         // runs with the guest on the stack and could not allocate one then.
         //
         // A guest that never awaits it pays nothing but a table entry, which
         // `end_dispatch` reaps. A guest that does await it observes a tripped
-        // token at its next wake — which is the only channel there is, because
-        // §5.4 makes cancellation deliberately *not* an entrancy.
+        // token at its next wake — the only channel there is, because
+        // cancellation is deliberately not an entrancy.
         let mut job = job;
-        // A **triple**: the hold is 60 ns and more — two map inserts and a set
-        // insert, any of which can grow — against a 20 ns mark, so the wait
-        // for this global table separates cleanly from the work under it.
+        // A **triple**: the hold is two map inserts and a set insert, any of
+        // which can grow, so it is well past a mark and the wait for this
+        // global table separates cleanly from the work under it.
         marks::mark(&mut marks, Mark::CancelAllocWanted);
         job.rec.cancel_future =
             self.rt
@@ -2796,16 +2776,16 @@ impl Cell {
                     g
                 }
                 Err(e) => {
-                    // §5.4 refusing a reentrant call. For a Durable Instance
-                    // this is §7.2's "strictly one dispatch at a time"; the
-                    // caller must retry.
+                    // The reentrancy rule refusing a second call. For a
+                    // Durable Instance that is "strictly one dispatch at a
+                    // time"; the caller must retry.
                     //
-                    // §6.4's tombstone refusal arrives at the same door and is
-                    // a different fact — "this instance was killed and you may
+                    // The tombstone refusal arrives at the same door and is a
+                    // different fact — "this instance was killed and you may
                     // not talk to it", not "come back in a moment" — so it is
                     // counted separately. Folding it into the reentrancy
-                    // counter left `tombstone_refusals`, §10's negative
-                    // control for the tombstone rule, permanently at zero.
+                    // counter left `tombstone_refusals`, the negative control
+                    // for the tombstone rule, permanently at zero.
                     self.count_enter_refusal(e);
                     marks::mark(&marks, Mark::EnterRefused);
                     self.respond(
@@ -2847,9 +2827,10 @@ impl Cell {
         // buffer to mark into — see the note in `crate::marks`.
         marks::mark(&mut marks, Mark::SlotReleaseReleased);
 
-        // A completion can land while a dispatch is Hot; §5.4 made it wait, so
-        // if one did, hand the instance to the wake lane rather than leaving a
-        // result queued against a parked instance nobody will visit again.
+        // A completion can land while a dispatch is Hot; the reentrancy rule
+        // made it wait, so if one did, hand the instance to the wake lane
+        // rather than leaving a result queued against a parked instance nobody
+        // will visit again.
         if !self.settle(&slot, &entry, outcome, &mut marks) {
             self.queue_wake(slot);
         }
@@ -3022,8 +3003,8 @@ impl Cell {
         // It is routed by instance, and `Cell::active` holds one entry per
         // instance — so the trace reclaimed below is whoever is in flight
         // *now*, not whoever awaited this completion. Those are the same
-        // request almost always, and §7.2's single-writer refusal is why:
-        // a second dispatch cannot begin while the first is still in `active`.
+        // request almost always, and the single-writer refusal is why: a
+        // second dispatch cannot begin while the first is still in `active`.
         // But a lane holds a wake for as long as its worker is busy and
         // `WorkQueue::pop` serves `lanes[worker % n]` with no stealing, so a
         // wake pushed during one dispatch can be popped after that dispatch
@@ -3040,9 +3021,9 @@ impl Cell {
         let current = slot.ctx.dispatch_id();
         let fresh = dispatch.is_none_or(|d| d == current);
         if !fresh {
-            // §10, and named beside the other instrument faults: a run that
-            // loses a request's spans this way says how many rather than
-            // publishing somebody else's.
+            // Named beside the other instrument faults: a run that loses a
+            // request's spans this way says how many rather than publishing
+            // somebody else's.
             self.metrics.stale_wakes.fetch_add(1, Ordering::Relaxed);
         }
         // **Reclaim the trace the park left behind.**
@@ -3096,10 +3077,10 @@ impl Cell {
         // instance's own context, which `begin_dispatch` set and every slice
         // of this request carries. See `Cell::answer_after_panic`.
         IN_FLIGHT.set(Some((slot.id, slot.ctx.dispatch_id())));
-        // A **triple**: ~48 ns held, with a `ModuleId::clone` inside the hold.
-        // Deliberately its own label rather than sharing the dispatch path's:
-        // the two are the same lock under different contention, and one row
-        // covering both could not say which side was waiting.
+        // A **triple**: the hold carries a `ModuleId::clone`. Deliberately its
+        // own label rather than sharing the dispatch path's: the two are the
+        // same lock under different contention, and one row covering both
+        // could not say which side was waiting.
         marks::mark(&marks, Mark::WakeResidentsLockWanted);
         let residents = self.residents.lock();
         marks::mark(&marks, Mark::WakeResidentsLockAcquired);
@@ -3133,10 +3114,10 @@ impl Cell {
                     g
                 }
                 Err(crate::instances::EnterError::Busy) => {
-                    // §5.4: a previous call into this instance has not
-                    // returned. This is the reentrancy rule doing its job —
-                    // the result stays queued and the in-flight call drains it
-                    // when it finishes.
+                    // A previous call into this instance has not returned.
+                    // This is the reentrancy rule doing its job — the result
+                    // stays queued and the in-flight call drains it when it
+                    // finishes.
                     self.metrics
                         .reentrancy_refusals
                         .fetch_add(1, Ordering::Relaxed);
@@ -3145,7 +3126,7 @@ impl Cell {
                 }
                 Err(e @ crate::instances::EnterError::Tombstoned) => {
                     // A wake queued for an instance that was tombstoned before
-                    // the wake lane reached it. §6.4 refuses, and §10 counts.
+                    // the wake lane reached it. Refused, and counted.
                     self.count_enter_refusal(e);
                     self.bail_wake(&slot, marks, &stamps);
                     return;
@@ -3155,8 +3136,8 @@ impl Cell {
                     return;
                 }
             };
-            // A **triple**: 80 ns and more — a loop popping and removing across
-            // three structures — so the wait for the table and the work under
+            // A **triple**: the hold is a loop popping and removing across
+            // three structures, so the wait for the table and the work under
             // it separate cleanly.
             marks::mark(&marks, Mark::TakeReadyWanted);
             let ready = self.rt.futures.take_ready_marked(slot.id, &mut marks);
@@ -3198,19 +3179,19 @@ impl Cell {
                 marks = self.active.with_mut(&slot.id, |a| a.marks.take()).flatten();
                 marks::mark(&marks, Mark::WakeAdopted);
             }
-            // §6.4: B and B+G bind the **dispatch**, so a wake resumes with
-            // what earlier slices already burned. Without this a guest could
-            // park and be woken indefinitely, each slice getting a fresh 50 ms
-            // and the hard deadline never arriving — and a guest unwinding
-            // inside grace would get its grace window back on every await,
-            // which would make "a pinned bit buys exactly G" false for anyone
-            // willing to park.
+            // The budget and the hard deadline bind the **dispatch**, so a
+            // wake resumes with what earlier slices already burned. Without
+            // this a guest could park and be woken indefinitely, each slice
+            // getting a fresh budget and the hard deadline never arriving —
+            // and a guest unwinding inside grace would get its grace window
+            // back on every await, so pinning the unsafe-to-trap bit would buy
+            // an unbounded extension rather than one grace window.
             //
             // The lane wait measured at the top of this function is stored in
             // the same acquisition. `waited` is taken, so a loop that runs
             // several slices charges the one wait it actually had: the later
             // slices did not go back through a lane and are charged nothing.
-            // A **pair**: ~20 ns held.
+            // A **pair**: the hold is under one mark.
             marks::mark(&marks, Mark::ActiveBudgetWanted);
             let budget = self
                 .active
@@ -3218,8 +3199,8 @@ impl Cell {
                 .unwrap_or_else(CpuBudget::http);
             marks::mark(&marks, Mark::ActiveBudgetReleased);
 
-            // §8.5: a wake is a new slice, so the coarse clock advances here
-            // and nowhere else.
+            // A wake is a new slice, so the coarse clock advances here and
+            // nowhere else.
             slot.ctx
                 .begin_slice(crate::now_ms(), slot.ctx.dispatch_id());
 
@@ -3283,8 +3264,8 @@ impl Cell {
         }
     }
 
-    /// The §6.3 poll-status switch. Returns true when the instance is no
-    /// longer available for more wakes in this loop.
+    /// The poll-status switch. Returns true when the instance is no longer
+    /// available for more wakes in this loop.
     fn settle(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
@@ -3292,10 +3273,9 @@ impl Cell {
         out: DispatchOutcome,
         marks: &mut Option<RequestMarks>,
     ) -> bool {
-        // §11.2: record the Hot interval. Nothing else is ever recorded — and on
-        // a kill of either phase that interval *includes the overage*, because
-        // the meter reads the thread clock and does not know what a budget is
-        // (§6.4: "the overage CPU is recorded").
+        // Record the Hot interval. Nothing else is ever recorded — and on a kill
+        // of either phase that interval *includes the overage*, because the
+        // meter reads the thread clock and does not know what a budget is.
         marks::mark(marks, Mark::TenantRecordWanted);
         entry.meters.record_cpu(&out);
         if out.grace_deferrals > 0 {
@@ -3303,12 +3283,11 @@ impl Cell {
                 .grace_deferrals
                 .fetch_add(out.grace_deferrals, Ordering::Relaxed);
         }
-        // A **triple**: 26.6 ns held at eight tenants, and it allocates a
-        // `String` from the tenant name inside the hold before walking a
-        // `BTreeMap` — so the hold grows with the tenant count while the wait
-        // grows with the thread count, and they are worth telling apart.
-        // `Metrics::by_tenant` is not a `CountedMutex` and appears in no row
-        // of `Cell::lock_stats`, so nothing else measures it at all.
+        // A **triple**: the hold allocates a `String` from the tenant name
+        // before walking a `BTreeMap`, so it grows with the tenant count while
+        // the wait grows with the thread count, and they are worth telling
+        // apart. `Metrics::by_tenant` is not a `CountedMutex` and appears in
+        // no row of `Cell::lock_stats`, so nothing else measures it at all.
         self.metrics.record_tenant_marked(
             &entry.tenant,
             out.cpu_ns,
@@ -3318,7 +3297,7 @@ impl Cell {
         marks::mark(marks, Mark::TenantRecordReleased);
 
         // The vtable may owe the guest a trap it could not raise from an
-        // import that returns a bare `i64` — §11.1's pending-futures cap, a
+        // import that returns a bare `i64` — the pending-futures cap, a
         // malformed payload, a capability violation. `call_future` cannot
         // trap, so it latches; this is where the latch becomes a trap, before
         // the guest is allowed to proceed as though the call had succeeded.
@@ -3342,10 +3321,10 @@ impl Cell {
             _ => out.completion,
         };
 
-        // A **triple**, and the only one `Cell::active` earns: this hold is
-        // ~65 ns because the module and the route are *cloned inside it*,
-        // against ~20 ns at every other site. If `Cell::active` is the cell's
-        // largest source of blocked time, this is the one critical section a
+        // A **triple**, and the only one `Cell::active` earns: this hold
+        // clones the module and the route *inside it*, where every other site
+        // does no allocation at all. If `Cell::active` is the cell's largest
+        // source of blocked time, this is the one critical section a
         // shortening would actually pay for.
         marks::mark(marks, Mark::ActiveUpdateWanted);
         let (lifecycle, module, route) = self
@@ -3371,9 +3350,9 @@ impl Cell {
             Completion::Parked => {
                 slot.park(crate::now_ms());
                 marks::mark(marks, Mark::Parked);
-                // A completion may have landed while we were Hot; §5.4 made it
-                // wait, so drain it now. A **pair**: one map lookup and an
-                // emptiness check.
+                // A completion may have landed while we were Hot; the
+                // reentrancy rule made it wait, so drain it now. A **pair**:
+                // one map lookup and an emptiness check.
                 marks::mark(marks, Mark::ReadyCheckWanted);
                 let ready = self.rt.futures.has_ready(slot.id);
                 marks::mark(marks, Mark::ReadyCheckReleased);
@@ -3381,20 +3360,20 @@ impl Cell {
                 !ready
             }
             Completion::Done => {
-                // §6.3: "the guest may return `done` with a body-stream handle
-                // and continue producing chunks via write futures under
-                // `WaitUntil` semantics". An unfinished streaming response
+                // A guest may return `done` with a body-stream handle and
+                // keep producing chunks through write futures under
+                // `wait_until` semantics. An unfinished streaming response
                 // must therefore stay in the response table — taking it here
                 // would make every subsequent `resp_write` fail with
                 // `NoSuchHandle`, which is a silent truncation of the tenant's
                 // response.
                 //
-                // **PoC gap:** `DispatchResult` carries a complete body, not a
-                // stream, so the caller receives the bytes accumulated up to
+                // **Not wired:** `DispatchResult` carries a complete body, not
+                // a stream, so the caller receives the bytes accumulated up to
                 // `done`. Chunks written afterwards accumulate on the instance
-                // and are readable via `Cell::response_snapshot`, but the PoC
-                // does not pipe them to the requester. Streaming to the client
-                // is `wisp-proxy`'s half of §6.3 and is not wired.
+                // and are readable via `Cell::response_snapshot`, but nothing
+                // pipes them to the requester. Streaming to the client is
+                // `wisp-proxy`'s half and is not built.
                 // A **triple**, and conditional: only a dispatch that
                 // completed with a response handle reaches it. The hold can
                 // clone the whole response body, so its cost is the size of
@@ -3439,8 +3418,8 @@ impl Cell {
 
                 match decide(lifecycle, completion, wait_until) {
                     RequestEnd::RetainedForWaitUntil => {
-                        // §2.2/§2.6: the instance lives past the response and,
-                        // under `fresh`, the reset is still owed.
+                        // The instance lives past the response and, under
+                        // `fresh`, the reset is still owed.
                         slot.park(crate::now_ms());
                         marks::mark(marks, Mark::Parked);
                         marks::mark(marks, Mark::ReadyCheckWanted);
@@ -3464,15 +3443,15 @@ impl Cell {
                     RequestEnd::Parked => unreachable!("Done cannot decide Parked"),
                 }
             }
-            // §6.4's CLEAN kill: the dispatch entered grace and returned
-            // inside it. The request still fails — a kill is a kill, and §13
-            // gives it `budget_exceeded` telemetry — but three things that are
-            // true of a hard kill are false here, and all three are the point:
+            // The CLEAN kill: the dispatch entered grace and returned inside
+            // it. The request still fails — a kill is a kill, and the tenant
+            // still sees `budget_exceeded` — but three things that are true of
+            // a hard kill are false here, and all three are the point:
             //
             //   * the instance is NOT tombstoned. `finally` ran, its state is
             //     consistent, and its slot is reusable (`decide` resets it);
-            //   * it does NOT count toward the hang breaker. §6.4: clean kills
-            //     "are the budget working as designed";
+            //   * it does NOT count toward the hang breaker: a clean kill is
+            //     the budget working as designed;
             //   * it is recorded, overage and all, exactly like any other CPU.
             Completion::CleanKill => {
                 let overage = out.overage_ns;
@@ -3486,11 +3465,11 @@ impl Cell {
                 tracing::info!(
                     tenant = %entry.tenant, instance = %slot.id,
                     overage_us = overage / 1_000,
-                    "clean kill: dispatch unwound inside its grace window (§6.4)"
+                    "clean kill: dispatch unwound inside its grace window"
                 );
                 let msg = format!(
                     "budget_exceeded: cpu budget elapsed; the dispatch unwound cleanly inside its \
-                     grace window and was recorded {:.3} ms of overage (§6.4 clean kill)",
+                     grace window and was recorded {:.3} ms of overage",
                     overage as f64 / 1e6
                 );
                 let result = self.build_result(
@@ -3528,12 +3507,12 @@ impl Cell {
                     if out.kill.is_some() {
                         self.metrics.grace_entries.fetch_add(1, Ordering::Relaxed);
                     }
-                    // §6.4: only HARD kills trip the hang breaker. A
-                    // **triple**, and the second acquisition of this lock in
-                    // one request — the first was the admission check, a whole
-                    // dispatch ago. The hold clones a `BreakerKey` into
-                    // `HashMap::entry` before hashing it, which is three
-                    // `String` allocations under the lock.
+                    // Only HARD kills trip the hang breaker. A **triple**,
+                    // and the second acquisition of this lock in one request —
+                    // the first was the admission check, a whole dispatch ago.
+                    // The hold clones a `BreakerKey` into `HashMap::entry`
+                    // before hashing it, which is three `String` allocations
+                    // under the lock.
                     marks::mark(marks, Mark::BreakerKillWanted);
                     self.breaker
                         .record_kill_marked(&breaker_key, crate::now_ms(), marks);
@@ -3550,13 +3529,13 @@ impl Cell {
                     // rows double-count for anyone reading down the column.
                     self.metrics.traps.fetch_add(1, Ordering::Relaxed);
                 }
-                // §6.4: **the tombstone.** Set on the slot before anything
-                // else touches it, because the engine will not do it for us
-                // (Appendix C, F2: a killed instance answered a later exported
-                // call correctly, globals intact). From here `slot.enter()`
+                // **The tombstone.** Set on the slot before anything else
+                // touches it, because the engine will not do it for us — a
+                // killed instance has been observed answering a later exported
+                // call correctly, globals intact. From here `slot.enter()`
                 // refuses, capture is refused, and reuse is impossible.
                 slot.tombstone();
-                // §6.4's identity — `tombstones == hard_kills + traps` — is
+                // The identity `tombstones == hard_kills + traps` is
                 // established by these three increments and nowhere else, but
                 // it is NOT asserted here: the three counters are separate
                 // atomics and two execution threads tombstoning at once are
@@ -3565,11 +3544,11 @@ impl Cell {
                 // [`Metrics::tombstone_invariant`] is the check, and it is
                 // meaningful at rest — which is where the tests call it.
                 self.metrics.tombstones.fetch_add(1, Ordering::Relaxed);
-                // A **triple**: the hold is a linear scan of up to 256 ring
-                // entries before the push, so it is a few hundred nanoseconds
-                // at a full ring rather than a constant — and every trap and
-                // every hard kill takes it, which is exactly the traffic a
-                // cell under stress is producing.
+                // A **triple**: the hold is a linear scan of the whole ring
+                // before the push, so its cost is a function of how full the
+                // ring is rather than a constant — and every trap and every
+                // hard kill takes it, which is exactly the traffic a cell
+                // under stress is producing.
                 marks::mark(marks, Mark::TombstoneRingWanted);
                 self.remember_tombstone_marked(slot, marks);
                 marks::mark(marks, Mark::TombstoneRingReleased);
@@ -3590,10 +3569,10 @@ impl Cell {
                     marks,
                 );
                 self.respond(slot, result, marks);
-                // §13: traps are never retried on the same memory. §6.4: the
-                // slot is reset before reuse — and for a tombstone "reset"
-                // means the whole activation goes back to the kernel, not a
-                // re-seal over memory a trap left mid-write.
+                // A trap is never retried on the same memory, and the slot is
+                // reset before reuse — for a tombstone "reset" means the whole
+                // activation goes back to the kernel, not a re-seal over
+                // memory a trap left mid-write.
                 self.finish_and_release(slot, entry, evict());
                 true
             }
@@ -3610,9 +3589,9 @@ impl Cell {
         trap: Option<String>,
         marks: &mut Option<RequestMarks>,
     ) -> DispatchResult {
-        // A **pair**: the hold is ~20 ns, half what a mark costs. Note this is
-        // the *third* separate acquisition of `Cell::active` on the same key
-        // in one request — the probe, the update in `settle`, and this — which
+        // A **pair**: the hold is under what a mark costs. Note this is the
+        // *third* separate acquisition of `Cell::active` on the same key in
+        // one request — the probe, the update in `settle`, and this — which
         // the span names make visible for the first time.
         marks::mark(marks, Mark::ResultReadWanted);
         let (dispatch_id, cpu_ns, wall_ns, slices, acquired) = self
@@ -3643,7 +3622,8 @@ impl Cell {
     }
 
     fn respond(&self, slot: &Arc<Slot>, result: DispatchResult, marks: &mut Option<RequestMarks>) {
-        // A **pair**: ~18 ns held, and the fourth acquisition of `active`.
+        // A **pair**: the hold is under one mark, and this is the fourth
+        // acquisition of `active`.
         marks::mark(marks, Mark::ResponderTakenWanted);
         let tx = self
             .active
@@ -3759,11 +3739,10 @@ impl Cell {
         if !d.is_warm() && !matches!(d.kind(), crate::instances::DispositionKind::Reset) {
             self.forget(slot);
         }
-        // A **triple**, and the one worth reading. The hold is
-        // `entries.retain(|_, e| e.owner != owner)` — a walk of **every entry
-        // in the whole cell's future table**, not just this instance's — so
-        // what it costs is a function of what every *other* instance is doing,
-        // and every dispatch that ends pays it.
+        // A **triple**, and the one worth reading. The hold is a `retain` over
+        // **every entry in the whole cell's future table**, not just this
+        // instance's — so what it costs is a function of what every *other*
+        // instance is doing, and every dispatch that ends pays it.
         marks::mark(&tail, Mark::ReleaseInstanceWanted);
         self.rt.futures.release_instance_marked(slot.id, &tail);
         marks::mark(&tail, Mark::ReleaseInstanceReleased);
@@ -3791,12 +3770,12 @@ impl Cell {
     /// most of what `settle` does — a response, a breaker verdict, a
     /// disposition — has no meaning when there is no request to answer.
     ///
-    /// The three increments are the ones §6.4's identity is built out of:
-    /// `tombstones == hard_kills + traps`. Leaving them out would make a
-    /// tombstone the cell definitely took invisible to
+    /// The three increments are the ones the identity
+    /// `tombstones == hard_kills + traps` is built out of. Leaving them out
+    /// would make a tombstone the cell definitely took invisible to
     /// [`Metrics::tombstone_invariant`] in the direction that *fails* the
     /// check, which is at least loud — but `traps` would also under-report,
-    /// and the blast table's tombstone row is the one §10 reads.
+    /// and the tombstone count is the one a blast-radius table reads.
     ///
     /// The overage is reported as zero. The hint runs on `CpuBudget::http`, a
     /// cap rather than a budget the tenant bought, so there is no meaningful
@@ -3826,7 +3805,7 @@ impl Cell {
         tracing::warn!(
             tenant = %entry.tenant, instance = %slot.id, ?completion,
             "the guest ended its pre-capture gc-hint in a tombstone; the instance is \
-             discarded and the slot keeps refusing (§6.4)"
+             discarded and the slot keeps refusing"
         );
     }
 
@@ -3840,7 +3819,7 @@ impl Cell {
     /// from the scan done under it.
     fn remember_tombstone_marked(&self, slot: &Arc<Slot>, marks: &mut Option<RequestMarks>) {
         /// Enough to cover the burst a breaker takes to notice, and small
-        /// enough that the ring is a rounding error next to one instance.
+        /// enough that the ring costs far less than one instance.
         const RING: usize = 256;
         let mut g = self.tombstoned.lock();
         marks::mark(marks, Mark::TombstoneRingAcquired);
@@ -3853,14 +3832,14 @@ impl Cell {
         }
     }
 
-    /// Every instance this cell currently remembers tombstoning. §10's
-    /// negative control reads it: a tombstone rule with nothing ever in here
-    /// and no failing probe is unfalsifiable.
+    /// Every instance this cell currently remembers tombstoning. The negative
+    /// control reads it: a tombstone rule with nothing ever in here and no
+    /// failing probe is unfalsifiable.
     pub fn tombstoned_instances(&self) -> Vec<InstanceId> {
         self.tombstoned.lock().iter().map(|s| s.id).collect()
     }
 
-    /// §10: attribute one `Slot::enter` refusal to the counter that names it.
+    /// Attribute one `Slot::enter` refusal to the counter that names it.
     ///
     /// One place rather than three, because the failure this had was a
     /// `Err(_)` arm that swallowed the distinction — and a second copy of the
@@ -3883,21 +3862,21 @@ impl Cell {
         }
     }
 
-    /// Call into an instance by id, through the cell's front door (§6.4, §10).
+    /// Call into an instance by id, through the cell's front door.
     ///
     /// [`Cell::slot`] answers from the tombstone ring on purpose, so a
     /// kill-then-call gets an instance that **refuses** rather than a `None`
     /// that reads as "no such instance". This is that refusal *counted*:
-    /// `tombstone_refusals` is §10's negative control for the tombstone rule,
+    /// `tombstone_refusals` is the negative control for the tombstone rule,
     /// and a control nothing ever increments cannot fail, which makes a green
     /// dashboard unfalsifiable.
     ///
     /// The closure shape is not decoration: [`crate::instances::CallGuard`]
     /// borrows the slot, so handing one out would mean handing out the
     /// lifetime too. Going through `Slot::enter` rather than re-deriving the
-    /// three refusals from `is_tombstoned`/`is_busy`/`state` keeps §5.4's
-    /// "unrepresentable, not discouraged" property intact — this is the same
-    /// door every dispatch uses, with a counter on it.
+    /// three refusals from `is_tombstoned`/`is_busy`/`state` keeps the
+    /// refusal unrepresentable rather than merely discouraged — this is the
+    /// same door every dispatch uses, with a counter on it.
     pub fn with_instance<R>(
         &self,
         id: InstanceId,
@@ -3952,16 +3931,16 @@ impl Cell {
         let (slot, src) = entry
             .pool
             .acquire_marked(|id| self.make_ctx(entry, id), marks)?;
-        // A **pair**: one `Weak` downgrade and one map insert, about 20 ns,
-        // which is at or under what a mark costs. It is here rather than
-        // folded into `acquire.rest` because it is a per-cell singleton mutex
+        // A **pair**: one `Weak` downgrade and one map insert, at or under
+        // what a mark costs. It is here rather than folded into
+        // `acquire.rest` because it is a per-cell singleton mutex
         // taken on *every* handler acquisition, warm ones included, and it
         // appears in no row of `Cell::lock_stats`.
         marks::mark(marks, Mark::IndexLockWanted);
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
         marks::mark(marks, Mark::IndexLockReleased);
-        // A **triple**: ~48 ns held, because a `ModuleId` — two `String`
-        // allocations — is cloned inside the hold.
+        // A **triple**: a `ModuleId` — two `String` allocations — is cloned
+        // inside the hold.
         marks::mark(marks, Mark::ResidentsLockWanted);
         let mut residents = self.residents.lock();
         marks::mark(marks, Mark::ResidentsLockAcquired);
@@ -3980,7 +3959,7 @@ impl Cell {
 
     /// Look up an instance by id.
     ///
-    /// Falls back to the tombstone ring (§6.4), so a kill-then-call gets an
+    /// Falls back to the tombstone ring, so a kill-then-call gets an
     /// instance that **refuses** rather than a `None` that reads as "no such
     /// instance". Linear over the ring, and only on the miss path.
     pub fn slot(&self, id: InstanceId) -> Option<Arc<Slot>> {
@@ -3991,17 +3970,17 @@ impl Cell {
     }
 
     // -----------------------------------------------------------------------
-    // §7.1 identity lookups
+    // Identity lookups
     //
     // These are public because the questions they answer are asked from
     // outside the cell and answering them by guessing is worse than not
-    // answering: the proxy's thundering-herd guard (§9.1) keys off residency,
-    // and an admin surface that reports tiers by identity has to get the
-    // identity from somewhere.
+    // answering: the proxy's thundering-herd guard keys off residency, and an
+    // admin surface that reports tiers by identity has to get the identity
+    // from somewhere.
     // -----------------------------------------------------------------------
 
-    /// Whether a version's template is registered on this cell. §9.2's "any
-    /// cell with the template cached", asked rather than assumed.
+    /// Whether a version's template is registered on this cell. "Any cell with
+    /// the template cached", asked rather than assumed.
     pub fn has_module(&self, module: &ModuleId) -> bool {
         self.modules.read().contains_key(module)
     }
@@ -4012,7 +3991,7 @@ impl Cell {
     }
 
     // -----------------------------------------------------------------------
-    // §6.6/§9.1 socket handles
+    // Socket handles
     // -----------------------------------------------------------------------
 
     pub(crate) fn rt_services(&self) -> &Arc<Services> {
@@ -4032,8 +4011,8 @@ impl Cell {
     pub fn resident_count(&self) -> usize {
         self.residents.lock().len()
     }
-    /// The bytes a streaming response has accumulated so far (§6.3). See the
-    /// PoC gap noted in `settle`.
+    /// The bytes a streaming response has accumulated so far. See the note in
+    /// `settle` about what is not wired to the requester.
     pub fn response_snapshot(&self, id: InstanceId, handle: u32) -> Option<Vec<u8>> {
         let g = self.residents.lock();
         let r = g.get(&id)?;
@@ -4055,11 +4034,11 @@ impl Cell {
         Ok(())
     }
 
-    /// Run one pass of the §6.6 idle trajectory synchronously.
+    /// Run one pass of the idle trajectory synchronously.
     pub fn sweep_now(self: &Arc<Self>) {}
 
     // -----------------------------------------------------------------------
-    // §8.2.4 quarantine migration
+    // Quarantine migration
     // -----------------------------------------------------------------------
 
     pub fn is_quarantined(&self, tenant: &str) -> bool {
@@ -4471,7 +4450,7 @@ mod queue_tests {
 
     /// **A wake comes out before a dispatch, whatever the structure.**
     ///
-    /// §6.4's admission story: overflow sheds *new* work so work already in
+    /// The admission story: overflow sheds *new* work so work already in
     /// flight keeps making progress. It is a property of what a worker pops,
     /// not of where a producer pushed, which is why splitting placement out
     /// cannot weaken it — but "cannot" is worth one assertion per structure.
@@ -4553,8 +4532,8 @@ mod queue_tests {
     // the lock-free structure
     // -----------------------------------------------------------------------
 
-    /// The lock-free ring sheds when full, which is the property §6.4 needs
-    /// and the reason a *bounded* queue was chosen for dispatches.
+    /// The lock-free ring sheds when full, which is the property admission
+    /// needs and the reason a *bounded* queue was chosen for dispatches.
     #[test]
     fn the_lock_free_ring_sheds_when_full() {
         let q = WorkQueue::new(4, 8, QueueStructure::LockFree, QueuePlacement::PowerOfTwo);
@@ -4833,8 +4812,8 @@ mod cell_tests {
     /// An "instance" that panics inside `dispatch`, standing in for a host
     /// assertion firing under a guest call.
     ///
-    /// The one that has actually fired is §6.4's tombstone assertion, which is
-    /// a `panic!` on purpose. Any other `assert!` or slice index in this crate
+    /// The one that has actually fired is the tombstone assertion, which is a
+    /// `panic!` on purpose. Any other `assert!` or slice index in this crate
     /// reaches an execution thread the same way.
     struct PanicsOnDispatch;
 
@@ -4985,12 +4964,11 @@ mod cell_tests {
     /// `WorkQueue::strategy` and the field behind it were never read — two
     /// dead-code warnings — while `Cell::lock_stats`'s own doc promised "the
     /// report says which strategy produced it". It matters because one row
-    /// means three different things: 365 s of blocked time under `shared` is
-    /// one mutex every thread queued on; the same figure under `per-worker` is
-    /// that time spread over `exec_threads` separate locks; and a zero under
-    /// `lock-free` is "there is no lock to block on", which is not the same
-    /// statement as "nothing blocked". Two runs' tables are not comparable
-    /// without it.
+    /// means three different things: blocked time under `shared` is one mutex
+    /// every thread queued on; the same figure under `per-worker` is that time
+    /// spread over `exec_threads` separate locks; and a zero under `lock-free`
+    /// is "there is no lock to block on", which is not the same statement as
+    /// "nothing blocked". Two runs' tables are not comparable without it.
     #[test]
     fn the_contention_row_names_the_structure_that_produced_it() {
         for (structure, row) in [

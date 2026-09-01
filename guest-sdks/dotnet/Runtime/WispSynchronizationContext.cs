@@ -5,8 +5,8 @@ using System.Threading;
 namespace Wisp.Runtime;
 
 /// <summary>
-/// The "wisp scheduler" of spec.md §4.2: the <see cref="SynchronizationContext"/>
-/// half of the pair that owns the continuation queue.
+/// The <see cref="SynchronizationContext"/> half of the wisp scheduler: the
+/// pair that owns the continuation queue.
 ///
 /// It exists to make one thing true. When guest code writes
 /// <c>await Cache.GetAsync(...)</c>, Roslyn's CPS transform has already
@@ -15,14 +15,14 @@ namespace Wisp.Runtime;
 /// the await point. The awaiter then hands its continuation to whatever
 /// <see cref="SynchronizationContext.Current"/> is. If that context ran the
 /// continuation inline on a host thread we would be back to hidden stacks; if
-/// it were the default context it would go to the thread pool, which does not
-/// exist here (§2.5.1, N4). Posting it to this queue instead means the
+/// it were the default context it would go to the thread pool, and the module
+/// has no threads to run one on. Posting it to this queue instead means the
 /// continuation is a heap object waiting to be dequeued, and the only way it
 /// ever runs is a fresh call in from the host.
 ///
 /// So: continuation queue empty + root task incomplete = the wasm stack is
 /// empty and every scrap of the dispatch's state is in linear memory. That is
-/// invariant 1 and invariant 3 simultaneously, and it falls out of the C#
+/// what makes a parked instance snapshotable, and it falls out of the C#
 /// language guarantee rather than out of anything WISP does at runtime.
 /// </summary>
 internal sealed class WispSynchronizationContext : SynchronizationContext
@@ -43,14 +43,15 @@ internal sealed class WispSynchronizationContext : SynchronizationContext
     public override void Post(SendOrPostCallback d, object? state) => _queue.Enqueue(new Work(d, state));
 
     /// <summary>
-    /// §2.5.2. <c>Send</c> is synchronous-wait-for-completion, i.e. blocking,
-    /// and blocking is inexpressible inside the sandbox by construction: the
-    /// only thing that can complete a host future is a fresh <c>wisp_wake</c>
-    /// call, which cannot arrive while we are still inside this one (§5.4
-    /// single-caller rule). A guest that reaches here has smuggled a
-    /// sync-over-async pattern past the analyzers; it would deadlock and then
-    /// be killed at its CPU budget. Failing loudly and immediately is strictly
-    /// better than burning the tenant's budget to reach the same outcome.
+    /// <c>Send</c> is synchronous-wait-for-completion, i.e. blocking, and
+    /// blocking is inexpressible inside the sandbox by construction: the only
+    /// thing that can complete a host future is a fresh <c>wisp_wake</c> call,
+    /// which cannot arrive while we are still inside this one — the host
+    /// refuses a reentrant call into an instance. A guest that reaches here
+    /// used a sync-over-async pattern, which nothing catches at build time —
+    /// it would deadlock and then be killed at its CPU budget. Failing loudly
+    /// and immediately is strictly better than burning the tenant's budget to
+    /// reach the same outcome.
     /// </summary>
     public override void Send(SendOrPostCallback d, object? state) => throw new NotSupportedException();
 

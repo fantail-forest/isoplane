@@ -1,6 +1,7 @@
-//! The runtime layer's allocator (§4.2: "a GC operating entirely within linear
-//! memory"; here a much simpler arena, but the structural point is the same —
-//! the *runtime* owns the heap and the app layer has none of its own).
+//! The runtime layer's allocator. A real one would be a GC operating entirely
+//! within linear memory; this is a much simpler arena, but the structural point
+//! is the same — the *runtime* owns the heap and the app layer has none of its
+//! own.
 //!
 //! The heap starts at `memory.size` as observed on the first allocation. For
 //! the base layer that is deliberately 8 MiB, because the base is linked with
@@ -94,7 +95,7 @@ unsafe fn grow_to(a: &mut Arena, want: usize) -> bool {
 }
 
 /// # Safety
-/// Single-threaded guest (§5.4); there is no other mutator.
+/// Single-threaded guest; there is no other mutator.
 pub unsafe fn alloc(size: usize, align: usize) -> *mut u8 {
     #[allow(static_mut_refs)]
     let a = &mut *core::ptr::addr_of_mut!(ARENA);

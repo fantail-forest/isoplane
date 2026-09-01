@@ -41,7 +41,7 @@ pub mod __rexport {
     }
 }
 
-/// §5.5 / §6.6. Called by the generated `wisp_gc_hint` export.
+/// Called by the generated `wisp_gc_hint` export.
 ///
 /// See [`alloc`] for exactly what this does; the short version is that it
 /// rolls the bump pointer back over a free tail and zeroes everything
@@ -59,10 +59,10 @@ pub fn heap_stats() -> alloc::HeapStats {
 /// Route Rust panics to the `abort` import so a fault carries a message, then
 /// let the runtime trap.
 ///
-/// §2.5.8: kills are abrupt and are never unwound. The release profile builds
-/// with `panic = "abort"`, so a panic here is a wasm trap and the host
-/// discards the instance -- there is no `finally`, no finalizer, and no
-/// cleanup quantum, exactly as the tenant contract says.
+/// The release profile builds with `panic = "abort"`, so a panic here is a
+/// wasm trap and the host discards the instance -- there is no `finally`, no
+/// finalizer and no cleanup quantum. A panic is not a budget kill: see
+/// [`budget`] for the window in which a dispatch can still unwind and return.
 pub fn install_panic_hook() {
     use core::sync::atomic::{AtomicBool, Ordering};
     static DONE: AtomicBool = AtomicBool::new(false);
@@ -78,10 +78,10 @@ pub fn install_panic_hook() {
 
 #[cfg(test)]
 mod contract_tests {
-    /// §2.5.1/§2.5.2 and §4.5: "no blocking" must be inexpressible, not merely
-    /// discouraged. `wasm32-unknown-unknown` and rule V2 (threads/atomics off)
-    /// carry most of that, but nothing stops an SDK author from writing a spin
-    /// loop, so this greps the shipping sources for the shapes that would.
+    /// "No blocking" must be inexpressible, not merely discouraged.
+    /// `wasm32-unknown-unknown` and the absence of threads and atomics carry
+    /// most of that, but nothing stops an SDK author from writing a spin loop,
+    /// so this greps the shipping sources for the shapes that would.
     ///
     /// Patterns are assembled from fragments so the test does not match its
     /// own source.
@@ -118,7 +118,7 @@ mod contract_tests {
             for pat in forbidden {
                 assert!(
                     !src.contains(pat),
-                    "{} contains `{}`: the guest SDK must not be able to block (§2.5, §4.5)",
+                    "{} contains `{}`: the guest SDK must not be able to block",
                     p.display(),
                     pat
                 );

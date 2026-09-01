@@ -114,7 +114,7 @@ fn pure_module_pre_inits_in_one_pass() {
         .expect("pre-init must succeed");
 
     println!(
-        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} ms, {} refusals",
+        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} ms CPU, {} refusals",
         wasm.len(),
         out.template_bytes,
         out.passes,
@@ -145,7 +145,7 @@ fn impure_units_are_deferred_and_pre_init_converges() {
         .expect("pre-init must converge");
 
     println!(
-        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals, {} ms",
+        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals, {} ms CPU",
         out.passes,
         out.deferred_units,
         out.deferred_reasons,
@@ -185,7 +185,7 @@ fn impure_units_are_deferred_and_pre_init_converges() {
     );
 }
 
-/// §4.4's deferral list is not derivable from the wasm, so it rides *inside*
+/// The deferral list is not derivable from the wasm, so it rides *inside*
 /// the artifact as the `wisp.deferred-init` custom section — which is what
 /// `wisp-engine::Template::deferred_init_units()` reads.
 #[test]
@@ -452,33 +452,10 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
     assert_eq!(Template::load(&out.template_wasm).i64("get_g"), 0);
 }
 
-/// CPU usage is checked after initialization; declared memory is checked before it.
+/// Declared memory is refused before initialization when it exceeds the configured limit.
 #[test]
-fn init_cpu_limit_is_enforced() {
-    // ~10^8 loop iterations: comfortably over a 1 ms budget, comfortably
-    // under a test timeout.
-    let wat = r#"(module
-  (memory (export "memory") 1 16)
-  (global $sink (mut i64) (i64.const 0))
-  (func (export "wisp_initialize") (local $i i32)
-    (local.set $i (i32.const 0))
-    (block $done (loop $l
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 100000000)))
-      (global.set $sink (i64.add (global.get $sink) (i64.const 1)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $l))))
-  (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
-  (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
-  (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))
-)"#;
-    let wasm = wat::parse_str(wat).unwrap();
-    let err = PreInitializer::with_limits(1, 512 << 20)
-        .run(&wasm, &req(&wasm))
-        .unwrap_err();
-    println!("{err}");
-    assert!(err.to_string().contains("CPU limit"));
-
-    // The memory gate refuses before a single guest instruction runs.
+fn init_memory_limit_is_enforced() {
+    // A gibibyte declared against the default ceiling.
     let big = wat::parse_str(
         r#"(module (memory (export "memory") 16384 16384)
              (func (export "wisp_initialize")))"#,
@@ -487,6 +464,23 @@ fn init_cpu_limit_is_enforced() {
     let err = PreInitializer::new().run(&big, &req(&big)).unwrap_err();
     println!("{err}");
     assert!(err.to_string().contains("exceeds the initialization limit"));
+
+    // ...and the ceiling is a knob, not a constant. A module the default
+    // admits must be refused under a limit below what it declares, or
+    // `with_memory_limit` is decoration.
+    let small = wat::parse_str(
+        r#"(module (memory (export "memory") 1 16)
+             (func (export "wisp_initialize")))"#,
+    )
+    .unwrap();
+    let err = PreInitializer::with_memory_limit(64 * 1024)
+        .run(&small, &req(&small))
+        .unwrap_err();
+    println!("{err}");
+    assert!(
+        err.to_string().contains("exceeds the initialization limit"),
+        "{err}"
+    );
 }
 
 #[test]

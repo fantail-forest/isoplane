@@ -41,6 +41,9 @@ The runtime-bringup policy allows additional runtime imports when the host recor
 no active initialization unit. That policy is separate from the application entropy source; selecting
 it does not grant arbitrary I/O during initialization.
 
+Initialization logging can report failures before preparation returns. Log
+messages must not contain secrets read by the application.
+
 ## Compiled artifacts
 
 Compiled native code depends on the engine and target configuration. Loading a

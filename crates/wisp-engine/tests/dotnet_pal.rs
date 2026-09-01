@@ -1,24 +1,22 @@
-//! **The finding, closed** (spec.md §4.3; Appendix C **F7**).
+//! A stock .NET module declares a large `wasi:*` surface that the raw
+//! capability table would reject, and only a couple of those imports are ever
+//! reached — among them `wasi:random` (a second entropy path) and
+//! `wasi:clocks/monotonic-clock` (the fine timer the platform denies). The
+//! delegating adapter resolves them under the no-new-channels rule.
 //!
-//! > *A stock .NET module declares 32 `wasi:*` imports the validator rejects;
-//! > recording stubs show 2–3 reached, including `wasi:random` (a second
-//! > entropy path) and `wasi:clocks/monotonic-clock` (the fine timer §8.4
-//! > denies). Resolved by the delegating adapter under the no-new-channels
-//! > rule.*
-//!
-//! F7 was measured against a real NativeAOT-LLVM artifact, so closing it has
-//! to be measured against one too. A synthetic `.wat` fixture with four
-//! `wasi:*` imports proves the linker works; it cannot prove the *whitelist
-//! is the right size*, because the fixture's surface is whatever the fixture
-//! author typed. This test loads the module the toolchain actually emits and
-//! asserts two things about it:
+//! That surface came off a real NativeAOT-LLVM artifact, so the check has to
+//! run against one too. A synthetic `.wat` fixture with four `wasi:*` imports
+//! proves the linker works; it cannot prove the *whitelist is the right size*,
+//! because the fixture's surface is whatever the fixture author typed. This
+//! test loads the module the toolchain actually emits and asserts two things
+//! about it:
 //!
 //! 1. it **loads**, which it could not before the adapter reached the data
 //!    plane's linker — validation and pre-initialization already passed, so
 //!    the failure used to surface at activation, which is the worst place for
 //!    a capability decision to appear;
 //! 2. the adapter drew on **exactly two** `wisp:platform` capabilities. That
-//!    number is the no-new-channels rule as an assertion: 32 declarations came
+//!    is the no-new-channels rule as an assertion: dozens of declarations came
 //!    in and two capabilities went out, both already in the tenant-facing
 //!    manifest.
 //!
@@ -39,16 +37,12 @@
 //! `cargo test` has no notion of "ran but proved nothing". Building the fixture
 //! removes the excuse for skipping instead of weakening the assertion.
 //!
-//! This test skipped for its first day, on the mistaken belief that the
-//! artifact was untracked build output. It was untracked, briefly, in a
-//! working tree where another track had built it before committing it — which
-//! is a decent illustration that "is this fixture tracked" is a question about
-//! the repository and not about whatever happens to be in one's own `git
-//! status` at the time.
-//!
-//! The claim is *also* reported through S10, which GAPs rather than passing
-//! when the artifact is missing. That is the aggregating home; this is the
-//! fast local one.
+//! This test once skipped, on the mistaken belief that the artifact was
+//! untracked build output. It was untracked, briefly, in a working tree where
+//! another track had built it before committing it — which is a decent
+//! illustration that "is this fixture tracked" is a question about the
+//! repository and not about whatever happens to be in one's own `git status`
+//! at the time.
 
 use wisp_engine::{EngineConfig, WispEngine};
 
@@ -81,7 +75,8 @@ fn stock_module() -> (String, Vec<u8>) {
         panic!(
             "{} is still missing after a successful build: {e}\n\nThat is a bug in \
              guests/build-dotnet.sh rather than in your checkout — skipping here would turn \
-             F7's only engine-level assertion into a green test that proved nothing.",
+             the only engine-level assertion about the WASI surface into a green test that \
+             proved nothing.",
             p.display()
         )
     });
@@ -103,10 +98,10 @@ fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
 
     let t = e.load_template(&wasm).unwrap_or_else(|err| {
         panic!(
-            "the stock .NET module at {path} did not load: {err:#}\n\nThis is Appendix C F7: \
-             the module declares ~32 `wasi:*` imports, and §4.3 resolves them by composing the \
-             PAL adapter at deploy. If this fails on an undeclared import, the whitelist is the \
-             wrong size and that is a design conversation, not a linker bug."
+            "the stock .NET module at {path} did not load: {err:#}\n\nThe module declares a \
+             large `wasi:*` surface, which the platform resolves by composing the PAL adapter \
+             at deploy. If this fails on an undeclared import, the whitelist is the wrong size \
+             and that is a design conversation, not a linker bug."
         )
     });
 
@@ -118,18 +113,18 @@ fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
     let trapped = composed.iter().filter(|d| !d.disposition.is_delegated()).count();
 
     eprintln!(
-        "F7 CLOSED: {path}\n  {} wasi: imports composed — {} trap-on-call, delegated to {:?}",
+        "{path}\n  {} wasi: imports composed — {} trap-on-call, delegated to {:?}",
         composed.len(),
         trapped,
         delegated
     );
 
-    // F7's number. Not asserted as an equality on 32 — the surface is a
-    // closure over what tenant code drags out of the BCL, not a fixed list
-    // (docs/dotnet-findings.md §1.4) — but it must be the shape F7 described.
+    // Not an equality: the surface is a closure over what tenant code drags
+    // out of the BCL, not a fixed list. But a stock module's surface is dozens
+    // of imports, and anything much smaller means the adapter did not run.
     assert!(
         composed.len() >= 30,
-        "only {} wasi: imports composed; F7 measured 32 on the stock module",
+        "only {} wasi: imports composed; a stock .NET module declares far more",
         composed.len()
     );
 

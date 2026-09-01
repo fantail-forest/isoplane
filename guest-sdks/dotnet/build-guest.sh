@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build a C# WISP guest to a core wasm module (spec.md §4.2, claim C10).
+# Build a C# WISP guest to a core wasm module.
 #
 #   build-guest.sh <guest-dir> [dotnet publish args...]
 #
 # One driver for every guest, next to the one SDK they all reference. A guest's
 # own build.sh is a two-line wrapper around this.
 #
-# Runs INSIDE the wisp-dev container (plan.md ground rule 1). From the host:
+# Runs INSIDE the wisp-dev container. From the host:
 set -euo pipefail
 
 SDK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +35,7 @@ OUT="${WISP_OUT_DIR:-$HERE/out}"
 # Output basename. Distinct flavours must land at distinct paths so they can be
 # compared against each other — `bench/dotnet-sharing` needs two materially
 # different modules from the same toolchain to measure cross-template page
-# dedup (§6.2: are two tenants' BCL images byte-identical?).
+# dedup, i.e. whether two tenants' BCL images are byte-identical.
 #   WISP_OUT=wisp_guest_dotnet_compat guests/dotnet/build.sh -p:WispCompatProbe=true
 # Defaulted after the publish, from the module the project produced — see below.
 NAME="${WISP_OUT:-}"
@@ -46,8 +46,8 @@ NAME="${WISP_OUT:-}"
 #
 # It comes from the IMAGE (see the Dockerfile), not from here. This script used
 # to install it on first run, which could never work: `scripts/dev` runs the
-# container as the invoking uid (ground rule 1) and /opt is root-owned, so the
-# untar emitted two hundred lines of "Cannot mkdir: Permission denied" and then
+# container as the invoking uid and /opt is root-owned, so the untar emitted
+# two hundred lines of "Cannot mkdir: Permission denied" and then
 # -- because the failure was inside a pipeline whose exit status belonged to
 # something else -- carried on to a link failure that named neither the missing
 # sysroot nor the reason. Refusing here, with the fix, is the whole of the
@@ -73,7 +73,7 @@ export WASI_SDK_PATH
 
 # The PAL shim (native/wisp_pal.c) defines the `__wasm_import_*` symbols that
 # wasi-libc would otherwise leave as `wasi:*` imports, so wasm-ld resolves them
-# locally and the module's import list is `wisp` and nothing else (§4.3 V1).
+# locally and the module's import list is `wisp` and nothing else.
 # It has to be compiled by the WASI SDK's clang, not by ILC, so it happens here
 # rather than in the csproj.
 # The PAL lives with the SDK, not with the guest: it is a closure over the BCL
@@ -85,7 +85,7 @@ mkdir -p "$HERE/obj"
 
 # MSBuild's up-to-date check does not see linker *arguments*, so changing a
 # property like WispMemoryMaxBytes would otherwise silently reuse the previous
-# link. Dropping the native output makes every build re-link; it costs ~1 s.
+# link. Dropping the native output makes every build re-link.
 rm -rf "$HERE/src/bin/Release/net10.0/wasi-wasm/native"
 
 echo "==> dotnet publish (NativeAOT-LLVM -> wasm32 core module)"
@@ -106,15 +106,15 @@ echo "==> module"
 ls -l "$OUT/$NAME.wasm"
 wasm-tools validate "$OUT/$NAME.wasm" && echo "    validates as core wasm"
 
-echo "==> imports (this list IS the capability manifest, §5.3 / rule V1)"
+echo "==> imports (this list IS the capability manifest)"
 wasm-tools print "$OUT/$NAME.wasm" | grep -E '^\s*\(import' | sed -E 's/ \(func.*//;s/^\s*/    /'
 
-# HARD GATE. Invariant 4 says the import list is the complete capability
-# manifest; anything outside module `wisp` is an undeclared capability and
-# `wisp_control::validate` rejects it under V1. The PAL shim is a closure over
-# what the tenant's code drags out of the BCL, not a fixed list — a new BCL
-# reference can pull in a new wasi import. Failing the build here is the only
-# way that stays visible instead of turning up as a deploy rejection.
+# HARD GATE. The import list is the complete capability manifest; anything
+# outside module `wisp` is an undeclared capability and
+# `wisp_control::validate` rejects it. The PAL shim is a closure over what the
+# tenant's code drags out of the BCL, not a fixed list — a new BCL reference
+# can pull in a new wasi import. Failing the build here is the only way that
+# stays visible instead of turning up as a deploy rejection.
 stray=$(wasm-tools print "$OUT/$NAME.wasm" \
         | grep -E '^\s*\(import' | grep -v '(import "wisp"' || true)
 if [ -n "$stray" ]; then
@@ -123,7 +123,7 @@ if [ -n "$stray" ]; then
     echo "FAIL: the module imports something outside the \`wisp\` module."
     echo "$stray"
     echo
-    echo "Each one is an undeclared capability (invariant 4, rule V1). Define"
+    echo "Each one is an undeclared capability the validator rejects. Define"
     echo "its \`__wasm_import_*\` symbol in native/wisp_pal.c; the symbol name"
     echo "and signature come from the module itself:"
     echo "    $HERE/build.sh -p:NativeDebugSymbols=true"

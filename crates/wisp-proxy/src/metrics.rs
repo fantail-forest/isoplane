@@ -6,10 +6,10 @@ use wisp_abi::host::CodeTier;
 
 /// A fixed-bucket log histogram over microseconds.
 ///
-/// Deliberately not a t-digest: p50/p99 to within one bucket (≈ 26 % relative
-/// width) is all §10 asks for, and a lock-free array of counters can be
-/// updated from every request thread without becoming the bottleneck it is
-/// supposed to be measuring.
+/// Deliberately not a t-digest: p50/p99 to within one bucket is all the
+/// exposition needs, and a lock-free array of counters can be updated from
+/// every request thread without becoming the bottleneck it is supposed to be
+/// measuring.
 #[derive(Debug)]
 pub struct Histogram {
     /// bucket i covers [2^(i/4), 2^((i+1)/4)) µs — 4 buckets per octave.
@@ -118,7 +118,7 @@ pub struct ProxyMetrics {
 
     /// End-to-end, proxy-observed.
     pub request_latency: Histogram,
-    /// Time spent in the admission queue before a permit was granted (§6.4).
+    /// Time spent in the admission queue before a permit was granted.
     pub admission_wait: Histogram,
 }
 

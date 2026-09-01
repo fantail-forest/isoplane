@@ -1,17 +1,17 @@
-//! The import vtable (spec.md §5.3, §5.5, invariant 4).
+//! The import vtable (invariant 4).
 //!
-//! > *The guest can affect the world exclusively through typed imports declared
-//! > in its component's WIT world.*
+//! The guest can affect the world exclusively through typed imports declared
+//! in its component's WIT world.
 //!
 //! The linker defines **exactly** [`wisp_abi::imports::IMPORTS`] under module
 //! `wisp` and nothing else, so a module importing anything else fails
-//! instantiation. That is rule V1 (§4.3) enforced a second time: the validator
+//! instantiation. That is rule V1 enforced a second time: the validator
 //! rejects the module at deploy time, and if a module somehow reached a cell
 //! anyway there is no symbol for it to bind to. There is deliberately no
 //! `define_unknown_imports_as_traps` here — an undeclared import must be a
 //! *deploy* failure, not a runtime one.
 //!
-//! Two rules govern every buffer that crosses the boundary (§5.5):
+//! Two rules govern every buffer that crosses the boundary:
 //!
 //! * guest → host: the engine copies the bytes **out** of linear memory before
 //!   calling the binding, so the host never holds a pointer into a memory the
@@ -39,9 +39,9 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<StoreState>> {
 
 /// Register one import under its declared core-wasm signature.
 ///
-/// The shapes are enumerated rather than generated because the set is small,
-/// closed, and normative: a new shape appearing in `IMPORTS` should be a
-/// compile-visible decision here, not something the engine silently guesses.
+/// The shapes are enumerated rather than generated because the set is small
+/// and closed: a new shape appearing in `IMPORTS` should be a compile-visible
+/// decision here, not something the engine silently guesses.
 fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
     use Ty::{I32, I64};
     let m = HOST_MODULE;
@@ -94,32 +94,31 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
 
 /// The body shared by every import.
 fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) -> Result<u64> {
-    // §4.4: the sealed init sandbox, where "every I/O import traps". Checked
-    // first, so a forbidden import cannot have a side effect on its way to
-    // trapping — that is what makes pre-init's rollback-by-replay a genuine
-    // rollback. The offending name is recorded because §4.4's deferral loop
-    // needs to know *which* import an impure static initializer touched.
+    // The sealed init sandbox, where every I/O import traps. Checked first, so
+    // a forbidden import cannot have a side effect on its way to trapping —
+    // that is what makes pre-init's rollback-by-replay a genuine rollback. The
+    // offending name is recorded because the deferral loop needs to know
+    // *which* import an impure static initializer touched.
     if c.data().is_init_sandbox() && !def.init_visible {
         c.data_mut().violation = Some(def.name);
         return Err(CapabilityViolation { import: def.name, init_sandbox: true }.into());
     }
 
     match def.name {
-        // §8.4/§8.5. The frozen clock never reaches a binding: it is an
-        // engine-owned security control. Returning a host-sourced value here
-        // would hand the guest back the measurement primitive the freeze exists
-        // to remove.
+        // The frozen clock never reaches a binding: it is an engine-owned
+        // security control. Returning a host-sourced value here would hand the
+        // guest back the measurement primitive the freeze exists to remove.
         "clock_now_coarse" => return Ok(c.data().clock_ms),
-        // §4.6's kill-cooperation ABI. Both halves are engine-owned and never
+        // The kill-cooperation ABI. Both halves are engine-owned and never
         // reach a `HostBindings` vtable: the state they read and write is the
         // meter the epoch callback compares against, which lives here.
         //
-        // "the host-published remaining-budget value" (§4.6), signed, in
-        // nanoseconds against B. Negative means the dispatch is in grace and
-        // by how much — the number a runtime layer needs to decide whether it
-        // can still afford to unwind. It is deliberately NOT a fine clock the
-        // guest can difference for timing (§8.4): it moves only with the
-        // guest's own thread CPU, so measuring it measures the guest itself.
+        // The host-published remaining-budget value, signed, in nanoseconds
+        // against B. Negative means the dispatch is in grace and by how much —
+        // the number a runtime layer needs to decide whether it can still
+        // afford to unwind. It is deliberately NOT a fine clock the guest can
+        // difference for timing: it moves only with the guest's own thread
+        // CPU, so measuring it measures the guest itself.
         "budget_remaining_ns" => {
             let m = c.data().meter;
             let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos());
@@ -128,13 +127,13 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
         }
         // The runtime layer's *unsafe-to-trap* bit: set around GC phases and
         // scheduler queue mutations. Honoured during grace entry, ignored at
-        // the hard deadline (§6.4).
+        // the hard deadline.
         "unsafe_to_trap" => {
             c.data_mut().unsafe_to_trap = raw[0] != 0;
             return Ok(0);
         }
-        // §5.3 core group. An abort is a guest fault, so it leaves as a trap
-        // rather than a return value; the message is kept for telemetry.
+        // An abort is a guest fault, so it leaves as a trap rather than a
+        // return value; the message is kept for telemetry.
         "abort" => {
             let bytes = read_guest(c, raw[0] as usize, raw[1] as usize).unwrap_or_default();
             let message = String::from_utf8_lossy(&bytes).into_owned();
@@ -168,7 +167,7 @@ fn call_binding(
 ) -> Result<u64> {
     use wisp_abi::imports::BufSpec;
 
-    // Guest -> host: copy out before the call (§5.5).
+    // Guest -> host: copy out before the call.
     if let BufSpec::In(i) = def.buf {
         let i = i as usize;
         let (ptr, len) = (raw[i] as usize, raw[i + 1] as usize);
@@ -192,7 +191,7 @@ fn call_binding(
         .data_mut()
         .bindings
         .take()
-        .context("import called reentrantly: the binding vtable is already in use (§5.4)")?;
+        .context("import called reentrantly: the binding vtable is already in use")?;
 
     let call = ImportCall { import: def.name, payload: scratch.as_slice(), scalars };
     let ret = if layout::is_out(def) {
@@ -204,19 +203,19 @@ fn call_binding(
         ) as u64
     } else {
         match def.kind {
-            // §5.1: "there is no import that waits". A future-returning import
-            // MUST return immediately with a future id, which is what makes
+            // There is no import that waits. A future-returning import MUST
+            // return immediately with a future id, which is what makes
             // invariant 3 hold by construction rather than by discipline.
             ImportKind::Future => bindings.call_future(call),
             ImportKind::Sync => bindings.call_sync(call) as u64,
         }
     };
 
-    // §8.5: the coarse clock "advances only at host-call/wake boundaries". A
+    // The coarse clock advances only at host-call/wake boundaries, and a
     // future-returning import is that boundary: control genuinely left the
     // guest. Synchronous imports do *not* advance it, so no amount of
-    // `log_emit` in a loop turns the clock into a stopwatch (§8.4). Monotonic
-    // per instance, as §8.5 requires.
+    // `log_emit` in a loop turns the clock into a stopwatch. Monotonic per
+    // instance.
     if matches!(def.kind, ImportKind::Future) {
         let now = bindings.slice_clock_ms();
         let d = c.data_mut();
@@ -225,7 +224,7 @@ fn call_binding(
 
     c.data_mut().bindings = Some(bindings);
 
-    // Host -> guest: copy in after the call (§5.5).
+    // Host -> guest: copy in after the call.
     if let BufSpec::Out(i) = def.buf {
         let ptr = raw[i as usize] as usize;
         write_guest(c, ptr, scratch.as_slice())?;
@@ -235,8 +234,8 @@ fn call_binding(
 }
 
 /// Ceiling on a single host->guest fill, so a guest cannot ask the host to
-/// allocate an arbitrary buffer on its behalf (§11.1 is about the guest's own
-/// memory; this is about the host's).
+/// allocate an arbitrary buffer on its behalf. The plan limits cap the guest's
+/// own memory; this caps the host's.
 const MAX_OUT_BUFFER: usize = 1 << 20;
 
 pub(crate) fn read_guest(c: &mut Caller<'_, StoreState>, ptr: usize, len: usize) -> Result<Vec<u8>> {

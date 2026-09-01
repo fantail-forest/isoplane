@@ -3,10 +3,10 @@ using System;
 namespace Wisp.Abi;
 
 /// <summary>
-/// The subset of <c>wisp-abi::dispatch::DispatchRecord</c> the guest handler
-/// reads. Fields are decoded in the Rust struct's declaration
-/// order because postcard writes structs as bare, unframed field sequences —
-/// the order IS the format.
+/// The subset of <c>wisp-abi::dispatch::DispatchRecord</c> the PoC handler
+/// reads. Fields are decoded in the Rust struct's declaration order because
+/// postcard writes structs as bare, unframed field sequences — the order IS
+/// the format.
 /// </summary>
 public sealed class DispatchRecord
 {
@@ -44,7 +44,8 @@ public sealed class DispatchRecord
             default:
                 
                 
-                // An unsupported dispatch kind is a protocol error.
+                // sends one is misrouting, and that must surface as Protocol
+                // rather than as silent misbehaviour.
                 throw new PostcardException();
         }
 
@@ -63,6 +64,9 @@ public sealed class DispatchRecord
 /// <summary>Discriminant order of <c>wisp-abi::dispatch::DispatchKind</c>.</summary>
 public enum DispatchKind : uint
 {
+    /// <summary>
+    /// An inbound HTTP request. The only trigger a Handler receives.
+    /// </summary>
     Http = 0,
 
 

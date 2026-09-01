@@ -92,7 +92,7 @@ impl Api {
             .query_get("ms")
             .and_then(|s| s.parse().ok())
             .unwrap_or(50);
-        // A timer is a host future, never a guest loop (§5.3). This `.await`
+        // A timer is a host future, never a guest loop. This `.await`
         // is a `return Poll::Pending` all the way out to the host.
         let _ = Clock::delay(ms).await;
         Response::json(&ParkReport {

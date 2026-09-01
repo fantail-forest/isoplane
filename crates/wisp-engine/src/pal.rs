@@ -1,4 +1,58 @@
-//! Implements admitted WASI imports through the host capability interface.
+//! The **WASI PAL adapter**, runtime half.
+//!
+//! NativeAOT-LLVM/componentize artifacts declare `wasi:*` imports that raw V1
+//! would reject, and only a handful of them are ever reached. Rather than
+//! fight the toolchain, the platform composes a WASI compatibility adapter at
+//! deploy: an enumerated whitelist of `wasi:*` interfaces satisfied by
+//! delegation to `wisp:platform` imports, and trap-on-call stubs for the
+//! unreached remainder, so validation passes while the capability stays
+//! absent.
+//!
+//! **No-new-channels rule:** no WASI import may introduce a capability or
+//! information channel — time, entropy, or otherwise — that is not already
+//! present, **at the same fidelity**, in `wisp:platform`.
+//!
+//! ## Why the bodies live here
+//!
+//! The *table* is [`wisp_abi::pal::PAL_IMPORTS`], beside the WISP one, so the
+//! validator and the linker read one definition. The **bodies** are here, in
+//! the engine, for the same reason: `wisp-control` validates a module and
+//! then this crate has to instantiate it, and a validator that admits a
+//! `wasi:*` import while the linker satisfies it *differently* would be a
+//! hole with a whitelist in front of it. `wisp-control::pal` re-exports
+//! [`link`] and [`PalSource`] so the deploy-time and init-sandbox callers use
+//! these exact four functions.
+//!
+//! ## The two properties that are easy to lose
+//!
+//! Both are asserted by `crates/wisp-control/tests/pal_channels.rs`, and both
+//! fail *silently* if broken — the module still runs, the tests still pass,
+//! and a channel the platform closed is quietly open again:
+//!
+//! * `monotonic-clock::now` is **quantized to the coarse clock and frozen
+//!   intra-slice**. Guests get no fine timer because it is the measurement
+//!   primitive most Spectre-class attacks need. The obvious thing
+//!   to reach for — `wasmtime-wasi`'s real nanosecond monotonic clock — is
+//!   precisely what the negative control there rejects.
+//! * `random::get-random-bytes` reaches the host CSPRNG per call without
+//!   caching guest-visible output. Guest values or PRNG state retained during
+//!   initialization can still be copied with the template.
+//!
+//! ## Interaction with the grace window
+//!
+//! Both mechanisms intercept import calls, so the precedence has to be
+//! decided rather than discovered:
+//!
+//! * **Poisoning wins for delegated entries.** They are real capabilities
+//!   reached through a WASI door, and poisoning covers every import called by
+//!   that dispatch. In this implementation that falls out for free: the two
+//!   delegated capabilities are `clock_now_coarse` and `entropy_fill`, both
+//!   **synchronous**, and poisoning applies to future-returning imports — the
+//!   ones whose `ResultRecord` can carry `Cancelled` at all. A sync import
+//!   has no channel to express a refusal through, and the unwind needs them
+//!   (a guest cannot report a clean kill through a poisoned `log_emit`).
+//! * **A `TrapOnCall` stub keeps trapping**, in grace or out of it. It was
+//!   never a capability, and a grace window does not turn one on.
 
 use wisp_abi::imports;
 use wisp_abi::pal::{
@@ -23,11 +77,11 @@ pub fn is_foreign_module(name: &str) -> bool {
 /// rather than merely being restated:
 ///
 /// * the clock is `StoreState::clock_ms` — the same field `clock_now_coarse`
-///   returns, sampled once per slice and frozen (§8.5). There is no second
-///   time source in this struct for a WASI door to reach.
+///   returns, sampled once per slice and frozen. There is no second time
+///   source in this struct for a WASI door to reach.
 /// * the entropy is the tenant's own `entropy_fill` binding, called through
-///   the same `call_fill` path §5.5 routes every host→guest byte through. It
-///   draws per call because that binding does; nothing here caches.
+///   the same `call_fill` path every host→guest byte goes through. It draws
+///   per call because that binding does; nothing here caches.
 impl PalSource for StoreState {
     fn slice_clock_ms(&mut self) -> u64 {
         self.clock_ms
@@ -42,7 +96,7 @@ impl PalSource for StoreState {
             // a per-call host draw, so fail loudly instead.
             panic!(
                 "PAL entropy delegation reached with no binding vtable: the host would have had \
-                 to zero-fill, which is a constant masquerading as a CSPRNG (§8.5)"
+                 to zero-fill, which is a constant masquerading as a CSPRNG"
             );
         };
         let n = b.call_fill(
@@ -53,7 +107,7 @@ impl PalSource for StoreState {
         assert!(
             n >= 0 && n as usize == out.len(),
             "the host denied or short-filled a PAL entropy draw ({n} of {} bytes); a partial \
-             fill leaves guest-visible zeroes that look like entropy (§8.5)",
+             fill leaves guest-visible zeroes that look like entropy",
             out.len()
         );
     }
@@ -68,22 +122,21 @@ impl PalSource for StoreState {
 /// absent from `wisp:platform`" is enforced by the type system before any
 /// test runs. Widening this trait is the design conversation.
 pub trait PalSource: Send + 'static {
-    /// §8.4/§8.5: the coarse (1 ms), intra-slice-**frozen** clock that backs
+    /// The coarse (1 ms), intra-slice-**frozen** clock that backs
     /// `clock_now_coarse`. Frozen means: within one dispatch slice this
     /// returns the same value however many times it is called.
     fn slice_clock_ms(&mut self) -> u64;
-    /// §8.5: fill `out` from the host CSPRNG. Called once per guest draw and
+    /// Fill `out` from the host CSPRNG. Called once per guest draw and
     /// never cached, which is what `entropy_fill` promises.
     fn entropy_fill(&mut self, out: &mut [u8]);
 }
 
-/// Compose the adapter over `module`'s `wasi:*` imports (§4.3, deploy time).
+/// Compose the adapter over `module`'s `wasi:*` imports, at deploy time.
 ///
 /// Every non-`wisp` import is looked up in [`PAL_IMPORTS`]; delegated entries
 /// get a delegating body, `TrapOnCall` entries get a stub that traps. An
 /// import outside the table is an error here as well as in the validator —
-/// defense in depth, in the same spirit as §8.2.2's "same rule, two places,
-/// one definition".
+/// the same rule in two places, from one definition.
 pub fn link<T: PalSource>(
     linker: &mut wasmtime::Linker<T>,
     module: &wasmtime::Module,
@@ -103,7 +156,7 @@ pub fn link<T: PalSource>(
         }
         let Some(def) = lookup(import.module(), import.name()) else {
             bail!(
-                "`{}`::`{}` is not in the WASI PAL whitelist (§4.3) — the \
+                "`{}`::`{}` is not in the WASI PAL whitelist — the \
                  validator should have rejected this module under V1",
                 import.module(),
                 import.name()
@@ -133,7 +186,7 @@ fn define_delegate<T: PalSource>(
     def: &'static PalDef,
 ) -> anyhow::Result<()> {
     match (def.module, def.func) {
-        // §8.4/§8.5. The coarse clock, widened to nanoseconds. Multiplying is
+        // The coarse clock, widened to nanoseconds. Multiplying is
         // the whole implementation and that is the point: the result is
         // always a whole number of milliseconds, so no sub-millisecond bit
         // exists to leak, and because `slice_clock_ms` is frozen for the
@@ -142,8 +195,8 @@ fn define_delegate<T: PalSource>(
             linker.func_wrap(def.module, def.func, |mut c: wasmtime::Caller<'_, T>| -> i64 {
                 let ms = c.data_mut().slice_clock_ms();
                 // Saturating rather than wrapping: a clock that runs backwards
-                // is a worse answer than one that stops, and §8.5 requires
-                // monotonicity. (The saturation point is year ~294,000.)
+                // is a worse answer than one that stops, and the clock must be
+                // monotone. (The saturation point is year ~294,000.)
                 i64::try_from(ms).unwrap_or(i64::MAX).saturating_mul(CLOCK_QUANTUM_NS)
             })?;
         }
@@ -152,7 +205,7 @@ fn define_delegate<T: PalSource>(
                 CLOCK_QUANTUM_NS
             })?;
         }
-        // §2.5.4. `list<tuple<string, string>>` lowers to a (ptr, len) pair in
+        // `list<tuple<string, string>>` lowers to a (ptr, len) pair in
         // a caller-supplied return area; (0, 0) is the empty list and needs no
         // allocation.
         (CLI_ENV, "get-environment") => {
@@ -166,10 +219,10 @@ fn define_delegate<T: PalSource>(
                 },
             )?;
         }
-        // §8.5. `get-random-bytes(len: u64) -> list<u8>`: the canonical ABI
-        // makes the CALLEE allocate, so the bytes land in guest memory via the
+        // `get-random-bytes(len: u64) -> list<u8>`: the canonical ABI makes
+        // the CALLEE allocate, so the bytes land in guest memory via the
         // guest's own `cabi_realloc` and no host pointer ever crosses the
-        // boundary (§5.5). The draw happens here, per call, from the source —
+        // boundary. The draw happens here, per call, from the source —
         // there is nowhere in this body for a cached buffer to live.
         (RANDOM, "get-random-bytes") => {
             linker.func_wrap(
@@ -223,8 +276,8 @@ fn define_delegate<T: PalSource>(
 ///
 /// Generated from the module's own declared type rather than from a recorded
 /// signature — see [`PalDef::sig`]. The message names the import and the
-/// reason, because "never reached" is a measurement about one toolchain
-/// build, not a guarantee (`docs/dotnet-findings.md` §1.3).
+/// reason, because "never reached" is an observation about one toolchain
+/// build, not a guarantee.
 fn define_trap<T: PalSource>(
     linker: &mut wasmtime::Linker<T>,
     def: &'static PalDef,
@@ -233,7 +286,7 @@ fn define_trap<T: PalSource>(
     linker.func_new(def.module, def.func, ty, move |_caller, _params, _results| {
         Err(wasmtime::Error::msg(format!(
             "guest called `{}`, which the WISP PAL adapter satisfies with a trap-on-call \
-             stub: {} (§4.3)",
+             stub: {}",
             def.full_name(),
             def.why
         )))

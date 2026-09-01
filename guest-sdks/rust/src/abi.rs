@@ -1,9 +1,9 @@
-//! The raw import surface (spec.md §5.3, invariant 4).
+//! The raw import surface.
 //!
 //! Exactly the functions in [`wisp_abi::imports::IMPORTS`], under module
 //! `"wisp"`, with exactly those signatures. Nothing else is declared, because
-//! an undeclared import is an attempted capability and the validator rejects
-//! the module at deploy time (rule V1, §4.3).
+//! the import list *is* the capability manifest: the validator rejects a module
+//! that imports anything else at deploy time.
 //!
 //! The [`wisp_imports!`] macro emits three things from one list:
 //!
@@ -87,7 +87,7 @@ macro_rules! wisp_imports {
 }
 
 /// Read a `BufSpec::Out(0)` import that reports the blob's full length --
-/// `(ptr, cap) -> full_len`, the probe-then-fill idiom (§4.4).
+/// `(ptr, cap) -> full_len`, the probe-then-fill idiom.
 ///
 /// On wasm this is the import call and nothing else, which is the path that
 /// ships. On host builds a guest pointer truncates to `i32`, so the stub hands
@@ -122,8 +122,8 @@ wisp_imports! {
     // ---- core -------------------------------------------------------------
     /// Guest panic. `init_visible`, so a failed pre-init reports usefully.
     fn abort(ptr: i32, len: i32);
-    /// §4.4 impure-cctor deferral: announce the unit id *before* running it,
-    /// so that if the unit traps on a forbidden import the host knows exactly
+    /// Impure-cctor deferral: announce the unit id *before* running it, so
+    /// that if the unit traps on a forbidden import the host knows exactly
     /// which one to defer when it replays pre-initialization.
     fn init_unit_begin(id: i32);
     /// Non-zero => the host has already decided this unit is impure. Skip it;
@@ -136,12 +136,11 @@ wisp_imports! {
 
     // ---- observability ----------------------------------------------------
     /// `(level, ptr, len)`. Counts against the dispatch CPU budget, which is
-    /// what stops log-as-compute abuse (§10).
+    /// what stops log-as-compute abuse.
     fn log_emit(level: i32, ptr: i32, len: i32);
     fn trace_span_begin(ptr: i32, len: i32) -> i32;
     fn trace_span_end(span: i32);
 
-    // ---- clock & entropy --------------------------------------------------
     /// The serving slice's fixed coarse time, in milliseconds since the Unix epoch.
     fn clock_now_coarse() -> i64;
     /// Creates a host timer future that completes after the requested delay.
@@ -163,34 +162,34 @@ wisp_imports! {
 
 
 
-    // ---- the kill-cooperation ABI (§4.6, §6.4) ----------------------------
+    // ---- the kill-cooperation ABI ------------------------------------------
     /// The host-published remaining-budget value: signed nanoseconds left
     /// against this dispatch's budget B. Negative once the dispatch is in its
     /// grace window, and falling.
     ///
-    /// §4.6 has the runtime layer read this at *"the allocation slow path, GC
-    /// entry, and task switch"* and raise `BudgetExceededException` when it is
-    /// spent. This SDK reads it at its own equivalent boundaries — see
+    /// The .NET runtime layer reads this at the allocation slow path, GC entry
+    /// and task switch, and raises `BudgetExceededException` when it is spent.
+    /// This SDK reads it at its own equivalent boundaries — see
     /// [`crate::budget`].
     ///
-    /// It is not a clock. It advances only with this guest's own thread CPU,
-    /// so differencing it measures the guest measuring itself, and §8.4's
-    /// removal of the timing primitive is unaffected.
+    /// It is not a clock. It advances only with this guest's own thread CPU, so
+    /// differencing it measures the guest measuring itself and gives back no
+    /// fine-grained wall-clock timer.
     fn budget_remaining_ns() -> i64;
-    /// The runtime layer's *unsafe-to-trap* bit (§4.6): non-zero while a GC
-    /// phase or a scheduler queue mutation is in progress. Grace entry defers
-    /// while it is set; the hard deadline at B+G ignores it.
+    /// The runtime layer's *unsafe-to-trap* bit: non-zero while a GC phase or a
+    /// scheduler queue mutation is in progress. Grace entry defers while it is
+    /// set; the hard deadline at B+G ignores it.
     fn unsafe_to_trap(on: i32);
 }
 
 // ---------------------------------------------------------------------------
-// The guest exports (§5.2).
+// The guest exports.
 //
-// `wisp_abi::imports::exports::SIGNATURES` is now the contract (it was not
-// when this SDK was first written -- see guests/README.md gap G1, resolved).
-// The table below is what the `export_*!` macros actually emit, kept separate
-// so that `exports_match_the_contract` can catch drift rather than have the
-// two definitions be the same line of code.
+// `wisp_abi::imports::exports::SIGNATURES` is the contract (it was not when
+// this SDK was first written -- see guests/README.md gap G1, resolved). The
+// table below is what the `export_*!` macros actually emit, kept separate so
+// that `exports_match_the_contract` can catch drift rather than have the two
+// definitions be the same line of code.
 // ---------------------------------------------------------------------------
 
 /// One guest export, as this SDK lowers it to core wasm.
@@ -203,9 +202,9 @@ pub struct SdkExport {
 const I32: Ty = Ty::I32;
 const I64: Ty = Ty::I64;
 
-/// The lowering of the §5.2 WIT world onto a flat core module. Host-side
-/// buffers are handed over by `wisp_alloc` + copy; every entrypoint returns a
-/// packed [`wisp_abi::PollStatus`].
+/// The lowering of the WIT world's guest exports onto a flat core module.
+/// Host-side buffers are handed over by `wisp_alloc` + copy; every entrypoint
+/// returns a packed [`wisp_abi::PollStatus`].
 pub const SDK_EXPORTS: &[SdkExport] = &[
     // wisp-alloc: func(size: u32, align: u32) -> u32
     SdkExport { name: "wisp_alloc", sig: Sig { params: &[I32, I32], results: &[I32] } },
@@ -217,7 +216,7 @@ pub const SDK_EXPORTS: &[SdkExport] = &[
     SdkExport { name: "wisp_wake", sig: Sig { params: &[I64, I32, I32], results: &[I64] } },
     // wisp-gc-hint: func(pressure: u8)
     SdkExport { name: "wisp_gc_hint", sig: Sig { params: &[I32], results: &[] } },
-    // Pre-init entrypoint, run once in the sealed init sandbox (§4.4).
+    // Pre-init entrypoint, run once in the sealed init sandbox.
     SdkExport { name: "wisp_initialize", sig: Sig { params: &[], results: &[] } },
 ];
 
@@ -229,8 +228,8 @@ mod tests {
     /// The one test that keeps three consumers of one table honest: the
     /// validator, the host linker and this SDK. If `wisp-abi` grows an import
     /// and the SDK does not declare it, this fails; if the SDK declares
-    /// something `wisp-abi` does not, V1 would reject every module we build,
-    /// and this fails first.
+    /// something `wisp-abi` does not, the validator would reject every module
+    /// we build, and this fails first.
     #[test]
     fn sdk_matches_the_contract() {
         let sdk: Vec<&str> = SDK_IMPORTS.iter().map(|i| i.name).collect();
@@ -244,9 +243,9 @@ mod tests {
         assert_eq!(SDK_IMPORTS.len(), IMPORTS.len());
     }
 
-    /// Invariant 3 is structural, but it is worth asserting that nothing in
-    /// the surface we declare *could* wait: every non-`Sync` import hands back
-    /// a future id and returns.
+    /// "Suspension implies an empty stack" is structural, but it is worth
+    /// asserting that nothing in the surface we declare *could* wait: every
+    /// non-`Sync` import hands back a future id and returns.
     #[test]
     fn no_declared_import_can_block() {
         for i in IMPORTS {
@@ -279,7 +278,7 @@ mod tests {
         }
     }
 
-    /// `BufSpec` (§5.5) resolves an ambiguity the raw signature cannot: which
+    /// `BufSpec` resolves an ambiguity the raw signature cannot: which
     /// `(i32, i32)` pairs are buffers, which way the bytes flow, and where the
     /// pair sits among the scalars. The SDK hard-codes that at each call site,
     /// so this asserts the hard-coding still matches the contract. Getting it

@@ -1,13 +1,10 @@
-//! Response building and streaming (spec.md §6.3).
+//! Response building and streaming.
 //!
-//! > Response streaming: the guest may return `done` with a body-stream handle
-//! > and continue producing chunks via write futures under `WaitUntil`
-//! > semantics.
-//!
-//! So a response handle outlives the call that returned `done`, and the
-//! instance stays alive until the stream finishes — which is also why §2.6
-//! words the `fresh` reset as owed *after the response **and any `WaitUntil`
-//! work***.
+//! The guest may return `done` with a body-stream handle and continue
+//! producing chunks via write futures under `WaitUntil` semantics. So a
+//! response handle outlives the call that returned `done`, and the instance
+//! stays alive until the stream finishes — which is why the `fresh` reset is
+//! owed *after the response **and any `WaitUntil` work***, not after `done`.
 
 use std::collections::HashMap;
 
@@ -15,8 +12,8 @@ use parking_lot::Mutex;
 use wisp_abi::dispatch::ResponseHead;
 
 /// A response under construction. `resp_new` creates one, `resp_write` appends
-/// (an Unbounded future — a stream cannot be buffered across hibernation,
-/// §6.8), `resp_finish` closes it.
+/// (an Unbounded future — a stream cannot be buffered across hibernation),
+/// `resp_finish` closes it.
 #[derive(Debug, Clone)]
 pub struct Response {
     pub head: ResponseHead,
@@ -50,7 +47,7 @@ impl ResponseTable {
     }
 
     pub fn create(&mut self, head: ResponseHead) -> u32 {
-        // Handle 0 is "no response" in `PollStatus::Done` (§5.2), so start at 1.
+        // Handle 0 is "no response" in `PollStatus::Done`, so start at 1.
         self.next += 1;
         let h = self.next;
         self.open.insert(h, Response { head, chunks: Vec::new(), finished: false });

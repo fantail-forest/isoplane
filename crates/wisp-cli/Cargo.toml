@@ -28,17 +28,33 @@ hex = { workspace = true }
 blake3 = { workspace = true }
 # `wisp doctor` reads the import section directly. This is presentation of the
 # capability manifest, NOT validation: `wisp-control::validate` is the
-# authority for V1-V4 and is wired in behind the `control` feature.
+# authority for V1-V4 and is linked in by the (default-on) `control` feature.
 wasmparser = { workspace = true }
 reqwest = { version = "0.12", features = ["json"], default-features = false }
 
-wisp-control = { workspace = true, optional = true }
+# The authority for V1-V4. `default-features = false` drops `preinit`, which
+# pulls wizer and with it a second wasmtime (36) alongside the data plane's 48.
+# `doctor` only validates, so one engine is enough — see the note above
+# `[features]` in wisp-control's manifest.
+#
+# A path dependency rather than `workspace = true` for the same reason
+# `wisp-docs` uses one: cargo IGNORES a member's `default-features = false`
+# when the workspace's own entry does not set it, with a warning and no other
+# effect. Taking it as `workspace = true` here would silently link both
+# engines.
+wisp-control = { path = "../wisp-control", optional = true, default-features = false }
 
 [features]
-default = []
-# Lights up when `wisp-control` compiles: `wisp doctor` then also prints the
-# validator's V1-V4 verdict rather than only the derived manifest.
+# On by default. `wisp doctor` is only worth running if it runs the real
+# validator: a CLI that tells a tenant to rebuild it from source before it will
+# answer the question is a CLI that answers the question at deploy time
+# instead, which is the loop this exists to shorten.
+default = ["control"]
 control = ["dep:wisp-control"]
 
 [dev-dependencies]
 tokio = { workspace = true }
+# `tests/cli.rs` builds its fixture modules from the signatures in
+# `wisp_abi::imports`, because the validator `doctor` now runs checks them.
+wat = "1"
+

@@ -40,7 +40,7 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("http_body_read", &["body_handle", "max_len"]),
     ("init_unit_begin", &["unit"]),
     ("init_unit_deferred", &["unit"]),
-    // §4.6's kill-cooperation ABI. Both are answered by the engine, so
+    // The kill-cooperation ABI. Both are answered by the engine, so
     // neither reaches this vtable — but they are declared imports and the
     // drift check below covers the whole table, not the part this file
     // happens to route.
@@ -100,7 +100,7 @@ impl WakeSink for NoWake {
 #[async_trait::async_trait]
 pub trait Fetcher: Send + Sync + 'static {
     /// `target.addr` is the **pinned** address from the SSRF check. An
-    /// implementation that re-resolves `target.url` has thrown away §8.6's
+    /// implementation that re-resolves `target.url` has thrown away the
     /// rebinding control.
     async fn fetch(
         &self,
@@ -108,12 +108,12 @@ pub trait Fetcher: Send + Sync + 'static {
         req: FetchRequest,
     ) -> Result<FetchResponse, FutureError>;
 
-    /// Streaming body read (§6.8 Unbounded).
+    /// Streaming body read; an Unbounded future.
     async fn read_body(&self, handle: u32, max_len: usize) -> Result<BodyChunk, FutureError>;
 }
 
 /// Everything the vtable routes to. Assembled by the cell from the control
-/// plane's services (§9.1's cell/control-plane seam).
+/// plane's services across the cell/control-plane seam.
 pub struct Services {
     pub egress: Arc<HostEgressPolicy>,
     pub fetcher: Arc<dyn Fetcher>,
@@ -126,7 +126,7 @@ pub struct CellRuntime {
     pub futures: Arc<FutureTable>,
     pub metrics: Arc<Metrics>,
     pub wake: Arc<dyn WakeSink>,
-    /// The reactor. §6.1: reactor threads own **all** I/O; an execution-pool
+    /// The reactor. Reactor threads own **all** I/O; an execution-pool
     /// thread never awaits anything, it only returns.
     pub reactor: tokio::runtime::Handle,
     /// A copy of [`crate::cell::CellConfig::stage_sample_every`], so a reactor
@@ -146,16 +146,15 @@ impl CellRuntime {
     /// `settle`, which is every future a guest awaits, and
     /// `Cell::complete_future`, which is the control plane, the proxy and the
     /// tests — and they used to be two copies of the same three lines. The
-    /// first version of this instrument measured only the second, so a real
-    /// run reported the pause's internals on 94 requests out of 9,310 and the
-    /// rest arrived carrying nothing. Nothing about that looked wrong in the
-    /// table; the counts simply differed.
+    /// first version of this instrument measured only the second, so most
+    /// requests in a real run arrived carrying nothing. Nothing about that
+    /// looked wrong in the table; the counts simply differed.
     ///
     /// **The two readings before the sampling decision are unavoidable.** The
     /// predicate runs on a dispatch id and the dispatch id is inside the future
     /// table, under the lock the second reading brackets — so while
-    /// `stage_sample_every` is non-zero, every completion pays two `RDTSCP`s,
-    /// about 40 ns. At zero it pays one relaxed load and a branch.
+    /// `stage_sample_every` is non-zero, every completion pays two `RDTSCP`s.
+    /// At zero it pays one relaxed load and a branch.
     pub fn settle_future(&self, id: u64, res: wisp_abi::result::ResultRecord) {
         let taking = self.stage_sample_every != 0;
         // The wait for the outside world closes at this instruction, not three
@@ -201,18 +200,18 @@ pub struct InstanceCtx {
     pub tenant: String,
     pub limits: Limits,
     pub lifecycle: HandlerLifecycle,
-    /// §8.6 optional per-app fetch allowlist.
+    /// Optional per-app fetch allowlist.
     pub allowlist: Option<Vec<String>>,
     pub meters: Arc<Meters>,
     /// `None` in unit tests that exercise the slot machinery without a cell.
     pub rt: Option<Arc<CellRuntime>>,
 
-    /// §8.5: the frozen slice clock. Written once per slice by the cell,
+    /// The frozen slice clock. Written once per slice by the cell,
     /// read by the guest through `clock_now_coarse`.
     clock_ms: AtomicU64,
-    /// Current top-level work item; the unit §11.1 caps futures per.
+    /// Current top-level work item; the unit the future cap applies to.
     dispatch: AtomicU64,
-    /// §11.1 subrequests per dispatch.
+    /// Subrequests issued this dispatch, against the application's cap.
     subrequests: AtomicU32,
     /// Incoming guest log payload bytes charged to this dispatch's allowance.
     log_bytes: AtomicU32,
@@ -221,14 +220,14 @@ pub struct InstanceCtx {
     /// A trap the vtable owes the guest but cannot raise from `call_sync`
     /// (which returns an `i64`). The cell converts it after the call returns.
     trap_latch: Mutex<Option<TrapCode>>,
-    /// §6.4/§5.3: **import poisoning**. Set the moment this dispatch enters
+    /// **Import poisoning.** Set the moment this dispatch enters
     /// its grace window, and cleared at the next `begin_dispatch`. While it is
-    /// set, *"every import called by that dispatch returns `Cancelled`
-    /// immediately"* — the guest cannot start new work with budget it does not
+    /// set, every import called by that dispatch returns `Cancelled`
+    /// immediately — the guest cannot start new work with budget it does not
     /// have, and every `await` it is already sitting on resolves to a terminal
     /// error, which is what gives the unwind something to unwind *for*.
     cancelled: AtomicBool,
-    /// The dispatch's implicit cancellation future (§5.4). The host cancels by
+    /// The dispatch's implicit cancellation future. The host cancels by
     /// completing it; the guest observes a tripped token at its next await.
     /// Cancellation is deliberately **not** an entrancy — it would violate the
     /// single-caller rule against exactly the instance least able to honour it.
@@ -293,7 +292,7 @@ impl InstanceCtx {
         )
     }
 
-    /// §8.5: freeze the coarse clock for one slice, monotonic per instance.
+    /// Freeze the coarse clock for one slice, monotonic per instance.
     ///
     /// Called by the cell immediately before entering the guest and not again
     /// until the next dispatch or wake. Within a slice the guest sees one
@@ -305,7 +304,7 @@ impl InstanceCtx {
         self.dispatch.store(dispatch, Ordering::Relaxed);
     }
 
-    /// Reset the per-dispatch counters §11.1 caps.
+    /// Reset the per-dispatch counters the application's limits cap.
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
         self.subrequests.store(0, Ordering::Relaxed);
         self.log_bytes.store(0, Ordering::Relaxed);
@@ -318,7 +317,7 @@ impl InstanceCtx {
         self.begin_slice(now_ms, dispatch);
     }
 
-    /// §5.4: the dispatch's implicit cancellation future, allocated by the
+    /// The dispatch's implicit cancellation future, allocated by the
     /// cell before the guest is entered and carried in the `DispatchRecord`.
     pub fn set_cancel_future(&self, id: u64) {
         self.cancel_future.store(id, Ordering::Relaxed);
@@ -328,12 +327,12 @@ impl InstanceCtx {
         self.cancel_future.load(Ordering::Relaxed)
     }
 
-    /// §6.4: has this dispatch entered grace, i.e. are its imports poisoned?
+    /// Has this dispatch entered grace, i.e. are its imports poisoned?
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)
     }
 
-    /// Enter the grace window: poison this dispatch's imports (§5.3).
+    /// Enter the grace window: poison this dispatch's imports.
     ///
     /// Returns false if it was already set, so the caller can complete the
     /// cancellation future exactly once.
@@ -404,7 +403,7 @@ impl CellBindings {
         self.ctx.rt.as_ref()
     }
 
-    /// Register a future for this instance, honouring §11.1's cap.
+    /// Register a future for this instance, honouring the application's cap.
     ///
     /// Refusal returns [`INVALID_FUTURE`] and latches
     /// [`TrapCode::TooManyFutures`], because `call_future` returns a bare
@@ -424,7 +423,7 @@ impl CellBindings {
             Err(e) => {
                 tracing::warn!(
                     tenant = %self.ctx.tenant, instance = %self.ctx.instance,
-                    limit = e.limit, "pending-futures cap exceeded (§11.1)"
+                    limit = e.limit, "pending-futures cap exceeded"
                 );
                 self.ctx.latch_trap(TrapCode::TooManyFutures);
                 None
@@ -437,14 +436,14 @@ impl CellBindings {
     /// **The** completion path for everything a guest awaits, and the reason
     /// [`CellRuntime::settle_future`] exists rather than three lines here: this
     /// and `Cell::complete_future` were two copies, and instrumenting only the
-    /// second measured 1% of the pauses in a real run.
+    /// second measured a small fraction of the pauses in a real run.
     fn settle(rt: &Arc<CellRuntime>, id: u64, res: ResultRecord) {
         rt.settle_future(id, res);
     }
 
     /// Resolve a future immediately, without touching the reactor. Used for
     /// policy refusals: the guest still learns through the future, which keeps
-    /// the ABI's "there is no import that waits" rule intact (§5.1).
+    /// the ABI's "there is no import that waits" rule intact.
     fn settle_now(&self, id: u64, res: ResultRecord) -> u64 {
         if let Some(rt) = self.rt() {
             Self::settle(rt, id, res);
@@ -463,12 +462,12 @@ impl CellBindings {
         }
     }
 
-    /// §11.1 subrequests per dispatch, and §8.6's egress policy.
+    /// The subrequests-per-dispatch cap, ahead of the egress policy.
     fn check_subrequest(&self) -> Result<(), FutureError> {
         let n = self.ctx.subrequests.fetch_add(1, Ordering::Relaxed) + 1;
         if n > self.ctx.limits.subrequests_per_dispatch {
             return Err(FutureError::Denied(format!(
-                "subrequest cap of {} per dispatch exceeded (§11.1)",
+                "subrequest cap of {} per dispatch exceeded",
                 self.ctx.limits.subrequests_per_dispatch
             )));
         }
@@ -495,8 +494,9 @@ impl HostBindings for CellBindings {
         let def = match imports::lookup(call.import) {
             Some(d) => d,
             None => {
-                // Cannot happen: the linker defines only `IMPORTS`. Rule V1
-                // enforced twice (§4.3) — this is the second time.
+                // Cannot happen: the linker defines only `IMPORTS`. The
+                // undeclared-import rule is enforced twice — this is the
+                // second time.
                 self.ctx.latch_trap(TrapCode::CapabilityViolation);
                 return INVALID_FUTURE;
             }
@@ -512,10 +512,10 @@ impl HostBindings for CellBindings {
             return INVALID_FUTURE;
         };
 
-        // §5.3, import poisoning: *"During a dispatch's grace window (§6.4)
-        // every import called by that dispatch returns `Cancelled`
-        // immediately"*. The refusal still arrives through the future, which
-        // keeps §5.1's "there is no import that waits" intact — the guest gets
+        // Import poisoning: during a dispatch's grace window every import
+        // called by that dispatch returns `Cancelled` immediately. The refusal
+        // still arrives through the future, which keeps "there is no import
+        // that waits" intact — the guest gets
         // a future id back and learns the answer at its next poll, exactly as
         // it would for an SSRF denial.
         //
@@ -549,9 +549,9 @@ impl HostBindings for CellBindings {
 
         match def.name {
             // ---- clock -----------------------------------------------------
-            // A timer is a host future, not a guest loop (§5.3). It costs the
+            // A timer is a host future, not a guest loop. It costs the
             // platform a timer entry and the instance zero CPU while it waits,
-            // which is the whole of G2.
+            // which is what makes an idle wait free.
             "clock_deadline_in" => {
                 let ms = scalars[0];
                 let rt2 = rt.clone();
@@ -574,7 +574,7 @@ impl HostBindings for CellBindings {
                     rt.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
                     return self.settle_now(id, ResultRecord::Err(e));
                 }
-                // SSRF policy, host-side, resolve-then-pin (§8.6). The check
+                // SSRF policy, host-side, resolve-then-pin. The check
                 // runs on the reactor because `getaddrinfo` blocks and an
                 // execution-pool thread must never block.
                 let allowlist = ctx.allowlist.clone();
@@ -601,7 +601,7 @@ impl HostBindings for CellBindings {
                             from_typed(out)
                         }
                         Ok(Err(deny)) => {
-                            tracing::warn!(tenant = %tenant, reason = %deny, "egress denied (§8.6)");
+                            tracing::warn!(tenant = %tenant, reason = %deny, "egress denied");
                             rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
                             ResultRecord::Err(FutureError::Denied(deny.to_string()))
                         }
@@ -617,7 +617,7 @@ impl HostBindings for CellBindings {
                 spawn!(|svc| from_typed(svc.fetcher.read_body(handle, max).await))
             }
 
-            // ---- response streaming (§6.3) ---------------------------------
+            // ---- response streaming ----------------------------------------
             "resp_write" => {
                 let handle = scalars[0] as u32;
                 let res = match ctx.responses.lock().write(handle, payload) {
@@ -658,18 +658,18 @@ impl HostBindings for CellBindings {
                 ctx.latch_trap(TrapCode::Panic);
                 0
             }
-            // The init-sandbox handshake (§4.4) only means anything inside
+            // The init-sandbox handshake only means anything inside
             // pre-init, which is `wisp-control`'s job. At runtime every unit
             // has already run or been deferred, so nothing is deferred here.
             "init_unit_begin" => 0,
             "init_unit_deferred" => 0,
 
-            // ---- observability (§10) -----------------------------------------
-            // "Log CPU counts against the dispatch budget (prevents
-            // log-as-compute abuse)." It does so automatically: this runs on
+            // ---- observability -----------------------------------------------
+            // Log CPU counts against the dispatch budget, which is what stops
+            // log-as-compute abuse. It does so automatically: this runs on
             // the execution-pool thread inside the dispatch's Hot interval, so
             // `CLOCK_THREAD_CPUTIME_ID` is already ticking. The measurement
-            // here exists to make the share visible (§10), and the byte cap
+            // here exists to make the share visible, and the byte cap
             // bounds volume independently of CPU.
             "log_emit" => {
                 let cpu = CpuInterval::start();
@@ -707,22 +707,22 @@ impl HostBindings for CellBindings {
                 0
             }
 
-            // ---- clock (§8.4/§8.5) --------------------------------------------
+            // ---- clock --------------------------------------------------------
             // Clock reads use the value fixed at slice entry.
             "clock_now_coarse" => ctx.slice_clock_ms() as i64,
 
-            // ---- entropy (§8.5) -----------------------------------------------
+            // ---- entropy ------------------------------------------------------
             // Host→guest, so it goes through `call_fill`, which is the only
             // path with somewhere to put the bytes. Reaching it here means the
             // engine linked it as an ordinary sync import; deny rather than
             // return a zero-filled buffer, because a silently constant
-            // "CSPRNG" would break §8.5 invisibly.
+            // "CSPRNG" would break clone uniqueness invisibly.
             "entropy_fill" | "init_hash_seed" | "init_config_get" => {
                 ctx.latch_trap(TrapCode::Protocol);
                 -1
             }
 
-            // ---- response building (§6.3) -------------------------------------
+            // ---- response building --------------------------------------------
             "resp_new" => {
                 let Some(head) = self.decode::<ResponseHead>(call.payload) else {
                     return 0;
@@ -735,7 +735,7 @@ impl HostBindings for CellBindings {
                 0
             }
 
-            // §4.6's kill-cooperation ABI is answered by the ENGINE, next to
+            // The kill-cooperation ABI is answered by the ENGINE, next to
             // the meter it reads and the epoch callback it feeds, and never
             // reaches this vtable. These arms exist so that a host running
             // against a fake or future engine that does not intercept them
@@ -752,8 +752,8 @@ impl HostBindings for CellBindings {
         }
     }
 
-    /// Host→guest sync imports (§5.5: the host writes into a host-side buffer
-    /// and the engine copies it in, so no host pointer enters guest memory).
+    /// Host→guest sync imports: the host writes into a host-side buffer and
+    /// the engine copies it in, so no host pointer enters guest memory.
     fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> i64 {
         match call.import {
             // Each call draws from the host CSPRNG without caching its output.
@@ -770,12 +770,12 @@ impl HostBindings for CellBindings {
                 *self.ctx.out_buffer.lock() = out.to_vec();
                 out.len() as i64
             }
-            // §4.4/§8.6: both of these belong to the sealed init sandbox, and
+            // Both of these belong to the sealed init sandbox, and
             // `wisp-control` serves them there. At runtime they are a
             // capability violation, not a value.
             //
             // `init_config_get` is safe to *pre-run* — it is tenant-authored
-            // deploy input, fixed for the version and part of §8.7's
+            // deploy input, fixed for the version and part of the build's
             // reproducibility preimage, so unlike a secret it bakes no shared
             // entropy into the template. But that is an argument for reading
             // it at init, not for reading it later: the guest captured the
@@ -793,18 +793,18 @@ impl HostBindings for CellBindings {
         }
     }
 
-    /// §6.4: the dispatch has crossed B. Two things, both required:
+    /// The dispatch has crossed B. Two things, both required:
     ///
-    /// 1. **poison the imports** (§5.3) — from here every future-returning
+    /// 1. **poison the imports** — from here every future-returning
     ///    import this dispatch makes answers `Cancelled` immediately;
-    /// 2. **complete the cancellation future** (§5.4) — the guest observes a
+    /// 2. **complete the cancellation future** — the guest observes a
     ///    tripped token at its next await, which is the only way a dispatch
     ///    sitting on an `await` can learn about a kill, because cancellation
     ///    is not an entrancy.
     ///
     /// Runs inside the epoch deadline callback with the guest on the stack, so
     /// it must not re-enter the instance. It does not: completing a future
-    /// marks it ready and signals the wake router, and §5.4's reentrancy guard
+    /// marks it ready and signals the wake router, and the reentrancy guard
     /// makes that wake wait for the current call to return.
     fn enter_grace(&mut self) {
         if !self.ctx.poison_imports() {
@@ -814,7 +814,7 @@ impl HostBindings for CellBindings {
         tracing::debug!(
             tenant = %self.ctx.tenant, instance = %self.ctx.instance,
             dispatch = self.ctx.dispatch_id(), cancel_future = cancel,
-            "dispatch entered its grace window: imports poisoned, cancellation tripped (§6.4)"
+            "dispatch entered its grace window: imports poisoned, cancellation tripped"
         );
         if cancel != 0 {
             self.settle_now(cancel, ResultRecord::Err(FutureError::Cancelled));
@@ -883,8 +883,8 @@ mod tests {
         }
     }
 
-    /// §5.5: host bytes reach guest memory through `call_fill` and nowhere
-    /// else, so every `BufSpec::Out` import must be routed there.
+    /// Host bytes reach guest memory through `call_fill` and nowhere else, so
+    /// every `BufSpec::Out` import must be routed there.
     #[test]
     fn every_out_buffer_import_is_routed_through_call_fill() {
         let c = ctx();
@@ -922,8 +922,8 @@ mod tests {
         assert_eq!(b.call_sync(call("clock_now_coarse", &[], [0; 3])), 1_007);
     }
 
-    /// §8.5: monotonic per instance. A host clock that steps backwards must
-    /// not be visible as time going backwards inside the sandbox.
+    /// Monotonic per instance. A host clock that steps backwards must not be
+    /// visible as time going backwards inside the sandbox.
     #[test]
     fn the_coarse_clock_never_goes_backwards() {
         let c = ctx();
@@ -954,7 +954,7 @@ mod tests {
 
     /// The engine's `call_fill` default denies rather than zero-filling, and
     /// so does this: a sync path with nowhere to put the bytes must not
-    /// pretend to have succeeded (§8.5).
+    /// pretend to have succeeded.
     #[test]
     fn entropy_through_a_path_with_no_out_buffer_is_denied() {
         let c = ctx();
@@ -984,7 +984,7 @@ mod tests {
         assert_ne!(x, y);
     }
 
-    /// §8.6: `secret_get` is runtime-only, and the init-sandbox seed is not
+    /// `secret_get` is runtime-only, and the init-sandbox seed is not
     /// reachable at runtime.
     #[test]
     fn the_deploy_hash_seed_is_not_reachable_at_runtime() {
@@ -1010,7 +1010,7 @@ mod tests {
         assert_eq!(c.take_trap(), Some(TrapCode::Panic));
     }
 
-    /// §10: a log line costs CPU on the dispatch's own thread, and volume is
+    /// A log line costs CPU on the dispatch's own thread, and volume is
     /// capped so log-as-compute cannot be turned into log-as-storage either.
     #[test]
     fn logs_are_structured_charged_and_bounded() {
@@ -1039,7 +1039,7 @@ mod tests {
     }
 
     /// Response building is synchronous; streaming chunks are future-shaped
-    /// because a stream cannot be buffered across hibernation (§6.3, §6.8).
+    /// because a stream cannot be buffered across hibernation.
     #[test]
     fn responses_are_built_through_the_vtable() {
         let c = ctx();

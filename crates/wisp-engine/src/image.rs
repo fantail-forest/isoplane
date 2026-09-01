@@ -1,16 +1,16 @@
 //! The template's post-init linear memory, stored as what is *in* it rather
-//! than as the memory itself (spec.md §4.4, §6.6).
+//! than as the memory itself.
 //!
 //! ## Why this is not a `Vec<u8>`
 //!
-//! It was one, and for a Rust guest that is fine: a 17-page template is a
-//! 1.1 MB allocation. For a pre-initialized .NET template it is not. The .NET
-//! runtime grows linear memory to ~810 pages during startup, so wizer's
-//! snapshot declares a 53,084,160-byte memory — of which the template's actual
-//! content is **147,207 bytes in 2,536 data segments, 0.277 %**. The rest is
-//! the GC's reserved-but-untouched heap.
+//! It was one, and for a Rust guest that is fine — the whole template is a
+//! megabyte or so. For a pre-initialized .NET template it is not. The .NET
+//! runtime grows linear memory by two orders of magnitude during startup, so
+//! wizer's snapshot declares a memory of tens of megabytes of which a fraction
+//! of a percent is actual content, spread across thousands of small data
+//! segments. The rest is the GC's reserved-but-untouched heap.
 //!
-//! A dense `Vec<u8>` charges a cell 53 MB per template for 147 KB of content,
+//! A dense `Vec<u8>` charges a cell the whole declared span for that content,
 //! and it charges it *twice*, because `wisp-host`'s activator kept its own
 //! copy for the hibernation baseline. Storing the runs instead makes both
 //! copies the size of the content.
@@ -20,18 +20,18 @@
 //! Page granularity would be simpler and is the wrong shape here: the .NET GC
 //! writes a few dozen bytes at the head and tail of every 64 KiB region, so
 //! **no 4 KiB page of that image is entirely zero** — a sparse-page
-//! representation would store 1,620 pages, 6.6 MB, and save almost nothing.
-//! Byte runs store the 147 KB that is actually there.
+//! representation would store every page and save almost nothing. Byte runs
+//! store what is actually there.
 //!
 //! ## What it must still be able to do
 //!
-//! Exactly one thing, and cheaply: §6.6's page-diff asks "is this live 4 KiB
-//! page identical to the template's?" for every candidate page. That is
-//! [`MemoryImage::page_eq`], and it is a binary search plus a walk of the runs
-//! overlapping one page.
+//! Exactly one thing, and cheaply: the hibernation page-diff asks "is this
+//! live 4 KiB page identical to the template's?" for every candidate page.
+//! That is [`MemoryImage::page_eq`], and it is a binary search plus a walk of
+//! the runs overlapping one page.
 
-/// Host page. The unit §6.6 diffs in, and deliberately not the 64 KiB wasm
-/// page.
+/// Host page. The unit hibernation diffs in, and deliberately not the 64 KiB
+/// wasm page.
 pub const PAGE: usize = 4096;
 
 /// Zero runs shorter than this are kept *inside* a run rather than splitting
@@ -56,8 +56,8 @@ pub struct MemoryImage {
     len: usize,
     /// `(offset, start_in_bytes, run_len)`, sorted by offset and
     /// non-overlapping. One `Vec` for the payload rather than one per run: a
-    /// .NET template has ~2,500 runs, and 2,500 separate allocations is 2,500
-    /// malloc headers and a fragmented heap for no gain.
+    /// .NET template has thousands of runs, and that many separate allocations
+    /// is that many malloc headers and a fragmented heap for no gain.
     runs: Vec<Run>,
     bytes: Vec<u8>,
 }
@@ -169,8 +169,8 @@ impl MemoryImage {
         }
     }
 
-    /// §6.6's whole question: is this live page byte-identical to the
-    /// template's?
+    /// The page-diff's whole question: is this live page byte-identical to
+    /// the template's?
     ///
     /// `page` is a 4 KiB index. A page beyond the image compares against zeros
     /// — wasm guarantees grown memory starts zero, so "equal to a zero-extended

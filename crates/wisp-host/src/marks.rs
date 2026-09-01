@@ -15,8 +15,15 @@ use crate::tsc_marks::Calibration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Mark {
-    /// Origin timestamp when the caller releases its request.
-    /// It is not an interval-ending mark.
+    // --- the caller's side -------------------------------------------------
+    /// The generator handing the request over. **The origin**, taken by
+    /// [`begin`] rather than by [`mark`].
+    ///
+    /// It is therefore the one variant that never appears as a span label:
+    /// [`tsc_marks::Marks`] names each span after the mark that *ends* it, and
+    /// nothing ends at the origin. Marking it as well as starting would insert
+    /// a span of one mark's cost with nothing inside it — a row in the report
+    /// that measures only the report.
     CallerReleased,
     /// The call arriving inside the cell.
     CellEntered,
@@ -27,7 +34,7 @@ pub enum Mark {
     BreakerLockWanted,
     /// **Waiting for the hang breaker's `entries` lock.**
     BreakerLockAcquired,
-    /// End of the hang-breaker admission check.
+    /// Holding it: hashing an app name, a version and a route.
     BreakerChecked,
     /// Allocating the `DispatchJob`: six owned `String`/`Vec`s.
     JobBuilt,
@@ -44,7 +51,14 @@ pub enum Mark {
     /// **The lane lock's wait, isolated.** The number the whole exercise
     /// exists to separate from the queue wait.
     LaneLockAcquired,
-    /// End of the producer queue critical section.
+    /// The critical section: a `len()` check, a `push_back` and a `fetch_add`.
+    /// Shorter than the counter's own step, so this row is expected to read as
+    /// noise, and it is here for what it does to its *neighbour* rather than
+    /// for itself. Closing the lock here is what makes the span after it the
+    /// wait for a worker and nothing else.
+    ///
+    /// **The producer's last mark.** What it does next is `notify_one`, and
+    /// that is measured on the thread it wakes — see [`Mark::WorkerWoken`].
     LaneLockReleased,
 
     // --- the enqueue, lock-free structure -----------------------------------
@@ -85,9 +99,9 @@ pub enum Mark {
     /// timestamp and each span is named after the mark that *ends* it, so a
     /// late mark does not go missing, it renames the pair it falls between.
     /// And the readings it lost were the *slow* notifies, which made the row a
-    /// distribution truncated at exactly the tail it existed to show: 80%
-    /// coverage on the wake lane, a p50 running short, a p99 of nothing in
-    /// particular.
+    /// distribution truncated at exactly the tail it existed to show: a chunk
+    /// of the wake lane's observations missing, a p50 running short, and a p99
+    /// of nothing in particular.
     ///
     /// Reading it on the consumer removes the race outright — the thread that
     /// takes the reading is the thread that files it — and it measures the
@@ -145,13 +159,20 @@ pub enum Mark {
     ModulesLockWanted,
     /// **Waiting for the module table's read lock.**
     ModulesLockAcquired,
-    /// End of accessing the module table.
+    /// Holding it: hashing a `ModuleId` and cloning an `Arc`.
     ModulesLockReleased,
     /// The 404 branch, where it is taken.
     InstanceAcquireBegan,
     /// Nothing; the left edge of the handler pool's idle lists.
     PoolLockWanted,
-    /// End of consulting the handler's reusable-instance pools.
+    /// **Consulting the warm and pooled-fresh lists** — the acquisition order
+    /// warm-parked, then pooled-fresh, then activate, as far as it gets. A
+    /// **pair**, and deliberately one pair rather than two: each list is its
+    /// own `Mutex<Vec<Arc<Slot>>>` but the held work in either is a single
+    /// `Vec::pop`, which is beneath the counter's step, and a `reuse` app that
+    /// finds a warm instance never touches the second lock at all.
+    /// What stretches this span is waiting, and the two waits are for the same
+    /// structure with the same fix. **Handler targets only.**
     PoolLockReleased,
     /// Nothing; the left edge of a hibernated instance's rehydration.
     HibernationWakeBegan,
@@ -161,7 +182,14 @@ pub enum Mark {
     /// table — everything the cold path does *before* the engine is asked for
     /// an instance.
     ActivationBegan,
-    /// End of a fresh sandbox activation from its template.
+    /// **Building a new sandbox**: the `mmap` of the template copy-on-write
+    /// and the seal of its globals.
+    ///
+    /// Highly variable, and the variation is structural rather than noise: the
+    /// **first** activation of a program pays for compilation and the page
+    /// cache and costs far more than every one after it. A single average over
+    /// this row is two populations; the p50 and the max are the interesting
+    /// pair. Reached only by a dispatch that found no instance to reuse.
     ActivationEnded,
     /// Nothing; the left edge of the cell's instance index.
     IndexLockWanted,
@@ -171,23 +199,27 @@ pub enum Mark {
     ResidentsLockWanted,
     /// **Waiting for the live-sandbox table.**
     ResidentsLockAcquired,
-    /// End of accessing the resident-instance table.
+    /// Holding it: a `u64` lookup plus a `ModuleId::clone` — two `String`
+    /// allocations — inside the hold.
     ResidentsLockReleased,
     /// End of acquiring the request's instance.
     InstanceAcquireEnded,
     /// Nothing; the left edge of the `active` probe.
     ActiveProbeWanted,
-    /// End of probing the active-instance index.
+    /// `Cell::active`'s single-writer probe: wait and hold. A **pair** — the
+    /// hold is cheaper than reading the clock.
     ActiveProbeReleased,
     /// Nothing; the left edge of the future table.
     CancelAllocWanted,
     /// **Waiting for the global future table.**
     CancelAllocAcquired,
-    /// End of allocating the cancellation future.
+    /// Holding it: two map inserts and a set insert, any of which can grow —
+    /// comfortably past a mark, which is what makes this a triple.
     CancelAllocReleased,
     /// Nothing; the left edge of the `active` insert.
     ActiveInsertWanted,
-    /// End of inserting into the active-instance index.
+    /// `Cell::active`'s insert: wait and hold. A **pair**. Note this is a
+    /// *second* acquisition of the same lock and key as `ActiveProbe`.
     ActiveInsertReleased,
 
     // --- running the guest --------------------------------------------------
@@ -197,7 +229,9 @@ pub enum Mark {
     /// it is a plain `parking_lot::Mutex`, not a `CountedMutex`, and it is in
     /// no lock table.
     SlotEnterAcquired,
-    /// End of the slot entry transition.
+    /// Holding it. Markedly longer whenever the sandbox was previously parked,
+    /// because `Slot::enter` reads the wall clock *inside* the lock to close
+    /// the park interval.
     SlotEnterReleased,
     /// `hot.fetch_add`.
     GuestEntered,
@@ -222,13 +256,18 @@ pub enum Mark {
     /// **Waiting for the per-tenant totals lock.** Not a `CountedMutex`, so
     /// nothing else in the cell measures it.
     TenantRecordAcquired,
-    /// End of updating per-tenant totals.
+    /// Holding it: it allocates a `String` from the tenant name inside the
+    /// hold before walking a `BTreeMap` — so it grows with the tenant count,
+    /// and on a run with many it is the hold rather than the wait that
+    /// moves.
     TenantRecordReleased,
     /// The trap latch.
     ActiveUpdateWanted,
     /// **Waiting for the in-flight record.**
     ActiveUpdateAcquired,
-    /// End of updating request metadata in the active-instance index.
+    /// Holding it: **the one expensive use of `Cell::active`**, because the
+    /// module and route are cloned inside the hold. Every other site allocates
+    /// nothing.
     ActiveUpdateReleased,
     /// Nothing; the left edge of the guest's response table.
     ResponseTableWanted,
@@ -246,11 +285,12 @@ pub enum Mark {
     WaitUntilCheckReleased,
     /// Nothing; the left edge of `build_result`'s read.
     ResultReadWanted,
-    /// End of reading the active request result.
+    /// `Cell::active` read: wait and hold. A **pair**, and the *third*
+    /// acquisition of the same lock and key.
     ResultReadReleased,
     /// Nothing; the left edge of taking the responder.
     ResponderTakenWanted,
-    /// End of taking the request responder.
+    /// `Cell::active` write: wait and hold. A **pair**.
     ResponderTakenReleased,
     /// The reply leaving the cell. Taken **after** the `active` shard is
     /// released and **before** the send, so the shard's own contention — which
@@ -300,8 +340,7 @@ pub enum Mark {
     /// **Waiting for the global future table on the completion path.**
     ///
     /// The reactor's own contribution to the lock `FutureTable` calls "the
-    /// binding one" — 91–99% of everything the execution threads waited on —
-    /// measured from the other side for the first time.
+    /// binding one", measured from the other side for the first time.
     FutureCompleteAcquired,
     /// Holding it: a lookup, the state and result writes, a `pending` removal,
     /// a per-dispatch decrement and a `ready` push. Comfortably past a mark,
@@ -324,9 +363,19 @@ pub enum Mark {
     /// waits however long the lane's consumers make it wait. **Mutex
     /// structures only.**
     WakeLaneLockAcquired,
-    /// End of the mutex-backed wake queue critical section.
+    /// The critical section: a `closed` check, a `push_back` and a `fetch_add`.
+    /// Below the counter's step, and here for the same reason
+    /// [`Mark::LaneLockReleased`] is — closing the lock at this line is what
+    /// makes the span after it the *pure* wait for a worker. **Mutex
+    /// structures only.**
     WakeLaneLockReleased,
-    /// A worker takes a queued wake from a mutex-backed lane.
+    /// **The priority lane's wait, isolated.** The wake sitting in a lane until
+    /// an execution thread takes it, with the producer's critical section and
+    /// its notify now excluded. A woken slice is the same request, and it
+    /// waits here exactly as a new dispatch waits — so this is the sharpest
+    /// question the two-lane design has to answer. The reading is taken inside
+    /// `WorkQueue::pop`, at the instant the consumer owns the item.
+    /// **Mutex structures only.**
     WakeTaken,
     /// **The lock-free ring's push and its wait, together.**
     ///
@@ -350,13 +399,13 @@ pub enum Mark {
     WakeResidentsLockWanted,
     /// **Waiting for the live-sandbox table**, on the wake path.
     WakeResidentsLockAcquired,
-    /// End of resident-instance access for a wake.
+    /// Holding it: a `ModuleId::clone` inside the hold.
     WakeResidentsLockReleased,
     /// Nothing; the left edge of the future table.
     TakeReadyWanted,
     /// **Waiting for the future table** to hand over the completed result.
     TakeReadyAcquired,
-    /// End of taking ready future completions.
+    /// Holding it: a loop popping and removing across three structures.
     TakeReadyReleased,
     /// **The pause ended, and what ended it was not measured on this request's
     /// behalf.**
@@ -391,7 +440,8 @@ pub enum Mark {
     WakeAdopted,
     /// Nothing; the left edge of the budget read.
     ActiveBudgetWanted,
-    /// End of reading the active request CPU budget.
+    /// `Cell::active` read for the remaining CPU budget: wait and hold. A
+    /// **pair**.
     ActiveBudgetReleased,
 
     // --- refusals -------------------------------------------------------------
@@ -416,7 +466,7 @@ pub enum Mark {
     /// under different contention and at different points in a request, and
     /// one row over both could not say which side was waiting.
     ShedMetersLockAcquired,
-    /// End of updating dispatch-shedding counters.
+    /// Holding it: hashing a `ModuleId` and cloning an `Arc`.
     ShedMetersLockReleased,
     /// No such module. Refused **after** queueing and being given a worker.
     ModuleMissing,
@@ -429,18 +479,28 @@ pub enum Mark {
     EnterRefused,
     /// The meters and counters a hard kill bumps, before the breaker.
     BreakerKillWanted,
-    /// The hang-breaker lock was acquired to record a hard budget kill.
+    /// **Waiting for the hang breaker's `entries` lock, to record a kill.**
+    /// The second time one request touches this lock — the first was the
+    /// admission check — and the only refusal path that goes back to it.
+    /// **Hard budget kills only:** a clean kill is the budget working as
+    /// designed, so it deliberately records nothing here, and a trap records
+    /// nothing here either.
     BreakerKillAcquired,
     /// Holding it: a `BreakerKey::clone` — a `ModuleId`'s two `String`s plus
     /// the route — allocated *inside* the hold before the entry is hashed, so
     /// this is well past what a mark costs and separates cleanly from the
     /// wait.
     BreakerKillReleased,
-    /// Start of recording the tombstone and related counters.
+    /// The tombstone itself and the three counters the identity
+    /// `tombstones == hard_kills + traps` is built out of.
     TombstoneRingWanted,
     /// **Waiting for the tombstone ring.**
     TombstoneRingAcquired,
-    /// End of recording the tombstone and related counters.
+    /// Holding it: **a linear scan of the whole ring** looking for the id
+    /// before pushing it, then a `push_back` and possibly a `pop_front`. Not a
+    /// constant and not small — its cost grows with how full the ring is — and
+    /// it is taken by every trap and every hard kill, which are exactly the
+    /// requests a cell under stress is producing.
     TombstoneRingReleased,
 
     // --- the caller's side again --------------------------------------------
@@ -449,7 +509,14 @@ pub enum Mark {
     /// request**; `stop()` is taken here.
     CallerReceived,
 
-    /// Start of post-response cleanup.
+    // --- the cell's tail, on a separate trace --------------------------------
+    //
+    // Everything below runs *after* the reply has been sent, on a buffer of
+    // its own. See "The tail is real work, and it is not the request's time"
+    // above: these overlap the request in wall-clock time and must never be
+    // added to it.
+    /// The discard of effects that were enqueued and never persisted — the
+    /// first thing the tail does, and the span the tail's origin opens.
     FinishBegan,
     /// Nothing; the left edge of the in-flight record's removal.
     ActiveRemoveWanted,
@@ -473,12 +540,12 @@ pub enum Mark {
     /// **Waiting for the global future table**, to release the instance.
     ReleaseInstanceAcquired,
     /// Holding it — **and this is the most interesting figure in the tail.**
-    /// `FutureTable::release_instance` does `entries.retain(|_, e| e.owner !=
-    /// owner)`, which walks **every entry in the whole cell's future table**,
-    /// not just this instance's. Its cost is therefore a function of what
-    /// every *other* instance is doing, and it is paid by every dispatch that
-    /// ends. There is an ownership index right beside it (`owned`) that is
-    /// removed in the line above and would give the ids directly.
+    /// `FutureTable::release_instance` runs a `retain` over **every entry in
+    /// the whole cell's future table**, not just this instance's. Its cost is
+    /// therefore a function of what every *other* instance is doing, and it is
+    /// paid by every dispatch that ends. The per-instance index it removes on
+    /// the line above already holds the ids that need removing; see
+    /// `FutureTable::release_instance_marked` for why the scan stays anyway.
     ReleaseInstanceReleased,
     /// Nothing; the left edge of the return to the pool.
     PoolReleaseWanted,
@@ -953,9 +1020,11 @@ pub enum Structural {
     /// 404, the 409s and the acquisition failure — none of which touch the
     /// module table on the way out.
     ShedRequest,
-    /// The dispatch discards its instance after a trap or hard kill.
+    /// A dispatch that trapped or was killed at its hard budget, and whose
+    /// instance was therefore tombstoned.
     TombstonedRequest,
-    /// The dispatch reaches its hard-budget termination path.
+    /// A dispatch killed at the end of its grace window — the hard kill. A
+    /// clean kill is not one of these and neither is a trap.
     HardKilledRequest,
     /// **Not part of the request at all.** What the worker does after the
     /// reply has gone: on its own trace, into its own sink, rendered in its
@@ -1017,8 +1086,8 @@ impl Structural {
                 "only a dispatch that trapped or was killed at its hard budget reaches it"
             }
             Structural::HardKilledRequest => {
-                "only a dispatch killed at its hard budget reaches it: §6.4 keeps a clean kill \
-                 and a trap away from the breaker"
+                "only a dispatch killed at its hard budget reaches it: a clean kill and a \
+                 trap never reach the breaker"
             }
             Structural::CellTail => {
                 "runs after the reply, on the cell's own trace, and is reported apart from the \
@@ -1105,8 +1174,8 @@ pub fn mark_at(m: &Option<RequestMarks>, label: Mark, at: Stamp) {
 /// work.
 ///
 /// So the reading is kept only when it postdates the item's own enqueue.
-/// Equality is kept: the counter steps by about 22 ticks, so two events inside
-/// one step are indistinguishable and refusing them would drop honest
+/// Equality is kept: the counter advances a step at a time, so two events
+/// inside one step are indistinguishable and refusing them would drop honest
 /// readings.
 ///
 /// `pushed` is [`NO_STAMP`] on an item nobody stamped, and then there is
@@ -1215,7 +1284,7 @@ impl StampCell {
 /// a race it usually lost — the thread the call wakes starts running while the
 /// producer is still returning from the syscall — and the readings it lost were
 /// the *slow* notifies, so the row was truncated at exactly the tail it existed
-/// to show: 80% coverage even with the second pass. The reading is now taken by
+/// to show, even with the second pass. The reading is now taken by
 /// the **consumer**, on its first instruction out of `Condvar::wait`, which has
 /// no race at all and measures what actually gates the request. See
 /// [`Mark::WorkerWoken`].
@@ -1405,21 +1474,24 @@ impl std::fmt::Debug for CellTails {
 ///
 /// The slack is not generosity. A worker holds its buffer across the whole
 /// tail, so `exec_threads` is the true peak — but a dry pool is a tail that
-/// goes untraced and the shortfall is counted in the same
-/// `pool_exhausted` figure the request pool reports, where it would read as a
-/// bias rather than as an off-by-one.
+/// goes untraced and the shortfall lands in the same
+/// [`TracePool::exhausted_checkouts`] figure the request pool reports, where
+/// it would read as a bias rather than as an off-by-one.
 pub fn tail_pool_for(cal: Calibration, exec_threads: usize) -> RequestMarksPool {
     TracePool::new(cal, exec_threads + 2, TAIL_CAPACITY)
 }
 
 /// Build a pool sized to a cell's admission bound.
 ///
-/// `max_hot + admission_capacity` is the number of requests that can be inside
-/// the cell at once — running, or queued — and the generator holds one more
-/// per thread between checkout and submit. The slack is not generosity: a dry
-/// pool is a request that goes untraced, counted in
-/// [`MarksPool::exhausted_checkouts`], and a sample that thins out *under
-/// load* biases every percentile in the flattering direction.
+/// `max_hot + admission_capacity` is the intended bound on requests inside the
+/// cell at once — running, or queued — and the generator holds one more per
+/// thread between checkout and submit. Note that `max_hot` is configured and
+/// never enforced (see [`crate::cell::CellConfig::max_hot`]), so this is a
+/// sizing convention rather than a derivation from anything the cell checks:
+/// the slack is what covers the difference. A dry pool is a request that goes
+/// untraced, counted in [`TracePool::exhausted_checkouts`], and a sample that
+/// thins out *under load* biases every percentile in the flattering
+/// direction.
 pub fn pool_for(
     cal: Calibration,
     max_hot: usize,
@@ -1578,16 +1650,6 @@ mod tests {
         );
     }
 
-    /// A trace that fills the buffer stops marking rather than reallocating,
-    /// and **says which** happened.
-    ///
-    /// The failure this prevents is invisible in the output: past its capacity
-    /// a growable buffer reallocates inside the timed region, on the dispatch
-    /// path, and the run that happens in reports a plausible number with a
-    /// memcpy in the middle of it. Here the slots are fixed and the overflow is
-    /// a counter, so a workload that pauses more than the buffer allows is
-    /// reported as truncated rather than as fast.
-    #[test]
     /// **A wake-up reading is kept only when the item it lands on was already
     /// queued**, and both halves are asserted.
     ///
@@ -1714,6 +1776,15 @@ mod tests {
         }
     }
 
+    /// A trace that fills the buffer stops marking rather than reallocating,
+    /// and **says which** happened.
+    ///
+    /// The failure this prevents is invisible in the output: past its capacity
+    /// a growable buffer reallocates inside the timed region, on the dispatch
+    /// path, and the run that happens in reports a plausible number with a
+    /// memcpy in the middle of it. Here the slots are fixed and the overflow is
+    /// a counter, so a workload that pauses more than the buffer allows is
+    /// reported as truncated rather than as fast.
     #[test]
     fn a_full_buffer_truncates_instead_of_growing() {
         let cal = Calibration::measure_for(std::time::Duration::from_millis(50));

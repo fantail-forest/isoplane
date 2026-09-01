@@ -1,4 +1,4 @@
-//! Per-dispatch context (spec.md §2.2, §5.4, §7.4).
+//! Per-dispatch context.
 
 use core::future::Future;
 
@@ -17,7 +17,7 @@ use crate::rt;
 #[derive(Clone)]
 pub struct Ctx {
     pub dispatch_id: u64,
-    /// Coarse wall clock at dispatch start, frozen for the slice (§8.5).
+    /// Coarse wall clock at dispatch start, frozen for the slice.
     pub now_ms: u64,
     pub cpu_budget_ms: u32,
     pub trace: TraceContext,
@@ -45,10 +45,11 @@ impl Ctx {
         rt::spawn(fut);
     }
 
-    /// §5.4. Cancellation is **not** an entrancy: the host cancels by
-    /// completing this future, and the guest observes it at its next await.
-    /// A dispatch that never awaits cannot observe cancellation and is killed
-    /// at its CPU budget instead -- abruptly, with no unwinding.
+    /// Cancellation is **not** an entrancy: the host never re-enters the guest
+    /// to announce it. It completes this future, and the guest observes it at
+    /// its next await. A dispatch that neither awaits nor checks
+    /// [`crate::budget`] never observes cancellation and runs to the hard
+    /// deadline at B+G, where it is trapped mid-frame with no unwinding.
     ///
     /// Use with [`crate::future::select2`].
     pub fn cancelled(&self) -> HostFuture<()> {
@@ -57,7 +58,7 @@ impl Ctx {
 
 
 
-    /// Instrumentation for the host-side park tests (claim C3/C4).
+    /// Instrumentation for the host-side park tests.
     pub fn park_count(&self) -> u64 {
         rt::park_count()
     }

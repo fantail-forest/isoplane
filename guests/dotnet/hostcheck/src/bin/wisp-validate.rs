@@ -1,5 +1,5 @@
 //! Runs the C# guest through the platform's **own** deploy-time validator
-//! (`wisp_control::validate`, spec.md §4.3) and prints the verdict verbatim.
+//! (`wisp_control::validate`) and prints the verdict verbatim.
 //!
 //! The point is not to describe what rule V1 would say about a module full of
 //! `wasi:*` imports. It is to make the module meet the validator and print

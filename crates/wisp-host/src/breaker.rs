@@ -1,15 +1,14 @@
-//! The hang breaker (spec.md §6.4, claim C7).
+//! The hang breaker.
 //!
-//! > An instance killed at budget is discarded; repeated budget kills for the
-//! > same (module, route) trip a breaker that fails subsequent dispatches fast
-//! > until the breaker cools or a new version deploys — the same posture as
-//! > the Workers runtime's hung-worker detection.
+//! An instance killed at budget is discarded; repeated budget kills for the
+//! same (module, route) trip a breaker that fails subsequent dispatches fast
+//! until the breaker cools or a new version deploys.
 //!
-//! The breaker is *not* an isolation mechanism. §8.3 is explicit that the
-//! isolation is already done by the time we get here: a spinner occupies only
-//! its own execution-pool thread and the kernel preempts it, so the blast
-//! radius is the offender's own requests. The breaker exists to stop paying
-//! 50 ms of CPU per request to learn the same thing repeatedly.
+//! The breaker is *not* an isolation mechanism. The isolation is already done
+//! by the time we get here: a spinner occupies only its own execution-pool
+//! thread and the kernel preempts it, so the blast radius is the offender's
+//! own requests. The breaker exists to stop burning a whole CPU budget per
+//! request to learn the same thing repeatedly.
 
 use std::collections::HashMap;
 
@@ -83,11 +82,9 @@ impl HangBreaker {
     /// [`HangBreaker::check`], marking the wait for `entries` separately from
     /// the work done under it.
     ///
-    /// **A triple.** The hold is ~34 ns of hashing three strings against a
-    /// mark that costs 20 ns on this machine, so the wait and the hold are
-    /// separable. It was briefly classified as a pair on the strength of a
-    /// calibration that reported the mark cost as 40 ns; that calibration was
-    /// measuring a core fresh out of a sleep and is fixed.
+    /// **A triple.** The hold hashes three strings, which is long enough
+    /// against the cost of a mark for the wait and the hold to be worth
+    /// separating.
     pub fn check_marked(
         &self,
         key: &BreakerKey,
@@ -112,7 +109,7 @@ impl HangBreaker {
         Err(e.open_until_ms)
     }
 
-    /// A dispatch was killed at its CPU budget (§2.5.8: abrupt, no unwinding).
+    /// A dispatch was killed at its CPU budget: abrupt, with no unwinding.
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
         self.record_kill_marked(key, now_ms, &mut None)
     }
@@ -122,14 +119,14 @@ impl HangBreaker {
     ///
     /// **A triple.** `HashMap::entry` takes the key by value, so the hold
     /// begins by cloning a `BreakerKey` — a `ModuleId`'s two `String`s plus
-    /// the route — and only then hashes it. That is well past the 20 ns a mark
-    /// costs here.
+    /// the route — and only then hashes it. That is well past what a mark
+    /// costs.
     ///
     /// This is the **second** time one request touches this lock: the first
-    /// was the admission check in `Cell::submit_with_marks`, tens of
-    /// microseconds and a whole dispatch earlier, under entirely different
-    /// contention. Its own label rather than a second observation of
-    /// `breaker.check.*`, so a row cannot pool the two.
+    /// was the admission check in `Cell::submit_with_marks`, a whole dispatch
+    /// earlier, under entirely different contention. Its own label rather than
+    /// a second observation of `breaker.check.*`, so a row cannot pool the
+    /// two.
     pub fn record_kill_marked(
         &self,
         key: &BreakerKey,
@@ -180,9 +177,10 @@ impl HangBreaker {
         }
     }
 
-    /// §6.4: "...until the breaker cools **or a new version deploys**". A new
-    /// version has a different `ModuleId`, so this only exists for the case
-    /// where an operator wants to clear a key by hand.
+    /// A breaker clears when it cools **or a new version deploys**. A new
+    /// version has a different `ModuleId`, so a deploy clears it for free and
+    /// this only exists for the case where an operator wants to clear a key by
+    /// hand.
     pub fn clear_module(&self, module: &ModuleId) {
         self.entries.lock().retain(|k, _| &k.module != module);
     }
@@ -220,8 +218,8 @@ mod tests {
     }
 
     /// The breaker is per (module, route): a hang on `/spin` must not fail
-    /// `/healthz`. §8.3's blast radius is "the offender's own requests", and
-    /// the breaker must not widen it.
+    /// `/healthz`. The blast radius of a hang is the offender's own requests,
+    /// and the breaker must not widen it.
     #[test]
     fn other_routes_are_unaffected() {
         let b = HangBreaker::default();
@@ -261,8 +259,8 @@ mod tests {
         assert!(b.check(&k, 6_100).is_err());
     }
 
-    /// §9.4/§6.4: a new version deploys and the breaker is gone, because the
-    /// key contains the version.
+    /// A new version deploys and the breaker is gone, because the key
+    /// contains the version.
     #[test]
     fn a_new_version_starts_closed() {
         let b = HangBreaker::default();

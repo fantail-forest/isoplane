@@ -1,7 +1,7 @@
 ---
 id: sdk-csharp
 title: C# SDK
-sidebar_position: 12
+sidebar_position: 11
 ---
 
 # C# SDK
@@ -22,7 +22,7 @@ binding errors. Build and run the reference handler with
 
 The entry project supplies the handler and its host-facing exports. Keep the
 SDK and guest entrypoint from the same checkout. See
-[Your first C# guest](../tutorials/first-csharp-guest.md) for the entrypoint and
+[Build a C# guest](../how-to/build-a-csharp-guest.md) for the entrypoint and
 build configuration used by this version.
 
 ## API documentation

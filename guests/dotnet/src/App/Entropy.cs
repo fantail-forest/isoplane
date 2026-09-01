@@ -7,9 +7,8 @@ using System.Text;
 namespace Wisp.App;
 
 /// <summary>
-/// The §4.4 clone-uniqueness probe. Build with
-/// <c>-p:WispEntropyProbe=true</c>, then run
-/// <c>check.sh --entropy-clone</c>.
+/// The clone-uniqueness probe. Build with <c>-p:WispEntropyProbe=true</c>, then
+/// run <c>check.sh --entropy-clone</c>.
 ///
 /// Host entropy is drawn per call, but template memory can retain returned
 /// values or a guest PRNG's state. This probe compares restored instances to
@@ -27,11 +26,10 @@ namespace Wisp.App;
 internal static class EntropyProbe
 {
     /// <summary>
-    /// What §4.4 explicitly WANTS a pre-initializer to do: "module
-    /// initializers, static constructors, DI-container construction, config
-    /// parsing". All of those hash strings, which is why §4.4 escrows a
-    /// per-deploy Marvin seed — "without it, nothing that hashes a string
-    /// (every dictionary, every DI container) could pre-run".
+    /// Exactly what a pre-initializer is supposed to do: module initializers,
+    /// static constructors, DI-container construction, config parsing. All of
+    /// those hash strings, which is why the deploy escrows a per-deploy Marvin
+    /// seed — without it, nothing that hashes a string could pre-run.
     ///
     /// Called from <c>wisp_initialize</c> under the probe only. Its whole
     /// purpose is to move the lazily-seeded RNG state from "drawn after the
@@ -43,9 +41,9 @@ internal static class EntropyProbe
         // NOTE the first thing this taught us: a small
         // `Dictionary<string, string>` does NOT seed Marvin. .NET uses
         // `NonRandomizedStringEqualityComparer` until a bucket exceeds the
-        // collision threshold, so §4.4's "every dictionary … could [not]
-        // pre-run without the seed" is too strong — most dictionaries never
-        // touch the randomized path at all. Forcing it takes an explicit
+        // collision threshold, so "every dictionary needs the seed to pre-run"
+        // is too strong — most dictionaries never touch the randomized path at
+        // all. Forcing it takes an explicit
         // `GetHashCode`, which is what a real config-parsing or DI cctor does
         // via `HashCode.Combine`, record equality, or a HashSet<string>.
         var config = new Dictionary<string, string>
@@ -55,7 +53,7 @@ internal static class EntropyProbe
         };
         GC.KeepAlive(config["region"]);
 
-        // Seeds the Marvin string-hash state (§4.4's escrowed seed).
+        // Seeds the Marvin string-hash state (the escrowed seed).
         GC.KeepAlive("wisp-config".GetHashCode());
 
         // Seeds the object-header hash path: ThreadSafeRandom -> Xoshiro.
@@ -70,27 +68,28 @@ internal static class EntropyProbe
         var sb = new StringBuilder();
 
         // Per-field try/catch, because "which of these five is unsupported"
-        // is itself a §12 measurement and one throw must not hide the rest.
+        // is itself a compatibility measurement and one throw must not hide
+        // the rest.
         Field(sb, "rng", static () =>
         {
-            // §2.5.5 says RandomNumberGenerator routes to a host import.
+            // RandomNumberGenerator routes to a host import.
             Span<byte> b = stackalloc byte[8];
             RandomNumberGenerator.Fill(b);
             return Convert.ToHexString(b);
         });
 
-        // v4 GUID — drawn per call, per §4.4's "no shared entropy streams".
+        // v4 GUID — drawn per call, so no entropy stream is shared.
         Field(sb, "guid", static () => Guid.NewGuid().ToString("N"));
 
         // Seeded ONCE, then advanced from heap state. This is the field that
         // detects a shared stream across clones of one template.
         Field(sb, "shared", static () => Random.Shared.Next().ToString());
 
-        // The Marvin string-hash seed §4.4 escrows, observed indirectly.
+        // The escrowed Marvin string-hash seed, observed indirectly.
         Field(sb, "strhash", static () => "wisp".GetHashCode().ToString());
 
         // Object-header hash code: assigned lazily from `ThreadSafeRandom`,
-        // which is the path §4.1 of the findings traced to `_Exit`.
+        // which is the path that was traced to `_Exit`.
         Field(sb, "objhash", static () => new object().GetHashCode().ToString());
 
         return sb.ToString();
@@ -106,7 +105,7 @@ internal static class EntropyProbe
         }
         catch (Exception e)
         {
-            // §12.2/§12.3: an edge-profile gap shows up here as a type name.
+            // A BCL gap shows up here as a type name.
             sb.Append("THREW:").Append(e.GetType().Name);
         }
     }

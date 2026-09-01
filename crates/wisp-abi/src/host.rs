@@ -16,7 +16,7 @@ pub type Result<T> = anyhow::Result<T>;
 
 
 
-/// §8.6 egress/SSRF policy, enforced host-side because the guest cannot be
+/// Egress/SSRF policy, enforced host-side because the guest cannot be
 /// trusted to enforce anything.
 pub trait EgressPolicy: Send + Sync + 'static {
     /// Resolve-then-pin, so DNS rebinding cannot move the target between the
@@ -35,7 +35,7 @@ pub struct PinnedTarget {
 }
 
 // ---------------------------------------------------------------------------
-// The proxy <-> cell seam (§9.1, §9.2).
+// The proxy <-> cell seam.
 // ---------------------------------------------------------------------------
 
 /// Dispatches requests to a locally selected application version.
@@ -43,7 +43,7 @@ pub struct PinnedTarget {
 pub trait Dispatcher: Send + Sync + 'static {
     /// Handler dispatch. Under `reuse` the cell may serve this from a warm
     /// parked instance; under `fresh` it is always a pristine template clone
-    /// (§2.6, §6.3).
+    /// per the app's declared handler lifecycle.
     async fn dispatch_http(
         &self,
         target: &RouteTarget,
@@ -79,6 +79,6 @@ pub struct HttpReply {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     /// Set when the guest returned `done` with a body-stream handle and is
-    /// still producing chunks under `WaitUntil` semantics (§6.3).
+    /// still producing chunks under `WaitUntil` semantics.
     pub streaming: bool,
 }

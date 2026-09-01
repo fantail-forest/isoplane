@@ -1,14 +1,12 @@
-//! Egress / SSRF policy (spec.md §8.6), enforced host-side.
+//! Egress / SSRF policy, enforced host-side.
 //!
-//! > Egress/SSRF: `http.fetch` enforces per-app policy host-side — RFC1918 /
-//! > link-local denied by default, DNS-rebinding-safe resolution
-//! > (resolve-then-pin), per-tenant connection and bandwidth quotas, optional
-//! > allowlists.
+//! `http.fetch` enforces per-app policy host-side — RFC1918 / link-local
+//! denied by default, DNS-rebinding-safe resolution (resolve-then-pin),
+//! per-tenant connection and bandwidth quotas, optional allowlists.
 //!
 //! "Host-side" is the whole of it: the guest cannot be trusted to enforce
-//! anything, and §8.2.1 says the import vtable is the entire attack surface
-//! into the host, so this is the only place an outbound connection can be
-//! decided.
+//! anything, and the import vtable is the entire attack surface into the host,
+//! so this is the only place an outbound connection can be decided.
 //!
 //! **Resolve-then-pin** is the part that is easy to get subtly wrong. Checking
 //! a hostname and then handing the hostname to an HTTP client lets DNS move
@@ -32,7 +30,7 @@ pub trait Resolver: Send + Sync + 'static {
 
 /// The real thing: blocking `getaddrinfo`. Called from the reactor's blocking
 /// pool, never from an execution-pool thread — a resolver stall must not hold
-/// a Hot dispatch's thread (§6.1).
+/// a Hot dispatch's thread.
 pub struct SystemResolver;
 
 impl Resolver for SystemResolver {
@@ -46,7 +44,7 @@ impl Resolver for SystemResolver {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenyReason {
-    /// Only http and https egress exists (§5.3: `http` is "the ONLY egress").
+    /// `http` is the only egress the guest has; nothing else is dialable.
     Scheme(String),
     Malformed(String),
     NoAddress,
@@ -54,9 +52,9 @@ pub enum DenyReason {
     PrivateAddress(IpAddr),
     /// An allowlist is configured and this host is not on it.
     NotAllowlisted(String),
-    /// §11.1 per-tenant connection quota.
+    /// Per-tenant connection quota.
     ConnectionQuota { limit: u64 },
-    /// §8.6 per-tenant bandwidth quota.
+    /// Per-tenant bandwidth quota.
     BandwidthQuota { limit_bytes: u64 },
 }
 
@@ -185,13 +183,13 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
     Ok(ParsedUrl { scheme, host: host.to_ascii_lowercase(), port, path_and_query: path.to_string() })
 }
 
-/// §8.6's policy, with the per-tenant quotas of §11.1 attached.
+/// The egress policy, with the per-tenant quotas attached.
 pub struct HostEgressPolicy {
     resolver: Box<dyn Resolver>,
-    /// §8.6 per-tenant connection quota.
+    /// Per-tenant connection quota.
     max_connections: u64,
-    /// §8.6 per-tenant bandwidth quota. v1 has "no egress fees" but "fair-use
-    /// bandwidth caps per plan" (§11.2), so this is a cap, not a meter.
+    /// Per-tenant bandwidth quota. This is a fair-use
+    /// cap, not a meter.
     max_bytes: u64,
     connections: AtomicU64,
     bytes: AtomicU64,
@@ -334,8 +332,8 @@ mod tests {
         HostEgressPolicy::new(Box::new(r), 100, 1 << 30)
     }
 
-    /// §8.6: RFC1918 / link-local denied by default. 169.254.169.254 is the
-    /// cloud metadata endpoint and is the reason this test exists.
+    /// RFC1918 / link-local denied by default. 169.254.169.254 is the cloud
+    /// metadata endpoint and is the reason this test exists.
     #[test]
     fn private_and_link_local_are_denied() {
         for ip in [

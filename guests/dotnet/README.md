@@ -3,7 +3,6 @@
 C# HTTP handler and runtime probes compiled with NativeAOT-LLVM to a core
 WebAssembly module for the host interface.
 
-
 ## Build and check
 
 The commands below use the repository development helper.
@@ -12,7 +11,7 @@ The commands below use the repository development helper.
 scripts/dev guests/dotnet/build.sh                  # -> out/wisp_guest_dotnet.wasm
 scripts/dev guests/dotnet/check.sh                  # asserts the ABI and invariant 3
 scripts/dev guests/dotnet/check.sh --wasi=trap      # the decisive V1 experiment
-scripts/dev guests/dotnet/check.sh --density 200    # per-instance RSS (§6.2)
+scripts/dev guests/dotnet/check.sh --density 200    # per-instance RSS
 ```
 
 `--wasi=` controls how non-`wisp` imports are bound: `pal` (default) implements
@@ -21,7 +20,7 @@ only the measured runtime-PAL set, `trap` makes every one abort if called, and
 report zero non-`wisp` imports; they stay as the regression guard for a
 toolchain bump that reintroduces some.
 
-Set a 64 MiB ceiling with
+Set a 64 MiB ceiling (validator rule V3) with
 `-p:WispMemoryMaxBytes=67108864`.
 
 `WISP_OUT=<basename>` changes the output filename so flavours can coexist under

@@ -24,17 +24,22 @@ public interface IWispRouter
     /// <summary>
     /// Route one decoded dispatch. A trigger this guest cannot receive must
     /// throw <see cref="PostcardException"/>, which the entrypoint turns into
-    /// <see cref="TrapCode.Protocol"/> — §13: the dispatch fails and the
-    /// instance is discarded, rather than answering wrongly.
+    /// <see cref="TrapCode.Protocol"/> — the dispatch fails and the instance is
+    /// discarded, rather than answering wrongly.
     /// </summary>
     Task<Response> Route(DispatchRecord d, Ctx ctx);
 }
 
 /// <summary>
-/// A §2.1 Handler: HTTP in, response out, instance drawn from a pool.
+/// A Handler: HTTP in, response out, instance drawn from a pool.
 /// </summary>
 public interface IWispHandler
 {
+    /// <summary>
+    /// Handle one HTTP request. Whether the instance behind <c>this</c> is reused
+    /// between requests or reset first is <c>wisp.toml</c>'s <c>lifecycle</c>, and a
+    /// handler may not depend on either answer.
+    /// </summary>
     Task<Response> HandleAsync(Request req, Ctx ctx);
 }
 
@@ -47,8 +52,15 @@ public sealed class HandlerRouter<TApp> : IWispRouter
 {
     private TApp? _app;
 
+    /// <summary>
+    /// Constructs the app once per wasm instance, before the first dispatch.
+    /// </summary>
     public void Boot() => _app = new TApp();
 
+    /// <summary>
+    /// Routes an HTTP dispatch to the app. Any other trigger is a host misrouting
+    /// and throws <see cref="PostcardException"/>.
+    /// </summary>
     public Task<Response> Route(DispatchRecord d, Ctx ctx)
     {
         if (d.Kind != DispatchKind.Http) throw new PostcardException();

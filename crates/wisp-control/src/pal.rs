@@ -1,4 +1,27 @@
-//! Admitted WASI imports and their host capability dispositions.
+//! The **WASI PAL adapter** — deploy-time composition.
+//!
+//! The *table* — [`PAL_IMPORTS`] and its types — lives in
+//! [`wisp_abi::pal`], beside [`wisp_abi::imports::IMPORTS`], for the same
+//! reason that one does: three consumers read it and must not disagree. The
+//! validator here, the runtime linker in `wisp-engine`, and the sealed
+//! init-sandbox linker below all resolve the same entries.
+//!
+//! It could not stay in this crate. `wisp-control` depends on `wisp-engine`,
+//! so the runtime linker cannot reach back into it without a dependency
+//! cycle — and a linker that composed a *different* WASI surface from the one
+//! the validator admitted would be a hole shaped exactly like the one this
+//! table exists to close.
+//!
+//! What remains here is the deploy-time half: the validator's view of the
+//! table, and the audit report.
+//!
+//! The **adapter bodies** are `wisp_engine::pal`, re-exported below. They
+//! moved there for the same one-definition reason the table moved to
+//! `wisp-abi`: `wisp-control` validates a module and then the engine has to
+//! instantiate it, and a validator that admits a `wasi:*` import while the
+//! linker satisfies it *differently* is a hole with a whitelist in front of
+//! it. `wisp-control` depends on `wisp-engine`, so re-export is the direction
+//! that works — and every caller keeps importing this name.
 
 pub use wisp_abi::pal::*;
 
@@ -71,13 +94,13 @@ mod tests {
             assert!(
                 !forbidden.contains(&def.group),
                 "{} delegates to `{cap}` in group {:?} — a WASI import must not be a door \
-                 to I/O or secrets (§4.3 no-new-channels)",
+                 to I/O or secrets (no-new-channels)",
                 p.full_name(),
                 def.group
             );
             assert!(
                 !def.sensitive,
-                "{} delegates to `{cap}`, which is marked sensitive (§8.6)",
+                "{} delegates to `{cap}`, which is marked sensitive",
                 p.full_name()
             );
         }
@@ -92,7 +115,7 @@ mod tests {
         assert_eq!(delegation_targets(), vec!["clock_now_coarse", "entropy_fill"]);
     }
 
-    /// The groups §2.5.4/§8.4 deny outright must be trap-on-call to the last
+    /// The groups the platform denies outright must be trap-on-call to the last
     /// entry. A single delegated filesystem or socket import would be an
     /// ambient-authority regression that no other test would notice.
     #[test]

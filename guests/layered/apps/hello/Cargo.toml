@@ -3,7 +3,7 @@ name = "layered-hello"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
-description = "Tenant 4: hello world. Reaches nothing but the dispatch codec — the floor case, and the one §4.6 cites as the precondition for §12.5's millisecond-scale dynamic admission."
+description = "Tenant 4: hello world. Reaches nothing but the dispatch codec — the floor case, and the one a layered runtime needs cheap if new tenants are to be admitted quickly."
 
 [lib]
 crate-type = ["cdylib"]

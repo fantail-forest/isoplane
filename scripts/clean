@@ -16,20 +16,19 @@ before=$(du -sm . 2>/dev/null | cut -f1)
 JUNK="target/debug/incremental target/release/incremental
       guests/target guests/dotnet/src/obj guests/dotnet/src/bin
       guests/dotnet/obj
-      guest-sdks/dotnet/obj guest-sdks/dotnet/bin
-      crates/spike/target"
+      guest-sdks/dotnet/obj guest-sdks/dotnet/bin"
 
-# A container build that wrote into the bind mount leaves root-owned trees the
-# host user cannot unlink. Deleting them from inside the container works
-# because we are root there, so try the cheap path first and fall back.
+# A container build that wrote into the bind mount can leave trees owned by a
+# uid the host user cannot unlink. Try the cheap path first and retry through
+# the container, which may hold the uid that owns them.
 if ! rm -rf $JUNK 2>/dev/null; then
   "$ROOT/scripts/dev" bash -c "cd /wisp && rm -rf $JUNK" >/dev/null 2>&1 || true
 fi
 find . -name '*.rs.bk' -delete 2>/dev/null || true
 
 if [ "${1:-}" = "--all" ]; then
-  # A container build can leave a root-owned target that the host user cannot
-  # remove; delete it from inside the container, where we are root.
+  # A container build can leave a target the host user cannot remove; retry
+  # the delete from inside the container.
   if [ -d target ] && [ ! -w target ]; then
     "$ROOT/scripts/dev" rm -rf /wisp/target
   else

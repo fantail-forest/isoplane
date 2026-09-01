@@ -15,15 +15,20 @@ use wasmtime::{
 use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead, TraceContext};
 use wisp_abi::status::PollStatus;
 
-/// Select how this fixture binds non-host imports.
+/// How the harness binds the residual `wasi:*` imports NativeAOT-LLVM leaves
+/// in the module. This is the whole of the rule-V1 question, so it is a
+/// first-class switch rather than a constant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WasiMode {
     /// Every non-`wisp` import traps if called. The decisive experiment: if a
-    /// dispatch completes under this, all 32 are dead declarations and the
+    /// dispatch completes under this, they are all dead declarations and the
     /// mitigation is a trapping-stub bind or a strip pass. If it does not,
     /// the set that fires is a genuine capability the toolchain requires.
     Trap,
-    /// Provide the fixture environment, fixed clock and deterministic bytes.
+    /// Only the measured runtime-PAL set is implemented — with the values
+    /// WISP policy demands, not with WASI's semantics: an EMPTY environment
+    /// environment, a FROZEN clock, and deterministic harness bytes.
+    /// Everything else traps. This is the default fixture configuration.
     Pal,
     /// Everything gets a recording stub that returns zeroes, so one run
     /// enumerates which imports are reachable rather than stopping at the
@@ -31,10 +36,10 @@ enum WasiMode {
     Stub,
 }
 
-/// This fixture uses deterministic bytes and does not provide cryptographic entropy.
+/// Deterministic byte source for this standalone fixture, not a cryptographic RNG.
 static SEED: AtomicU64 = AtomicU64::new(0x243F_6A88_85A3_08D3);
 
-/// §8.5: the clock is coarse and does not advance within a dispatch slice.
+/// The clock is coarse and does not advance within a dispatch slice.
 const FROZEN_NOW_MS: i64 = 1_724_000_000_000;
 
 /// Everything the fake host observed, so the assertions can be about
@@ -44,7 +49,7 @@ struct HostLog {
     logs: Vec<String>,
     responses: Vec<ResponseHead>,
     /// Names of imports outside the `wisp` module that the guest actually
-    /// invoked. §5.3/rule V1 cares about the declared set; this measures the
+    /// invoked. Rule V1 cares about the declared set; this measures the
     /// *reachable* set, which is the number that decides whether the residual
     /// wasi imports are a real capability leak or dead weight.
     non_wisp_calls: Vec<String>,
@@ -157,7 +162,11 @@ fn rss_kb() -> u64 {
         .unwrap_or(0)
 }
 
-/// Measure process RSS while activating the requested number of sample instances.
+/// Claim C1: activate N instances of one module, each taken through the .NET
+/// runtime startup that grows linear memory, and measure what the host actually
+/// pays. If the runtime merely *reserves* that memory the RSS slope is the
+/// dirty-page count; if it memsets it, the slope is the whole grown memory and
+/// the density claim does not survive contact with .NET.
 fn density(engine: &Engine, module: &Module, linker: &Linker<()>, n: usize) -> Result<()> {
     let base = rss_kb();
     let mut stores = Vec::with_capacity(n);
@@ -200,6 +209,9 @@ fn entropy_clone(
     log: &Shared,
     dispatch: &[u8],
 ) -> Result<()> {
+    // 1. Bring one instance up exactly as a pre-initializer would, and freeze
+    //    its memory. `wisp_initialize` is the boundary crossing that starts
+    //    the .NET runtime.
     let mut store = Store::new(engine, ());
     let inst = linker.instantiate(&mut store, module)?;
     inst.get_typed_func::<(), ()>(&mut store, "_initialize")?
@@ -265,7 +277,7 @@ fn entropy_clone(
     let mut shared = Vec::new();
     for ((ka, va), (_, vb)) in a.iter().zip(b.iter()) {
         if va.starts_with("THREW:") {
-            // An unsupported API is a §12 gap, not an entropy-sharing signal.
+            // An unsupported API is a BCL gap, not an entropy-sharing signal.
             println!("    {ka:<8} unsupported ({va})");
             continue;
         }
@@ -287,7 +299,10 @@ fn entropy_clone(
             a.len(),
             shared.join(", ")
         );
-        println!("These observations concern captured heap state, not a cryptographic guarantee.");
+        println!(
+            "       These fields are stored in the captured guest heap; the harness\n\
+             \x20      does not establish a cryptographic uniqueness guarantee."
+        );
     }
     Ok(())
 }
@@ -466,16 +481,16 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// §5.2 plus `wisp-abi::imports::exports::REQUIRED`.
+/// The required export set, from `wisp-abi::imports::exports::REQUIRED`.
 fn check_abi_surface(module: &Module) -> Result<()> {
     let exports: Vec<&str> = module.exports().map(|e| e.name()).collect();
     for required in wisp_abi::imports::exports::REQUIRED {
         if !exports.contains(required) {
-            bail!("module is missing required export `{required}` (§5.2)");
+            bail!("module is missing required export `{required}`");
         }
     }
 
-    // §4.3 V3: exactly one linear memory.
+    // V3: exactly one linear memory.
     let memories = module
         .exports()
         .filter(|e| matches!(e.ty(), wasmtime::ExternType::Memory(_)))
@@ -530,11 +545,11 @@ fn build_linker(
     // expressed as WISP capabilities instead of as `wasi:*` imports outside
     // the manifest. They are ordinary entries in `wisp_abi::imports::IMPORTS`.
 
-    // §8.4/§8.5: coarse (1 ms) and FROZEN for the dispatch slice. A constant
+    // Coarse (1 ms) and FROZEN for the dispatch slice. A constant
     // is the policy, not a shortcut past it.
     linker.func_wrap("wisp", "clock_now_coarse", move || -> i64 { FROZEN_NOW_MS })?;
 
-    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+    // Deterministic fixture bytes vary across calls; this is not the production entropy source.
     linker.func_wrap(
         "wisp",
         "entropy_fill",
@@ -571,7 +586,18 @@ fn build_linker(
         },
     )?;
 
-    // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+    // ---- entropy ---------------------------------------------------------
+    // NOT a formality. .NET's object-header hash codes are seeded from
+    // `Random`, which on wasi-libc reaches `arc4random_buf` ->
+    // `wasi:random/random::get-random-bytes`; wasi-libc treats a failed random
+    // draw as `_Exit`. A stub that returns nothing therefore kills the guest
+    // the first time anything hashes an object — which is the very first
+    // ConditionalWeakTable insert inside System.Text.Json's options ctor.
+    //
+    // This is the hash-seed problem observed from the other side:
+    // "without it, nothing that hashes a string (every dictionary, every DI
+    // container) could pre-run". Empirically it is stronger than that — the
+    // guest does not merely fail to pre-run, it aborts.
     let l = log.clone();
     if mode != WasiMode::Trap {
         linker.func_wrap(
@@ -594,7 +620,7 @@ fn build_linker(
                 let Some(Extern::Memory(mem)) = caller.get_export("memory") else {
                     return Err(wasmtime::Error::msg("no memory export"));
                 };
-                // This fixture uses deterministic bytes and does not provide cryptographic entropy.
+                // Vary deterministic fixture bytes across calls.
                 let mut seed = SEED.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
                 let mut bytes = vec![0u8; len];
                 for b in bytes.iter_mut() {
@@ -705,12 +731,12 @@ const PROVIDED: &[&str] = &["wasi:random/random@0.2.0::get-random-bytes"];
 /// implemented to WISP policy and the other 29 trap; if a toolchain bump makes
 /// the guest reach a fourth, `check.sh` fails and names it.
 const PAL: &[&str] = &[
-    // .NET runtime startup reads configuration. §2.5.4 says there is no
+    // .NET runtime startup reads configuration. There is no
     // ambient environment, so the policy-correct answer is an empty list.
     "wasi:cli/environment@0.2.0::get-environment",
-    // §8.4/§8.5: coarse and frozen for the dispatch slice. Returning a
+    // Coarse and frozen for the dispatch slice. Returning a
     // constant is the policy, not a gap in it — a fine-grained monotonic
-    // clock is the measurement primitive §8.4 deliberately denies guests.
+    // clock is the measurement primitive the platform deliberately denies.
     "wasi:clocks/monotonic-clock@0.2.0::now",
     // This fixture uses deterministic bytes and does not provide cryptographic entropy.
     "wasi:random/random@0.2.0::get-random-bytes",
@@ -752,7 +778,7 @@ fn read_guest_string(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> String 
     String::from_utf8_lossy(&read_guest_bytes(caller, ptr, len)).into_owned()
 }
 
-/// §5.5: host→guest data enters via `wisp_alloc` + copy.
+/// Host→guest data enters via `wisp_alloc` + copy.
 fn handoff(store: &mut Store<()>, instance: &Instance, bytes: &[u8]) -> Result<i32> {
     let alloc = instance.get_typed_func::<(i32, i32), i32>(&mut *store, "wisp_alloc")?;
     let ptr = alloc.call(&mut *store, (bytes.len() as i32, 8))?;

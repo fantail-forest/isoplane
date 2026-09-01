@@ -1,9 +1,9 @@
-//! Tenant 4: hello world. Reaches nothing but the dispatch codec — the floor case, and the one §4.6 cites as the precondition for §12.5's millisecond-scale dynamic admission.
+//! Tenant 4: hello world. Reaches nothing but the dispatch codec — the floor case, and the one a layered runtime needs cheap if new tenants are to be admitted quickly.
 //!
 //! Written once, built twice: `--features layered` compiles it against the
-//! §4.6 runtime layer's imported ABI (the module then contains app code and
+//! shared runtime layer's imported ABI (the module then contains app code and
 //! nothing else), `--features selfcontained` links the identical runtime code
-//! in and lets fat LTO trim it to this app's reachable subset (§4.2). The two
+//! in and lets fat LTO trim it to this app's reachable subset. The two
 //! artifacts are what `bench/dotnet-sharing`'s `layered` subcommand compares.
 
 #![cfg_attr(feature = "layered", no_std)]
@@ -33,7 +33,7 @@ unsafe fn rt_str(n: i32) -> alloc::string::String {
     alloc::string::String::from_utf8(take_out_after(n)).unwrap_or_default()
 }
 
-/// §5.2 host→guest buffer handoff. In `layered` mode this hands back a pointer
+/// Host→guest buffer handoff. In `layered` mode this hands back a pointer
 /// into the *runtime layer's* heap: the app owns no memory of its own.
 #[no_mangle]
 pub unsafe extern "C" fn wisp_alloc(size: u32, align: u32) -> *mut u8 {
@@ -51,7 +51,7 @@ pub unsafe extern "C" fn wisp_handle(ptr: *const u8, len: u32) -> u64 {
     rt_status_done(1)
 }
 
-/// The composite-identity half §4.6 gives the tenant: which runtime world this
+/// The composite-identity half the layering gives the tenant: which runtime world this
 /// app layer was compiled against.
 #[no_mangle]
 pub extern "C" fn app_runtime_world_len() -> u32 {

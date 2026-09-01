@@ -17,6 +17,7 @@ tokio = { workspace = true }
 wasmparser = { workspace = true }
 # Wizer's engine produces WebAssembly bytes for the separate execution engine.
 wizer = { version = "10", optional = true }
+
 wasmtime = { version = "48", features = ["winch"] }
 blake3 = { workspace = true }
 hex = { workspace = true }
@@ -25,12 +26,16 @@ serde_json = { workspace = true }
 zstd = { workspace = true }
 rand = { workspace = true }
 parking_lot = { workspace = true }
+libc = { workspace = true }
+# Pre-init only: bounds wizer's compile pool. See `preinit::PREINIT_COMPILE_THREADS`.
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
+
 wat = "1"
 tokio = { workspace = true }
 
 [features]
 # Consumers that only validate modules can disable initialization support.
 default = ["preinit"]
-preinit = ["dep:wizer"]
+preinit = ["dep:wizer", "dep:rayon"]

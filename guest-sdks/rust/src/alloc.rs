@@ -1,15 +1,13 @@
 //! The guest heap: a first-fit, address-ordered, coalescing arena that knows
-//! how to make itself cheap to snapshot (spec.md §5.5, §6.6).
+//! how to make itself cheap to snapshot.
 //!
 //! ## What this is, honestly
 //!
-//! §4.2 specifies a bundled generational GC with a mark-compact snapshot mode.
-//! A Rust guest has no precise root set, so **moving** live objects is not
-//! possible and pretending otherwise would be a lie. What *is* possible, and
-//! is what §6.6 actually pays for, is the other half of the snapshot mode:
-//!
-//! > *the guest GC performs mark-compact into low addresses, zeroes the freed
-//! > tail, and resets card tables. Zeroed pages compress out of the delta.*
+//! This is not a GC. A Rust guest has no precise root set, so **moving** live
+//! objects is not possible. What is possible is the part that makes a
+//! hibernation delta small: the host captures a page diff of linear memory
+//! against the template and zstd-compresses it, so pages that are runs of
+//! zeros nearly vanish.
 //!
 //! So on `wisp_gc_hint(snapshot)` this allocator:
 //!
@@ -20,15 +18,16 @@
 //!    and the heap's high-water mark, so those pages are runs of zeros in the
 //!    hibernation delta and zstd removes them;
 //! 3. **remembers which blocks it already zeroed** (a bit stolen from the
-//!    size word), so a second `gc_hint` with no intervening allocation dirties
-//!    nothing. Writing zeros over an already-zero page still trips the
-//!    soft-dirty PTE the host diffs against, so "zero everything, always"
-//!    would make the delta *bigger*.
+//!    size word), so a second `gc_hint` with no intervening allocation writes
+//!    nothing. Re-zeroing an already-zero page spends dispatch CPU, and where
+//!    the host narrows its page diff with the kernel's soft-dirty bit it also
+//!    re-marks that page as a diff candidate, so "zero everything, always" is
+//!    strictly worse than tracking what is already clean.
 //!
-//! Nothing here shrinks linear memory: shipped WASM has no page-return
-//! instruction, and §6.6 does not ask for one -- *compaction through rebirth*
-//! (hibernate, then wake onto a fresh CoW template) is the platform's
-//! defragmenter, and this allocator's job is only to make the delta small.
+//! Nothing here shrinks linear memory: wasm has `memory.grow` and no
+//! counterpart that gives pages back. *Compaction through rebirth* (hibernate,
+//! then wake onto a fresh CoW template) is the platform's defragmenter, and
+//! this allocator's job is only to make the delta small.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
@@ -41,7 +40,8 @@ const ALIGN: usize = 16;
 /// Room for the free-block header (`size`, `next`).
 const MIN_BLOCK: usize = 16;
 /// Stolen from the size word: sizes are 16-aligned, so the low 4 bits are
-/// free. Set means "this block's body is already all zeros" (see §6.6 above).
+/// free. Set means "this block's body is already all zeros" (see the module
+/// docs).
 const ZEROED: usize = 1;
 
 #[inline]
@@ -312,7 +312,8 @@ impl Heap {
         }
     }
 
-    /// §5.5 / §6.6. See the module docs for what this does and does not do.
+    /// The body of `wisp_gc_hint`. See the module docs for what this does and
+    /// does not do.
     ///
     /// `zero` is false for the low-pressure hint, where writing zeros would
     /// cost more dirty pages than it saves.
@@ -379,7 +380,7 @@ fn sys_grow(h: &mut Heap, need: usize) -> bool {
     let pages = align_up(need, WASM_PAGE) / WASM_PAGE;
     let prev = core::arch::wasm32::memory_grow::<0>(pages);
     if prev == usize::MAX {
-        return false; // §11.1 instance memory ceiling; surfaces as OOM
+        return false; // the plan's instance memory ceiling; surfaces as OOM
     }
     let new_base = prev * WASM_PAGE;
     if h.end == 0 {
@@ -409,9 +410,9 @@ fn sys_grow(_h: &mut Heap, _need: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 struct HeapCell(UnsafeCell<Heap>);
-// Single logical thread by construction: §4.3 rule V2 turns threads, shared
-// memory and atomics off at the engine, so the module cannot even express a
-// second thread.
+// Single logical thread by construction: the engine builds wasmtime without
+// threads, shared memory or atomics, and the validator rejects a module that
+// declares them, so the module cannot even express a second thread.
 unsafe impl Sync for HeapCell {}
 
 static HEAP: HeapCell = HeapCell(UnsafeCell::new(Heap::new()));
@@ -490,9 +491,8 @@ mod tests {
         assert_eq!(h.stats().live_bytes, 0);
     }
 
-    /// The "compaction toward low addresses" the spec can actually buy from a
-    /// non-moving allocator: a free run touching the top gives the bump
-    /// pointer back.
+    /// The only compaction toward low addresses a non-moving allocator can
+    /// offer: a free run touching the top gives the bump pointer back.
     #[test]
     fn gc_hint_rolls_back_a_free_tail() {
         let mut h = Heap::over(region());
@@ -526,8 +526,9 @@ mod tests {
         }
     }
 
-    /// Re-zeroing a page that is already zero still trips the host's
-    /// soft-dirty PTE walk, so the second hint must write nothing.
+    /// Re-zeroing an already-zero page spends dispatch CPU and, where the host
+    /// narrows its page diff with the soft-dirty bit, re-marks a clean page as
+    /// a candidate. The second hint must write nothing.
     #[test]
     fn a_second_gc_hint_dirties_nothing() {
         let mut h = Heap::over(region());
@@ -572,7 +573,7 @@ mod tests {
         let mut h = Heap::over(Box::leak(vec![0u8; 8192].into_boxed_slice()));
         unsafe {
             assert!(!h.alloc(l(4096)).is_null());
-            // §11.1: the plan ceiling shows up here as a failed grow. The
+            // The plan's memory ceiling shows up here as a failed grow. The
             // guest must surface OutOfMemory, not corrupt itself.
             assert!(h.alloc(l(1 << 20)).is_null());
         }

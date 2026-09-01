@@ -41,7 +41,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     let n = |name: &str| format!("{name}{{node=\"{node}\"}}");
 
 
-    // --- dispatches & CPU ------------------------------------------------
+    // --- dispatches & CPU ----------------------------------------------------
     let _ = writeln!(&mut o, "# HELP wisp_dispatches_total Dispatches handled, by code tier");
     let _ = writeln!(&mut o, "# TYPE wisp_dispatches_total counter");
     let _ = writeln!(
@@ -65,7 +65,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     let _ = writeln!(&mut o, "# TYPE wisp_cpu_ms_total counter");
     let _ = writeln!(&mut o, "{} {:.3}", n("wisp_cpu_ms_total"), snap.cpu_ms_total);
 
-    // --- activation & wake latency --------------------------------------
+    // --- activation & wake latency ------------------------------------------
     latency_lines(
         &mut o,
         node,
@@ -81,7 +81,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
         snap.wake,
     );
 
-    // --- lifecycle tier counts ------------------------------------------
+    // --- lifecycle tier counts ----------------------------------------------
     let _ = writeln!(
         &mut o,
         "# HELP wisp_instances Instances by lifecycle state"
@@ -95,7 +95,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
         let _ = writeln!(&mut o, "wisp_instances{{node=\"{node}\",tier=\"{tier}\"}} {v}");
     }
 
-    // --- dirty set & delta storage --------------------------------------
+    // --- dirty set & delta storage ------------------------------------------
     histogram_lines(
         &mut o,
         node,
@@ -108,7 +108,7 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     let _ = writeln!(&mut o, "# TYPE wisp_delta_storage_bytes gauge");
     let _ = writeln!(&mut o, "{} {}", n("wisp_delta_storage_bytes"), snap.delta_storage_bytes);
 
-    // --- traps ------------------------------------------------
+    // --- traps ----------------------------------------------------
 
     let _ = writeln!(&mut o, "# HELP wisp_traps_total Guest faults. Traps are never retried on the same memory.");
     let _ = writeln!(&mut o, "# TYPE wisp_traps_total counter");
@@ -187,7 +187,7 @@ mod tests {
         ] {
             assert!(out.contains(series), "missing {series} from /metrics");
         }
-        // §9.3: tier=fast must be visible.
+        // tier=fast must be visible.
         assert!(out.contains("tier=\"fast\"} 4"));
     }
 

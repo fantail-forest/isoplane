@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use wisp_abi::imports::{self, Group, ImportDef, ImportKind};
+use wisp_abi::pal::{self, PalDef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleImport {
@@ -16,7 +17,18 @@ pub struct Report {
     pub blake3: String,
     /// Imports that are in the platform's manifest, in canonical order.
     pub declared: Vec<&'static ImportDef>,
-    /// Imports that are NOT — each one is a V1 rejection (§4.3).
+    /// `wasi:*` imports in the enumerated PAL whitelist
+    /// ([`wisp_abi::pal::PAL_IMPORTS`]). These are declared — the deploy-time
+    /// composition satisfies each one by delegating to a `wisp:platform`
+    /// capability or by a stub that traps when called.
+    ///
+    /// They are a bucket of their own rather than being folded into
+    /// `declared` because they are not the same kind of thing: a `wisp` import
+    /// IS a capability, whereas a PAL entry is a BCL call that the adapter
+    /// either forwards to one or refuses. A tenant reading the manifest needs
+    /// to see which.
+    pub pal: Vec<&'static PalDef>,
+    /// Imports that are in neither table — each one is a V1 rejection.
     pub undeclared: Vec<ModuleImport>,
     pub exports: Vec<String>,
     pub missing_required_exports: Vec<&'static str>,
@@ -25,9 +37,18 @@ pub struct Report {
 }
 
 impl Report {
-    /// V1: any import outside `wisp_abi::imports::IMPORTS` is an attempted
-    /// capability and the module is rejected. There is no dynamic-linking
-    /// escape hatch, so this is decidable from the bytes alone.
+    /// V1: an import in neither `wisp_abi::imports::IMPORTS` nor
+    /// `wisp_abi::pal::PAL_IMPORTS` is an attempted capability and the module
+    /// is rejected. There is no dynamic-linking escape hatch, so this is
+    /// decidable from the bytes alone.
+    ///
+    /// This is a strict subset of what `wisp_control::validate` checks — both
+    /// conditions below are V1 violations there, and it additionally checks
+    /// signatures (V1), the engine profile (V2), memory shape (V3) and the
+    /// resource-bomb bounds (V4). So it is the exit-code verdict only in a
+    /// build without the validator; see `resolve_plan`'s caller. Keeping it as
+    /// a second opinion alongside the validator is what produced a build that
+    /// refused a module the validator accepts.
     pub fn would_be_rejected(&self) -> bool {
         !self.undeclared.is_empty() || !self.missing_required_exports.is_empty()
     }
@@ -40,13 +61,38 @@ impl Report {
         m
     }
 
+    /// Every `wisp` capability this module can reach, whether it imports it
+    /// directly or gets there through the PAL.
+    ///
+    /// A module that never imports `wisp.entropy_fill` but calls
+    /// `wasi:random/random`'s `get-random-bytes` has exactly that capability,
+    /// because the adapter forwards it there — so a manifest that listed only
+    /// the direct imports would understate what the code can do. Entries whose
+    /// disposition is `TrapOnCall` (or `Delegate(Nothing)`) reach nothing and
+    /// contribute nothing here, which is the whole point of those spellings.
+    pub fn effective_capabilities(&self) -> Vec<&'static ImportDef> {
+        let mut out = self.declared.clone();
+        for def in self
+            .pal
+            .iter()
+            .filter_map(|p| p.disposition.capability())
+            .filter_map(imports::lookup)
+        {
+            if !out.iter().any(|x| x.name == def.name) {
+                out.push(def);
+            }
+        }
+        out
+    }
+
     /// The one-line answer to "what can this code do?", in the terms a tenant
     /// (or their auditor) actually cares about.
     pub fn plain_english(&self) -> Vec<String> {
         let mut out = Vec::new();
-        let has = |g: Group| self.declared.iter().any(|i| i.group == g);
+        let reachable = self.effective_capabilities();
+        let has = |g: Group| reachable.iter().any(|i| i.group == g);
         if has(Group::Http) {
-            out.push("make outbound HTTP requests (host-side SSRF policy applies — §8.6)".into());
+            out.push("make outbound HTTP requests (host-side SSRF policy applies)".into());
         }
         if has(Group::Entropy) {
             out.push("draw randomness from the host CSPRNG".into());
@@ -102,6 +148,7 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
         ..Default::default()
     };
     let mut found: Vec<&'static ImportDef> = Vec::new();
+    let mut pal_found: Vec<&'static PalDef> = Vec::new();
 
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
@@ -111,14 +158,22 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
                 // grouped import form.
                 for imp in reader.into_imports_with_offsets() {
                     let (_, imp) = imp?;
+                    // The same three-way split `wisp_control::validator`
+                    // makes, in the same order, so that "is this import
+                    // declared" has ONE answer. Reading the import section is
+                    // presentation; agreeing with the authority about what is
+                    // in the tables is not optional.
                     match imports::lookup(imp.name) {
                         Some(def) if imp.module == imports::HOST_MODULE => found.push(def),
                         // Right name, wrong module: still an undeclared
                         // capability. The module name is part of the identity.
-                        _ => report.undeclared.push(ModuleImport {
-                            module: imp.module.to_string(),
-                            field: imp.name.to_string(),
-                        }),
+                        _ => match pal::lookup(imp.module, imp.name) {
+                            Some(p) => pal_found.push(p),
+                            None => report.undeclared.push(ModuleImport {
+                                module: imp.module.to_string(),
+                                field: imp.name.to_string(),
+                            }),
+                        },
                     }
                 }
             }
@@ -143,6 +198,15 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
     report.declared = imports::IMPORTS
         .iter()
         .filter(|d| found.iter().any(|f| f.name == d.name) && seen.insert(d.name))
+        .collect();
+
+    let mut seen = std::collections::BTreeSet::new();
+    report.pal = pal::PAL_IMPORTS
+        .iter()
+        .filter(|d| {
+            pal_found.iter().any(|f| f.module == d.module && f.func == d.func)
+                && seen.insert((d.module, d.func))
+        })
         .collect();
 
     for e in imports::exports::REQUIRED {
@@ -221,8 +285,8 @@ mod tests {
         assert_eq!(r.missing_optional_exports, vec!["wisp_gc_hint", "wisp_initialize"]);
     }
 
-    /// V1 (§4.3): an undeclared import is an attempted capability, and the
-    /// module is rejected. This is the whole of invariant 4's teeth.
+    /// V1: an undeclared import is an attempted capability, and the module is
+    /// rejected. This is where the capability manifest gets its teeth.
     #[test]
     fn an_undeclared_import_is_a_rejection() {
         let m = module(

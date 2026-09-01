@@ -21,8 +21,8 @@ pub use status::{PollStatus, TrapCode};
 /// The version of the guest host-interface contract.
 pub const ABI_REV: u32 = 1;
 
-/// Engine page size. The unit of copy-on-write sharing (§6.2) and of the
-/// hibernation page-diff (§6.6, "v1: page-diff").
+/// Engine page size. The unit of copy-on-write sharing and of the
+/// hibernation page-diff.
 pub const PAGE_SIZE: usize = 4096;
 
 /// WASM linear-memory page size (64 KiB).

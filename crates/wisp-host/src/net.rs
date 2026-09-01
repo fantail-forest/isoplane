@@ -2,7 +2,7 @@
 //!
 //! ## Why the fetcher takes a `PinnedTarget` and not a URL
 //!
-//! §8.6 requires "DNS-rebinding-safe resolution (resolve-then-pin)". The
+//! Egress resolution is DNS-rebinding-safe: resolve, then pin. The
 //! resolution and the policy decision happen in [`crate::egress`]; this
 //! module's job is to not throw that away. [`PinnedHttpFetcher`] connects to
 //! `target.addr` — the `SocketAddr` the policy already validated — and uses
@@ -15,7 +15,7 @@
 //! The workspace has no TLS crate, so `https://` egress is refused with a
 //! typed error rather than silently downgraded to `http://` — a silent
 //! downgrade would be a security bug wearing a convenience costume. Plain HTTP
-//! egress is real, and every §8.6 control is exercised by it.
+//! egress is real, and every egress control is exercised by it.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -99,7 +99,7 @@ impl Fetcher for PinnedHttpFetcher {
             .uri(&parsed.path_and_query)
             .header(hyper::header::HOST, &authority);
         for (k, v) in &req.headers {
-            // The trace context is propagated by the caller (§10); everything
+            // The trace context is propagated by the caller; everything
             // else is the tenant's.
             builder = builder.header(k.as_str(), v.as_str());
         }
@@ -136,8 +136,8 @@ impl Fetcher for PinnedHttpFetcher {
             });
         }
 
-        // Unknown or large: hand back a streaming handle. §6.8 types that
-        // future Unbounded, so the guest already knows it will not survive a
+        // Unknown or large: hand back a streaming handle. That future is
+        // typed Unbounded, so the guest already knows it will not survive a
         // hibernation and must be prepared to re-issue.
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         self.bodies.lock().insert(handle, body);
@@ -172,3 +172,7 @@ impl Fetcher for PinnedHttpFetcher {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The scrape endpoint
+// ---------------------------------------------------------------------------

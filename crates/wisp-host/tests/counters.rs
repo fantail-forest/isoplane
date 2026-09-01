@@ -1,3 +1,31 @@
+//! **Every counter the benchmark differences into a published figure, moved on
+//! purpose.**
+//!
+//! A counter is a claim about what the platform did, and it is only worth
+//! anything if something has proved it can move. The failure mode these tests
+//! exist for is the one an audit found across
+//! `cell.rs`: counters that **cannot move**. A structurally-zero counter is
+//! not a metric reading low, it is four different facts wearing the same
+//! number — "never incremented", "no events", "no dispatches", and "every
+//! dispatch paid full price" — and no dashboard, alert or bench verdict built
+//! on it can tell them apart.
+//!
+//! So each test below constructs the event and asserts the counter changed.
+//! Where a counter is one half of an identity — `dispatches` versus the 409s
+//! that precede it, `tombstones` versus `hard_kills + traps` — the identity is
+//! asserted too, because a pair of counters that agree by accident is the next
+//! bug rather than the fix.
+//!
+//! | Defect | Counter | Test |
+//! |---|---|---|
+//! | H1 | `served_warm` / `served_hibernation_wake` / `served_activated` on the durable path | [`a_durable_dispatch_records_how_it_was_served`], [`a_hibernated_identity_is_served_as_a_wake_not_as_warm`] |
+//! | H2 | `capture_write_failures` | [`a_failed_delta_write_is_not_counted_as_a_capture`] |
+//! | H3 | `traps` disjoint from `hard_kills` | [`a_hard_kill_is_not_counted_as_a_trap`] |
+//! | H4 | `futures_shed_capture` | [`futures_shed_is_a_capture_signal_not_a_load_signal`] |
+//! | H5 | `single_writer_refusals` | [`the_single_writer_409_is_counted_and_is_not_a_dispatch`] |
+//! | H6 | `tombstone_refusals` | [`a_host_call_into_a_tombstone_is_refused_and_counted`] |
+//! | H7 | per-dispatch histogram sampling | [`the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path`] |
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -93,6 +121,29 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     module
 }
 
+// ---------------------------------------------------------------------------
+// H1 — "served without paying for an activation", on the path that
+//      actually runs
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// H2 — a capture that did not happen
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// H3 — traps and hard kills are different events
+// ---------------------------------------------------------------------------
+
+/// **`tombstones == hard_kills + traps`, and it is only checkable because the
+/// two terms are disjoint.**
+///
+/// `traps` was incremented in the shared `Trapped | BudgetKill` arm, after the
+/// `if killed { … hard_kills … }` block, which made `traps ⊇ hard_kills`. The
+/// documented invariant was then false *by construction*: a correct
+/// implementation gave `tombstones == traps`, and `hard_kills + traps`
+/// overshot by exactly `hard_kills`. The blast table prints `hard kills`,
+/// `clean kills` and `tombstones` as adjacent rows, so a reader summing down
+/// the column double-counted every hard kill.
 #[test]
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
@@ -108,6 +159,9 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     let spinner = app(&r, "spinner", FakeBehaviour::program([Step::Spin]));
 
     let mut rec = http(&r.cell, &trapper, "/trap");
+    // **The test's budget, not the plan's.** The spinner below has to reach
+    // B+G inside `T`, so this is a bound on the test's own runtime rather than
+    // a statement about the plan's limits — and it must not move when those do.
     rec.cpu_budget_ms = 50;
     let out = r
         .cell
@@ -147,13 +201,13 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     assert_eq!(
         m.tombstones,
         m.hard_kills + m.traps,
-        "§6.4's identity. If `traps` overshoots by exactly `hard_kills` the two are sharing an \
-         increment again"
+        "the tombstone identity. If `traps` overshoots by exactly `hard_kills` the two are \
+         sharing an increment again"
     );
     r.cell
         .metrics_raw()
         .tombstone_invariant()
-        .expect("§6.4 invariant");
+        .expect("tombstone invariant");
 
     // The tenant-level meters keep the same split, so a per-tenant trap rate
     // is not inflated by kills either.
@@ -161,6 +215,30 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     r.cell.shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// H4 — a capture signal is not a load signal
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// H5 — the single-writer refusal, counted on the platform side
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// H6 — the negative control for the tombstone rule
+// ---------------------------------------------------------------------------
+
+/// **A host call into a tombstone is refused, and the refusal is counted.**
+///
+/// `tombstone_refusals` had zero write sites in the workspace. Its own doc
+/// says why that is fatal: it is the negative control for the rule, and a
+/// green dashboard with it permanently at zero and no failing probe is
+/// unfalsifiable. It was permanently at zero, so the unfalsifiable dashboard
+/// it warns about was the one that existed.
+///
+/// `Cell::slot` deliberately answers from the tombstone ring so a
+/// kill-then-call gets an instance that **refuses** rather than a `None` that
+/// reads as "no such instance". `Cell::with_instance` is that door with the
+/// counter on it.
 #[test]
 fn a_host_call_into_a_tombstone_is_refused_and_counted() {
     let r = rig(CellConfig::for_test("tombstone-refusal"));
@@ -195,6 +273,8 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
         "nothing has called it yet"
     );
 
+    // wasmtime would run this instance if asked, so the refusal is the cell's
+    // to make — and the cell's to count.
     let refused = r.cell.with_instance(killed, |i| i.is_parked());
     assert!(
         matches!(refused, Err(EnterError::Tombstoned)),
@@ -227,6 +307,25 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
     r.cell.shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// H7 — the telemetry must be removable, so the claim about it can be tested
+// ---------------------------------------------------------------------------
+
+/// **The two per-dispatch histograms can be taken off the dispatch path
+/// without taking the metrics off the scrape.**
+///
+/// `request_us` and `park_ms` are recorded on every completed dispatch and
+/// each takes a per-cell mutex shared by every execution thread. The campaign
+/// publishes "the cell's knee is lock contention, not CPU" and names the work
+/// queue as the prime suspect — an inference equally consistent with
+/// contention on `active`, on `durables`, or on these two. Part of what the
+/// density campaign measures may be its own telemetry, and the only way to
+/// know is to run the same point with and without them.
+///
+/// So this asserts the shape that makes that experiment possible: at
+/// `telemetry_sample_every: 0` the histograms take no lock, the percentiles go
+/// quiet, and **the counts and the rest of the scrape keep working** — a run
+/// without them is still a run, comparable against a run with them.
 #[test]
 fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
     let r = rig(CellConfig {
@@ -258,8 +357,8 @@ fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
     // the wait is only so the assertion is not a race.
     assert!(
         wait_for(|| raw.request_us.count() == 5, Duration::from_secs(5)),
-        "turning sampling off must not turn the metric into a zero — the count is what §10 needs \
-         to keep the rate honest, and it read {}",
+        "turning sampling off must not turn the metric into a zero — the count is what keeps \
+         the rate honest, and it read {}",
         raw.request_us.count()
     );
     assert_eq!(
@@ -269,7 +368,7 @@ fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
     );
 
     let m = r.cell.metrics();
-    assert_eq!(m.dispatches, 5, "the rest of §10 is unaffected");
+    assert_eq!(m.dispatches, 5, "the rest of the scrape is unaffected");
     assert!(r.cell.metrics_text().contains("wisp_cell_request_p50_us 0"));
 
     // The default is every sample, and the same workload then has a
@@ -312,6 +411,20 @@ fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
     sampled.cell.shutdown();
 }
 
+/// **Per-worker queues serve every dispatch, exactly once.**
+///
+/// `QueueStructure::PerWorker` gives each worker its own two-lane queue, and
+/// the default `QueuePlacement::PowerOfTwo` places new work by sampling two
+/// lanes and taking the less loaded. That is a change to the one structure
+/// every dispatch passes through, so the property that matters is not
+/// throughput — it is that nothing is lost, nothing is run twice, and the rule
+/// that wakes are never shed still holds.
+///
+/// The counters are what make "exactly once" checkable: the four acquisition
+/// sources are exhaustive over admitted dispatches, so a duplicate would show
+/// as a sum larger than `dispatches` and a loss as a caller that never got a
+/// reply. All three structures are driven through the same load so the
+/// comparison is like for like.
 #[test]
 fn per_worker_queues_serve_every_dispatch_exactly_once() {
     for strategy in [

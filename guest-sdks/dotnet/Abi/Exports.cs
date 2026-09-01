@@ -8,8 +8,19 @@ using Wisp.Runtime;
 namespace Wisp.Abi;
 
 /// <summary>
-/// Core WebAssembly entrypoints for host allocation, dispatch, wake and GC hints.
-/// Dispatch and wake convert managed failures to protocol trap results.
+/// The guest exports, as core-wasm functions.
+///
+/// <c>[UnmanagedCallersOnly]</c> is what makes NativeAOT-LLVM emit a real
+/// wasm export with the exact name the host linker looks for; the resulting
+/// module exports <c>wisp_alloc</c>, <c>wisp_handle</c>, <c>wisp_wake</c>,
+/// <c>wisp_gc_hint</c>, <c>wisp_initialize</c> and <c>memory</c>, which is
+/// <c>wisp-abi::imports::exports::REQUIRED</c> plus both optionals.
+///
+/// Nothing here may throw across the boundary: an escaping managed exception
+/// in an <c>UnmanagedCallersOnly</c> frame is a runtime abort, and the host
+/// would see a wasm trap with no code. Every entrypoint therefore catches and
+/// converts to <see cref="PollStatus.Trapped"/> — a trap fails the dispatch
+/// and discards the instance, never retried on the same memory.
 /// </summary>
 public static unsafe class Exports<TRouter>
     where TRouter : IWispRouter, new()
@@ -34,9 +45,9 @@ public static unsafe class Exports<TRouter>
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Host-to-guest data enters via <c>wisp_alloc</c> + copy. No host
-    /// pointer ever enters guest memory, so this hands back an offset into
-    /// our own linear memory and nothing else.
+    /// Host→guest data enters via <c>wisp_alloc</c> + copy. No host pointer
+    /// ever enters guest memory, so this hands back an offset into our own
+    /// linear memory and nothing else.
     ///
     /// The contract with the host is that every pointer passed to
     /// <c>wisp_handle</c> / <c>wisp_wake</c> came from here, because those
@@ -71,7 +82,7 @@ public static unsafe class Exports<TRouter>
 
     /// <summary>
     /// A new top-level work item. Returns <c>done</c>, <c>pending</c> or
-    /// <c>trapped</c>.
+    /// <c>trapped</c>; <see cref="PollStatus"/> encodes no fourth outcome.
     /// </summary>
     public static long Handle(int ptr, int len)
     {
@@ -176,8 +187,9 @@ public static unsafe class Exports<TRouter>
             warm.Str("wisp");
             GC.KeepAlive(warm.Span.Length);
 #if WISP_ENTROPY_PROBE
-            // The probe initializes representative application collections so
-            // the entropy-clone check uses a populated template.
+            // Under the probe only: also do what pre-init is FOR (building
+            // dictionaries, DI containers), so `--entropy-clone` measures the
+            // realistic template rather than a minimal one.
             Wisp.App.EntropyProbe.WarmLikePreInit();
 #endif
         }
@@ -273,8 +285,11 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// Reports the managed exception type before returning a panic trap.
-    /// Build settings may omit exception messages and stack traces.
+    /// A `Trapped(Panic)` with no diagnostic is a support ticket nobody can
+    /// answer. The guest build turns exception messages into resource keys
+    /// (`UseSystemResourceKeys`) and turns stack traces off, so the type name
+    /// is what is left — and it is enough to tell a tenant bug from a missing
+    /// platform capability.
     /// </summary>
     private static long Panic(Exception e)
     {
@@ -296,7 +311,9 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// Emits a UTF-8 message through the host logging import.
+    /// <c>Console.Write*</c> is shimmed onto the log import. Going through the
+    /// import rather than stdout is what keeps <c>wasi:cli/stdout</c> out of
+    /// the module's capability manifest.
     /// </summary>
     private static void Log(int level, string message)
     {

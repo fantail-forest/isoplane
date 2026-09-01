@@ -1,9 +1,9 @@
-//! The import vtable seam (spec.md §5.3, invariant 4).
+//! The import vtable seam (invariant 4).
 //!
 //! The engine copies guest buffers out before calling the host and copies
 //! results back in via `wisp_alloc`, so **no host pointer ever enters guest
-//! memory** (§5.5) and the host never holds a raw pointer into a linear memory
-//! that a guest could grow underneath it.
+//! memory** and the host never holds a raw pointer into a linear memory that a
+//! guest could grow underneath it.
 
 /// One invocation of a declared import.
 #[derive(Debug)]
@@ -23,7 +23,7 @@ pub struct ImportCall<'a> {
 /// Implemented by `wisp-host`. The engine calls this and nothing else; every
 /// capability the platform offers arrives here or does not exist.
 pub trait HostBindings: Send + 'static {
-    /// A future-returning import (§5.1). MUST return immediately with a
+    /// A future-returning import. MUST return immediately with a
     /// future id — there is no import that waits, which is what makes
     /// invariant 3 hold by construction.
     fn call_future(&mut self, call: ImportCall<'_>) -> u64;
@@ -39,8 +39,8 @@ pub trait HostBindings: Send + 'static {
     /// to put 16 bytes of hash seed or N bytes of CSPRNG output.
     ///
     /// The host writes into `out`, which is a **host-side** buffer; the engine
-    /// copies it into linear memory afterwards, so §5.5 still holds in this
-    /// direction: no host pointer enters guest memory.
+    /// copies it into linear memory afterwards, so the rule still holds in
+    /// this direction: no host pointer enters guest memory.
     ///
     /// Returns the number of bytes written, or a negative value to deny.
     /// The default denies unsupported fill operations.
@@ -48,7 +48,7 @@ pub trait HostBindings: Send + 'static {
         -1
     }
 
-    /// §8.5: the coarse clock is FROZEN for the duration of a dispatch slice
+    /// The coarse clock is FROZEN for the duration of a dispatch slice
     /// and advances only at host-call/wake boundaries, which removes the
     /// measurement primitive Spectre-class attacks need. The engine asks the
     /// host for the frozen value once per slice.
@@ -59,21 +59,21 @@ pub trait HostBindings: Send + 'static {
         false
     }
 
-    /// **The dispatch has crossed B and entered its grace window** (§6.4).
+    /// **The dispatch has crossed B and entered its grace window.**
     ///
     /// Called from the epoch deadline callback, once per slice, on the
     /// execution-pool thread with the guest suspended at a back-edge. The host
-    /// owes two things in response, and §6.4 names both:
+    /// owes two things in response:
     ///
     /// * complete the dispatch's **cancellation future**, so a guest sitting
-    ///   at an `await` observes a tripped token at its next wake (§5.4);
+    ///   at an `await` observes a tripped token at its next wake;
     /// * **poison this dispatch's imports** so every subsequent call returns
-    ///   `Cancelled` immediately (§5.3).
+    ///   `Cancelled` immediately.
     ///
     /// It must be cheap and it must not re-enter the guest — the guest is on
     /// the stack. The default is a no-op so a `HostBindings` that predates the
     /// two-phase kill still compiles; such a host simply never offers grace,
     /// and every over-budget dispatch of its guests takes the hard trap at
-    /// B+G, which is v1.1 behaviour and is safe, not wrong.
+    /// B+G, which is the older behaviour and is safe, not wrong.
     fn enter_grace(&mut self) {}
 }

@@ -13,6 +13,7 @@ initialization variables and outbound HTTP bindings. The runtime contract is
 
 ## Local project keys
 
+{/* @generated:begin wisp-cli-keys */}
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | string | none | Application name |
@@ -21,12 +22,15 @@ initialization variables and outbound HTTP bindings. The runtime contract is
 | `hosts` | string[] | `[]` | Application hostnames |
 | `path_prefix` | string | none | Routing path prefix |
 | `limits` | table | none | Numeric resource budgets |
+{/* @generated:end wisp-cli-keys */}
 
 ## `[handlers]`
 
+{/* @generated:begin wisp-handlers */}
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `lifecycle` | `reuse` \| `fresh` | `reuse` | Handler freshness. `fresh` resets the instance after every dispatch. |
+{/* @generated:end wisp-handlers */}
 
 `reuse` permits guest-state reuse between dispatches. The host may reset or
 discard an instance, so its memory is temporary application state.
@@ -35,9 +39,11 @@ discard an instance, so its memory is temporary application state.
 
 ## `[bindings]`
 
+{/* @generated:begin wisp-bindings */}
 | Key | Type | Meaning |
 |---|---|---|
 | `fetch_allowlist` | optional string[] | Optional outbound HTTP host allowlist |
+{/* @generated:end wisp-bindings */}
 
 ## `init_visible_vars`
 

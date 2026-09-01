@@ -1,15 +1,12 @@
-//! §4.4 against a real .NET guest — the measurement that decides whether
-//! pre-initialization is an optimization or a prerequisite.
+//! Pre-initialization against a real .NET guest — the measurement that decides
+//! whether it is an optimization or a prerequisite.
 //!
-//! `docs/dotnet-findings.md` measured a stock C# guest at **~26.8 ms to the
-//! first managed call** and ~49.5 MB RSS, against G1's p50 < 1 ms and 5,000
-//! resident instances, and observed that every bit of the miss is .NET runtime
-//! startup — i.e. exactly what §4.4 exists to delete:
+//! A stock C# guest spends tens of milliseconds getting to its first managed
+//! call, and essentially all of it is .NET runtime startup: assembly load, JIT,
+//! static init, config parse. Pre-initialization exists to delete exactly that
+//! from cold activation.
 //!
-//! > *Cold activation therefore skips: assembly load (none), JIT (none),
-//! > static init (already ran), config parse (already ran).*
-//!
-//! So this test does the honest version of that claim: take the same module,
+//! So this test does the honest version of the claim: take the same module,
 //! run it through the real deploy-time pre-initializer, and time the first
 //! call into the guest **before and after**, in the same process, under the
 //! same engine. Rust guests cannot produce this number — they have no runtime
@@ -37,8 +34,8 @@ use wisp_control::validator;
 /// them.
 ///
 /// So the fixture is built the way a Rust test dependency is: on demand, by the
-/// thing that needs it. `--if-stale` makes the common case a 39 ms no-op, and
-/// the script takes an flock because cargo runs test binaries concurrently.
+/// thing that needs it. `--if-stale` makes the common case a no-op, and the
+/// script takes an flock because cargo runs test binaries concurrently.
 fn dotnet_fixture(name: &str) -> Vec<u8> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -76,10 +73,10 @@ fn dotnet_guest() -> Vec<u8> {
     dotnet_fixture("wisp_guest_dotnet")
 }
 
-/// §4.3 against the real thing. `docs/dotnet-findings.md` §4 reported 32
-/// undeclared `wasi:*@0.2.0` imports; spec v1.4 answers them with the
-/// deploy-time PAL adapter (`crate::pal`, and see `tests/pal_dotnet.rs` for
-/// the stock module going through it). *This* build needs none of that: the
+/// V1 against the real thing. A stock NativeAOT-LLVM build declares a large
+/// `wasi:*@0.2.0` surface, which the deploy-time PAL adapter answers
+/// (`crate::pal`, and see `tests/pal_dotnet.rs` for the stock module going
+/// through it). *This* build needs none of that: the
 /// guest-side shim in `guests/dotnet/native/wisp_pal.c` resolves wasi-libc's
 /// imports inside the module, so it imports **only** `wisp` and the adapter
 /// has nothing to compose. Both paths must work, and this test owns the
@@ -101,7 +98,7 @@ fn the_dotnet_guest_satisfies_v1_with_no_pal_exception() {
     );
     assert!(
         report.has_initialize(),
-        "the §4.4 pre-init entry point must be exported"
+        "the pre-init entry point must be exported"
     );
     // The finding that matters: no `wasi:*` import survived into this build,
     // so invariant 4 holds for a real .NET guest with no widening of the
@@ -159,7 +156,7 @@ fn pre_initialization_deletes_dotnet_runtime_startup() {
     let cold = Cold::measure(&engine, &wasm, /*call_init=*/ true);
     let warm = Cold::measure(&engine, &out.template_wasm, /*call_init=*/ false);
 
-    println!("\n                        stock module      template (§4.4)");
+    println!("\n                        stock module      template");
     println!(
         "  compile               {:>9.2} ms   {:>12.2} ms",
         cold.compile_ms, warm.compile_ms
@@ -192,12 +189,6 @@ fn pre_initialization_deletes_dotnet_runtime_startup() {
         cold.memory_bytes / 1024,
         warm.memory_bytes / 1024
     );
-    println!(
-        "\n  G1 (p50 activation < 1 ms): stock {} / template {}",
-        verdict(cold.activation_ms() < 1.0),
-        verdict(warm.activation_ms() < 1.0)
-    );
-
     // The claim under test. Anything less than a large factor means either
     // pre-init did not capture .NET startup or the guest's `wisp_initialize`
     // does not reach managed code — both are findings, so the assertion is
@@ -208,14 +199,6 @@ fn pre_initialization_deletes_dotnet_runtime_startup() {
         warm.activation_ms(),
         cold.activation_ms()
     );
-}
-
-fn verdict(ok: bool) -> &'static str {
-    if ok {
-        "MET"
-    } else {
-        "MISSED"
-    }
 }
 
 fn render(vs: &[wisp_control::Violation]) -> String {
@@ -241,7 +224,7 @@ struct Cold {
 impl Cold {
     /// What a cold activation costs: instantiate, run whatever initialization
     /// the artifact still needs, and make the first call into the guest.
-    /// Compilation is excluded — §4.4 does it once at deploy time per µarch.
+    /// Compilation is excluded — the deploy does it once per µarch.
     fn activation_ms(&self) -> f64 {
         self.instantiate_ms + self.c_ctors_ms + self.managed_init_ms + self.first_call_ms
     }
@@ -271,7 +254,7 @@ impl Cold {
             }
             // ...it comes up on the first call across an
             // `[UnmanagedCallersOnly]` boundary, which is what
-            // `wisp_initialize` is for (§4.4, and dotnet-findings §6.2).
+            // `wisp_initialize` is for.
             if let Ok(f) = instance.get_typed_func::<(), ()>(&mut store, "wisp_initialize") {
                 let t = Instant::now();
                 f.call(&mut store, ()).expect("wisp_initialize");
@@ -326,11 +309,11 @@ fn engine() -> wasmtime::Engine {
 }
 
 /// The runtime import vtable: every capability defined, init-only imports
-/// bound to **traps**. `docs/spike-findings.md` flags that wizer does not
-/// strip the import section, so a template still *declares* the init-only
-/// imports; binding them to traps is both required for instantiation and a
-/// tripwire — if a template could re-read the escrowed hash seed at runtime,
-/// §8.6's secret-bearing classification would widen and this would say so.
+/// bound to **traps**. wizer does not strip the import section, so a template
+/// still *declares* the init-only imports; binding them to traps is both
+/// required for instantiation and a tripwire — if a template could re-read the
+/// escrowed hash seed at runtime, its secret-bearing classification would
+/// widen and this would say so.
 fn host_linker(engine: &wasmtime::Engine) -> wasmtime::Linker<()> {
     use wisp_abi::imports::{self, Ty};
     let mut linker: wasmtime::Linker<()> = wasmtime::Linker::new(engine);

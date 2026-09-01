@@ -132,8 +132,14 @@ internal sealed class PostcardWriter
     internal ReadOnlySpan<byte> Span => _buf.AsSpan(0, _len);
 }
 
+/// <summary>
+/// A malformed dispatch or result encoding, or a trigger this guest cannot receive.
+///
+/// The entrypoint converts it to <see cref="TrapCode.Protocol"/>: the dispatch
+/// fails and the instance is discarded, rather than being answered wrongly.
+/// </summary>
 public sealed class PostcardException : Exception
 {
-    // §12.3: UseSystemResourceKeys=true means exception messages are resource
-    // keys anyway, so carrying a message here would buy nothing.
+    // The guest build sets UseSystemResourceKeys=true, so exception messages
+    // are resource keys anyway and carrying one here would buy nothing.
 }

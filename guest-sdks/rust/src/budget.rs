@@ -1,4 +1,4 @@
-//! Cooperating with the two-phase kill (spec.md §6.4, §4.6, §2.5.8).
+//! Cooperating with the two-phase kill.
 //!
 //! # Why a guest should care
 //!
@@ -13,17 +13,16 @@
 //! | returns inside G | **clean kill** | consistent, `Drop` ran, **slot reused** |
 //! | is still executing at B+G | **hard kill** | trapped mid-frame, **tombstoned** |
 //!
-//! §6.4 calls clean kills *"the overwhelmingly common case"* and makes the
-//! clean:hard ratio a first-class SLI. That claim is only true of guests that
-//! actually check. This module is what a Rust guest checks *with*; the .NET
-//! runtime layer §4.6 describes does the equivalent for tenants automatically,
-//! at the allocation slow path, GC entry and task switch.
+//! The host reports a clean:hard ratio per tenant, and a fleet is only as
+//! clean as its guests: the ratio is good only where guests actually check.
+//! This module is what a Rust guest checks *with*; the .NET runtime layer does
+//! the equivalent for tenants automatically, at the allocation slow path, GC
+//! entry and task switch.
 //!
 //! # What "unwinding" means here
 //!
-//! Guest modules build with `panic = "abort"` (§2.5.8: a guest that could
-//! unwind would be modelling something the platform does not offer), so the
-//! unwind is an ordinary early `return` and the `finally` semantics are
+//! Guest modules build with `panic = "abort"` (see `guests/Cargo.toml`), so
+//! the unwind is an ordinary early `return` and the `finally` semantics are
 //! `Drop`. That is not a weaker form of the same thing — it is the same
 //! thing: destructors run, buffers flush, and the value the platform cares
 //! about (a consistent heap at an empty stack) is produced either way.
@@ -41,7 +40,7 @@ pub fn remaining_ns() -> i64 {
     unsafe { abi::budget_remaining_ns() }
 }
 
-/// True once this dispatch has crossed B (§6.4).
+/// True once this dispatch has crossed B.
 ///
 /// The name is the one that matters at a call site: past this point the
 /// request is over — nothing the guest computes will be returned to anyone —
@@ -104,7 +103,7 @@ impl Budget {
     }
 }
 
-/// RAII guard for §4.6's *unsafe-to-trap* bit.
+/// RAII guard for the *unsafe-to-trap* bit.
 ///
 /// Hold one across a region that must not be interrupted **cleanly** — a GC
 /// phase, a scheduler queue mutation, any window where delivering `Cancelled`
@@ -112,10 +111,10 @@ impl Budget {
 /// tombstones exist to contain. While it is held, grace *entry* defers.
 ///
 /// What it does **not** do, and must not be mistaken for: it does not defer
-/// the hard deadline. §6.4 is explicit — *"the hard deadline ignores the
-/// bit"*, and *"a pinned bit buys exactly G, nothing more"*. A guest that
-/// holds one forever is tombstoned at B+G exactly like one that never heard
-/// of it, and has spent its whole grace window buying nothing.
+/// the hard deadline. The engine checks B+G first and ignores the bit there,
+/// so a pinned bit buys exactly G and nothing more. A guest that holds one
+/// forever is tombstoned at B+G exactly like one that never heard of it, and
+/// has spent its whole grace window buying nothing.
 ///
 /// ```ignore
 /// {
@@ -179,7 +178,7 @@ mod tests {
         });
     }
 
-    /// §6.4: the grace window is finite and the guard does not extend it.
+    /// The grace window is finite and the guard does not extend it:
     /// `grace_remaining_ns` must fall as the overage grows, never rise.
     #[test]
     fn grace_remaining_never_exceeds_g() {

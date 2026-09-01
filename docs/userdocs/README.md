@@ -101,11 +101,11 @@ here, in a form a user can act on — do not cite a section number and move on.
 Two rules follow from that:
 
 - **No `§` references and no "the specification says".** State the thing.
-- **Never copy a generated number into this site.** `docs/findings.md` and
-  `docs/bench/results.md` are generated from real runs and are authoritative.
-  Link to them, or describe how to produce the figure yourself. A transcribed
-  number goes stale silently, which is the failure mode this rule exists to
-  prevent.
+- **Never copy a measured number into this site.** Benchmark figures are
+  generated from real runs and are authoritative where they are generated;
+  a page here describes how to produce the figure instead of quoting it. A
+  transcribed number goes stale silently, which is the failure mode this rule
+  exists to prevent.
 
 When you need to check a claim before writing it down, the tree is the source:
 `crates/wisp-abi` for the wire contract and the capability list,

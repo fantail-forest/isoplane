@@ -29,6 +29,7 @@ const sidebars = {
       link: {type: 'doc', id: 'how-to/index'},
       items: [
         'how-to/use-the-sandbox',
+        'how-to/build-a-csharp-guest',
         'how-to/debug-a-rejected-module',
         'how-to/observe-a-running-node',
       ],

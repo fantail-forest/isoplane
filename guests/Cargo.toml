@@ -1,7 +1,7 @@
 # The guest workspace is deliberately SEPARATE from the root one: guests target
-# wasm32-unknown-unknown with a size-tuned release profile, while host crates
-# build for the native target. The root
-# Cargo.toml excludes `guests` for exactly this reason.
+# wasm32-unknown-unknown with a size-tuned release profile, while the host
+# crates build for the native target. The root Cargo.toml excludes `guests` for
+# exactly this reason.
 [workspace]
 resolver = "2"
 members = [
@@ -16,10 +16,10 @@ members = [
     "undeclared-import",
     "impure-cctor",
     "bigheap",
-    # spec.md §4.6 layered runtime hosting. `layered/base` is the shared
-    # runtime layer; `layered/apps/*` are tenant app layers, each built twice
-    # (against the base's imported ABI, and self-contained with the same code
-    # statically linked and trimmed). See docs/layered-runtime.md.
+    # Layered runtime hosting. `layered/base` is the shared runtime layer;
+    # `layered/apps/*` are tenant app layers, each built twice: against the
+    # base's imported ABI, and self-contained with the same code statically
+    # linked and trimmed.
     "layered/rtlib",
     "layered/rtabi",
     "layered/base",
@@ -45,7 +45,10 @@ serde      = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 postcard   = { version = "1", features = ["alloc"] }
 
-# Keep release guest artifacts small; a guest panic aborts execution.
+# Tuned for size: a guest module is carried per version and instantiated per
+# instance. panic=abort is not just a size knob -- kills are abrupt and are
+# never unwound, so a guest that could unwind would be modelling something the
+# platform does not offer.
 [profile.release]
 opt-level        = "z"
 lto              = true

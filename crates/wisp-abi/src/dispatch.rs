@@ -1,5 +1,4 @@
-//! `dispatch-record` — the single envelope covering every trigger type
-//! (spec.md §5.2).
+//! `dispatch-record` — the single envelope covering every trigger type.
 
 use serde::{Deserialize, Serialize};
 
@@ -8,16 +7,16 @@ use serde::{Deserialize, Serialize};
 pub struct DispatchRecord {
     pub dispatch_id: u64,
     pub kind: DispatchKind,
-    /// W3C context, propagated into outbound fetches automatically (§10).
+    /// W3C context, propagated into outbound fetches automatically.
     pub trace: TraceContext,
-    /// §5.4: cancellation is NOT an entrancy. The host cancels by completing
+    /// Cancellation is NOT an entrancy. The host cancels by completing
     /// this future; the guest observes it at its next await as a tripped
     /// `CancellationToken`. A dispatch that never awaits cannot observe it and
     /// is killed at its CPU budget instead — abruptly, with no unwinding.
     pub cancel_future: u64,
-    /// CPU-ms budget for this dispatch (§6.4, §11.1).
+    /// CPU-ms budget for this dispatch, from the plan limits.
     pub cpu_budget_ms: u32,
-    /// Coarse wall clock at dispatch start; frozen for the slice (§8.5).
+    /// Coarse wall clock at dispatch start; frozen for the slice.
     pub now_ms: u64,
 }
 

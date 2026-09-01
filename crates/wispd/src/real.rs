@@ -33,7 +33,7 @@ pub struct RealCells {
     tenants: Arc<RwLock<HashMap<String, String>>>,
 }
 
-/// What a real node needs on disk. All local (docs/plan.md: "Local storage").
+/// What a real node needs on disk. All local.
 pub struct RealPaths {
     /// Private local preparation output.
     pub registry: std::path::PathBuf,
@@ -148,7 +148,7 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
         };
         crate::admin::NodeSnapshot {
             dispatches_total: m.dispatches,
-            // §11.2: recorded CPU is the thread CPU clock over Hot intervals,
+            // Recorded CPU is the thread CPU clock over Hot intervals,
             // and the cell is the only thing that can measure it.
             cpu_ms_total: 0.0,
             activation: crate::admin::Latency {
@@ -164,7 +164,7 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
             instances_hot: m.hot,
             instances_parked: m.parked,
             instances_hibernated: m.hibernated,
-            // The cell reports dirty *pages*; §10 wants bytes.
+            // The cell reports dirty *pages*; the exposition wants bytes.
             dirty_set_bytes: vec![
                 m.dirty_pages_p50 * wisp_abi::PAGE_SIZE as u64,
                 m.dirty_pages_p99 * wisp_abi::PAGE_SIZE as u64,

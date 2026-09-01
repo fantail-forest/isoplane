@@ -1,8 +1,8 @@
-//! Templates (spec.md §4.4) — the unit the data plane loads.
+//! Templates — the unit the data plane loads.
 //!
-//! > *The template, not the raw module, is the unit the data plane loads.
-//! > Cold activation therefore skips: assembly load (none), JIT (none),
-//! > static init (already ran), config parse (already ran).*
+//! The template, not the raw module, is what a cell loads. Cold activation
+//! therefore skips assembly load (none), JIT (none), static init (already
+//! ran) and config parse (already ran).
 
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ impl std::fmt::Display for ModuleHash {
 }
 
 /// Custom section `wisp-control`'s pre-init writes into the template wasm to
-/// record which init units it had to leave un-run (§4.4 impure-cctor deferral).
+/// record which init units it had to leave un-run (impure-cctor deferral).
 ///
 /// It has to travel *in the artifact*: `deferred_init_units` is a property of
 /// this particular pre-initialization, not of the module, and the data plane
@@ -44,14 +44,12 @@ pub const DEFERRED_INIT_SECTION: &str = "wisp.deferred-init";
 ///
 /// The memory image behind this is page-aligned and memfd-backed, so
 /// activation is `mmap MAP_PRIVATE` — O(page tables), no copy — and every
-/// instance of the module on the machine shares its pages until written
-/// (§6.2). Concretely, that mapping is wasmtime's `memory_init_cow` image,
-/// which is what `Config::memory_init_cow(true)` and the pooling allocator buy
-/// us; §6.2 says the wasmtime instance-pooling design is "adopted wholesale"
-/// and this is where that happens.
+/// instance of the module on the machine shares its pages until written.
+/// Concretely, that mapping is wasmtime's `memory_init_cow` image, which is
+/// what `Config::memory_init_cow(true)` and the pooling allocator buy us.
 pub struct Template {
     pub hash: ModuleHash,
-    /// Bound into every hibernation delta (§6.6): a delta is only valid
+    /// Bound into every hibernation delta: a delta is only valid
     /// against `(module hash, engine ABI rev)`.
     pub abi_rev: u32,
     pub(crate) inner: Arc<TemplateInner>,
@@ -59,7 +57,7 @@ pub struct Template {
 
 pub(crate) struct TemplateInner {
     pub module: Module,
-    /// §4.3: a linker carrying this module's **WASI PAL adapter**, or `None`
+    /// A linker carrying this module's **WASI PAL adapter**, or `None`
     /// when the module imports only `wisp` — which is every guest the Rust SDK
     /// builds, so the common path costs exactly nothing.
     ///
@@ -67,33 +65,33 @@ pub(crate) struct TemplateInner {
     /// of that matter. Per engine is impossible: a `TrapOnCall` stub is
     /// generated from the type the module itself declares (`PalDef::sig` is
     /// deliberately `None` for those), so it cannot be built without a module
-    /// in hand. Per activation would put a ~45-entry map clone on the §6.5
-    /// "activation p50 ≤ 1 ms" path to save nothing — templates are shared by
-    /// every instance of a module on the machine (§4.4).
+    /// in hand. Per activation would put a whole-table map clone on the
+    /// activation path to save nothing — templates are shared by every
+    /// instance of a module on the machine.
     pub pal_linker: Option<wasmtime::Linker<crate::state::StoreState>>,
-    /// What the adapter composed, for the §4.3 audit trail.
+    /// What the adapter composed, for the audit trail.
     pub pal_composed: Vec<&'static wisp_abi::pal::PalDef>,
     /// The post-init linear memory as laid down at deploy time. This is the
-    /// baseline the hibernation page-diff is taken against (§6.6) and the
-    /// oracle for "reset restores template contents".
+    /// baseline the hibernation page-diff is taken against, and the oracle
+    /// for "reset restores template contents".
     ///
     /// Stored as its non-zero runs, not as the memory. A pre-initialized .NET
-    /// template declares 53,084,160 bytes of which 147,207 are content; a
-    /// `Vec<u8>` here charged every cell 53 MB per template for that, and
-    /// `wisp-host`'s activator then copied it again. See `image::MemoryImage`.
+    /// template declares tens of megabytes of which a fraction of a percent is
+    /// content; a `Vec<u8>` here charged every cell the whole declared span
+    /// per template, and `wisp-host`'s activator then copied it again. See
+    /// `image::MemoryImage`.
     ///
     /// Its own `Arc` rather than a plain field, so `wisp-host`'s activator can
-    /// hold the baseline for §6.6 by bumping a refcount instead of taking the
+    /// hold the page-diff baseline by bumping a refcount instead of taking the
     /// second copy it used to take.
     pub image: Arc<crate::image::MemoryImage>,
     pub memory_pages: u32,
     pub deferred: Vec<u32>,
     /// Exported mutable globals in module-global-index order, with the values
-    /// they hold in the template. §6.2 step 2 ("initialize mutable globals from
-    /// the template's sealed values") is performed by wasmtime instantiation
-    /// itself; these are kept so the seal can be *verified* and so
-    /// capture/restore agree on an ordering without carrying names in the
-    /// delta.
+    /// they hold in the template. Initializing mutable globals from the
+    /// template's sealed values is performed by wasmtime instantiation itself;
+    /// these are kept so the seal can be *verified* and so capture/restore
+    /// agree on an ordering without carrying names in the delta.
     pub mut_globals: Vec<(String, GlobalValue)>,
     /// Exported tables, in export order, with their instantiated sizes.
     pub tables: Vec<(String, u64)>,
@@ -117,8 +115,8 @@ impl Template {
     /// The image as an `Arc` a consumer can hold without copying it.
     ///
     /// `wisp-host`'s activator needs the baseline on an execution-pool thread
-    /// for §6.6's page-diff. It used to take `memory_image().to_vec()`, which
-    /// for a .NET template was a second 53 MB allocation per module per cell;
+    /// for the page-diff. It used to take `memory_image().to_vec()`, which for
+    /// a .NET template was a second whole-span allocation per module per cell;
     /// the template is already an `Arc`, so sharing it costs a refcount.
     pub fn memory_image_arc(&self) -> Arc<crate::image::MemoryImage> {
         Arc::clone(&self.inner.image)
@@ -129,25 +127,25 @@ impl Template {
     }
 
     /// Which init units were left un-run because they touched a forbidden
-    /// import in the sealed sandbox (§4.4 impure-cctor deferral). They run
+    /// import in the sealed sandbox (impure-cctor deferral). They run
     /// lazily, per instance, on first touch.
     pub fn deferred_init_units(&self) -> &[u32] {
         &self.inner.deferred
     }
 
-    /// §5.2: `wisp_gc_hint` is optional but strongly recommended — a guest
-    /// that does not export it is correct, but stores a larger hibernation
-    /// delta and pays for it (§5.5, §11.2).
+    /// `wisp_gc_hint` is optional but strongly recommended — a guest that does
+    /// not export it is correct, but stores a larger hibernation delta and
+    /// pays for it.
     pub fn has_gc_hint(&self) -> bool {
         self.inner.has_gc_hint
     }
 
-    /// §4.4: whether the module can be driven through the sealed init sandbox.
+    /// Whether the module can be driven through the sealed init sandbox.
     pub fn has_initialize(&self) -> bool {
         self.inner.has_initialize
     }
 
-    /// §4.3: the `wasi:*` imports the PAL adapter composed for this template,
+    /// The `wasi:*` imports the PAL adapter composed for this template,
     /// empty for a module that declares none.
     ///
     /// This is the audit trail the no-new-channels rule needs to be
@@ -271,7 +269,7 @@ pub(crate) fn exported_tables(wasm: &[u8]) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Reject anything §4.3 V2/V3 forbids that the engine config cannot catch on
+/// Reject anything V2/V3 forbids that the engine config cannot catch on
 /// its own. The engine is not the validator — `wisp-control` owns V1-V4 — but a
 /// second linear memory or an import outside the table must never get as far as
 /// a slot, so the cheap structural checks are repeated here.
@@ -303,11 +301,11 @@ pub(crate) fn structural_check(wasm: &[u8]) -> Result<()> {
                     // "unknown import".
                     //
                     // "Declared" means one of two enumerated tables, never a
-                    // pattern: `wisp_abi::imports::IMPORTS`, or — since v1.4's
-                    // §4.3 — `wisp_abi::pal::PAL_IMPORTS`, the WASI whitelist
-                    // the deploy-time adapter composes (Appendix C, F7). A
-                    // `wasi:*` name outside that whitelist is still an
-                    // attempted capability and is still refused here; there is
+                    // pattern: `wisp_abi::imports::IMPORTS`, or
+                    // `wisp_abi::pal::PAL_IMPORTS`, the WASI whitelist the
+                    // deploy-time adapter composes. A `wasi:*` name outside
+                    // that whitelist is still an attempted capability and is
+                    // still refused here; there is
                     // no `wasi:`-prefix escape hatch, which is the whole point
                     // of the table being a list rather than a rule.
                     let declared = wisp_abi::imports::is_declared(imp.module, imp.name)
@@ -315,7 +313,7 @@ pub(crate) fn structural_check(wasm: &[u8]) -> Result<()> {
                     if !declared {
                         bail!(
                             "V1: undeclared import `{}::{}` — imports are the complete \
-                             capability surface (§4.3), and neither `wisp:platform` nor the \
+                             capability surface, and neither `wisp:platform` nor the \
                              WASI PAL whitelist declares this one",
                             imp.module,
                             imp.name
@@ -332,12 +330,12 @@ pub(crate) fn structural_check(wasm: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Envelope for the content-addressed artifact cache (§4.4, §9.3).
+/// Envelope for the content-addressed artifact cache.
 ///
 /// The wasmtime `.cwasm` alone is not enough: a cell needs the ABI rev the
 /// delta format is bound to, the deferred-unit list, and the global ordering,
 /// and it must be able to check that the artifact was built by a compatible
-/// engine before it maps code (§8.7).
+/// engine before it maps code.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ArtifactMeta {
     pub magic: [u8; 8],

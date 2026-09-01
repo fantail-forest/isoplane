@@ -10,11 +10,34 @@ use wisp_engine::ModuleHash;
 use wizer::wasmtime as wt;
 use wizer::Wizer;
 
-/// Initialization time and declared-memory limits.
-pub use crate::validator::{INIT_CPU_LIMIT_MS, INIT_MEMORY_LIMIT_BYTES};
+/// Initialization declared-memory limit.
+pub use crate::validator::INIT_MEMORY_LIMIT_BYTES;
 
 /// Maximum number of initialization attempts.
 pub const MAX_PASSES: u32 = 16;
+
+/// How many threads wizer's embedded wasmtime may compile on.
+///
+/// Left alone, wizer compiles through rayon's *global* pool, which sizes itself
+/// to the machine — 256 workers on the box this was measured on. That pool is
+/// shared with the data plane (`wisp-engine` runs wasmtime 48 through the same
+/// rayon), so `RAYON_NUM_THREADS` is the wrong lever: it would also serialize
+/// the optimizing AOT tier, whose whole purpose is to compile in the
+/// background. [`PreInitializer::run`] therefore scopes a pool of its own with
+/// `ThreadPool::install`, which binds only wizer's work.
+///
+/// One worker, because the parallelism was not buying anything. Sweeping
+/// 1/2/4/8/16 over five guests spanning 55 KB to 15 MB moved wall time by less
+/// than the run-to-run noise, while process CPU rose monotonically with the
+/// thread count; the global pool was the *slowest* setting of all, costing
+/// 1.6-2.0x the wall time of a single worker and 120-290x the CPU on the small
+/// guests. The extra threads were spinning, not compiling.
+///
+/// One worker has a second effect worth naming: with nothing to steal the
+/// work, the thread that drives the replay loop does all of it, so
+/// [`PreInitOutcome::init_cpu_ms`] measures the whole of pre-init rather than
+/// a floor. See [`ThreadCpu`].
+pub const PREINIT_COMPILE_THREADS: usize = 1;
 
 /// The host treats 0 and `u32::MAX` as no active initialization unit.
 pub const NO_UNIT: u32 = u32::MAX;
@@ -49,7 +72,6 @@ impl InitPal {
 }
 
 pub struct PreInitializer {
-    cpu_limit_ms: u64,
     memory_limit_bytes: u64,
     max_passes: u32,
     pal: InitPal,
@@ -72,6 +94,15 @@ pub struct PreInitOutcome {
     pub deferred_units: Vec<u32>,
     /// Number of initialization attempts, including the successful pass.
     pub passes: u32,
+    /// CPU consumed by the thread that ran the replay loop, reported for the
+    /// deploy record. Not a budget: nothing refuses a template for being slow.
+    ///
+    /// CPU rather than wall clock because this number is a property of the
+    /// tenant's module, and wall clock on a shared control plane is a property
+    /// of whoever else was deploying at the time. It counts the whole of
+    /// pre-init rather than a floor only because the compile is scoped to one
+    /// worker — see [`ThreadCpu`] and [`PREINIT_COMPILE_THREADS`], and for why
+    /// `0` can also mean the clock was unreadable.
     pub init_cpu_ms: u64,
     pub template_bytes: u64,
     /// Digest of explicit initialization inputs; fresh random output is excluded.
@@ -110,11 +141,6 @@ pub enum PreInitError {
     #[error("pre-init did not converge in {0} passes")]
     NoConvergence(u32),
     #[error(
-        "pre-init exceeded the elapsed-time limit of {limit_ms} ms (ran {ran_ms} ms); \
-             checked after initialization returned"
-    )]
-    CpuLimit { limit_ms: u64, ran_ms: u64 },
-    #[error(
         "declared init memory of {bytes} bytes exceeds the initialization limit of {limit} bytes"
     )]
     MemoryLimit { bytes: u64, limit: u64 },
@@ -125,7 +151,6 @@ pub enum PreInitError {
 impl PreInitializer {
     pub fn new() -> Self {
         Self {
-            cpu_limit_ms: INIT_CPU_LIMIT_MS,
             memory_limit_bytes: INIT_MEMORY_LIMIT_BYTES,
             max_passes: MAX_PASSES,
             pal: InitPal::Sealed,
@@ -133,10 +158,9 @@ impl PreInitializer {
         }
     }
 
-    /// Set the elapsed-time and declared-memory limits.
-    pub fn with_limits(cpu_limit_ms: u64, memory_limit_bytes: u64) -> Self {
+    /// Set the initialization declared-memory ceiling.
+    pub fn with_memory_limit(memory_limit_bytes: u64) -> Self {
         Self {
-            cpu_limit_ms,
             memory_limit_bytes,
             ..Self::new()
         }
@@ -187,10 +211,29 @@ impl PreInitializer {
             .into());
         }
 
+        // Bound wizer's compiler, and nothing else's. `install` runs the
+        // closure on a worker of *this* pool, and rayon's implicit parallelism
+        // — which is how wasmtime spells its parallel compile — resolves
+        // against the pool of the calling thread rather than the global one.
+        // So the data plane's `wisp-engine` engine and the deploy-time
+        // optimizing AOT tier keep the global pool they were sized for.
+        match compile_pool() {
+            Some(pool) => pool.install(|| self.replay(wasm, req)),
+            None => self.replay(wasm, req),
+        }
+    }
+
+    /// The rollback-by-replay loop, run inside the scoped compile pool.
+    ///
+    /// Separate from [`Self::run`] so the CPU clock starts on the thread that
+    /// actually does the work: `install` hands the closure to a pool worker
+    /// and parks the caller, so a `ThreadCpu` started outside would measure
+    /// the parked thread and report zero for every deploy.
+    fn replay(&self, wasm: &[u8], req: &PreInitRequest) -> crate::Result<PreInitOutcome> {
         let mut deferred: BTreeSet<u32> = BTreeSet::new();
         let mut reasons: Vec<(u32, &'static str)> = Vec::new();
         let mut refusals = 0u32;
-        let started = std::time::Instant::now();
+        let cpu = ThreadCpu::start();
 
         for pass in 1..=self.max_passes {
             let state = Arc::new(Mutex::new(Sandbox {
@@ -212,20 +255,14 @@ impl PreInitializer {
                     // answer it — so the fact travels *in the artifact*, not
                     // in a side channel the artifact could get separated from.
                     append_deferred_init_section(&mut template_wasm, &deferred);
-                    let elapsed_ms = started.elapsed().as_millis() as u64;
-                    // This rejects a slow result after return; it cannot interrupt Wizer.
-                    if elapsed_ms > self.cpu_limit_ms {
-                        return Err(PreInitError::CpuLimit {
-                            limit_ms: self.cpu_limit_ms,
-                            ran_ms: elapsed_ms,
-                        }
-                        .into());
-                    }
+                    // Thread CPU is reported after Wizer returns; this does not interrupt initialization.
+                    let cpu_ms = cpu.elapsed_ms();
                     tracing::info!(
                         module = %req.module_hash,
                         passes = pass,
                         deferred = deferred.len(),
                         bytes = template_wasm.len(),
+                        cpu_ms,
                         "pre-init converged"
                     );
                     return Ok(PreInitOutcome {
@@ -234,7 +271,7 @@ impl PreInitializer {
                         template_wasm,
                         deferred_units: deferred.iter().copied().collect(),
                         passes: pass,
-                        init_cpu_ms: elapsed_ms,
+                        init_cpu_ms: cpu_ms,
                         deferred_reasons: reasons,
                         init_logs: s.logs.clone(),
                         capability_refusals: refusals,
@@ -277,6 +314,36 @@ impl PreInitializer {
 impl Default for PreInitializer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A rayon pool of [`PREINIT_COMPILE_THREADS`] workers, or `None` if one could
+/// not be built.
+///
+/// Built per call rather than kept in a `OnceLock`: a one-thread pool costs
+/// ~51 us to build (median of 50, release profile), which is under 2% of the
+/// fastest pre-init measured and invisible against the rest, and the per-call
+/// pool leaves no idle threads in a daemon that deploys rarely.
+///
+/// `None` is a degraded path, not a failure: a control plane that cannot spawn
+/// a thread has worse problems than an unbounded compile, and refusing the
+/// deploy over a missed optimization would be the wrong trade. It is logged
+/// because a silent fall back to the 256-worker pool would look exactly like
+/// this fix never landing.
+fn compile_pool() -> Option<rayon::ThreadPool> {
+    match rayon::ThreadPoolBuilder::new()
+        .num_threads(PREINIT_COMPILE_THREADS)
+        .thread_name(|i| format!("wisp-preinit-{i}"))
+        .build()
+    {
+        Ok(pool) => Some(pool),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "could not build the pre-init compile pool; falling back to rayon's global pool"
+            );
+            None
+        }
     }
 }
 
@@ -390,6 +457,78 @@ impl Sandbox {
     fn serves(&self, name: &str) -> bool {
         name == "entropy_fill" || (self.current_unit.is_none() && self.pal.serves(name))
     }
+}
+
+/// CPU burned by the calling thread — `CLOCK_THREAD_CPUTIME_ID` — over the
+/// life of the value.
+///
+/// ## Why the thread clock, and not wall time
+///
+/// `init_cpu_ms` lands on the deploy record, where it reads as a property of
+/// the tenant's module. Wall clock is not that: on a control plane running
+/// several deploys at once it moves with the neighbours' load, so the same
+/// module reports a different init cost depending on who else showed up.
+///
+/// ## Why the thread clock, and not the process clock
+///
+/// The process clock is the same disease as wall clock, in a worse form:
+/// `CLOCK_PROCESS_CPUTIME_ID` sums every thread in the daemon, so it charges a
+/// deploy for the data plane's compiles and for whoever else was deploying.
+///
+/// ## Why it is no longer a floor
+///
+/// It used to be. Wizer's embedded wasmtime compiles through rayon, and with
+/// the global pool in charge the work scattered across 256 workers that this
+/// clock could not see — measured on a 256-core box, a 10.9 ms pre-init read
+/// 7.6 ms on the thread clock and 802 ms on the process clock. Since
+/// [`PreInitializer::run`] scopes that compile to
+/// [`PREINIT_COMPILE_THREADS`] workers and this value is constructed *inside*
+/// that scope, one worker means nothing can steal the work: across five guests
+/// spanning 55 KB to 15 MB the thread clock, the process clock and wall time
+/// now agree to within a few percent. Raising `PREINIT_COMPILE_THREADS` would
+/// make it a floor again.
+struct ThreadCpu {
+    /// `None` if the clock could not be read at construction.
+    start: Option<u64>,
+}
+
+impl ThreadCpu {
+    fn start() -> Self {
+        Self {
+            start: thread_cpu_ns(),
+        }
+    }
+
+    /// Milliseconds of thread CPU since construction.
+    ///
+    /// An unreadable clock reports `0` and says so in the log. `0` is a lie in
+    /// the flattering direction, but the alternatives are worse: reporting the
+    /// raw counter would charge the deploy for the thread's entire lifetime,
+    /// and nothing downstream can act on the difference anyway — this number
+    /// gates nothing.
+    fn elapsed_ms(&self) -> u64 {
+        match (self.start, thread_cpu_ns()) {
+            (Some(started), Some(now)) => now.saturating_sub(started) / 1_000_000,
+            _ => {
+                tracing::warn!("CLOCK_THREAD_CPUTIME_ID unreadable; reporting init_cpu_ms = 0");
+                0
+            }
+        }
+    }
+}
+
+/// `CLOCK_THREAD_CPUTIME_ID` in nanoseconds, or `None` if it could not be
+/// read. Mirrors `wisp_host::meters::try_read_thread_cpu_ns`; not shared with
+/// it because the control plane does not depend on the host crate.
+fn thread_cpu_ns() -> Option<u64> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a live, aligned `timespec` owned for the duration of the
+    // call; `clock_gettime` writes it and returns 0 or -1.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    (rc == 0).then(|| (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
 }
 
 fn wizen(wasm: &[u8], init_func: &str, state: Arc<Mutex<Sandbox>>) -> anyhow::Result<Vec<u8>> {
@@ -795,7 +934,7 @@ fn install_pal_adapter(
                     // Counted even though it is unconditional: this is the
                     // import that decided the question. `check.sh --wasi=trap`
                     // does not fail late, it fails *inside `_initialize`* on
-                    // exactly this call (docs/dotnet-findings.md §1.2), so a
+                    // exactly this call, so a
                     // toolchain bump that stops reaching it — or starts
                     // reaching it more — should be visible as a number.
                     *st.lock().pal_calls.entry(pal::CLI_ENVIRONMENT).or_default() += 1;
@@ -942,4 +1081,166 @@ fn declared_memory_bytes(wasm: &[u8]) -> u64 {
         }
     }
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Burn roughly `ms` of CPU on this thread, by the same clock under test —
+    /// so a broken clock cannot make this loop exit early and then pass the
+    /// assertion it was supposed to fail.
+    fn burn_cpu_ms(ms: u64) {
+        let target = thread_cpu_ns().unwrap() + ms * 1_000_000;
+        let mut x = 0u64;
+        while thread_cpu_ns().unwrap() < target {
+            for i in 0..10_000u64 {
+                x = x.wrapping_add(i ^ x).rotate_left(7);
+            }
+        }
+        std::hint::black_box(x);
+    }
+
+    /// The bug this instrument replaced, stated as a test: `init_cpu_ms` used
+    /// to be `Instant::elapsed`, which would read ~200 here. A blocked thread
+    /// consumes no CPU, and a deploy that waited is not a deploy that worked.
+    #[test]
+    fn time_spent_off_cpu_is_not_init_cpu() {
+        let cpu = ThreadCpu::start();
+        let wall = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let burned = cpu.elapsed_ms();
+        assert!(
+            wall.elapsed().as_millis() >= 150,
+            "the window did not actually elapse"
+        );
+        assert!(
+            burned < 20,
+            "200 ms of sleep read as {burned} ms of thread CPU"
+        );
+    }
+
+    /// ...and the other direction, or "measures nothing" would also pass.
+    #[test]
+    fn cpu_actually_burned_is_counted() {
+        let cpu = ThreadCpu::start();
+        burn_cpu_ms(100);
+        let burned = cpu.elapsed_ms();
+        assert!(
+            burned >= 50,
+            "100 ms of spinning read as {burned} ms of thread CPU"
+        );
+    }
+
+    /// A clock that could not be read must report zero, not the thread's whole
+    /// CPU lifetime — the difference between an unmeasured deploy and one that
+    /// appears to have cost minutes.
+    #[test]
+    fn an_unreadable_clock_reports_zero_not_the_threads_lifetime() {
+        burn_cpu_ms(20);
+        assert!(
+            thread_cpu_ns().unwrap() > 20_000_000,
+            "this thread has burned real CPU"
+        );
+        assert_eq!(ThreadCpu { start: None }.elapsed_ms(), 0);
+    }
+
+    /// A module whose `wisp_initialize` burns a visible amount of CPU in a
+    /// loop the compiler cannot delete — the store address moves, so it is not
+    /// a dead store. Kept small enough to be a unit test and large enough that
+    /// millisecond granularity is not the thing under test.
+    fn cpu_burning_module() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+                 (memory (export "memory") 1)
+                 (func (export "wisp_initialize")
+                   (local $i i32)
+                   (local.set $i (i32.const 250000000))
+                   (block $done
+                     (loop $l
+                       (br_if $done (i32.eqz (local.get $i)))
+                       (i32.store
+                         (i32.and (local.get $i) (i32.const 0xffc))
+                         (local.get $i))
+                       (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+                       (br $l)))))"#,
+        )
+        .expect("the fixture must assemble")
+    }
+
+    fn req_for(wasm: &[u8]) -> PreInitRequest {
+        PreInitRequest {
+            module_hash: ModuleHash::of(wasm),
+            init_blob: Vec::new(),
+        }
+    }
+
+    /// The mechanism, asserted rather than assumed: `install` makes rayon's
+    /// *current* pool the scoped one, which is what nested parallel work —
+    /// wasmtime's compile — resolves against.
+    ///
+    /// The second half keeps this from being vacuous on a one-core machine,
+    /// where the global pool is also one thread and a no-op `install` would
+    /// pass the first assertion.
+    #[test]
+    fn the_compile_pool_narrows_rayons_current_pool() {
+        let pool = compile_pool().expect("a one-thread pool must build");
+        let inside = pool.install(rayon::current_num_threads);
+        assert_eq!(
+            inside, PREINIT_COMPILE_THREADS,
+            "`install` did not take effect"
+        );
+
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        if cores > PREINIT_COMPILE_THREADS {
+            let outside = rayon::current_num_threads();
+            assert!(
+                outside > inside,
+                "on a {cores}-core machine the global pool is {outside} threads and the                  scoped pool {inside}; equal would mean `install` narrowed nothing"
+            );
+        }
+    }
+
+    /// Scoping the compile must not change the artifact. Both arms of `run`'s
+    /// match are exercised, because the `None` arm — taken when a pool cannot
+    /// be built — is otherwise unreachable and would rot unnoticed.
+    #[test]
+    fn the_pooled_and_unpooled_paths_produce_the_same_template() {
+        let wasm = cpu_burning_module();
+        let req = req_for(&wasm);
+        let pre = PreInitializer::new();
+
+        let pooled = pre.run(&wasm, &req).expect("pre-init must converge");
+        let unpooled = pre
+            .replay(&wasm, &req)
+            .expect("the fallback path must converge");
+
+        assert_eq!(pooled.template_wasm, unpooled.template_wasm);
+        assert_eq!(pooled.passes, 1);
+        assert_eq!(unpooled.passes, 1);
+    }
+
+    /// The bug the `run`/`replay` split exists to prevent: `install` parks the
+    /// calling thread and runs the closure on a pool worker, so a `ThreadCpu`
+    /// started outside the scope measures a thread that is asleep and reports
+    /// `0` for every deploy — silently, on a number nothing else checks.
+    #[test]
+    fn init_cpu_ms_measures_the_thread_that_does_the_work() {
+        let wasm = cpu_burning_module();
+        let wall = std::time::Instant::now();
+        let out = PreInitializer::new()
+            .run(&wasm, &req_for(&wasm))
+            .expect("must converge");
+        let wall_ms = wall.elapsed().as_millis() as u64;
+
+        assert!(
+            wall_ms >= 20,
+            "the fixture must take long enough to measure; took {wall_ms} ms"
+        );
+        assert!(
+            out.init_cpu_ms * 2 >= wall_ms,
+            "pre-init took {wall_ms} ms of wall clock but reported {} ms of CPU;              the clock is reading a thread that is not doing the work",
+            out.init_cpu_ms
+        );
+    }
 }

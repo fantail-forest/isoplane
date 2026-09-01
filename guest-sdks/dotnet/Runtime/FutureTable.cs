@@ -6,21 +6,22 @@ using Wisp.Abi;
 namespace Wisp.Runtime;
 
 /// <summary>
-/// The other half of the §4.2 wisp scheduler: the map from host future ids to
+/// The other half of the wisp scheduler: the map from host future ids to
 /// <see cref="TaskCompletionSource{TResult}"/> slots.
 ///
-/// Every entry is a promise the HOST holds the trigger for (invariant 2). The
-/// guest owns no timer, no socket and no thread — only this dictionary, which
-/// lives in linear memory and therefore survives a snapshot along with
-/// everything else.
+/// Every entry is a promise the HOST holds the trigger for. The guest owns no
+/// timer, no socket and no thread — only this dictionary, which lives in linear
+/// memory and therefore survives a snapshot along with everything else.
 /// </summary>
 internal static class FutureTable
 {
     private static readonly Dictionary<ulong, TaskCompletionSource<ResultRecord>> Pending = new();
 
-    /// <summary>§11.1: the simultaneous-pending-futures cap. Exceeding it is
-    /// <see cref="TrapCode.TooManyFutures"/>, not a queue that grows until the
-    /// cell dies — the residency bound of §1.3/G2 is structural.</summary>
+    /// <summary>The guest's own ceiling on simultaneous pending futures. The
+    /// host enforces the plan's <c>pending_futures_per_dispatch</c> as well;
+    /// this one makes a runaway fan-out
+    /// <see cref="TrapCode.TooManyFutures"/> rather than a dictionary that
+    /// grows until the cell dies.</summary>
     internal const int MaxPending = 128;
 
     internal static int Count => Pending.Count;
@@ -50,9 +51,9 @@ internal static class FutureTable
     /// <summary>
     /// Delivers a completion from <c>wisp_wake</c>.
     ///
-    /// §5.4: wake order for distinct futures is unspecified, so this must not
-    /// care which one arrives. An id we do not know is not an error — the host
-    /// may complete a future the guest already abandoned.
+    /// Wake order for distinct futures is unspecified, so this must not care
+    /// which one arrives. An id we do not know is not an error — the host may
+    /// complete a future the guest already abandoned.
     /// </summary>
     internal static bool Complete(long futureId, ResultRecord result)
     {

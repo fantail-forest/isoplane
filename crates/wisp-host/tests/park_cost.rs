@@ -1,3 +1,11 @@
+//! **A parked instance costs zero CPU.**
+//!
+//! This is one test in one binary on purpose. It measures
+//! `CLOCK_PROCESS_CPUTIME_ID` across the whole process, and `cargo` runs the
+//! tests within a single binary in parallel — so sharing a binary with, say,
+//! the budget-killed-spinner test would measure the spinner. `cargo test` runs
+//! test *binaries* one at a time, which is the isolation this needs.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -63,6 +71,9 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
     cond()
 }
 
+/// A host timer long enough that it will not fire during the measurement.
+/// Timers are host futures, not guest loops — which is the mechanism the whole
+/// claim rests on.
 const PARK_MS: u64 = 600_000;
 
 #[test]
@@ -82,6 +93,8 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
     });
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("parker", "v1"),
+        // Park on a host timer far beyond the test window. Timers are host
+        // futures, not guest loops — which is the whole mechanism.
         FakeBehaviour::program([Step::Park {
             imports: vec![("clock_deadline_in", PARK_MS)],
         }]),
@@ -96,7 +109,7 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
 
     // Baseline first: what does an *empty* cell cost? Reactor threads, the
     // timer wheel and the idle sweeper all run whether or not anything is
-    // parked, and claim C3 is about the *marginal* cost of an instance, not
+    // parked, and the claim is about the *marginal* cost of an instance, not
     // about the fixed cost of having a cell at all. Measuring the difference
     // also makes the test robust on a loaded build machine, where absolute
     // CPU readings drift.
@@ -148,7 +161,7 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
     let marginal_ns_per_s = (cpu_ns as f64 / secs - baseline_ns_per_s).max(0.0);
     let per_instance_us_per_s = marginal_ns_per_s / 1e3 / N as f64;
     eprintln!(
-        "empty cell {:.1} ms/s; {N} parked for {secs:.1}s -> {:.1} ms total          ({cores_used:.4} cores), marginal {per_instance_us_per_s:.2} µs/instance/s",
+        "parked: empty cell {:.1} ms/s; {N} parked for {secs:.1}s -> {:.1} ms total          ({cores_used:.4} cores), marginal {per_instance_us_per_s:.2} µs/instance/s",
         baseline_ns_per_s / 1e6,
         cpu_ns as f64 / 1e6,
     );
@@ -157,9 +170,9 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
     //
     // The marginal bound is the claim: a parked instance holds no thread and
     // no stack, so the only CPU it can cost is whatever the cell spends
-    // noticing it exists. At 10 µs/instance/s, G1's 5,000 instances would cost
-    // 5% of one core — visible but not structural. At 100 µs/s it would be
-    // half a core and the economics would be different.
+    // noticing it exists. The two bounds below are loose ceilings — they are
+    // there to fail when parking stops being free, not to describe how cheap
+    // it is.
     assert!(
         per_instance_us_per_s < 15.0,
         "each parked instance costs {per_instance_us_per_s:.1} µs/s of cell CPU; parking is not free"
@@ -172,7 +185,9 @@ fn parked_instance_cpu_use_stays_within_the_test_budget() {
 
     let meters = cell.meters(&module).unwrap();
     let cpu_ms = meters.cpu_ms();
-    eprintln!("tenant recorded {cpu_ms:.3} CPU-ms for {N} dispatches + {seconds}s of parking");
+    eprintln!(
+        "parked: tenant recorded {cpu_ms:.3} CPU-ms for {N} dispatches + {seconds}s of parking"
+    );
     assert!(
         cpu_ms < 200.0,
         "recorded {cpu_ms} CPU-ms; the park window must contribute nothing"

@@ -1,8 +1,4 @@
-//! `wisp.toml` (§9.5) as the CLI reads it.
-//!
-//! `wisp_abi::config::AppManifest` is the contract; this adds only the two
-//! things the *CLI* needs and the runtime does not: which hostnames to publish
-//! and where the built module is.
+//! Local application manifest parsing and validation limits.
 
 use serde::Deserialize;
 
@@ -41,6 +37,18 @@ impl CliManifest {
         Ok(Some((toml::from_str(&text)?, path)))
     }
 
+    /// The nearest `wisp.toml` at or above `start`.
+    pub fn find(start: &std::path::Path) -> anyhow::Result<Option<(Self, std::path::PathBuf)>> {
+        let mut dir = Some(start);
+        while let Some(d) = dir {
+            if let Some(found) = Self::load(d)? {
+                return Ok(Some(found));
+            }
+            dir = d.parent();
+        }
+        Ok(None)
+    }
+
     pub fn lifecycle(&self) -> Option<wisp_abi::config::HandlerLifecycle> {
         match self.handlers.lifecycle.as_deref() {
             Some("fresh") => Some(wisp_abi::config::HandlerLifecycle::Fresh),
@@ -50,8 +58,8 @@ impl CliManifest {
     }
 }
 
-/// A version id derived from the module bytes plus the wall clock: immutable
-/// (§9.4), content-anchored, and sortable. `v-<epoch-secs>-<hash8>`.
+/// A version id derived from the module bytes plus the wall clock: immutable,
+/// content-anchored, and sortable. `v-<epoch-secs>-<hash8>`.
 pub fn derive_version(module: Option<&[u8]>, now_s: u64) -> String {
     let h = match module {
         Some(bytes) => hex::encode(&blake3::hash(bytes).as_bytes()[..4]),

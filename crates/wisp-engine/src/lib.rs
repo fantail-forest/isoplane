@@ -2,24 +2,23 @@
 //!
 //! Everything that touches `wasmtime` lives here, so that the rest of the
 //! platform can talk about *instances* without talking about engines. It owns
-//! the three mechanisms the spec's economics rest on:
+//! the three mechanisms the platform's economics rest on:
 //!
-//! * **Templates** (§4.4) — a pre-initialized memory image, page-aligned and
-//!   mapped copy-on-write. Cold activation therefore skips assembly load,
-//!   JIT, static init and config parse, because all four already happened at
-//!   deploy time.
-//! * **Slots** (§6.2) — activation is `mmap MAP_PRIVATE` + seal globals +
-//!   bind the import vtable; reset is `madvise(MADV_DONTNEED)`. Marginal cost
-//!   per instance is dirty pages, which is the whole of G1.
-//! * **Budgets** (§6.4) — a dispatch is a synchronous call on a pool thread,
-//!   metered by `CLOCK_THREAD_CPUTIME_ID` and killed by the epoch counter.
-//!   Kills are abrupt by construction (§2.5.8): there is no unwinding.
+//! * **Templates** — a pre-initialized memory image, page-aligned and mapped
+//!   copy-on-write. Cold activation therefore skips assembly load, JIT, static
+//!   init and config parse, because all four already happened at deploy time.
+//! * **Slots** — activation is `mmap MAP_PRIVATE` + seal globals + bind the
+//!   import vtable; reset is `madvise(MADV_DONTNEED)`. Marginal cost per
+//!   instance is dirty pages, which is the whole density argument.
+//! * **Budgets** — a dispatch is a synchronous call on a pool thread, metered
+//!   by `CLOCK_THREAD_CPUTIME_ID` and killed by the epoch counter. Kills are
+//!   abrupt by construction: there is no unwinding.
 //!
 //! ## How the mechanisms map onto wasmtime
 //!
 //! The `mmap`/`madvise` sentences above are not something this crate does by
 //! hand. They are what wasmtime's **pooling allocator with `memory_init_cow`**
-//! does, and §6.2 says that design is "adopted wholesale". Concretely:
+//! does, adopted wholesale. Concretely:
 //! `WispEngine::activate` is a `Store` plus a `Linker::instantiate`, which maps
 //! the module's memory image `MAP_PRIVATE` into a pre-reserved slot;
 //! `InstanceOps::reset` drops the store, which returns the slot to the pool and
@@ -75,26 +74,25 @@ use template::TemplateInner;
 pub type Result<T> = anyhow::Result<T>;
 
 /// Engine-wide configuration. The feature flags here are not tuning knobs —
-/// they are rule **V2** of deploy-time validation (§4.3) enforced a second
+/// they are rule **V2** of deploy-time validation enforced a second
 /// time at the engine, so that a module which somehow slipped past the
 /// validator still cannot use threads, shared memory or atomics.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     /// Ceiling on concurrently resident instances in this cell.
     pub max_instances: u32,
-    /// Per-instance linear-memory ceiling (§5.5, §11.1). One of the three
-    /// factors in the structural residency bound (§11.2).
+    /// Per-instance linear-memory ceiling, from the plan limits. One of the
+    /// three factors in the structural residency bound.
     pub max_memory_bytes: u64,
-    /// §6.4: bumped every 200 µs by a watchdog thread. Exists to *deliver*
+    /// Bumped every `epoch_tick_us` by a watchdog thread. Exists to *deliver*
     /// deadline kills, not to deschedule-and-resume — the latter would need
     /// fibers, i.e. hidden native stacks, which invariant 3 forbids.
     pub epoch_tick_us: u64,
-    /// §6.2: the wasmtime instance-pooling design, adopted wholesale.
+    /// The wasmtime instance-pooling design, adopted wholesale.
     pub pooling: bool,
-    /// §8.4: Cranelift bounds-check masking / pointer sanitization on loads.
+    /// Cranelift bounds-check masking / pointer sanitization on loads.
     pub spectre_mitigations: bool,
-    /// Reserved guard region enabling elision of explicit bounds checks
-    /// (§8.2.1).
+    /// Reserved guard region enabling elision of explicit bounds checks.
     ///
     /// Dead `PROT_NONE` space placed *after* each slot's linear memory, never
     /// mapped and never usable by a guest. What it buys is codegen: Cranelift
@@ -153,7 +151,7 @@ impl Default for EngineConfig {
 /// A configured wasmtime engine plus its epoch watchdog and AOT code cache.
 ///
 /// Code pages map read-only and are shared by every instance of a module on
-/// the machine, so per-instance code cost is zero (§4.4).
+/// the machine, so per-instance code cost is zero.
 pub struct WispEngine {
     inner: Arc<EngineInner>,
 }
@@ -162,8 +160,8 @@ pub(crate) struct EngineInner {
     pub(crate) wasmtime: wasmtime::Engine,
     pub(crate) cfg: EngineConfig,
     /// Built once. A `Linker<T>` is reusable across every store of the same
-    /// `T`, and the per-instance context it binds (§6.2 step 3) lives in the
-    /// store data rather than in the linker.
+    /// `T`, and the per-instance context it binds lives in the store data
+    /// rather than in the linker.
     pub(crate) linker: Linker<StoreState>,
     pub(crate) watchdog: watchdog::Watchdog,
     pub(crate) fingerprint: String,
@@ -180,7 +178,7 @@ impl WispEngine {
         })
     }
 
-    /// Cranelift compile. Treated as parsing hostile input (§8.7) — the
+    /// Cranelift compile. Treated as parsing hostile input — the
     /// caller is expected to have run this inside the resource-capped
     /// validator sandbox.
     pub fn load_template(&self, template_wasm: &[u8]) -> Result<Template> {
@@ -232,19 +230,14 @@ impl WispEngine {
     /// memory. `Module::deserialize_file` requires the artifact to start at
     /// offset 0 of the file it maps.
     ///
-    /// Splitting them is worth a two-file artifact. Measured on the C# bench
-    /// guest's pre-initialized template (a 56 MB artifact, of which 53 MB is
-    /// the memory image and almost none of it is ever read):
-    ///
-    /// | arrival | resident per template | memfd shmem per template |
-    /// |---|---:|---:|
-    /// | `deserialize(&[u8])` | 55,105 kB | 53,084,160 B |
-    /// | `deserialize_file(path)` | 1,262 kB | **0** |
-    ///
-    /// The memfd goes to zero because wasmtime sources §6.2's CoW image from
-    /// the file mapping rather than minting one, and per-instance sharing is
-    /// unchanged by that: 44.3 kB/instance marginal PSS over 400 live
-    /// instances, on both paths.
+    /// Splitting them is worth a two-file artifact. On the C# bench guest's
+    /// pre-initialized template — most of which is memory image that is never
+    /// read — `deserialize(&[u8])` makes the whole artifact resident and mints
+    /// a memfd the size of the image, while `deserialize_file(path)` makes
+    /// almost none of it resident and mints no memfd at all. The memfd goes to
+    /// zero because wasmtime sources the CoW image from the file mapping
+    /// rather than minting one, and per-instance sharing is unchanged by that:
+    /// the same marginal PSS per instance on both paths.
     pub fn serialize_parts(&self, t: &Template) -> Result<(Vec<u8>, Vec<u8>)> {
         let cwasm = t
             .inner
@@ -298,11 +291,11 @@ impl WispEngine {
     /// The counterpart to [`WispEngine::serialize_parts`], and the load path a
     /// cell should use. `deserialize` copies the whole artifact into anonymous
     /// memory and makes every byte of it resident whether or not anything ever
-    /// executes it; this maps the file, so the code and §6.2's memory image are
+    /// executes it; this maps the file, so the code and the memory image are
     /// page cache — demand-paged, evictable under pressure, and shared by every
     /// mapping of the same artifact rather than duplicated per tenant.
     ///
-    /// The numbers, and the reason this is not merely tidier, are on
+    /// The reason this is not merely tidier is on
     /// [`WispEngine::serialize_parts`].
     ///
     /// # Safety
@@ -354,14 +347,14 @@ impl WispEngine {
         if meta.engine_fingerprint != self.inner.fingerprint {
             bail!(
                 "template artifact was built by engine {} but this cell is {} — artifacts are \
-                 content-addressed by (module hash, engine version, µarch) (§4.4)",
+                 content-addressed by (module hash, engine version, µarch)",
                 meta.engine_fingerprint,
                 self.inner.fingerprint
             );
         }
         if meta.abi_rev != wisp_abi::ABI_REV {
             bail!(
-                "template artifact is ABI rev {} but this engine is rev {} (§6.6, §9.4)",
+                "template artifact is ABI rev {} but this engine is rev {}",
                 meta.abi_rev,
                 wisp_abi::ABI_REV
             );
@@ -369,7 +362,7 @@ impl WispEngine {
         Ok(())
     }
 
-    /// The artifact-cache key for a template on this engine (§4.4, §9.3):
+    /// The artifact-cache key for a template on this engine:
     /// `(module hash, engine version, µarch)`.
     pub fn artifact_key(&self, t: &Template) -> String {
         format!("{}-{}", t.hash.hex(), self.inner.fingerprint)
@@ -387,10 +380,11 @@ impl WispEngine {
     /// compiled module before returning.
     ///
     /// Dropping it is the point. Cranelift does not give its working set back:
-    /// compiling the C# bench guest's pre-initialized template leaves ~27 MB of
-    /// anonymous memory per module resident in the process **after the template
-    /// is dropped**, and `malloc_trim` recovers none of it. A process that
-    /// compiles N templates carries N times that for its whole life. So the
+    /// compiling the C# bench guest's pre-initialized template leaves tens of
+    /// megabytes of anonymous memory per module resident in the process
+    /// **after the template is dropped**, and `malloc_trim` recovers none of
+    /// it. A process that compiles N templates carries N times that for its
+    /// whole life. So the
     /// intended caller is a *short-lived* one — `wispd --precompile`, or a
     /// deploy step — after which the cell maps the result and never runs the
     /// compiler at all.
@@ -443,13 +437,13 @@ impl WispEngine {
         Ok((t, compiled))
     }
 
-    /// §6.2 step 1-3: map the template CoW, seal globals/tables, bind the
-    /// import vtable to this instance's tenant context.
+    /// Map the template CoW, seal globals/tables, bind the import vtable to
+    /// this instance's tenant context.
     ///
-    /// Steps 1 and 2 are performed by `Linker::instantiate` under
+    /// The first two are performed by `Linker::instantiate` under
     /// `memory_init_cow` + the pooling allocator: the memory image is mapped
     /// `MAP_PRIVATE` into a pre-reserved slot and globals and tables are
-    /// initialized from the module's sealed post-init values. Step 3 is the
+    /// initialized from the module's sealed post-init values. The third is the
     /// `HostBindings` box landing in this store's data, which is where the
     /// meters and capability config for *this* tenant live.
     pub fn activate(&self, t: &Template, b: Box<dyn HostBindings>) -> Result<Instance> {
@@ -471,7 +465,7 @@ impl WispEngine {
     }
 
     /// Epoch bumps the watchdog has actually published. Reported because the
-    /// achieved tick is not the configured one — see `docs/spike-findings.md`.
+    /// achieved tick is not the configured one.
     pub fn epoch_ticks(&self) -> u64 {
         self.inner.watchdog.shared().ticks()
     }
@@ -485,7 +479,7 @@ impl WispEngine {
         table_names: Vec<String>,
     ) -> Result<Template> {
         // Instantiate once to read back the pre-initialized image. This is the
-        // baseline §6.6 diffs against and the oracle `reset` is checked
+        // baseline the page-diff runs against and the oracle `reset` is checked
         // against; it is *not* what activation copies from, which is the CoW
         // mapping wasmtime already holds.
         let mut probe_state =
@@ -495,7 +489,7 @@ impl WispEngine {
         store.limiter(|d| &mut d.limits);
         store.set_epoch_deadline(u64::MAX / 2);
 
-        // §4.3: compose the WASI PAL adapter over whatever `wasi:*` the module
+        // Compose the WASI PAL adapter over whatever `wasi:*` the module
         // declares, before anything tries to instantiate it. A module that
         // declares none — every Rust-SDK guest — takes the engine's shared
         // linker unchanged and pays nothing.
@@ -508,7 +502,7 @@ impl WispEngine {
         let (pal_linker, pal_composed) = if needs_pal {
             let mut l = self.inner.linker.clone();
             let composed = pal::link(&mut l, &module).context(
-                "composing the WASI PAL adapter (§4.3); an import outside \
+                "composing the WASI PAL adapter; an import outside \
                  `wisp_abi::pal::PAL_IMPORTS` is a V1 rejection, not something the linker \
                  may improvise",
             )?;
@@ -533,8 +527,8 @@ impl WispEngine {
             .get_memory(&mut store, guest_exports::MEMORY)
             .with_context(|| format!("template does not export `{}`", guest_exports::MEMORY))?;
         // Scanned into runs rather than copied: see `image::MemoryImage`. The
-        // dense borrow lives only for this statement, so a 53 MB .NET template
-        // is never *held* densely, only read once.
+        // dense borrow lives only for this statement, so a .NET template's
+        // whole declared span is never *held* densely, only read once.
         let image = Arc::new(crate::image::MemoryImage::from_dense(memory.data(&store)));
         let memory_pages = memory.size(&store) as u32;
 
@@ -640,7 +634,7 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 /// Bindings for the probe instantiation in `load_template`. Nothing may be
 /// called: reading the template image must not have side effects, and a
 /// template whose *instantiation* calls an import is a template that would bake
-/// a host response into every clone (§4.4).
+/// a host response into every clone.
 struct DenyAll;
 
 impl HostBindings for DenyAll {
@@ -664,10 +658,10 @@ pub(crate) fn instantiate(
 ) -> Result<Live> {
     let mut store = Store::new(&engine.wasmtime, data);
 
-    // §5.5/§11.1: the plan's linear-memory ceiling.
+    // The plan's linear-memory ceiling.
     store.limiter(|d| &mut d.limits);
 
-    // §6.6 "checked, not assumed". The depth behind `is_parked` is maintained
+    // Checked, not assumed: the depth behind `is_parked` is maintained
     // by wasmtime's own transition hook, so it reflects the engine's view of
     // the native stack rather than the engine embedder's bookkeeping around a
     // call. It costs a closure call per host/wasm transition, which is a real
@@ -685,18 +679,18 @@ pub(crate) fn instantiate(
         Ok(())
     });
 
-    // §4.5: "the CPU-budget kill (thread-clock metered, epoch-delivered)".
+    // The CPU-budget kill is thread-clock metered and epoch-delivered.
     // Epochs are wall-clock ticks and cannot themselves express a CPU budget;
     // what they give us is a periodic, guest-preempting callback in which the
     // *thread* clock is the thing compared. Under preemption a dispatch may
     // burn many epochs while off-CPU and is not killed for it, which is the
     // same reason wall time does not consume the CPU budget.
     //
-    // §6.4's two-phase kill lives in these twenty lines, and the ORDER of the
+    // The two-phase kill lives in these twenty lines, and the ORDER of the
     // two comparisons is the whole guarantee:
     //
     //   1. **B+G first, unconditionally.** The hard deadline ignores the
-    //      runtime layer's *unsafe-to-trap* bit (§4.6) and ignores whether
+    //      runtime layer's *unsafe-to-trap* bit and ignores whether
     //      grace was ever successfully entered. A guest that pins the bit, or
     //      one whose host declines to offer grace at all, still dies here.
     //      That is what makes the grace window safe to offer.
@@ -741,7 +735,7 @@ pub(crate) fn instantiate(
             // epoch checks are emitted into *wasm* code, not into host
             // functions — so that branch is unreachable in practice. If it
             // ever is reached, leaving `grace_at_ns` unset simply retries on
-            // the next tick, 200 µs later, well inside G.
+            // the next tick, well inside G.
         }
 
         if let Some(w) = m.wall0 {
@@ -765,7 +759,7 @@ pub(crate) fn instantiate(
         .unwrap_or(&engine.linker)
         .instantiate(&mut store, &t.module)
         .map_err(anyhow::Error::from)
-        .context("activating template (an import outside the table fails here — §4.3 V1)")?;
+        .context("activating template (an import outside the table fails here — V1)")?;
 
     // One pass over the export table; the hot path must not do string lookups.
     let mut memory = None;
@@ -793,10 +787,10 @@ pub(crate) fn instantiate(
     }
 
     let memory = memory.with_context(|| {
-        format!("module does not export `{}` (§5.2 required)", guest_exports::MEMORY)
+        format!("module does not export `{}` (required)", guest_exports::MEMORY)
     })?;
     let want = |o: Option<wasmtime::Func>, n: &str| -> Result<wasmtime::Func> {
-        o.with_context(|| format!("module does not export `{n}` (§5.2 required)"))
+        o.with_context(|| format!("module does not export `{n}` (required)"))
     };
     let f_alloc = want(f_alloc, guest_exports::ALLOC)?
         .typed::<(i32, i32), i32>(&store)
@@ -850,54 +844,51 @@ pub(crate) fn instantiate(
 /// What the host must be able to do to a live instance. Kept as a trait so
 /// `wisp-host` can be written and tested against a fake engine.
 pub trait InstanceOps {
-    /// §6.2 step 4. Runs to completion, park, or kill.
+    /// Run a dispatch to completion, park, or kill.
     fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome;
-    /// Deliver a completed host future (§5.2). Order between distinct futures
-    /// is unspecified by contract (§5.4).
+    /// Deliver a completed host future. Order between distinct futures is
+    /// unspecified by contract.
     fn wake(&mut self, future: u64, res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome;
-    /// §5.5. Called before hibernation capture so the guest GC can compact
+    /// Called before hibernation capture so the guest GC can compact
     /// into low addresses and zero the freed tail — zeroed pages compress out
     /// of the delta.
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
-    /// §6.2 reset: `madvise(MADV_DONTNEED)` restores template contents in
+    /// Reset: `madvise(MADV_DONTNEED)` restores template contents in
     /// microseconds and globals/tables are re-sealed.
     fn reset(&mut self) -> Result<()>;
     /// True only when this instance came to rest by returning `pending` and
-    /// its WASM stack is empty (§6.6: "checked, not assumed").
+    /// its WASM stack is empty — checked, not assumed.
     ///
     /// This is invariant 3's predicate — *suspension implies an empty stack* —
-    /// and it is deliberately about **suspension**, not about eligibility. It
-    /// is what claim C4 measures.
+    /// and it is deliberately about **suspension**, not about eligibility.
     fn is_parked(&self) -> bool;
 
-    /// True when this instance is at a serializable point and may be captured
-    /// (§6.6, and normative since spec v1.4: snapshot eligibility is
-    /// `SP == base`, the shadow stack pointer at its base — an empty stack —
-    /// and nothing about which return value produced it. Appendix C F1 cites
-    /// this prototype for the finding.)
+    /// True when this instance is at a serializable point and may be captured:
+    /// the shadow stack pointer is at its base — an empty stack — and nothing
+    /// about which return value produced it.
     ///
     /// Distinct from [`InstanceOps::is_parked`], and the distinction cost a
-    /// real bug. §6.6 says capture is *"eligible only when Parked (empty stack
-    /// — checked, not assumed)"*, and the parenthetical is the definition:
-    /// what a capture depends on is the stack being empty, not how the
-    /// instance got there. An instance that returned `done` also has an empty
+    /// real bug. Capture is eligible only on an empty stack, checked rather
+    /// than assumed, and that is the whole of the definition: what a capture
+    /// depends on is the stack being empty, not how the instance got there.
+    /// An instance that returned `done` also has an empty
     /// stack — in fact it is the *easier* case, because there are no pending
     /// futures for the capture sequence to quiesce first.
     ///
-    /// Requiring `pending` excluded exactly the instances G3 is about: a
-    /// Durable Instance that answers a message and goes idle would never have
-    /// been capturable, so "a DI parked beyond `hibernate_after` is captured
-    /// with no tenant involvement" (§6.6) would have been true only of DIs
+    /// Requiring `pending` excluded exactly the instances hibernation is
+    /// about: a Durable Instance that answers a message and goes idle would
+    /// never have been capturable, so "a DI parked beyond `hibernate_after` is
+    /// captured with no tenant involvement" would have been true only of DIs
     /// that happened to be waiting on something.
     ///
     /// `Trapped` and `BudgetKill` are excluded, and they are the whole reason
-    /// this is not simply "the stack is empty": §2.5.8 kills a dispatch with no
-    /// unwinding, so the memory of a killed instance is arbitrary — storing it
-    /// would persist a state no execution ever produced. That is exactly the
-    /// line `Completion::instance_survives` already draws.
+    /// this is not simply "the stack is empty": a hard kill unwinds nothing, so
+    /// the memory of a killed instance is arbitrary — storing it would persist
+    /// a state no execution ever produced. That is exactly the line
+    /// `Completion::instance_survives` already draws.
     ///
     /// Implementations MUST still check the stack rather than infer it from
-    /// the completion; §6.6 is explicit that this is checked, not assumed.
+    /// the completion. Checked, not assumed.
     fn is_capture_eligible(&self) -> bool;
     fn memory(&mut self) -> &mut [u8];
     fn memory_len(&self) -> usize;
@@ -907,8 +898,8 @@ pub trait InstanceOps {
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> Result<()>;
 }
 
-/// Classification of a completed dispatch, for the tenant-facing contract in
-/// §13 and the hang breaker in §6.4.
+/// Classification of a completed dispatch, for the tenant-facing outcome
+/// codes and the hang breaker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Completion {
     /// Guest returned `done`.
@@ -917,17 +908,17 @@ pub enum Completion {
     Parked,
     /// Guest faulted. Instance discarded; never retried on the same memory.
     Trapped,
-    /// §6.4's **hard** kill: still executing at B+G, terminated with no
-    /// unwinding whatsoever (§2.5.8). The instance is **tombstoned** — its
-    /// memory is a state no execution ever produced.
+    /// The **hard** kill: still executing at B+G, terminated with no
+    /// unwinding whatsoever. The instance is **tombstoned** — its memory is a
+    /// state no execution ever produced.
     BudgetKill,
-    /// §6.4's **clean** kill: the dispatch entered grace and *returned* inside
+    /// The **clean** kill: the dispatch entered grace and *returned* inside
     /// it. `finally` ran, the instance is consistent, the slot is reusable,
     /// and the overage CPU is recorded.
     ///
-    /// The request still fails with `budget_exceeded` (§13) — a clean kill is
-    /// a kill. What it is not is a tombstone, and it does not count toward the
-    /// hang breaker: it is the budget working as designed (§6.4).
+    /// The request still fails with `budget_exceeded` — a clean kill is a
+    /// kill. What it is not is a tombstone, and it does not count toward the
+    /// hang breaker: it is the budget working as designed.
     CleanKill,
 }
 
@@ -941,15 +932,15 @@ impl Completion {
     }
     /// Whether the instance may be reused. A hard-killed or trapped instance
     /// may not: its memory is arbitrary and no cleanup ran. A **clean**-killed
-    /// one may — that is the entire point of the grace window (§6.4).
+    /// one may — that is the entire point of the grace window.
     pub fn instance_survives(self) -> bool {
         matches!(self, Completion::Done | Completion::Parked | Completion::CleanKill)
     }
-    /// Whether §6.4 requires this completion to leave a **tombstone**: a
-    /// hard-killed instance may be internally inconsistent because the trap
-    /// landed at an arbitrary back-edge — mid-collection, mid-queue-mutation,
-    /// mid-frame — and the engine does not poison a store after a trap
-    /// (Appendix C, F2), so the platform must.
+    /// Whether this completion must leave a **tombstone**: a hard-killed
+    /// instance may be internally inconsistent because the trap landed at an
+    /// arbitrary back-edge — mid-collection, mid-queue-mutation, mid-frame —
+    /// and the engine does not poison a store after a trap, so the platform
+    /// must.
     pub fn tombstones(self) -> bool {
         matches!(self, Completion::Trapped | Completion::BudgetKill)
     }

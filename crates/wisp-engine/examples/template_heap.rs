@@ -426,7 +426,7 @@ fn main() -> anyhow::Result<()> {
     println!();
     println!("  WHERE THE MARGINAL RSS LIVES (smaps, n={n_lo}..{n_hi}, kB per template):");
     println!(
-        "    memfd (wasmtime CoW memory image)   {:>9.1}",
+        "    memfd (wasmtime CoW memory image)         {:>9.1}",
         v_hi.memfd_kb.saturating_sub(v_lo.memfd_kb) as f64 / d
     );
     println!(
@@ -489,7 +489,7 @@ fn main() -> anyhow::Result<()> {
         fd_bytes as f64 / per,
         fd_blocks as f64 / per,
     );
-    println!("      file-allocation counters are separate from the process RSS counters ");
+    println!("      file-allocation counters are separate from the process RSS counters");
     drop(cwasm);
 
     println!();

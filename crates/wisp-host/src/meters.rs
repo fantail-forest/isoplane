@@ -373,11 +373,7 @@ mod tests {
         );
         let m = Meters::new();
         m.record_interval(iv.try_elapsed_ns());
-        assert_eq!(
-            m.cpu_ns(),
-            0,
-            "an unmeasured interval must not be invented"
-        );
+        assert_eq!(m.cpu_ns(), 0, "an unmeasured interval must not be invented");
         assert_eq!(m.incomplete_intervals(), 1, "...and must not vanish either");
 
         FORCE_CLOCK_FAILURE.with(|f| f.set(false));

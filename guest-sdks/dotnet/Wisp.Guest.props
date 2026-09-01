@@ -2,27 +2,27 @@
   The critical build settings every C# WISP guest needs, in one place.
 
   Import this from a guest's .csproj. It exists because these settings are not
-  stylistic: three of them decide whether NativeAOT-LLVM produces a flat core
-  module at all, and the two linker arguments decide whether the module passes
-  validator rule V3. Before this file each guest carried its own copy, so a
-  correction had to be made once per guest and a guest that missed one failed
-  in a way that names nothing useful.
+  stylistic: some of them decide whether NativeAOT-LLVM produces a flat core
+  module at all, and the max-memory linker argument decides whether the module
+  passes the validator's memory-ceiling check. Before this file each guest
+  carried its own copy, so a correction had to be made once per guest and a
+  guest that missed one failed in a way that names nothing useful.
 
   Guest-specific settings — AssemblyName, the entrypoint, embedded resources —
   stay in the guest's own .csproj.
 -->
 <Project>
   <PropertyGroup>
-    <!-- Pinned deliberately. The experimental feed publishes several builds a
-         week and they are not all mutually compatible; an unpinned float here
-         is a build that breaks on someone else's machine on a different day.
-         It lives here rather than in a Directory.Build.props because this file
-         is imported by path: a directory-scoped one only reaches guests that
-         happen to sit underneath it. -->
+    <!-- Pinned deliberately: this is a preview package off an experimental
+         feed, so an unpinned float here is a build that breaks on someone
+         else's machine on a different day. It lives here rather than in a
+         Directory.Build.props because this file is imported by path: a
+         directory-scoped one only reaches guests that happen to sit
+         underneath it. -->
     <ILCompilerVersion Condition="'$(ILCompilerVersion)' == ''">10.0.0-rc.1.26357.1</ILCompilerVersion>
     <TargetFramework>net10.0</TargetFramework>
     <!-- library, not Exe: a WISP guest is a reactor with named exports, not a
-         command. Gets us `-mexec-model=reactor` and `_initialize` (§4.4). -->
+         command. Gets us `-mexec-model=reactor` and `_initialize`. -->
     <OutputType>library</OutputType>
     <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
     <RootNamespace>Wisp</RootNamespace>
@@ -37,7 +37,8 @@
     <LinkerFlavor>lld</LinkerFlavor>
     <DebugType>none</DebugType>
 
-    <!-- §4.2's feature switches, verbatim. -->
+    <!-- Feature switches: strip what a guest cannot use, so the trimmer has
+         less to keep and the module is smaller. -->
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EventSourceSupport>false</EventSourceSupport>
@@ -51,13 +52,13 @@
     <IlcFoldVTables>true</IlcFoldVTables>
     <StackTraceSupport>false</StackTraceSupport>
 
-    <!-- §4.3 rule V3 rejects a declared memory maximum above the plan's
+    <!-- The validator rejects a declared memory maximum above the plan's
          ceiling, and `wisp_abi::config` caps plans at 64 / 128 / 512 MB. The
          toolchain's own link line declares 2 GiB, so this must be set or the
-         module is rejected on every plan. 134217728 is §5.5's 128 MB default
-         (the Standard plan); build with -p:WispMemoryMaxBytes=67108864 to
-         target Free. Note that .NET runtime startup alone reserves ~50 MB, so
-         a Free-plan guest runs with very little headroom. -->
+         module is rejected on every plan. 134217728 is the 128 MB Standard
+         plan; build with -p:WispMemoryMaxBytes=67108864 to target Free. .NET
+         runtime startup reserves a substantial slice of that on its own, so a
+         Free-plan guest runs with little headroom. -->
     <WispMemoryMaxBytes Condition="'$(WispMemoryMaxBytes)' == ''">134217728</WispMemoryMaxBytes>
   </PropertyGroup>
 
@@ -67,18 +68,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Exported so the host harness can assert invariant 3 numerically:
-         the shadow stack pointer at the moment `wisp_handle` returns `pending`
-         must equal its value before the dispatch started. -->
+    <!-- Exported so the host harness can assert "suspension implies an empty
+         stack" numerically: the shadow stack pointer at the moment
+         `wisp_handle` returns `pending` must equal its value before the
+         dispatch started. -->
     <LinkerArg Include="-Wl,--export=__stack_pointer" />
 
-    <!-- §4.3 rule V3 rejects "a declared memory maximum exceeding the plan's
-         ceiling". NativeAOT-LLVM's own link line passes
-         a 2 GiB max-memory, which exceeds every plan in
-         `wisp-abi::config` (64/128/512 MB) — so the stock toolchain output is
-         V3-rejected as built. wasm-ld honours the last max-memory flag, and
-         ours is appended after the toolchain's. 134217728 = the 128 MB
-         standard-plan ceiling of §5.5. -->
+    <!-- The validator rejects a declared memory maximum exceeding the plan's
+         ceiling. NativeAOT-LLVM's own link line passes a 2 GiB max-memory,
+         which exceeds every plan in `wisp-abi::config` (64/128/512 MB) — so
+         the stock toolchain output is rejected as built. wasm-ld honours the
+         last max-memory flag, and ours is appended after the toolchain's.
+         134217728 = the 128 MB Standard-plan ceiling. -->
     <LinkerArg Include="-Wl,--max-memory=$(WispMemoryMaxBytes)" />
 
     <!-- The PAL shim, compiled by build.sh with the WASI SDK's clang. It
@@ -90,11 +91,170 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The runtime cannot read the environment (§2.5.4: no ambient state,
-         and the host stubs `wasi:cli/environment` to empty), so every GC knob
-         has to be baked in at build time. -->
+    <!-- The runtime cannot read the environment — there is no ambient state,
+         and the PAL answers `wasi:cli/environment` with an empty list — so
+         every GC knob has to be baked in at build time. -->
     <RuntimeHostConfigurationOption Include="System.GC.Server" Value="false" Trim="true" />
     <RuntimeHostConfigurationOption Include="System.GC.Concurrent" Value="false" Trim="true" />
   </ItemGroup>
+
+  <!--
+    ===========================================================================
+    The build that produces the module is the build that judges it.
+    ===========================================================================
+
+    Without this, the first thing that ever inspects a C# guest's module is
+    `wisp deploy`, and the loop is edit -> build -> deploy -> rejected. The
+    rules are not obscure: rule V3 alone rejects the stock NativeAOT-LLVM
+    output on every plan (see WispMemoryMaxBytes above), so "my module is
+    invalid" is a normal state to be in, not an exotic one, and it should cost
+    a build rather than a round trip.
+
+    WHERE IT HANGS. `LinkNative` is the ILCompiler target that runs wasm-ld;
+    `$(NativeBinary)` is its output and is the exact module the publish
+    pipeline then copies. Anything earlier than the linker has no module to
+    look at.
+
+    NOTE THAT THIS IS THE PUBLISH PIPELINE, NOT `Build`. NativeAOT compilation
+    hangs off `Publish` (`NativeCompilationDuringPublish` defaults true in the
+    ILCompiler package), so `dotnet build` on a guest compiles to IL and stops
+    — there is no .wasm at all for a `Build`-time target to check. Moving ILC
+    into `Build` would validate a module at the price of running the whole
+    NativeAOT compile on every inner-loop build, which is a bad trade; the
+    guest build scripts run `dotnet publish` and that is where the check
+    belongs. `WispSaysBuildDoesNotProduceAModule` below makes sure a developer
+    who runs plain `dotnet build` is told that rather than left to infer a
+    clean bill of health from a green build.
+
+    WHAT IT RUNS. `wisp doctor`, which exits 2 when the control plane would
+    reject the module. Shelling out to the CLI rather than reimplementing the
+    rules here is the whole point: `wisp-control::validate` is the authority,
+    and a second implementation living in MSBuild would be a weaker copy that
+    drifts.
+
+    WHEN THE CLI IS NOT THERE. Warning, not error, and not silence. The three
+    outcomes are deliberately distinct:
+
+      * the module was judged and rejected     -> error   WISP0001
+      * no CLI was found to judge it with      -> warning WISP0002
+      * the CLI was found and could not answer -> warning WISP0003
+
+    Errors are verdicts; warnings are the absence of one. Failing the build
+    because a developer has the SDK and not yet the CLI would punish them for
+    a state that lasts five minutes, and the build did produce a module.
+    Passing silently would be worse than having no hook, because a green build
+    would then mean "valid" to everyone who has the CLI and "unknown" to
+    everyone who does not. A warning says which of those you got, and
+    `-warnaserror:WISP0002` makes it a hard gate for anyone (CI) who wants
+    one.
+
+    OPT-OUT: `-p:WispValidate=false`.
+  -->
+  <PropertyGroup>
+    <WispValidate Condition="'$(WispValidate)' == ''">true</WispValidate>
+
+    <!-- Which `wisp` to run, most explicit first.
+
+         The CARGO_TARGET_DIR / repo-root steps exist because this SDK is also
+         imported by the guests inside the platform's own checkout, where the
+         CLI is a build output rather than something installed: without them
+         the hook would warn on every in-repo guest build, which is the state
+         it exists to end. Outside a checkout both conditions are false —
+         there is no Cargo.toml above a NuGet-restored SDK — and it is PATH. -->
+    <WispCli Condition="'$(WispCli)' == '' AND '$(WISP_CLI)' != ''">$(WISP_CLI)</WispCli>
+    <WispCli Condition="'$(WispCli)' == '' AND '$(CARGO_TARGET_DIR)' != '' AND Exists('$(CARGO_TARGET_DIR)/release/wisp')">$(CARGO_TARGET_DIR)/release/wisp</WispCli>
+    <_WispCheckout Condition="'$(WispCli)' == ''">$([MSBuild]::GetDirectoryNameOfFileAbove('$(MSBuildThisFileDirectory)', 'Cargo.toml'))</_WispCheckout>
+    <WispCli Condition="'$(WispCli)' == '' AND '$(_WispCheckout)' != '' AND Exists('$(_WispCheckout)/target/release/wisp')">$(_WispCheckout)/target/release/wisp</WispCli>
+    <WispCli Condition="'$(WispCli)' == ''">wisp</WispCli>
+
+    <!-- Empty by default: `wisp doctor` finds the app's `wisp.toml` by walking
+         up from the module, and the plan it declares is the one deploy will
+         judge against. Set this only when the module is nowhere near its
+         manifest. It is NOT defaulted from WispMemoryMaxBytes: that property
+         says what the module declares, and the plan says what it is allowed to
+         declare — collapsing the two would make the check compare a number
+         against itself. -->
+  </PropertyGroup>
+
+  <Target Name="WispValidateModule"
+          AfterTargets="LinkNative"
+          Condition="'$(WispValidate)' != 'false' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
+
+    <PropertyGroup>
+      <!-- Absolute, because every path in this target ends up in a message
+           somebody is meant to paste back into a shell, and `$(NativeBinary)`
+           is relative to the project directory rather than to wherever they
+           are standing. -->
+      <_WispModule>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(NativeBinary)'))))</_WispModule>
+      <_WispDoctor>&quot;$(WispCli)&quot; doctor &quot;$(_WispModule)&quot; --no-color</_WispDoctor>
+    </PropertyGroup>
+
+    <!-- IgnoreExitCode because the exit code IS the result: 0 accepted, 2
+         rejected, anything else (127 / 9009 = no such command) not an answer.
+         IgnoreStandardErrorWarningFormat so doctor's own prose is never
+         re-parsed into MSBuild diagnostics we did not write. -->
+    <Exec Command="$(_WispDoctor)"
+          IgnoreExitCode="true"
+          ContinueOnError="true"
+          IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low"
+          ConsoleToMSBuild="true">
+      <Output TaskParameter="ExitCode" PropertyName="_WispDoctorExit" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_WispDoctorSaid" />
+    </Exec>
+
+    <!-- The whole report, but only when there is something to read in it. -->
+    <Message Condition="'$(_WispDoctorExit)' != '0'" Importance="high" Text="@(_WispDoctorSaid, '%0a')" />
+
+    <!-- One line on the happy path, carrying the plan the verdict was reached
+         against. A check nobody can see run is one everybody assumes is not
+         running, and the plan is half the verdict: the same module passes on
+         standard and fails on free. -->
+    <ItemGroup Condition="'$(_WispDoctorExit)' == '0'">
+      <_WispPlanLine Include="@(_WispDoctorSaid)"
+                     Condition="$([System.String]::Copy('%(Identity)').Contains('judged against'))" />
+    </ItemGroup>
+    <Message Condition="'$(_WispDoctorExit)' == '0'" Importance="high"
+             Text="wisp: $(TargetName).wasm passes validator rules V1-V4 — @(_WispPlanLine->Trim(), '; ')" />
+
+    <!-- MSBuild's end-of-build summary reprints Error text and nothing else,
+         so the violation has to be IN it. These are doctor's own failing
+         lines. -->
+    <ItemGroup Condition="'$(_WispDoctorExit)' == '2'">
+      <_WispVerdict Include="@(_WispDoctorSaid)"
+                    Condition="$([System.String]::Copy('%(Identity)').Contains('✗'))" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(_WispDoctorExit)' == '2' AND '@(_WispVerdict)' == ''">
+      <!-- Belt and braces: an error that names nothing is the failure mode
+           this target exists to replace. -->
+      <_WispVerdict Include="see the report above" />
+    </ItemGroup>
+
+    <Error Condition="'$(_WispDoctorExit)' == '2'"
+           Code="WISP0001"
+           File="$(MSBuildProjectFullPath)"
+           Text="the control plane would reject $(_WispModule): @(_WispVerdict->Trim(), ' / ') — reproduce with `$(WispCli) doctor $(_WispModule)`; skip this check with -p:WispValidate=false" />
+
+    <Warning Condition="'$(_WispDoctorExit)' == '127' OR '$(_WispDoctorExit)' == '9009'"
+             Code="WISP0002"
+             File="$(MSBuildProjectFullPath)"
+             Text="the module was NOT validated: no `wisp` CLI at '$(WispCli)'. $(_WispModule) was built but nothing checked it against validator rules V1-V4, so a violation will first surface at `wisp deploy`. Install the CLI (`cargo build --release -p wisp-cli`) or set -p:WispCli=/path/to/wisp; -p:WispValidate=false accepts the gap deliberately." />
+
+    <Warning Condition="'$(_WispDoctorExit)' != '0' AND '$(_WispDoctorExit)' != '2' AND '$(_WispDoctorExit)' != '127' AND '$(_WispDoctorExit)' != '9009'"
+             Code="WISP0003"
+             File="$(MSBuildProjectFullPath)"
+             Text="the module was NOT validated: `$(WispCli) doctor` exited $(_WispDoctorExit) without reaching a verdict (its output is above). $(_WispModule) is unchecked." />
+  </Target>
+
+  <!-- `dotnet build` on a guest is IL only; see the note above WispValidateModule.
+       A green build must not read as a clean bill of health. `_IsPublishing` is
+       set by the CLI for `dotnet publish` and empty for `dotnet build`. -->
+  <Target Name="WispSaysBuildDoesNotProduceAModule"
+          AfterTargets="Build"
+          Condition="'$(WispValidate)' != 'false' AND '$(_IsPublishing)' != 'true' AND '$(RuntimeIdentifier)' == 'wasi-wasm'">
+    <Message Importance="high"
+             Text="wisp: this was `dotnet build` — it compiled to IL and produced no .wasm, so nothing was validated. `dotnet publish` (what the guest's build.sh runs) is what NativeAOT-LLVM links a module in, and where rules V1-V4 are checked." />
+  </Target>
 
 </Project>

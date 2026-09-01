@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build the §4.6 layered-runtime fixtures.
+# Build the layered-runtime fixtures.
 #
-# Compiled on the HOST (docs/AGENT-RULES.md rule 10: compile on the host,
-# measure in the sandbox). Nothing here is timed.
+# Compiled on the HOST; measurement happens in the sandbox. Nothing here is
+# timed.
 #
 # Three artifact families land in guests/layered/out:
 #
-#   base.wasm             the shared runtime layer (§4.6). Linked with
+#   base.wasm             the shared runtime layer. Linked with
 #                         --initial-memory=8388608, which reserves the window
 #                         [4 MiB, 8 MiB) for an app layer's static data and
 #                         shadow stack and puts the runtime heap at 8 MiB.
@@ -15,12 +15,12 @@
 #                         at instantiation, and --global-base=4194304 so its
 #                         data lands in the reserved window.
 #   selfcontained-<t>.wasm the same tenant source with the identical runtime
-#                         code statically linked and fat-LTO trimmed (§4.2).
+#                         code statically linked and fat-LTO trimmed.
 #
-# §4.3 V2 forbids threads/shared memory/atomics, and none of this uses them:
-# the base's memory is an ordinary unshared memory, imported by one app layer
-# per instance. Cross-tenant sharing is copy-on-write of a common template,
-# never a shared mutable heap. See docs/layered-runtime.md §2.
+# Validator rule V2 rejects threads, shared memory and atomics, and none of
+# this uses them: the base's memory is an ordinary unshared memory, imported by
+# one app layer per instance. Cross-tenant sharing is copy-on-write of a common
+# template, never a shared mutable heap.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,7 +40,7 @@ mkdir -p "$OUT"
 rm -f "$OUT"/*.wasm
 cd "$ROOT/.."
 
-echo "==> app layers (§4.6: imports the runtime, owns no memory)"
+echo "==> app layers (imports the runtime, owns no memory)"
 for a in "${APPS[@]}"; do
   cargo rustc -p "layered-$a" --target "$TARGET" --release --features layered -- \
     -C link-arg=--import-memory \
@@ -56,7 +56,7 @@ cargo rustc -p wisp-layer-base --target "$TARGET" --release -- \
   -C link-arg=--export=__stack_pointer
 cp "$REL/wisp_layer_base.wasm" "$OUT/base.wasm"
 
-echo "==> self-contained equivalents (§4.2: same code, statically linked, LTO-trimmed)"
+echo "==> self-contained equivalents (same code, statically linked, LTO-trimmed)"
 for a in "${APPS[@]}"; do
   cargo rustc -p "layered-$a" --target "$TARGET" --release --features selfcontained -- \
     -C link-arg=--export=__stack_pointer

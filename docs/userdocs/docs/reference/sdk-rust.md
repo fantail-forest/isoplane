@@ -1,7 +1,7 @@
 ---
 id: sdk-rust
 title: Rust SDK
-sidebar_position: 11
+sidebar_position: 12
 ---
 
 # Rust guest helpers

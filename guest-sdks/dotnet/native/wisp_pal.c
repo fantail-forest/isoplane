@@ -28,12 +28,12 @@ extern void wisp_entropy_fill(uint8_t *buf, int32_t len);
 #define WISP_PAL_DEAD(name)                                                    \
     do {                                                                       \
         static const char m[] = "wisp: guest reached unsupported PAL entry "    \
-                                name;          \
+                                name;                                          \
         wisp_abort((const uint8_t *)m, (int32_t)(sizeof(m) - 1));               \
         __builtin_unreachable();                                               \
     } while (0)
 
-/* ---- live: environment ---------------------------------------- */
+/* ---- live: environment -------------------------------------------------- */
 
 /* `get-environment() -> list<tuple<string, string>>`. The canonical ABI
  * returns it through a caller-supplied area holding (ptr, len). Zero length is
@@ -150,11 +150,11 @@ void __wasm_import_streams_method_input_stream_blocking_read(int32_t a, int64_t 
 
 /* ---- dead: pulled in by the wider BCL surface -------------------------- */
 /* Referencing LINQ, source-generated Regex or System.Text.Json makes the .NET
- * PAL link its directory and file-open paths, which adds twelve more wasi
- * imports. None is reachable either, but the fact that the set GREW with the
- * BCL surface is the finding: this file is a closure over what the tenant's
- * code drags in, not a fixed list, and `build.sh` fails the build if a new one
- * appears rather than letting it become an undeclared capability. */
+ * PAL link its directory and file-open paths, which adds the entries below.
+ * None is reachable either, but the fact that the set GREW with the BCL surface
+ * is the point: this file is a closure over what the tenant's code drags in,
+ * not a fixed list, and `build.sh` fails the build if a new one appears rather
+ * than letting it become an undeclared capability. */
 
 /* (param i32) */
 void __wasm_import_filesystem_directory_entry_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("filesystem dir-entry-stream drop"); }

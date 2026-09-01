@@ -10,6 +10,7 @@ members = [
     "crates/wispd",
     "crates/wisp-cli",
     "crates/wisp-bench",
+    "crates/wisp-docs",
     "tests",
 ]
 exclude = ["crates/spike", "guests"]
@@ -29,6 +30,7 @@ wisp-host      = { path = "crates/wisp-host" }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
 wispd          = { path = "crates/wispd" }
+wisp-cli       = { path = "crates/wisp-cli" }
 
 anyhow      = "1"
 thiserror   = "2"
@@ -57,6 +59,10 @@ bytes       = "1"
 aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
+# Pre-init runs wizer's embedded wasmtime, which compiles through rayon. Named
+# here so guest preparation can bound that pool; must resolve to the same rayon
+# both wasmtime versions use, or `install` would scope a pool nobody consults.
+rayon       = "1"
 base64      = "0.22"
 
 # Line tables preserve source locations for workspace development backtraces.

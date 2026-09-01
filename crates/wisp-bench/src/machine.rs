@@ -29,7 +29,7 @@ pub struct Machine {
     pub numa: Vec<NumaNode>,
     /// NUMA distance matrix, row-major over `numa`.
     pub numa_distances: Vec<Vec<u32>>,
-    /// One entry per distinct last-level-cache domain.
+    /// One entry per distinct last-level-cache domain (a CCD on AMD parts).
     pub l3_domains: Vec<CacheDomain>,
     /// Host memory reported by `/proc/meminfo`; this is not the process cgroup limit.
     #[serde(alias = "total_memory_bytes")]
@@ -518,9 +518,13 @@ impl Machine {
     }
 }
 
-/// Report disagreement between two available physical-core counts.
+/// The cross-check, as its own function so a disagreement can be
+/// constructed in a test rather than waited for.
 ///
-/// A missing derivation has its own collection error and is not reported again.
+/// Returns the complaint, if the two derivations of the physical core count
+/// do not agree. Both being present and equal is the only quiet outcome; a
+/// derivation that could not be made at all has already logged its own reason
+/// and is not double-reported here.
 fn core_count_disagreement(
     from_ids: Option<usize>,
     from_siblings: Option<usize>,
@@ -833,7 +837,10 @@ fn dependent_chain(iters: u64) -> u64 {
 mod tests {
     use super::*;
 
-    /// An unavailable CPU topology entry returns an error.
+    /// A cpu that does not exist has no `thread_siblings_list`, which is
+    /// the same read failure sysbox can produce for one that does. The old
+    /// code answered `vec![cpu]` — every logical cpu its own physical core —
+    /// and this asserts the read now refuses instead.
     #[test]
     fn an_unreadable_siblings_list_is_an_error_and_not_one_core_per_cpu() {
         let e = dedup_to_physical(&[999_999]).unwrap_err();
@@ -846,7 +853,9 @@ mod tests {
         assert_eq!(cpu0, vec![0]);
     }
 
-    /// Compare independent physical-core counts.
+    /// The disagreement itself, constructed. Neither derivation is wrong
+    /// in a way the other can see; only the comparison catches it, and there
+    /// was no comparison.
     #[test]
     fn two_core_counts_that_disagree_are_refused() {
         // 128 physical cores by (package, core_id); 256 by a siblings list
@@ -891,7 +900,10 @@ mod tests {
         assert!(!m.l3_size_is_known_for(&[999_999]));
     }
 
-    /// Distinguish a byte limit, an unlimited controller and an unreadable value.
+    /// cgroup v2 writes the literal `max`, and the three states must not
+    /// collapse: `max` is *no limit*, an absent file is no limit at a cgroup
+    /// root, and anything else is *unknown* — which is what the old
+    /// `"max".parse::<u64>().ok()` turned every one of them into.
     #[test]
     fn a_cgroup_limit_of_max_is_not_the_same_none_as_an_unreadable_one() {
         let dir = std::env::temp_dir().join(format!("wisp-cg-{}", std::process::id()));
@@ -956,7 +968,9 @@ mod tests {
         assert_eq!(m.cell_gib_per_core(16), None);
     }
 
-    /// Sample clock estimates under the requested CPU load.
+    /// `EffectiveClock` had no constructor, so the "one figure before the
+    /// load and one during" its doc promises had never been taken. The gap
+    /// between the two is the boost bin the benchmark ran in.
     #[test]
     fn the_effective_clock_is_measured_at_two_loads_and_restores_the_caller() {
         let before = crate::affinity::current_affinity().unwrap();

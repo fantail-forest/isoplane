@@ -13,6 +13,7 @@ use wisp_proxy::{ProxyConfig, ShedConfig};
 
 
 // ---------------------------------------------------------------------------
+// Routing
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -135,6 +136,8 @@ async fn the_proxy_sheds_before_the_cells_saturate() {
 
 #[tokio::test]
 async fn a_cell_s_503_reaches_the_client_with_its_headers() {
+    // Repeated budget kills trip a breaker that fails subsequent
+    // dispatches fast until it cools or a new version deploys.
     let cell = Arc::new(FakeCell::new());
     let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
     assert_eq!(

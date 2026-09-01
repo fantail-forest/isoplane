@@ -30,6 +30,6 @@ pub struct TableMutation {
     pub table: u32,
     pub index: u32,
     /// Function index, or `None` for a null slot. Typed function tables mean
-    /// there are no arbitrary indirect calls to forge (§8.2.1).
+    /// there are no arbitrary indirect calls to forge.
     pub func: Option<u32>,
 }

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use wisp_engine::{HostBindings, ImportCall};
 
-/// Bump allocator + the four required exports (§5.2). `$BODY_HANDLE` and
+/// Bump allocator + the four required exports. `$BODY_HANDLE` and
 /// `$BODY_WAKE` are the only things a fixture varies.
 ///
 /// The allocator wraps rather than growing: these fixtures serve many
@@ -31,7 +31,7 @@ pub fn guest(pages: u32, extra_imports: &str, extra_funcs: &str, handle: &str, w
   (global $calls (export "g_calls") (mut i64) (i64.const 0))
 
   ;; (size, align) -> ptr. 0 means "cannot allocate", which the engine
-  ;; classifies as TrapKind::OutOfMemory (§5.5).
+  ;; classifies as TrapKind::OutOfMemory.
   (func (export "wisp_alloc") (param $size i32) (param $align i32) (result i32)
     (local $p i32)
     (if (i32.gt_u (i32.add (global.get $bump) (local.get $size)) (i32.const {heap_top}))

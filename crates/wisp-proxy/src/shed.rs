@@ -1,4 +1,4 @@
-//! Admission control: "the proxy sheds before cells saturate" (§6.4).
+//! Admission control: the proxy sheds before cells saturate.
 //!
 //! Two knobs, and the second is the interesting one:
 //!
@@ -10,8 +10,8 @@
 //! an unbounded queue, and every request then times out having consumed a
 //! thread and a socket. Shedding at the edge is what keeps the failure mode
 //! "some requests get a fast 503" rather than "all requests get a slow 504" —
-//! and it is the proxy's job specifically because §6.4 puts it there: cells
-//! queue at admission, but the shed happens before that queue exists.
+//! and it is the proxy's job because cells queue at admission, and the shed
+//! has to happen before that queue exists.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

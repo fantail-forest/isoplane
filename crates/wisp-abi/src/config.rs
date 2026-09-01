@@ -11,8 +11,8 @@ pub struct AppManifest {
     pub bindings: Bindings,
     #[serde(default)]
     pub limits: Limits,
-    /// §4.4: non-secret vars the tenant marks init-visible, supplied to the
-    /// sealed init sandbox as a data blob. Runtime secrets never appear here.
+    /// Non-secret vars the tenant marks init-visible, supplied to the sealed
+    /// init sandbox as a data blob. Runtime secrets never appear here.
     #[serde(default)]
     pub init_visible_vars: Vec<(String, String)>,
 }
@@ -45,7 +45,7 @@ impl HandlerLifecycle {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Bindings {
-    /// §8.6 egress policy. RFC1918 / link-local are denied by default.
+    /// Egress policy. RFC1918 / link-local are denied by default.
     #[serde(default)]
     pub fetch_allowlist: Option<Vec<String>>,
 }
@@ -113,14 +113,13 @@ impl LifecycleTier {
         matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
     }
 
-    /// §6.5's Entry/Exit columns as a predicate, and nothing outside them.
+    /// The legal tier transitions as a predicate, and nothing outside them.
     ///
     /// This lives with the tiers rather than in the cell because it *is* the
-    /// normative table: `Hibernated -> Parked` is absent because §6.5's exit
-    /// from Hibernated is a wake trigger, which makes the instance Hot; and
-    /// nothing leaves Discarded, because §6.5's exit from Discarded is "fresh
-    /// activation", which produces a *new* instance rather than resurrecting
-    /// this one.
+    /// table: `Hibernated -> Parked` is absent because the only exit from
+    /// Hibernated is a wake trigger, which makes the instance Hot; and nothing
+    /// leaves Discarded, because a fresh activation produces a *new* instance
+    /// rather than resurrecting this one.
     pub fn may_transition_to(self, next: Self) -> bool {
         use LifecycleTier::*;
         matches!(

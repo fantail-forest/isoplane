@@ -12,9 +12,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 thread_local! {
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    /// §4.4: unit ids the "host" has already learned are impure.
+    /// Unit ids the "host" has already learned are impure.
     static DEFERRED: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
-    /// §4.4/§9.5: the init-visible config blob this deploy supplies.
+    /// The init-visible config blob this deploy supplies.
     static CONFIG: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// Bytes an `Out(_)` import "wrote into guest memory". Host builds cannot
     /// use the passed pointer (it truncates to `i32`), so the stub parks them
@@ -39,14 +39,14 @@ impl StubHost {
             v
         })
     }
-    /// §4.4: mark a pre-init unit as one the host discovered was impure on a
+    /// Mark a pre-init unit as one the host discovered was impure on a
     /// previous pass, so the replay must skip it.
     pub fn defer_unit(&self, id: i64) {
         DEFERRED.with(|d| d.borrow_mut().push(id));
     }
 
-    /// §4.4/§9.5: supply the init-visible config blob the sealed init sandbox
-    /// will serve. The control plane encodes it as JSON `[(name, value), ..]`.
+    /// Supply the init-visible config blob the sealed init sandbox will
+    /// serve. The control plane encodes it as JSON `[(name, value), ..]`.
     pub fn set_config(&self, blob: Vec<u8>) {
         CONFIG.with(|c| *c.borrow_mut() = blob);
     }
@@ -95,17 +95,17 @@ pub(crate) fn take_out_buffer(dst: &mut [u8]) {
 pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
     CALLS.with(|c| c.borrow_mut().push((name, args.to_vec())));
     // A future-returning import hands back a future id and returns
-    // immediately (§5.1). A sync import returns 0 here.
+    // immediately. A sync import returns 0 here.
     // `resp_new` is the one sync import whose return value the tests care
     // about: it is the response handle `PollStatus::Done` carries.
     if name == "resp_new" {
         return RESP_HANDLE;
     }
-    // §4.4 replay: non-zero means "this unit is deferred, skip it".
+    // Pre-init replay: non-zero means "this unit is deferred, skip it".
     if name == "init_unit_deferred" {
         return DEFERRED.with(|d| i64::from(d.borrow().contains(&args[0])));
     }
-    // §4.4 config blob: write up to `cap` bytes, return the FULL length so a
+    // Config blob: write up to `cap` bytes, return the FULL length so a
     // zero-length probe sizes the buffer. Mirrors the host in
     // `wisp_control::preinit`.
     if name == "init_config_get" {

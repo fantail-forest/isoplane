@@ -28,11 +28,19 @@ machine-readable version:
 wisp doctor mod.wasm --json | jq '{rejected, undeclared, missing_required_exports}'
 ```
 
-:::note doctor is advisory unless built with the validator
-By default `doctor` reports the manifest it derives from the import section.
-The authority for rules V1–V4 is `wisp-control::validate`. Rebuild with
-`--features control` to run the real validator inside `doctor`, or use the
-daemon, which always does.
+:::note doctor runs the real validator
+`doctor` prints the manifest it derives from the import section and then the
+verdict of `wisp-control::validate` — the authority for rules V1–V4 — judged
+against the configured limits. **The validator's verdict is the
+exit code**: the derived manifest is presentation, and checks a strict subset
+of V1. A build of the CLI with `--no-default-features` drops the validator, and
+there the derived manifest is all there is.
+:::
+
+:::tip C# guests are checked by their own build
+`guest-sdks/dotnet/Wisp.Guest.props` runs `wisp doctor` on the module as soon
+as `wasm-ld` produces it, so a violation fails `dotnet publish` instead of
+waiting for a deploy. `-p:WispValidate=false` turns it off.
 :::
 
 ## The four rules

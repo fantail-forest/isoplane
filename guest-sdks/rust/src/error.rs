@@ -8,8 +8,8 @@ use wisp_abi::result::{FutureError, };
 pub enum WispError {
     /// A deadline elapsed, or the dispatch CPU budget did.
     Timeout,
-    /// §5.4. The dispatch's implicit cancellation future completed. Observed
-    /// at an await, because cancellation is not an entrancy.
+    /// The dispatch's implicit cancellation future completed. Observed at an
+    /// await, because cancellation is not an entrancy.
     Cancelled,
     /// Host capability policy refused the call, such as a denied egress target.
     Denied(String),

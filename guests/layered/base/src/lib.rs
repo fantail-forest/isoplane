@@ -1,6 +1,6 @@
 //! The base layer — the buildable stand-in for `wisp:dotnet-runtime@<x>.<y>`.
 //!
-//! Everything §4.6 asks of a base template, this module has to actually do:
+//! Everything a base template has to do, this module has to actually do:
 //!
 //! * **It owns the linear memory.** It is linked with
 //!   `--initial-memory=8388608`, which does two things at once: it reserves
@@ -17,14 +17,16 @@
 //!   reliably retained — the same reason `guest-sdks/rust` is rlib-only.
 //! * **It is un-trimmable, on purpose.** Every entry point is a root, so fat
 //!   LTO cannot delete anything reachable from the full surface. That is
-//!   §4.6's stated cost — "no trimming or devirtualization through the
-//!   runtime, so the shared runtime ships un-trimmed" — made literal, and it
-//!   is the quantity the break-even analysis divides by.
-//! * **It pre-initializes.** `wisp_initialize` is what wizer runs in the
-//!   §4.4 sealed sandbox to produce the base template.
+//!   the stated cost of layering — no trimming or devirtualization through the
+//!   runtime, so the shared runtime ships un-trimmed — made literal, and it is
+//!   the quantity the break-even analysis divides by.
+//! * **It pre-initializes.** `wisp_initialize` is what wizer runs in the sealed
+//!   init sandbox to produce the base template.
 //!
-//! **Rust, not .NET.** See `docs/layered-runtime.md` for what that does and
-//! does not license you to conclude.
+//! **Rust, not .NET.** These fixtures model a split where almost the whole
+//! module is shareable runtime. NativeAOT compiles the trimmed BCL into each
+//! tenant module instead, so its shareable fraction is far smaller — do not
+//! read a .NET break-even off these numbers.
 
 #[global_allocator]
 static ALLOC: wisp_rtlib::heap::RtAlloc = wisp_rtlib::heap::RtAlloc;
@@ -40,18 +42,18 @@ macro_rules! reexport {
 
 wisp_rtabi::rt_surface_list!(reexport);
 
-/// §4.4: the init entry wizer runs in the sealed sandbox. Pre-initializing the
-/// base is done **once per machine**, not once per tenant — that is the whole
-/// point of §4.6, and it is why the cost of a big un-trimmed runtime is
+/// The init entry wizer runs in the sealed sandbox. Pre-initializing the base
+/// is done **once per machine**, not once per tenant — that is the whole point
+/// of layering, and it is why the cost of a big un-trimmed runtime is
 /// amortized rather than multiplied.
 #[no_mangle]
 pub unsafe extern "C" fn wisp_initialize() {
     wisp_rtlib::abi::wisp_initialize()
 }
 
-/// The runtime layer's identity. §4.6 makes instance identity composite —
-/// `(base hash, app hash)` — and §6.6 binds hibernation deltas to the
-/// composite, so this string moving is a fleet-wide `wake-flush` event (§9.4).
+/// The runtime layer's identity. Layering makes instance identity composite —
+/// `(base hash, app hash)` — and hibernation deltas bind to the composite, so
+/// this string moving is a fleet-wide wake-flush event.
 #[no_mangle]
 pub extern "C" fn rt_world_version() -> u32 {
     0x0001_0000

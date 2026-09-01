@@ -1,8 +1,8 @@
 //! The real [`Activator`]: `wisp-engine`'s template and slot machinery,
-//! wrapped in the seam the cell codes against (spec.md §4.4, §6.2).
+//! wrapped in the seam the cell codes against.
 //!
-//! There is nothing to this file, and that is the point. §6.2's activation is
-//! four steps — map the template memfd `MAP_PRIVATE`, initialize mutable
+//! There is nothing to this file, and that is the point. Activation is four
+//! steps — map the template memfd `MAP_PRIVATE`, initialize mutable
 //! globals and tables from the template's sealed values, bind the import
 //! vtable to this instance's tenant context, call `wisp-handle` — and all four
 //! live in `wisp-engine` because all four touch wasmtime. The cell's interest
@@ -11,14 +11,13 @@
 //!
 //! The one thing worth stating here is why the template image is held as an
 //! `Arc` at construction rather than borrowed per call: it is the baseline for
-//! every hibernation page-diff (§6.6), taken on an execution-pool thread while
+//! every hibernation page-diff, taken on an execution-pool thread while
 //! the engine's own copy stays mapped read-only and shared by every instance
-//! of the module on the machine (§6.2).
+//! of the module on the machine.
 //!
 //! It used to be `Arc::new(template.memory_image().to_vec())` — a **second**
-//! full copy of the image per module per cell. That is 1.1 MB for a Rust
-//! guest and 53 MB for a pre-initialized .NET one, for a baseline the engine
-//! was already holding. It is now the engine's own `Arc`, shared.
+//! full copy of the image per module per cell, for a baseline the engine was
+//! already holding. It is now the engine's own `Arc`, shared.
 
 use std::sync::Arc;
 
@@ -40,9 +39,9 @@ impl EngineActivator {
         Self { engine, template, module, image }
     }
 
-    /// Compile and pre-stage a template, then wrap it. §8.7 treats the module
-    /// bytes as hostile input to the compiler, so this expects to be called
-    /// with an artifact the validator sandbox has already produced.
+    /// Compile and pre-stage a template, then wrap it. The module bytes are
+    /// hostile input to the compiler, so this expects to be called with an
+    /// artifact the validator sandbox has already produced.
     pub fn load(
         engine: Arc<WispEngine>,
         module: ModuleId,
@@ -57,15 +56,14 @@ impl EngineActivator {
     ///
     /// This is what a cell should call. [`EngineActivator::load`] copies the
     /// compiled artifact into anonymous memory and makes all of it resident;
-    /// this maps it, so the code and §6.2's memory image are page cache —
+    /// this maps it, so the code and the memory image are page cache —
     /// demand-paged, evictable, and shared between every mapping of the same
-    /// artifact. For the C# bench guest's pre-initialized template that is
-    /// 1,262 kB per template against 55,105 kB, plus 53 MB of memfd shmem that
-    /// stops existing.
+    /// artifact, and the template's memfd shmem stops existing. The gap is
+    /// widest for a large pre-initialized template.
     ///
     /// Returns whether it had to compile. A cell that reports `true` on every
     /// load has a cache that is not working, which is worth being able to see:
-    /// the compile is the expensive half, and it leaves ~27 MB per module
+    /// the compile is the expensive half, and it leaves the compiled artifact
     /// resident in this process for good.
     ///
     /// # Safety

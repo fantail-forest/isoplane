@@ -1,8 +1,8 @@
-//! `undeclared-import` — the validator's rule **V1** corpus (spec.md §4.3).
+//! `undeclared-import` — the validator's rule **V1** corpus.
 //!
-//! > *any import outside the world's allowlist (imports are the complete
-//! > capability surface -- an undeclared import is an attempted capability,
-//! > and there is no "dynamic linking" escape hatch).*
+//! V1 rejects any import outside the world's allowlist. Imports are the
+//! complete capability surface, so an undeclared import is an attempted
+//! capability and there is no "dynamic linking" escape hatch.
 //!
 //! This module is otherwise a perfectly well-formed guest: it exports
 //! `wisp_alloc`, `wisp_handle`, `wisp_wake`, `wisp_gc_hint` and

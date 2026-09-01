@@ -26,31 +26,31 @@ pub struct NodeConfig {
     pub engine: EngineLimits,
 }
 
-/// The engine sizing a real node's cells share (§6.2, §11.1).
+/// The engine sizing a real node's cells share.
 ///
 /// These are a node-level setting rather than a constant because they are not
 /// free: the pooling allocator reserves `max_instances × (max_memory + guard)`
-/// of virtual address space, which at the defaults is ~21 TiB per engine.
-/// That costs no physical memory, but a 47-bit address space holds about six
-/// of them — so a machine running several nodes, or a test binary building
-/// several, has to be able to say "smaller". Leaving this unconfigurable is
-/// how you get a node that works alone and fails in a fleet.
+/// of virtual address space up front. That costs no physical memory, but the
+/// usable address space is finite and a handful of engines can exhaust it — so
+/// a machine running several nodes, or a test binary building several, has to
+/// be able to say "smaller". Leaving this unconfigurable is how you get a node
+/// that works alone and fails in a fleet.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct EngineLimits {
-    /// Ceiling on concurrently resident instances per engine. G1 wants ≥ 5,000
-    /// (§6.2), so the default leaves headroom above it.
+    /// Ceiling on concurrently resident instances per engine. Raising it
+    /// raises the address-space reservation; lowering it caps density.
     #[serde(default = "default_max_instances")]
     pub max_instances: u32,
-    /// Per-instance linear-memory ceiling (§5.5, §11.1).
+    /// Per-instance linear-memory ceiling.
     #[serde(default = "default_max_memory_mib")]
     pub max_memory_mib: u64,
-    /// §8.2.1's reserved guard region, which is what lets Cranelift elide
-    /// explicit bounds checks.
+    /// The reserved guard region, which is what lets Cranelift elide explicit
+    /// bounds checks.
     ///
     /// Address space, not memory, and it bounds density rather than guests:
-    /// the pool reserves `max_instances × (max_memory_mib + this)`, so at the
-    /// old 2048 default a node could not be configured past ~10,000 instances
-    /// on a 128 TiB address space. See `wisp_engine::EngineConfig`.
+    /// the pool reserves `max_instances × (max_memory_mib + this)`, so a bigger
+    /// guard buys back fewer configurable instances. See
+    /// `wisp_engine::EngineConfig`.
     #[serde(default = "default_guard_mib")]
     pub guard_mib: u64,
 }
@@ -172,10 +172,10 @@ pub struct AppConfig {
     pub path_prefix: String,
     #[serde(default)]
     pub versions: Vec<VersionConfig>,
-    /// §4.4 / §9.5: non-secret vars the tenant marks `init-visible`, handed to
-    /// the sealed init sandbox as a data blob so config parsing happens once at
-    /// deploy time instead of once per activation. Runtime secrets are declared
-    /// by name elsewhere and are never available here (§8.6).
+    /// Non-secret vars the tenant marks `init-visible`, handed to the sealed
+    /// init sandbox as a data blob so config parsing happens once at deploy
+    /// time instead of once per activation. Runtime secrets are declared by
+    /// name elsewhere and are never available here.
     #[serde(default)]
     pub init_visible_vars: BTreeMap<String, String>,
     /// Additional runtime initialization capability policy.

@@ -25,7 +25,7 @@ impl std::fmt::Display for PendingCapError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "simultaneous pending futures cap exceeded: {} outstanding, limit {} (§11.1)",
+            "simultaneous pending futures cap exceeded: {} outstanding, limit {}",
             self.outstanding, self.limit
         )
     }
@@ -39,7 +39,7 @@ pub enum WakeTarget {
     Instance(InstanceId),
     /// The future had no owner any more (instance discarded, dispatch over).
     /// The result is dropped; the host reclaimed the handle on instance death,
-    /// which is invariant 2 doing the cleanup (§5.4).
+    /// which is invariant 2 doing the cleanup.
     Orphan,
     /// Already completed; a duplicate completion is a reactor bug, not a
     /// guest-visible event.
@@ -69,19 +69,17 @@ struct Owned {
     /// Registered and not yet completed.
     pending: BTreeSet<u64>,
     /// Completed and not yet handed to the guest, in completion order. Order
-    /// between distinct futures is unspecified by contract (§5.4), but FIFO is
+    /// between distinct futures is unspecified by contract, but FIFO is
     /// the least surprising unspecified order.
     ready: VecDeque<u64>,
-    /// Pending count per dispatch — the unit §11.1 caps.
+    /// Pending count per dispatch — the unit the cap applies to.
     per_dispatch: HashMap<u64, u32>,
 }
 
 /// Per-instance future ownership and pending counts.
 #[derive(Debug)]
 pub struct OwnedFutures {
-    /// The instance this belongs to **now**. §6.8 wakes an instance under a
-    /// new `InstanceId` (§8.2.4: portable memory, non-portable identity), and
-    /// `complete` has to name the current one for the wake it returns.
+    /// Instance identifier returned by completion routing.
     instance: AtomicU64,
     inner: Mutex<Owned>,
 }
@@ -119,9 +117,10 @@ impl FutureTable {
     ///
     /// The table was one `CountedMutex` over two maps and this returned its
     /// sample. Both maps are `scc` now and the only remaining exclusion is one
-    /// instance's own, which §7.2 keeps uncontended. `Cell::lock_stats` omits
-    /// the row rather than printing this zero — a zero is a measurement and
-    /// "there is nothing here to measure" is not one.
+    /// instance's own, which one-dispatch-per-instance keeps uncontended.
+    /// `Cell::lock_stats` omits the row rather than printing this zero — a
+    /// zero is a measurement and "there is nothing here to measure" is not
+    /// one.
     pub fn lock_stats(&self) -> crate::lockstats::LockSample {
         crate::lockstats::LockSample::default()
     }
@@ -157,7 +156,7 @@ impl FutureTable {
 
     /// Register a future for `owner` under `dispatch`.
     ///
-    /// `limit` is the application's `pending_futures_per_dispatch` (§11.1). Refusal is
+    /// `limit` is the application's `pending_futures_per_dispatch`. Refusal is
     /// a `Result`, not a panic or a silent success, because the guest must be
     /// able to observe it as `TrapCode::TooManyFutures`.
     pub fn alloc(
@@ -169,9 +168,9 @@ impl FutureTable {
     ) -> Result<u64, PendingCapError> {
         let arc = self.owned_of(owner);
         // **The cap is still a check-then-act, and it is still atomic** — but
-        // against this instance's lock rather than the whole cell's. §7.2
-        // allows one dispatch per instance, so the only contender for it is
-        // this instance's own park/wake.
+        // against this instance's lock rather than the whole cell's. There is
+        // one dispatch per instance, so the only contender for it is this
+        // instance's own park/wake.
         let mut o = arc.inner.lock();
         let outstanding = *o.per_dispatch.get(&dispatch).unwrap_or(&0);
         if outstanding >= limit {
@@ -194,10 +193,10 @@ impl FutureTable {
         Ok(id)
     }
 
-    /// Register the dispatch's **implicit cancellation future** (§5.4).
+    /// Register the dispatch's **implicit cancellation future**.
     ///
     /// Separate from [`FutureTable::alloc`] for one reason, and it is a
-    /// contract reason rather than a convenience: §11.1's
+    /// contract reason rather than a convenience:
     /// `pending_futures_per_dispatch` caps the fan-out a *guest* can create,
     /// and this future is not the guest's. Charging it to the cap would
     /// silently shrink every tenant's declared limit by one and make the
@@ -206,7 +205,7 @@ impl FutureTable {
     /// It cannot fail, for the same reason: there is no limit to refuse it
     /// against. That matters — a dispatch whose cancellation future failed to
     /// allocate would be a dispatch that can only ever be hard-killed, which
-    /// is precisely the outcome §6.4 is trying to make rare.
+    /// is precisely the outcome the two-phase kill exists to make rare.
     pub fn alloc_cancellation(&self, owner: InstanceId, dispatch: u64) -> u64 {
         self.alloc_cancellation_marked(owner, dispatch, &mut None)
     }
@@ -214,10 +213,10 @@ impl FutureTable {
     /// [`FutureTable::alloc_cancellation`], marking the wait for the table's
     /// lock separately from the work done under it.
     ///
-    /// **A triple, not a pair.** The hold is 60 ns and more — two map inserts
-    /// and a set insert, any of which can grow — comfortably above the 20 ns a
-    /// mark costs on this machine, so the wait and the hold are separable and
-    /// worth separating. This is a global lock every dispatch takes.
+    /// **A triple, not a pair.** The hold is two map inserts and a set
+    /// insert, any of which can grow — comfortably above what a mark costs, so
+    /// the wait and the hold are separable and worth separating. This is a
+    /// global lock every dispatch takes.
     pub fn alloc_cancellation_marked(
         &self,
         owner: InstanceId,
@@ -242,7 +241,7 @@ impl FutureTable {
     }
 
     /// A reactor thread completed a host future. Maps id → owning instance and
-    /// makes the result deliverable; the caller enqueues the wake (§6.1).
+    /// makes the result deliverable; the caller enqueues the wake.
     pub fn complete(&self, id: u64, result: ResultRecord) -> WakeTarget {
         self.complete_marked(id, result, false).target
     }
@@ -313,7 +312,7 @@ impl FutureTable {
     /// Pull the next deliverable result for `owner`. The exec-pool thread calls
     /// this in a loop while it holds the instance's [`crate::CallGuard`], which
     /// is how a completion that lands mid-dispatch is delivered *after* the
-    /// current call returns rather than reentrantly (§5.4).
+    /// current call returns rather than reentrantly.
     pub fn take_ready(&self, owner: InstanceId) -> Option<(u64, ResultRecord)> {
         self.take_ready_marked(owner, &mut None)
     }
@@ -321,9 +320,9 @@ impl FutureTable {
     /// [`FutureTable::take_ready`], marking the wait for the table separately
     /// from the work done under it.
     ///
-    /// **A triple.** The hold is 80 ns and more — a loop popping and removing
-    /// across three structures — and it is taken on every resumed slice, so
-    /// the wait and the hold are worth telling apart.
+    /// **A triple.** The hold is a loop popping and removing across three
+    /// structures, and it is taken on every resumed slice, so the wait and the
+    /// hold are worth telling apart.
     pub fn take_ready_marked(
         &self,
         owner: InstanceId,
@@ -403,8 +402,8 @@ impl FutureTable {
     }
 
     /// Instance death. Every handle the instance held is reclaimed here; this
-    /// is the mechanical form of §2.5.8's "cleanup lives outside the sandbox
-    /// lifetime".
+    /// is the mechanical form of cleanup living outside the sandbox
+    /// lifetime.
     pub fn release_instance(&self, owner: InstanceId) {
         self.release_instance_marked(owner, &None)
     }
@@ -441,8 +440,8 @@ impl FutureTable {
 
     /// Live futures the **guest** issued, in id order.
     ///
-    /// Excludes the implicit cancellation future §5.4 gives every dispatch,
-    /// which the guest did not ask for and (usually) never awaits. A test
+    /// Excludes the implicit cancellation future every dispatch gets, which
+    /// the guest did not ask for and (usually) never awaits. A test
     /// reasoning about "the futures this dispatch registered" wants this one;
     /// [`FutureTable::live_future_ids`] is the whole table, cancellation
     /// included.
@@ -497,7 +496,8 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    /// Pending futures are capped per dispatch.
+    /// The pending-futures cap comes from the application budget, and the residency bound
+    /// depends on it being real.
     #[test]
     fn pending_cap_is_enforced_per_dispatch() {
         let t = table();
@@ -520,7 +520,7 @@ mod tests {
         );
 
         // A *different* dispatch on the same instance has its own budget: the
-        // cap in §11.1 is per dispatch, not per instance.
+        // cap is per dispatch, not per instance.
         assert!(t.alloc(i, 8, "kv_get", limit).is_ok());
     }
 

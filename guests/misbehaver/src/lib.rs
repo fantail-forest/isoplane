@@ -1,18 +1,18 @@
-//! `misbehaver` — hostile and broken routes, for the §6.4/§8.3 kill tests.
+//! `misbehaver` — hostile and broken routes, for the kill tests.
 //!
 //! Every route here is supposed to die. What matters is *how*:
 //!
 //! | route | what it does | expected platform response |
 //! |---|---|---|
-//! | `/spin` | infinite loop, never awaits, never checks | **hard** kill at B+G; no unwinding (§2.5.8); instance tombstoned (§6.4) |
-//! | `/cooperative` | the same loop, but it reads the remaining budget | **clean** kill inside grace: `Drop` runs, slot reusable (§6.4) |
-//! | `/gc_pin` | spins with the *unsafe-to-trap* bit pinned | **hard** kill at B+G anyway — a pinned bit buys exactly G (§4.6) |
-//! | `/sync_over_async` | polls a host future in a loop without returning | **can never** be woken, so it dies at the cap (§4.5, §8.3) |
-//! | `/alloc_bomb` | grows memory past the plan ceiling | allocation fails -> trap (§11.1, §V3) |
-//! | `/trap` | explicit `unreachable` | trapped; instance discarded, never retried on the same memory (§13) |
+//! | `/spin` | infinite loop, never awaits, never checks | **hard** kill at B+G; no unwinding; instance tombstoned |
+//! | `/cooperative` | the same loop, but it reads the remaining budget | **clean** kill inside grace: `Drop` runs, slot reusable |
+//! | `/gc_pin` | spins with the *unsafe-to-trap* bit pinned | **hard** kill at B+G anyway — a pinned bit buys exactly G |
+//! | `/sync_over_async` | polls a host future in a loop without returning | **can never** be woken, so it dies at the cap |
+//! | `/alloc_bomb` | grows memory past the plan ceiling | allocation fails -> trap (the plan ceiling, and validator rule V3) |
+//! | `/trap` | explicit `unreachable` | trapped; instance discarded, never retried on the same memory |
 //! | `/ok` | returns 200 | the control: the module itself is fine |
 //!
-//! §8.3's claim is that the blocking residue is *self-punishing*: a spinner
+//! The blocking residue is meant to be *self-punishing*: a spinner
 //! occupies only its own execution-pool thread, the kernel preempts it, and
 //! the epoch-delivered budget kill ends it. `/sync_over_async` is the sharper
 //! case -- it is not merely slow, it is **provably unable to make progress**,
@@ -21,8 +21,8 @@
 //!
 //! # This module is the negative control for the two-phase kill
 //!
-//! §6.4 offers a grace window and claims clean kills are "the overwhelmingly
-//! common case". A platform can make that claim look true by weakening the
+//! The platform offers a grace window and expects clean kills to be the
+//! common case. A platform can make that look true by weakening the
 //! hard path -- extending deadlines, forgiving overage, treating a spin as a
 //! slow return. `/spin` exists so that it cannot: it is genuinely
 //! uncooperative, it never calls `budget_remaining_ns`, it has no await point,
@@ -30,8 +30,8 @@
 //! to catch it. `/cooperative` is the same loop with one check added, so the
 //! ONLY difference between a clean kill and a tombstone is guest behaviour.
 //!
-//! `/gc_pin` closes the remaining hole. §4.6 lets a runtime layer defer grace
-//! while its *unsafe-to-trap* bit is set, and a deferral that could be held
+//! `/gc_pin` closes the remaining hole. A runtime layer may defer grace while
+//! its *unsafe-to-trap* bit is set, and a deferral that could be held
 //! indefinitely would be an escape hatch from the budget itself. This route
 //! pins the bit and spins; it must still die at B+G.
 
@@ -74,8 +74,8 @@ fn sync_over_async() -> ! {
     }
 }
 
-/// Grow linear memory until the plan ceiling refuses (§11.1
-/// `instance_memory_max`, and V3 caps the declared maximum at deploy time).
+/// Grow linear memory until the plan ceiling refuses (`instance_memory_max`,
+/// and V3 caps the declared maximum at deploy time).
 /// The allocation failure becomes an abort, which is a wasm trap.
 fn alloc_bomb(mb: usize) -> ! {
     let mut kept: Vec<Vec<u8>> = Vec::new();
@@ -97,14 +97,14 @@ fn alloc_bomb(mb: usize) -> ! {
     }
 }
 
-/// The cooperative spinner: §6.4's clean kill, demonstrated by a real guest.
+/// The cooperative spinner: the clean kill, demonstrated by a real guest.
 ///
 /// It burns CPU in exactly the same loop as `spin_forever`, with one addition:
 /// every `CHECK_EVERY` iterations it reads the host-published remaining
 /// budget. Once that goes non-positive the dispatch is inside its grace window
 /// and this returns -- an ordinary Rust `return`, which runs every `Drop`
-/// between here and the entrypoint. That return is the whole of the "managed
-/// unwind" §2.5.8 promises; there is nothing else to it.
+/// between here and the entrypoint. That return is the whole of the managed
+/// unwind; there is nothing else to it.
 ///
 /// (Guests build with `panic = "abort"`, so `Drop`-on-return is the only
 /// unwind shape there is. It is also the only one the platform needs: what a
@@ -120,8 +120,8 @@ fn alloc_bomb(mb: usize) -> ! {
 fn cooperative_spin() -> Response {
     const CHECK_EVERY: u64 = 1 << 16;
 
-    // A `Drop` that observably ran. §2.5.8: `finally` blocks and disposals run
-    // on a clean kill and do NOT on a hard one, and that difference has to be
+    // A `Drop` that observably ran. `finally` blocks and disposals run on a
+    // clean kill and do NOT on a hard one, and that difference has to be
     // visible from outside the sandbox or it is not a claim, just a comment.
     struct Cleanup(&'static str);
     impl Drop for Cleanup {
@@ -129,7 +129,7 @@ fn cooperative_spin() -> Response {
             log(Level::Info, self.0);
         }
     }
-    let _finally = Cleanup("misbehaver/cooperative: finally ran (§2.5.8, clean kill)");
+    let _finally = Cleanup("misbehaver/cooperative: finally ran (clean kill)");
 
     let mut x: u64 = 1;
     let mut n: u64 = 0;
@@ -141,13 +141,13 @@ fn cooperative_spin() -> Response {
             // The unwind. `_finally` drops on the way out of this frame.
             return Response::text(
                 503,
-                "cooperative: observed the grace window and unwound (§6.4 clean kill)",
+                "cooperative: observed the grace window and unwound (clean kill)",
             );
         }
     }
 }
 
-/// Pin §4.6's *unsafe-to-trap* bit and then refuse to cooperate.
+/// Pin the *unsafe-to-trap* bit and then refuse to cooperate.
 ///
 /// A runtime layer sets this bit around GC phases so grace does not land
 /// mid-collection. The platform honours it for grace *entry* and ignores it at

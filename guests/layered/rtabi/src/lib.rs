@@ -1,4 +1,4 @@
-//! One tenant-facing surface, two link strategies (spec.md §4.6 vs §4.2).
+//! One tenant-facing surface, two link strategies: layered, and self-contained.
 //!
 //! Every app in `guests/layered/apps` is written once against this crate and
 //! built twice. The *only* thing that differs is whether `surface!` below
@@ -108,7 +108,7 @@ macro_rules! rt_surface_list {
 
 macro_rules! surface {
     ($( fn $n:ident ( $($a:ident : $t:ty),* $(,)? ) -> $r:ty; )*) => {
-        // §4.6 layered: the runtime is an *import*. Note the module name is
+        // Layered: the runtime is an *import*. Note the module name is
         // `env`, which is also where `wasm-ld --import-memory` puts the
         // imported linear memory, so one `Linker::instance("env", base)` in
         // the host satisfies the whole runtime world at once.
@@ -118,7 +118,7 @@ macro_rules! surface {
             $( pub fn $n($($a: $t),*) -> $r; )*
         }
 
-        // §4.2 self-contained: the identical functions, statically linked.
+        // Self-contained: the identical functions, statically linked.
         #[cfg(feature = "selfcontained")]
         pub use wisp_rtlib::abi::{ $($n),* };
     };
@@ -202,9 +202,8 @@ surface! {
 
 // ---------------------------------------------------------------------------
 // The allocator. In `layered` mode the app has no allocator of its own at all:
-// every byte it owns lives in the runtime layer's heap, which is what §4.2
-// means by "a GC operating entirely within linear memory" belonging to the
-// runtime rather than to the app.
+// every byte it owns lives in the runtime layer's heap: the heap belongs to
+// the runtime, not to the app.
 // ---------------------------------------------------------------------------
 
 pub struct RtAlloc;
@@ -232,8 +231,7 @@ pub fn take_out() -> Vec<u8> {
     }
 }
 
-/// The layer identity §4.6 pins: which runtime ABI this app was compiled
-/// against. A base-layer republish that changes this string changes the
-/// composite `(base hash, app hash)` and therefore invalidates hibernated
-/// deltas (§6.6, §9.4).
+/// The layer identity: which runtime ABI this app was compiled against. A
+/// base-layer republish that changes this string changes the composite
+/// `(base hash, app hash)` and therefore invalidates hibernated deltas.
 pub const RUNTIME_WORLD: &str = "wisp:rtlib@1.0";
