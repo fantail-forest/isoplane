@@ -246,6 +246,13 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         "§5.1: there is no import that waits — this one IS the wait, and \
          admitting it would break invariant 3 by construction",
     ),
+    // Refuse this potentially blocking wait during a guest invocation.
+    trap(
+        IO_POLL,
+        "poll",
+        "§5.1: there is no import that waits — this is `pollable.block` over a \
+         list, and admitting it would break invariant 3 by construction",
+    ),
     trap(IO_STREAMS, "[resource-drop]input-stream", "no stream is ever handed out"),
     trap(IO_STREAMS, "[resource-drop]output-stream", "no stream is ever handed out"),
     trap(IO_STREAMS, "[method]input-stream.blocking-read", "§5.1: no import waits"),

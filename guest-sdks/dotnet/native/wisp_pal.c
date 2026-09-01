@@ -54,6 +54,28 @@ int64_t __wasm_import_monotonic_clock_now(void)
     return wisp_clock_now_coarse() * 1000000LL;
 }
 
+/* Wall clock. */
+
+/* The canonical datetime result uses a 16-byte, 8-aligned area: seconds at
+ * offset 0 and nanoseconds at offset 8. Both adapters derive from the host's
+ * coarse millisecond clock. A serving slice observes its fixed clock sample;
+ * a later slice can observe a later sample. */
+void __wasm_import_wall_clock_now(int32_t retptr)
+{
+    int64_t ms = wisp_clock_now_coarse();
+    if (ms < 0) {
+        /* The host contract is Unix epoch milliseconds and cannot legitimately
+         * be negative. Clamping rather than trusting it keeps the unsigned
+         * division below from turning one bad host value into a wildly wrong
+         * date the guest would then persist. */
+        ms = 0;
+    }
+    uint64_t *seconds = (uint64_t *)(uintptr_t)retptr;
+    uint32_t *nanoseconds = (uint32_t *)(uintptr_t)(retptr + 8);
+    *seconds = (uint64_t)ms / 1000u;
+    *nanoseconds = (uint32_t)((uint64_t)ms % 1000u) * 1000000u;
+}
+
 /* Entropy. */
 
 /* `get-random-bytes(len: u64) -> list<u8>`. The callee allocates; wasi-libc
@@ -96,7 +118,6 @@ void __wasm_import_poll_method_pollable_block(int32_t a) { (void)a; WISP_PAL_DEA
 void __wasm_import_terminal_stdin_get_terminal_stdin(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stdin"); }
 void __wasm_import_terminal_stdout_get_terminal_stdout(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stdout"); }
 void __wasm_import_terminal_stderr_get_terminal_stderr(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stderr"); }
-void __wasm_import_wall_clock_now(int32_t a) { (void)a; WISP_PAL_DEAD("clocks/wall-clock now"); }
 void __wasm_import_filesystem_preopens_get_directories(int32_t a) { (void)a; WISP_PAL_DEAD("filesystem/preopens"); }
 
 /* (param i32) (result i32) */
