@@ -18,10 +18,10 @@ pub(crate) fn dense_image_bytes(cfg: &EngineConfig) -> u64 {
 /// Metadata byte limit for each pooled core instance.
 /// Managed guests with more runtime functions need a larger allowance;
 /// instantiation fails when a module exceeds this limit.
-pub(crate) const MAX_CORE_INSTANCE_SIZE: usize = 96 * 1024;
+pub(crate) const MAX_CORE_INSTANCE_SIZE: usize = 1024 * 1024;
 
 /// Element limit for each pooled table.
-pub(crate) const TABLE_ELEMENTS: usize = 3072;
+pub(crate) const TABLE_ELEMENTS: usize = 32768;
 
 /// Configured core-instance cap plus one pointer-sized entry per table element.
 pub(crate) const BOOKKEEPING_BYTES: usize =

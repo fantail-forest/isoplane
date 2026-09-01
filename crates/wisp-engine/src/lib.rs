@@ -96,11 +96,43 @@ pub struct EngineConfig {
     /// Reserved guard region enabling elision of explicit bounds checks
     /// (§8.2.1).
     ///
+    /// Dead `PROT_NONE` space placed *after* each slot's linear memory, never
+    /// mapped and never usable by a guest. What it buys is codegen: Cranelift
+    /// can drop the explicit bounds check on any access whose **static** offset
+    /// lands inside it, because an out-of-bounds access faults on unmapped
+    /// pages instead. It does not enlarge what a guest may address — that is
+    /// `max_memory_bytes`, enforced by the pool and again by the store limiter
+    /// on every `memory.grow` — and it cannot be grown at runtime, since
+    /// `memory_reservation` is fixed at `max_memory_bytes` with
+    /// `memory_may_move(false)`.
+    ///
+    /// ## 32 MiB, not 2 GiB — this was a density ceiling nobody had evaluated
+    ///
     /// The pooling allocator reserves `max_instances × (max_memory_bytes +
-    /// guard_size_bytes)` of virtual address space, so this and
-    /// `max_instances` are not independent: at the 2 GiB default, 10,000 slots
-    /// is ~20 TiB of `PROT_NONE` reservation. That costs no memory, but it is
-    /// a real limit and `WispEngine::new` reports it if the kernel refuses.
+    /// guard_size_bytes)` of address space up front, so this and
+    /// `max_instances` are not independent. x86-64 gives ~128 TiB of user
+    /// address space, and at a 2 GiB guard that ran out an order of magnitude
+    /// below the densities this platform is built for. Measured, by asking
+    /// `WispEngine::new` at each setting:
+    ///
+    /// | `max_instances` | guard 2 GiB | guard 32 MiB |
+    /// |---:|---|---|
+    /// | 10,000 | 20.8 TiB — ok | 1.5 TiB — ok |
+    /// | 50,000 | 103.8 TiB — **refused** | 7.6 TiB — ok |
+    /// | 100,000 | 207.5 TiB — **refused** | 15.3 TiB — ok |
+    /// | 200,000 | 415.0 TiB — **refused** | 30.5 TiB — ok |
+    ///
+    /// A cell could not be *configured* past ~10,000 instances, whatever its
+    /// RAM. 32 MiB is also wasmtime's own default, so the 2 GiB was this
+    /// engine's deliberate raise; what it bought over 32 MiB is elision for
+    /// static offsets between the two, and a wasm32 static offset is normally a
+    /// struct-field displacement. **The throughput cost of the reduction has not
+    /// been measured** — if a bounds-check regression ever shows up on the
+    /// `echo`/`echo-cs` ladders, this is the first constant to suspect.
+    ///
+    /// Note this participates in [`WispEngine::artifact_key`] via the engine
+    /// fingerprint: changing it invalidates every cached AOT artifact, which is
+    /// correct — it changes generated code — but means a fleet-wide recompile.
     pub guard_size_bytes: u64,
 
 }
@@ -113,7 +145,7 @@ impl Default for EngineConfig {
             epoch_tick_us: 200,
             pooling: true,
             spectre_mitigations: true,
-            guard_size_bytes: 2 << 30,
+            guard_size_bytes: 32 << 20,
         }
     }
 }

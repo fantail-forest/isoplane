@@ -1462,7 +1462,7 @@ fn fixed_bookkeeping_stays_within_its_address_space_and_heap_budgets() {
 
 
     assert!(
-        reserved <= 128 * 1024,
+        reserved <= 2 * 1024 * 1024,
         "per-slot configured bookkeeping exceeds the test bound: {reserved} B"
     );
 

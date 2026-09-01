@@ -46,6 +46,11 @@ pub struct EngineLimits {
     pub max_memory_mib: u64,
     /// §8.2.1's reserved guard region, which is what lets Cranelift elide
     /// explicit bounds checks.
+    ///
+    /// Address space, not memory, and it bounds density rather than guests:
+    /// the pool reserves `max_instances × (max_memory_mib + this)`, so at the
+    /// old 2048 default a node could not be configured past ~10,000 instances
+    /// on a 128 TiB address space. See `wisp_engine::EngineConfig`.
     #[serde(default = "default_guard_mib")]
     pub guard_mib: u64,
 }
@@ -57,7 +62,7 @@ fn default_max_memory_mib() -> u64 {
     128
 }
 fn default_guard_mib() -> u64 {
-    2048
+    32
 }
 
 impl Default for EngineLimits {

@@ -321,7 +321,23 @@ fn main() -> anyhow::Result<()> {
 
     // The engine, its pool reservation and its shared linker are not per
     // template and must not be charged to one.
-    let cfg = EngineConfig::default();
+    // Overridable so the address-space ceiling can be probed: the pooling
+    // allocator reserves `max_instances x (max_memory + guard)` of PROT_NONE
+    // virtual address space, and on x86-64 with 4-level paging the user half is
+    // 128 TiB. That product, not RAM, is what decides how many instances a cell
+    // can be *configured* for.
+    let cfg = EngineConfig {
+        max_instances: env_u64("WISP_MAX_INSTANCES", 10_000) as u32,
+        guard_size_bytes: env_u64("WISP_GUARD_BYTES", EngineConfig::default().guard_size_bytes),
+        ..EngineConfig::default()
+    };
+    println!(
+        "  engine         max_instances={} guard={} MiB -> {:.1} TiB of address space reserved",
+        cfg.max_instances,
+        cfg.guard_size_bytes >> 20,
+        cfg.max_instances as f64 * (cfg.max_memory_bytes + cfg.guard_size_bytes) as f64
+            / (1u64 << 40) as f64,
+    );
     let engine = WispEngine::new(cfg)?;
     let after_engine = footprint(trim);
     println!(
@@ -574,6 +590,13 @@ struct Artifacts {
     blobs: Vec<Vec<u8>>,
     dir: Option<tempfile::TempDir>,
     same: bool,
+}
+
+fn env_u64(k: &str, d: u64) -> u64 {
+    std::env::var(k)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(d)
 }
 
 impl Artifacts {
