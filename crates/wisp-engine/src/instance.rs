@@ -68,10 +68,9 @@ enum Entry<'a> {
 }
 
 impl Instance {
-    /// Estimate from engine allocation constants and host Rust value sizes; excludes heap allocations.
-    pub fn bookkeeping_bytes(&self) -> usize {
-        let committed = crate::wtconfig::BOOKKEEPING_BYTES;
-        let host = std::mem::size_of::<Instance>()
+    /// Host Rust value sizes retained per activation; excludes separately allocated heap data.
+    pub fn host_bookkeeping_bytes(&self) -> usize {
+        std::mem::size_of::<Instance>()
             + std::mem::size_of::<Live>()
             + std::mem::size_of::<StoreState>()
             + self
@@ -82,8 +81,7 @@ impl Instance {
                         + l.globals.len() * std::mem::size_of::<Global>()
                         + l.tables.len() * std::mem::size_of::<Table>()
                 })
-                .unwrap_or(0);
-        committed + host
+                .unwrap_or(0)
     }
 
     /// Counts pages that differ from the template; reading the full mapping can make it resident.

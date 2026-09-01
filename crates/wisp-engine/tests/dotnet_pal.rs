@@ -24,20 +24,20 @@
 //!
 //! ## Why this fails rather than skips
 //!
-//! `guests/dotnet/out/wisp_guest_dotnet_stock.wasm` is **committed** — all
-//! five .NET artifacts are, because building them needs a .NET SDK that most
-//! checkouts do not have. So its absence is a broken checkout, not an
-//! environment: there is no legitimate configuration in which this test has
-//! nothing to run against.
+//! `guests/dotnet/out/wisp_guest_dotnet_stock.wasm` is **built by this test**,
+//! via `guests/build-dotnet.sh --if-stale`. It used to be committed, on the
+//! argument that building it needs a .NET SDK most checkouts do not have — but
+//! that describes checkouts which cannot run this test either: the Dockerfile
+//! installs the SDK and `scripts/dev` is the enforced environment for every
+//! build and test in this repo. What the old rule actually bought was six
+//! tracked binaries that went stale the moment anyone edited the shared PAL,
+//! with tests still asserting against them.
 //!
-//! That is the whole of the rule. A fixture-dependent test should **fail** on
-//! a missing *tracked* fixture and may **skip** on a missing *generated* one
-//! (`guests/out/*.wasm` is `.gitignore`d, so those are absent on every fresh
-//! clone and failing would make `cargo test` red for an environmental reason
-//! — which trains people to ignore red). A skip in the first case buys
-//! nothing and costs the thing that matters: a green test that asserted
-//! nothing, with no aggregator to notice, because `cargo test` has no notion
-//! of "ran but proved nothing".
+//! The rule that survives is the one that mattered: this test **fails** rather
+//! than skips. A skip buys nothing and costs the thing that matters — a green
+//! test that asserted nothing, with no aggregator to notice, because
+//! `cargo test` has no notion of "ran but proved nothing". Building the fixture
+//! removes the excuse for skipping instead of weakening the assertion.
 //!
 //! This test skipped for its first day, on the mistaken belief that the
 //! artifact was untracked build output. It was untracked, briefly, in a
@@ -58,14 +58,30 @@ fn stock_module() -> (String, Vec<u8>) {
         .and_then(|p| p.parent())
         .expect("crates/wisp-engine has a grandparent")
         .to_path_buf();
+    // Built on demand rather than committed — see this test's header. The
+    // script is a no-op when the fixture is fresh and takes an flock, because
+    // cargo runs test binaries concurrently and two of them call it.
+    let script = root.join("guests/build-dotnet.sh");
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("--if-stale")
+        .current_dir(&root)
+        .output()
+        .unwrap_or_else(|e| panic!("could not run {}: {e}", script.display()));
+    assert!(
+        out.status.success(),
+        "{} failed, so the stock .NET fixture could not be built:\n{}{}",
+        script.display(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
     let p = root.join("guests/dotnet/out/wisp_guest_dotnet_stock.wasm");
     let bytes = std::fs::read(&p).unwrap_or_else(|e| {
         panic!(
-            "cannot read {}: {e}\n\nThis file is COMMITTED — see this test's header — so its \
-             absence is a broken checkout rather than a missing build step, and skipping would \
-             turn F7's only engine-level assertion into a green test that proved nothing. If it \
-             genuinely needs rebuilding:\n    WISP_OUT=wisp_guest_dotnet_stock \
-             guests/dotnet/build.sh -p:WispPalObject=",
+            "{} is still missing after a successful build: {e}\n\nThat is a bug in \
+             guests/build-dotnet.sh rather than in your checkout — skipping here would turn \
+             F7's only engine-level assertion into a green test that proved nothing.",
             p.display()
         )
     });

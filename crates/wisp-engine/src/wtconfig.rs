@@ -23,10 +23,6 @@ pub(crate) const MAX_CORE_INSTANCE_SIZE: usize = 4 * 1024 * 1024;
 /// Element limit for each pooled table.
 pub(crate) const TABLE_ELEMENTS: usize = 131072;
 
-/// Configured core-instance cap plus one pointer-sized entry per table element.
-pub(crate) const BOOKKEEPING_BYTES: usize =
-    MAX_CORE_INSTANCE_SIZE + TABLE_ELEMENTS * std::mem::size_of::<usize>();
-
 pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     let mut c = Config::new();
 

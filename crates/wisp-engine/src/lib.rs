@@ -476,12 +476,6 @@ impl WispEngine {
         self.inner.watchdog.shared().ticks()
     }
 
-    /// Fixed, per-live-instance bookkeeping the engine commits, independent of
-    /// any instance. §6.2 targets ≤ 64 KB.
-    pub fn bookkeeping_bytes_per_instance(&self) -> usize {
-        wtconfig::BOOKKEEPING_BYTES
-    }
-
     fn finish_template(
         &self,
         module: wasmtime::Module,

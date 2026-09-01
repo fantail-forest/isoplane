@@ -1447,26 +1447,28 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
 
 
 #[test]
-fn fixed_bookkeeping_stays_within_its_address_space_and_heap_budgets() {
+fn host_side_per_activation_structures_stay_near_their_observed_size() {
     let e = test_engine();
     let t = e.load_template(&echo_guest()).unwrap();
     let i = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
         .unwrap();
-    let total = i.bookkeeping_bytes();
-    let reserved = e.bookkeeping_bytes_per_instance();
-    let host = total - reserved;
-    eprintln!(
-        "BOOKKEEPING: {total} B/instance = {reserved} B configured pool bookkeeping + {host} B host bookkeeping"
-    );
+    let host = i.host_bookkeeping_bytes();
+    eprintln!("HOST STRUCTS: {host} B/activation (S01 measures residency at ~9.8 kB)");
 
-
-    assert!(
-        reserved <= 8 * 1024 * 1024,
-        "per-slot configured bookkeeping exceeds the test bound: {reserved} B"
-    );
-
-    // The instance has not dispatched, so its scratch buffer is empty.
+    // The bound is 4 KB rather than §6.2's 64 KB, and deliberately so. This
+    // term is observed at ~1.1 KB on a fresh activation, so a 64 KB bound has
+    // 57x of headroom and cannot fail for any change anyone would plausibly
+    // make — it would be decoration wearing a tripwire's name, which is the
+    // same category of error as the ceiling-as-measurement one this test was
+    // rewritten to stop making. Set it close enough to the observed value that
+    // inlining a buffer into `StoreState` or `Live` trips it.
+    //
+    // Safe *here* because this instance has been activated and never
+    // dispatched: `StoreState::scratch` is the one dynamic term in the sum and
+    // it is still empty. An instance that has served an import call may
+    // legitimately carry up to `MAX_OUT_BUFFER` of retained scratch capacity,
+    // so do not copy this bound to a test that dispatches first.
     assert!(
         host <= 4 * 1024,
         "host bookkeeping exceeds the test bound for an undispatched instance: {host} B"

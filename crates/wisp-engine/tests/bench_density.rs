@@ -158,7 +158,7 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
     }
 
     let dirty_reported = live[0].dirty_page_count();
-    let book = live[0].bookkeeping_bytes();
+    let book = live[0].host_bookkeeping_bytes();
     let end_rss = rss_kb();
     let end_pss = smaps_kb("Pss:");
     let end_shared = smaps_kb("Shared_Clean:");
@@ -197,7 +197,7 @@ fn run_scenario(s: &Scenario, guard: u64) -> f64 {
         (end_private.saturating_sub(base_private)) as f64 / n as f64
     );
     eprintln!(
-        "  engine-reported: dirty_page_count={dirty_reported} ({} kB), bookkeeping={book} B",
+        "  engine-reported: dirty_page_count={dirty_reported} ({} kB), host structs={book} B",
         dirty_reported * 4
     );
     eprintln!(
