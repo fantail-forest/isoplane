@@ -184,6 +184,7 @@ create_container() {
     -v wisp-nuget:/nuget \
     -w /wisp \
     -e CARGO_TARGET_DIR=/ctarget \
+    -e CARGO_BUILD_BUILD_DIR=/ctarget/build \
     -e CARGO_HOME=/opt/cargo \
     -e NUGET_PACKAGES=/nuget \
     -e HOME=/tmp \
