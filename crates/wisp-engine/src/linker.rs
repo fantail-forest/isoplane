@@ -1,25 +1,8 @@
-//! The import vtable (invariant 4).
-//!
-//! The guest can affect the world exclusively through typed imports declared
-//! in its component's WIT world.
-//!
-//! The linker defines **exactly** [`wisp_abi::imports::IMPORTS`] under module
-//! `wisp` and nothing else, so a module importing anything else fails
-//! instantiation. That is rule V1 enforced a second time: the validator
-//! rejects the module at deploy time, and if a module somehow reached a cell
-//! anyway there is no symbol for it to bind to. There is deliberately no
-//! `define_unknown_imports_as_traps` here — an undeclared import must be a
-//! *deploy* failure, not a runtime one.
-//!
-//! Two rules govern every buffer that crosses the boundary:
-//!
-//! * guest → host: the engine copies the bytes **out** of linear memory before
-//!   calling the binding, so the host never holds a pointer into a memory the
-//!   guest could grow underneath it;
-//! * host → guest: the binding fills a host-side scratch buffer and the engine
-//!   copies it **in**.
-//!
-//! In neither direction does a host pointer enter guest memory.
+//! The import vtable. The linker defines exactly [`wisp_abi::imports::IMPORTS`]
+//! under module `wisp`, so a module importing anything else fails to
+//! instantiate. Guest buffers are copied out before the binding is called and
+//! host results are copied in afterwards; in neither direction does a host
+//! pointer enter guest memory.
 
 use wasmtime::error::Context;
 use wasmtime::{bail, Caller, Engine, Linker, Result};
@@ -37,11 +20,8 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<StoreState>> {
     Ok(l)
 }
 
-/// Register one import under its declared core-wasm signature.
-///
 /// The shapes are enumerated rather than generated because the set is small
-/// and closed: a new shape appearing in `IMPORTS` should be a compile-visible
-/// decision here, not something the engine silently guesses.
+/// and closed: a new shape in `IMPORTS` is a decision here, not a guess.
 fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
     use Ty::{I32, I64};
     let m = HOST_MODULE;
@@ -99,13 +79,9 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
     Ok(())
 }
 
-/// The body shared by every import.
 fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) -> Result<u64> {
-    // The sealed init sandbox, where every I/O import traps. Checked first, so
-    // a forbidden import cannot have a side effect on its way to trapping —
-    // that is what makes pre-init's rollback-by-replay a genuine rollback. The
-    // offending name is recorded because the deferral loop needs to know
-    // *which* import an impure static initializer touched.
+    // Refuse this call before its side effect. Earlier permitted initialization
+    // I/O is not undone when preparation retries a deferred unit.
     if c.data().is_init_sandbox() && !def.init_visible {
         c.data_mut().violation = Some(def.name);
         return Err(CapabilityViolation {
@@ -116,35 +92,22 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     }
 
     match def.name {
-        // The frozen clock never reaches a binding: it is an engine-owned
-        // security control. Returning a host-sourced value here would hand the
-        // guest back the measurement primitive the freeze exists to remove.
+        // Engine-owned: a host-sourced value here would hand the guest back
+        // the timing primitive the freeze removes.
         "clock_now_coarse" => return Ok(c.data().clock_ms),
-        // The kill-cooperation ABI. Both halves are engine-owned and never
-        // reach a `HostBindings` vtable: the state they read and write is the
-        // meter the epoch callback compares against, which lives here.
-        //
-        // The host-published remaining-budget value, signed, in nanoseconds
-        // against B. Negative means the dispatch is in grace and by how much —
-        // the number a runtime layer needs to decide whether it can still
-        // afford to unwind. It is deliberately NOT a fine clock the guest can
-        // difference for timing: it moves only with the guest's own thread
-        // CPU, so measuring it measures the guest itself.
+        // Engine-owned: reads the meter the epoch callback compares against.
+        // Not a fine clock, since it moves only with the guest's own thread
+        // CPU.
         "budget_remaining_ns" => {
             let m = c.data().meter;
             let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos());
             let remaining = (m.cpu_budget_ns as i128) - (cpu as i128);
             return Ok(remaining.clamp(i64::MIN as i128, i64::MAX as i128) as i64 as u64);
         }
-        // The runtime layer's *unsafe-to-trap* bit: set around GC phases and
-        // scheduler queue mutations. Honoured during grace entry, ignored at
-        // the hard deadline.
         "unsafe_to_trap" => {
             c.data_mut().unsafe_to_trap = raw[0] != 0;
             return Ok(0);
         }
-        // An abort is a guest fault, so it leaves as a trap rather than a
-        // return value; the message is kept for telemetry.
         "abort" => {
             let bytes = read_guest(c, raw[0] as usize, raw[1] as usize).unwrap_or_default();
             let message = String::from_utf8_lossy(&bytes).into_owned();
@@ -156,9 +119,9 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
 
     let scalars = layout::scalars_of(def, raw);
 
-    // Borrow dance: `HostBindings` methods take `&mut self`, and both the
-    // bindings and the scratch buffer live in the store data, so both are moved
-    // out for the duration of the call.
+    // `HostBindings` methods take `&mut self`, and both the bindings and the
+    // scratch buffer live in the store data, so both are moved out for the
+    // call.
     let mut scratch = std::mem::take(&mut c.data_mut().scratch);
     scratch.clear();
 
@@ -178,17 +141,16 @@ fn call_binding(
 ) -> Result<u64> {
     use wisp_abi::imports::BufSpec;
 
-    // Guest -> host: copy out before the call.
     if let BufSpec::In(i) = def.buf {
         let i = i as usize;
         let (ptr, len) = (raw[i] as usize, raw[i + 1] as usize);
         let bytes = read_guest(c, ptr, len)?;
         *scratch = bytes;
     }
-    // Host -> guest: the second parameter is a *capacity*, not a length. The
-    // host may report a larger value than it could fit (`init_config_get`
-    // answers a zero-length probe with the blob's full size), so the engine
-    // never treats the return value as a byte count to copy.
+    // The second parameter of an out-buffer is a capacity. The host may
+    // report a larger value than fits (`init_config_get` answers a zero-length
+    // probe with the blob's full size), so the return value is never treated
+    // as a byte count to copy.
     if let BufSpec::Out(i) = def.buf {
         let cap = raw[i as usize + 1] as usize;
         if cap > MAX_OUT_BUFFER_BYTES {
@@ -213,8 +175,6 @@ fn call_binding(
         scalars,
     };
     let ret = if layout::is_out(def) {
-        // The one case where bytes flow host -> guest inside an import. The
-        // host writes into a host-side buffer; the engine copies it in below.
         bindings.call_fill(
             ImportCall {
                 import: def.name,
@@ -225,19 +185,14 @@ fn call_binding(
         ) as u64
     } else {
         match def.kind {
-            // There is no import that waits. A future-returning import MUST
-            // return immediately with a future id, which is what makes
-            // invariant 3 hold by construction rather than by discipline.
             ImportKind::Future => bindings.call_future(call),
             ImportKind::Sync => bindings.call_sync(call) as u64,
         }
     };
 
-    // The coarse clock advances only at host-call/wake boundaries, and a
-    // future-returning import is that boundary: control genuinely left the
-    // guest. Synchronous imports do *not* advance it, so no amount of
-    // `log_emit` in a loop turns the clock into a stopwatch. Monotonic per
-    // instance.
+    // Future-returning imports resample the binding's clock. Cell bindings
+    // keep that value frozen until the next slice; synchronous imports do
+    // not resample it.
     if matches!(def.kind, ImportKind::Future) {
         let now = bindings.slice_clock_ms();
         let d = c.data_mut();
@@ -246,7 +201,6 @@ fn call_binding(
 
     c.data_mut().bindings = Some(bindings);
 
-    // Host -> guest: copy in after the call.
     if let BufSpec::Out(i) = def.buf {
         let ptr = raw[i as usize] as usize;
         write_guest(c, ptr, scratch.as_slice())?;

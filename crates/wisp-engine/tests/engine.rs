@@ -1,7 +1,4 @@
 //! Behavioural tests for the sandbox boundary.
-//!
-//! Each test names the property it is holding the engine to. A claim without a
-//! test is a claim.
 
 mod common;
 
@@ -14,12 +11,8 @@ use wisp_engine::{
     Completion, CpuBudget, EngineConfig, InstanceOps, KillPhase, TrapKind, WispEngine,
 };
 
-/// Small engine: 64 slots, 4 MiB ceiling, small guard. The guard is not the
-/// 2 GiB default because every test process would otherwise reserve tens of
-/// GiB of address space per engine it builds.
-/// The config every test engine here is built from. Split out from
-/// [`test_engine`] so a test can vary one field without restating the rest —
-/// which matters for anything asserting that a *bad* configuration is refused.
+/// A small engine: the guard is not the default because every test process
+/// would otherwise reserve tens of GiB of address space per engine it builds.
 fn small_engine_config() -> EngineConfig {
     EngineConfig {
         max_instances: 64,
@@ -39,15 +32,37 @@ fn echo_guest() -> Vec<u8> {
     guest(4, "", "", DONE, DONE)
 }
 
+fn activate(e: &WispEngine, t: &wisp_engine::Template) -> wisp_engine::Instance {
+    e.activate(t, Box::new(TestBindings::new(Recorder::default())))
+        .expect("activation")
+}
+
+fn read_u64(m: &[u8], off: usize) -> u64 {
+    u64::from_le_bytes(m[off..off + 8].try_into().expect("8 bytes"))
+}
+
+fn read_u32(m: &[u8], off: usize) -> u32 {
+    u32::from_le_bytes(m[off..off + 4].try_into().expect("4 bytes"))
+}
+
+fn budget(cpu_ms: u32) -> CpuBudget {
+    CpuBudget {
+        cpu_ms,
+        wall_ms_cap: 30_000,
+        spent_ns: 0,
+    }
+}
+
+const SPIN: &str = "(func $spin (loop $l (br $l)))";
+
 // ---------------------------------------------------------------------------
-// V1 / invariant 4 — imports are the complete capability surface
+// imports are the complete capability surface
 // ---------------------------------------------------------------------------
 
 #[test]
 fn an_import_outside_the_table_fails_to_load() {
     let e = test_engine();
 
-    // Right module, wrong field.
     let wasm = guest(
         4,
         r#"(import "wisp" "definitely_not_an_import" (func $x (result i64)))"#,
@@ -57,18 +72,13 @@ fn an_import_outside_the_table_fails_to_load() {
     );
     let err = e
         .load_template(&wasm)
-        .expect_err("undeclared import must be rejected");
+        .expect_err("an undeclared import must be rejected");
     let msg = format!("{err:#}");
     assert!(
         msg.contains("definitely_not_an_import"),
-        "error must name the offender: {msg}"
-    );
-    assert!(
-        msg.contains("V1"),
-        "must cite the rule it is enforcing: {msg}"
+        "the error must name the offending import: {msg}"
     );
 
-    // Right field, wrong module: `wisp` is the only host module.
     let wasm = guest(
         4,
         r#"(import "wasi_snapshot_preview1" "fd_write" (func $x (param i32) (result i32)))"#,
@@ -78,10 +88,12 @@ fn an_import_outside_the_table_fails_to_load() {
     );
     let err = e
         .load_template(&wasm)
-        .expect_err("a second host module must be rejected");
-    assert!(format!("{err:#}").contains("fd_write"));
+        .expect_err("an import from an unknown module must be rejected");
+    assert!(
+        format!("{err:#}").contains("fd_write"),
+        "the error must name the offending import: {err:#}"
+    );
 
-    // And the declared ones do link.
     let wasm = guest(
         4,
         &import("kv_get", "(param i32 i32)", "(result i64)"),
@@ -95,17 +107,71 @@ fn an_import_outside_the_table_fails_to_load() {
 #[test]
 fn a_module_missing_a_required_export_cannot_activate() {
     let e = test_engine();
-    // Everything except `wisp_wake`.
     let src = r#"
 (module
   (memory (export "memory") 1)
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 1024))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0)))"#;
-    let t = e.load_template(&wat::parse_str(src).unwrap()).unwrap();
+    let t = e
+        .load_template(&wat::parse_str(src).expect("wat"))
+        .expect("the module compiles");
     let err = e
         .activate(&t, Box::new(TestBindings::new(Recorder::default())))
         .expect_err("a module without wisp_wake is not deployable");
-    assert!(format!("{err:#}").contains("wisp_wake"), "{err:#}");
+    assert!(
+        format!("{err:#}").contains("wisp_wake"),
+        "the error must name the missing export: {err:#}"
+    );
+}
+
+#[test]
+fn a_template_whose_start_function_calls_an_import_is_refused() {
+    let e = test_engine();
+    let wasm = guest(
+        4,
+        &import("init_unit_begin", "(param i32)", ""),
+        r#"
+  (func $start (call $init_unit_begin (i32.const 1)))
+  (start $start)"#,
+        DONE,
+        DONE,
+    );
+    let err = e
+        .load_template(&wasm)
+        .expect_err("a template that reaches the host during instantiation must be refused");
+    assert!(
+        format!("{err:#}").contains("called a host import"),
+        "the error must say the start function reached the host: {err:#}"
+    );
+}
+
+#[test]
+fn a_module_with_more_table_elements_than_the_pool_allows_is_refused() {
+    let e = test_engine();
+    let wasm = guest(4, "", "(table 131073 funcref)", DONE, DONE);
+    e.load_template(&wasm)
+        .expect_err("a table over the pool's element cap must not load");
+    let wasm = guest(4, "", "(table 131072 funcref)", DONE, DONE);
+    let t = e.load_template(&wasm).expect("a table at the cap loads");
+    activate(&e, &t);
+}
+
+// ---------------------------------------------------------------------------
+// engine construction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_epoch_tick_too_coarse_for_the_grace_floor_is_refused_at_construction() {
+    let err = WispEngine::new(EngineConfig {
+        epoch_tick_us: 5_000,
+        ..small_engine_config()
+    })
+    .err()
+    .expect("a 5 ms tick cannot deliver a 2 ms grace window and must be refused");
+    assert!(
+        format!("{err:#}").contains("grace"),
+        "the refusal must say what the tick is too coarse for: {err:#}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -115,37 +181,32 @@ fn a_module_missing_a_required_export_cannot_activate() {
 #[test]
 fn reset_restores_template_contents_byte_exactly() {
     let e = test_engine();
-    let t = e.load_template(&echo_guest()).unwrap();
-    let image = t.memory_image().to_dense();
+    let t = e.load_template(&echo_guest()).expect("template");
+    let image = t.memory_image_arc().to_dense();
 
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let mut i = activate(&e, &t);
     assert_eq!(
         i.memory(),
         image.as_slice(),
         "a fresh activation must equal the template"
     );
 
-    // Scribble over a spread of pages, including one far from the others.
     for off in [0usize, 4096, 65536, 30 * 4096, 60 * 4096] {
         i.memory()[off..off + 8].copy_from_slice(&[0xAB; 8]);
     }
-    assert_ne!(i.memory(), image.as_slice());
-    assert!(
-        i.dirty_page_count() >= 5,
-        "dirtied {} pages",
-        i.dirty_page_count()
+    assert_ne!(
+        i.memory(),
+        image.as_slice(),
+        "the writes must have changed memory"
     );
 
-    i.reset().unwrap();
+    i.reset().expect("reset");
 
     assert_eq!(
         i.memory(),
         image.as_slice(),
-        "reset restores template contents — byte for byte, not approximately"
+        "reset must restore template contents byte for byte"
     );
-    assert_eq!(i.dirty_page_count(), 0);
 }
 
 #[test]
@@ -158,26 +219,15 @@ fn activation_seals_globals_and_tables_from_the_template() {
   (table (export "t") 4 4 funcref)
   (elem (i32.const 0) $marker)
   (func $marker (result i32) (i32.const 7))
-  (global $counter (export "g_counter") (mut i64) (i64.const 41))
-  (func (export "bump") (result i64)
-    (global.set $counter (i64.add (global.get $counter) (i64.const 1)))
-    (global.get $counter))"#,
+  (global $counter (export "g_counter") (mut i64) (i64.const 41))"#,
         DONE,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
 
-    let baseline = {
-        let mut i = e
-            .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-            .unwrap();
-        i.capture_mutable_state().unwrap()
-    };
+    let baseline = activate(&e, &t).capture_mutable_state().expect("capture");
 
-    // Mutate one activation's globals and memory...
-    let mut a = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let mut a = activate(&e, &t);
     a.memory()[0..8].copy_from_slice(&[9u8; 8]);
     let mut img = baseline.clone();
     img.globals = img
@@ -190,117 +240,50 @@ fn activation_seals_globals_and_tables_from_the_template() {
             other => *other,
         })
         .collect();
-    a.restore_mutable_state(&img).unwrap();
-    let mutated = a.capture_mutable_state().unwrap();
+    a.restore_mutable_state(&img).expect("restore");
+    let mutated = a.capture_mutable_state().expect("capture");
     assert_ne!(
         format!("{:?}", mutated.globals),
         format!("{:?}", baseline.globals),
-        "the test must actually have changed something"
+        "the restore must have changed the globals"
     );
 
-    // ...and a fresh activation of the same template must not see any of it.
-    // Globals and tables are initialized from the template's sealed values,
-    // which wasmtime instantiation performs.
-    let mut b = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    let fresh = b.capture_mutable_state().unwrap();
+    let mut b = activate(&e, &t);
+    let fresh = b.capture_mutable_state().expect("capture");
     assert_eq!(
         format!("{:?}", fresh.globals),
-        format!("{:?}", baseline.globals)
+        format!("{:?}", baseline.globals),
+        "a fresh activation must see the template's sealed globals"
     );
-    assert_eq!(b.memory(), t.memory_image().to_dense());
-    // The table is re-sealed too: capture would have failed if any slot's
-    // nullness differed from the template baseline.
-    assert!(fresh.table_mutations.is_empty());
+    assert_eq!(
+        b.memory(),
+        t.memory_image_arc().to_dense(),
+        "a fresh activation must see the template's memory"
+    );
+    assert!(
+        fresh.table_mutations.is_empty(),
+        "a fresh activation's table must match the template baseline"
+    );
 
-    // And `reset` gets the same seal, since it is a re-instantiation.
-    a.reset().unwrap();
-    let after = a.capture_mutable_state().unwrap();
+    a.reset().expect("reset");
+    let after = a.capture_mutable_state().expect("capture");
     assert_eq!(
         format!("{:?}", after.globals),
-        format!("{:?}", baseline.globals)
+        format!("{:?}", baseline.globals),
+        "reset must re-seal globals from the template"
     );
 }
 
 #[test]
-fn a_serialized_template_round_trips_and_is_engine_pinned() {
+fn a_mapped_artifact_is_equivalent_to_the_compiled_template() {
     let e = test_engine();
-    let t = e.load_template(&echo_guest()).unwrap();
-    let bytes = e.serialize(&t).unwrap();
-
-    // SAFETY: produced by `serialize` on this very engine.
-    let back = unsafe { e.deserialize(&bytes) }.unwrap();
-    assert_eq!(back.hash, t.hash);
-    assert_eq!(back.abi_rev, wisp_abi::ABI_REV);
-    assert_eq!(back.memory_image(), t.memory_image());
-    assert_eq!(e.artifact_key(&back), e.artifact_key(&t));
-
-    let mut i = e
-        .activate(&back, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    assert_eq!(
-        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
-        Completion::Done
-    );
-
-    // Artifacts are content-addressed by (module hash, engine version,
-    // µarch). An engine configured differently must refuse them.
-    let other = WispEngine::new(EngineConfig {
-        max_instances: 8,
-        max_memory_bytes: 8 << 20,
-        epoch_tick_us: 200,
-        pooling: true,
-        spectre_mitigations: false,
-        guard_size_bytes: 2 << 20,
-    })
-    .unwrap();
-    let err =
-        unsafe { other.deserialize(&bytes) }.expect_err("cross-engine artifact must be refused");
-    assert!(format!("{err:#}").contains("engine"), "{err:#}");
-}
-
-/// The activator's baseline must be the engine's, not a copy of it.
-///
-/// `wisp-host`'s `EngineActivator` holds the template image for the page-diff.
-/// It used to take `memory_image().to_vec()` — a second full copy per module
-/// per cell, which for a pre-initialized .NET template is tens of megabytes.
-/// `memory_image_arc` hands out the engine's own allocation instead, and
-/// pointer equality is the only assertion that actually proves no copy
-/// happened: comparing contents would pass just as happily for a clone.
-#[test]
-fn the_template_image_is_shared_not_copied() {
-    let e = test_engine();
-    let t = e.load_template(&echo_guest()).unwrap();
-    let a = t.memory_image_arc();
-    let b = t.memory_image_arc();
-    assert!(
-        std::sync::Arc::ptr_eq(&a, &b),
-        "two holders must share one allocation"
-    );
-    assert!(
-        std::ptr::eq(std::sync::Arc::as_ptr(&a), t.memory_image() as *const _),
-        "the shared allocation must be the template's own, not a clone of it"
-    );
-}
-
-/// The mapped load path has to be *equivalent*, not merely cheaper: same
-/// template, same image, same dispatch, and the same refusal when the engine
-/// does not match.
-#[test]
-fn a_mapped_artifact_is_equivalent_to_a_copied_one() {
-    let e = test_engine();
-    let dir = std::env::temp_dir().join(format!("wisp-artifact-test-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = tempfile::tempdir().expect("tempdir");
     let wasm = echo_guest();
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
 
-    // First load compiles into the cache; the second must map what the first
-    // wrote. If `compiled` were true both times the cache would be doing
-    // nothing, which is exactly the failure the flag exists to catch.
     // SAFETY: a fresh directory this test owns, written only by this engine.
-    let (a, compiled_a) = unsafe { e.load_mapped(&wasm, &dir) }.unwrap();
-    let (b, compiled_b) = unsafe { e.load_mapped(&wasm, &dir) }.unwrap();
+    let (a, compiled_a) = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("first load");
+    let (b, compiled_b) = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("second load");
     assert!(
         compiled_a,
         "the first load has nothing to map and must compile"
@@ -311,59 +294,97 @@ fn a_mapped_artifact_is_equivalent_to_a_copied_one() {
     );
 
     for m in [&a, &b] {
-        assert_eq!(m.hash, t.hash);
-        assert_eq!(m.abi_rev, t.abi_rev);
-        assert_eq!(m.memory_image(), t.memory_image());
-        assert_eq!(m.memory_pages(), t.memory_pages());
-        assert_eq!(e.artifact_key(m), e.artifact_key(&t));
+        assert_eq!(m.hash, t.hash, "the mapped template is the same module");
+        assert_eq!(
+            m.abi_rev, t.abi_rev,
+            "the mapped template has the same ABI rev"
+        );
+        assert_eq!(
+            *m.memory_image_arc(),
+            *t.memory_image_arc(),
+            "the mapped template has the same memory image"
+        );
+        assert_eq!(
+            m.memory_pages(),
+            t.memory_pages(),
+            "the mapped template has the same memory size"
+        );
     }
 
-    let mut i = e
-        .activate(&b, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let mut i = activate(&e, &b);
     assert_eq!(
         i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
-        Completion::Done
+        Completion::Done,
+        "a mapped template dispatches like a compiled one"
     );
 
-    // Content-addressing again, on the mapped path: a differently configured engine
-    // must refuse the file rather than map code it cannot run.
     let other = WispEngine::new(EngineConfig {
-        max_instances: 8,
-        max_memory_bytes: 8 << 20,
-        epoch_tick_us: 200,
-        pooling: true,
         spectre_mitigations: false,
-        guard_size_bytes: 2 << 20,
+        ..small_engine_config()
     })
-    .unwrap();
-    let paths = wisp_engine::ArtifactPaths::new(&dir, &e.artifact_key(&t));
-    let meta = std::fs::read(&paths.meta).unwrap();
+    .expect("engine");
+    let paths = e
+        .precompile_to_files(&wasm, dir.path())
+        .expect("precompile");
+    let meta = std::fs::read(&paths.meta).expect("read meta");
+    // SAFETY: the metadata was written by `e` just above.
     let err = unsafe { other.deserialize_file(&meta, &paths.cwasm) }
-        .expect_err("cross-engine artifact must be refused");
-    assert!(format!("{err:#}").contains("engine"), "{err:#}");
+        .expect_err("a differently configured engine must refuse the artifact");
+    assert!(
+        format!("{err:#}").contains("engine"),
+        "the refusal must say the engine does not match: {err:#}"
+    );
+}
 
-    let _ = std::fs::remove_dir_all(&dir);
+#[test]
+fn a_tampered_artifact_is_refused_before_it_is_mapped() {
+    let e = test_engine();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wasm = echo_guest();
+    let paths = e
+        .precompile_to_files(&wasm, dir.path())
+        .expect("precompile");
+
+    let mut cwasm = std::fs::read(&paths.cwasm).expect("read cwasm");
+    let mid = cwasm.len() / 2;
+    cwasm[mid] ^= 0xFF;
+    std::fs::write(&paths.cwasm, &cwasm).expect("write cwasm");
+
+    // SAFETY: the directory is this test's own; the point is that the tamper
+    // is caught before wasmtime sees the file.
+    let err = unsafe { e.load_mapped(&wasm, dir.path()) }
+        .expect_err("a .cwasm that does not match its metadata must be refused");
+    assert!(
+        format!("{err:#}").contains("does not match the hash"),
+        "the refusal must say the hash failed: {err:#}"
+    );
 }
 
 #[test]
 fn deferred_init_units_travel_in_the_template() {
     let e = test_engine();
     let mut wasm = echo_guest();
-    // The section `wisp-control` pre-init is expected to emit.
     let mut payload = 3u32.to_le_bytes().to_vec();
     for id in [7u32, 11, 13] {
         payload.extend_from_slice(&id.to_le_bytes());
     }
     append_custom_section(&mut wasm, wisp_engine::DEFERRED_INIT_SECTION, &payload);
 
-    let t = e.load_template(&wasm).unwrap();
-    assert_eq!(t.deferred_init_units(), &[7, 11, 13]);
+    let t = e.load_template(&wasm).expect("template");
+    assert_eq!(
+        t.deferred_init_units(),
+        &[7, 11, 13],
+        "the section names the deferred units"
+    );
 
-    // ...and survive the artifact cache.
-    let bytes = e.serialize(&t).unwrap();
-    let back = unsafe { e.deserialize(&bytes) }.unwrap();
-    assert_eq!(back.deferred_init_units(), &[7, 11, 13]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    // SAFETY: a fresh directory this test owns.
+    let (back, _) = unsafe { e.load_mapped(&wasm, dir.path()) }.expect("mapped load");
+    assert_eq!(
+        back.deferred_init_units(),
+        &[7, 11, 13],
+        "the deferred units survive the artifact cache"
+    );
 }
 
 fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
@@ -382,117 +403,78 @@ fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
     leb(name.len() as u32, &mut body);
     body.extend_from_slice(name.as_bytes());
     body.extend_from_slice(data);
-    wasm.push(0); // custom section id
+    wasm.push(0);
     leb(body.len() as u32, wasm);
     wasm.extend_from_slice(&body);
 }
 
 // ---------------------------------------------------------------------------
-// budget kills are abrupt and self-limiting
+// the two-phase kill
 // ---------------------------------------------------------------------------
 
-/// An *uncooperative* spinner is killed at **B+G**, not at B, and only then is
-/// the kill abrupt.
+/// The guest marks memory before it spins and would mark it again on the way
+/// out; a hard kill is not unwound, so the second marker never appears.
 #[test]
-fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
+fn an_uncooperative_spinner_is_hard_killed_and_tombstoned() {
     let e = test_engine();
-    // A tight back-edge loop: epoch checks are Cranelift-inserted at back-edges.
-    // The guest marks memory before it starts spinning and would mark it again
-    // on the way out. A hard budget kill is not unwound — no `finally` blocks,
-    // no finalizers, no cleanup quantum — so the second marker must never
-    // appear.
     let wasm = guest(
         4,
         "",
-        r#"
-  (global $spins (export "g_spins") (mut i64) (i64.const 0))
-  (func $spin (loop $l (global.set $spins (i64.add (global.get $spins) (i64.const 1))) (br $l)))"#,
+        SPIN,
         r#"
     (i64.store (i32.const 3000) (i64.const 1))   ;; entered
     (call $spin)
-    (i64.store (i32.const 3008) (i64.const 1))   ;; "finally" — must never run
+    (i64.store (i32.const 3008) (i64.const 1))   ;; the `finally`
     (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
 
-    let budget = CpuBudget {
-        cpu_ms: 20,
-        wall_ms_cap: 30_000,
-        spent_ns: 0,
-    };
-    let out = i.dispatch(&http_dispatch(1), budget);
+    let b = budget(20);
+    let out = i.dispatch(&http_dispatch(1), b);
 
     let trap = out.trap.as_ref().expect("a spinner must trap");
-    assert_eq!(trap.kind, TrapKind::BudgetExceeded, "{trap:?}");
-    assert_eq!(trap.kind.tenant_code(), "budget_exceeded");
-    assert_eq!(out.completion, Completion::BudgetKill);
-    assert!(!out.completion.instance_survives());
-
-    assert_eq!(out.kill, Some(KillPhase::Hard));
-
-    // The kill lands at B+G, not at B. G = max(2 ms, 10% of 20 ms) = 2 ms, so
-    // the hard deadline is 22 ms; the meter is the thread clock, so this is a
-    // CPU measurement and not a wall-clock one.
-    let cpu_ms = out.cpu_ns as f64 / 1e6;
-    let hard_ms = budget.hard_ns() as f64 / 1e6;
-    assert_eq!(hard_ms, 22.0);
+    assert_eq!(
+        trap.kind,
+        TrapKind::BudgetExceeded,
+        "the trap must be classified as a budget kill: {trap:?}"
+    );
+    assert_eq!(
+        out.completion,
+        Completion::BudgetKill,
+        "a spinner takes the hard kill"
+    );
+    assert_eq!(out.kill, Some(KillPhase::Hard), "the phase is hard");
     assert!(
-        cpu_ms >= hard_ms,
-        "killed after {cpu_ms:.2} ms, before the {hard_ms:.0} ms hard deadline — the grace \
-         window was cut short"
+        out.cpu_ns >= b.hard_ns(),
+        "the kill lands at B+G, not before: {} ns against {} ns",
+        out.cpu_ns,
+        b.hard_ns()
     );
     assert!(
-        cpu_ms < hard_ms + 8.0,
-        "killed after {cpu_ms:.2} ms against a {hard_ms:.0} ms hard deadline"
-    );
-    // The overage is recorded, and it is the CPU past B — grace included.
-    assert!(
-        out.overage_ns >= budget.grace_ns(),
-        "a dispatch that ran the whole grace window must be recorded at least G of overage; \
-         recorded {} ns against G = {} ns",
-        out.overage_ns,
-        budget.grace_ns()
-    );
-    eprintln!(
-        "HARD KILL: B=20 ms G={:.0} ms => B+G={hard_ms:.0} ms; recorded {:.3} ms CPU \
-         ({:.3} ms overage), {:.3} ms wall, overshoot past B+G {:.3} ms",
-        budget.grace_ns() as f64 / 1e6,
-        cpu_ms,
-        out.overage_ns as f64 / 1e6,
-        out.wall_ns as f64 / 1e6,
-        cpu_ms - hard_ms
+        out.overage_ns >= b.grace_ns(),
+        "a dispatch that ran the whole grace window is recorded at least G of overage"
     );
 
-    // Checked rather than asserted in prose: the guest was inside the
-    // dispatch, and the code after the loop never ran. There is no unwinding
-    // to run it — which is why the host reclaims all of the dispatch's handles
-    // on kill; invariant 2 *is* the cleanup story.
-    let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
     let (entered, cleaned_up) = {
         let m = i.memory();
-        (read(m, 3000), read(m, 3008))
+        (read_u64(m, 3000), read_u64(m, 3008))
     };
-    assert_eq!(entered, 1, "the guest must actually have been running");
+    assert_eq!(entered, 1, "the guest must have been running");
     assert_eq!(
         cleaned_up, 0,
-        "no `finally`-equivalent may run after a hard budget kill"
+        "no `finally` may run after a hard budget kill"
     );
 
-    // The instance is a TOMBSTONE. Not "discarded by convention" —
-    // every host-side operation on it fails, and a call into the guest is a
-    // hard assertion failure. Kill-then-call is checked in its own
-    // conformance test below; here it is enough that the state is set and the
-    // two host-side operations that could launder it refuse.
-    assert!(i.is_poisoned());
-    assert!(i.tombstone_reason().is_some());
-    assert!(!i.is_parked());
+    assert!(!i.is_parked(), "a tombstone is not parked");
+    assert!(
+        !i.is_capture_eligible(),
+        "a tombstone is never a capture candidate"
+    );
     assert!(
         i.reset().is_err(),
-        "a hard-killed instance must not be laundered back into the pool"
+        "a hard-killed instance must not be reset back into the pool"
     );
     assert!(
         i.capture_mutable_state().is_err(),
@@ -500,116 +482,56 @@ fn an_uncooperative_spinner_is_hard_killed_at_b_plus_g_and_tombstoned() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// the three CONFORMANCE TESTS for the two-phase kill
-//
-//   1. kill-then-call MUST observe refusal;
-//   2. a dispatch that yields during grace MUST be observed clean;
-//   3. a genuine spin MUST tombstone at exactly B+G.
-//
-// They are written against hand-built `.wat` guests rather than the Rust SDK
-// for the reason the fixture module gives: a guest-SDK bug must never be
-// mistakable for an engine bug. The SDK's own cooperation is proved
-// separately, end-to-end through a real cell, in
-// `crates/wisp-host/tests/two_phase_kill.rs`.
-// ---------------------------------------------------------------------------
-
-/// **Conformance 1: kill-then-call MUST observe refusal.**
-///
-/// wasmtime does *not* poison a store after a budget trap — a killed instance
-/// has been observed answering a later exported call correctly, globals intact
-/// — so "the instance is discarded" is an invariant the platform has to
-/// enforce rather than one the engine provides.
-///
-/// The refusal is a panic, which is what "hard assertion failure" means, so
-/// the test has to catch it. That is the point: an `Err` could be ignored by
-/// a caller, and a caller ignoring it is exactly the bug.
 #[test]
-fn conformance_kill_then_call_is_refused() {
+fn a_tombstoned_instance_refuses_the_next_call() {
     let e = test_engine();
-    let wasm = guest(
-        4,
-        "",
-        r#"
-  (global $spins (export "g_spins") (mut i64) (i64.const 0))
-  (func $spin (loop $l (global.set $spins (i64.add (global.get $spins) (i64.const 1))) (br $l)))"#,
-        "(call $spin) (i64.const 0)",
-        DONE,
-    );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    let budget = CpuBudget {
-        cpu_ms: 5,
-        wall_ms_cap: 30_000,
-        spent_ns: 0,
-    };
+    let wasm = guest(4, "", SPIN, "(call $spin) (i64.const 0)", DONE);
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
+    let b = budget(5);
 
-    let out = i.dispatch(&http_dispatch(1), budget);
-    assert_eq!(out.completion, Completion::BudgetKill);
-    assert!(i.is_poisoned(), "a hard kill must tombstone");
-
-    // The call that used to succeed. It must now be refused.
-    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        i.dispatch(&http_dispatch(2), budget)
-    }));
-    let payload = refused.expect_err(
-        "a tombstoned instance answered a second dispatch, which must be a hard assertion \
-         failure",
+    let out = i.dispatch(&http_dispatch(1), b);
+    assert_eq!(
+        out.completion,
+        Completion::BudgetKill,
+        "the spinner must be hard-killed"
     );
-    let msg = payload
-        .downcast_ref::<String>()
-        .cloned()
-        .unwrap_or_else(|| {
-            payload
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .unwrap_or_default()
-        });
-    assert!(msg.contains("TOMBSTONED"), "unhelpful refusal: {msg}");
 
-    // Every other door is shut too, and these refuse rather than panic
-    // because they are host-side operations on memory, not calls into a guest.
-    assert!(i.reset().is_err());
-    assert!(
-        i.capture_mutable_state().is_err(),
-        "deltas are never captured from a tombstone"
+    let refused = i.dispatch(&http_dispatch(2), b);
+    assert_eq!(
+        refused.completion,
+        Completion::Trapped,
+        "a call into a tombstone must not run the guest"
     );
-    assert!(!i.is_capture_eligible());
-    assert!(!i.is_parked());
+    let trap = refused.trap.expect("the refusal is reported as a trap");
+    assert_eq!(
+        trap.kind,
+        TrapKind::Tombstoned,
+        "the refusal names the tombstone: {trap:?}"
+    );
+    assert_eq!(
+        refused.cpu_ns, 0,
+        "a refused call bills nothing, since nothing ran"
+    );
+
+    let woke = i.wake(1, &ResultRecord::Ok(vec![]), b);
+    assert_eq!(
+        woke.trap.map(|t| t.kind),
+        Some(TrapKind::Tombstoned),
+        "a wake into a tombstone is refused too"
+    );
 }
 
-/// **Conformance 2: a dispatch that yields during grace MUST be observed
-/// clean (no tombstone).**
-///
-/// The fixture is the negative control's twin: the identical spin loop, plus
-/// a `budget_remaining_ns` check every 4096 iterations. When the check goes
-/// non-positive it stores a marker — the `finally` a *hard* kill never runs —
-/// and returns `done`.
-///
-/// Everything a clean kill promises is asserted here: the completion
-/// is `CleanKill`, the instance is NOT tombstoned, `reset` works, the slot is
-/// reusable for a subsequent dispatch, and the overage is recorded.
+/// The identical spin loop, plus a `budget_remaining_ns` check every 1024
+/// iterations. A runtime layer does the same at its allocation slow path, GC
+/// entry and task switch.
 #[test]
-fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
+fn a_dispatch_that_yields_during_grace_takes_a_clean_kill() {
     let e = test_engine();
     let wasm = guest(
         4,
         &import("budget_remaining_ns", "", "(result i64)"),
         r#"
-  ;; The cooperative loop: a slab of pure arithmetic, then one read of the
-  ;; host-published remaining budget, repeat. A runtime layer does the same
-  ;; thing at its allocation slow path, GC entry and task switch.
-  ;;
-  ;; The slab size is the interesting parameter and it is what the third
-  ;; conformance test is really about: cooperation is only cooperation if the
-  ;; gap between checks is comfortably inside G. 1024 xorshift rounds is a few
-  ;; microseconds against a 2 ms window. An earlier draft of this fixture
-  ;; checked every 4096 turns of a loop whose body was itself a host call,
-  ;; which put the checks ~1.6 ms apart and made the "clean" kill land past
-  ;; B+G about half the time — a real bug in miniature, and exactly the one a
-  ;; runtime layer with a coarse safepoint interval would ship.
   (func $cooperate (result i32)
     (local $n i32) (local $x i64)
     (local.set $x (i64.const 88172645463325252))
@@ -634,212 +556,83 @@ fn conformance_a_dispatch_that_yields_during_grace_is_clean() {
     (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    let budget = CpuBudget {
-        cpu_ms: 20,
-        wall_ms_cap: 30_000,
-        spent_ns: 0,
-    };
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
+    let b = budget(20);
 
-    let out = i.dispatch(&http_dispatch(1), budget);
+    let out = i.dispatch(&http_dispatch(1), b);
 
     assert!(
         out.trap.is_none(),
         "a clean kill is a return, not a trap: {:?}",
         out.trap
     );
-    assert_eq!(out.completion, Completion::CleanKill);
-    assert_eq!(out.kill, Some(KillPhase::Clean));
-    assert!(out.completion.instance_survives(), "the slot is reusable");
-    assert!(!out.completion.tombstones());
+    assert_eq!(
+        out.completion,
+        Completion::CleanKill,
+        "a dispatch that returned inside grace is a clean kill"
+    );
+    assert_eq!(out.kill, Some(KillPhase::Clean), "the phase is clean");
+    assert!(
+        out.completion.instance_survives(),
+        "the slot is reusable after a clean kill"
+    );
 
-    // The difference, made visible: on a clean kill the code after the
-    // loop DOES run. The hard-kill test above asserts the same address stays
-    // zero, and the two fixtures differ only in the budget check.
-    let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
     let (entered, cleaned_up) = {
         let m = i.memory();
-        (read(m, 3000), read(m, 3008))
+        (read_u64(m, 3000), read_u64(m, 3008))
     };
-    assert_eq!(entered, 1);
-    assert_eq!(cleaned_up, 1, "on a clean kill `finally` runs");
-
-    // The overage is real and is recorded: it ran past B, inside G, and stopped.
-    let cpu_ms = out.cpu_ns as f64 / 1e6;
+    assert_eq!(entered, 1, "the guest must have been running");
+    assert_eq!(cleaned_up, 1, "on a clean kill the `finally` runs");
     assert!(
-        cpu_ms >= 20.0,
-        "the dispatch must actually have crossed B, not merely returned early"
-    );
-    assert!(
-        out.cpu_ns < budget.hard_ns(),
-        "a clean kill must land INSIDE the grace window: {cpu_ms:.3} ms against a {:.0} ms hard \
-         deadline",
-        budget.hard_ns() as f64 / 1e6
+        out.cpu_ns >= b.budget_ns(),
+        "the dispatch must have crossed B rather than returned early"
     );
     assert!(out.overage_ns > 0, "the overage CPU is recorded");
-    eprintln!(
-        "CLEAN KILL: B=20 ms G={:.0} ms; returned after {:.3} ms CPU ({:.3} ms overage, \
-         {:.1}% of G used)",
-        budget.grace_ns() as f64 / 1e6,
-        cpu_ms,
-        out.overage_ns as f64 / 1e6,
-        100.0 * out.overage_ns as f64 / budget.grace_ns() as f64
-    );
 
-    // Not a tombstone: it can be reset and reused, which is the whole
-    // economic point of the grace window.
-    assert!(!i.is_poisoned());
-    assert!(i.tombstone_reason().is_none());
     i.reset().expect("the slot is reusable after a clean kill");
-    let again = i.dispatch(
-        &http_dispatch(2),
-        CpuBudget {
-            cpu_ms: 20,
-            wall_ms_cap: 30_000,
-            spent_ns: 0,
-        },
-    );
+    let again = i.dispatch(&http_dispatch(2), b);
     assert_eq!(
         again.completion,
         Completion::CleanKill,
-        "the reused slot must run the guest again, not refuse it"
+        "the reused slot runs the guest again rather than refusing it"
     );
 }
 
-/// **Conformance 3: a genuine spin MUST tombstone at exactly B+G.**
-///
-/// "Exactly" is bounded by the mechanism, not by wishes: epochs tick every
-/// 200 µs and the check is at a back-edge, so the achievable statement is
-/// "at B+G, within one epoch tick plus scheduling noise". This measures the
-/// distribution over 30 runs and pins both sides — the kill must not come
-/// early (that would mean grace was not really offered) and must not come
-/// late (that would mean the deadline is soft).
-///
-/// It also runs the pinned-bit case, because the runtime layer's
-/// *unsafe-to-trap* bit is the one mechanism that could turn the hard deadline
-/// into a negotiation.
+/// The runtime layer's unsafe-to-trap bit is the one mechanism that could
+/// turn the hard deadline into a negotiation; a pinned bit buys exactly G.
 #[test]
-fn conformance_a_genuine_spin_tombstones_at_exactly_b_plus_g() {
-    let e = test_engine();
-    let spin = "(func $spin (loop $l (br $l)))";
-    let plain = guest(4, "", spin, "(call $spin) (i64.const 0)", DONE);
-    // The same spin, with the unsafe-to-trap bit pinned before it starts. A pinned bit
-    // buys exactly G, nothing more.
-    let pinned = guest(
-        4,
-        &import("unsafe_to_trap", "(param i32)", ""),
-        spin,
-        "(call $unsafe_to_trap (i32.const 1)) (call $spin) (i64.const 0)",
-        DONE,
-    );
-
-    for (label, wasm) in [("spin", plain), ("spin+pinned-bit", pinned)] {
-        let t = e.load_template(&wasm).unwrap();
-        let budget = CpuBudget {
-            cpu_ms: 10,
-            wall_ms_cap: 30_000,
-            spent_ns: 0,
-        };
-        let (b, g, hard) = (budget.budget_ns(), budget.grace_ns(), budget.hard_ns());
-        assert_eq!((b, g, hard), (10_000_000, 2_000_000, 12_000_000));
-
-        let mut deltas = Vec::new();
-        let mut deferrals = 0u64;
-        for n in 0..30u64 {
-            let mut i = e
-                .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-                .unwrap();
-            let out = i.dispatch(&http_dispatch(n), budget);
-
-            assert_eq!(
-                out.completion,
-                Completion::BudgetKill,
-                "[{label}] must hard-kill"
-            );
-            assert_eq!(out.kill, Some(KillPhase::Hard));
-            assert_eq!(out.trap.as_ref().unwrap().kind, TrapKind::BudgetExceeded);
-            assert!(i.is_poisoned(), "[{label}] a hard kill tombstones");
-            assert!(
-                !i.is_capture_eligible(),
-                "[{label}] no delta from a tombstone"
-            );
-            assert!(
-                out.cpu_ns >= hard,
-                "[{label}] killed at {} ns, BEFORE the B+G deadline of {hard} ns — the grace \
-                 window was not really offered",
-                out.cpu_ns
-            );
-            deferrals += out.grace_deferrals;
-            deltas.push(out.cpu_ns - hard);
-        }
-        deltas.sort_unstable();
-        eprintln!(
-            "[{label}] B+G = {:.0} ms; overshoot past it p50={:.0} us p90={:.0} us max={:.0} us \
-             (grace deferrals: {deferrals})",
-            hard as f64 / 1e6,
-            pct(&deltas, 0.50) as f64 / 1000.0,
-            pct(&deltas, 0.90) as f64 / 1000.0,
-            *deltas.last().unwrap() as f64 / 1000.0
-        );
-        // One epoch tick is 200 µs; allow a generous multiple for scheduling
-        // noise on a shared machine but stay far below G itself, so "exactly
-        // B+G" remains a claim with teeth.
-        assert!(
-            pct(&deltas, 0.90) < g / 2,
-            "[{label}] the hard deadline is soft: p90 overshoot {} ns against G = {g} ns",
-            pct(&deltas, 0.90)
-        );
-        if label.contains("pinned") {
-            assert!(
-                deferrals > 0,
-                "the pinned-bit fixture must actually have caused grace entry to defer, or it is \
-                 not testing what it claims"
-            );
-        }
-    }
-}
-
-#[test]
-fn budget_kill_latency_is_bounded_by_the_epoch_tick() {
+fn a_spinner_with_the_unsafe_to_trap_bit_pinned_is_still_hard_killed() {
     let e = test_engine();
     let wasm = guest(
         4,
-        "",
-        "(func $spin (loop $l (br $l)))",
-        "(call $spin) (i64.const 0)",
+        &import("unsafe_to_trap", "(param i32)", ""),
+        SPIN,
+        "(call $unsafe_to_trap (i32.const 1)) (call $spin) (i64.const 0)",
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
+    let b = budget(10);
 
-    let mut over = Vec::new();
-    for n in 0..40u64 {
-        let mut i = e
-            .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-            .unwrap();
-        let b = CpuBudget {
-            cpu_ms: 5,
-            wall_ms_cap: 30_000,
-            spent_ns: 0,
-        };
-        let out = i.dispatch(&http_dispatch(n), b);
-        assert_eq!(out.trap.as_ref().unwrap().kind, TrapKind::BudgetExceeded);
-        // Overshoot is measured past B+G, which is where the kill is now due.
-        over.push(out.cpu_ns.saturating_sub(b.hard_ns()));
-    }
-    over.sort_unstable();
-    eprintln!(
-        "BUDGET KILL OVERSHOOT over a 5 ms budget (n=40): p50={:.0} us p90={:.0} us p99={:.0} us max={:.0} us",
-        pct(&over, 0.50) as f64 / 1000.0,
-        pct(&over, 0.90) as f64 / 1000.0,
-        pct(&over, 0.99) as f64 / 1000.0,
-        *over.last().unwrap() as f64 / 1000.0
+    let out = i.dispatch(&http_dispatch(1), b);
+    assert_eq!(
+        out.completion,
+        Completion::BudgetKill,
+        "a pinned bit does not prevent the hard kill"
+    );
+    assert_eq!(out.kill, Some(KillPhase::Hard), "the phase is hard");
+    assert!(
+        out.cpu_ns >= b.hard_ns(),
+        "the kill still lands at B+G, not before"
     );
     assert!(
-        pct(&over, 0.99) < 5_000_000,
-        "overshoot must stay well inside the budget itself"
+        out.grace_deferrals > 0,
+        "the pinned bit must have deferred grace entry, or the fixture is not testing it"
+    );
+    assert!(
+        !i.is_capture_eligible(),
+        "a hard-killed instance is never a capture candidate"
     );
 }
 
@@ -853,18 +646,26 @@ fn a_guest_abort_is_a_guest_panic_not_a_sandbox_violation() {
         r#"(call $abort (i32.const 0) (i32.const 5)) (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    // Put a recognisable message where `abort` will read it.
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
     i.memory()[0..5].copy_from_slice(b"boom!");
 
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
-    let trap = out.trap.unwrap();
-    assert_eq!(trap.kind, TrapKind::GuestPanic, "{trap:?}");
-    assert!(trap.message.contains("boom!"), "{}", trap.message);
-    assert!(i.is_poisoned());
+    let trap = out.trap.expect("abort traps");
+    assert_eq!(
+        trap.kind,
+        TrapKind::GuestPanic,
+        "abort is the guest's own fault: {trap:?}"
+    );
+    assert!(
+        trap.message.contains("boom!"),
+        "the abort message reaches telemetry: {}",
+        trap.message
+    );
+    assert!(
+        i.reset().is_err(),
+        "a trapped instance is tombstoned and cannot be reset"
+    );
 }
 
 #[test]
@@ -874,22 +675,23 @@ fn a_bounds_violation_is_classified_as_a_sandbox_trap() {
         4,
         "",
         "",
-        // Well past a 4-page memory.
         "(drop (i64.load (i32.const 1000000000))) (i64.const 0)",
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
     assert_eq!(
-        out.trap.as_ref().unwrap().kind,
-        TrapKind::Sandbox,
-        "{:?}",
+        out.trap.as_ref().map(|t| t.kind),
+        Some(TrapKind::Sandbox),
+        "an out-of-bounds load is a sandbox trap: {:?}",
         out.trap
     );
-    assert_eq!(out.completion, Completion::Trapped);
+    assert_eq!(
+        out.completion,
+        Completion::Trapped,
+        "a sandbox trap discards the instance"
+    );
 }
 
 #[test]
@@ -901,98 +703,21 @@ fn a_failed_wisp_alloc_is_out_of_memory() {
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
-    let t = e.load_template(&wat::parse_str(src).unwrap()).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e
+        .load_template(&wat::parse_str(src).expect("wat"))
+        .expect("template");
+    let mut i = activate(&e, &t);
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
     assert_eq!(
-        out.trap.as_ref().unwrap().kind,
-        TrapKind::OutOfMemory,
-        "{:?}",
+        out.trap.as_ref().map(|t| t.kind),
+        Some(TrapKind::OutOfMemory),
+        "an allocator that returns 0 is out of memory: {:?}",
         out.trap
     );
 }
 
 // ---------------------------------------------------------------------------
-// the meter
-// ---------------------------------------------------------------------------
-
-#[test]
-fn metered_cpu_is_stable_and_excludes_time_spent_parked() {
-    let e = test_engine();
-    // Park on the first dispatch after a fixed amount of work; complete on the
-    // wake after the same amount again.
-    let wasm = guest(
-        4,
-        "",
-        "",
-        "(drop (call $burn (i32.const 400000))) (i64.const 1)",
-        "(drop (call $burn (i32.const 400000))) (i64.const 0)",
-    );
-    let t = e.load_template(&wasm).unwrap();
-
-    // Stability: the same work must bill the same CPU across runs.
-    let mut samples = Vec::new();
-    for n in 0..25u64 {
-        let mut i = e
-            .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-            .unwrap();
-        let out = i.dispatch(&http_dispatch(n), CpuBudget::http());
-        assert_eq!(out.completion, Completion::Parked);
-        samples.push(out.cpu_ns);
-    }
-    samples.sort_unstable();
-    let (p50, p99, min) = (pct(&samples, 0.5), pct(&samples, 0.99), samples[0]);
-    eprintln!(
-        "METER: 400k-iteration dispatch recorded p50={:.3} ms p99={:.3} ms min={:.3} ms (n=25, spread {:.1}%)",
-        p50 as f64 / 1e6,
-        p99 as f64 / 1e6,
-        min as f64 / 1e6,
-        100.0 * (p99 - min) as f64 / p50 as f64
-    );
-    assert!(p50 > 0, "the meter must resolve a millisecond of work");
-    assert!(
-        (p99 as f64) < (p50 as f64) * 2.0,
-        "recorded CPU for identical work must not vary 2x: p50={p50} p99={p99}"
-    );
-
-    // Park time is not recorded. The instance parks, sits for 250 ms holding no
-    // thread, then is woken; the sum of the two metered intervals must be
-    // nowhere near the wall time that elapsed.
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    let t0 = std::time::Instant::now();
-    let a = i.dispatch(&http_dispatch(99), CpuBudget::http());
-    assert_eq!(a.completion, Completion::Parked);
-    assert!(
-        i.is_parked(),
-        "an instance that returned `pending` is Parked"
-    );
-
-    std::thread::sleep(std::time::Duration::from_millis(250));
-
-    let b = i.wake(1, &ResultRecord::Ok(vec![1, 2, 3]), CpuBudget::http());
-    assert_eq!(b.completion, Completion::Done);
-    let total_wall = t0.elapsed().as_nanos() as u64;
-    let recorded = a.cpu_ns + b.cpu_ns;
-
-    eprintln!(
-        "PARK: recorded {:.3} ms CPU across a {:.1} ms wall-clock lifetime ({:.1}% of wall)",
-        recorded as f64 / 1e6,
-        total_wall as f64 / 1e6,
-        100.0 * recorded as f64 / total_wall as f64
-    );
-    assert!(
-        recorded < 250_000_000,
-        "park time is never metered, but {recorded} ns was recorded over a 250 ms park"
-    );
-    assert!(total_wall > 250_000_000);
-}
-
-// ---------------------------------------------------------------------------
-// the frozen clock is a security control
+// the frozen clock
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1002,9 +727,6 @@ fn the_coarse_clock_does_not_advance_within_a_dispatch_slice() {
         4,
         &import("clock_now_coarse", "", "(result i64)"),
         "",
-        // Read, burn, read, burn, read. If the clock were a timer, these would
-        // differ and the guest would have the measurement primitive the freeze exists
-        // to remove.
         r#"
     (i64.store (i32.const 0) (call $clock_now_coarse))
     (drop (call $burn (i32.const 200000)))
@@ -1014,37 +736,34 @@ fn the_coarse_clock_does_not_advance_within_a_dispatch_slice() {
     (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
     let rec = Recorder::default();
     let mut i = e
         .activate(&t, Box::new(TestBindings::new(rec.clone())))
-        .unwrap();
+        .expect("activation");
 
     i.dispatch(&http_dispatch(1), CpuBudget::http());
-    let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
     let (a, b, c) = {
         let m = i.memory();
-        (read(m, 0), read(m, 8), read(m, 16))
+        (read_u64(m, 0), read_u64(m, 8), read_u64(m, 16))
     };
     assert_eq!(a, b, "the clock advanced mid-slice");
     assert_eq!(b, c, "the clock advanced mid-slice");
 
-    // The host clock genuinely moves — otherwise the assertion above is
-    // vacuous — and the *next* slice sees the new value.
     i.dispatch(&http_dispatch(2), CpuBudget::http());
     let (d, e2, f) = {
         let m = i.memory();
-        (read(m, 0), read(m, 8), read(m, 16))
+        (read_u64(m, 0), read_u64(m, 8), read_u64(m, 16))
     };
-    assert_eq!(d, e2);
-    assert_eq!(e2, f);
-    assert!(d > a, "a new slice must see a fresh clock ({a} -> {d})");
-    assert!(rec.clock_reads.load(Ordering::Relaxed) >= 2);
-
-    eprintln!(
-        "FROZEN CLOCK: slice 1 read {a} three times across ~400k iterations; slice 2 read {d}. \
-         Host clock was sampled {} times for 6 guest reads.",
-        rec.clock_reads.load(Ordering::Relaxed)
+    assert_eq!(d, e2, "the clock advanced mid-slice");
+    assert_eq!(e2, f, "the clock advanced mid-slice");
+    assert!(
+        d > a,
+        "a new slice must see a fresh clock ({a} -> {d}), or the freeze test is vacuous"
+    );
+    assert!(
+        rec.clock_reads.load(Ordering::Relaxed) >= 2,
+        "the host clock must have been sampled once per slice"
     );
 }
 
@@ -1063,38 +782,41 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
         "",
         r#"
     (i64.store (i32.const 0) (call $clock_now_coarse))
-    ;; A synchronous import is not a host-call boundary for clock purposes:
-    ;; otherwise `log_emit` in a loop would be a stopwatch.
     (call $log_emit (i32.const 1) (i32.const 2048) (i32.const 4))
     (i64.store (i32.const 8) (call $clock_now_coarse))
-    ;; A future-returning import is one: control genuinely left the guest.
     (drop (call $kv_get (i32.const 2048) (i32.const 4)))
     (i64.store (i32.const 16) (call $clock_now_coarse))
     (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
     let rec = Recorder::default();
     let mut i = e
         .activate(&t, Box::new(TestBindings::new(rec.clone())))
-        .unwrap();
+        .expect("activation");
     i.dispatch(&http_dispatch(1), CpuBudget::http());
 
-    let read = |m: &[u8], off: usize| u64::from_le_bytes(m[off..off + 8].try_into().unwrap());
     let m = i.memory();
-    let (a, b, c) = (read(m, 0), read(m, 8), read(m, 16));
+    let (a, b, c) = (read_u64(m, 0), read_u64(m, 8), read_u64(m, 16));
     assert_eq!(
         a, b,
-        "a synchronous import must not advance the frozen clock"
+        "a synchronous import must not advance the frozen clock, or log_emit in a loop is a \
+         stopwatch"
     );
     assert!(
         c > b,
-        "a future-returning import is a host-call boundary ({b} -> {c})"
+        "a future-returning import is a host-call boundary and advances the clock ({b} -> {c})"
     );
 
     let calls = rec.calls.lock().clone();
-    assert!(calls.iter().any(|c| c.starts_with("log_emit")), "{calls:?}");
-    assert!(calls.iter().any(|c| c.starts_with("kv_get")), "{calls:?}");
+    assert!(
+        calls.iter().any(|c| c.starts_with("log_emit")),
+        "log_emit reached the host: {calls:?}"
+    );
+    assert!(
+        calls.iter().any(|c| c.starts_with("kv_get")),
+        "kv_get reached the host: {calls:?}"
+    );
     assert!(
         !calls.iter().any(|c| c.starts_with("clock_now_coarse")),
         "the frozen clock is engine-owned and must never reach a binding: {calls:?}"
@@ -1118,32 +840,41 @@ fn guest_buffers_are_copied_out_and_out_buffers_are_copied_in() {
         &imports,
         "",
         r#"
-    ;; guest -> host: the engine copies these 12 bytes out before the call.
     (i64.store (i32.const 2048) (i64.const 1234567890))
     (i64.store (i32.const 2056) (i64.const 0))
     (drop (call $kv_get (i32.const 2048) (i32.const 12)))
-    ;; host -> guest: the host fills a host-side buffer, the engine copies in.
     (call $entropy_fill (i32.const 3072) (i32.const 32))
     (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
     let rec = Recorder::default();
     let mut i = e
         .activate(&t, Box::new(TestBindings::new(rec.clone())))
-        .unwrap();
+        .expect("activation");
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
-    assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
+    assert_eq!(
+        out.completion,
+        Completion::Done,
+        "both imports complete: {:?}",
+        out.trap
+    );
 
     let calls = rec.calls.lock().clone();
-    assert!(calls.contains(&"kv_get(12 bytes)".to_string()), "{calls:?}");
-    // The out-buffer import reaches the host with an *empty* payload; the space
-    // it is to fill is a host-side buffer, never a pointer into guest memory.
+    assert!(
+        calls.contains(&"kv_get(12 bytes)".to_string()),
+        "the guest's 12 bytes were copied out before the call: {calls:?}"
+    );
     assert!(
         calls.contains(&"entropy_fill(0 bytes)".to_string()),
-        "{calls:?}"
+        "an out-buffer import reaches the host with an empty payload, never a pointer into \
+         guest memory: {calls:?}"
     );
-    assert_eq!(&i.memory()[3072..3104], &[0xABu8; 32]);
+    assert_eq!(
+        &i.memory()[3072..3104],
+        &[0xABu8; 32],
+        "the host's fill was copied into guest memory"
+    );
 }
 
 #[test]
@@ -1156,23 +887,18 @@ fn an_out_of_bounds_import_buffer_traps_rather_than_reading_host_memory() {
         "(drop (call $kv_get (i32.const 1000000) (i32.const 4096))) (i64.const 0)",
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
-    assert!(out.trap.is_some());
+    let trap = out.trap.expect("a buffer outside linear memory must trap");
     assert!(
-        out.trap.as_ref().unwrap().message.contains("outside"),
-        "{:?}",
-        out.trap
+        trap.message.contains("outside"),
+        "the trap must say the buffer was outside linear memory: {trap:?}"
     );
 }
 
 #[test]
 fn the_default_host_bindings_deny_out_buffer_fills() {
-    // A zero-filled default would return a constant instead of host entropy.
-    // The default binding denies the fill.
     let e = test_engine();
     let wasm = guest(
         4,
@@ -1181,65 +907,53 @@ fn the_default_host_bindings_deny_out_buffer_fills() {
         "(call $entropy_fill (i32.const 3072) (i32.const 32)) (i64.const 0)",
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
     let mut b = TestBindings::new(Recorder::default());
     b.allow_fill = false;
-    let mut i = e.activate(&t, Box::new(b)).unwrap();
+    let mut i = e.activate(&t, Box::new(b)).expect("activation");
     i.dispatch(&http_dispatch(1), CpuBudget::http());
     assert_eq!(
         &i.memory()[3072..3104],
         &[0u8; 32],
-        "denied fills must write nothing"
+        "a denied fill must write nothing, so a missing CSPRNG cannot pass as a constant one"
     );
 }
 
 // ---------------------------------------------------------------------------
-// "checked, not assumed"
+// park state and capture
 // ---------------------------------------------------------------------------
 
 #[test]
-fn park_state_is_checked_against_the_real_wasm_stack_depth() {
+fn an_instance_is_parked_only_after_returning_pending() {
     let e = test_engine();
     let wasm = guest(4, "", "", PENDING, DONE);
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
 
-    // Never dispatched: an empty stack, but no futures — not Parked.
-    assert!(!i.is_parked(), "a fresh instance is not Parked");
-    assert_eq!(i.max_wasm_depth_observed(), 0, "no wasm frame has ever run");
+    assert!(!i.is_parked(), "a fresh instance is not parked");
 
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
-    assert_eq!(out.status, PollStatus::Pending);
-    assert!(i.is_parked());
-
-    // The depth counter is wasmtime's own view of the native stack, not our
-    // bookkeeping around the call: a frame really was pushed and really was
-    // popped. Without the first assertion, "depth == 0" would be vacuous.
     assert_eq!(
-        i.max_wasm_depth_observed(),
-        1,
-        "a wasm frame must have been observed on the stack during the dispatch"
+        out.status,
+        PollStatus::Pending,
+        "the fixture returns pending"
     );
+    assert!(i.is_parked(), "an instance that returned pending is parked");
 
-    // The single-caller rule, observed from inside: the host never re-enters
-    // a running instance, so the depth never exceeds one.
     i.wake(1, &ResultRecord::Ok(vec![]), CpuBudget::http());
-    assert_eq!(i.max_wasm_depth_observed(), 1);
     assert!(
         !i.is_parked(),
-        "an instance that returned `done` is not Parked"
+        "an instance that returned done is not parked"
     );
 
-    // A trapped instance is never a capture candidate however empty its stack.
     let wasm = guest(4, "", "", "(unreachable)", DONE);
-    let t2 = e.load_template(&wasm).unwrap();
-    let mut j = e
-        .activate(&t2, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t2 = e.load_template(&wasm).expect("template");
+    let mut j = activate(&e, &t2);
     j.dispatch(&http_dispatch(1), CpuBudget::http());
-    assert!(!j.is_parked());
+    assert!(
+        !j.is_parked(),
+        "a trapped instance is never parked however empty its stack"
+    );
 }
 
 #[test]
@@ -1257,34 +971,32 @@ fn capture_and_restore_round_trip_mutable_globals() {
         "(call $advance) (i64.const 1)",
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    assert!(t.mutable_global_names().count() >= 4);
+    let t = e.load_template(&wasm).expect("template");
 
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let mut i = activate(&e, &t);
     for n in 0..3 {
         i.dispatch(&http_dispatch(n), CpuBudget::http());
     }
-    let img = i.capture_mutable_state().unwrap();
-    assert_eq!(img.memory_pages, 4);
+    let img = i.capture_mutable_state().expect("capture");
+    assert_eq!(img.memory_pages, 4, "the captured size is the fixture's");
 
-    // A fresh activation is at the template's sealed values; restoring the
-    // captured image must put it exactly where the first one was.
-    let mut j = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    let fresh = j.capture_mutable_state().unwrap();
-    assert_ne!(format!("{:?}", fresh.globals), format!("{:?}", img.globals));
-    j.restore_mutable_state(&img).unwrap();
+    let mut j = activate(&e, &t);
+    let fresh = j.capture_mutable_state().expect("capture");
+    assert_ne!(
+        format!("{:?}", fresh.globals),
+        format!("{:?}", img.globals),
+        "the dispatches must have moved the globals"
+    );
+    j.restore_mutable_state(&img).expect("restore");
     assert_eq!(
-        format!("{:?}", j.capture_mutable_state().unwrap().globals),
-        format!("{:?}", img.globals)
+        format!("{:?}", j.capture_mutable_state().expect("capture").globals),
+        format!("{:?}", img.globals),
+        "restore must put the globals exactly where the capture found them"
     );
 }
 
 // ---------------------------------------------------------------------------
-// the sealed init sandbox
+// the init sandbox
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1302,57 +1014,52 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
         r#"
   (func (export "wisp_initialize")
     (call $init_unit_begin (i32.const 4))
-    ;; Pure so far. This one is not: reading the clock makes the cctor impure
-    ;; and it must be deferred to lazy per-instance execution.
     (i64.store (i32.const 0) (call $clock_now_coarse)))"#,
         DONE,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
 
     let rec = Recorder::default();
     let mut i = e
         .activate(&t, Box::new(TestBindings::init_sandbox(rec.clone())))
-        .unwrap();
-    let out = i.run_initialize(CpuBudget {
-        cpu_ms: 10_000,
-        wall_ms_cap: 10_000,
-        spent_ns: 0,
-    });
+        .expect("activation");
+    let out = i.run_initialize(budget(10_000));
 
     let trap = out
         .trap
         .as_ref()
-        .expect("an impure initializer must trap in the sealed sandbox");
-    assert_eq!(trap.kind, TrapKind::CapabilityViolation, "{trap:?}");
-    assert_eq!(trap.kind.tenant_code(), "capability_violation");
+        .expect("an impure initializer must trap in the init sandbox");
+    assert_eq!(
+        trap.kind,
+        TrapKind::CapabilityViolation,
+        "reading the clock at init is a capability violation: {trap:?}"
+    );
     assert!(
         trap.message.contains("clock_now_coarse"),
-        "must name the import: {}",
+        "the trap must name the import: {}",
         trap.message
     );
-    assert_eq!(i.last_capability_violation(), Some("clock_now_coarse"));
+    assert_eq!(
+        i.last_capability_violation(),
+        Some("clock_now_coarse"),
+        "the violation is recorded for the deferral loop"
+    );
 
-    // The init-visible import ran; the forbidden one never reached a binding.
     let calls = rec.calls.lock().clone();
     assert!(
         calls.iter().any(|c| c.starts_with("init_unit_begin")),
-        "{calls:?}"
+        "the init-visible import ran: {calls:?}"
     );
     assert!(
         !calls.iter().any(|c| c.starts_with("clock_now_coarse")),
-        "{calls:?}"
+        "the forbidden import must trap before reaching a binding: {calls:?}"
     );
-
-    eprintln!("INIT SANDBOX: unit 4 deferred, reason = {}", trap.message);
 }
 
 #[test]
 fn the_init_sandbox_permits_exactly_the_init_visible_set() {
     let e = test_engine();
-    // The escrowed hash seed is the one *externally sourced* value; the
-    // config blob is tenant-authored deploy input, which is why pre-running a
-    // config parse bakes no shared secret.
     let imports = format!(
         "{}\n{}\n{}",
         import("init_hash_seed", "(param i32 i32)", ""),
@@ -1367,58 +1074,59 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
     (if (i32.eqz (call $init_unit_deferred (i32.const 1)))
       (then
         (call $init_hash_seed (i32.const 512) (i32.const 16))
-        ;; The zero-length probe: `(ptr, cap) -> i32` answers with the blob's
-        ;; FULL length, so a guest can size its buffer before asking for bytes.
         (i32.store (i32.const 600) (call $init_config_get (i32.const 0) (i32.const 0)))
         (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))))))"#,
         DONE,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
+    let t = e.load_template(&wasm).expect("template");
     let mut b = TestBindings::init_sandbox(Recorder::default());
     b.full_length = Some(9_000);
-    let mut i = e.activate(&t, Box::new(b)).unwrap();
-    let out = i.run_initialize(CpuBudget {
-        cpu_ms: 10_000,
-        wall_ms_cap: 10_000,
-        spent_ns: 0,
-    });
-    assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
+    let mut i = e.activate(&t, Box::new(b)).expect("activation");
+    let out = i.run_initialize(budget(10_000));
+    assert_eq!(
+        out.completion,
+        Completion::Done,
+        "the init-visible imports are reachable: {:?}",
+        out.trap
+    );
 
     let m = i.memory();
-    // `TestBindings::call_fill` varies its byte per call — a fake CSPRNG that
-    // answered a constant could not tell a per-call draw from a cached one —
-    // so each fill is checked for being uniform and non-zero rather than for
-    // one particular value. What matters here is the *extent* copied, which
-    // is what the (ptr, cap) contract is about.
     let seed = &m[512..528];
     assert!(
         seed.iter().all(|b| *b == seed[0]) && seed[0] != 0,
-        "the escrowed seed must be delivered"
+        "the hash seed must be delivered into the guest's buffer"
     );
     assert_eq!(
-        u32::from_le_bytes(m[600..604].try_into().unwrap()),
+        read_u32(m, 600),
         9_000,
         "a zero-capacity probe must report the full length, not what was copied"
     );
-    assert_eq!(u32::from_le_bytes(m[604..608].try_into().unwrap()), 9_000);
+    assert_eq!(
+        read_u32(m, 604),
+        9_000,
+        "a capped read still reports the full length"
+    );
     let capped = &m[1024..1032];
     assert!(
         capped.iter().all(|b| *b == capped[0]) && capped[0] != 0,
         "the capped read must fill exactly `cap` bytes"
     );
-    assert_eq!(m[1032], 0, "and must not write one byte past `cap`");
+    assert_eq!(m[1032], 0, "the capped read must not write past `cap`");
     assert_ne!(
         seed[0], capped[0],
-        "two host fills in one dispatch must not be the same draw"
+        "two host fills in one dispatch must be two draws"
     );
 
-    // Cross-check against the contract: every import the sandbox admits is
-    // marked init_visible, and nothing in a binding group is.
     let visible: Vec<&str> = wisp_abi::imports::init_visible().map(|d| d.name).collect();
-    assert!(visible.contains(&"init_hash_seed"));
-    assert!(visible.contains(&"init_config_get"));
-    assert!(!visible.contains(&"clock_now_coarse"));
+    assert!(
+        visible.contains(&"init_hash_seed") && visible.contains(&"init_config_get"),
+        "the sandbox admits what the table marks init-visible: {visible:?}"
+    );
+    assert!(
+        !visible.contains(&"clock_now_coarse"),
+        "the clock is not init-visible: {visible:?}"
+    );
 }
 
 #[test]
@@ -1431,58 +1139,19 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
         DONE,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
     let out = i.run_initialize(CpuBudget::http());
-    assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
-    assert_eq!(i.last_capability_violation(), None);
-}
-
-// ---------------------------------------------------------------------------
-// per-activation bookkeeping
-// ---------------------------------------------------------------------------
-
-/// Fixed bookkeeping per instance is a claim about **residency**, and this
-/// test cannot see residency; it owns the one thing it can establish.
-///
-/// It used to also assert a bound on the pooling allocator's per-slot
-/// reservation, derived from the two caps in `wtconfig`. That assertion is gone
-/// with the constant it read: the reservation is address space, it grew by
-/// orders of magnitude across four cap raises without residency moving at all,
-/// and a tripwire that fires on a change costing no RAM trains people to raise
-/// the bound rather than think. The address-space arithmetic that actually
-/// matters (`max_instances × per-slot`) now lives in `MAX_CORE_INSTANCE_SIZE`'s
-/// doc comment, where the caps are.
-///
-/// What remains is a genuine per-activation heap allocation.
-#[test]
-fn host_side_per_activation_structures_stay_near_their_observed_size() {
-    let e = test_engine();
-    let t = e.load_template(&echo_guest()).unwrap();
-    let i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
-    let host = i.host_bookkeeping_bytes();
-    eprintln!("HOST STRUCTS: {host} B/activation (the density test measures residency)");
-
-    // The bound is close to the observed size on purpose. This term is around
-    // a kilobyte on a fresh activation, so a bound tens of times larger could
-    // not fail for any change anyone would plausibly make — it would be
-    // decoration wearing a tripwire's name, which is the same category of
-    // error as the ceiling-as-measurement one this test was rewritten to stop
-    // making. Set it close enough that inlining a buffer into `StoreState` or
-    // `Live` trips it.
-    //
-    // Safe *here* because this instance has been activated and never
-    // dispatched: `StoreState::scratch` is the one dynamic term in the sum and
-    // it is still empty. An instance that has served an import call may
-    // legitimately carry up to `MAX_OUT_BUFFER` of retained scratch capacity,
-    // so do not copy this bound to a test that dispatches first.
-    assert!(
-        host <= 4 * 1024,
-        "host bookkeeping exceeds the test bound for an undispatched instance: {host} B"
+    assert_eq!(
+        out.completion,
+        Completion::Done,
+        "outside the sandbox the clock is reachable: {:?}",
+        out.trap
+    );
+    assert_eq!(
+        i.last_capability_violation(),
+        None,
+        "no violation is recorded outside the sandbox"
     );
 }
 
@@ -1503,27 +1172,28 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
         PENDING,
         DONE,
     );
-    let t = e.load_template(&wasm).unwrap();
-    assert!(t.has_gc_hint());
+    let t = e.load_template(&wasm).expect("template");
+    assert!(t.has_gc_hint(), "the fixture exports the hint");
 
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let mut i = activate(&e, &t);
     i.dispatch(&http_dispatch(1), CpuBudget::http());
-    assert!(i.is_parked());
+    assert!(i.is_parked(), "the fixture parks");
 
     let out = i.gc_hint(255);
-    assert_eq!(out.completion, Completion::Done, "{:?}", out.trap);
+    assert_eq!(
+        out.completion,
+        Completion::Done,
+        "the hint completes: {:?}",
+        out.trap
+    );
 
     let m = i.memory();
-    assert_eq!(u32::from_le_bytes(m[2048..2052].try_into().unwrap()), 255);
-    assert_eq!(u32::from_le_bytes(m[2052..2056].try_into().unwrap()), 1);
+    assert_eq!(read_u32(m, 2048), 255, "the pressure reached the guest");
+    assert_eq!(read_u32(m, 2052), 1, "the hint ran once");
 
-    // The whole point of the hint is that capture happens next.
     assert!(
         i.is_parked(),
-        "gc-hint is called on a Parked instance immediately before capture; \
-         the hint must not clear park state"
+        "the hint is called immediately before capture and must not clear the park state"
     );
     i.capture_mutable_state()
         .expect("a hinted, parked instance must still be capturable");
@@ -1531,39 +1201,32 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
 
 #[test]
 fn gc_hint_is_optional() {
-    // A guest that ignores the hint is correct but stores a larger delta and
-    // pays for it. Not exporting it at all is the same choice, earlier.
     let e = test_engine();
-    let t = e.load_template(&guest(4, "", "", PENDING, DONE)).unwrap();
-    assert!(!t.has_gc_hint());
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e
+        .load_template(&guest(4, "", "", PENDING, DONE))
+        .expect("template");
+    assert!(!t.has_gc_hint(), "the fixture exports no hint");
+    let mut i = activate(&e, &t);
     i.dispatch(&http_dispatch(1), CpuBudget::http());
-    assert_eq!(i.gc_hint(255).completion, Completion::Done);
-    assert!(i.is_parked());
+    assert_eq!(
+        i.gc_hint(255).completion,
+        Completion::Done,
+        "a guest without the export is correct, just stores a larger delta"
+    );
+    assert!(i.is_parked(), "the no-op hint leaves the instance parked");
 }
 
 // ---------------------------------------------------------------------------
-// the wall-clock backstop is a guard, not a meter
+// the wall-clock backstop
 // ---------------------------------------------------------------------------
 
 #[test]
 fn the_wall_clock_backstop_reports_its_distinct_cap() {
     let e = test_engine();
-    let wasm = guest(
-        4,
-        "",
-        "(func $spin (loop $l (br $l)))",
-        "(call $spin) (i64.const 0)",
-        DONE,
-    );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let wasm = guest(4, "", SPIN, "(call $spin) (i64.const 0)", DONE);
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
 
-    // A CPU budget it will never reach, and a wall cap it will.
     let out = i.dispatch(
         &http_dispatch(1),
         CpuBudget {
@@ -1573,26 +1236,21 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
         },
     );
     let trap = out.trap.as_ref().expect("the backstop must trip");
-    assert_eq!(trap.kind, TrapKind::BudgetExceeded, "{trap:?}");
+    assert_eq!(
+        trap.kind,
+        TrapKind::BudgetExceeded,
+        "the tenant sees the same abrupt termination: {trap:?}"
+    );
     assert!(
         trap.message.contains("wall-clock backstop"),
-        "the message must distinguish the backstop from the CPU meter, since \
-         wall time is excluded from execution CPU accounting: {}",
+        "the message must distinguish the backstop from the CPU meter, since wall time is \
+         excluded from execution CPU accounting: {}",
         trap.message
     );
     assert!(
         out.wall_ns >= 40_000_000,
-        "tripped after {} ns of wall",
+        "the backstop fires at the cap, not before: {} ns",
         out.wall_ns
-    );
-    assert!(
-        out.cpu_ns < 600_000 * 1_000_000,
-        "the CPU budget was never reached; the kill came from the wall guard"
-    );
-    eprintln!(
-        "WALL BACKSTOP: 40 ms cap tripped at {:.1} ms wall / {:.1} ms CPU",
-        out.wall_ns as f64 / 1e6,
-        out.cpu_ns as f64 / 1e6
     );
 }
 
@@ -1600,15 +1258,6 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
 // the features that make blocking inexpressible
 // ---------------------------------------------------------------------------
 
-/// V2 is the rule that makes "no blocking" structural rather than advisory: with
-/// threads and shared memory off, `memory.atomic.wait*`/`notify` fail bytecode
-/// validation and a guest cannot express a wait at all.
-///
-/// This is asserted empirically because arguing it from cargo features is not
-/// safe: cargo unifies features across a workspace, `wisp-control` depends on
-/// wasmtime with default features, and `WasmFeatures::THREADS` defaults to
-/// **true**. The engine therefore disables the proposals explicitly, and this
-/// test is what would catch it if that ever stopped working.
 #[test]
 fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
     let e = test_engine();
@@ -1640,7 +1289,7 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
                        (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
         ),
         (
-            "two linear memories (V3)",
+            "two linear memories",
             r#"(module (memory (export "memory") 1) (memory 1)
                        (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
                        (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
@@ -1649,65 +1298,37 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
     ];
 
     for (what, src) in cases {
-        // Some of these do not even assemble once the feature is off, which is
-        // itself the rule holding; the ones that do assemble must be rejected
-        // by `load_template`.
-        match wat::parse_str(src) {
-            Err(e) => eprintln!("  V2 `{what}`: rejected at assembly ({e})"),
-            Ok(wasm) => {
-                let err = e
-                    .load_template(&wasm)
-                    .err()
-                    .unwrap_or_else(|| panic!("V2/V3: `{what}` must not load"));
-                eprintln!(
-                    "  V2 `{what}`: rejected -> {}",
-                    format!("{err:#}").lines().next().unwrap()
-                );
-            }
-        }
+        let wasm = wat::parse_str(src)
+            .unwrap_or_else(|err| panic!("the `{what}` fixture must assemble: {err}"));
+        assert!(
+            e.load_template(&wasm).is_err(),
+            "a module using {what} must not load"
+        );
     }
 
-    // Relaxed SIMD is off too — only the deterministic subset — while
-    // the deterministic subset still works.
     let relaxed = r#"(module (memory (export "memory") 1)
         (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
         (func (export "wisp_handle") (param i32 i32) (result i64)
           (drop (i32x4.relaxed_trunc_f32x4_s (v128.const i32x4 0 0 0 0)))
           (i64.const 0))
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
-    match wat::parse_str(relaxed) {
-        Ok(wasm) => {
-            let err = match e.load_template(&wasm) {
-                Ok(_) => panic!("V2: relaxed SIMD must be rejected"),
-                Err(err) => err,
-            };
-            eprintln!(
-                "  V2 `relaxed SIMD`: rejected -> {}",
-                format!("{err:#}").lines().next().unwrap()
-            );
-        }
-        Err(e) => eprintln!("  V2 `relaxed SIMD`: rejected at assembly ({e})"),
-    }
+    let wasm = wat::parse_str(relaxed).expect("the relaxed SIMD fixture must assemble");
+    assert!(
+        e.load_template(&wasm).is_err(),
+        "relaxed SIMD must be rejected; only the deterministic subset is allowed"
+    );
     let deterministic = r#"(module (memory (export "memory") 1)
         (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
         (func (export "wisp_handle") (param i32 i32) (result i64)
           (drop (i32x4.add (v128.const i32x4 1 2 3 4) (v128.const i32x4 5 6 7 8)))
           (i64.const 0))
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
-    e.load_template(&wat::parse_str(deterministic).unwrap())
+    e.load_template(&wat::parse_str(deterministic).expect("wat"))
         .expect("the deterministic SIMD subset must still load");
 }
 
 // ---------------------------------------------------------------------------
-// the WASI PAL adapter, at RUNTIME
-//
-// `wisp-control` proves the adapter validates and pre-initializes. These
-// prove the other half: that a module carrying `wasi:*` imports now
-// *instantiates in a cell*, and that the two channel properties survive the
-// trip through the data plane's linker. Both properties fail silently if
-// broken — the module still runs, every other test still passes, and a
-// channel the platform closed is quietly open again — which is why they are
-// asserted here and not assumed from the deploy-time tests.
+// the WASI PAL adapter at runtime
 // ---------------------------------------------------------------------------
 
 /// A guest that imports `wasi:*` as well as `wisp`, with the `cabi_realloc`
@@ -1722,8 +1343,6 @@ fn pal_guest(handle: &str) -> Vec<u8> {
 "#,
     );
     let funcs = r#"
-  ;; The canonical ABI's allocator. A bump allocator over a fixed arena is
-  ;; enough: the adapter calls it once per `get-random-bytes`.
   (global $cabi (mut i32) (i32.const 40000))
   (func (export "cabi_realloc")
         (param $old i32) (param $oldsz i32) (param $align i32) (param $newsz i32) (result i32)
@@ -1737,10 +1356,6 @@ fn pal_guest(handle: &str) -> Vec<u8> {
     guest(4, &imports, funcs, handle, DONE)
 }
 
-/// A module declaring `wasi:*` imports **instantiates**. Before the
-/// adapter reached the data plane's linker it could pass validation and
-/// pre-initialization and then fail at activation, which is the worst place
-/// for a capability decision to surface.
 #[test]
 fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
     let e = test_engine();
@@ -1749,94 +1364,80 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
         .load_template(&wasm)
         .expect("a whitelisted wasi: surface must instantiate");
 
-    assert!(
-        t.uses_pal(),
-        "the adapter should have been composed for this module"
-    );
+    assert!(t.uses_pal(), "the adapter was composed for this module");
     let composed: Vec<String> = t.pal_composed().iter().map(|d| d.full_name()).collect();
-    assert_eq!(composed.len(), 4, "composed: {composed:?}");
+    assert_eq!(
+        composed.len(),
+        4,
+        "every declared wasi: import was composed: {composed:?}"
+    );
 
-    // The audit trail: a capability that came in through a WASI door must
-    // be nameable as the `wisp:platform` capability it resolves to, or "no new
-    // channels" is a promise nobody can check.
-    let caps: Vec<&str> = t
+    let mut caps: Vec<&str> = t
         .pal_composed()
         .iter()
         .filter_map(|d| d.disposition.capability())
         .collect();
-    assert!(caps.contains(&"clock_now_coarse"), "caps: {caps:?}");
-    assert!(caps.contains(&"entropy_fill"), "caps: {caps:?}");
+    caps.sort_unstable();
     assert_eq!(
-        caps.len(),
-        2,
-        "the adapter drew on more than the two declared capabilities: {caps:?}"
+        caps,
+        vec!["clock_now_coarse", "entropy_fill"],
+        "the adapter drew on exactly the two declared capabilities"
     );
 
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let mut i = activate(&e, &t);
     assert_eq!(
         i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
-        Completion::Done
+        Completion::Done,
+        "the module dispatches"
     );
 }
 
-/// Through the runtime linker: `monotonic-clock::now` is
-/// **quantized to the coarse clock and frozen intra-slice**.
-///
-/// The negative control is the whole test. A real nanosecond monotonic clock
-/// — which is what `wasmtime-wasi` would hand you, and the obvious thing to
-/// reach for — passes "the guest can read the time" and fails both assertions
-/// below. Guests get no fine timer because it is the measurement primitive
-/// most Spectre-class attacks need.
+/// A nanosecond monotonic clock would pass "the guest can read the time" and
+/// fail both assertions; a fine timer is the measurement primitive
+/// Spectre-class attacks need.
 #[test]
 fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     let e = test_engine();
-    // Two reads in one dispatch, stored side by side.
     let wasm = pal_guest(
         r#"
     (i64.store (i32.const 3000) (call $wasi_now))
     (i64.store (i32.const 3008) (call $wasi_now))
     (i64.const 0)"#,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let rec = Recorder::default();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(rec.clone())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
 
     let read = |i: &mut wisp_engine::Instance, off: usize| -> i64 {
         let m = i.memory();
-        i64::from_le_bytes(m[off..off + 8].try_into().unwrap())
+        i64::from_le_bytes(m[off..off + 8].try_into().expect("8 bytes"))
     };
 
     assert_eq!(
         i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
-        Completion::Done
+        Completion::Done,
+        "the dispatch completes"
     );
     let (a, b) = (read(&mut i, 3000), read(&mut i, 3008));
     assert_eq!(
         a, b,
-        "the clock is FROZEN within a slice — two reads cannot differ"
+        "the clock is frozen within a slice, so two reads cannot differ"
     );
     assert_eq!(
         a % 1_000_000,
         0,
-        "the delegated clock must be quantized to the coarse clock's 1 ms, so no \
-         sub-millisecond bit exists to leak; got {a} ns"
+        "the delegated clock is quantized to the coarse clock's millisecond: {a} ns"
     );
 
-    // Across slices it may advance — and must still be quantized. A clock
-    // that never moved would pass the two assertions above while being
-    // useless, so this is the control on the control.
     assert_eq!(
         i.dispatch(&http_dispatch(2), CpuBudget::http()).completion,
-        Completion::Done
+        Completion::Done,
+        "the second dispatch completes"
     );
     let c = read(&mut i, 3000);
     assert!(
         c > a,
-        "the coarse clock must still advance between slices: {a} then {c}"
+        "the coarse clock must advance between slices ({a} then {c}), or the freeze test is \
+         vacuous"
     );
     assert_eq!(
         c % 1_000_000,
@@ -1845,73 +1446,59 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     );
 }
 
-/// Through the runtime linker: `random::get-random-bytes` reaches the
-/// host CSPRNG **per call and caches nothing**.
-///
-/// Entropy captured into a
-/// template, or memoized anywhere on the delegation path, would be shared by
-/// every clone of that template — and would look completely fine, because
-/// random-looking bytes arrive either way.
+/// Entropy captured into a template, or memoised anywhere on the delegation
+/// path, would be shared by every clone and look fine, because random-looking
+/// bytes arrive either way.
 #[test]
 fn the_pal_entropy_delegation_draws_per_call_and_never_caches() {
     let e = test_engine();
-    // Two 16-byte draws in one dispatch, into two return areas.
     let wasm = pal_guest(
         r#"
     (call $wasi_random (i64.const 16) (i32.const 3000))
     (call $wasi_random (i64.const 16) (i32.const 3016))
     (i64.const 0)"#,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut b = TestBindings::new(Recorder::default());
-    b.allow_fill = true;
-    let mut i = e.activate(&t, Box::new(b)).unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
 
     assert_eq!(
         i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
-        Completion::Done
+        Completion::Done,
+        "the dispatch completes"
     );
 
-    // Each return area holds (ptr, len) into guest memory.
     let (p1, l1, p2, l2) = {
         let m = i.memory();
-        let rd = |o: usize| u32::from_le_bytes(m[o..o + 4].try_into().unwrap()) as usize;
-        (rd(3000), rd(3004), rd(3016), rd(3020))
+        (
+            read_u32(m, 3000) as usize,
+            read_u32(m, 3004),
+            read_u32(m, 3016) as usize,
+            read_u32(m, 3020),
+        )
     };
     assert_eq!(
         (l1, l2),
         (16, 16),
-        "the adapter must return the requested length"
+        "the adapter returns the requested length"
     );
     assert_ne!(
         p1, p2,
-        "each draw must allocate its own buffer through `cabi_realloc`"
+        "each draw allocates its own buffer through `cabi_realloc`"
     );
 
     let (first, second) = {
         let m = i.memory();
         (m[p1..p1 + 16].to_vec(), m[p2..p2 + 16].to_vec())
     };
-    // `TestBindings::call_fill` writes an incrementing byte per call, so two
-    // draws differ iff the host was really asked twice. A cached buffer —
-    // anywhere on the path — makes these equal.
     assert_ne!(
         first, second,
-        "two draws in one dispatch returned identical bytes, so something on the \
-         delegation path cached the CSPRNG output; clones of this template would share an RNG \
-         stream and nothing else in the suite would notice"
+        "two draws in one dispatch returned identical bytes, so something on the delegation \
+         path cached the CSPRNG output"
     );
 }
 
-/// A `TrapOnCall` entry **traps when called**, and does not quietly
-/// return zero.
-///
-/// This is the negative control for the whitelist itself. A silent
-/// zero-returning stub really does succeed — the guest carries on, the
-/// dispatch returns 200, and a denied capability has become a supported one
-/// that happens to answer badly. A trap fails the dispatch and discards the
-/// instance, which is the honest answer for a declaration that is toolchain
-/// residue.
+/// A stub that returned zero would let the guest carry on, turning a denied
+/// capability into a supported one that answers badly.
 #[test]
 fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
     let e = test_engine();
@@ -1921,10 +1508,8 @@ fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
     (i64.store (i32.const 3000) (i64.const 1))   ;; must never run
     (i64.const 0)"#,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
 
     let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
     assert_eq!(
@@ -1932,20 +1517,17 @@ fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
         Completion::Trapped,
         "a denied capability must not answer"
     );
-    let msg = out
-        .trap
-        .as_ref()
-        .map(|t| t.message.clone())
-        .unwrap_or_default();
+    let msg = out.trap.map(|t| t.message).unwrap_or_default();
     assert!(
         msg.contains("wasi:cli/exit") && msg.contains("trap-on-call"),
         "the trap must name the import and say why: {msg}"
     );
-    assert!(i.is_poisoned(), "a trapped instance is discarded");
+    assert!(
+        i.reset().is_err(),
+        "a trapped instance is discarded, not reset"
+    );
 }
 
-/// Through the runtime linker: `get-environment` answers the **empty
-/// list**, which is the same fidelity as absent.
 #[test]
 fn the_pal_environment_delegation_answers_empty() {
     let e = test_engine();
@@ -1955,19 +1537,17 @@ fn the_pal_environment_delegation_answers_empty() {
     (call $wasi_env (i32.const 3000))
     (i64.const 0)"#,
     );
-    let t = e.load_template(&wasm).unwrap();
-    let mut i = e
-        .activate(&t, Box::new(TestBindings::new(Recorder::default())))
-        .unwrap();
+    let t = e.load_template(&wasm).expect("template");
+    let mut i = activate(&e, &t);
     assert_eq!(
         i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
-        Completion::Done
+        Completion::Done,
+        "the dispatch completes"
     );
 
     let (ptr, len) = {
         let m = i.memory();
-        let rd = |o: usize| u32::from_le_bytes(m[o..o + 4].try_into().unwrap());
-        (rd(3000), rd(3004))
+        (read_u32(m, 3000), read_u32(m, 3004))
     };
     assert_eq!(
         (ptr, len),

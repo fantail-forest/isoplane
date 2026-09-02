@@ -55,6 +55,11 @@ bytes       = "1"
 aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
+# Default features off: the defaults pull in `async` (fiber stack switching)
+# and `threads`. Each crate names the features it needs.
+wasmtime    = { version = "48", default-features = false }
+wat         = "1"
+tempfile    = "3"
 # Pre-init runs wizer's embedded wasmtime, which compiles through rayon. Named
 # here so guest preparation can bound that pool; must resolve to the same rayon
 # both wasmtime versions use, or `install` would scope a pool nobody consults.
@@ -75,9 +80,5 @@ debug = false
 debug = false
 
 [profile.release]
-# debug = "line-tables-only"
-
-# lto = "fat" # way longer compile
 lto = "thin"
 strip = "debuginfo"
-panic = "abort"

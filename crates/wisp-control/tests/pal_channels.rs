@@ -57,7 +57,7 @@ impl PalSource for Host {
     fn slice_clock_ms(&mut self) -> u64 {
         self.slice_ms
     }
-    fn entropy_fill(&mut self, out: &mut [u8]) {
+    fn entropy_fill(&mut self, out: &mut [u8]) -> wasmtime::Result<()> {
         self.entropy_calls += 1;
         for b in out.iter_mut() {
             self.csprng = self
@@ -66,6 +66,7 @@ impl PalSource for Host {
                 .wrapping_add(1442695040888963407);
             *b = (self.csprng >> 33) as u8;
         }
+        Ok(())
     }
 }
 

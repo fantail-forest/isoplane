@@ -105,7 +105,9 @@ impl PalSource for Host {
     fn slice_clock_ms(&mut self) -> u64 {
         0
     }
-    fn entropy_fill(&mut self, _out: &mut [u8]) {}
+    fn entropy_fill(&mut self, _out: &mut [u8]) -> wasmtime::Result<()> {
+        Ok(())
+    }
 }
 
 fn report(name: &str, wasm: &[u8]) -> validator::ValidationReport {

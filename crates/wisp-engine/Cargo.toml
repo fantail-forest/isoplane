@@ -12,23 +12,20 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
-# `default-features = false` is critical, not tidiness: the default feature
-# set pulls in `async`, which is wasmtime's fiber-based stack switching. The
-# engine runs in synchronous mode on execution-pool threads, deliberately not in
-# the engine's async mode, whose epoch-*yielding* is implemented with fibers —
-# hidden native stacks, which invariant 3 forbids. With the feature off the
-# fiber code is not merely unused, it is not compiled in.
-wasmtime = { version = "48", default-features = false, features = [
-    "anyhow",               # makes `wasmtime::Error` *be* `anyhow::Error`
-    "runtime",              # the JIT runtime itself
+# No `async`: wasmtime's epoch yielding runs on fibers, hidden native stacks
+# a parked instance must not hold. With the feature off that code is not
+# compiled in.
+wasmtime = { workspace = true, features = [
+    "anyhow",
+    "runtime",
     "std",
-    "cranelift",            # AOT compile
-    "pooling-allocator",    # instance slots, adopted wholesale
-    "call-hook",            # checked, not assumed: genuine wasm-frame depth
-    "backtrace",            # trap classification wants a message
+    "cranelift",
+    "pooling-allocator",
+    "call-hook",
+    "backtrace",
     "demangle",
     "parallel-compilation",
-    "gc", "gc-null",        # funcref/externref plumbing; the wasm-gc *proposal* is off
+    "gc", "gc-null",        # funcref/externref plumbing; the wasm-gc proposal is off
 ] }
 wasmparser = { workspace = true }
 libc = { workspace = true }
@@ -37,6 +34,7 @@ postcard = { workspace = true }
 blake3 = { workspace = true }
 
 [dev-dependencies]
-# Engine unit tests use hand-written .wat fixtures rather than real guests, so a
-# guest-SDK bug can never be mistaken for an engine bug.
-wat = "1"
+# Hand-written .wat fixtures, so a guest-SDK bug is never mistaken for an
+# engine bug.
+wat = { workspace = true }
+tempfile = { workspace = true }

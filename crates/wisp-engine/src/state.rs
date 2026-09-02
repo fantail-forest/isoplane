@@ -1,6 +1,5 @@
-//! Per-instance store data: the bindings, the frozen clock, the meter, and the
-//! wasm-frame depth that makes snapshot eligibility checked rather than
-//! assumed.
+//! Per-instance store data: the bindings, the frozen clock, the meter, and
+//! the wasm-frame depth capture eligibility is checked against.
 
 use std::time::Instant;
 
@@ -9,40 +8,29 @@ use wasmtime::{Memory, ResourceLimiter};
 use crate::bindings::HostBindings;
 
 /// Why the engine terminated a dispatch. Recorded in the store rather than
-/// inferred from the error chain, so classification is exact instead of
-/// string-matched.
+/// inferred from the error chain, so classification is exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kill {
-    /// The **hard** phase: `CLOCK_THREAD_CPUTIME_ID` passed **B+G** and the
-    /// epoch counter delivered the kill without unwinding. The grace window
-    /// had already been offered and the dispatch did not take it.
-    ///
-    /// There is deliberately no `Kill::Clean`: a clean kill is not something
-    /// the engine does *to* the guest, it is the guest returning. It leaves no
-    /// trap and no error, only a `grace` record in the store.
+    /// Thread CPU passed B+G and the epoch callback trapped. There is no
+    /// `Clean` variant: a clean kill is the guest returning, and leaves a
+    /// `grace_at_ns` record rather than an error.
     CpuHard,
-    /// The wall-clock backstop. Never a meter — purely a guard against a
-    /// dispatch pinned off-CPU forever. Bypasses grace: a dispatch pinned
-    /// off-CPU is not burning budget, so there is nothing to warn it about.
+    /// The wall-clock backstop against a dispatch pinned off-CPU. Bypasses
+    /// grace, since a dispatch that is not running has nothing to unwind.
     Wall,
 }
 
-/// The CPU budget state the epoch callback consults. The kill is thread-clock
-/// metered and epoch-delivered: epochs are wall-clock ticks, so they cannot
-/// themselves express a CPU budget; they exist to give us a periodic,
-/// guest-preempting callback in which the thread clock is the thing actually
-/// compared.
+/// The CPU budget state the epoch callback consults.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Meter {
     pub cpu0_ns: u64,
     pub wall0: Option<Instant>,
-    /// **B**. Crossing it enters grace; it is not itself fatal.
+    /// B. Crossing it enters grace.
     pub cpu_budget_ns: u64,
-    /// **G**, `max(2 ms, 10% of B)`. `cpu_budget_ns + grace_ns` is the hard
-    /// deadline, and it is the only deadline that traps.
+    /// G. `cpu_budget_ns + grace_ns` is the only deadline that traps.
     pub grace_ns: u64,
-    /// Thread CPU burned by earlier slices of this same dispatch. B and B+G
-    /// are per-dispatch, not per-slice.
+    /// Thread CPU burned by earlier slices of the same dispatch; B and G are
+    /// per dispatch, not per slice.
     pub spent_ns: u64,
     pub wall_cap_ns: u64,
     /// How far to extend the epoch deadline at each check.
@@ -50,14 +38,12 @@ pub(crate) struct Meter {
 }
 
 impl Meter {
-    /// Thread CPU this dispatch has burned in total, earlier slices included.
     #[inline]
     pub fn dispatch_cpu_ns(&self, now_ns: u64) -> u64 {
         self.spent_ns
             .saturating_add(now_ns.saturating_sub(self.cpu0_ns))
     }
 
-    /// The hard deadline B+G, saturating.
     #[inline]
     pub fn hard_ns(&self) -> u64 {
         self.cpu_budget_ns.saturating_add(self.grace_ns)
@@ -78,7 +64,6 @@ impl Default for Meter {
     }
 }
 
-/// Exactly one linear memory, maximum = the plan ceiling.
 pub(crate) struct Limits {
     pub max_memory_bytes: usize,
     pub oom: bool,
@@ -93,9 +78,8 @@ impl ResourceLimiter for Limits {
     ) -> wasmtime::Result<bool> {
         let ok = desired <= self.max_memory_bytes;
         if !ok {
-            // Remembered so a later trap can be classified `OutOfMemory`
-            // instead of the generic `Sandbox`: `memory.grow` itself returns
-            // -1 rather than trapping, so the fault surfaces further along.
+            // `memory.grow` returns -1 rather than trapping, so the fault
+            // surfaces later; remembered so it classifies as `OutOfMemory`.
             self.oom = true;
         }
         Ok(ok)
@@ -122,55 +106,30 @@ impl ResourceLimiter for Limits {
 }
 
 pub(crate) struct StoreState {
-    /// `Option` only so the engine can move the box out for the duration of an
-    /// import call — `HostBindings` methods take `&mut self` while the encoded
-    /// payload borrows the scratch buffer that lives in this same struct.
+    /// `Option` so the engine can move the box out for the duration of an
+    /// import call: `HostBindings` methods take `&mut self` while the payload
+    /// borrows the scratch buffer in this same struct.
     pub bindings: Option<Box<dyn HostBindings>>,
-    /// Set immediately after instantiation; the import path needs it and a
-    /// per-call `get_export("memory")` lookup would be pure waste.
     pub memory: Option<Memory>,
-
-    /// The coarse clock, **frozen** for the slice. This is a security control,
-    /// not a convenience: with no threads, no shared memory and no fine clock,
-    /// the guest has no measurement primitive to build a Spectre-class gadget
-    /// on.
+    /// The coarse clock, frozen for the slice. With no threads, no shared
+    /// memory and no fine clock, the guest has no timing primitive to build a
+    /// Spectre-class gadget on.
     pub clock_ms: u64,
-
-    /// Number of wasm frames currently on this thread's native stack, as
-    /// reported by wasmtime's own call hook — not by our bookkeeping around the
-    /// call. Snapshot eligibility has to be *checked* rather than assumed, and
-    /// this is the thing that gets checked.
+    /// Wasm frames on this thread's native stack, from wasmtime's call hook.
     pub wasm_depth: i32,
-    /// High-water mark, kept so tests can prove the counter tracks reality in
-    /// both directions and so a reentrancy violation would be visible.
-    pub max_wasm_depth: i32,
-
     pub meter: Meter,
     pub kill: Option<Kill>,
-
-    /// Grace. `Some(cpu_ns)` from the moment the dispatch crossed B and the
-    /// host was told — the cancellation future completed and imports began
-    /// answering `Cancelled`.
-    ///
-    /// It is set only once per slice and only when the notification actually
-    /// reached the host, so a deferral on the *unsafe-to-trap* bit leaves it
-    /// `None` and the next epoch tick tries again.
+    /// `Some(cpu_ns)` once the dispatch crossed B and the host was told. A
+    /// deferral on the unsafe-to-trap bit leaves it `None` so the next tick
+    /// tries again.
     pub grace_at_ns: Option<u64>,
-    /// The runtime layer's *unsafe-to-trap* bit. Set around GC phases and
-    /// scheduler queue mutations by the `unsafe_to_trap` import.
-    ///
-    /// Grace entry **defers** while it is set. The hard deadline **ignores**
-    /// it — which is the whole of "a pinned bit buys exactly G, nothing more".
+    /// The runtime layer's unsafe-to-trap bit. Grace entry defers while it is
+    /// set; the hard deadline ignores it.
     pub unsafe_to_trap: bool,
-    /// How many epoch ticks found the bit set and deferred grace entry.
     pub grace_deferrals: u64,
-    /// The import that violated capability policy, for `TrapInfo::message` and
-    /// for pre-init's deferral loop, which needs to know *which* import an
-    /// impure static initializer touched.
+    /// The import that violated capability policy.
     pub violation: Option<&'static str>,
-    /// Message passed to `abort`.
     pub abort_msg: Option<String>,
-
     pub limits: Limits,
     /// Reused across import calls so the copy-out path does not allocate.
     pub scratch: Vec<u8>,
@@ -183,7 +142,6 @@ impl StoreState {
             memory: None,
             clock_ms: 0,
             wasm_depth: 0,
-            max_wasm_depth: 0,
             meter: Meter::default(),
             kill: None,
             grace_at_ns: None,
@@ -199,16 +157,13 @@ impl StoreState {
         }
     }
 
-    /// Clear the per-dispatch scratch state, keeping the bindings and the
-    /// allocation capacity.
     pub(crate) fn begin_slice(&mut self, clock_ms: u64, meter: Meter) {
         self.clock_ms = clock_ms;
         self.meter = meter;
         self.kill = None;
         self.grace_at_ns = None;
-        // The bit is a property of the runtime layer's *current* critical
-        // section, not of the instance. A slice that ended inside one ended
-        // because it trapped, and the next slice starts outside it.
+        // The bit describes the runtime layer's current critical section; a
+        // slice that ended inside one ended by trapping.
         self.unsafe_to_trap = false;
         self.grace_deferrals = 0;
         self.violation = None;
@@ -224,17 +179,9 @@ impl StoreState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Typed errors raised out of the engine's own code, so trap classification is
-// exact rather than a match on wasmtime's message strings.
-// ---------------------------------------------------------------------------
-
-/// The **hard** kill, raised from the epoch deadline callback at B+G.
-///
-/// The message names both numbers on purpose: a tenant reading
-/// `budget_exceeded` needs to see that a grace window existed and was not
-/// taken, because that is the difference between "my code is slow" and "my
-/// code cannot be interrupted".
+/// The hard kill, raised from the epoch deadline callback at B+G. The message
+/// names both numbers so a tenant can tell "my code is slow" from "my code
+/// cannot be interrupted".
 #[derive(Debug, thiserror::Error)]
 #[error(
     "cpu budget exceeded: {cpu_ns} ns of thread CPU against a {budget_ns} ns budget \
@@ -247,18 +194,14 @@ pub(crate) struct BudgetExceeded {
     pub grace_ns: u64,
 }
 
-/// The wall-clock backstop. Distinct from `BudgetExceeded` because it is not a
-/// CPU-budget event.
 #[derive(Debug, thiserror::Error)]
 #[error("wall-clock backstop tripped after {wall_ns} ns")]
 pub(crate) struct WallCapExceeded {
     pub wall_ns: u64,
 }
 
-/// Invariant 4. Either an import the module did not declare (which
-/// normally cannot happen — the linker defines only [`wisp_abi::imports::IMPORTS`]
-/// — but is checked twice on purpose) or one that the sealed init sandbox
-/// forbids, which is the signal that a static initializer is impure.
+/// An import the init sandbox forbids, which is how an impure static
+/// initialiser is detected.
 #[derive(Debug, thiserror::Error)]
 #[error("capability violation: import `{import}` is not reachable here (sealed init sandbox: {init_sandbox})")]
 pub(crate) struct CapabilityViolation {
@@ -266,23 +209,18 @@ pub(crate) struct CapabilityViolation {
     pub init_sandbox: bool,
 }
 
-/// The guest called `abort`.
 #[derive(Debug, thiserror::Error)]
 #[error("guest aborted: {message}")]
 pub(crate) struct GuestAbort {
     pub message: String,
 }
 
-/// `wisp_alloc` could not satisfy a host->guest buffer handoff.
 #[derive(Debug, thiserror::Error)]
 #[error("wisp_alloc({size}) returned 0: guest heap exhausted")]
 pub(crate) struct AllocFailed {
     pub size: usize,
 }
 
-/// The host must not call into an instance while a previous call into it has
-/// not returned. Enforced here as well as in `wisp-host` because a violation
-/// would corrupt the meter and the frozen clock, not merely the guest.
 #[derive(Debug, thiserror::Error)]
 #[error("reentrant call into an instance with {depth} wasm frames already on the stack")]
 pub(crate) struct Reentrancy {

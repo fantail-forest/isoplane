@@ -56,5 +56,5 @@ control = ["dep:wisp-control"]
 tokio = { workspace = true }
 # `tests/cli.rs` builds its fixture modules from the signatures in
 # `wisp_abi::imports`, because the validator `doctor` now runs checks them.
-wat = "1"
+wat = { workspace = true }
 
