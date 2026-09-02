@@ -16,19 +16,6 @@ members = [
     "undeclared-import",
     "impure-cctor",
     "bigheap",
-    # Layered runtime hosting. `layered/base` is the shared runtime layer;
-    # `layered/apps/*` are tenant app layers, each built twice: against the
-    # base's imported ABI, and self-contained with the same code statically
-    # linked and trimmed.
-    "layered/rtlib",
-    "layered/rtabi",
-    "layered/base",
-    "layered/apps/quotes",
-    "layered/apps/chat",
-    "layered/apps/etl",
-    "layered/apps/hello",
-    "layered/apps/audit",
-    "layered/apps/search",
 ]
 
 [workspace.package]

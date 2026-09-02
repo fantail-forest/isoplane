@@ -11,12 +11,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$ROOT/out"
 TARGET=wasm32-unknown-unknown
 PROFILE=release
-# Host and guest Cargo workspaces use separate target directories.
+# Separate guest build outputs avoid locking the parent host build directory.
 TDIR="${CARGO_TARGET_DIR:+${CARGO_TARGET_DIR%/}/guests}"
 TDIR="${TDIR:-$ROOT/target}"
 export CARGO_TARGET_DIR="$TDIR"
 
-# WISP_BUILD_QUIET skips size and import/export reports while retaining validation.
+# WISP_BUILD_QUIET skips informational size and import/export reports.
 QUIET="${WISP_BUILD_QUIET:-}"
 mkdir -p "$OUT"
 cd "$ROOT"
@@ -24,11 +24,12 @@ cd "$ROOT"
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
 [ -n "${WISP_OFFLINE:-}" ] && CARGO_FLAGS+=(--offline)
 
-# Check the toolchain before deleting any build outputs.
+# Check tools before replacing existing outputs.
 preflight_missing=()
 command -v cargo >/dev/null 2>&1 || preflight_missing+=(
   "cargo is not on PATH -- the guests are a cargo workspace of their own")
-# rustup can name a target directory even when its libraries are not installed.
+# rustup prints a target-libdir for any triple it can name, installed or not,
+# and only creates the directory when the target is really there.
 if ! libdir=$(rustc --print target-libdir --target "$TARGET" 2>/dev/null) || [ ! -d "$libdir" ]; then
   preflight_missing+=("the $TARGET std is not installed (rustup target add $TARGET)")
 fi
@@ -117,8 +118,7 @@ fi
 
 echo
 echo "==> V1 (capability surface) is checked by the validator, not by this script"
-# Validate capabilities with the real host validator:
-# scripts/dev cargo test -p wisp-control --test real_guests
+# Import names and signatures are checked by the host validator tests.
 
 echo
 echo "==> wrote $(ls -1 "$OUT"/*.wasm | wc -l) modules to $OUT"

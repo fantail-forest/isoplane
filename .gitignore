@@ -2,7 +2,6 @@
 /crates/spike/target
 /guests/target
 /guests/out/*.wasm
-/guests/layered/out/*.wasm
 **/*.rs.bk
 .wisp-data/
 
@@ -10,15 +9,10 @@
 guests/dotnet/src/obj/
 guests/dotnet/src/bin/
 guests/dotnet/hostcheck/target/
-bench/*/target/
-bench/out/*.wasm
-bench/out/**/*.wasm
 .scratch-*
 wispd-data/
 .wisp-data/
 
-# benchmark outputs
-bench/out
 wispd-data-todo/
 
 # local .data output for manual testing
