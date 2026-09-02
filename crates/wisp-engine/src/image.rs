@@ -103,13 +103,21 @@ impl MemoryImage {
                     None => break,
                 }
             }
-            runs.push(Run { off: start, start: bytes.len(), len: end - start });
+            runs.push(Run {
+                off: start,
+                start: bytes.len(),
+                len: end - start,
+            });
             bytes.extend_from_slice(&dense[start..end]);
             i = end;
         }
         runs.shrink_to_fit();
         bytes.shrink_to_fit();
-        MemoryImage { len: dense.len(), runs, bytes }
+        MemoryImage {
+            len: dense.len(),
+            runs,
+            bytes,
+        }
     }
 
     /// The logical size of the memory, including everything that is zero.
@@ -234,7 +242,11 @@ mod tests {
     fn roundtrip(dense: &[u8]) {
         let img = MemoryImage::from_dense(dense);
         assert_eq!(img.len(), dense.len());
-        assert_eq!(img.to_dense(), dense, "to_dense must reproduce the input exactly");
+        assert_eq!(
+            img.to_dense(),
+            dense,
+            "to_dense must reproduce the input exactly"
+        );
         for (i, &b) in dense.iter().enumerate() {
             assert_eq!(img.byte(i), b, "byte {i}");
         }
@@ -244,7 +256,10 @@ mod tests {
             let mut buf = vec![0u8; hi - lo];
             img.read_at(lo, &mut buf);
             assert_eq!(&buf[..], &dense[lo..hi], "read_at page {p}");
-            assert!(img.page_eq(p, &dense[lo..hi]), "page_eq must hold for the image itself");
+            assert!(
+                img.page_eq(p, &dense[lo..hi]),
+                "page_eq must hold for the image itself"
+            );
         }
     }
 
@@ -295,7 +310,11 @@ mod tests {
         // region's head run begins, so all but the first and last merge. That
         // adjacency is real in the .NET image too, and coalescing it is the
         // representation doing its job.
-        assert_eq!(img.runs(), 65, "one run per region boundary, plus the two ends");
+        assert_eq!(
+            img.runs(),
+            65,
+            "one run per region boundary, plus the two ends"
+        );
         assert!(
             img.stored_bytes() < d.len() / 500,
             "stored {} of {} bytes — the whole point",
@@ -326,7 +345,10 @@ mod tests {
             for probe in [0usize, 1, 100, 4000, PAGE - 1] {
                 let mut live = d[p * PAGE..(p + 1) * PAGE].to_vec();
                 live[probe] = live[probe].wrapping_add(1);
-                assert!(!img.page_eq(p, &live), "page {p} byte {probe} must be seen as dirty");
+                assert!(
+                    !img.page_eq(p, &live),
+                    "page {p} byte {probe} must be seen as dirty"
+                );
             }
         }
     }

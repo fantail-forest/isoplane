@@ -9,8 +9,16 @@ use crate::admin::{Latency, NodeSnapshot};
 fn latency_lines(out: &mut String, node: &str, name: &str, help: &str, l: Latency) {
     let _ = writeln!(out, "# HELP {name} {help}");
     let _ = writeln!(out, "# TYPE {name} summary");
-    let _ = writeln!(out, "{name}{{node=\"{node}\",quantile=\"0.5\"}} {}", l.p50_us);
-    let _ = writeln!(out, "{name}{{node=\"{node}\",quantile=\"0.99\"}} {}", l.p99_us);
+    let _ = writeln!(
+        out,
+        "{name}{{node=\"{node}\",quantile=\"0.5\"}} {}",
+        l.p50_us
+    );
+    let _ = writeln!(
+        out,
+        "{name}{{node=\"{node}\",quantile=\"0.99\"}} {}",
+        l.p99_us
+    );
     let _ = writeln!(out, "{name}_count{{node=\"{node}\"}} {}", l.count);
 }
 
@@ -29,8 +37,16 @@ fn histogram_lines(
         let cum = samples.iter().filter(|s| **s <= *b).count();
         let _ = writeln!(out, "{name}_bucket{{node=\"{node}\",le=\"{b}\"}} {cum}");
     }
-    let _ = writeln!(out, "{name}_bucket{{node=\"{node}\",le=\"+Inf\"}} {}", samples.len());
-    let _ = writeln!(out, "{name}_sum{{node=\"{node}\"}} {}", samples.iter().sum::<u64>());
+    let _ = writeln!(
+        out,
+        "{name}_bucket{{node=\"{node}\",le=\"+Inf\"}} {}",
+        samples.len()
+    );
+    let _ = writeln!(
+        out,
+        "{name}_sum{{node=\"{node}\"}} {}",
+        samples.iter().sum::<u64>()
+    );
     let _ = writeln!(out, "{name}_count{{node=\"{node}\"}} {}", samples.len());
 }
 
@@ -42,7 +58,10 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
 
 
     // --- dispatches & CPU ----------------------------------------------------
-    let _ = writeln!(&mut o, "# HELP wisp_dispatches_total Dispatches handled, by code tier");
+    let _ = writeln!(
+        &mut o,
+        "# HELP wisp_dispatches_total Dispatches handled, by code tier"
+    );
     let _ = writeln!(&mut o, "# TYPE wisp_dispatches_total counter");
     let _ = writeln!(
         &mut o,
@@ -54,16 +73,29 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
         "wisp_dispatches_total{{node=\"{node}\",tier=\"optimized\"}} {}",
         proxy.dispatches_tier_optimized.load(Relaxed)
     );
-    let _ = writeln!(&mut o, "# HELP wisp_cell_dispatches_total Dispatches observed inside the cell");
+    let _ = writeln!(
+        &mut o,
+        "# HELP wisp_cell_dispatches_total Dispatches observed inside the cell"
+    );
     let _ = writeln!(&mut o, "# TYPE wisp_cell_dispatches_total counter");
-    let _ = writeln!(&mut o, "{} {}", n("wisp_cell_dispatches_total"), snap.dispatches_total);
+    let _ = writeln!(
+        &mut o,
+        "{} {}",
+        n("wisp_cell_dispatches_total"),
+        snap.dispatches_total
+    );
 
     let _ = writeln!(
         &mut o,
         "# HELP wisp_cpu_ms_total CPU milliseconds reported by the node"
     );
     let _ = writeln!(&mut o, "# TYPE wisp_cpu_ms_total counter");
-    let _ = writeln!(&mut o, "{} {:.3}", n("wisp_cpu_ms_total"), snap.cpu_ms_total);
+    let _ = writeln!(
+        &mut o,
+        "{} {:.3}",
+        n("wisp_cpu_ms_total"),
+        snap.cpu_ms_total
+    );
 
     // --- activation & wake latency ------------------------------------------
     latency_lines(
@@ -92,7 +124,10 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
         ("parked", snap.instances_parked),
         ("hibernated", snap.instances_hibernated),
     ] {
-        let _ = writeln!(&mut o, "wisp_instances{{node=\"{node}\",tier=\"{tier}\"}} {v}");
+        let _ = writeln!(
+            &mut o,
+            "wisp_instances{{node=\"{node}\",tier=\"{tier}\"}} {v}"
+        );
     }
 
     // --- dirty set & delta storage ------------------------------------------
@@ -106,28 +141,74 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     );
     let _ = writeln!(&mut o, "# HELP wisp_delta_storage_bytes Local snapshot bytes held");
     let _ = writeln!(&mut o, "# TYPE wisp_delta_storage_bytes gauge");
-    let _ = writeln!(&mut o, "{} {}", n("wisp_delta_storage_bytes"), snap.delta_storage_bytes);
+    let _ = writeln!(
+        &mut o,
+        "{} {}",
+        n("wisp_delta_storage_bytes"),
+        snap.delta_storage_bytes
+    );
 
     // --- traps ----------------------------------------------------
 
-    let _ = writeln!(&mut o, "# HELP wisp_traps_total Guest faults. Traps are never retried on the same memory.");
+    let _ = writeln!(
+        &mut o,
+        "# HELP wisp_traps_total Guest faults. Traps are never retried on the same memory."
+    );
     let _ = writeln!(&mut o, "# TYPE wisp_traps_total counter");
     let _ = writeln!(&mut o, "{} {}", n("wisp_traps_total"), snap.traps_total);
     let _ = writeln!(&mut o, "# HELP wisp_trap_rate Traps per dispatch");
     let _ = writeln!(&mut o, "# TYPE wisp_trap_rate gauge");
     let denom = snap.dispatches_total.max(1) as f64;
-    let _ = writeln!(&mut o, "{} {:.6}", n("wisp_trap_rate"), snap.traps_total as f64 / denom);
-    let _ = writeln!(&mut o, "# HELP wisp_hang_breakers_tripped Routes currently failing fast");
+    let _ = writeln!(
+        &mut o,
+        "{} {:.6}",
+        n("wisp_trap_rate"),
+        snap.traps_total as f64 / denom
+    );
+    let _ = writeln!(
+        &mut o,
+        "# HELP wisp_hang_breakers_tripped Routes currently failing fast"
+    );
     let _ = writeln!(&mut o, "# TYPE wisp_hang_breakers_tripped gauge");
-    let _ = writeln!(&mut o, "{} {}", n("wisp_hang_breakers_tripped"), snap.breaker_trips);
+    let _ = writeln!(
+        &mut o,
+        "{} {}",
+        n("wisp_hang_breakers_tripped"),
+        snap.breaker_trips
+    );
 
     // --- proxy-owned meters ---------------------------------------------------
     for (name, help, ty, v) in [
-        ("wisp_proxy_requests_total", "Requests accepted by the front proxy", "counter", proxy.requests_total.load(Relaxed)),
-        ("wisp_proxy_requests_unrouted_total", "Requests with no matching route", "counter", proxy.requests_404.load(Relaxed)),
-        ("wisp_proxy_requests_shed_total", "Requests refused at the edge before cells saturated", "counter", proxy.requests_shed.load(Relaxed)),
-        ("wisp_proxy_requests_failed_total", "Dispatches that returned an error", "counter", proxy.requests_failed.load(Relaxed)),
-        ("wisp_proxy_route_generation", "Route-table generation", "gauge", proxy.route_generation.load(Relaxed)),
+        (
+            "wisp_proxy_requests_total",
+            "Requests accepted by the front proxy",
+            "counter",
+            proxy.requests_total.load(Relaxed),
+        ),
+        (
+            "wisp_proxy_requests_unrouted_total",
+            "Requests with no matching route",
+            "counter",
+            proxy.requests_404.load(Relaxed),
+        ),
+        (
+            "wisp_proxy_requests_shed_total",
+            "Requests refused at the edge before cells saturated",
+            "counter",
+            proxy.requests_shed.load(Relaxed),
+        ),
+        (
+            "wisp_proxy_requests_failed_total",
+            "Dispatches that returned an error",
+            "counter",
+            proxy.requests_failed.load(Relaxed),
+        ),
+        (
+            "wisp_proxy_route_generation",
+            "Route-table generation",
+            "gauge",
+            proxy.route_generation.load(Relaxed),
+        ),
     ] {
         let _ = writeln!(&mut o, "# HELP {name} {help}");
         let _ = writeln!(&mut o, "# TYPE {name} {ty}");
@@ -135,13 +216,29 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
     }
 
     for (name, help, h) in [
-        ("wisp_proxy_request_latency_us", "End-to-end latency observed at the proxy", &proxy.request_latency),
-        ("wisp_proxy_admission_wait_us", "Time spent queued at admission before a slot freed", &proxy.admission_wait),
+        (
+            "wisp_proxy_request_latency_us",
+            "End-to-end latency observed at the proxy",
+            &proxy.request_latency,
+        ),
+        (
+            "wisp_proxy_admission_wait_us",
+            "Time spent queued at admission before a slot freed",
+            &proxy.admission_wait,
+        ),
     ] {
         let _ = writeln!(&mut o, "# HELP {name} {help}");
         let _ = writeln!(&mut o, "# TYPE {name} summary");
-        let _ = writeln!(&mut o, "{name}{{node=\"{node}\",quantile=\"0.5\"}} {:.0}", h.p50_us());
-        let _ = writeln!(&mut o, "{name}{{node=\"{node}\",quantile=\"0.99\"}} {:.0}", h.p99_us());
+        let _ = writeln!(
+            &mut o,
+            "{name}{{node=\"{node}\",quantile=\"0.5\"}} {:.0}",
+            h.p50_us()
+        );
+        let _ = writeln!(
+            &mut o,
+            "{name}{{node=\"{node}\",quantile=\"0.99\"}} {:.0}",
+            h.p99_us()
+        );
         let _ = writeln!(&mut o, "{name}_count{{node=\"{node}\"}} {}", h.count());
     }
 
@@ -194,8 +291,14 @@ mod tests {
     #[test]
     fn quantiles_come_out_of_the_samples() {
         let out = render("n1", &ProxyMetrics::new(), snap());
-        assert!(out.contains("wisp_activation_us{node=\"n1\",quantile=\"0.5\"} 700"), "{out}");
-        assert!(out.contains("wisp_wake_us{node=\"n1\",quantile=\"0.5\"} 9000"), "{out}");
+        assert!(
+            out.contains("wisp_activation_us{node=\"n1\",quantile=\"0.5\"} 700"),
+            "{out}"
+        );
+        assert!(
+            out.contains("wisp_wake_us{node=\"n1\",quantile=\"0.5\"} 9000"),
+            "{out}"
+        );
     }
 
 

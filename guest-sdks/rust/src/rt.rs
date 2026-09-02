@@ -199,7 +199,10 @@ static BUSY: Cell<bool> = Cell(UnsafeCell::new(false));
 pub(crate) fn with<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
     unsafe {
         let busy = &mut *BUSY.0.get();
-        debug_assert!(!*busy, "re-entrant runtime access: never run guest code inside `with`");
+        debug_assert!(
+            !*busy,
+            "re-entrant runtime access: never run guest code inside `with`"
+        );
         *busy = true;
         let r = f(&mut *RT.0.get());
         *busy = false;
@@ -243,7 +246,9 @@ pub(crate) fn run() -> PollStatus {
     while let Some(id) = with(|rt| rt.ready.pop_front()) {
         // A stale ready entry (its task already finished) is a permitted
         // spurious wakeup, not an error.
-        let Some(mut task) = with(|rt| rt.take_task(id)) else { continue };
+        let Some(mut task) = with(|rt| rt.take_task(id)) else {
+            continue;
+        };
         with(|rt| {
             rt.current = id;
             rt.polls += 1;
@@ -292,7 +297,13 @@ pub(crate) fn register(id: u64) -> Registered {
             return Registered::TooMany;
         }
         let owner = rt.current;
-        rt.futures.entry(id).or_insert(FutureSlot { owner, result: None }).owner = owner;
+        rt.futures
+            .entry(id)
+            .or_insert(FutureSlot {
+                owner,
+                result: None,
+            })
+            .owner = owner;
         Registered::Ok
     })
 }
@@ -351,7 +362,9 @@ pub fn park_count() -> u64 {
 pub fn export_alloc(size: usize, align: usize) -> usize {
     let size = size.max(1);
     let align = align.max(1).next_power_of_two();
-    let Ok(layout) = Layout::from_size_align(size, align) else { return 0 };
+    let Ok(layout) = Layout::from_size_align(size, align) else {
+        return 0;
+    };
     let p = unsafe { raw_alloc(layout) };
     if p.is_null() {
         return 0;
@@ -380,7 +393,12 @@ pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask
     let rec: DispatchRecord = match postcard::from_bytes(bytes) {
         Ok(r) => r,
         // Malformed dispatch encoding is an ABI break, not an app error.
-        Err(_) => return PollStatus::Trapped { code: TrapCode::Protocol }.encode(),
+        Err(_) => {
+            return PollStatus::Trapped {
+                code: TrapCode::Protocol,
+            }
+            .encode()
+        }
     };
     free_host_buf(ptr);
     spawn_main(make(rec));
@@ -394,7 +412,12 @@ pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
     let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
     let res: ResultRecord = match postcard::from_bytes(bytes) {
         Ok(r) => r,
-        Err(_) => return PollStatus::Trapped { code: TrapCode::Protocol }.encode(),
+        Err(_) => {
+            return PollStatus::Trapped {
+                code: TrapCode::Protocol,
+            }
+            .encode()
+        }
     };
     free_host_buf(ptr);
     deliver(future, res);
@@ -474,7 +497,11 @@ mod tests {
                 TaskOutcome::Response(1)
             }));
             assert_eq!(run(), PollStatus::Pending);
-            assert_eq!(pending_futures(), 2, "both futures must be in flight at once");
+            assert_eq!(
+                pending_futures(),
+                2,
+                "both futures must be in flight at once"
+            );
             let polls_after_park = with(|rt| rt.polls);
             assert_eq!(polls_after_park, 1);
 
@@ -500,7 +527,11 @@ mod tests {
             spawn_main(Box::pin(async { TaskOutcome::Response(5) }));
             assert_eq!(run(), PollStatus::Done { response: 5 });
             deliver(bg, ResultRecord::Ok(Vec::new()));
-            assert_eq!(run(), PollStatus::Done { response: 0 }, "background work drained");
+            assert_eq!(
+                run(),
+                PollStatus::Done { response: 0 },
+                "background work drained"
+            );
         });
     }
 
@@ -536,7 +567,12 @@ mod tests {
             let st = PollStatus::decode(export_handle(junk.as_ptr() as usize, 8, |_| {
                 Box::pin(async { TaskOutcome::Response(0) })
             }));
-            assert_eq!(st, PollStatus::Trapped { code: TrapCode::Protocol });
+            assert_eq!(
+                st,
+                PollStatus::Trapped {
+                    code: TrapCode::Protocol
+                }
+            );
         });
     }
 }

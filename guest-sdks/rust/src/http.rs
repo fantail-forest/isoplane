@@ -16,7 +16,10 @@ pub trait RequestExt {
 
 impl RequestExt for Request {
     fn query_get(&self, key: &str) -> Option<&str> {
-        self.query.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.query
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
     fn header(&self, name: &str) -> Option<&str> {
         self.headers
@@ -61,9 +64,7 @@ impl Response {
     /// Postcard body, for service bindings and DI replies.
     pub fn postcard<T: Serialize>(v: &T) -> Response {
         match postcard::to_allocvec(v) {
-            Ok(b) => {
-                Response::new(200, b).with_header("content-type", "application/x-postcard")
-            }
+            Ok(b) => Response::new(200, b).with_header("content-type", "application/x-postcard"),
             Err(e) => Response::text(500, format!("serialize: {e}")),
         }
     }
@@ -98,7 +99,12 @@ pub struct ResponseStream {
 
 impl ResponseStream {
     pub fn open(status: u16, headers: Vec<(String, String)>) -> ResponseStream {
-        let head = ResponseHead { status, headers, body: Vec::new(), streaming: true };
+        let head = ResponseHead {
+            status,
+            headers,
+            body: Vec::new(),
+            streaming: true,
+        };
         let buf = postcard::to_allocvec(&head).expect("postcard encode");
         let handle = unsafe { abi::resp_new(buf.as_ptr() as i32, buf.len() as i32) as u32 };
         ResponseStream { handle }
@@ -108,7 +114,11 @@ impl ResponseStream {
     }
     pub fn write(&self, chunk: &[u8]) -> HostFuture<()> {
         let id = unsafe {
-            abi::resp_write(self.handle as i32, chunk.as_ptr() as i32, chunk.len() as i32)
+            abi::resp_write(
+                self.handle as i32,
+                chunk.as_ptr() as i32,
+                chunk.len() as i32,
+            )
         } as u64;
         HostFuture::new(id, decode_unit)
     }

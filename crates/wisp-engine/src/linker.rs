@@ -57,18 +57,16 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
 
     match (def.sig.params, def.sig.results) {
         ([], [I64]) => wrap!(|c| -> i64 { Ok(invoke(&mut c, def, &[])? as i64) }),
-        ([I32], []) => wrap!(|c, a: i32| -> () {
-            invoke(&mut c, def, &[a as u32 as u64]).map(|_| ())
-        }),
-        ([I32], [I32]) => wrap!(|c, a: i32| -> i32 {
-            Ok(invoke(&mut c, def, &[a as u32 as u64])? as u32 as i32)
-        }),
-        ([I64], []) => wrap!(|c, a: i64| -> () {
-            invoke(&mut c, def, &[a as u64]).map(|_| ())
-        }),
-        ([I64], [I64]) => wrap!(|c, a: i64| -> i64 {
-            Ok(invoke(&mut c, def, &[a as u64])? as i64)
-        }),
+        ([I32], []) => {
+            wrap!(|c, a: i32| -> () { invoke(&mut c, def, &[a as u32 as u64]).map(|_| ()) })
+        }
+        ([I32], [I32]) => {
+            wrap!(|c, a: i32| -> i32 { Ok(invoke(&mut c, def, &[a as u32 as u64])? as u32 as i32) })
+        }
+        ([I64], []) => wrap!(|c, a: i64| -> () { invoke(&mut c, def, &[a as u64]).map(|_| ()) }),
+        ([I64], [I64]) => {
+            wrap!(|c, a: i64| -> i64 { Ok(invoke(&mut c, def, &[a as u64])? as i64) })
+        }
         ([I32, I32], []) => wrap!(|c, a: i32, b: i32| -> () {
             invoke(&mut c, def, &[a as u32 as u64, b as u32 as u64]).map(|_| ())
         }),
@@ -79,10 +77,19 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
             Ok(invoke(&mut c, def, &[a as u32 as u64, b as u32 as u64])? as i64)
         }),
         ([I32, I32, I32], []) => wrap!(|c, a: i32, b: i32, d: i32| -> () {
-            invoke(&mut c, def, &[a as u32 as u64, b as u32 as u64, d as u32 as u64]).map(|_| ())
+            invoke(
+                &mut c,
+                def,
+                &[a as u32 as u64, b as u32 as u64, d as u32 as u64],
+            )
+            .map(|_| ())
         }),
         ([I32, I32, I32], [I64]) => wrap!(|c, a: i32, b: i32, d: i32| -> i64 {
-            Ok(invoke(&mut c, def, &[a as u32 as u64, b as u32 as u64, d as u32 as u64])? as i64)
+            Ok(invoke(
+                &mut c,
+                def,
+                &[a as u32 as u64, b as u32 as u64, d as u32 as u64],
+            )? as i64)
         }),
         ([I32, I32, I64], []) => wrap!(|c, a: i32, b: i32, d: i64| -> () {
             invoke(&mut c, def, &[a as u32 as u64, b as u32 as u64, d as u64]).map(|_| ())
@@ -101,7 +108,11 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     // *which* import an impure static initializer touched.
     if c.data().is_init_sandbox() && !def.init_visible {
         c.data_mut().violation = Some(def.name);
-        return Err(CapabilityViolation { import: def.name, init_sandbox: true }.into());
+        return Err(CapabilityViolation {
+            import: def.name,
+            init_sandbox: true,
+        }
+        .into());
     }
 
     match def.name {
@@ -181,7 +192,10 @@ fn call_binding(
     if let BufSpec::Out(i) = def.buf {
         let cap = raw[i as usize + 1] as usize;
         if cap > MAX_OUT_BUFFER {
-            bail!("`{}` out-buffer of {cap} bytes exceeds the {MAX_OUT_BUFFER} byte cap", def.name);
+            bail!(
+                "`{}` out-buffer of {cap} bytes exceeds the {MAX_OUT_BUFFER} byte cap",
+                def.name
+            );
         }
         scratch.clear();
         scratch.resize(cap, 0);
@@ -193,12 +207,20 @@ fn call_binding(
         .take()
         .context("import called reentrantly: the binding vtable is already in use")?;
 
-    let call = ImportCall { import: def.name, payload: scratch.as_slice(), scalars };
+    let call = ImportCall {
+        import: def.name,
+        payload: scratch.as_slice(),
+        scalars,
+    };
     let ret = if layout::is_out(def) {
         // The one case where bytes flow host -> guest inside an import. The
         // host writes into a host-side buffer; the engine copies it in below.
         bindings.call_fill(
-            ImportCall { import: def.name, payload: &[], scalars },
+            ImportCall {
+                import: def.name,
+                payload: &[],
+                scalars,
+            },
             scratch.as_mut_slice(),
         ) as u64
     } else {
@@ -238,19 +260,30 @@ fn call_binding(
 /// own memory; this caps the host's.
 const MAX_OUT_BUFFER: usize = 1 << 20;
 
-pub(crate) fn read_guest(c: &mut Caller<'_, StoreState>, ptr: usize, len: usize) -> Result<Vec<u8>> {
+pub(crate) fn read_guest(
+    c: &mut Caller<'_, StoreState>,
+    ptr: usize,
+    len: usize,
+) -> Result<Vec<u8>> {
     let mem = c.data().memory.context("instance has no `memory` export")?;
-    let end = ptr.checked_add(len).context("import buffer address overflow")?;
+    let end = ptr
+        .checked_add(len)
+        .context("import buffer address overflow")?;
     let data = mem.data(&*c);
-    let slice = data
-        .get(ptr..end)
-        .with_context(|| format!("import buffer [{ptr}, {end}) is outside a {} byte linear memory", data.len()))?;
+    let slice = data.get(ptr..end).with_context(|| {
+        format!(
+            "import buffer [{ptr}, {end}) is outside a {} byte linear memory",
+            data.len()
+        )
+    })?;
     Ok(slice.to_vec())
 }
 
 fn write_guest(c: &mut Caller<'_, StoreState>, ptr: usize, bytes: &[u8]) -> Result<()> {
     let mem = c.data().memory.context("instance has no `memory` export")?;
-    let end = ptr.checked_add(bytes.len()).context("import buffer address overflow")?;
+    let end = ptr
+        .checked_add(bytes.len())
+        .context("import buffer address overflow")?;
     let data = mem.data_mut(&mut *c);
     let dst = data
         .get_mut(ptr..end)

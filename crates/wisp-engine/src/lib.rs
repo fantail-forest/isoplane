@@ -43,8 +43,8 @@ use wisp_abi::result::ResultRecord;
 use wisp_abi::status::PollStatus;
 
 pub mod bindings;
-pub mod image;
 pub mod budget;
+pub mod image;
 pub mod instance;
 pub mod pal;
 pub mod snapshot;
@@ -58,8 +58,8 @@ mod watchdog;
 mod wtconfig;
 
 pub use bindings::{HostBindings, ImportCall};
-pub use image::{MemoryImage, PAGE};
 pub use budget::{CpuBudget, DispatchOutcome, KillPhase, TrapInfo, TrapKind};
+pub use image::{MemoryImage, PAGE};
 pub use instance::Instance;
 pub use meter::{
     clock_read_failures, thread_cpu_nanos, thread_cpu_resolution_nanos, try_thread_cpu_nanos,
@@ -132,7 +132,6 @@ pub struct EngineConfig {
     /// fingerprint: changing it invalidates every cached AOT artifact, which is
     /// correct — it changes generated code — but means a fleet-wide recompile.
     pub guard_size_bytes: u64,
-
 }
 
 impl Default for EngineConfig {
@@ -174,7 +173,13 @@ impl WispEngine {
         let watchdog = watchdog::Watchdog::start(wasmtime.clone(), cfg.epoch_tick_us);
         let fingerprint = wtconfig::engine_fingerprint(&cfg);
         Ok(Self {
-            inner: Arc::new(EngineInner { wasmtime, cfg, linker, watchdog, fingerprint }),
+            inner: Arc::new(EngineInner {
+                wasmtime,
+                cfg,
+                linker,
+                watchdog,
+                fingerprint,
+            }),
         })
     }
 
@@ -189,7 +194,13 @@ impl WispEngine {
         let deferred = template::read_deferred_units(template_wasm)?;
         let mut_names = template::exported_mutable_globals(template_wasm)?;
         let table_names = template::exported_tables(template_wasm)?;
-        self.finish_template(module, ModuleHash::of(template_wasm), deferred, mut_names, table_names)
+        self.finish_template(
+            module,
+            ModuleHash::of(template_wasm),
+            deferred,
+            mut_names,
+            table_names,
+        )
     }
 
     /// Serializes this template's metadata and compiled WebAssembly module.
@@ -245,8 +256,8 @@ impl WispEngine {
             .serialize()
             .map_err(anyhow::Error::from)
             .context("serializing compiled template")?;
-        let meta = postcard::to_allocvec(&self.artifact_meta(t))
-            .context("encoding artifact metadata")?;
+        let meta =
+            postcard::to_allocvec(&self.artifact_meta(t)).context("encoding artifact metadata")?;
         Ok((meta, cwasm))
     }
 
@@ -318,9 +329,12 @@ impl WispEngine {
             postcard::from_bytes(meta).context("decoding artifact metadata")?;
         self.check_artifact_meta(&meta)?;
         // SAFETY: delegated to the caller's contract above.
-        let module = unsafe { wasmtime::Module::deserialize_file(&self.inner.wasmtime, cwasm_path) }
-            .map_err(anyhow::Error::from)
-            .with_context(|| format!("mapping precompiled template {}", cwasm_path.display()))?;
+        let module =
+            unsafe { wasmtime::Module::deserialize_file(&self.inner.wasmtime, cwasm_path) }
+                .map_err(anyhow::Error::from)
+                .with_context(|| {
+                    format!("mapping precompiled template {}", cwasm_path.display())
+                })?;
         self.finish_template(
             module,
             ModuleHash(meta.module_hash),
@@ -373,7 +387,11 @@ impl WispEngine {
     /// The point of the cache is to answer "do I already have this?" before
     /// paying for a compile, which a key that needs a `Template` cannot do.
     pub fn artifact_key_for(&self, template_wasm: &[u8]) -> String {
-        format!("{}-{}", ModuleHash::of(template_wasm).hex(), self.inner.fingerprint)
+        format!(
+            "{}-{}",
+            ModuleHash::of(template_wasm).hex(),
+            self.inner.fingerprint
+        )
     }
 
     /// Compile a template's wasm to the two artifact files, and drop the
@@ -508,7 +526,10 @@ impl WispEngine {
             )?;
             tracing::info!(
                 composed = composed.len(),
-                delegated = composed.iter().filter(|d| d.disposition.is_delegated()).count(),
+                delegated = composed
+                    .iter()
+                    .filter(|d| d.disposition.is_delegated())
+                    .count(),
                 "composed the WASI PAL adapter for a template"
             );
             (Some(l), composed)
@@ -562,7 +583,9 @@ impl WispEngine {
         }
 
         let has_gc_hint = inst.get_func(&mut store, guest_exports::GC_HINT).is_some();
-        let has_initialize = inst.get_func(&mut store, guest_exports::INITIALIZE).is_some();
+        let has_initialize = inst
+            .get_func(&mut store, guest_exports::INITIALIZE)
+            .is_some();
         drop(store);
 
         Ok(Template {
@@ -585,14 +608,20 @@ impl WispEngine {
     }
 }
 
-fn instance_global_value(v: wasmtime::Val, store: impl wasmtime::AsContext) -> Result<snapshot::GlobalValue> {
+fn instance_global_value(
+    v: wasmtime::Val,
+    store: impl wasmtime::AsContext,
+) -> Result<snapshot::GlobalValue> {
     use snapshot::GlobalValue as G;
     Ok(match v {
         wasmtime::Val::I32(x) => G::I32(x),
         wasmtime::Val::I64(x) => G::I64(x),
         wasmtime::Val::F32(x) => G::F32(x),
         wasmtime::Val::F64(x) => G::F64(x),
-        other => bail!("template mutable global of type {:?} is not capturable", other.ty(store)),
+        other => bail!(
+            "template mutable global of type {:?} is not capturable",
+            other.ty(store)
+        ),
     })
 }
 
@@ -787,7 +816,10 @@ pub(crate) fn instantiate(
     }
 
     let memory = memory.with_context(|| {
-        format!("module does not export `{}` (required)", guest_exports::MEMORY)
+        format!(
+            "module does not export `{}` (required)",
+            guest_exports::MEMORY
+        )
     })?;
     let want = |o: Option<wasmtime::Func>, n: &str| -> Result<wasmtime::Func> {
         o.with_context(|| format!("module does not export `{n}` (required)"))
@@ -838,7 +870,17 @@ pub(crate) fn instantiate(
 
     store.data_mut().memory = Some(memory);
 
-    Ok(Live { store, memory, f_alloc, f_handle, f_wake, f_gc_hint, f_initialize, globals, tables })
+    Ok(Live {
+        store,
+        memory,
+        f_alloc,
+        f_handle,
+        f_wake,
+        f_gc_hint,
+        f_initialize,
+        globals,
+        tables,
+    })
 }
 
 /// What the host must be able to do to a live instance. Kept as a trait so
@@ -934,7 +976,10 @@ impl Completion {
     /// may not: its memory is arbitrary and no cleanup ran. A **clean**-killed
     /// one may — that is the entire point of the grace window.
     pub fn instance_survives(self) -> bool {
-        matches!(self, Completion::Done | Completion::Parked | Completion::CleanKill)
+        matches!(
+            self,
+            Completion::Done | Completion::Parked | Completion::CleanKill
+        )
     }
     /// Whether this completion must leave a **tombstone**: a hard-killed
     /// instance may be internally inconsistent because the trap landed at an

@@ -47,19 +47,19 @@ impl BigHeap {
 
 impl Handler for BigHeap {
     fn new() -> Self {
-        BigHeap { held: RefCell::new(Vec::new()) }
+        BigHeap {
+            held: RefCell::new(Vec::new()),
+        }
     }
 
-    fn handle(
-        &'static self,
-        req: Request,
-        _ctx: Ctx,
-    ) -> impl Future<Output = Response> + 'static {
+    fn handle(&'static self, req: Request, _ctx: Ctx) -> impl Future<Output = Response> + 'static {
         async move {
             match req.path.as_str() {
                 "/dirty" => {
-                    let pages: usize =
-                        req.query_get("pages").and_then(|s| s.parse().ok()).unwrap_or(256);
+                    let pages: usize = req
+                        .query_get("pages")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(256);
                     let byte: u8 = req
                         .query_get("byte")
                         .and_then(|s| u8::from_str_radix(s.trim_start_matches("0x"), 16).ok())
@@ -76,8 +76,10 @@ impl Handler for BigHeap {
                     self.report()
                 }
                 "/release" => {
-                    let keep: usize =
-                        req.query_get("keep").and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let keep: usize = req
+                        .query_get("keep")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                     let mut held = self.held.borrow_mut();
                     while held.len() > keep {
                         held.pop();
@@ -86,8 +88,10 @@ impl Handler for BigHeap {
                     self.report()
                 }
                 "/park" => {
-                    let ms: u64 =
-                        req.query_get("ms").and_then(|s| s.parse().ok()).unwrap_or(1000);
+                    let ms: u64 = req
+                        .query_get("ms")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(1000);
                     let _ = Clock::delay(ms).await;
                     self.report()
                 }

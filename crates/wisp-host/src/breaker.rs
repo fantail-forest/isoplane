@@ -30,7 +30,9 @@ pub enum BreakerState {
     Closed,
     /// Failing fast. Subsequent dispatches are refused without entering the
     /// guest at all, which is the point: no CPU is spent to relearn.
-    Open { until_ms: u64 },
+    Open {
+        until_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,7 +47,11 @@ pub struct BreakerConfig {
 
 impl Default for BreakerConfig {
     fn default() -> Self {
-        Self { kill_threshold: 3, window_ms: 10_000, cooldown_ms: 5_000 }
+        Self {
+            kill_threshold: 3,
+            window_ms: 10_000,
+            cooldown_ms: 5_000,
+        }
     }
 }
 
@@ -66,14 +72,19 @@ pub struct HangBreaker {
 
 impl HangBreaker {
     pub fn new(cfg: BreakerConfig) -> Self {
-        Self { cfg, entries: Mutex::new(HashMap::new()) }
+        Self {
+            cfg,
+            entries: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Admission check. `Err(until_ms)` means fail fast — the dispatch never
     /// reaches an execution-pool thread.
     pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<(), u64> {
         let mut g = self.entries.lock();
-        let Some(e) = g.get_mut(key) else { return Ok(()) };
+        let Some(e) = g.get_mut(key) else {
+            return Ok(());
+        };
         if e.open_until_ms == 0 {
             return Ok(());
         }
@@ -124,7 +135,9 @@ impl HangBreaker {
     pub fn state(&self, key: &BreakerKey, now_ms: u64) -> BreakerState {
         let g = self.entries.lock();
         match g.get(key) {
-            Some(e) if e.open_until_ms > now_ms => BreakerState::Open { until_ms: e.open_until_ms },
+            Some(e) if e.open_until_ms > now_ms => BreakerState::Open {
+                until_ms: e.open_until_ms,
+            },
             _ => BreakerState::Closed,
         }
     }
@@ -138,7 +151,11 @@ impl HangBreaker {
     }
 
     pub fn open_count(&self, now_ms: u64) -> usize {
-        self.entries.lock().values().filter(|e| e.open_until_ms > now_ms).count()
+        self.entries
+            .lock()
+            .values()
+            .filter(|e| e.open_until_ms > now_ms)
+            .count()
     }
 }
 
@@ -153,7 +170,10 @@ mod tests {
     use super::*;
 
     fn key(route: &str) -> BreakerKey {
-        BreakerKey { module: ModuleId::new("app", "v1"), route: route.into() }
+        BreakerKey {
+            module: ModuleId::new("app", "v1"),
+            route: route.into(),
+        }
     }
 
     #[test]
@@ -166,7 +186,10 @@ mod tests {
         assert!(b.check(&k, 200).is_ok(), "two kills must not trip it");
         b.record_kill(&k, 200);
         assert_eq!(b.state(&k, 250), BreakerState::Open { until_ms: 5_200 });
-        assert!(b.check(&k, 250).is_err(), "third kill must fail subsequent dispatches fast");
+        assert!(
+            b.check(&k, 250).is_err(),
+            "third kill must fail subsequent dispatches fast"
+        );
     }
 
     /// The breaker is per (module, route): a hang on `/spin` must not fail
@@ -181,7 +204,15 @@ mod tests {
         }
         assert!(b.check(&spin, 100).is_err());
         assert!(b.check(&key("/healthz"), 100).is_ok());
-        assert!(b.check(&BreakerKey { module: ModuleId::new("other", "v1"), route: "/spin".into() }, 100).is_ok());
+        assert!(b
+            .check(
+                &BreakerKey {
+                    module: ModuleId::new("other", "v1"),
+                    route: "/spin".into()
+                },
+                100
+            )
+            .is_ok());
     }
 
     #[test]
@@ -220,7 +251,10 @@ mod tests {
         for t in 0..3 {
             b.record_kill(&v1, t);
         }
-        let v2 = BreakerKey { module: ModuleId::new("app", "v2"), route: "/spin".into() };
+        let v2 = BreakerKey {
+            module: ModuleId::new("app", "v2"),
+            route: "/spin".into(),
+        };
         assert!(b.check(&v2, 100).is_ok());
     }
 }

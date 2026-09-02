@@ -349,7 +349,11 @@ impl Metrics {
     }
 
     pub fn tenant(&self, tenant: &str) -> TenantCounters {
-        self.by_tenant.lock().get(tenant).copied().unwrap_or_default()
+        self.by_tenant
+            .lock()
+            .get(tenant)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// The tombstone identity, as an assertion rather than a comment.
@@ -424,7 +428,11 @@ impl Metrics {
             // most it can honestly claim.
             clean_hard_ratio: {
                 let (c, h) = (l(&self.clean_kills), l(&self.hard_kills));
-                if h == 0 { c as f64 } else { c as f64 / h as f64 }
+                if h == 0 {
+                    c as f64
+                } else {
+                    c as f64 / h as f64
+                }
             },
             shed: l(&self.shed),
             breaker_rejections: l(&self.breaker_rejections),
@@ -477,7 +485,11 @@ impl Metrics {
                 + wisp_engine::clock_read_failures(),
             trap_rate: {
                 let d = l(&self.dispatches);
-                if d == 0 { 0.0 } else { l(&self.traps) as f64 / d as f64 }
+                if d == 0 {
+                    0.0
+                } else {
+                    l(&self.traps) as f64 / d as f64
+                }
             },
             tenants: self.by_tenant.lock().clone(),
         }
@@ -496,12 +508,18 @@ impl Metrics {
             out.push_str(&format!("wisp_cell_{k} {v}\n"));
         }
         for (tenant, c) in &s.tenants {
-            out.push_str(&format!("wisp_tenant_dispatches{{tenant=\"{tenant}\"}} {}\n", c.dispatches));
+            out.push_str(&format!(
+                "wisp_tenant_dispatches{{tenant=\"{tenant}\"}} {}\n",
+                c.dispatches
+            ));
             out.push_str(&format!(
                 "wisp_tenant_cpu_ms{{tenant=\"{tenant}\"}} {:.3}\n",
                 c.cpu_ns as f64 / 1e6
             ));
-            out.push_str(&format!("wisp_tenant_traps{{tenant=\"{tenant}\"}} {}\n", c.traps));
+            out.push_str(&format!(
+                "wisp_tenant_traps{{tenant=\"{tenant}\"}} {}\n",
+                c.traps
+            ));
         }
         out
     }
@@ -590,8 +608,14 @@ impl MetricsSnapshot {
             ("shed", self.shed.to_string()),
             ("breaker_rejections", self.breaker_rejections.to_string()),
             ("reentrancy_refusals", self.reentrancy_refusals.to_string()),
-            ("single_writer_refusals", self.single_writer_refusals.to_string()),
-            ("pending_cap_rejections", self.pending_cap_rejections.to_string()),
+            (
+                "single_writer_refusals",
+                self.single_writer_refusals.to_string(),
+            ),
+            (
+                "pending_cap_rejections",
+                self.pending_cap_rejections.to_string(),
+            ),
             ("egress_denials", self.egress_denials.to_string()),
             ("instances_live", self.live.to_string()),
             ("instances_parked", self.parked.to_string()),
@@ -599,22 +623,37 @@ impl MetricsSnapshot {
             ("instances_hot", self.hot.to_string()),
             ("captures", self.captures.to_string()),
             ("delta_bytes", self.delta_bytes.to_string()),
-            ("capture_write_failures", self.capture_write_failures.to_string()),
+            (
+                "capture_write_failures",
+                self.capture_write_failures.to_string(),
+            ),
             ("hibernation_wakes", self.hibernation_wakes.to_string()),
             ("delta_fallbacks", self.delta_fallbacks.to_string()),
             ("futures_shed", self.futures_shed.to_string()),
-            ("futures_shed_capture", self.futures_shed_capture.to_string()),
+            (
+                "futures_shed_capture",
+                self.futures_shed_capture.to_string(),
+            ),
             ("futures_buffered", self.futures_buffered.to_string()),
             ("served_warm", self.served_warm.to_string()),
             ("served_pooled_fresh", self.served_pooled_fresh.to_string()),
-            ("served_hibernation_wake", self.served_hibernation_wake.to_string()),
+            (
+                "served_hibernation_wake",
+                self.served_hibernation_wake.to_string(),
+            ),
             ("served_activated", self.served_activated.to_string()),
             ("activation_p50_us", self.activation_p50_us.to_string()),
             ("activation_p99_us", self.activation_p99_us.to_string()),
             ("wake_p50_us", self.wake_p50_us.to_string()),
             ("wake_p99_us", self.wake_p99_us.to_string()),
-            ("hibernation_wake_p50_us", self.hibernation_wake_p50_us.to_string()),
-            ("hibernation_wake_p99_us", self.hibernation_wake_p99_us.to_string()),
+            (
+                "hibernation_wake_p50_us",
+                self.hibernation_wake_p50_us.to_string(),
+            ),
+            (
+                "hibernation_wake_p99_us",
+                self.hibernation_wake_p99_us.to_string(),
+            ),
             ("capture_p50_us", self.capture_p50_us.to_string()),
             ("request_p50_us", self.request_p50_us.to_string()),
             ("request_p99_us", self.request_p99_us.to_string()),
@@ -690,8 +729,13 @@ mod tests {
         }
         m.hard_kills.fetch_add(1, Ordering::Relaxed);
         let s = m.snapshot();
-        assert_eq!(s.clean_hard_ratio, 3_000.0, "3,000 clean against 1 hard is 3,000");
-        assert!(m.to_text().contains("wisp_cell_clean_hard_ratio 3000.000000"));
+        assert_eq!(
+            s.clean_hard_ratio, 3_000.0,
+            "3,000 clean against 1 hard is 3,000"
+        );
+        assert!(m
+            .to_text()
+            .contains("wisp_cell_clean_hard_ratio 3000.000000"));
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).unwrap();
         assert_eq!(json["clean_kills"], 3_000);
         assert_eq!(json["hard_kills"], 1);
@@ -741,7 +785,8 @@ mod tests {
             m.traps.fetch_add(1, Ordering::Relaxed);
             m.tombstones.fetch_add(1, Ordering::Relaxed);
         }
-        m.tombstone_invariant().expect("disjoint counters must satisfy the identity");
+        m.tombstone_invariant()
+            .expect("disjoint counters must satisfy the identity");
         let s = m.snapshot();
         assert_eq!(s.tombstones, 7);
         assert_eq!(s.tombstones, s.hard_kills + s.traps);
@@ -755,7 +800,9 @@ mod tests {
             bug.traps.fetch_add(1, Ordering::Relaxed); // the shared increment
             bug.tombstones.fetch_add(1, Ordering::Relaxed);
         }
-        let e = bug.tombstone_invariant().expect_err("the shared increment must be caught");
+        let e = bug
+            .tombstone_invariant()
+            .expect_err("the shared increment must be caught");
         assert!(e.contains("tombstones (4)"), "{e}");
         assert!(e.contains("hard_kills (4)"), "{e}");
         assert!(e.contains("traps (4)"), "{e}");
@@ -785,17 +832,33 @@ mod tests {
         }
 
         for h in [&every, &one_in_four, &off] {
-            assert_eq!(h.count(), 100, "the observation count is not a sampled quantity");
+            assert_eq!(
+                h.count(),
+                100,
+                "the observation count is not a sampled quantity"
+            );
             assert!((h.mean() - 50.5).abs() < 0.001, "nor is the mean");
         }
         assert_eq!(every.retained(), 100);
         assert_eq!(one_in_four.retained(), 25);
-        assert_eq!(off.retained(), 0, "at 0 the record path takes no lock and keeps nothing");
+        assert_eq!(
+            off.retained(),
+            0,
+            "at 0 the record path takes no lock and keeps nothing"
+        );
 
         assert_eq!(every.p50(), 50);
         // A quarter of the samples still describes the distribution.
-        assert!((one_in_four.p50() as i64 - 50).abs() <= 8, "p50 was {}", one_in_four.p50());
-        assert_eq!(off.p50(), 0, "no window, no percentile — and 0 is what an empty window reads");
+        assert!(
+            (one_in_four.p50() as i64 - 50).abs() <= 8,
+            "p50 was {}",
+            one_in_four.p50()
+        );
+        assert_eq!(
+            off.p50(),
+            0,
+            "no window, no percentile — and 0 is what an empty window reads"
+        );
     }
 
     /// Every metric is present and scrapeable. The harness reads this
@@ -823,7 +886,10 @@ mod tests {
             "wisp_cell_trap_rate",
             "wisp_tenant_cpu_ms{tenant=\"acme\"} 2.000",
         ] {
-            assert!(text.contains(needle), "scrape is missing `{needle}`:\n{text}");
+            assert!(
+                text.contains(needle),
+                "scrape is missing `{needle}`:\n{text}"
+            );
         }
 
         let json: serde_json::Value = serde_json::from_str(&m.to_json()).unwrap();

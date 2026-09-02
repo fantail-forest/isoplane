@@ -21,7 +21,9 @@
 
 use std::sync::Arc;
 
-use wisp_engine::{HostBindings, Instance, InstanceOps, MemoryImage, ModuleHash, Template, WispEngine};
+use wisp_engine::{
+    HostBindings, Instance, InstanceOps, MemoryImage, ModuleHash, Template, WispEngine,
+};
 
 use crate::instances::Activator;
 use crate::ModuleId;
@@ -36,7 +38,12 @@ pub struct EngineActivator {
 impl EngineActivator {
     pub fn new(engine: Arc<WispEngine>, template: Template, module: ModuleId) -> Self {
         let image = template.memory_image_arc();
-        Self { engine, template, module, image }
+        Self {
+            engine,
+            template,
+            module,
+            image,
+        }
     }
 
     /// Compile and pre-stage a template, then wrap it. The module bytes are
@@ -99,7 +106,10 @@ impl Activator for EngineActivator {
     fn template_image(&self) -> Arc<MemoryImage> {
         self.image.clone()
     }
-    fn activate(&self, bindings: Box<dyn HostBindings>) -> anyhow::Result<Box<dyn InstanceOps + Send>> {
+    fn activate(
+        &self,
+        bindings: Box<dyn HostBindings>,
+    ) -> anyhow::Result<Box<dyn InstanceOps + Send>> {
         let inst: Instance = self.engine.activate(&self.template, bindings)?;
         Ok(Box::new(inst))
     }

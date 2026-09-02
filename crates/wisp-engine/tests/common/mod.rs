@@ -20,7 +20,13 @@ use wisp_engine::{HostBindings, ImportCall};
 /// dispatches and the engine copies each record in and the guest never retains
 /// it, so a ring is both sufficient and keeps the dirty set of the density
 /// fixture honest.
-pub fn guest(pages: u32, extra_imports: &str, extra_funcs: &str, handle: &str, wake: &str) -> Vec<u8> {
+pub fn guest(
+    pages: u32,
+    extra_imports: &str,
+    extra_funcs: &str,
+    handle: &str,
+    wake: &str,
+) -> Vec<u8> {
     let heap_top = pages as usize * 65536 - 4096;
     let src = format!(
         r#"
@@ -132,10 +138,16 @@ impl TestBindings {
         }
     }
     pub fn init_sandbox(rec: Recorder) -> Self {
-        Self { init_sandbox: true, ..Self::new(rec) }
+        Self {
+            init_sandbox: true,
+            ..Self::new(rec)
+        }
     }
     fn note(&self, call: &ImportCall<'_>) {
-        self.rec.calls.lock().push(format!("{}({} bytes)", call.import, call.payload.len()));
+        self.rec
+            .calls
+            .lock()
+            .push(format!("{}({} bytes)", call.import, call.payload.len()));
     }
 }
 

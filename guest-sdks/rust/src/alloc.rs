@@ -263,7 +263,13 @@ impl Heap {
                     // The remainder keeps the parent's zeroed status: we are
                     // handing out the low part, and the tail is untouched.
                     let zeroed = b.size & ZEROED;
-                    ptr::write(rest as *mut FreeBlock, FreeBlock { size: (size - need) | zeroed, next });
+                    ptr::write(
+                        rest as *mut FreeBlock,
+                        FreeBlock {
+                            size: (size - need) | zeroed,
+                            next,
+                        },
+                    );
                     *prevp = rest;
                 } else {
                     *prevp = next;
@@ -539,7 +545,10 @@ mod tests {
             let first = h.compact_and_zero(true);
             assert!(first.last_zeroed > 0);
             let second = h.compact_and_zero(true);
-            assert_eq!(second.last_zeroed, 0, "gc_hint must be idempotent on a clean heap");
+            assert_eq!(
+                second.last_zeroed, 0,
+                "gc_hint must be idempotent on a clean heap"
+            );
             h.dealloc(keep, l(64));
         }
     }

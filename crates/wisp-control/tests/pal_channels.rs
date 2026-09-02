@@ -45,7 +45,11 @@ struct Host {
 
 impl Host {
     fn new(slice_ms: u64) -> Self {
-        Host { slice_ms, entropy_calls: 0, csprng: 0x243F_6A88_85A3_08D3 }
+        Host {
+            slice_ms,
+            entropy_calls: 0,
+            csprng: 0x243F_6A88_85A3_08D3,
+        }
     }
 }
 
@@ -223,7 +227,9 @@ fn the_delegated_monotonic_clock_adds_no_channel() {
 #[test]
 fn the_delegated_clock_is_frozen_within_a_slice_but_advances_between_them() {
     let (mut store, instance) = with_adapter(1_000);
-    let now = instance.get_typed_func::<(), (i64, i64)>(&mut store, "now_twice").unwrap();
+    let now = instance
+        .get_typed_func::<(), (i64, i64)>(&mut store, "now_twice")
+        .unwrap();
 
     let (a, b) = now.call(&mut store, ()).unwrap();
     assert_eq!(a, b, "frozen within the slice");
@@ -233,7 +239,11 @@ fn the_delegated_clock_is_frozen_within_a_slice_but_advances_between_them() {
     store.data_mut().slice_ms = 1_007;
     let (c, d) = now.call(&mut store, ()).unwrap();
     assert_eq!(c, d, "still frozen inside the new slice");
-    assert_eq!(c, 1_007 * CLOCK_QUANTUM_NS, "and it advanced with the slice");
+    assert_eq!(
+        c,
+        1_007 * CLOCK_QUANTUM_NS,
+        "and it advanced with the slice"
+    );
     assert!(c > a);
 }
 
@@ -253,14 +263,22 @@ fn negative_control_a_nanosecond_clock_fails_the_no_new_channels_check() {
 
     static TICK: AtomicU64 = AtomicU64::new(1_700_000_000_000_000_000);
     linker
-        .func_wrap("wasi:clocks/monotonic-clock@0.2.0", "now", |_: wasmtime::Caller<'_, Host>| {
-            // A real monotonic clock: advances on every read, nanosecond bits
-            // intact. Exactly what wasmtime-wasi would give you.
-            TICK.fetch_add(37_913, Ordering::Relaxed) as i64
-        })
+        .func_wrap(
+            "wasi:clocks/monotonic-clock@0.2.0",
+            "now",
+            |_: wasmtime::Caller<'_, Host>| {
+                // A real monotonic clock: advances on every read, nanosecond bits
+                // intact. Exactly what wasmtime-wasi would give you.
+                TICK.fetch_add(37_913, Ordering::Relaxed) as i64
+            },
+        )
         .unwrap();
     linker
-        .func_wrap("wasi:clocks/monotonic-clock@0.2.0", "resolution", |_: wasmtime::Caller<'_, Host>| 1i64)
+        .func_wrap(
+            "wasi:clocks/monotonic-clock@0.2.0",
+            "resolution",
+            |_: wasmtime::Caller<'_, Host>| 1i64,
+        )
         .unwrap();
     // The rest of the imports are irrelevant to this control; trap them.
     for (module_name, func) in [
@@ -277,7 +295,9 @@ fn negative_control_a_nanosecond_clock_fails_the_no_new_channels_check() {
             })
             .unwrap();
         linker
-            .func_new(module_name, func, ty, |_, _, _| Err(wasmtime::Error::msg("unused")))
+            .func_new(module_name, func, ty, |_, _, _| {
+                Err(wasmtime::Error::msg("unused"))
+            })
             .unwrap();
     }
 
@@ -313,7 +333,10 @@ fn negative_control_a_quantized_but_unfrozen_clock_fails_too() {
     let unfrozen = [(1_000 * CLOCK_QUANTUM_NS, 1_001 * CLOCK_QUANTUM_NS)];
     let verdict = clock_adds_no_channel(&unfrozen, CLOCK_QUANTUM_NS);
     println!("negative control verdict: {verdict:?}");
-    assert!(verdict.is_err(), "an unfrozen coarse clock is still a stopwatch");
+    assert!(
+        verdict.is_err(),
+        "an unfrozen coarse clock is still a stopwatch"
+    );
     assert!(verdict.unwrap_err().contains("FROZEN"));
 }
 
@@ -349,7 +372,9 @@ fn entropy_adds_no_channel(draws: &[Vec<u8>], source_calls: usize) -> Result<(),
 #[test]
 fn the_delegated_csprng_adds_no_channel() {
     let (mut store, instance) = with_adapter(1_000);
-    let draw = instance.get_typed_func::<(i64, i32), ()>(&mut store, "draw").unwrap();
+    let draw = instance
+        .get_typed_func::<(i64, i32), ()>(&mut store, "draw")
+        .unwrap();
 
     let mut draws = Vec::new();
     // Same length, same slice, same instance: if anything were cached, these
@@ -389,7 +414,10 @@ fn negative_control_a_cached_csprng_fails_the_no_new_channels_check() {
     let cached = vec![vec![0xab; 32], vec![0xab; 32], vec![0xab; 32]];
     let verdict = entropy_adds_no_channel(&cached, 1);
     println!("negative control verdict: {verdict:?}");
-    assert!(verdict.is_err(), "a cached RNG stream MUST fail; that is the whole rule");
+    assert!(
+        verdict.is_err(),
+        "a cached RNG stream MUST fail; that is the whole rule"
+    );
     assert!(verdict.unwrap_err().contains("PER CALL"));
 
     // And the subtler variant: the host is reached per call, but the source
@@ -455,13 +483,20 @@ fn negative_control_a_populated_environment_fails_the_no_new_channels_check() {
 fn a_trap_on_call_stub_links_and_then_traps_naming_itself() {
     let (mut store, instance) = with_adapter(1_000);
     // It linked: instantiation above succeeded with the import present.
-    let stat = instance.get_typed_func::<(i32, i32), ()>(&mut store, "stat").unwrap();
-    let err = stat.call(&mut store, (0, 64)).expect_err("a denied capability must trap");
+    let stat = instance
+        .get_typed_func::<(i32, i32), ()>(&mut store, "stat")
+        .unwrap();
+    let err = stat
+        .call(&mut store, (0, 64))
+        .expect_err("a denied capability must trap");
     let msg = format!("{err:?}");
     println!("trap: {msg}");
     assert!(msg.contains("wasi:filesystem/types@0.2.0::[method]descriptor.stat"));
     assert!(msg.contains("trap-on-call"));
-    assert!(msg.contains("no filesystem"), "the trap must say why, not just that");
+    assert!(
+        msg.contains("no filesystem"),
+        "the trap must say why, not just that"
+    );
 }
 
 /// **Negative control** for the trap rule: a stub that silently returns
@@ -478,7 +513,9 @@ fn negative_control_a_silent_stub_would_not_be_detected_as_a_trap() {
     // condition by constructing the silent stub in a second linker.
     let mut silent: Linker<Host> = Linker::new(&e);
     for import in m.imports() {
-        let wasmtime::ExternType::Func(ty) = import.ty() else { continue };
+        let wasmtime::ExternType::Func(ty) = import.ty() else {
+            continue;
+        };
         let results: Vec<wasmtime::Val> = ty
             .results()
             .map(|t| match t {

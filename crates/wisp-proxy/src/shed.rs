@@ -29,7 +29,10 @@ pub struct ShedConfig {
 
 impl Default for ShedConfig {
     fn default() -> Self {
-        ShedConfig { max_in_flight: 256, max_queued: 1024 }
+        ShedConfig {
+            max_in_flight: 256,
+            max_queued: 1024,
+        }
     }
 }
 
@@ -78,7 +81,12 @@ impl AdmissionControl {
             return Admit::Shed;
         }
         let t0 = Instant::now();
-        let permit = self.sem.clone().acquire_owned().await.expect("admission semaphore is never closed");
+        let permit = self
+            .sem
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("admission semaphore is never closed");
         self.queued.fetch_sub(1, Ordering::AcqRel);
         self.metrics.admission_wait.record(t0.elapsed());
         Admit::Granted(permit)
@@ -92,7 +100,10 @@ mod tests {
     #[tokio::test]
     async fn grants_up_to_the_in_flight_cap_without_queueing() {
         let ac = AdmissionControl::new(
-            ShedConfig { max_in_flight: 3, max_queued: 1 },
+            ShedConfig {
+                max_in_flight: 3,
+                max_queued: 1,
+            },
             Arc::new(ProxyMetrics::new()),
         );
         let mut held = Vec::new();
@@ -106,7 +117,10 @@ mod tests {
     async fn sheds_once_the_queue_is_deeper_than_configured() {
         let metrics = Arc::new(ProxyMetrics::new());
         let ac = Arc::new(AdmissionControl::new(
-            ShedConfig { max_in_flight: 1, max_queued: 2 },
+            ShedConfig {
+                max_in_flight: 1,
+                max_queued: 2,
+            },
             metrics.clone(),
         ));
 
@@ -142,7 +156,10 @@ mod tests {
     #[tokio::test]
     async fn releasing_a_permit_lets_the_queue_drain() {
         let ac = Arc::new(AdmissionControl::new(
-            ShedConfig { max_in_flight: 1, max_queued: 8 },
+            ShedConfig {
+                max_in_flight: 1,
+                max_queued: 8,
+            },
             Arc::new(ProxyMetrics::new()),
         ));
         let p = match ac.admit().await {

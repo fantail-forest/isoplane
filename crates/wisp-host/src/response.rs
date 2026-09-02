@@ -50,12 +50,22 @@ impl ResponseTable {
         // Handle 0 is "no response" in `PollStatus::Done`, so start at 1.
         self.next += 1;
         let h = self.next;
-        self.open.insert(h, Response { head, chunks: Vec::new(), finished: false });
+        self.open.insert(
+            h,
+            Response {
+                head,
+                chunks: Vec::new(),
+                finished: false,
+            },
+        );
         h
     }
 
     pub fn write(&mut self, handle: u32, chunk: Vec<u8>) -> Result<usize, ResponseError> {
-        let r = self.open.get_mut(&handle).ok_or(ResponseError::NoSuchHandle)?;
+        let r = self
+            .open
+            .get_mut(&handle)
+            .ok_or(ResponseError::NoSuchHandle)?;
         if r.finished {
             return Err(ResponseError::AlreadyFinished);
         }
@@ -65,7 +75,10 @@ impl ResponseTable {
     }
 
     pub fn finish(&mut self, handle: u32) -> Result<(), ResponseError> {
-        let r = self.open.get_mut(&handle).ok_or(ResponseError::NoSuchHandle)?;
+        let r = self
+            .open
+            .get_mut(&handle)
+            .ok_or(ResponseError::NoSuchHandle)?;
         r.finished = true;
         Ok(())
     }
@@ -79,7 +92,9 @@ impl ResponseTable {
     }
 
     pub fn is_streaming(&self, handle: u32) -> bool {
-        self.open.get(&handle).is_some_and(|r| r.head.streaming && !r.finished)
+        self.open
+            .get(&handle)
+            .is_some_and(|r| r.head.streaming && !r.finished)
     }
 
     pub fn len(&self) -> usize {
@@ -103,13 +118,22 @@ mod tests {
     use super::*;
 
     fn head(streaming: bool) -> ResponseHead {
-        ResponseHead { status: 200, headers: vec![], body: b"head".to_vec(), streaming }
+        ResponseHead {
+            status: 200,
+            headers: vec![],
+            body: b"head".to_vec(),
+            streaming,
+        }
     }
 
     #[test]
     fn handles_are_never_zero() {
         let mut t = ResponseTable::default();
-        assert_ne!(t.create(head(false)), 0, "0 means `no response` in PollStatus::Done");
+        assert_ne!(
+            t.create(head(false)),
+            0,
+            "0 means `no response` in PollStatus::Done"
+        );
     }
 
     #[test]

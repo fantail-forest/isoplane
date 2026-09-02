@@ -53,7 +53,8 @@ impl Meter {
     /// Thread CPU this dispatch has burned in total, earlier slices included.
     #[inline]
     pub fn dispatch_cpu_ns(&self, now_ns: u64) -> u64 {
-        self.spent_ns.saturating_add(now_ns.saturating_sub(self.cpu0_ns))
+        self.spent_ns
+            .saturating_add(now_ns.saturating_sub(self.cpu0_ns))
     }
 
     /// The hard deadline B+G, saturating.
@@ -190,7 +191,10 @@ impl StoreState {
             grace_deferrals: 0,
             violation: None,
             abort_msg: None,
-            limits: Limits { max_memory_bytes, oom: false },
+            limits: Limits {
+                max_memory_bytes,
+                oom: false,
+            },
             scratch: Vec::new(),
         }
     }
@@ -213,7 +217,10 @@ impl StoreState {
     }
 
     pub(crate) fn is_init_sandbox(&self) -> bool {
-        self.bindings.as_ref().map(|b| b.is_init_sandbox()).unwrap_or(false)
+        self.bindings
+            .as_ref()
+            .map(|b| b.is_init_sandbox())
+            .unwrap_or(false)
     }
 }
 

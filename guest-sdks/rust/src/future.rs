@@ -31,7 +31,13 @@ pub struct HostFuture<T> {
 
 impl<T> HostFuture<T> {
     pub(crate) fn new(id: u64, decode: fn(&[u8]) -> Result<T>) -> Self {
-        HostFuture { id, registered: false, finished: false, decode, _t: PhantomData }
+        HostFuture {
+            id,
+            registered: false,
+            finished: false,
+            decode,
+            _t: PhantomData,
+        }
     }
 
     /// The identifier of the host-owned future.
@@ -164,7 +170,10 @@ pub struct Join2<A: Future, B: Future> {
 /// host's reactor, and the guest holds nothing but a table entry per
 /// outstanding future.
 pub fn join2<A: Future, B: Future>(a: A, b: B) -> Join2<A, B> {
-    Join2 { a: MaybeDone::Pending(Box::pin(a)), b: MaybeDone::Pending(Box::pin(b)) }
+    Join2 {
+        a: MaybeDone::Pending(Box::pin(a)),
+        b: MaybeDone::Pending(Box::pin(b)),
+    }
 }
 
 impl<A: Future, B: Future> Future for Join2<A, B> {
@@ -216,7 +225,12 @@ pub struct JoinAll<F: Future> {
 /// `pending_futures_per_dispatch` -- one of the three factors in the
 /// structural anti-abuse residency bound, which is why park time is free.
 pub fn join_all<F: Future>(futs: impl IntoIterator<Item = F>) -> JoinAll<F> {
-    JoinAll { items: futs.into_iter().map(|f| MaybeDone::Pending(Box::pin(f))).collect() }
+    JoinAll {
+        items: futs
+            .into_iter()
+            .map(|f| MaybeDone::Pending(Box::pin(f)))
+            .collect(),
+    }
 }
 
 impl<F: Future> Future for JoinAll<F> {
@@ -249,7 +263,10 @@ pub struct Select2<A: Future, B: Future> {
 /// implicit cancellation future at an await point -- the host never re-enters
 /// a guest to announce cancellation, so this is the only way to see it.
 pub fn select2<A: Future, B: Future>(a: A, b: B) -> Select2<A, B> {
-    Select2 { a: Box::pin(a), b: Box::pin(b) }
+    Select2 {
+        a: Box::pin(a),
+        b: Box::pin(b),
+    }
 }
 
 impl<A: Future, B: Future> Future for Select2<A, B> {

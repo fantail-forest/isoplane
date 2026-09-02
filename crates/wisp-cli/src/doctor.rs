@@ -105,7 +105,11 @@ impl Report {
 
 
     pub fn sensitive_imports(&self) -> Vec<&'static ImportDef> {
-        self.declared.iter().copied().filter(|i| i.sensitive).collect()
+        self.declared
+            .iter()
+            .copied()
+            .filter(|i| i.sensitive)
+            .collect()
     }
 }
 
@@ -204,7 +208,9 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
     report.pal = pal::PAL_IMPORTS
         .iter()
         .filter(|d| {
-            pal_found.iter().any(|f| f.module == d.module && f.func == d.func)
+            pal_found
+                .iter()
+                .any(|f| f.module == d.module && f.func == d.func)
                 && seen.insert((d.module, d.func))
         })
         .collect();
@@ -273,7 +279,11 @@ mod tests {
     #[test]
     fn a_well_formed_module_yields_its_capability_manifest() {
         let m = module(
-            &[("wisp", "http_body_read"), ("wisp", "http_fetch"), ("wisp", "init_hash_seed")],
+            &[
+                ("wisp", "http_body_read"),
+                ("wisp", "http_fetch"),
+                ("wisp", "init_hash_seed"),
+            ],
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
         let r = analyse(&m).unwrap();
@@ -282,7 +292,10 @@ mod tests {
         assert_eq!(names, vec!["init_hash_seed", "http_fetch", "http_body_read"]);
         assert!(r.has_memory);
         assert_eq!(r.missing_required_exports, Vec::<&str>::new());
-        assert_eq!(r.missing_optional_exports, vec!["wisp_gc_hint", "wisp_initialize"]);
+        assert_eq!(
+            r.missing_optional_exports,
+            vec!["wisp_gc_hint", "wisp_initialize"]
+        );
     }
 
     /// V1: an undeclared import is an attempted capability, and the module is
@@ -297,7 +310,10 @@ mod tests {
         assert!(r.would_be_rejected());
         assert_eq!(
             r.undeclared,
-            vec![ModuleImport { module: "env".into(), field: "socket".into() }]
+            vec![ModuleImport {
+                module: "env".into(),
+                field: "socket".into()
+            }]
         );
     }
 
@@ -330,7 +346,13 @@ mod tests {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
         let r = analyse(&m).unwrap();
-        assert_eq!(r.sensitive_imports().iter().map(|i| i.name).collect::<Vec<_>>(), vec!["init_hash_seed"]);
+        assert_eq!(
+            r.sensitive_imports()
+                .iter()
+                .map(|i| i.name)
+                .collect::<Vec<_>>(),
+            vec!["init_hash_seed"]
+        );
     }
 
     #[test]

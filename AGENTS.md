@@ -48,7 +48,7 @@ cargo metadata --no-deps --format-version 1 \
 | **ILCompiler.LLVM**      | `guest-sdks/dotnet/Wisp.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
 | **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` | The gate, green before every commit.                                                                                                             |
-| **Format**               | house style                                             | `cargo fmt` is not run and not a gate; match the surrounding file.                                                                               |
+| **Format**               | `rustfmt.toml` (root and `guests/`)                     | `cargo fmt --all --check` in both workspaces is a commit gate, alongside clippy. Default rustfmt settings; never `#[rustfmt::skip]`.             |
 | **Tests**                | `cargo test`                                            | Guest fixtures are built by `guests/build.sh` and `guests/build-dotnet.sh`; a test that needs one builds it on demand through the shared fixture helper.                                                     |
 | **Database**             | SQLite via `rusqlite` (bundled)                         | Schema and migrations live with the store crate. |
 | **HTTP**                 | hyper 1, tokio                                          |                                                                                                                                                  |
@@ -67,6 +67,7 @@ scripts/dev --stop                                 # Remove your container when 
 
 cargo build --workspace --all-targets              # Build crates, tests, examples
 cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check && (cd guests && cargo fmt --all --check)   # The format gate
 
 cargo test --workspace                             # Everything
 cargo test -p wisp-host                            # One crate

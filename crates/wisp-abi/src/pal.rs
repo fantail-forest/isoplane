@@ -172,7 +172,13 @@ const ENTROPY: Delegation = Delegation::Cap("entropy_fill");
 
 /// A `TrapOnCall` entry, which is most of them.
 const fn trap(module: &'static str, func: &'static str, why: &'static str) -> PalDef {
-    PalDef { module, func, disposition: Disposition::TrapOnCall, sig: None, why }
+    PalDef {
+        module,
+        func,
+        disposition: Disposition::TrapOnCall,
+        sig: None,
+        why,
+    }
 }
 
 /// A delegated entry. The signature is mandatory here, precisely because the
@@ -184,7 +190,13 @@ const fn delegate(
     sig: Sig,
     why: &'static str,
 ) -> PalDef {
-    PalDef { module, func, disposition: Disposition::Delegate(to), sig: Some(sig), why }
+    PalDef {
+        module,
+        func,
+        disposition: Disposition::Delegate(to),
+        sig: Some(sig),
+        why,
+    }
 }
 
 /// **The complete WASI surface the platform will compose.** Anything outside
@@ -200,7 +212,10 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         CLI_ENV,
         "get-environment",
         Delegation::Nothing,
-        Sig { params: &[I32], results: &[] },
+        Sig {
+            params: &[I32],
+            results: &[],
+        },
         "there is no ambient environment, so the empty list is the \
          same-fidelity answer for a capability the platform does not have",
     ),
@@ -216,7 +231,10 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         MONOTONIC,
         "now",
         CLOCK,
-        Sig { params: &[], results: &[I64] },
+        Sig {
+            params: &[],
+            results: &[I64],
+        },
         "quantized to the coarse clock's 1 ms resolution and frozen \
          intra-slice — no finer timer than `clock_now_coarse` already is",
     ),
@@ -228,7 +246,10 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         MONOTONIC,
         "resolution",
         CLOCK,
-        Sig { params: &[], results: &[I64] },
+        Sig {
+            params: &[],
+            results: &[I64],
+        },
         "the resolution query is quantized to match the delegated clock \
          (1 ms), so the reported fidelity equals the delivered fidelity",
     ),
@@ -239,7 +260,10 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         RANDOM,
         "get-random-bytes",
         ENTROPY,
-        Sig { params: &[I64, I32], results: &[] },
+        Sig {
+            params: &[I64, I32],
+            results: &[],
+        },
         "host CSPRNG drawn per call; guest code can retain returned bytes \
          or its own PRNG state in captured memory",
     ),
@@ -248,15 +272,51 @@ pub const PAL_IMPORTS: &[PalDef] = &[
     // right answer for every one of these — the declaration is toolchain
     // residue, the capability is denied, and if a toolchain bump ever reaches
     // one the failure is loud instead of silent.
-    trap(CLI_EXIT, "exit", "process exit is the host's decision, not the guest's"),
-    trap(CLI_STDIN, "get-stdin", "no ambient I/O; observability is `log_emit`"),
-    trap(CLI_STDOUT, "get-stdout", "stdout is not a log sink; `log_emit` is"),
-    trap(CLI_STDERR, "get-stderr", "stderr is not a log sink; `log_emit` is"),
-    trap(CLI_TERM_IN, "[resource-drop]terminal-input", "no terminal exists to drop a handle to"),
-    trap(CLI_TERM_OUT, "[resource-drop]terminal-output", "no terminal exists to drop a handle to"),
-    trap(CLI_TERM_STDIN, "get-terminal-stdin", "there is no terminal to hand out"),
-    trap(CLI_TERM_STDOUT, "get-terminal-stdout", "there is no terminal to hand out"),
-    trap(CLI_TERM_STDERR, "get-terminal-stderr", "there is no terminal to hand out"),
+    trap(
+        CLI_EXIT,
+        "exit",
+        "process exit is the host's decision, not the guest's",
+    ),
+    trap(
+        CLI_STDIN,
+        "get-stdin",
+        "no ambient I/O; observability is `log_emit`",
+    ),
+    trap(
+        CLI_STDOUT,
+        "get-stdout",
+        "stdout is not a log sink; `log_emit` is",
+    ),
+    trap(
+        CLI_STDERR,
+        "get-stderr",
+        "stderr is not a log sink; `log_emit` is",
+    ),
+    trap(
+        CLI_TERM_IN,
+        "[resource-drop]terminal-input",
+        "no terminal exists to drop a handle to",
+    ),
+    trap(
+        CLI_TERM_OUT,
+        "[resource-drop]terminal-output",
+        "no terminal exists to drop a handle to",
+    ),
+    trap(
+        CLI_TERM_STDIN,
+        "get-terminal-stdin",
+        "there is no terminal to hand out",
+    ),
+    trap(
+        CLI_TERM_STDOUT,
+        "get-terminal-stdout",
+        "there is no terminal to hand out",
+    ),
+    trap(
+        CLI_TERM_STDERR,
+        "get-terminal-stderr",
+        "there is no terminal to hand out",
+    ),
     // ---- trap-on-call: clocks --------------------------------------------
     // `subscribe-duration` maps naturally onto host deadline futures rather
     // than pollables, and in a component-model world that would be exactly
@@ -291,8 +351,16 @@ pub const PAL_IMPORTS: &[PalDef] = &[
          the first is observable is a new channel",
     ),
     // ---- trap-on-call: io -------------------------------------------------
-    trap(IO_ERROR, "[resource-drop]error", "no stream exists to have produced an error"),
-    trap(IO_POLL, "[resource-drop]pollable", "no pollable is ever handed out"),
+    trap(
+        IO_ERROR,
+        "[resource-drop]error",
+        "no stream exists to have produced an error",
+    ),
+    trap(
+        IO_POLL,
+        "[resource-drop]pollable",
+        "no pollable is ever handed out",
+    ),
     trap(
         IO_POLL,
         "[method]pollable.block",
@@ -306,14 +374,46 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         "there is no import that waits — this is `pollable.block` over a \
          list, and admitting it would break invariant 3 by construction",
     ),
-    trap(IO_STREAMS, "[resource-drop]input-stream", "no stream is ever handed out"),
-    trap(IO_STREAMS, "[resource-drop]output-stream", "no stream is ever handed out"),
-    trap(IO_STREAMS, "[method]input-stream.blocking-read", "no import waits, no stream exists"),
-    trap(IO_STREAMS, "[method]input-stream.subscribe", "no stream is ever handed out"),
-    trap(IO_STREAMS, "[method]output-stream.check-write", "no stream is ever handed out"),
-    trap(IO_STREAMS, "[method]output-stream.write", "no ambient I/O; observability is `log_emit`"),
-    trap(IO_STREAMS, "[method]output-stream.blocking-flush", "no import waits, no stream exists"),
-    trap(IO_STREAMS, "[method]output-stream.subscribe", "no stream is ever handed out"),
+    trap(
+        IO_STREAMS,
+        "[resource-drop]input-stream",
+        "no stream is ever handed out",
+    ),
+    trap(
+        IO_STREAMS,
+        "[resource-drop]output-stream",
+        "no stream is ever handed out",
+    ),
+    trap(
+        IO_STREAMS,
+        "[method]input-stream.blocking-read",
+        "no import waits, no stream exists",
+    ),
+    trap(
+        IO_STREAMS,
+        "[method]input-stream.subscribe",
+        "no stream is ever handed out",
+    ),
+    trap(
+        IO_STREAMS,
+        "[method]output-stream.check-write",
+        "no stream is ever handed out",
+    ),
+    trap(
+        IO_STREAMS,
+        "[method]output-stream.write",
+        "no ambient I/O; observability is `log_emit`",
+    ),
+    trap(
+        IO_STREAMS,
+        "[method]output-stream.blocking-flush",
+        "no import waits, no stream exists",
+    ),
+    trap(
+        IO_STREAMS,
+        "[method]output-stream.subscribe",
+        "no stream is ever handed out",
+    ),
     // ---- trap-on-call: filesystem ----------------------------------------
     // The substantively worst group, and the one the probe builds confirmed
     // is entirely dead. `wasi:filesystem` is ambient filesystem authority,
@@ -322,23 +422,91 @@ pub const PAL_IMPORTS: &[PalDef] = &[
     // returning an empty preopen list, because an empty list is a valid
     // answer that lets the runtime proceed as if a filesystem existed — a
     // trap says what is true.
-    trap(FS_PREOPENS, "get-directories", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[resource-drop]descriptor", "no descriptor is ever handed out"),
-    trap(FS_TYPES, "[resource-drop]directory-entry-stream", "no directory is ever opened"),
-    trap(FS_TYPES, "[method]descriptor.read-via-stream", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.write-via-stream", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.append-via-stream", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.advise", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.get-flags", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.read", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.read-directory", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.stat", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.stat-at", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.open-at", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.readlink-at", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.unlink-file-at", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.metadata-hash", "no filesystem, ambient or otherwise"),
-    trap(FS_TYPES, "[method]descriptor.metadata-hash-at", "no filesystem, ambient or otherwise"),
+    trap(
+        FS_PREOPENS,
+        "get-directories",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[resource-drop]descriptor",
+        "no descriptor is ever handed out",
+    ),
+    trap(
+        FS_TYPES,
+        "[resource-drop]directory-entry-stream",
+        "no directory is ever opened",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.read-via-stream",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.write-via-stream",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.append-via-stream",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.advise",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.get-flags",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.read",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.read-directory",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.stat",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.stat-at",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.open-at",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.readlink-at",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.unlink-file-at",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.metadata-hash",
+        "no filesystem, ambient or otherwise",
+    ),
+    trap(
+        FS_TYPES,
+        "[method]descriptor.metadata-hash-at",
+        "no filesystem, ambient or otherwise",
+    ),
     trap(
         FS_TYPES,
         "[method]directory-entry-stream.read-directory-entry",
@@ -355,7 +523,9 @@ pub fn is_wasi(module: &str) -> bool {
 
 /// The whitelist lookup. `None` means V1 rejection — there is no wildcard.
 pub fn lookup(module: &str, func: &str) -> Option<&'static PalDef> {
-    PAL_IMPORTS.iter().find(|p| p.module == module && p.func == func)
+    PAL_IMPORTS
+        .iter()
+        .find(|p| p.module == module && p.func == func)
 }
 
 pub fn delegated() -> impl Iterator<Item = &'static PalDef> {
@@ -365,8 +535,10 @@ pub fn delegated() -> impl Iterator<Item = &'static PalDef> {
 /// The distinct `wisp:platform` capabilities reachable through the adapter.
 /// This is the set the no-new-channels rule is *about*.
 pub fn delegation_targets() -> Vec<&'static str> {
-    let mut v: Vec<&'static str> =
-        PAL_IMPORTS.iter().filter_map(|p| p.disposition.capability()).collect();
+    let mut v: Vec<&'static str> = PAL_IMPORTS
+        .iter()
+        .filter_map(|p| p.disposition.capability())
+        .collect();
     v.sort_unstable();
     v.dedup();
     v

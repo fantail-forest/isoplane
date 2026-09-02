@@ -108,9 +108,14 @@ fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
     assert!(t.uses_pal(), "a stock .NET module must need the adapter");
 
     let composed = t.pal_composed();
-    let delegated: Vec<&str> =
-        composed.iter().filter_map(|d| d.disposition.capability()).collect();
-    let trapped = composed.iter().filter(|d| !d.disposition.is_delegated()).count();
+    let delegated: Vec<&str> = composed
+        .iter()
+        .filter_map(|d| d.disposition.capability())
+        .collect();
+    let trapped = composed
+        .iter()
+        .filter(|d| !d.disposition.is_delegated())
+        .count();
 
     eprintln!(
         "{path}\n  {} wasi: imports composed — {} trap-on-call, delegated to {:?}",
@@ -142,5 +147,8 @@ fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
         vec!["clock_now_coarse", "entropy_fill"],
         "the adapter drew on capabilities beyond the declared two: {unique:?}"
     );
-    assert!(trapped > 0, "most of a stock module's wasi: surface is toolchain residue and must trap");
+    assert!(
+        trapped > 0,
+        "most of a stock module's wasi: surface is toolchain residue and must trap"
+    );
 }

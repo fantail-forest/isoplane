@@ -27,11 +27,26 @@ pub mod exports {
     /// `(ptr, len)` pairs always address a postcard-encoded `DispatchRecord`
     /// or `ResultRecord` in guest memory. `wisp_handle` and `wisp_wake`
     /// return a packed `PollStatus` (see `crate::status`).
-    pub const SIG_ALLOC: Sig = Sig { params: &[I32, I32], results: &[I32] };
-    pub const SIG_HANDLE: Sig = Sig { params: &[I32, I32], results: &[I64] };
-    pub const SIG_WAKE: Sig = Sig { params: &[I64, I32, I32], results: &[I64] };
-    pub const SIG_GC_HINT: Sig = Sig { params: &[I32], results: &[] };
-    pub const SIG_INITIALIZE: Sig = Sig { params: &[], results: &[] };
+    pub const SIG_ALLOC: Sig = Sig {
+        params: &[I32, I32],
+        results: &[I32],
+    };
+    pub const SIG_HANDLE: Sig = Sig {
+        params: &[I32, I32],
+        results: &[I64],
+    };
+    pub const SIG_WAKE: Sig = Sig {
+        params: &[I64, I32, I32],
+        results: &[I64],
+    };
+    pub const SIG_GC_HINT: Sig = Sig {
+        params: &[I32],
+        results: &[],
+    };
+    pub const SIG_INITIALIZE: Sig = Sig {
+        params: &[],
+        results: &[],
+    };
 
     /// `(name, signature)` for every export the host may call.
     pub const SIGNATURES: &[(&str, Sig)] = &[
@@ -128,9 +143,18 @@ const I64: Ty = Ty::I64;
 /// `(ptr: i32, len: i32) -> i64` — the shape of every postcard-encoded,
 /// future-returning import. Guest memory is read at (ptr, len), which is
 /// valid only for the duration of the call.
-const BUF_TO_FUTURE: Sig = Sig { params: &[I32, I32], results: &[I64] };
-const BUF_TO_VOID: Sig = Sig { params: &[I32, I32], results: &[] };
-const BUF_TO_I32: Sig = Sig { params: &[I32, I32], results: &[I32] };
+const BUF_TO_FUTURE: Sig = Sig {
+    params: &[I32, I32],
+    results: &[I64],
+};
+const BUF_TO_VOID: Sig = Sig {
+    params: &[I32, I32],
+    results: &[],
+};
+const BUF_TO_I32: Sig = Sig {
+    params: &[I32, I32],
+    results: &[I32],
+};
 
 macro_rules! imp {
     ($name:literal, $group:ident, $sig:expr, $kind:expr, $why:literal) => {
@@ -321,10 +345,16 @@ mod tests {
     #[test]
     fn init_sandbox_exposes_no_io() {
         let io = [
-            Group::Http,             Group::Clock, Group::Entropy,
+            Group::Http,
+            Group::Clock,
+            Group::Entropy,
         ];
         for i in init_visible() {
-            assert!(!io.contains(&i.group), "init sandbox exposes I/O via {}", i.name);
+            assert!(
+                !io.contains(&i.group),
+                "init sandbox exposes I/O via {}",
+                i.name
+            );
         }
     }
 
@@ -362,7 +392,10 @@ mod tests {
             .filter(|i| matches!(i.buf, BufSpec::Out(_)))
             .map(|i| i.name)
             .collect();
-        assert_eq!(out, vec!["init_hash_seed", "init_config_get", "entropy_fill"]);
+        assert_eq!(
+            out,
+            vec!["init_hash_seed", "init_config_get", "entropy_fill"]
+        );
     }
 
 }

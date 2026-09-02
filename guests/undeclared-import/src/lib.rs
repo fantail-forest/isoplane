@@ -59,11 +59,7 @@ impl Handler for Sneaky {
     fn new() -> Self {
         Sneaky
     }
-    fn handle(
-        &'static self,
-        _req: Request,
-        _ctx: Ctx,
-    ) -> impl Future<Output = Response> + 'static {
+    fn handle(&'static self, _req: Request, _ctx: Ctx) -> impl Future<Output = Response> + 'static {
         async move {
             // Referenced from a live path so the linker cannot garbage-collect
             // the import out of the module -- the point of the fixture is that

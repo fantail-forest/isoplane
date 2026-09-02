@@ -25,7 +25,6 @@
 
 pub use wisp_abi::pal::*;
 
-
 // The adapter *bodies* moved to `wisp_engine::pal` so that the data plane can
 // compose the same surface it validates. `wisp-control` depends on
 // `wisp-engine`, so re-exporting is the direction that works — and it keeps
@@ -49,7 +48,11 @@ mod tests {
     fn names_are_unique() {
         let mut seen = std::collections::BTreeSet::new();
         for p in PAL_IMPORTS {
-            assert!(seen.insert((p.module, p.func)), "duplicate PAL entry {}", p.full_name());
+            assert!(
+                seen.insert((p.module, p.func)),
+                "duplicate PAL entry {}",
+                p.full_name()
+            );
         }
     }
 
@@ -86,10 +89,13 @@ mod tests {
     #[test]
     fn no_delegation_reaches_an_io_or_secret_capability() {
         use wisp_abi::imports::Group::*;
-        let forbidden =
-            [Http, Kv, Blob, Queue, Sql, Durable, Socket, Secret, Service, Response, Ctx];
+        let forbidden = [
+            Http, Kv, Blob, Queue, Sql, Durable, Socket, Secret, Service, Response, Ctx,
+        ];
         for p in delegated() {
-            let Some(cap) = p.disposition.capability() else { continue };
+            let Some(cap) = p.disposition.capability() else {
+                continue;
+            };
             let def = imports::lookup(cap).expect("checked above");
             assert!(
                 !forbidden.contains(&def.group),
@@ -112,7 +118,10 @@ mod tests {
     /// `host_writes_into_guest_memory_through_exactly_three_imports` makes.
     #[test]
     fn the_adapter_draws_on_exactly_two_platform_capabilities() {
-        assert_eq!(delegation_targets(), vec!["clock_now_coarse", "entropy_fill"]);
+        assert_eq!(
+            delegation_targets(),
+            vec!["clock_now_coarse", "entropy_fill"]
+        );
     }
 
     /// The groups the platform denies outright must be trap-on-call to the last
@@ -160,7 +169,11 @@ mod tests {
     #[test]
     fn every_entry_states_why() {
         for p in PAL_IMPORTS {
-            assert!(p.why.len() > 20, "{} has no usable rationale", p.full_name());
+            assert!(
+                p.why.len() > 20,
+                "{} has no usable rationale",
+                p.full_name()
+            );
         }
     }
 }

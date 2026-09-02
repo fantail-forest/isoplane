@@ -65,8 +65,11 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         wisp_initialize();
 
         let calls = host.calls();
-        let begins: Vec<i64> =
-            calls.iter().filter(|(n, _)| *n == "init_unit_begin").map(|(_, a)| a[0]).collect();
+        let begins: Vec<i64> = calls
+            .iter()
+            .filter(|(n, _)| *n == "init_unit_begin")
+            .map(|(_, a)| a[0])
+            .collect();
         // 0 runs (then leaves scope with the -1 sentinel), 1 is skipped (the
         // host clears its own current-unit on a deferred answer, so no
         // sentinel is needed there), 2 runs.
@@ -109,10 +112,21 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         // Init-only imports stay declared in the template but the runtime
         // linker binds them to traps. After `wisp_initialize` the SDK must
         // serve the captured seed rather than call the import again.
-        let before = host.calls().iter().filter(|(n, _)| *n == "init_hash_seed").count();
+        let before = host
+            .calls()
+            .iter()
+            .filter(|(n, _)| *n == "init_hash_seed")
+            .count();
         let _ = wisp_guest::init::hash_seed();
-        let after = host.calls().iter().filter(|(n, _)| *n == "init_hash_seed").count();
-        assert_eq!(before, after, "hash_seed must not touch an init-only import after init");
+        let after = host
+            .calls()
+            .iter()
+            .filter(|(n, _)| *n == "init_hash_seed")
+            .count();
+        assert_eq!(
+            before, after,
+            "hash_seed must not touch an init-only import after init"
+        );
     });
 }
 
@@ -125,7 +139,10 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
 fn config_is_readable_at_init_and_only_at_init() {
     with_stub_host(|host| {
         let vars = vec![
-            ("FX_URL".to_string(), "https://rates.example/nzd".to_string()),
+            (
+                "FX_URL".to_string(),
+                "https://rates.example/nzd".to_string(),
+            ),
             ("QUOTE_TTL_MS".to_string(), "300000".to_string()),
         ];
         host.set_config(serde_json::to_vec(&vars).unwrap());
@@ -151,9 +168,20 @@ fn config_is_readable_at_init_and_only_at_init() {
 
         // Cached: later reads must not touch the import again, because the
         // runtime linker binds init-only imports to traps.
-        let before = host.calls().iter().filter(|(n, _)| *n == "init_config_get").count();
+        let before = host
+            .calls()
+            .iter()
+            .filter(|(n, _)| *n == "init_config_get")
+            .count();
         let _ = wisp_guest::init::config_vars();
-        let after = host.calls().iter().filter(|(n, _)| *n == "init_config_get").count();
-        assert_eq!(before, after, "config must be served from the template after init");
+        let after = host
+            .calls()
+            .iter()
+            .filter(|(n, _)| *n == "init_config_get")
+            .count();
+        assert_eq!(
+            before, after,
+            "config must be served from the template after init"
+        );
     });
 }

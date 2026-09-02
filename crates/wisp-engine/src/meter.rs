@@ -36,7 +36,10 @@ pub fn try_thread_cpu_nanos() -> Option<u64> {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
     }
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: `ts` is a live, writable, correctly-typed timespec and
     // CLOCK_THREAD_CPUTIME_ID is always a valid clock id on Linux.
     let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
@@ -69,7 +72,10 @@ pub fn thread_cpu_nanos() -> u64 {
 /// it, so a failed query reported a resolution of `0 ns` — a meter of infinite
 /// precision, which is the most flattering number in the file.
 pub fn thread_cpu_resolution_nanos() -> Option<u64> {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: as above.
     let rc = unsafe { libc::clock_getres(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
     if rc != 0 {
@@ -96,20 +102,34 @@ mod tests {
         }
         std::hint::black_box(x);
         let lifetime = try_thread_cpu_nanos().expect("the clock works at the start of the test");
-        assert!(lifetime > 5_000_000, "the warm-up burned only {lifetime} ns");
+        assert!(
+            lifetime > 5_000_000,
+            "the warm-up burned only {lifetime} ns"
+        );
 
         let before = clock_read_failures();
         FORCE_CLOCK_FAILURE.with(|f| f.set(true));
 
-        assert_eq!(try_thread_cpu_nanos(), None, "an unreadable clock must say so");
-        assert!(clock_read_failures() > before, "the failed read was not counted");
+        assert_eq!(
+            try_thread_cpu_nanos(),
+            None,
+            "an unreadable clock must say so"
+        );
+        assert!(
+            clock_read_failures() > before,
+            "the failed read was not counted"
+        );
 
         // The lossy wrapper still answers `0` for the budget-check callers
         // that need a bare `u64` — but it counts, so `0` and "unreadable" stay
         // separable after the fact instead of being fused into one number.
         let mid = clock_read_failures();
         assert_eq!(thread_cpu_nanos(), 0);
-        assert_eq!(clock_read_failures(), mid + 1, "the wrapper swallowed the failure");
+        assert_eq!(
+            clock_read_failures(),
+            mid + 1,
+            "the wrapper swallowed the failure"
+        );
 
         // Compare interval calculations using the same failed start reading.
         let start_now = try_thread_cpu_nanos(); // the fixed form: None
@@ -148,13 +168,20 @@ mod tests {
             _ => 0,
         };
         assert!(measured > 0, "a working clock measured nothing");
-        assert_eq!(quiet, clock_read_failures(), "a working read was counted as a failure");
+        assert_eq!(
+            quiet,
+            clock_read_failures(),
+            "a working read was counted as a failure"
+        );
     }
 
     #[test]
     fn the_resolution_query_reports_a_real_number_or_none() {
         let res = thread_cpu_resolution_nanos().expect("clock_getres works on this platform");
-        assert!(res > 0, "a resolution of 0 ns is a meter of infinite precision, not a reading");
+        assert!(
+            res > 0,
+            "a resolution of 0 ns is a meter of infinite precision, not a reading"
+        );
         // Resolution queries do not measure a CPU interval, so their failures
         // are not included in the interval-read failure counter.
         let before = clock_read_failures();
@@ -170,7 +197,10 @@ mod tests {
         FORCE_CLOCK_FAILURE.with(|f| f.set(true));
         assert_eq!(try_thread_cpu_nanos(), None);
         let elsewhere = std::thread::spawn(try_thread_cpu_nanos).join().unwrap();
-        assert!(elsewhere.is_some(), "the injected fault leaked into another thread");
+        assert!(
+            elsewhere.is_some(),
+            "the injected fault leaked into another thread"
+        );
         FORCE_CLOCK_FAILURE.with(|f| f.set(false));
     }
 
@@ -193,6 +223,9 @@ mod tests {
 
         // Compare sleeping and spinning on the same thread CPU clock.
         assert!(slept < 5_000_000, "sleeping recorded {slept} ns of CPU");
-        assert!(burned > 40_000_000, "50 ms of spinning recorded only {burned} ns");
+        assert!(
+            burned > 40_000_000,
+            "50 ms of spinning recorded only {burned} ns"
+        );
     }
 }

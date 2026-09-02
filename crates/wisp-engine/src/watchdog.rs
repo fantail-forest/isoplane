@@ -81,7 +81,10 @@ impl Watchdog {
             .spawn(move || run(engine, s))
             .expect("spawn epoch watchdog");
 
-        Self { shared, join: Some(join) }
+        Self {
+            shared,
+            join: Some(join),
+        }
     }
 
     pub(crate) fn shared(&self) -> &Arc<Shared> {

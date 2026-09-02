@@ -50,7 +50,12 @@ unsafe impl<T> Sync for LazyInit<T> {}
 
 impl<T: 'static> LazyInit<T> {
     pub const fn new(name: &'static str, init: fn() -> T) -> LazyInit<T> {
-        LazyInit { name, slot: UnsafeCell::new(None), init, runs: Cell::new(0) }
+        LazyInit {
+            name,
+            slot: UnsafeCell::new(None),
+            init,
+            runs: Cell::new(0),
+        }
     }
 
     pub const fn name(&self) -> &'static str {
@@ -89,7 +94,10 @@ impl<T: 'static> LazyInit<T> {
 
     /// Wrap this cell as a pre-init unit.
     pub const fn unit(&'static self, run: fn()) -> InitUnit {
-        InitUnit { name: self.name, run }
+        InitUnit {
+            name: self.name,
+            run,
+        }
     }
 }
 
@@ -269,7 +277,10 @@ pub fn config_vars() -> Vec<(String, String)> {
 /// One init-visible var by name.
 #[cfg(feature = "json")]
 pub fn config_get(name: &str) -> Option<String> {
-    config_vars().into_iter().find(|(k, _)| k == name).map(|(_, v)| v)
+    config_vars()
+        .into_iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v)
 }
 
 #[cfg(test)]
@@ -285,7 +296,11 @@ mod tests {
         assert!(PURE.is_initialized());
         assert_eq!(PURE.run_count(), 1);
         assert_eq!(*PURE.get(), 42);
-        assert_eq!(PURE.run_count(), 1, "reuse amortizes a deferred initializer");
+        assert_eq!(
+            PURE.run_count(),
+            1,
+            "reuse amortizes a deferred initializer"
+        );
     }
 
     /// The unit list is index-addressed because the host records unit *ids*

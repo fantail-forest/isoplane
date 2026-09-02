@@ -70,8 +70,14 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         let st = PollStatus::decode(wisp_handle(ptr, len));
         assert_eq!(st, PollStatus::Pending, "an awaited host future must park");
         assert_eq!(wisp_guest::rt::pending_futures(), 1);
-        assert!(host.called("clock_deadline_in"), "the import must have been issued before parking");
-        assert!(!host.called("resp_new"), "no response may exist while parked");
+        assert!(
+            host.called("clock_deadline_in"),
+            "the import must have been issued before parking"
+        );
+        assert!(
+            !host.called("resp_new"),
+            "no response may exist while parked"
+        );
 
         // The stub mints future ids from 1, so `clock_deadline_in` got id 1.
         let fut_id = 1u64;
@@ -82,8 +88,17 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         let (ptr, len) = handoff(&enc);
         let st = PollStatus::decode(wisp_wake(fut_id, ptr, len));
 
-        assert_eq!(st, PollStatus::Done { response: RESP_HANDLE as u32 });
+        assert_eq!(
+            st,
+            PollStatus::Done {
+                response: RESP_HANDLE as u32
+            }
+        );
         assert!(host.called("resp_new"));
-        assert_eq!(wisp_guest::rt::pending_futures(), 0, "future table must not leak");
+        assert_eq!(
+            wisp_guest::rt::pending_futures(),
+            0,
+            "future table must not leak"
+        );
     });
 }

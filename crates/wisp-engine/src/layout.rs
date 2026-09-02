@@ -56,12 +56,21 @@ mod tests {
     #[test]
     fn scalars_skip_the_buffer_pair() {
         // log_emit(level, ptr, len) -> the level is the only scalar.
-        assert_eq!(scalars_of(lookup("log_emit").unwrap(), &[3, 1024, 16]), [3, 0, 0]);
+        assert_eq!(
+            scalars_of(lookup("log_emit").unwrap(), &[3, 1024, 16]),
+            [3, 0, 0]
+        );
         // di_alarm_set(ptr, len, at_ms) -> the deadline is the only scalar.
-        assert_eq!(scalars_of(lookup("di_alarm_set").unwrap(), &[1024, 4, 999]), [999, 0, 0]);
+        assert_eq!(
+            scalars_of(lookup("di_alarm_set").unwrap(), &[1024, 4, 999]),
+            [999, 0, 0]
+        );
         // http_body_read(handle, max) -> BUF_TO_FUTURE's shape, but no buffer;
         // both parameters are scalars.
-        assert_eq!(scalars_of(lookup("http_body_read").unwrap(), &[7, 65536]), [7, 65536, 0]);
+        assert_eq!(
+            scalars_of(lookup("http_body_read").unwrap(), &[7, 65536]),
+            [7, 65536, 0]
+        );
     }
 
     /// `wisp-abi` has its own test that every `BufSpec` agrees with its

@@ -53,9 +53,13 @@ pub enum DenyReason {
     /// An allowlist is configured and this host is not on it.
     NotAllowlisted(String),
     /// Per-tenant connection quota.
-    ConnectionQuota { limit: u64 },
+    ConnectionQuota {
+        limit: u64,
+    },
     /// Per-tenant bandwidth quota.
-    BandwidthQuota { limit_bytes: u64 },
+    BandwidthQuota {
+        limit_bytes: u64,
+    },
 }
 
 impl std::fmt::Display for DenyReason {
@@ -67,12 +71,17 @@ impl std::fmt::Display for DenyReason {
             DenyReason::PrivateAddress(ip) => {
                 write!(f, "target {ip} is private/link-local; denied by default")
             }
-            DenyReason::NotAllowlisted(h) => write!(f, "host `{h}` is not on the app's fetch allowlist"),
+            DenyReason::NotAllowlisted(h) => {
+                write!(f, "host `{h}` is not on the app's fetch allowlist")
+            }
             DenyReason::ConnectionQuota { limit } => {
                 write!(f, "per-tenant connection quota of {limit} exhausted")
             }
             DenyReason::BandwidthQuota { limit_bytes } => {
-                write!(f, "per-tenant bandwidth quota of {limit_bytes} bytes exhausted")
+                write!(
+                    f,
+                    "per-tenant bandwidth quota of {limit_bytes} bytes exhausted"
+                )
             }
         }
     }
@@ -155,7 +164,9 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
     // Credentials in the authority are a redirect-and-confuse primitive and
     // buy a tenant nothing they cannot do with a header.
     if authority.contains('@') {
-        return Err(DenyReason::Malformed("userinfo is not permitted in a fetch url".into()));
+        return Err(DenyReason::Malformed(
+            "userinfo is not permitted in a fetch url".into(),
+        ));
     }
     let default_port = if scheme == "https" { 443 } else { 80 };
     let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
@@ -164,7 +175,9 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
             .split_once(']')
             .ok_or_else(|| DenyReason::Malformed("unterminated ipv6 literal".into()))?;
         let port = match rest.strip_prefix(':') {
-            Some(p) => p.parse().map_err(|_| DenyReason::Malformed("bad port".into()))?,
+            Some(p) => p
+                .parse()
+                .map_err(|_| DenyReason::Malformed("bad port".into()))?,
             None => default_port,
         };
         (h.to_string(), port)
@@ -172,7 +185,8 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
         match authority.rsplit_once(':') {
             Some((h, p)) => (
                 h.to_string(),
-                p.parse().map_err(|_| DenyReason::Malformed("bad port".into()))?,
+                p.parse()
+                    .map_err(|_| DenyReason::Malformed("bad port".into()))?,
             ),
             None => (authority.to_string(), default_port),
         }
@@ -180,7 +194,12 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
     if host.is_empty() {
         return Err(DenyReason::Malformed("empty host".into()));
     }
-    Ok(ParsedUrl { scheme, host: host.to_ascii_lowercase(), port, path_and_query: path.to_string() })
+    Ok(ParsedUrl {
+        scheme,
+        host: host.to_ascii_lowercase(),
+        port,
+        path_and_query: path.to_string(),
+    })
 }
 
 /// The egress policy, with the per-tenant quotas attached.
@@ -226,7 +245,9 @@ impl HostEgressPolicy {
     pub fn release_connection(&self) {
         let _ = self
             .connections
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)));
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
+            });
     }
 
     fn allowlisted(host: &str, allowlist: Option<&[String]>) -> bool {
@@ -250,7 +271,9 @@ impl HostEgressPolicy {
             return Err(DenyReason::NotAllowlisted(parsed.host));
         }
         if self.bytes.load(Ordering::Relaxed) >= self.max_bytes {
-            return Err(DenyReason::BandwidthQuota { limit_bytes: self.max_bytes });
+            return Err(DenyReason::BandwidthQuota {
+                limit_bytes: self.max_bytes,
+            });
         }
         let taken = self
             .connections
@@ -258,7 +281,9 @@ impl HostEgressPolicy {
                 (v < self.max_connections).then_some(v + 1)
             });
         if taken.is_err() {
-            return Err(DenyReason::ConnectionQuota { limit: self.max_connections });
+            return Err(DenyReason::ConnectionQuota {
+                limit: self.max_connections,
+            });
         }
 
         // Resolve ONCE. Everything after this decides about addresses we
@@ -282,7 +307,10 @@ impl HostEgressPolicy {
             self.release_connection();
             return Err(DenyReason::PrivateAddress(bad.ip()));
         }
-        Ok(PinnedTarget { url: url.to_string(), addr: addrs[0] })
+        Ok(PinnedTarget {
+            url: url.to_string(),
+            addr: addrs[0],
+        })
     }
 }
 
@@ -306,7 +334,10 @@ mod tests {
     }
     impl Rebinder {
         fn new(answers: Vec<Vec<SocketAddr>>) -> Self {
-            Self { answers: Mutex::new(answers), calls: AtomicU64::new(0) }
+            Self {
+                answers: Mutex::new(answers),
+                calls: AtomicU64::new(0),
+            }
         }
     }
     impl Resolver for Rebinder {
@@ -362,7 +393,10 @@ mod tests {
             let ip: IpAddr = lit.trim_matches(['[', ']']).parse().unwrap();
             let p = policy(Fixed(vec![SocketAddr::new(ip, 80)]));
             let err = p.check_typed(&format!("http://{lit}/"), None).unwrap_err();
-            assert!(matches!(err, DenyReason::PrivateAddress(_)), "{lit} allowed: {err}");
+            assert!(
+                matches!(err, DenyReason::PrivateAddress(_)),
+                "{lit} allowed: {err}"
+            );
         }
     }
 
@@ -387,16 +421,25 @@ mod tests {
     /// to the public one.
     #[test]
     fn a_mixed_answer_is_denied_entirely() {
-        let p = policy(Fixed(vec![sa([93, 184, 216, 34], 80), sa([192, 168, 0, 5], 80)]));
+        let p = policy(Fixed(vec![
+            sa([93, 184, 216, 34], 80),
+            sa([192, 168, 0, 5], 80),
+        ]));
         let err = p.check_typed("http://mixed.example/", None).unwrap_err();
-        assert_eq!(err, DenyReason::PrivateAddress(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5))));
+        assert_eq!(
+            err,
+            DenyReason::PrivateAddress(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5)))
+        );
     }
 
     #[test]
     fn only_http_and_https_egress_exists() {
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 80)]));
         for url in ["file:///etc/passwd", "gopher://x/", "ftp://x/"] {
-            assert!(matches!(p.check_typed(url, None), Err(DenyReason::Scheme(_))), "{url}");
+            assert!(
+                matches!(p.check_typed(url, None), Err(DenyReason::Scheme(_))),
+                "{url}"
+            );
         }
         assert!(matches!(
             p.check_typed("http://user:pw@example.com/", None),
@@ -408,19 +451,31 @@ mod tests {
     fn allowlist_supports_exact_and_wildcard_hosts() {
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 443)]));
         let list = vec!["api.example.com".to_string(), "*.cdn.example".to_string()];
-        assert!(p.check_typed("https://api.example.com/x", Some(&list)).is_ok());
-        assert!(p.check_typed("https://a.cdn.example/x", Some(&list)).is_ok());
+        assert!(p
+            .check_typed("https://api.example.com/x", Some(&list))
+            .is_ok());
+        assert!(p
+            .check_typed("https://a.cdn.example/x", Some(&list))
+            .is_ok());
         assert!(p.check_typed("https://cdn.example/x", Some(&list)).is_ok());
-        let err = p.check_typed("https://evil.example/x", Some(&list)).unwrap_err();
+        let err = p
+            .check_typed("https://evil.example/x", Some(&list))
+            .unwrap_err();
         assert_eq!(err, DenyReason::NotAllowlisted("evil.example".into()));
         // Not a suffix match on the raw string: `notcdn.example` must not pass
         // a `*.cdn.example` rule.
-        assert!(p.check_typed("https://notcdn.example/x", Some(&list)).is_err());
+        assert!(p
+            .check_typed("https://notcdn.example/x", Some(&list))
+            .is_err());
     }
 
     #[test]
     fn connection_quota_is_per_tenant_and_released() {
-        let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])), 2, 1 << 30);
+        let p = HostEgressPolicy::new(
+            Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])),
+            2,
+            1 << 30,
+        );
         assert!(p.check_typed("http://a.example/", None).is_ok());
         assert!(p.check_typed("http://a.example/", None).is_ok());
         assert!(matches!(
@@ -452,6 +507,9 @@ mod tests {
         );
         assert_eq!(parse_url("http://example.com:8080").unwrap().port, 8080);
         assert_eq!(parse_url("http://[::1]:9/").unwrap().host, "::1");
-        assert_eq!(parse_url("http://EXAMPLE.com/").unwrap().host, "example.com");
+        assert_eq!(
+            parse_url("http://EXAMPLE.com/").unwrap().host,
+            "example.com"
+        );
     }
 }

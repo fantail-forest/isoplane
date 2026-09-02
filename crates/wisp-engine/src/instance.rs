@@ -19,7 +19,9 @@ use crate::state::{
     AllocFailed, BudgetExceeded, GuestAbort, Kill, Meter, Reentrancy, StoreState, WallCapExceeded,
 };
 use crate::template::TemplateInner;
-use crate::{Completion, DispatchOutcome, EngineInner, InstanceImage, InstanceOps, Result, TrapInfo};
+use crate::{
+    Completion, DispatchOutcome, EngineInner, InstanceImage, InstanceOps, Result, TrapInfo,
+};
 
 /// The wasmtime side of an activation. Separated from [`Instance`] so that
 /// `reset` can drop the whole thing — returning the slot to the pool, which is
@@ -141,7 +143,9 @@ impl Instance {
     /// process-wide `/proc/self/clear_refs` batching, which is
     /// `wisp-hibernate`'s call to make.
     pub fn dirty_page_count(&self) -> usize {
-        let Some(live) = self.live.as_ref() else { return 0 };
+        let Some(live) = self.live.as_ref() else {
+            return 0;
+        };
         let data = live.memory.data(&live.store);
         let image = &self.template.image;
         let mut n = 0;
@@ -211,7 +215,10 @@ impl Instance {
     /// is the single-caller rule — the host must not call into an instance
     /// while a previous call into it has not returned — observed from inside.
     pub fn max_wasm_depth_observed(&self) -> i32 {
-        self.live.as_ref().map(|l| l.store.data().max_wasm_depth).unwrap_or(0)
+        self.live
+            .as_ref()
+            .map(|l| l.store.data().max_wasm_depth)
+            .unwrap_or(0)
     }
 
     /// Run `wisp_initialize`. Used by `wisp-control`'s pre-init replay
@@ -229,11 +236,16 @@ impl Instance {
 
     fn refuse(&self, why: &str) -> DispatchOutcome {
         DispatchOutcome {
-            status: PollStatus::Trapped { code: TrapCode::Unknown },
+            status: PollStatus::Trapped {
+                code: TrapCode::Unknown,
+            },
             completion: Completion::Trapped,
             cpu_ns: 0,
             wall_ns: 0,
-            trap: Some(TrapInfo { kind: TrapKind::Other, message: why.to_string() }),
+            trap: Some(TrapInfo {
+                kind: TrapKind::Other,
+                message: why.to_string(),
+            }),
             kill: None,
             overage_ns: 0,
             grace_deferrals: 0,
@@ -264,11 +276,16 @@ impl Instance {
         if depth != 0 {
             let e: anyhow::Error = Reentrancy { depth }.into();
             return DispatchOutcome {
-                status: PollStatus::Trapped { code: TrapCode::Protocol },
+                status: PollStatus::Trapped {
+                    code: TrapCode::Protocol,
+                },
                 completion: Completion::Trapped,
                 cpu_ns: 0,
                 wall_ns: 0,
-                trap: Some(TrapInfo { kind: TrapKind::Other, message: format!("{e}") }),
+                trap: Some(TrapInfo {
+                    kind: TrapKind::Other,
+                    message: format!("{e}"),
+                }),
                 kill: None,
                 overage_ns: 0,
                 grace_deferrals: 0,
@@ -345,7 +362,11 @@ impl Instance {
             // is killed at its deadline rather than escaping its budget). That
             // is the conservative direction, and the counter now says it
             // happened; accounting is what this change makes honest.
-            Meter { cpu0_ns: cpu0.unwrap_or(0), wall0: Some(wall0), ..meter },
+            Meter {
+                cpu0_ns: cpu0.unwrap_or(0),
+                wall0: Some(wall0),
+                ..meter
+            },
         );
         live.store.set_epoch_deadline(meter.check_ticks);
 
@@ -385,7 +406,12 @@ impl Instance {
             }
             Err(e) => {
                 let info = classify(live, &e);
-                (PollStatus::Trapped { code: trap_code_of_kind(info.kind) }, Some(info))
+                (
+                    PollStatus::Trapped {
+                        code: trap_code_of_kind(info.kind),
+                    },
+                    Some(info),
+                )
             }
         };
 
@@ -408,7 +434,10 @@ impl Instance {
         // and the wake that follows carries `spent_ns` so the rest of G is
         // what remains. Reporting it as a kill here would end a dispatch the
         // guest is still unwinding.
-        let hard_kill = matches!(trap.as_ref().map(|t| t.kind), Some(TrapKind::BudgetExceeded));
+        let hard_kill = matches!(
+            trap.as_ref().map(|t| t.kind),
+            Some(TrapKind::BudgetExceeded)
+        );
         let dispatch_cpu = budget.spent_ns.saturating_add(cpu_ns);
         // A guest can return between epoch ticks; compare its active execution time
         // with the budget even when the epoch callback did not run.
@@ -467,13 +496,17 @@ impl Instance {
 fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
     match entry {
         Entry::Handle(rec) => {
-            let bytes = postcard::to_allocvec(rec).map_err(wasmtime::Error::new).context("encoding dispatch record")?;
+            let bytes = postcard::to_allocvec(rec)
+                .map_err(wasmtime::Error::new)
+                .context("encoding dispatch record")?;
             let (ptr, len) = handoff(live, &bytes)?;
             let f = live.f_handle.clone();
             Ok(f.call(&mut live.store, (ptr, len))? as u64)
         }
         Entry::Wake(future, res) => {
-            let bytes = postcard::to_allocvec(res).map_err(wasmtime::Error::new).context("encoding result record")?;
+            let bytes = postcard::to_allocvec(res)
+                .map_err(wasmtime::Error::new)
+                .context("encoding result record")?;
             let (ptr, len) = handoff(live, &bytes)?;
             let f = live.f_wake.clone();
             Ok(f.call(&mut live.store, (future as i64, ptr, len))? as u64)
@@ -499,7 +532,9 @@ fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
 /// Host->guest data enters via `wisp_alloc` + copy. The guest owns the
 /// allocation; the host never hands it a pointer.
 fn handoff(live: &mut Live, bytes: &[u8]) -> wasmtime::Result<(i32, i32)> {
-    let len = i32::try_from(bytes.len()).map_err(wasmtime::Error::new).context("record too large for the guest ABI")?;
+    let len = i32::try_from(bytes.len())
+        .map_err(wasmtime::Error::new)
+        .context("record too large for the guest ABI")?;
     let alloc = live.f_alloc.clone();
     let ptr = alloc.call(&mut live.store, (len, 8))?;
     if ptr == 0 {
@@ -547,16 +582,28 @@ fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
     }
 
     if let Some(v) = err.downcast_ref::<crate::state::CapabilityViolation>() {
-        return TrapInfo { kind: TrapKind::CapabilityViolation, message: v.to_string() };
+        return TrapInfo {
+            kind: TrapKind::CapabilityViolation,
+            message: v.to_string(),
+        };
     }
     if let Some(a) = err.downcast_ref::<GuestAbort>() {
-        return TrapInfo { kind: TrapKind::GuestPanic, message: a.to_string() };
+        return TrapInfo {
+            kind: TrapKind::GuestPanic,
+            message: a.to_string(),
+        };
     }
     if let Some(a) = err.downcast_ref::<AllocFailed>() {
-        return TrapInfo { kind: TrapKind::OutOfMemory, message: a.to_string() };
+        return TrapInfo {
+            kind: TrapKind::OutOfMemory,
+            message: a.to_string(),
+        };
     }
     if let Some(r) = err.downcast_ref::<Reentrancy>() {
-        return TrapInfo { kind: TrapKind::Other, message: r.to_string() };
+        return TrapInfo {
+            kind: TrapKind::Other,
+            message: r.to_string(),
+        };
     }
     if d.limits.oom {
         return TrapInfo {
@@ -589,10 +636,16 @@ fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
             | T::AtomicWaitNonSharedMemory => TrapKind::Sandbox,
             _ => TrapKind::Other,
         };
-        return TrapInfo { kind, message: format!("{err}") };
+        return TrapInfo {
+            kind,
+            message: format!("{err}"),
+        };
     }
 
-    TrapInfo { kind: TrapKind::Other, message: format!("{err:#}") }
+    TrapInfo {
+        kind: TrapKind::Other,
+        message: format!("{err:#}"),
+    }
 }
 
 fn trap_kind_of_code(c: TrapCode) -> TrapKind {
@@ -678,7 +731,9 @@ impl InstanceOps for Instance {
     /// guest that busy-waits never returns, so its frame never leaves the stack
     /// and it is never a capture candidate — it just dies at its CPU budget.
     fn is_parked(&self) -> bool {
-        let Some(live) = self.live.as_ref() else { return false };
+        let Some(live) = self.live.as_ref() else {
+            return false;
+        };
         self.tombstone.is_none()
             && live.store.data().wasm_depth == 0
             && self.last == Some(Completion::Parked)
@@ -688,7 +743,9 @@ impl InstanceOps for Instance {
     /// completion enum says what the *last call returned*, and "checked, not
     /// assumed" is about the thing that would actually corrupt a delta.
     fn is_capture_eligible(&self) -> bool {
-        let Some(live) = self.live.as_ref() else { return false };
+        let Some(live) = self.live.as_ref() else {
+            return false;
+        };
         // Deltas are never captured from a tombstone. The tombstone check is
         // first because it is the one that must never be argued with.
         self.tombstone.is_none()
@@ -731,14 +788,22 @@ impl InstanceOps for Instance {
         // dropping half of invariant 1 on the floor.
         let table_mutations = Vec::new();
         for (i, t) in live.tables.iter().enumerate() {
-            let baseline = template.table_nullness.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
+            let baseline = template
+                .table_nullness
+                .get(i)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
             let size = t.size(&live.store);
             if size as usize != baseline.len() {
                 bail!(
                     "table `{}` grew from {} to {size} entries; the engine cannot name a funcref \
                      by function index through wasmtime's public API, so this mutation cannot be \
                      represented in a delta (documented gap)",
-                    template.tables.get(i).map(|(n, _)| n.as_str()).unwrap_or("?"),
+                    template
+                        .tables
+                        .get(i)
+                        .map(|(n, _)| n.as_str())
+                        .unwrap_or("?"),
                     baseline.len()
                 );
             }
@@ -753,7 +818,11 @@ impl InstanceOps for Instance {
                     bail!(
                         "table `{}` slot {slot} changed nullness since activation; see the \
                          documented gap on funcref identity",
-                        template.tables.get(i).map(|(n, _)| n.as_str()).unwrap_or("?")
+                        template
+                            .tables
+                            .get(i)
+                            .map(|(n, _)| n.as_str())
+                            .unwrap_or("?")
                     );
                 }
             }
@@ -805,7 +874,10 @@ impl InstanceOps for Instance {
     }
 }
 
-fn to_global_value(v: Val, store: impl wasmtime::AsContext) -> Result<crate::snapshot::GlobalValue> {
+fn to_global_value(
+    v: Val,
+    store: impl wasmtime::AsContext,
+) -> Result<crate::snapshot::GlobalValue> {
     use crate::snapshot::GlobalValue as G;
     Ok(match v {
         Val::I32(x) => G::I32(x),

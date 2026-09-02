@@ -100,7 +100,11 @@ impl PalSource for StoreState {
             );
         };
         let n = b.call_fill(
-            ImportCall { import: "entropy_fill", payload: &[], scalars: [0; 3] },
+            ImportCall {
+                import: "entropy_fill",
+                payload: &[],
+                scalars: [0; 3],
+            },
             out,
         );
         self.bindings = Some(b);
@@ -151,7 +155,10 @@ pub fn link<T: PalSource>(
         // A module may legally declare the same import twice; a `Linker` may
         // not be told about it twice. Real toolchain output does not do this,
         // which is exactly why a hostile module might.
-        if composed.iter().any(|d| d.module == import.module() && d.func == import.name()) {
+        if composed
+            .iter()
+            .any(|d| d.module == import.module() && d.func == import.name())
+        {
             continue;
         }
         let Some(def) = lookup(import.module(), import.name()) else {
@@ -192,13 +199,19 @@ fn define_delegate<T: PalSource>(
         // exists to leak, and because `slice_clock_ms` is frozen for the
         // slice, two calls inside one dispatch return the same instant.
         (MONOTONIC, "now") => {
-            linker.func_wrap(def.module, def.func, |mut c: wasmtime::Caller<'_, T>| -> i64 {
-                let ms = c.data_mut().slice_clock_ms();
-                // Saturating rather than wrapping: a clock that runs backwards
-                // is a worse answer than one that stops, and the clock must be
-                // monotone. (The saturation point is year ~294,000.)
-                i64::try_from(ms).unwrap_or(i64::MAX).saturating_mul(CLOCK_QUANTUM_NS)
-            })?;
+            linker.func_wrap(
+                def.module,
+                def.func,
+                |mut c: wasmtime::Caller<'_, T>| -> i64 {
+                    let ms = c.data_mut().slice_clock_ms();
+                    // Saturating rather than wrapping: a clock that runs backwards
+                    // is a worse answer than one that stops, and the clock must be
+                    // monotone. (The saturation point is year ~294,000.)
+                    i64::try_from(ms)
+                        .unwrap_or(i64::MAX)
+                        .saturating_mul(CLOCK_QUANTUM_NS)
+                },
+            )?;
         }
         (MONOTONIC, "resolution") => {
             linker.func_wrap(def.module, def.func, |_: wasmtime::Caller<'_, T>| -> i64 {
@@ -283,14 +296,18 @@ fn define_trap<T: PalSource>(
     def: &'static PalDef,
     ty: wasmtime::FuncType,
 ) -> anyhow::Result<()> {
-    linker.func_new(def.module, def.func, ty, move |_caller, _params, _results| {
-        Err(wasmtime::Error::msg(format!(
-            "guest called `{}`, which the WISP PAL adapter satisfies with a trap-on-call \
+    linker.func_new(
+        def.module,
+        def.func,
+        ty,
+        move |_caller, _params, _results| {
+            Err(wasmtime::Error::msg(format!(
+                "guest called `{}`, which the WISP PAL adapter satisfies with a trap-on-call \
              stub: {}",
-            def.full_name(),
-            def.why
-        )))
-    })?;
+                def.full_name(),
+                def.why
+            )))
+        },
+    )?;
     Ok(())
 }
-

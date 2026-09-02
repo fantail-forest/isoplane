@@ -124,6 +124,9 @@ mod contract_tests {
                 );
             }
         }
-        assert!(checked >= 10, "expected to scan the whole SDK, saw {checked} files");
+        assert!(
+            checked >= 10,
+            "expected to scan the whole SDK, saw {checked} files"
+        );
     }
 }

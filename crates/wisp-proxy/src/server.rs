@@ -17,7 +17,7 @@ use wisp_abi::host::{Dispatcher, RouteTarget};
 
 use crate::metrics::ProxyMetrics;
 use crate::routes::RouteResolver;
-use crate::shed::{Admit, AdmissionControl, ShedConfig};
+use crate::shed::{AdmissionControl, Admit, ShedConfig};
 
 pub type Body = Full<Bytes>;
 
@@ -97,7 +97,9 @@ impl Proxy {
     ) -> Result<Response<Body>, hyper::Error> {
         let started = Instant::now();
         self.metrics.requests_total.fetch_add(1, Relaxed);
-        self.metrics.route_generation.store(self.routes.generation(), Relaxed);
+        self.metrics
+            .route_generation
+            .store(self.routes.generation(), Relaxed);
 
         let resp = self.route_and_dispatch(req, peer).await;
         self.metrics.request_latency.record(started.elapsed());
@@ -160,15 +162,16 @@ impl Proxy {
             method: parts.method.to_string(),
             url: parts.uri.to_string(),
             path: parts.uri.path().to_string(),
-            query: parts
-                .uri
-                .query()
-                .map(parse_query)
-                .unwrap_or_default(),
+            query: parts.uri.query().map(parse_query).unwrap_or_default(),
             headers: parts
                 .headers
                 .iter()
-                .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+                .map(|(k, v)| {
+                    (
+                        k.as_str().to_string(),
+                        String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                    )
+                })
                 .collect(),
             body: body.to_vec(),
         };
@@ -216,7 +219,9 @@ fn tier_str(t: wisp_abi::host::CodeTier) -> &'static str {
 
 
 fn text(status: StatusCode, body: &str, headers: &[(&str, &str)]) -> Response<Body> {
-    let mut b = Response::builder().status(status).header("content-type", "text/plain");
+    let mut b = Response::builder()
+        .status(status)
+        .header("content-type", "text/plain");
     for (k, v) in headers {
         b = b.header(*k, *v);
     }
@@ -247,7 +252,11 @@ mod tests {
     fn query_parsing() {
         assert_eq!(
             parse_query("a=1&b=&c"),
-            vec![("a".into(), "1".into()), ("b".into(), "".into()), ("c".into(), "".into())]
+            vec![
+                ("a".into(), "1".into()),
+                ("b".into(), "".into()),
+                ("c".into(), "".into())
+            ]
         );
     }
 }

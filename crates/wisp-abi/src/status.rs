@@ -69,7 +69,9 @@ impl PollStatus {
         match tag {
             TAG_DONE => PollStatus::Done { response: payload },
             TAG_PENDING => PollStatus::Pending,
-            _ => PollStatus::Trapped { code: TrapCode::from_u32(payload) },
+            _ => PollStatus::Trapped {
+                code: TrapCode::from_u32(payload),
+            },
         }
     }
 }
@@ -82,9 +84,13 @@ mod tests {
     fn round_trips() {
         for s in [
             PollStatus::Done { response: 0 },
-            PollStatus::Done { response: 0xDEAD_BEEF },
+            PollStatus::Done {
+                response: 0xDEAD_BEEF,
+            },
             PollStatus::Pending,
-            PollStatus::Trapped { code: TrapCode::CapabilityViolation },
+            PollStatus::Trapped {
+                code: TrapCode::CapabilityViolation,
+            },
         ] {
             assert_eq!(PollStatus::decode(s.encode()), s);
         }

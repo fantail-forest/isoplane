@@ -380,7 +380,11 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
 fn doctor_takes_numeric_limits_from_the_app_manifest() {
     let dir = std::env::temp_dir().join(format!("wisp-cli-freeapp-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("out")).unwrap();
-    std::fs::write(dir.join("wisp.toml"), "name = \"pinched\"\nlimits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n").unwrap();
+    std::fs::write(
+        dir.join("wisp.toml"),
+        "name = \"pinched\"\nlimits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n",
+    )
+    .unwrap();
     let p = dir.join("out").join("bigmem.wasm");
     std::fs::write(
         &p,

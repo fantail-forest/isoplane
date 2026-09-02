@@ -195,7 +195,10 @@ pub(crate) fn read_deferred_units(wasm: &[u8]) -> Result<Vec<u32>> {
                 }
                 let n = u32::from_le_bytes(d[0..4].try_into().unwrap()) as usize;
                 if d.len() < 4 + n * 4 {
-                    bail!("`{DEFERRED_INIT_SECTION}` declares {n} units but is {} bytes", d.len());
+                    bail!(
+                        "`{DEFERRED_INIT_SECTION}` declares {n} units but is {} bytes",
+                        d.len()
+                    );
                 }
                 return Ok((0..n)
                     .map(|i| u32::from_le_bytes(d[4 + i * 4..8 + i * 4].try_into().unwrap()))
@@ -366,7 +369,9 @@ pub(crate) fn decode_artifact(bytes: &[u8]) -> Result<(ArtifactMeta, &[u8])> {
         bail!("template artifact is truncated");
     }
     let n = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-    let end = 4usize.checked_add(n).context("artifact metadata length overflow")?;
+    let end = 4usize
+        .checked_add(n)
+        .context("artifact metadata length overflow")?;
     if bytes.len() < end {
         bail!("template artifact metadata is truncated");
     }
@@ -376,7 +381,10 @@ pub(crate) fn decode_artifact(bytes: &[u8]) -> Result<(ArtifactMeta, &[u8])> {
         bail!("not a WISP template artifact");
     }
     if meta.format != ARTIFACT_FORMAT {
-        bail!("template artifact format {} is not {ARTIFACT_FORMAT}", meta.format);
+        bail!(
+            "template artifact format {} is not {ARTIFACT_FORMAT}",
+            meta.format
+        );
     }
     Ok((meta, &bytes[end..]))
 }

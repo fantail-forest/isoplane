@@ -39,7 +39,9 @@ use core::future::Future;
 use core::hint::black_box;
 use core::task::{Context, Poll, Waker};
 
-use wisp_guest::{log, Budget, Clock, Ctx, Handler, Level, Request, RequestExt, Response, UnsafeToTrap};
+use wisp_guest::{
+    log, Budget, Clock, Ctx, Handler, Level, Request, RequestExt, Response, UnsafeToTrap,
+};
 
 pub struct Misbehaver;
 
@@ -47,7 +49,9 @@ pub struct Misbehaver;
 fn spin_forever() -> ! {
     let mut x: u64 = 1;
     loop {
-        x = black_box(x).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        x = black_box(x)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         black_box(x);
     }
 }
@@ -134,7 +138,9 @@ fn cooperative_spin() -> Response {
     let mut x: u64 = 1;
     let mut n: u64 = 0;
     loop {
-        x = black_box(x).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        x = black_box(x)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         black_box(x);
         n += 1;
         if n % CHECK_EVERY == 0 && Budget::exhausted() {
@@ -173,11 +179,7 @@ impl Handler for Misbehaver {
         Misbehaver
     }
 
-    fn handle(
-        &'static self,
-        req: Request,
-        _ctx: Ctx,
-    ) -> impl Future<Output = Response> + 'static {
+    fn handle(&'static self, req: Request, _ctx: Ctx) -> impl Future<Output = Response> + 'static {
         async move {
             match req.path.as_str() {
                 "/spin" => spin_forever(),
@@ -185,7 +187,10 @@ impl Handler for Misbehaver {
                 "/gc_pin" => gc_pin_spin(),
                 "/sync_over_async" => sync_over_async(),
                 "/alloc_bomb" => {
-                    let mb = req.query_get("mb").and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let mb = req
+                        .query_get("mb")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                     alloc_bomb(mb)
                 }
                 "/trap" => hard_trap(),

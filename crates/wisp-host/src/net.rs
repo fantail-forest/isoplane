@@ -51,7 +51,11 @@ impl Default for PinnedHttpFetcher {
 
 impl PinnedHttpFetcher {
     pub fn new(inline_limit: usize) -> Self {
-        Self { bodies: Mutex::new(HashMap::new()), next_handle: AtomicU32::new(1), inline_limit }
+        Self {
+            bodies: Mutex::new(HashMap::new()),
+            next_handle: AtomicU32::new(1),
+            inline_limit,
+        }
     }
 
     async fn send(
@@ -70,7 +74,10 @@ impl PinnedHttpFetcher {
                 tracing::debug!(error = %e, "egress connection closed");
             }
         });
-        sender.send_request(req).await.map_err(|e| FutureError::Io(format!("request: {e}")))
+        sender
+            .send_request(req)
+            .await
+            .map_err(|e| FutureError::Io(format!("request: {e}")))
     }
 }
 
@@ -81,7 +88,8 @@ impl Fetcher for PinnedHttpFetcher {
         target: PinnedTarget,
         req: FetchRequest,
     ) -> Result<FetchResponse, FutureError> {
-        let parsed = crate::egress::parse_url(&target.url).map_err(|e| FutureError::Denied(e.to_string()))?;
+        let parsed = crate::egress::parse_url(&target.url)
+            .map_err(|e| FutureError::Denied(e.to_string()))?;
         if parsed.scheme == "https" {
             // Refused, not downgraded. See the module docs.
             return Err(FutureError::Io(
@@ -112,7 +120,12 @@ impl Fetcher for PinnedHttpFetcher {
         let headers: Vec<(String, String)> = resp
             .headers()
             .iter()
-            .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).to_string()))
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    String::from_utf8_lossy(v.as_bytes()).to_string(),
+                )
+            })
             .collect();
 
         let hint = resp
@@ -141,7 +154,12 @@ impl Fetcher for PinnedHttpFetcher {
         // hibernation and must be prepared to re-issue.
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         self.bodies.lock().insert(handle, body);
-        Ok(FetchResponse { status, headers, body_handle: handle, body_inline: None })
+        Ok(FetchResponse {
+            status,
+            headers,
+            body_handle: handle,
+            body_inline: None,
+        })
     }
 
     async fn read_body(&self, handle: u32, max_len: usize) -> Result<BodyChunk, FutureError> {
@@ -153,7 +171,10 @@ impl Fetcher for PinnedHttpFetcher {
         };
         let frame = body.frame().await;
         match frame {
-            None => Ok(BodyChunk { data: Vec::new(), eof: true }),
+            None => Ok(BodyChunk {
+                data: Vec::new(),
+                eof: true,
+            }),
             Some(Err(e)) => Err(FutureError::Io(format!("body: {e}"))),
             Some(Ok(f)) => {
                 let data = f.into_data().map(|b| b.to_vec()).unwrap_or_default();
@@ -161,7 +182,11 @@ impl Fetcher for PinnedHttpFetcher {
                     // Trailing bytes beyond the guest's buffer would have to be
                     // stashed; the PoC truncates and says so rather than
                     // silently keeping a shadow buffer the guest cannot see.
-                    tracing::warn!(handle, dropped = data.len() - max_len, "body chunk truncated");
+                    tracing::warn!(
+                        handle,
+                        dropped = data.len() - max_len,
+                        "body chunk truncated"
+                    );
                     data[..max_len].to_vec()
                 } else {
                     data

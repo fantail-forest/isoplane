@@ -7,7 +7,8 @@
 
 
 use wisp_abi::calls::*;
-use wisp_abi::result::{BodyChunk, FetchResponse, };
+use wisp_abi::result::{
+    BodyChunk, FetchResponse, };
 
 use crate::abi;
 use crate::error::{Result, WispError};
@@ -101,7 +102,9 @@ pub async fn fetch_bytes(url: &str) -> Result<(u16, Vec<u8>)> {
     if let Some(b) = r.body_inline {
         return Ok((r.status, b));
     }
-    let body = BodyReader::new(r.body_handle).read_to_end(64 * 1024).await?;
+    let body = BodyReader::new(r.body_handle)
+        .read_to_end(64 * 1024)
+        .await?;
     Ok((r.status, body))
 }
 

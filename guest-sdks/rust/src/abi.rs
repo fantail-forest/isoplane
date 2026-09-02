@@ -24,12 +24,20 @@ pub struct SdkImport {
 }
 
 macro_rules! wty {
-    (i32) => { Ty::I32 };
-    (i64) => { Ty::I64 };
+    (i32) => {
+        Ty::I32
+    };
+    (i64) => {
+        Ty::I64
+    };
 }
 macro_rules! wres {
-    () => { &[] };
-    ($t:ident) => { &[wty!($t)] };
+    () => {
+        &[]
+    };
+    ($t:ident) => {
+        &[wty!($t)]
+    };
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -94,18 +102,12 @@ macro_rules! wisp_imports {
 /// the bytes back through [`crate::testing`] instead; that shim exists only so
 /// the idiom itself is testable without a wasm engine.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn read_sized_out(
-    imp: unsafe extern "C" fn(i32, i32) -> i32,
-    dst: &mut [u8],
-) -> i32 {
+pub(crate) fn read_sized_out(imp: unsafe extern "C" fn(i32, i32) -> i32, dst: &mut [u8]) -> i32 {
     unsafe { imp(dst.as_mut_ptr() as i32, dst.len() as i32) }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn read_sized_out(
-    imp: unsafe extern "C" fn(i32, i32) -> i32,
-    dst: &mut [u8],
-) -> i32 {
+pub(crate) fn read_sized_out(imp: unsafe extern "C" fn(i32, i32) -> i32, dst: &mut [u8]) -> i32 {
     let full = unsafe { imp(0, dst.len() as i32) };
     crate::testing::take_out_buffer(dst);
     full
@@ -207,17 +209,47 @@ const I64: Ty = Ty::I64;
 /// returns a packed [`wisp_abi::PollStatus`].
 pub const SDK_EXPORTS: &[SdkExport] = &[
     // wisp-alloc: func(size: u32, align: u32) -> u32
-    SdkExport { name: "wisp_alloc", sig: Sig { params: &[I32, I32], results: &[I32] } },
+    SdkExport {
+        name: "wisp_alloc",
+        sig: Sig {
+            params: &[I32, I32],
+            results: &[I32],
+        },
+    },
     // wisp-handle: func(dispatch: dispatch-record) -> poll-status
     // ...lowered as (ptr, len) of a postcard `DispatchRecord` in a buffer the
     // host obtained from `wisp_alloc`. The guest frees it.
-    SdkExport { name: "wisp_handle", sig: Sig { params: &[I32, I32], results: &[I64] } },
+    SdkExport {
+        name: "wisp_handle",
+        sig: Sig {
+            params: &[I32, I32],
+            results: &[I64],
+        },
+    },
     // wisp-wake: func(future: u64, result: result-record) -> poll-status
-    SdkExport { name: "wisp_wake", sig: Sig { params: &[I64, I32, I32], results: &[I64] } },
+    SdkExport {
+        name: "wisp_wake",
+        sig: Sig {
+            params: &[I64, I32, I32],
+            results: &[I64],
+        },
+    },
     // wisp-gc-hint: func(pressure: u8)
-    SdkExport { name: "wisp_gc_hint", sig: Sig { params: &[I32], results: &[] } },
+    SdkExport {
+        name: "wisp_gc_hint",
+        sig: Sig {
+            params: &[I32],
+            results: &[],
+        },
+    },
     // Pre-init entrypoint, run once in the sealed init sandbox.
-    SdkExport { name: "wisp_initialize", sig: Sig { params: &[], results: &[] } },
+    SdkExport {
+        name: "wisp_initialize",
+        sig: Sig {
+            params: &[],
+            results: &[],
+        },
+    },
 ];
 
 #[cfg(test)]
@@ -234,7 +266,10 @@ mod tests {
     fn sdk_matches_the_contract() {
         let sdk: Vec<&str> = SDK_IMPORTS.iter().map(|i| i.name).collect();
         let abi: Vec<&str> = IMPORTS.iter().map(|i| i.name).collect();
-        assert_eq!(sdk, abi, "import name/order drift between wisp-guest and wisp-abi");
+        assert_eq!(
+            sdk, abi,
+            "import name/order drift between wisp-guest and wisp-abi"
+        );
 
         for s in SDK_IMPORTS {
             let a = imports::lookup(s.name).expect("declared but not in the contract");
@@ -333,10 +368,16 @@ mod tests {
             if *name == imports::exports::MEMORY {
                 continue; // emitted by the linker, not by us
             }
-            assert!(SDK_EXPORTS.iter().any(|e| e.name == *name), "missing export {name}");
+            assert!(
+                SDK_EXPORTS.iter().any(|e| e.name == *name),
+                "missing export {name}"
+            );
         }
         for name in imports::exports::OPTIONAL {
-            assert!(SDK_EXPORTS.iter().any(|e| e.name == *name), "missing export {name}");
+            assert!(
+                SDK_EXPORTS.iter().any(|e| e.name == *name),
+                "missing export {name}"
+            );
         }
     }
 }

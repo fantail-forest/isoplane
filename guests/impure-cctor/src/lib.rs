@@ -69,11 +69,7 @@ impl Handler for Impure {
     fn new() -> Self {
         Impure
     }
-    fn handle(
-        &'static self,
-        req: Request,
-        _ctx: Ctx,
-    ) -> impl Future<Output = Response> + 'static {
+    fn handle(&'static self, req: Request, _ctx: Ctx) -> impl Future<Output = Response> + 'static {
         async move {
             match req.path.as_str() {
                 "/init" => {
