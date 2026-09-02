@@ -19,7 +19,6 @@ license-file = "LICENSE.txt"
 rust-version = "1.85"
 
 [workspace.dependencies]
-tempfile = "3"
 wisp-abi       = { path = "crates/wisp-abi" }
 wisp-engine    = { path = "crates/wisp-engine" }
 wisp-hibernate = { path = "crates/wisp-hibernate" }
