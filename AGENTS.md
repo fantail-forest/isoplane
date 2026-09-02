@@ -47,7 +47,7 @@ cargo metadata --no-deps --format-version 1 \
 | **.NET SDK**             | `Dockerfile` (`DOTNET_CHANNEL`)                         | Pin to one SDK version, not a channel.                                                                                                           |
 | **ILCompiler.LLVM**      | `guest-sdks/dotnet/Wisp.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
-| **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` and `scripts/prose-gate` | The gate, green before every commit. The prose gate's scope is the path list on this line; it is empty until the read-through adds a crate, and `scripts/prose-gate --self-test` proves its patterns fire. |
+| **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` | The gate, green before every commit.                                                                                                             |
 | **Format**               | house style                                             | `cargo fmt` is not run and not a gate; match the surrounding file.                                                                               |
 | **Tests**                | `cargo test`                                            | Guest fixtures are built by `guests/build.sh` and `guests/build-dotnet.sh`; a test that needs one builds it on demand through the shared fixture helper.                                                     |
 | **Database**             | SQLite via `rusqlite` (bundled)                         | Schema and migrations live with the store crate. |
@@ -67,7 +67,6 @@ scripts/dev --stop                                 # Remove your container when 
 
 cargo build --workspace --all-targets              # Build crates, tests, examples
 cargo clippy --workspace --all-targets -- -D warnings
-scripts/prose-gate --self-test                     # The comment-prose gate, proving its own patterns
 
 cargo test --workspace                             # Everything
 cargo test -p wisp-host                            # One crate
