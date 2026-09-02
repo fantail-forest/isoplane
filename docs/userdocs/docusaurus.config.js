@@ -72,7 +72,7 @@ const config = {
       footer: {
         style: 'dark',
         copyright:
-          'WISP documentation.',
+          'WISP proof of concept — internal documentation.',
       },
       prism: {
         theme: prismThemes.github,

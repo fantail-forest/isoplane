@@ -1,10 +1,7 @@
 //! The `wisp` command line, as types.
 //!
 //! Here rather than in `main.rs` so that exactly one definition of the command
-//! surface exists: `main.rs` parses it, and `wisp-docs` walks the same
-//! [`clap::Command`] to emit `reference/cli-wisp.md`. The doc comments below
-//! are what a tenant reads in `--help` *and* on that page — write them for
-//! both.
+//! surface exists. The doc comments below are what a tenant reads in `--help`.
 
 use std::path::PathBuf;
 

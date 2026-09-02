@@ -118,8 +118,7 @@ pub struct ImportDef {
     /// macro takes it as a required parameter, so a new capability cannot be
     /// added without saying what it is for.
     ///
-    /// Read by `wisp-docs` to emit `reference/capabilities.md`, and by
-    /// `wisp doctor` when it explains a manifest.
+    /// Read by `wisp doctor` when it explains a manifest.
     pub why: &'static str,
 }
 

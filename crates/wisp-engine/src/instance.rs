@@ -90,8 +90,8 @@ impl Instance {
     /// allocator's two per-slot caps — and call the total "fixed bookkeeping
     /// cost per instance". That number was never a cost. Both caps are pool
     /// *strides*, so raising them changes this figure and changes residency
-    /// not at all: `tests/bench_density.rs` measures the same per-instance
-    /// overhead at either end of the cap range. Over four raises the sum grew
+    /// not at all: the measured per-instance overhead is the same at either
+    /// end of the cap range. Over four raises the sum grew
     /// by orders of magnitude while the measured number never moved, so the
     /// reported value tracked a configuration constant and was mistaken for
     /// RAM.

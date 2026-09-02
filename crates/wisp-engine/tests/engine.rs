@@ -1445,8 +1445,7 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
 // ---------------------------------------------------------------------------
 
 /// Fixed bookkeeping per instance is a claim about **residency**, and this
-/// test cannot see residency. `tests/bench_density.rs` owns that against a
-/// measured number; this owns the one thing it can establish.
+/// test cannot see residency; it owns the one thing it can establish.
 ///
 /// It used to also assert a bound on the pooling allocator's per-slot
 /// reservation, derived from the two caps in `wtconfig`. That assertion is gone
