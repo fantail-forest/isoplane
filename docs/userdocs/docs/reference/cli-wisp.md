@@ -6,8 +6,6 @@ sidebar_position: 4
 
 # `wisp`
 
-This page is generated from the command's own definition. To change it, change the doc comments in the source and run `cargo run -p wisp-docs`.
-
 WebAssembly validation.
 
 ```

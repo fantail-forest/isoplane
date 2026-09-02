@@ -37,11 +37,10 @@ reqwest = { version = "0.12", features = ["json"], default-features = false }
 # `doctor` only validates, so one engine is enough — see the note above
 # `[features]` in wisp-control's manifest.
 #
-# A path dependency rather than `workspace = true` for the same reason
-# `wisp-docs` uses one: cargo IGNORES a member's `default-features = false`
-# when the workspace's own entry does not set it, with a warning and no other
-# effect. Taking it as `workspace = true` here would silently link both
-# engines.
+# A path dependency rather than `workspace = true`: cargo IGNORES a member's
+# `default-features = false` when the workspace's own entry does not set it,
+# with a warning and no other effect. Taking it as `workspace = true` here
+# would silently link both engines.
 wisp-control = { path = "../wisp-control", optional = true, default-features = false }
 
 [features]

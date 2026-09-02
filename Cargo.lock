@@ -2210,15 +2210,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roxmltree"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4238,25 +4229,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wisp-acceptance"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde",
-]
-
-[[package]]
-name = "wisp-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "serde",
- "serde_json",
- "wisp-acceptance",
-]
-
-[[package]]
 name = "wisp-cli"
 version = "0.1.0"
 dependencies = [
@@ -4303,24 +4275,6 @@ dependencies = [
  "wisp-engine",
  "wizer",
  "zstd",
-]
-
-[[package]]
-name = "wisp-docs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "roxmltree",
- "serde",
- "serde_json",
- "toml 0.9.12+spec-1.1.0",
- "wasmparser 0.244.0",
- "wisp-abi",
- "wisp-cli",
- "wisp-control",
- "wisp-proxy",
- "wispd",
 ]
 
 [[package]]

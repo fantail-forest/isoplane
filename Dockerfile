@@ -19,20 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Rust (host runtime + Rust guests) -------------------------------------
-#
-# Nightly is here for `wisp-docs`, which generates `sdk-rust.md` from rustdoc's
-# JSON output -- nightly-only -- and documents the SDK for wasm32, the target
-# guests link, since the crate is `cfg(target_arch = "wasm32")` throughout.
-# It cannot be added later: the container runs as the invoking uid and
-# RUSTUP_HOME is root-owned, so `rustup toolchain install` fails on a temp file.
-# Without it `scripts/dev cargo test --workspace` cannot check the docs.
 ARG RUST_VERSION=stable
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal \
     && rustup target add wasm32-unknown-unknown wasm32-wasip1 \
-    && rustup component add rustfmt clippy \
-    && rustup toolchain install nightly --profile minimal \
-    && rustup +nightly target add wasm32-unknown-unknown
+    && rustup component add rustfmt clippy
 
 # --- .NET (the C# guest, which is the point of the exercise) ----------------
 # Installed inside the image only; never on the host.

@@ -9,9 +9,6 @@ members = [
     "crates/wisp-proxy",
     "crates/wispd",
     "crates/wisp-cli",
-    "crates/wisp-bench",
-    "crates/wisp-docs",
-    "tests",
 ]
 exclude = ["crates/spike", "guests"]
 
