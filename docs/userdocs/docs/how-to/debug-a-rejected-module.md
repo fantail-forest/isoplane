@@ -66,7 +66,7 @@ Fixes:
 |---|---|
 | A Rust guest pulled in `std::fs`, `std::net`, or a crate that did | Remove it; the SDK deliberately offers no equivalent |
 | A C# guest dragged in a new BCL surface | Define the `__wasm_import_*` symbol in `guest-sdks/dotnet/native/wisp_pal.c` — see [below](#the-c-case-a-new-wasi-import-appeared) |
-| A hand-written module | Check the name against [Capabilities](../reference/capabilities.md); typos land here |
+| A hand-written module | Check the name against Capabilities; typos land here |
 
 ### V2 — the binary requires a disabled engine feature
 
@@ -151,5 +151,3 @@ the import.
 
 ## Related
 
-- [Validator rules](../reference/validator.md) — the full violation vocabulary.
-- [Capabilities](../reference/capabilities.md) — every declared import.

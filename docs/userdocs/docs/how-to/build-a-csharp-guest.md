@@ -6,21 +6,13 @@ sidebar_position: 9
 
 # Build a C# guest
 
-Everything about *building and shipping* a C# guest: the project layout, the
-build flavours, the settings that look like cruft and are not, and what
-`check.sh` proves.
-
-The SDK's API surface — every type and member — is generated from the
-library's own doc comments and lives in the [C# SDK
-reference](../reference/sdk-csharp.md). This page is the part a compiler
-cannot tell you.
+The SDK source under `guest-sdks/dotnet/` defines the managed APIs.
+This guide covers the project layout and build options.
 
 ## What the SDK reaches
 
 The SDK's `Abi/Imports.cs` binds the host contract. A module links the imports
-its compiled code reaches; the validator checks the resulting module. The
-[SDK reference](../reference/sdk-csharp.md) and API source describe the managed
-surface at this revision.
+its compiled code reaches; the validator checks the resulting module. The SDK source describes the managed surface at this revision.
 
 ## Layout
 

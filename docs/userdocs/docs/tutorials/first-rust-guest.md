@@ -120,5 +120,3 @@ The fixture SDK definitions and helpers are in `guest-sdks/rust`.
 `crates/wisp-abi/src/imports.rs` defines host imports and guest export
 signatures. `dispatch.rs`, `result.rs` and `status.rs` in the same crate define
 the records and entrypoint outcomes used by this example.
-
-See [Guest ABI](../reference/guest-abi.md) for the boundary and encoding.

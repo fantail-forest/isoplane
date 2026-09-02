@@ -24,9 +24,6 @@ It is a convention, not a gate. Nothing in the crates or the tests checks what
 it is running under: drop the prefix and they build and run wherever their
 toolchain does. `cargo build` on the host is fine and faster.
 
-`scripts/dev` uses your uid for its container and manages the container
-that it creates.
-
 ## Layout
 
 | Path                                     | What it is                                                                                                                                                                                                                                           |

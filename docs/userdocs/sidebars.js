@@ -41,15 +41,6 @@ const sidebars = {
       link: {type: 'doc', id: 'reference/index'},
       items: [
         'reference/architecture',
-        'reference/wisp-toml',
-        'reference/cli-wisp',
-        'reference/cli-other',
-        'reference/guest-abi',
-        'reference/capabilities',
-        'reference/sdk-csharp',
-        'reference/sdk-rust',
-        'reference/metrics',
-        'reference/validator',
       ],
     },
     {

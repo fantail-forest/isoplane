@@ -28,8 +28,8 @@ Read the two SDK pages with that asymmetry in mind:
 
 | | |
 |---|---|
-| [C# SDK](reference/sdk-csharp.md) | **The target.** What a tenant writes. |
-| [Rust SDK](reference/sdk-rust.md) | The reference implementation of the contract and its fixture guests. |
+| C# SDK | **The target.** What a tenant writes. |
+| Rust SDK | The reference implementation of the contract, and the fixture guests. |
 
 Where a mechanism is currently more complete on the Rust side, this
 documentation says so on the page that documents it rather than implying

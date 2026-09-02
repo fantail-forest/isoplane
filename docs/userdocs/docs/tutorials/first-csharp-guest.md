@@ -64,8 +64,8 @@ public sealed class Api
 ```
 
 The reference harness expects the echoed request path. Rebuild after an edit;
-keep that response contract when running these fixture checks. `Request`,
-`Response` and `Ctx` are described in the [C# SDK reference](../reference/sdk-csharp.md).
+keep that response contract when running these fixture checks. The SDK source under `guest-sdks/dotnet/Sdk/` defines `Request`,
+`Response` and `Ctx`.
 
 ## 4. Run it through the validator
 
@@ -166,6 +166,4 @@ Then define that symbol in `guest-sdks/dotnet/native/wisp_pal.c`.
 
 ## Where next
 
-- [C# SDK reference](../reference/sdk-csharp.md) — the full surface and the build flavours.
-- [The guest ABI](../reference/guest-abi.md) — what the five exports actually receive.
 - [Why suspension implies an empty stack](../explanation/invariants.md#invariant-3--suspension-implies-an-empty-stack).
