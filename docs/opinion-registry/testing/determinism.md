@@ -6,7 +6,7 @@ Give a test that needs time a clock, and advance it. Wall-clock reads in a test 
 
 **Not this:** Sleep for a while, then assert the metered CPU was small.
 
-**Exception:** A benchmark, which lives in the benchmark crate and is not a test.
+**Exception:** A benchmark, which does not live under `cargo test` and is not a test.
 
 ## Assert order with sequencing, not with a race that usually resolves one way
 

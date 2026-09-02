@@ -1,12 +1,12 @@
 # Benchmarking
 
-## Keep benchmarks in the benchmark crate and never under `cargo test`
+## A benchmark is a run of a load tool against a node, never a test
 
-Generate load and produce figures in `wisp-bench` and `bench/`. Move any measurement that needs a real guest, a real cell, and a quiet machine there, whether or not it has a `#[test]` attribute. Give a benchmark no pass or fail; it produces a measurement, and what to do about it is a decision a person makes reading it.
+Generate load with a maintained open-loop HTTP generator against a running `wispd`, and read its latency histogram. Nothing in the repository generates load or renders a report, and nothing under `cargo test` measures: a measurement with a pass mark painted on is green on one machine and red on another. Give a benchmark no verdict; what to do about its figure is a decision a person makes reading it.
 
-**Not this:** Density, activation-latency, and park-cost measurements in a crate's `tests/` directory, passing on every machine because their thresholds cannot fail.
+**Not this:** Density, activation-latency, and park-cost measurements in a crate's `tests/` directory, passing on every machine because their thresholds cannot fail. A load generator of our own with a SKU projection, a campaign planner, and a report renderer.
 
-**Exception:** None.
+**Exception:** A small in-tree generator for a specific arrival process the maintained tools lack, kept to what that process needs, and kept out of `cargo test`.
 
 ## Measure the path a customer takes
 
@@ -18,24 +18,8 @@ Send load in through the proxy with a stated arrival process and measure at the 
 
 ## Keep the instrument out of the product
 
-Keep the machinery a benchmark needs to attribute time (sample carriers, lock statistics, comparison arms) with the benchmark, on a branch or behind a feature that production builds do not enable. Ship the product with `tracing` spans and nothing else of the instrument.
+Ship the product with `tracing` spans and nothing else of a benchmark's instrument. Machinery a benchmark needs to attribute time (sample carriers, lock statistics, comparison arms) lives with the benchmark, on a branch or behind a feature that production builds do not enable, and is deleted with it.
 
 **Not this:** A benchmark's timestamp instrument compiled into the cell and sampling production traffic by default.
 
 **Exception:** None.
-
-## A benchmark's tests test the benchmark
-
-Unit tests of an analysis function are welcome in the benchmark crate. A "test" that runs the generator against a real cell to check that traces tile a request is a smoke run and is named as one.
-
-**Not this:** A benchmark crate whose tests depend on the acceptance crate's statistics module and on guest fixtures built by a build script.
-
-**Exception:** None.
-
-## Prefer an off-the-shelf load tool
-
-An open-loop HTTP generator with a latency histogram exists in several maintained tools. Writing one is justified only when the question cannot be asked through the proxy, and the answer to that is usually to fix the proxy.
-
-**Not this:** A load generator with its own SKU projection, campaign planner, and report renderer.
-
-**Exception:** A small in-tree generator for a specific arrival process the maintained tools lack, kept to what that process needs.

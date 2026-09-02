@@ -4,7 +4,7 @@
 
 Create a crate because two things depend on it, because it has its own toolchain or target, or because it must build without the rest of the tree. A crate with one consumer is a directory with a longer build graph and a public API that outlives its reason for being public.
 
-**Not this:** A documentation generator that depends on the benchmark crate, so that regenerating a reference page compiles the engine.
+**Not this:** A documentation generator that depends on a benchmark crate, so that regenerating a reference page compiles the engine.
 
 **Exception:** A crate whose second consumer is known and imminent may be split early if the boundary is cheap to define.
 

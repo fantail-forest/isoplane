@@ -14,7 +14,7 @@ Make a scenario assert: every check is pass or fail, runs under `cargo test`, an
 
 **Not this:** A scenario runner whose numeric checks produce a third verdict that passes `cargo test` unless an environment variable is set.
 
-**Exception:** A benchmark may render a report. It lives in the benchmark crate.
+**Exception:** A benchmark may render a report. It does not live under `cargo test`.
 
 ## Test behaviour through public interfaces, not implementation
 
