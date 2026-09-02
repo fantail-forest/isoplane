@@ -47,7 +47,6 @@ pub trait Handler: Sized + 'static {
 
     fn handle(&'static self, req: Request, ctx: Ctx) -> impl Future<Output = Response> + 'static;
 
-
 }
 
 

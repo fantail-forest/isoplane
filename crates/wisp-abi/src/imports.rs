@@ -13,20 +13,14 @@ pub mod exports {
     pub const INITIALIZE: &str = "wisp_initialize";
     pub const MEMORY: &str = "memory";
 
-    /// Required for a module to be deployable at all.
     pub const REQUIRED: &[&str] = &[ALLOC, HANDLE, WAKE, MEMORY];
-    /// Optional but strongly recommended.
     pub const OPTIONAL: &[&str] = &[GC_HINT, INITIALIZE];
 
     use super::{Sig, Ty::I32, Ty::I64};
 
-    /// Core-wasm signatures, for the same reason [`super::IMPORTS`] exists:
-    /// the validator, the linker and the guest SDK must check ONE definition
-    /// rather than three copies of a paragraph.
-    ///
-    /// `(ptr, len)` pairs always address a postcard-encoded `DispatchRecord`
-    /// or `ResultRecord` in guest memory. `wisp_handle` and `wisp_wake`
-    /// return a packed `PollStatus` (see `crate::status`).
+    /// `(ptr, len)` pairs address a postcard-encoded `DispatchRecord` or
+    /// `ResultRecord` in guest memory; `wisp_handle` and `wisp_wake` return a
+    /// packed [`crate::status::PollStatus`].
     pub const SIG_ALLOC: Sig = Sig {
         params: &[I32, I32],
         results: &[I32],
@@ -48,7 +42,6 @@ pub mod exports {
         results: &[],
     };
 
-    /// `(name, signature)` for every export the host may call.
     pub const SIGNATURES: &[(&str, Sig)] = &[
         (ALLOC, SIG_ALLOC),
         (HANDLE, SIG_HANDLE),
@@ -78,35 +71,34 @@ pub struct Sig {
 /// Position and direction of an import buffer; scalar parameters do not describe it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufSpec {
-    /// No buffer; every parameter is a scalar.
     None,
-    /// Guest -> host. `(params[i], params[i+1])` is `(ptr, len)`, read out of
-    /// guest memory and valid only for the duration of the call.
+    /// Guest to host: `(params[i], params[i+1])` is `(ptr, len)`, read out of
+    /// guest memory for the duration of the call.
     In(u8),
-    /// Host -> guest. `(params[i], params[i+1])` is `(ptr, cap)`; the host
-    /// fills a scratch buffer that the engine then copies in. Still no host
-    /// pointer ever enters guest memory.
+    /// Host to guest: `(params[i], params[i+1])` is `(ptr, cap)`; the host
+    /// fills a scratch buffer that the engine copies into guest memory.
     Out(u8),
 }
 
+/// The most an out-buffer import may ask the host to produce in one call.
+/// Application budgets cap the guest's own memory; this caps what the guest can make
+/// the host allocate on its behalf.
+pub const MAX_OUT_BUFFER_BYTES: usize = 1 << 20;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportKind {
-    /// Returns a value immediately and cannot block. Safe intra-slice.
     Sync,
-    /// Returns a `future-id: u64` immediately. There is no import that waits,
-    /// which is what makes invariant 3 hold by construction.
+    /// Returns a future id immediately. No import waits.
     Future,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// Runtime plumbing: allocation handshake, panics, pre-init interposer.
     Core,
     Observe,
     Clock,
     Entropy,
     Http,
-    /// Building the inbound reply.
     Response,
     Ctx,
 }
@@ -117,32 +109,19 @@ pub struct ImportDef {
     pub group: Group,
     pub sig: Sig,
     pub kind: ImportKind,
-    /// Where the `(ptr, len)` pair is, and which way it flows.
     pub buf: BufSpec,
     /// Marks values that require sensitive-data handling.
     pub sensitive: bool,
     /// Included in the baseline initialization import set.
     pub init_visible: bool,
-    /// What this capability is *for*, in one sentence, for a tenant reading
-    /// the manifest rather than the table.
-    ///
-    /// Here rather than in the documentation generator for the same reason
-    /// [`PalDef::why`](crate::pal::PalDef::why) is here: the capability
-    /// surface has one definition, and a reference page that re-describes it
-    /// somewhere else is a second one that goes stale silently. The `imp!`
-    /// macro takes it as a required parameter, so a new capability cannot be
-    /// added without saying what it is for.
-    ///
-    /// Read by `wisp doctor` when it explains a manifest.
+    /// What the capability is for, for a tenant reading a manifest. Required
+    /// by `imp!` so a capability cannot be added without saying.
     pub why: &'static str,
 }
 
 const I32: Ty = Ty::I32;
 const I64: Ty = Ty::I64;
 
-/// `(ptr: i32, len: i32) -> i64` — the shape of every postcard-encoded,
-/// future-returning import. Guest memory is read at (ptr, len), which is
-/// valid only for the duration of the call.
 const BUF_TO_FUTURE: Sig = Sig {
     params: &[I32, I32],
     results: &[I64],
@@ -174,15 +153,14 @@ macro_rules! imp {
 const SYNC: ImportKind = ImportKind::Sync;
 const FUT: ImportKind = ImportKind::Future;
 
-/// **The complete capability surface.** Nothing else may be imported.
 pub const IMPORTS: &[ImportDef] = &[
     // ---- core -------------------------------------------------------------
-    // Guest panic. Available at init so a failed pre-init reports usefully.
     ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \
          trapping anonymously") },
-    // A forbidden unit causes a bounded retry that defers that unit.
-    // Earlier allowed external effects are not rolled back.
+    // The guest announces each init unit before running it; when a unit traps
+    // on a forbidden import, pre-init is replayed with that unit deferred to
+    // ordinary lazy execution.
     ImportDef {
         init_visible: true,
         ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_begin", Core, Sig { params: &[I32], results: &[] }, SYNC,
@@ -195,7 +173,6 @@ pub const IMPORTS: &[ImportDef] = &[
             "asks whether this unit was deferred on a previous attempt; non-zero means skip it on \
              the replay") }
     },
-    // The preparation string-hash seed is separate from entropy requests and can be captured in guest state.
     ImportDef {
         init_visible: true,
         sensitive: true,
@@ -203,14 +180,9 @@ pub const IMPORTS: &[ImportDef] = &[
             "A per-attempt string-hash seed, separate from host entropy requests.") }
     },
 
-    // A template deletes the config parse from cold activation, and the
-    // tenant declares `init_visible_vars` — but without this import the blob
-    // has no way to reach the guest. Unlike the hash seed this is NOT
-    // externally sourced: it is tenant-authored deploy input, fixed for the
-    // version and part of the reproducibility preimage, so pre-running a
-    // config parse bakes no shared secret and no shared entropy.
-    // (ptr, cap) -> i32 returns the blob's FULL length, so a guest can size
-    // its buffer with a zero-length probe.
+    // Tenant-authored deploy input, fixed for the version: unlike the hash
+    // seed it carries no secret and no entropy, so baking a parse of it into
+    // the template shares nothing between instances.
     ImportDef {
         init_visible: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC,
@@ -220,8 +192,6 @@ pub const IMPORTS: &[ImportDef] = &[
     },
 
     // ---- observability ----------------------------------------------------
-    // Log CPU counts against the dispatch budget, which is what stops
-    // log-as-compute abuse.
     ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; the CPU counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
@@ -231,21 +201,17 @@ pub const IMPORTS: &[ImportDef] = &[
         "closes the span with that id; unbalanced spans are the guest's problem, not the host's") },
 
     // ---- clock & entropy --------------------------------------------------
-    // Coarse (1 ms) and FROZEN intra-slice: removes the
-    // measurement primitive most Spectre-class attacks need. NOT init-visible
-    // — a cctor that reads the clock is impure and gets deferred.
+    // Not init-visible: a static initialiser that reads the clock is impure.
     ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC,
         "Reads the host coarse clock; use host deadline futures to wait.") },
     ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
-    // Requests bytes through the host entropy interface; captured guest values remain captured.
     ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,
         "Host CSPRNG bytes for this request; values already stored in guest memory remain part of captured state.") },
 
-    // ---- outbound http ----------------------------------
+    // ---- outbound http ----------------------------------------------------
     imp!("http_fetch", Http, BUF_TO_FUTURE, FUT,
         "Issues an outbound request through the host egress policy and completes with its response head."),
-    // A response-body read completes through a host-owned future.
     ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
         "Reads the next chunk of a response body through a host-owned future.") },
 
@@ -259,36 +225,19 @@ pub const IMPORTS: &[ImportDef] = &[
 
 
 
+    // ---- sockets ----------------------------------------------------------
 
-    // Imports marked as carrying sensitive data.
+    // ---- secrets ----------------------------------------------------------
 
 
     // ---- the kill-cooperation ABI ------------------------------------------
-    // Two halves of one mechanism, and both are engine-owned: neither ever
-    // reaches a `HostBindings` vtable, because the budget state they read and
-    // write lives in the engine's store, next to the meter the epoch callback
-    // compares against.
-    //
-    // `budget_remaining_ns` is the host-published remaining-budget value the
-    // runtime layer reads so it can raise `BudgetExceededException` at its
-    // natural boundaries — the allocation slow path, GC entry, and task
-    // switch. It returns the signed nanoseconds left against the budget; once
-    // grace has begun it is <= 0 and keeps falling, so a guest can tell "at
-    // budget" from "deep into grace" and decide how much unwinding it can
-    // still afford.
+    // Both engine-owned rather than in the bindings vtable: the budget state
+    // they read and write lives in the engine's store, beside the meter the
+    // epoch callback compares against.
     ImportDef { buf: BufSpec::None, ..imp!("budget_remaining_ns", Ctx, Sig { params: &[], results: &[I64] }, SYNC,
         "signed nanoseconds left against this dispatch's CPU budget; negative once the dispatch is \
          in its grace window and still falling, so a guest can tell `at budget` from `deep into \
          grace` and decide how much unwinding it can still afford") },
-    // `unsafe_to_trap` is the bit the runtime layer publishes around GC phases
-    // and scheduler queue mutations. The epoch callback **defers grace entry**
-    // while it is set and the **hard deadline ignores it**: a pinned bit buys
-    // exactly the grace window, nothing more.
-    //
-    // A production runtime layer would publish this as an exported mutable
-    // global so the host reads it for free; an import costs one host call per
-    // GC phase, which is the honest PoC shape and keeps the bit's owner
-    // unambiguous.
     ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC,
         "the runtime layer's unsafe-to-trap bit, set around GC phases and scheduler queue \
          mutations. Grace entry defers while it is set and the hard deadline ignores it, so a \
@@ -299,19 +248,12 @@ pub fn lookup(name: &str) -> Option<&'static ImportDef> {
     IMPORTS.iter().find(|i| i.name == name)
 }
 
-/// Rule **V1**: an undeclared import is an attempted capability.
 pub fn is_declared(module: &str, field: &str) -> bool {
     module == HOST_MODULE && lookup(field).is_some()
 }
 
-/// Imports marked for the baseline initialization policy.
 pub fn init_visible() -> impl Iterator<Item = &'static ImportDef> {
     IMPORTS.iter().filter(|i| i.init_visible)
-}
-
-/// Imports marked as carrying sensitive data.
-pub fn sensitive() -> impl Iterator<Item = &'static ImportDef> {
-    IMPORTS.iter().filter(|i| i.sensitive)
 }
 
 
@@ -319,8 +261,6 @@ pub fn sensitive() -> impl Iterator<Item = &'static ImportDef> {
 mod tests {
     use super::*;
 
-    /// A capability with no stated purpose is a capability nobody argued for.
-    /// The macro makes the field mandatory; this is what stops `""`.
     #[test]
     fn every_import_says_what_it_is_for() {
         for i in IMPORTS {
@@ -358,9 +298,8 @@ mod tests {
         }
     }
 
-    /// A `BufSpec` that disagrees with its signature would make the engine
-    /// read a scalar as a pointer — i.e. hand the host an attacker-chosen
-    /// offset into guest memory. Cheap to check, so check it.
+    /// A `BufSpec` that disagrees with its signature would have the engine
+    /// read a scalar as a pointer into guest memory.
     #[test]
     fn buffer_specs_agree_with_signatures() {
         for i in IMPORTS {
@@ -384,7 +323,8 @@ mod tests {
         }
     }
 
-    /// Requests bytes through the host entropy interface; captured guest values remain captured.
+    /// A fourth out-buffer import is a new path for host bytes to cross the
+    /// sandbox boundary, and gets a design conversation before this list.
     #[test]
     fn host_writes_into_guest_memory_through_exactly_three_imports() {
         let out: Vec<_> = IMPORTS
@@ -394,7 +334,8 @@ mod tests {
             .collect();
         assert_eq!(
             out,
-            vec!["init_hash_seed", "init_config_get", "entropy_fill"]
+            vec!["init_hash_seed", "init_config_get", "entropy_fill"],
+            "the set of imports that write into guest memory has changed"
         );
     }
 

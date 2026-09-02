@@ -1,22 +1,19 @@
-//! `dispatch-record` — the single envelope covering every trigger type.
+//! The dispatch record: one envelope for every trigger a guest receives.
 
 use serde::{Deserialize, Serialize};
 
-/// One top-level unit of work handed to a guest via `wisp_handle`.
+/// One unit of work handed to a guest via `wisp_handle`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispatchRecord {
     pub dispatch_id: u64,
     pub kind: DispatchKind,
-    /// W3C context, propagated into outbound fetches automatically.
+    /// W3C trace context.
     pub trace: TraceContext,
-    /// Cancellation is NOT an entrancy. The host cancels by completing
-    /// this future; the guest observes it at its next await as a tripped
-    /// `CancellationToken`. A dispatch that never awaits cannot observe it and
-    /// is killed at its CPU budget instead — abruptly, with no unwinding.
+    /// The future the host completes to cancel this dispatch. A guest observes
+    /// it at its next await; one that never awaits is killed at its CPU budget.
     pub cancel_future: u64,
-    /// CPU-ms budget for this dispatch, from the plan limits.
     pub cpu_budget_ms: u32,
-    /// Coarse wall clock at dispatch start; frozen for the slice.
+    /// Wall clock at dispatch start, frozen for the slice.
     pub now_ms: u64,
 }
 
@@ -37,7 +34,6 @@ pub struct HttpRequest {
 }
 
 
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceContext {
     pub trace_id: String,
@@ -50,9 +46,9 @@ pub struct TraceContext {
 pub struct ResponseHead {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    /// Inline response bytes; streamed responses send subsequent chunks through `resp_write`.
     pub body: Vec<u8>,
-    /// If true the guest will keep writing chunks after returning `done`.
+    /// The guest will keep writing chunks through `resp_write` after
+    /// returning `done`.
     pub streaming: bool,
 }
 

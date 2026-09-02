@@ -1,7 +1,5 @@
-//! `poll-status` — what a guest entrypoint returns.
-//!
-//! Packed into a single `u64` so that `wisp_handle` / `wisp_wake` need no
-//! out-parameter and no allocation on the hot path:
+//! The poll status a guest entrypoint returns, packed into one `u64` so that
+//! `wisp_handle` and `wisp_wake` need no out-parameter:
 //!
 //! ```text
 //!   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped
@@ -9,7 +7,6 @@
 //!                          trapped -> trap code
 //! ```
 
-/// The result of a guest entrypoint call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PollStatus {
     /// Dispatch complete. Carries the host response handle, or zero for no response.
@@ -27,12 +24,12 @@ pub enum TrapCode {
     Unknown = 0,
     Panic = 1,
     OutOfMemory = 2,
-    /// A capability was invoked that this module did not declare, or that the
-    /// init sandbox forbids.
+    /// A capability the module did not declare, or that the init sandbox
+    /// forbids.
     CapabilityViolation = 3,
-    /// Malformed dispatch/result encoding.
+    /// Malformed dispatch or result encoding.
     Protocol = 4,
-    /// Guest exceeded the simultaneous-pending-futures cap.
+    /// The pending-futures cap was exceeded.
     TooManyFutures = 5,
 }
 
@@ -81,7 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips() {
+    fn every_status_survives_a_round_trip() {
         for s in [
             PollStatus::Done { response: 0 },
             PollStatus::Done {
@@ -92,7 +89,11 @@ mod tests {
                 code: TrapCode::CapabilityViolation,
             },
         ] {
-            assert_eq!(PollStatus::decode(s.encode()), s);
+            assert_eq!(
+                PollStatus::decode(s.encode()),
+                s,
+                "the packed status must decode to what was encoded"
+            );
         }
     }
 }

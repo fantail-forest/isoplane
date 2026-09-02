@@ -23,7 +23,7 @@
 
 use wasmtime::error::Context;
 use wasmtime::{bail, Caller, Engine, Linker, Result};
-use wisp_abi::imports::{ImportDef, ImportKind, Ty, HOST_MODULE, IMPORTS};
+use wisp_abi::imports::{ImportDef, ImportKind, Ty, HOST_MODULE, IMPORTS, MAX_OUT_BUFFER_BYTES};
 
 use crate::bindings::ImportCall;
 use crate::layout;
@@ -191,9 +191,9 @@ fn call_binding(
     // never treats the return value as a byte count to copy.
     if let BufSpec::Out(i) = def.buf {
         let cap = raw[i as usize + 1] as usize;
-        if cap > MAX_OUT_BUFFER {
+        if cap > MAX_OUT_BUFFER_BYTES {
             bail!(
-                "`{}` out-buffer of {cap} bytes exceeds the {MAX_OUT_BUFFER} byte cap",
+                "`{}` out-buffer of {cap} bytes exceeds the {MAX_OUT_BUFFER_BYTES} byte cap",
                 def.name
             );
         }
@@ -254,11 +254,6 @@ fn call_binding(
 
     Ok(ret)
 }
-
-/// Ceiling on a single host->guest fill, so a guest cannot ask the host to
-/// allocate an arbitrary buffer on its behalf. The plan limits cap the guest's
-/// own memory; this caps the host's.
-const MAX_OUT_BUFFER: usize = 1 << 20;
 
 pub(crate) fn read_guest(
     c: &mut Caller<'_, StoreState>,

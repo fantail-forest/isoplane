@@ -11,8 +11,7 @@ pub struct AppManifest {
     pub bindings: Bindings,
     #[serde(default)]
     pub limits: Limits,
-    /// Non-secret vars the tenant marks init-visible, supplied to the sealed
-    /// init sandbox as a data blob. Runtime secrets never appear here.
+    /// Non-secret variables handed to the init sandbox as a data blob.
     #[serde(default)]
     pub init_visible_vars: Vec<(String, String)>,
 }
@@ -23,33 +22,26 @@ pub struct HandlerConfig {
     pub lifecycle: HandlerLifecycle,
 }
 
-/// Policy for reusing guest state across handler dispatches.
+/// Per-app: whether an instance may serve more than one dispatch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HandlerLifecycle {
-    /// Reuse guest memory opportunistically between dispatches.
-    /// The host may reset or discard an instance; memory is temporary.
+    /// Instances may survive across dispatches, and the platform resets or
+    /// discards them whenever it chooses.
     #[default]
     Reuse,
-    /// Use initialized guest state for each dispatch.
+    /// Every dispatch runs on a pristine clone of the template.
     Fresh,
 }
 
-impl HandlerLifecycle {
-    /// Whether a reset after every dispatch is *guaranteed* rather than merely
-    /// permitted.
-    pub fn resets_every_dispatch(self) -> bool {
-        self == HandlerLifecycle::Fresh
-    }
-}
+impl HandlerLifecycle {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Bindings {
-    /// Egress policy. RFC1918 / link-local are denied by default.
+    /// Egress allowlist. `None` leaves the platform's default egress policy in force.
     #[serde(default)]
     pub fetch_allowlist: Option<Vec<String>>,
 }
-
 
 
 
@@ -61,7 +53,6 @@ pub struct Limits {
     pub instance_memory_max: u64,
     pub cpu_ms_per_http_dispatch: u32,
     pub subrequests_per_dispatch: u32,
-    /// Maximum pending futures allowed for a dispatch.
     pub pending_futures_per_dispatch: u32,
 }
 
@@ -77,13 +68,15 @@ impl Default for Limits {
     }
 }
 
-/// Execution and residency states reported by the host.
+/// The lifecycle tiers an instance moves through. Defined here because the
+/// cell owns the transitions while `wispd` reports the counts and `wisp
+/// status` prints them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LifecycleTier {
     /// Executing on a pool thread.
     Hot,
-    /// Empty invocation stack with host-owned wake sources and resident guest memory.
+    /// Empty stack, futures pending, memory resident.
     Parked,
     /// Resumable sandbox state is retained at a host return boundary.
     Hibernated,
@@ -108,18 +101,15 @@ impl LifecycleTier {
         }
     }
 
-    /// Whether this state retains resident guest memory.
+    /// Whether an instance in this tier occupies linear memory. The proxy's
+    /// wake coalescing and the cell's residency accounting both key off it.
     pub fn is_resident(self) -> bool {
         matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
     }
 
-    /// The legal tier transitions as a predicate, and nothing outside them.
-    ///
-    /// This lives with the tiers rather than in the cell because it *is* the
-    /// table: `Hibernated -> Parked` is absent because the only exit from
-    /// Hibernated is a wake trigger, which makes the instance Hot; and nothing
-    /// leaves Discarded, because a fresh activation produces a *new* instance
-    /// rather than resurrecting this one.
+    /// The legal transitions. `Hibernated -> Parked` is absent because the
+    /// only exit from `Hibernated` is a wake, which makes the instance `Hot`;
+    /// nothing leaves `Discarded` because a fresh activation is a new instance.
     pub fn may_transition_to(self, next: Self) -> bool {
         use LifecycleTier::*;
         matches!(
@@ -145,21 +135,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_guarantees_reset() {
-        assert!(HandlerLifecycle::Fresh.resets_every_dispatch());
-        assert!(!HandlerLifecycle::Reuse.resets_every_dispatch());
-    }
-}
-
-#[cfg(test)]
-mod lifecycle_tests {
-    use super::*;
-
-    #[test]
     fn only_hot_and_parked_hold_memory() {
-        assert!(LifecycleTier::Hot.is_resident());
-        assert!(LifecycleTier::Parked.is_resident());
-        assert!(!LifecycleTier::Hibernated.is_resident());
-        assert!(!LifecycleTier::Discarded.is_resident());
+        assert!(
+            LifecycleTier::Hot.is_resident(),
+            "a hot instance is in memory"
+        );
+        assert!(
+            LifecycleTier::Parked.is_resident(),
+            "a parked instance is in memory"
+        );
+        assert!(
+            !LifecycleTier::Hibernated.is_resident(),
+            "a hibernated instance is bytes in storage"
+        );
+        assert!(
+            !LifecycleTier::Discarded.is_resident(),
+            "a discarded instance holds nothing"
+        );
     }
 }

@@ -44,8 +44,6 @@ public sealed class DispatchRecord
             default:
                 
                 
-                // sends one is misrouting, and that must surface as Protocol
-                // rather than as silent misbehaviour.
                 throw new PostcardException();
         }
 
@@ -68,7 +66,6 @@ public enum DispatchKind : uint
     /// An inbound HTTP request. The only trigger a Handler receives.
     /// </summary>
     Http = 0,
-
 
 
 
@@ -100,10 +97,9 @@ internal sealed class ResultRecord
 internal enum FutureError : uint
 {
 
-    Timeout = 0,
-    Cancelled = 1,
-    Denied = 2,
+    Cancelled = 0,
+    Denied = 1,
 
-    NotFound = 3,
-    Io = 4,
+    NotFound = 2,
+    Io = 3,
 }

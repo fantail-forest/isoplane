@@ -6,8 +6,6 @@ use wisp_abi::result::{FutureError, };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WispError {
-    /// A deadline elapsed, or the dispatch CPU budget did.
-    Timeout,
     /// The dispatch's implicit cancellation future completed. Observed at an
     /// await, because cancellation is not an entrancy.
     Cancelled,
@@ -30,7 +28,6 @@ impl WispError {
 impl From<FutureError> for WispError {
     fn from(e: FutureError) -> Self {
         match e {
-            FutureError::Timeout => WispError::Timeout,
             FutureError::Cancelled => WispError::Cancelled,
             FutureError::Denied(s) => WispError::Denied(s),
             FutureError::NotFound => WispError::NotFound,
@@ -42,7 +39,6 @@ impl From<FutureError> for WispError {
 impl fmt::Display for WispError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WispError::Timeout => write!(f, "timeout"),
             WispError::Cancelled => write!(f, "cancelled"),
             WispError::Denied(s) => write!(f, "denied: {s}"),
             WispError::NotFound => write!(f, "not found"),

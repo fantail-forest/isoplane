@@ -1,12 +1,10 @@
-//! `result-record` — how a host future completes.
+//! The result record: how a host future completes.
 
 use serde::{Deserialize, Serialize};
 
-/// Delivered to the guest via `wisp_wake(future_id, result)`.
-///
-/// The payload is opaque at this layer: the guest SDK knows which typed
-/// response a given future expects because it recorded that when it issued
-/// the import call.
+/// Delivered to the guest via `wisp_wake(future_id, result)`. The payload is
+/// opaque here; the guest SDK recorded which typed response the future expects
+/// when it issued the import call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResultRecord {
     Ok(Vec<u8>),
@@ -15,8 +13,7 @@ pub enum ResultRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FutureError {
-    Timeout,
-    /// The dispatch's implicit cancellation future completed.
+    /// The dispatch's cancellation future completed.
     Cancelled,
     /// Host capability policy refused the call, such as a denied egress target.
     Denied(String),
@@ -28,7 +25,6 @@ pub enum FutureError {
 impl std::fmt::Display for FutureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FutureError::Timeout => write!(f, "deadline elapsed"),
             FutureError::Cancelled => write!(f, "dispatch cancelled"),
             FutureError::Denied(why) => write!(f, "capability denied: {why}"),
             FutureError::NotFound => write!(f, "not found"),
@@ -40,7 +36,7 @@ impl std::fmt::Display for FutureError {
 impl std::error::Error for FutureError {}
 
 impl FutureError {
-    /// True for refusals that mean *stop*, as opposed to *retry*.
+    /// True for refusals that mean stop, as opposed to retry.
     pub fn is_terminal(&self) -> bool {
         matches!(self, FutureError::Cancelled)
     }
@@ -55,17 +51,14 @@ impl ResultRecord {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Typed payloads carried inside `ResultRecord::Ok`.
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    /// A response-body read completes through a host-owned future.
+    /// Handle for streaming the body via `http_body_read`.
     pub body_handle: u32,
-    /// Complete response bytes when returned inline instead of through `body_handle`.
+    /// The whole body, when it fit under the inline cap and no streaming read
+    /// is needed.
     pub body_inline: Option<Vec<u8>>,
 }
 
