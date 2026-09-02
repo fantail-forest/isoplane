@@ -9,12 +9,8 @@ use wisp_abi::host::{Dispatcher, HttpReply, RouteTarget};
 use crate::cell::{Cell, DispatchResult, Target};
 use crate::ModuleId;
 
-/// A dispatch that is still outstanding after this long has not parked — it
-/// has gone wrong. The real backstop is the CPU budget and
-/// `CellConfig::wall_ms_cap`, both of which fire inside the cell; this only
-/// exists so a caller cannot be blocked forever by a bug in the cell itself,
-/// which is why it is the wall cap plus a margin rather than a limit in its
-/// own right.
+/// The wall cap plus a margin: the budget and the wall cap fire inside the
+/// cell, and this only keeps a caller from waiting forever on a cell bug.
 fn deadline(cell: &Cell) -> Duration {
     Duration::from_millis(cell.cfg.wall_ms_cap as u64 + 5_000)
 }
@@ -29,11 +25,8 @@ impl Cell {
                 self.cfg.name
             )
         })?;
-        // Trust-tier partitioning is enforced at registration by
-        // `Cell::admits`. This is the other half: a route that resolved to the
-        // right module but the wrong tenant must not be served, or the tier
-        // partitioning would be a property of the route table rather than of
-        // the cell.
+        // The other half of `Cell::admits`: a route to the right module and
+        // the wrong tenant is not served.
         anyhow::ensure!(
             tenant == target.tenant,
             "{module} on cell `{}` belongs to tenant `{tenant}`, not `{}`",
@@ -43,12 +36,8 @@ impl Cell {
         Ok(module)
     }
 
-    /// Run a dispatch on the exec pool without blocking the caller's reactor.
-    ///
-    /// Reactor threads own I/O, execution-pool threads run guests. A
-    /// `Dispatcher` method is called *on* a reactor thread, so the handoff has
-    /// to happen here — `Cell::dispatch_blocking` would otherwise park a proxy
-    /// worker for the length of a guest dispatch.
+    /// A `Dispatcher` method runs on a reactor thread, so the blocking
+    /// dispatch is handed to a blocking task.
     async fn run(
         &self,
         module: ModuleId,
@@ -81,9 +70,6 @@ impl Dispatcher for Cell {
         let out = self.run(module, Target::Handler { route }, rec).await?;
 
         if let Some(trap) = &out.trap {
-            // The trap rate has to be visible, and the trap has already
-            // become a 5xx inside the cell, so this is telemetry, not control
-            // flow.
             tracing::warn!(
                 app = %target.app, version = %target.version, trap,
                 "guest fault"
@@ -93,10 +79,7 @@ impl Dispatcher for Cell {
             status: out.status,
             headers: out.headers,
             body: out.body,
-            // Streaming responses accumulate on the instance and are
-            // readable via `Cell::response_snapshot`, but the PoC does not
-            // pipe post-`done` chunks to the requester. Claiming `streaming`
-            // here would promise the proxy chunks that never arrive.
+            // Chunks written after `done` are not piped to the requester.
             streaming: false,
         })
     }

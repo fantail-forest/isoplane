@@ -1,17 +1,13 @@
-//! The map behind `Cell::active`: one mutex per shard rather than one over
-//! the whole map, because every use of it is a single-key operation on an
-//! `InstanceId` and nothing iterates it or holds an invariant across two keys.
+//! The map behind `Cell::active`: one mutex per shard, because every use is a
+//! single-key operation and nothing holds an invariant across two keys.
 
 use std::collections::HashMap;
 use std::hash::Hash;
 
 use parking_lot::Mutex;
 
-/// A key that already carries its own shard index.
-///
-/// `InstanceId`s come from a counter, so their low bits are already a perfect
-/// round-robin; hashing them would spread them worse than not hashing. A key
-/// type whose low bits are not a round-robin folds its own hash in here.
+/// `InstanceId`s come from a counter, so their low bits already spread
+/// evenly; a key type whose low bits do not folds its own hash in here.
 pub(crate) trait ShardKey {
     fn shard_key(&self) -> u64;
 }
@@ -28,8 +24,6 @@ impl ShardKey for crate::InstanceId {
     }
 }
 
-/// One shard on a cacheline of its own, so two threads on two different
-/// shards do not write the same line.
 #[repr(align(128))]
 struct Shard<K, V> {
     map: Mutex<HashMap<K, V>>,
@@ -41,9 +35,7 @@ pub(crate) struct ShardedMap<K, V> {
 }
 
 impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
-    /// `shards` is rounded up to a power of two. Size it above the execution
-    /// pool: with fewer shards than threads, collisions are guaranteed rather
-    /// than merely possible.
+    /// `shards` is rounded up to a power of two.
     pub(crate) fn new(shards: usize) -> ShardedMap<K, V> {
         let n = shards.max(1).next_power_of_two();
         ShardedMap {
@@ -73,8 +65,7 @@ impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
         self.shard(k).lock().remove(k)
     }
 
-    /// `f` applied to the value under `k`, or `None` if there is none. `f`
-    /// runs with the shard locked, so a reference never leaves the lock.
+    /// `f` runs with the shard locked, so a reference never leaves the lock.
     pub(crate) fn with<R>(&self, k: &K, f: impl FnOnce(&V) -> R) -> Option<R> {
         self.shard(k).lock().get(k).map(f)
     }
@@ -116,7 +107,8 @@ mod tests {
                     *v += 1;
                     *v
                 }),
-                Some(k as u32 + 1)
+                Some(k as u32 + 1),
+                "a key must update in its own shard"
             );
             assert_eq!(
                 m.remove(&k),
@@ -135,7 +127,7 @@ mod tests {
             128,
             "the mask only works over a power of two"
         );
-        assert_eq!(m.mask, 127);
+        assert_eq!(m.mask, 127, "the mask covers every shard");
         let m: ShardedMap<u64, u32> = ShardedMap::new(0);
         assert_eq!(
             m.shards.len(),

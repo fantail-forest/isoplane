@@ -15,9 +15,8 @@ pub fn clock_read_failures() -> u64 {
 
 #[cfg(test)]
 thread_local! {
-    /// Test-only fault injection for the unreadable-clock path. Thread-local
-    /// on purpose: the unit tests share a process, and a global switch would
-    /// make one test's fault another test's flake.
+    /// Fault injection for the unreadable-clock path; thread-local so one
+    /// test's fault is not another's flake.
     static FORCE_CLOCK_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -32,7 +31,6 @@ fn clock_failure_forced() -> bool {
     false
 }
 
-#[allow(unsafe_code)]
 fn read_clock_ns(clock: libc::clockid_t) -> Option<u64> {
     if clock_failure_forced() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
@@ -42,8 +40,8 @@ fn read_clock_ns(clock: libc::clockid_t) -> Option<u64> {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: `ts` is a valid, properly aligned `timespec` we own for the
-    // duration of the call; `clock_gettime` writes it and returns 0 or -1.
+    // SAFETY: `ts` is a valid, aligned `timespec` owned for the duration of
+    // the call; `clock_gettime` writes it and returns 0 or -1.
     let rc = unsafe { libc::clock_gettime(clock, &mut ts) };
     if rc != 0 {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
@@ -52,44 +50,25 @@ fn read_clock_ns(clock: libc::clockid_t) -> Option<u64> {
     Some((ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
 }
 
-/// Calling-thread CPU time, or `None` if the clock could not be read.
+/// Calling-thread CPU time, or `None` if the clock cannot be read.
 pub fn try_read_thread_cpu_ns() -> Option<u64> {
     read_clock_ns(libc::CLOCK_THREAD_CPUTIME_ID)
 }
 
-/// `CLOCK_PROCESS_CPUTIME_ID` — every thread in this process summed — or
-/// `None` if the clock could not be read.
-pub fn try_read_process_cpu_ns() -> Option<u64> {
-    read_clock_ns(libc::CLOCK_PROCESS_CPUTIME_ID)
-}
-
-/// `CLOCK_MONOTONIC`, **raw**, or `None` if the clock could not be read.
-///
-/// Raw is the point: no per-process origin is subtracted, so a reading taken
-/// here and a reading taken by any other crate in this process — notably
-/// `wisp_bench::schedule::mono_ns`, which is this same `clock_gettime` call —
-/// are on one epoch and may be subtracted from each other. See
-/// [`crate::mono_ns`] for what the origin used to be and why it had to go.
+/// Raw `CLOCK_MONOTONIC`, with no per-process origin subtracted, or `None` if
+/// the clock could not be read.
 pub fn try_read_mono_ns() -> Option<u64> {
     read_clock_ns(libc::CLOCK_MONOTONIC)
 }
 
-/// [`try_read_thread_cpu_ns`] with the unreadable case flattened to `0`.
-///
-/// Kept because callers outside this module read a bare `u64`, but the zero
-/// it returns on failure is a **floor, not a measurement**; the failure is
-/// counted in [`clock_read_failures`] so the two are still separable after
-/// the fact. New code should call the `try_` form.
+/// [`try_read_thread_cpu_ns`] with the unreadable case flattened to `0`, a
+/// floor rather than a measurement; the failure is still counted in
+/// [`clock_read_failures`].
 pub fn read_thread_cpu_ns() -> u64 {
     try_read_thread_cpu_ns().unwrap_or(0)
 }
 
-/// [`try_read_process_cpu_ns`] with an unreadable clock represented as `0`.
-pub fn read_process_cpu_ns() -> u64 {
-    try_read_process_cpu_ns().unwrap_or(0)
-}
-
-/// A scoped thread-CPU measurement over an active guest interval.
+/// A thread-CPU measurement over an active guest interval.
 pub struct CpuInterval {
     /// The start reading, or `None` when the clock could not be read.
     start: Option<u64>,
@@ -101,12 +80,12 @@ impl CpuInterval {
             start: try_read_thread_cpu_ns(),
         }
     }
-    /// Elapsed thread CPU time, or `None` if either endpoint is unreadable.
+    /// `None` if either end could not be read.
     pub fn try_elapsed_ns(&self) -> Option<u64> {
         Some(try_read_thread_cpu_ns()?.saturating_sub(self.start?))
     }
-    /// The interval, with an unreadable clock flattened to `0`. The failure is
-    /// still visible in [`clock_read_failures`].
+    /// An unreadable clock flattened to `0`, still counted in
+    /// [`clock_read_failures`].
     pub fn elapsed_ns(&self) -> u64 {
         self.try_elapsed_ns().unwrap_or(0)
     }
@@ -117,33 +96,25 @@ impl CpuInterval {
 pub struct Meters {
     /// Accumulated thread CPU time.
     cpu_ns: AtomicU64,
-    /// Recorded separately from CPU usage.
+    /// Recorded separately from active execution time.
     wall_ns: AtomicU64,
-    /// Raw dispatch count.
     dispatches: AtomicU64,
-    /// Wakes delivered from the parked state.
-    wakes: AtomicU64,
-    /// Hibernation wake count.
     hibernation_wakes: AtomicU64,
     /// Accumulated captured delta bytes.
     delta_bytes: AtomicU64,
     captures: AtomicU64,
-    /// Accumulated park duration in milliseconds.
+    /// Recorded separately from active execution time.
     observed_park_ms: AtomicU64,
-    /// Log CPU counts against the dispatch budget, which is what stops
-    /// log-as-compute abuse. Already included in `cpu_ns` (it is spent on the
-    /// pool thread); broken out so the share is visible.
+    /// Already inside `cpu_ns`; broken out so the share is visible.
     log_cpu_ns: AtomicU64,
     trapped: AtomicU64,
-    /// Every CPU-budget kill this tenant took, both phases.
     budget_kills: AtomicU64,
-    /// Clean and hard CPU-budget kill counts.
     clean_kills: AtomicU64,
     hard_kills: AtomicU64,
     /// CPU consumed past the budget, already included in `cpu_ns`.
     overage_ns: AtomicU64,
     shed: AtomicU64,
-    /// Active intervals with an unreadable endpoint clock.
+    /// Active intervals with an unreadable thread clock endpoint.
     incomplete_intervals: AtomicU64,
 }
 
@@ -152,13 +123,12 @@ impl Meters {
         Self::default()
     }
 
-    /// Record the dispatch's CPU and wall-clock measurements.
     pub fn record_cpu(&self, out: &DispatchOutcome) {
         self.cpu_ns.fetch_add(out.cpu_ns, Ordering::Relaxed);
         self.wall_ns.fetch_add(out.wall_ns, Ordering::Relaxed);
     }
 
-    /// Record measured CPU time, counting an unreadable interval separately.
+    /// Record active time, counting an unreadable interval separately.
     pub fn record_interval(&self, ns: Option<u64>) {
         match ns {
             Some(ns) => {
@@ -170,14 +140,10 @@ impl Meters {
         }
     }
 
-    /// Record one top-level work item.
     pub fn record_dispatch(&self) {
         self.dispatches.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn record_wake(&self) {
-        self.wakes.fetch_add(1, Ordering::Relaxed);
-    }
     pub fn record_hibernation_wake(&self) {
         self.hibernation_wakes.fetch_add(1, Ordering::Relaxed);
     }
@@ -185,7 +151,6 @@ impl Meters {
         self.captures.fetch_add(1, Ordering::Relaxed);
         self.delta_bytes.fetch_add(delta_bytes, Ordering::Relaxed);
     }
-    /// Accumulated park duration.
     pub fn record_park(&self, ms: u64) {
         self.observed_park_ms.fetch_add(ms, Ordering::Relaxed);
     }
@@ -195,7 +160,6 @@ impl Meters {
     pub fn record_trap(&self) {
         self.trapped.fetch_add(1, Ordering::Relaxed);
     }
-    /// Record the over-budget share already included in `record_cpu`.
     pub fn record_budget_kill(&self, phase: wisp_engine::KillPhase, overage_ns: u64) {
         self.budget_kills.fetch_add(1, Ordering::Relaxed);
         match phase {
@@ -220,9 +184,6 @@ impl Meters {
     }
     pub fn dispatches(&self) -> u64 {
         self.dispatches.load(Ordering::Relaxed)
-    }
-    pub fn wakes(&self) -> u64 {
-        self.wakes.load(Ordering::Relaxed)
     }
     pub fn hibernation_wakes(&self) -> u64 {
         self.hibernation_wakes.load(Ordering::Relaxed)
@@ -251,14 +212,13 @@ impl Meters {
     pub fn hard_kills(&self) -> u64 {
         self.hard_kills.load(Ordering::Relaxed)
     }
-    /// CPU consumed past the budget, already included in [`Meters::cpu_ns`].
+    /// A subset of [`Meters::cpu_ns`], never an addition to it.
     pub fn overage_ns(&self) -> u64 {
         self.overage_ns.load(Ordering::Relaxed)
     }
     pub fn shed(&self) -> u64 {
         self.shed.load(Ordering::Relaxed)
     }
-    /// Active intervals with an unreadable endpoint clock.
     pub fn incomplete_intervals(&self) -> u64 {
         self.incomplete_intervals.load(Ordering::Relaxed)
     }
@@ -300,10 +260,10 @@ mod tests {
         m.record_budget_kill(wisp_engine::KillPhase::Clean, out.overage_ns);
 
         assert_eq!(m.cpu_ns(), 53_000_000, "the meter must not stop at B");
-        assert_eq!(m.overage_ns(), 3_000_000);
-        assert_eq!(m.clean_kills(), 1);
-        assert_eq!(m.hard_kills(), 0);
-        assert_eq!(m.budget_kills(), 1);
+        assert_eq!(m.overage_ns(), 3_000_000, "the overage share is visible");
+        assert_eq!(m.clean_kills(), 1, "a clean kill is counted as one");
+        assert_eq!(m.hard_kills(), 0, "and not as a hard kill");
+        assert_eq!(m.budget_kills(), 1, "both phases count as budget kills");
     }
 
     #[test]
@@ -324,15 +284,17 @@ mod tests {
             m.record_cpu(&out);
             m.record_budget_kill(wisp_engine::KillPhase::Clean, out.overage_ns);
         }
-        assert_eq!(m.overage_ns(), 8_400_000);
+        assert_eq!(m.overage_ns(), 8_400_000, "every overage is summed");
         assert!(
             m.cpu_ns() > 3 * budget_ns,
-            "three over-budget dispatches measured {} ns, which is at most 3xB — the overage was \
+            "three over-budget dispatches measured {} ns, which is at most 3xB; the overage was \
              dropped somewhere",
             m.cpu_ns()
         );
-        // Overage is a subset of the compute total, not an addition.
-        assert!(m.overage_ns() < m.cpu_ns());
+        assert!(
+            m.overage_ns() < m.cpu_ns(),
+            "the overage is a subset of the one compute meter, not an addition to it"
+        );
     }
 
     #[test]
@@ -340,9 +302,9 @@ mod tests {
         let m = Meters::new();
         m.record_cpu(&outcome(1_000, 1_000_000_000));
         m.record_park(60_000);
-        assert_eq!(m.cpu_ns(), 1_000);
-        assert_eq!(m.observed_park_ms(), 60_000);
-        assert_eq!(m.cpu_ms(), 0.001);
+        assert_eq!(m.cpu_ns(), 1_000, "only the CPU interval is measured");
+        assert_eq!(m.observed_park_ms(), 60_000, "park time is recorded");
+        assert_eq!(m.cpu_ms(), 0.001, "a second off-CPU adds no CPU time");
     }
 
     #[test]
@@ -355,15 +317,14 @@ mod tests {
             None,
             "an unreadable clock must say so"
         );
-        assert_eq!(try_read_process_cpu_ns(), None);
         let failures = clock_read_failures();
-        assert!(failures >= before + 2, "the failed reads were not counted");
+        assert!(failures > before, "the failed read was not counted");
 
-        // The lossy wrappers still answer `0` for callers that take a bare
-        // `u64` — but the failure is on the record, so the two are separable
-        // after the fact rather than fused into one number.
-        assert_eq!(read_thread_cpu_ns(), 0);
-        assert!(clock_read_failures() > failures);
+        assert_eq!(read_thread_cpu_ns(), 0, "the lossy wrapper answers a floor");
+        assert!(
+            clock_read_failures() > failures,
+            "and the floor is still on the record as a failure"
+        );
 
         let iv = CpuInterval::start();
         assert_eq!(
@@ -390,7 +351,7 @@ mod tests {
             "a working clock must produce a measurement"
         );
         m.record_interval(measured);
-        assert!(m.cpu_ns() > 0);
+        assert!(m.cpu_ns() > 0, "a working clock measures the interval");
         assert_eq!(
             m.incomplete_intervals(),
             1,
@@ -398,14 +359,13 @@ mod tests {
         );
     }
 
-    /// The fault injection is thread-local, so one test's broken clock is not
-    /// another test's flake. Worth asserting: a global switch here would make
-    /// every CPU measurement in this binary suspect.
     #[test]
     fn the_clock_fault_injection_does_not_escape_its_thread() {
         FORCE_CLOCK_FAILURE.with(|f| f.set(true));
-        assert_eq!(try_read_thread_cpu_ns(), None);
-        let elsewhere = std::thread::spawn(try_read_thread_cpu_ns).join().unwrap();
+        assert_eq!(try_read_thread_cpu_ns(), None, "the fault is injected here");
+        let elsewhere = std::thread::spawn(try_read_thread_cpu_ns)
+            .join()
+            .expect("thread");
         assert!(
             elsewhere.is_some(),
             "the injected fault leaked into another thread"
@@ -427,7 +387,6 @@ mod tests {
         std::hint::black_box(x);
         let burned = busy.elapsed_ns();
 
-        // 50 ms of sleep must not read as 50 ms of CPU.
         assert!(slept < 5_000_000, "sleeping recorded {slept} ns of CPU");
         assert!(
             burned > slept,

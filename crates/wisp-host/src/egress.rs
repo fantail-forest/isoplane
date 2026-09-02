@@ -1,36 +1,21 @@
-//! Egress / SSRF policy, enforced host-side.
-//!
-//! `http.fetch` enforces per-app policy host-side — RFC1918 / link-local
-//! denied by default, DNS-rebinding-safe resolution (resolve-then-pin),
-//! per-tenant connection and bandwidth quotas, optional allowlists.
-//!
-//! "Host-side" is the whole of it: the guest cannot be trusted to enforce
-//! anything, and the import vtable is the entire attack surface into the host,
-//! so this is the only place an outbound connection can be decided.
-//!
-//! **Resolve-then-pin** is the part that is easy to get subtly wrong. Checking
-//! a hostname and then handing the hostname to an HTTP client lets DNS move
-//! the target between the check and the connect — the classic rebinding
-//! attack. [`HostEgressPolicy::check`] therefore resolves once, validates
-//! *every* address it got back, and returns a [`PinnedTarget`] carrying the
-//! `SocketAddr` the connection must actually use. A caller that re-resolves
-//! has thrown the control away, which is why the pinned address is the only
-//! thing the fetch path is given.
+//! Egress policy for `http_fetch`, enforced host-side: private and link-local
+//! ranges denied, optional per-app allowlists, per-tenant connection and
+//! bandwidth quotas, and resolve-then-pin. The check resolves once, validates
+//! every address it got back, and returns a [`PinnedTarget`] carrying the
+//! `SocketAddr` the connection uses, so DNS cannot move the target between
+//! the check and the connect.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wisp_abi::host::{EgressPolicy, PinnedTarget};
 
-/// DNS, behind a seam so the rebinding behaviour is testable without a
-/// resolver that lies on demand in production.
 pub trait Resolver: Send + Sync + 'static {
     fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String>;
 }
 
-/// The real thing: blocking `getaddrinfo`. Called from the reactor's blocking
-/// pool, never from an execution-pool thread — a resolver stall must not hold
-/// a Hot dispatch's thread.
+/// Blocking `getaddrinfo`; called from the reactor's blocking pool so a
+/// resolver stall never holds an execution thread.
 pub struct SystemResolver;
 
 impl Resolver for SystemResolver {
@@ -87,57 +72,58 @@ impl std::fmt::Display for DenyReason {
     }
 }
 
-/// Every range the platform refuses to dial. Deny-by-default: the check is
-/// "is this address in a range we are willing to reach", and anything the
-/// classifier does not understand is refused.
+/// Every range the platform refuses to dial.
 pub fn is_forbidden(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            v4.is_private()            // RFC1918
+            v4.is_private()
                 || v4.is_loopback()
-                || v4.is_link_local()  // 169.254/16, and with it 169.254.169.254
+                || v4.is_link_local()
                 || v4.is_broadcast()
                 || v4.is_documentation()
                 || v4.is_unspecified()
                 || v4.is_multicast()
-                || is_shared_cgnat(v4) // 100.64/10 — carrier NAT, often internal
-                || is_benchmark(v4)    // 198.18/15
+                || is_shared_cgnat(v4)
+                || is_benchmark(v4)
                 || v4.octets()[0] == 0
-                || v4.octets()[0] >= 240 // reserved / class E
+                || v4.octets()[0] >= 240
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
-                || is_unique_local(v6)      // fc00::/7
-                || is_v6_link_local(v6)     // fe80::/10
-                // A v4-mapped or v4-compatible address must be judged as the
-                // v4 address it carries, or ::ffff:127.0.0.1 walks straight in.
+                || is_unique_local(v6)
+                || is_v6_link_local(v6)
+                // Judged as the v4 address it carries, or ::ffff:127.0.0.1
+                // walks straight in.
                 || v6.to_ipv4_mapped().map(|v| is_forbidden(IpAddr::V4(v))).unwrap_or(false)
                 || v6.to_ipv4().map(|v| is_forbidden(IpAddr::V4(v))).unwrap_or(false)
         }
     }
 }
 
+/// 100.64/10, carrier NAT.
 fn is_shared_cgnat(v4: Ipv4Addr) -> bool {
     let o = v4.octets();
     o[0] == 100 && (64..128).contains(&o[1])
 }
 
+/// 198.18/15.
 fn is_benchmark(v4: Ipv4Addr) -> bool {
     let o = v4.octets();
     o[0] == 198 && (o[1] == 18 || o[1] == 19)
 }
 
+/// fc00::/7.
 fn is_unique_local(v6: Ipv6Addr) -> bool {
     (v6.segments()[0] & 0xfe00) == 0xfc00
 }
 
+/// fe80::/10.
 fn is_v6_link_local(v6: Ipv6Addr) -> bool {
     (v6.segments()[0] & 0xffc0) == 0xfe80
 }
 
-/// A parsed URL, without pulling in a URL crate for the PoC.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedUrl {
     pub scheme: String,
@@ -161,8 +147,7 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
     if authority.is_empty() {
         return Err(DenyReason::Malformed("empty authority".into()));
     }
-    // Credentials in the authority are a redirect-and-confuse primitive and
-    // buy a tenant nothing they cannot do with a header.
+    // Credentials in the authority buy a tenant nothing a header cannot.
     if authority.contains('@') {
         return Err(DenyReason::Malformed(
             "userinfo is not permitted in a fetch url".into(),
@@ -170,7 +155,6 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
     }
     let default_port = if scheme == "https" { 443 } else { 80 };
     let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
-        // IPv6 literal.
         let (h, rest) = inner
             .split_once(']')
             .ok_or_else(|| DenyReason::Malformed("unterminated ipv6 literal".into()))?;
@@ -202,18 +186,13 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
     })
 }
 
-/// The egress policy, with the per-tenant quotas attached.
 pub struct HostEgressPolicy {
     resolver: Box<dyn Resolver>,
-    /// Per-tenant connection quota.
     max_connections: u64,
-    /// Per-tenant bandwidth quota. This is a fair-use
-    /// cap, not a meter.
+    /// Egress has a fair-use cap.
     max_bytes: u64,
     connections: AtomicU64,
     bytes: AtomicU64,
-    /// Counts resolutions, so a test can prove the target was pinned rather
-    /// than looked up twice.
     resolutions: AtomicU64,
 }
 
@@ -243,6 +222,7 @@ impl HostEgressPolicy {
         self.bytes.fetch_add(n, Ordering::Relaxed);
     }
     pub fn release_connection(&self) {
+        // Infallible: the closure always returns `Some`.
         let _ = self
             .connections
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
@@ -286,8 +266,6 @@ impl HostEgressPolicy {
             });
         }
 
-        // Resolve ONCE. Everything after this decides about addresses we
-        // already hold, and the pinned address is what the connection uses.
         self.resolutions.fetch_add(1, Ordering::Relaxed);
         let addrs = match self.resolver.resolve(&parsed.host, parsed.port) {
             Ok(a) => a,
@@ -300,9 +278,8 @@ impl HostEgressPolicy {
             self.release_connection();
             return Err(DenyReason::NoAddress);
         }
-        // Every returned address must be acceptable, not merely the first: a
-        // resolver that returns [public, private] would otherwise let a client
-        // that falls back to the second address reach the private one.
+        // Every address, not the first: a client that falls back to a second
+        // address would otherwise reach a private one.
         if let Some(bad) = addrs.iter().find(|a| is_forbidden(a.ip())) {
             self.release_connection();
             return Err(DenyReason::PrivateAddress(bad.ip()));
@@ -326,8 +303,7 @@ mod tests {
     use parking_lot::Mutex;
     use std::net::Ipv4Addr;
 
-    /// A resolver that answers differently on each call — the shape of a DNS
-    /// rebinding attack.
+    /// Answers differently on each call, the shape of a DNS rebinding attack.
     struct Rebinder {
         answers: Mutex<Vec<Vec<SocketAddr>>>,
         calls: AtomicU64,
@@ -363,8 +339,6 @@ mod tests {
         HostEgressPolicy::new(Box::new(r), 100, 1 << 30)
     }
 
-    /// RFC1918 / link-local denied by default. 169.254.169.254 is the cloud
-    /// metadata endpoint and is the reason this test exists.
     #[test]
     fn private_and_link_local_are_denied() {
         for ip in [
@@ -377,22 +351,29 @@ mod tests {
             [0, 0, 0, 0],
         ] {
             let p = policy(Fixed(vec![sa(ip, 80)]));
-            let err = p.check_typed("http://target.example/", None).unwrap_err();
+            let err = p
+                .check_typed("http://target.example/", None)
+                .expect_err("a private address must be refused");
             assert!(
                 matches!(err, DenyReason::PrivateAddress(_)),
                 "{ip:?} was not denied: {err}"
             );
         }
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 80)]));
-        assert!(p.check_typed("http://example.com/", None).is_ok());
+        assert!(
+            p.check_typed("http://example.com/", None).is_ok(),
+            "a public address is dialable"
+        );
     }
 
     #[test]
     fn ipv6_loopback_ula_and_v4_mapped_are_denied() {
         for lit in ["[::1]", "[fc00::1]", "[fe80::1]", "[::ffff:127.0.0.1]"] {
-            let ip: IpAddr = lit.trim_matches(['[', ']']).parse().unwrap();
+            let ip: IpAddr = lit.trim_matches(['[', ']']).parse().expect("literal");
             let p = policy(Fixed(vec![SocketAddr::new(ip, 80)]));
-            let err = p.check_typed(&format!("http://{lit}/"), None).unwrap_err();
+            let err = p
+                .check_typed(&format!("http://{lit}/"), None)
+                .expect_err("a private v6 address must be refused");
             assert!(
                 matches!(err, DenyReason::PrivateAddress(_)),
                 "{lit} allowed: {err}"
@@ -400,35 +381,41 @@ mod tests {
         }
     }
 
-    /// Resolve-then-pin. The check resolves once; the connection is given the
-    /// address, not the name, so a second DNS answer has nothing to move.
     #[test]
     fn dns_rebinding_cannot_move_the_target_after_the_check() {
         let p = policy(Rebinder::new(vec![
-            vec![sa([93, 184, 216, 34], 443)], // first answer: public
-            vec![sa([127, 0, 0, 1], 443)],     // second: the attack
+            vec![sa([93, 184, 216, 34], 443)],
+            vec![sa([127, 0, 0, 1], 443)],
         ]));
-        let pinned = p.check_typed("https://rebind.example/", None).unwrap();
-        assert_eq!(pinned.addr, sa([93, 184, 216, 34], 443));
+        let pinned = p
+            .check_typed("https://rebind.example/", None)
+            .expect("the first answer is public");
+        assert_eq!(
+            pinned.addr,
+            sa([93, 184, 216, 34], 443),
+            "the pinned address is the one that was checked"
+        );
         assert_eq!(p.resolutions(), 1, "the policy must resolve exactly once");
-        // The fetch path connects to `pinned.addr`. Even though DNS now says
-        // 127.0.0.1, nothing in the request carries the name any more.
-        assert_ne!(pinned.addr.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert_ne!(
+            pinned.addr.ip(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "the second DNS answer has nothing left to move"
+        );
     }
 
-    /// The other half of rebinding: a single answer containing both a public
-    /// and a private address must be refused outright, not silently narrowed
-    /// to the public one.
     #[test]
     fn a_mixed_answer_is_denied_entirely() {
         let p = policy(Fixed(vec![
             sa([93, 184, 216, 34], 80),
             sa([192, 168, 0, 5], 80),
         ]));
-        let err = p.check_typed("http://mixed.example/", None).unwrap_err();
+        let err = p
+            .check_typed("http://mixed.example/", None)
+            .expect_err("an answer with a private address must be refused");
         assert_eq!(
             err,
-            DenyReason::PrivateAddress(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5)))
+            DenyReason::PrivateAddress(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5))),
+            "the answer is refused outright, not narrowed to the public address"
         );
     }
 
@@ -438,35 +425,49 @@ mod tests {
         for url in ["file:///etc/passwd", "gopher://x/", "ftp://x/"] {
             assert!(
                 matches!(p.check_typed(url, None), Err(DenyReason::Scheme(_))),
-                "{url}"
+                "{url} is not dialable"
             );
         }
-        assert!(matches!(
-            p.check_typed("http://user:pw@example.com/", None),
-            Err(DenyReason::Malformed(_))
-        ));
+        assert!(
+            matches!(
+                p.check_typed("http://user:pw@example.com/", None),
+                Err(DenyReason::Malformed(_))
+            ),
+            "userinfo in the authority is refused"
+        );
     }
 
     #[test]
     fn allowlist_supports_exact_and_wildcard_hosts() {
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 443)]));
         let list = vec!["api.example.com".to_string(), "*.cdn.example".to_string()];
-        assert!(p
-            .check_typed("https://api.example.com/x", Some(&list))
-            .is_ok());
-        assert!(p
-            .check_typed("https://a.cdn.example/x", Some(&list))
-            .is_ok());
-        assert!(p.check_typed("https://cdn.example/x", Some(&list)).is_ok());
+        assert!(
+            p.check_typed("https://api.example.com/x", Some(&list))
+                .is_ok(),
+            "an exact entry matches"
+        );
+        assert!(
+            p.check_typed("https://a.cdn.example/x", Some(&list))
+                .is_ok(),
+            "a wildcard matches a subdomain"
+        );
+        assert!(
+            p.check_typed("https://cdn.example/x", Some(&list)).is_ok(),
+            "a wildcard matches its bare suffix"
+        );
         let err = p
             .check_typed("https://evil.example/x", Some(&list))
-            .unwrap_err();
-        assert_eq!(err, DenyReason::NotAllowlisted("evil.example".into()));
-        // Not a suffix match on the raw string: `notcdn.example` must not pass
-        // a `*.cdn.example` rule.
-        assert!(p
-            .check_typed("https://notcdn.example/x", Some(&list))
-            .is_err());
+            .expect_err("a host off the list is refused");
+        assert_eq!(
+            err,
+            DenyReason::NotAllowlisted("evil.example".into()),
+            "the refusal names the host"
+        );
+        assert!(
+            p.check_typed("https://notcdn.example/x", Some(&list))
+                .is_err(),
+            "`*.cdn.example` is not a raw suffix match"
+        );
     }
 
     #[test]
@@ -476,40 +477,64 @@ mod tests {
             2,
             1 << 30,
         );
-        assert!(p.check_typed("http://a.example/", None).is_ok());
-        assert!(p.check_typed("http://a.example/", None).is_ok());
-        assert!(matches!(
-            p.check_typed("http://a.example/", None),
-            Err(DenyReason::ConnectionQuota { limit: 2 })
-        ));
+        assert!(
+            p.check_typed("http://a.example/", None).is_ok(),
+            "the first connection"
+        );
+        assert!(
+            p.check_typed("http://a.example/", None).is_ok(),
+            "the second connection"
+        );
+        assert!(
+            matches!(
+                p.check_typed("http://a.example/", None),
+                Err(DenyReason::ConnectionQuota { limit: 2 })
+            ),
+            "the third is over the quota"
+        );
         p.release_connection();
-        assert!(p.check_typed("http://a.example/", None).is_ok());
+        assert!(
+            p.check_typed("http://a.example/", None).is_ok(),
+            "a released connection frees the slot"
+        );
     }
 
-    /// A denied request must not consume a connection slot.
     #[test]
     fn a_denied_target_does_not_burn_quota() {
         let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([10, 0, 0, 1], 80)])), 1, 1 << 30);
-        assert!(p.check_typed("http://internal/", None).is_err());
-        assert_eq!(p.connections(), 0);
+        assert!(
+            p.check_typed("http://internal/", None).is_err(),
+            "the target is private"
+        );
+        assert_eq!(p.connections(), 0, "a refused target holds no slot");
     }
 
     #[test]
     fn urls_parse_the_way_the_policy_assumes() {
         assert_eq!(
-            parse_url("https://example.com/a?b=c").unwrap(),
+            parse_url("https://example.com/a?b=c").expect("parses"),
             ParsedUrl {
                 scheme: "https".into(),
                 host: "example.com".into(),
                 port: 443,
                 path_and_query: "/a?b=c".into()
-            }
+            },
+            "scheme, host, default port and path are split"
         );
-        assert_eq!(parse_url("http://example.com:8080").unwrap().port, 8080);
-        assert_eq!(parse_url("http://[::1]:9/").unwrap().host, "::1");
         assert_eq!(
-            parse_url("http://EXAMPLE.com/").unwrap().host,
-            "example.com"
+            parse_url("http://example.com:8080").expect("parses").port,
+            8080,
+            "an explicit port is kept"
+        );
+        assert_eq!(
+            parse_url("http://[::1]:9/").expect("parses").host,
+            "::1",
+            "a v6 literal loses its brackets"
+        );
+        assert_eq!(
+            parse_url("http://EXAMPLE.com/").expect("parses").host,
+            "example.com",
+            "hosts are lower-cased"
         );
     }
 }

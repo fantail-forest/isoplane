@@ -1,21 +1,9 @@
-//! Outbound HTTP through pinned destinations.
-//!
-//! ## Why the fetcher takes a `PinnedTarget` and not a URL
-//!
-//! Egress resolution is DNS-rebinding-safe: resolve, then pin. The
-//! resolution and the policy decision happen in [`crate::egress`]; this
-//! module's job is to not throw that away. [`PinnedHttpFetcher`] connects to
-//! `target.addr` — the `SocketAddr` the policy already validated — and uses
-//! the URL only for the request line and the `Host` header. There is no code
-//! path here that resolves a name, which is the property that makes rebinding
-//! structurally impossible rather than merely unlikely.
-//!
-//! ## PoC gap: no TLS
-//!
-//! The workspace has no TLS crate, so `https://` egress is refused with a
-//! typed error rather than silently downgraded to `http://` — a silent
-//! downgrade would be a security bug wearing a convenience costume. Plain HTTP
-//! egress is real, and every egress control is exercised by it.
+//! Outbound HTTP through pinned destinations. [`PinnedHttpFetcher`]
+//! connects to the address the egress policy pinned and uses the URL only for
+//! the request line and the `Host` header; nothing here resolves a name, which
+//! is what makes DNS rebinding impossible after the check. There is no TLS
+//! crate in the workspace, so `https://` egress is refused rather than
+//! downgraded.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -62,7 +50,6 @@ impl PinnedHttpFetcher {
         addr: SocketAddr,
         req: Request<Full<Bytes>>,
     ) -> Result<Response<Incoming>, FutureError> {
-        // Connect to the PINNED address. The hostname is never resolved here.
         let stream = tokio::net::TcpStream::connect(addr)
             .await
             .map_err(|e| FutureError::Io(format!("connect {addr}: {e}")))?;
@@ -91,10 +78,8 @@ impl Fetcher for PinnedHttpFetcher {
         let parsed = crate::egress::parse_url(&target.url)
             .map_err(|e| FutureError::Denied(e.to_string()))?;
         if parsed.scheme == "https" {
-            // Refused, not downgraded. See the module docs.
             return Err(FutureError::Io(
-                "https egress requires TLS, which the PoC does not build (see wisp-host/src/net.rs)"
-                    .into(),
+                "https egress requires TLS, which this host does not build".into(),
             ));
         }
         let authority = if parsed.port == 80 {
@@ -107,8 +92,6 @@ impl Fetcher for PinnedHttpFetcher {
             .uri(&parsed.path_and_query)
             .header(hyper::header::HOST, &authority);
         for (k, v) in &req.headers {
-            // The trace context is propagated by the caller; everything
-            // else is the tenant's.
             builder = builder.header(k.as_str(), v.as_str());
         }
         let request = builder
@@ -149,9 +132,8 @@ impl Fetcher for PinnedHttpFetcher {
             });
         }
 
-        // Unknown or large: hand back a streaming handle. That future is
-        // typed Unbounded, so the guest already knows it will not survive a
-        // hibernation and must be prepared to re-issue.
+        // Unknown or large: a streaming handle, whose future is Unbounded and
+        // will not survive a hibernation.
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         self.bodies.lock().insert(handle, body);
         Ok(FetchResponse {
@@ -163,9 +145,7 @@ impl Fetcher for PinnedHttpFetcher {
     }
 
     async fn read_body(&self, handle: u32, max_len: usize) -> Result<BodyChunk, FutureError> {
-        // Taken out and put back rather than held across the await: a lock
-        // held across an await on a reactor thread is how a reactor stops
-        // owning all I/O and starts owning a deadlock.
+        // Taken out and put back rather than held across the await.
         let Some(mut body) = self.bodies.lock().remove(&handle) else {
             return Err(FutureError::NotFound);
         };
@@ -179,9 +159,8 @@ impl Fetcher for PinnedHttpFetcher {
             Some(Ok(f)) => {
                 let data = f.into_data().map(|b| b.to_vec()).unwrap_or_default();
                 let data = if max_len > 0 && data.len() > max_len {
-                    // Trailing bytes beyond the guest's buffer would have to be
-                    // stashed; the PoC truncates and says so rather than
-                    // silently keeping a shadow buffer the guest cannot see.
+                    // Truncated and said so, rather than kept in a shadow
+                    // buffer the guest cannot see.
                     tracing::warn!(
                         handle,
                         dropped = data.len() - max_len,
@@ -197,7 +176,3 @@ impl Fetcher for PinnedHttpFetcher {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// The scrape endpoint
-// ---------------------------------------------------------------------------

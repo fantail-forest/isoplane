@@ -1,14 +1,7 @@
 //! Instance slots, exclusive call access, and idle pools.
 //!
-//! [`Slot::enter`] moves the resident instance into a [`CallGuard`]. Another
-//! entry into that slot is refused until the guard is dropped. Destroying the
-//! guard's instance leaves the slot discarded.
-//!
-//! [`decide`] keeps parked calls and outstanding background work separate
-//! from terminal pool decisions. A successful `fresh` request selects reset;
-//! a successful `reuse` request can retain its state. [`InstancePool::release`]
-//! applies the disposition and discards instances when reset or pool admission
-//! fails.
+//! `Slot::enter` moves a resident instance into a call guard. Pool policy
+//! selects reset, retention, or discard after a request finishes.
 
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -20,16 +13,15 @@ use wisp_engine::{Completion, InstanceOps, ModuleHash};
 use crate::bindings::InstanceCtx;
 use crate::{InstanceId, ModuleId};
 
-/// Supplies module identity, baseline memory, and instances for the pool.
-///
-/// Activated instances are `Send` so their ownership can move between workers.
+/// What the cell needs from a compiled, pre-initialized module. A produced
+/// instance is `Send` because a parked instance is woken onto whichever pool
+/// thread takes the wake.
 pub trait Activator: Send + Sync + 'static {
     fn module(&self) -> &ModuleId;
     fn module_hash(&self) -> ModuleHash;
     fn abi_rev(&self) -> u32;
-    /// Baseline memory image exposed to capture and restore callers.
+    /// The baseline hibernation diffs against.
     fn template_image(&self) -> Arc<wisp_engine::MemoryImage>;
-    /// Create an instance using the supplied host bindings.
     fn activate(
         &self,
         bindings: Box<dyn wisp_engine::HostBindings>,
@@ -39,7 +31,8 @@ pub trait Activator: Send + Sync + 'static {
 /// Lifecycle state shared with the host interface.
 pub use wisp_abi::config::LifecycleTier;
 
-// Private byte encoding for the atomic lifecycle hint.
+/// The byte encoding for `state_hint`; private so the order never becomes
+/// contract surface.
 fn tier_as_u8(t: LifecycleTier) -> u8 {
     match t {
         LifecycleTier::Hot => 0,
@@ -60,18 +53,20 @@ fn tier_from_u8(v: u8) -> LifecycleTier {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnterError {
-    /// A call guard already owns the instance.
+    /// A previous call into this instance has not returned.
     Busy,
-    /// The slot currently has no resident instance.
+    /// Hibernated or discarded: there is no memory here to call into.
     NotResident(LifecycleTier),
-    /// The instance was discarded and refuses further guest calls.
+    /// The instance was hard-killed or trapped, so its memory may be
+    /// mid-collection or mid-frame. wasmtime would still answer a call on the
+    /// killed store, so the refusal is the platform's to make.
     Tombstoned,
 }
 
 impl std::fmt::Display for EnterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EnterError::Busy => write!(f, "instance already has a call in flight"),
+            EnterError::Busy => write!(f, "reentrant call refused"),
             EnterError::NotResident(s) => write!(f, "instance is {}", s.as_str()),
             EnterError::Tombstoned => write!(
                 f,
@@ -81,25 +76,26 @@ impl std::fmt::Display for EnterError {
     }
 }
 
-/// Exclusive access to a live instance.
-///
-/// Entry moves the instance out of its slot. Dropping the guard returns it
-/// unless [`CallGuard::destroy`] consumed it.
+/// Exclusive access to a live instance. Dropping the guard returns it unless
+/// `CallGuard::destroy` consumed it.
 pub struct CallGuard<'a> {
     slot: &'a Slot,
+    /// `Some` until `destroy` or `Drop` takes it, and neither can be followed
+    /// by a call to `instance`.
     inst: Option<Box<dyn InstanceOps + Send>>,
 }
 
 impl CallGuard<'_> {
     pub fn instance(&mut self) -> &mut (dyn InstanceOps + Send) {
-        // Invariant: `inst` is `Some` for the whole life of the guard; it is
-        // taken only in `Drop`.
         self.inst
             .as_deref_mut()
-            .expect("CallGuard without an instance")
+            .expect("a CallGuard holds its instance until destroy or Drop consumes it")
     }
-    /// Drop the instance and tombstone its slot before releasing the call guard,
-    /// preventing another entry while the discarded state is published.
+    /// Terminates the instance instead of returning it, for traps and hard
+    /// kills. The tombstone is set while the guard is still held, so `Drop`
+    /// clears `in_call` on a slot that already refuses; a plain drop followed
+    /// by a tombstone would leave an instant in which another thread could
+    /// enter memory a trap abandoned.
     pub fn destroy(mut self) {
         self.inst = None;
         self.slot.tombstone();
@@ -115,19 +111,14 @@ impl Drop for CallGuard<'_> {
         match inst {
             Some(i) => {
                 g.resident = Some(i);
-                // The call returned, so the stack is empty again (invariant 3)
-                // and the slot goes back to the tier it came from. A dispatch
-                // that parked or completed will be re-parked or disposed by
-                // the caller straight after this; a host-initiated call such
-                // as the pre-capture `gc-hint` simply leaves no trace.
+                // Back to the tier it came from, so a host-initiated call such
+                // as the pre-capture gc hint leaves no trace.
                 g.state = g.resume_state;
                 if g.state == LifecycleTier::Parked && g.parked_since_ms.is_none() {
                     g.parked_since_ms = Some(crate::now_ms().max(1));
                 }
             }
             None => {
-                // The instance was destroyed under us; the slot cannot be Hot
-                // with nothing in it.
                 g.resident = None;
                 g.state = LifecycleTier::Discarded;
             }
@@ -138,32 +129,35 @@ impl Drop for CallGuard<'_> {
 
 struct SlotInner {
     state: LifecycleTier,
-    /// State restored when a host-initiated call returns without changing it.
+    /// The tier to return to when the current call returns. Entering makes an
+    /// instance momentarily Hot, including for the pre-capture gc hint, which
+    /// would otherwise leave the slot Hot and fail the capture's own check.
     resume_state: LifecycleTier,
     /// The resident instance between calls; a call guard temporarily owns it.
     resident: Option<Box<dyn InstanceOps + Send>>,
     in_call: bool,
     parked_since_ms: Option<u64>,
-    /// Capture key recorded while the slot is hibernated.
+    /// Key of this instance's delta in the hibernation store, when sleeping.
     delta_key: Option<String>,
-    /// Future IDs recorded by hibernation and drained by `take_shed_futures`.
+    /// Ids shed at capture, owed to the guest as `FutureLost` on wake.
     shed_on_capture: Vec<u64>,
     /// Set on entry or rehydration and cleared by reset.
     dirty: bool,
-    /// `CallGuard::destroy` sets this before Drop clears `in_call`, so no
-    /// caller can enter between discarding the instance and publishing that state.
+    /// Once set, [`Slot::enter`] refuses. [`CallGuard::destroy`] sets it while
+    /// the guard is held; a site that drops the guard after a trap and
+    /// tombstones later leaves an instant in which another thread can enter.
     tombstoned: bool,
 }
 
-/// A resident instance, its shared host context, and lifecycle bookkeeping.
 pub struct Slot {
     pub id: InstanceId,
     pub ctx: Arc<InstanceCtx>,
     inner: Mutex<SlotInner>,
-    /// Milliseconds accrued when entry consumes a recorded park timestamp.
+    /// Accumulated parked time, reported separately from active execution time.
     parked_ms_total: AtomicU64,
-    /// A lock-free mirror of `inner.state` and `inner.parked_since_ms`,
-    /// written inside the same critical sections.
+    /// Lock-free mirrors of `inner.state` and `inner.parked_since_ms`, written
+    /// in the same critical sections, so the idle sweep and the gauges do not
+    /// take a mutex per parked instance per tick.
     state_hint: AtomicU8,
     parked_since_hint: AtomicU64,
 }
@@ -197,9 +191,7 @@ impl Slot {
             .store(g.parked_since_ms.unwrap_or(0), Ordering::Relaxed);
     }
 
-    /// Take exclusive ownership of the instance for one call into the guest.
-    ///
-    /// A second entry into this slot is refused while its guard is alive.
+    /// Take exclusive ownership of this slot's instance for a guest call.
     pub fn enter(&self) -> Result<CallGuard<'_>, EnterError> {
         let mut g = self.inner.lock();
         if g.tombstoned {
@@ -213,7 +205,6 @@ impl Slot {
         };
         g.in_call = true;
         g.dirty = true;
-        // Accumulate the completed park interval separately from active execution time.
         if let Some(since) = g.parked_since_ms.take() {
             let now = crate::now_ms();
             self.parked_ms_total
@@ -229,16 +220,11 @@ impl Slot {
         })
     }
 
-    /// Lock-free. See `state_hint`.
     pub fn state(&self) -> LifecycleTier {
         tier_from_u8(self.state_hint.load(Ordering::Relaxed))
     }
 
-    pub fn is_busy(&self) -> bool {
-        self.inner.lock().in_call
-    }
-
-    /// Whether the slot is parked, resident, not tombstoned, and has no call in flight.
+    /// Capture is eligible only when Parked and never from a tombstone.
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
         !g.tombstoned && !g.in_call && g.state == LifecycleTier::Parked && g.resident.is_some()
@@ -258,7 +244,6 @@ impl Slot {
         !self.inner.lock().dirty
     }
 
-    /// Lock-free. See `state_hint`.
     pub fn parked_since_ms(&self) -> Option<u64> {
         match self.parked_since_hint.load(Ordering::Relaxed) {
             0 => None,
@@ -284,8 +269,6 @@ impl Slot {
         self.publish(&g);
     }
 
-    /// Mark a returned guest call parked and record the start of its idle time.
-    /// Host resources held by the shared context remain owned by that context.
     pub fn park(&self, now_ms: u64) {
         let mut g = self.inner.lock();
         debug_assert!(
@@ -299,7 +282,7 @@ impl Slot {
     }
 
     /// Drop the resident instance and record its capture key and future IDs.
-    /// Refuse while a call is in flight or the state is not parked.
+    /// Refuse while a call is in flight, the slot is tombstoned, or it is not parked.
     pub fn hibernate(&self, delta_key: String, shed: Vec<u64>) -> Result<(), HibernateRefused> {
         let mut g = self.inner.lock();
         if g.tombstoned {
@@ -332,11 +315,10 @@ impl Slot {
         self.publish(&g);
     }
 
-    /// Ask the resident instance to reset and clear the slot's dirty marker.
-    /// Return an error if a call is in flight or the engine reset fails.
+    /// Reset to template contents. Refused for a tombstone, because an `Ok`
+    /// here is what `InstancePool::release` takes as "reusable".
     pub fn reset(&self) -> anyhow::Result<()> {
         let mut g = self.inner.lock();
-        // Success would let InstancePool::release hand out the discarded slot again.
         if g.tombstoned {
             anyhow::bail!(
                 "refusing to reset a tombstoned slot: a hard-killed instance is discarded"
@@ -355,8 +337,6 @@ impl Slot {
         Ok(())
     }
 
-    /// Drop the resident instance and clear its capture key and park timestamp.
-    /// Resources held by the shared host context are managed separately.
     pub fn discard(&self) {
         let mut g = self.inner.lock();
         g.resident = None;
@@ -369,33 +349,26 @@ impl Slot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HibernateRefused {
-    /// The instance was tombstoned by a hard execution stop.
     Tombstoned,
-    /// A call guard is still in flight.
+    /// A call is in flight, so the stack is not empty.
     Hot,
     NotParked(LifecycleTier),
 }
 
-// ---------------------------------------------------------------------------
-// The disposition of an instance after a request.
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispositionKind {
-    /// Keep the instance's state available for a later dispatch.
+    /// Keep the instance with its residue. Only reachable under `reuse`.
     Warm,
-    /// Reset the instance before admitting it to the reset pool.
+    /// Back to template contents, then pooled; indistinguishable from a
+    /// fresh clone, so a `fresh` acquisition may draw from this pool.
     Reset,
-    /// Discard: trapped, killed, or evicted.
     Discard,
 }
 
-/// The disposition of an instance at the end of a request.
-///
-/// Policy helpers construct the private value; [`InstancePool::release`]
-/// applies it to a slot.
+/// Constructible only by [`decide`], [`evict`] and [`policy_reset`], none of
+/// which produce `Warm` for a `fresh` app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "returning an instance to its pool requires a disposition"]
+#[must_use = "an undisposed instance would leak residue, which `fresh` forbids"]
 pub struct Disposition(DispositionKind);
 
 impl Disposition {
@@ -414,22 +387,18 @@ impl Disposition {
     }
 }
 
-/// What happens to the instance when a call into it returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestEnd {
-    /// The guest parked, so its request remains in flight.
+    /// The guest returned `pending`; a wake will resume the request.
     Parked,
-    /// The response completed but background work still postpones disposal.
+    /// The response is delivered but `WaitUntil` work is outstanding; under
+    /// `fresh` the reset is still owed.
     RetainedForWaitUntil,
-    /// Terminal.
     Disposed(Disposition),
 }
 
-/// Select a pending-work result or a terminal pool disposition.
-///
-/// Traps and budget kills select discard. Once successful work completes,
-/// `fresh` selects reset and `reuse` selects warm retention. Pool admission can
-/// still discard the instance.
+/// The disposition table. A trapped or killed instance is discarded; `fresh`
+/// never yields `Warm`; `reuse` yields `Warm`.
 pub fn decide(
     lifecycle: HandlerLifecycle,
     completion: Completion,
@@ -456,32 +425,41 @@ pub fn decide(
     }
 }
 
-/// Returns a discard disposition.
 pub fn evict() -> Disposition {
     Disposition(DispositionKind::Discard)
 }
 
-/// A reset requested by the instance reuse policy.
+/// A reset requested by policy rather than by the end of a request.
 pub fn policy_reset() -> Disposition {
     Disposition(DispositionKind::Reset)
 }
 
-// ---------------------------------------------------------------------------
-// Idle pool acquisition.
-// ---------------------------------------------------------------------------
-
-/// The pool or activation path that supplied a slot.
+/// What a dispatch paid for its instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquireSource {
-    /// A slot taken from the warm pool under `reuse`.
+    /// A parked instance with residue: `reuse` Handlers, and a resident
+    /// durable instance.
     WarmParked,
-    /// A slot taken from the reset pool.
+    /// A reset Handler instance from the pool.
     PooledFresh,
-    /// An instance constructed by the activator.
+    /// A durable instance woken from its hibernation delta.
+    HibernationWake,
+    /// A cold activation from the template.
     Activated,
 }
 
-/// Idle instance pools for one module and lifecycle policy.
+impl AcquireSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            AcquireSource::WarmParked => "warm",
+            AcquireSource::PooledFresh => "pooled_fresh",
+            AcquireSource::HibernationWake => "hibernation_wake",
+            AcquireSource::Activated => "activated",
+        }
+    }
+}
+
+/// A per-module pool of Handler instances.
 pub struct InstancePool {
     pub module: ModuleId,
     pub lifecycle: HandlerLifecycle,
@@ -509,10 +487,6 @@ impl InstancePool {
         }
     }
 
-    pub fn activator(&self) -> &Arc<dyn Activator> {
-        &self.activator
-    }
-
     pub fn live(&self) -> u64 {
         self.live.load(Ordering::Relaxed)
     }
@@ -521,8 +495,8 @@ impl InstancePool {
         (self.warm.lock().len(), self.fresh.lock().len())
     }
 
-    /// Try the warm pool for `reuse`, then the reset pool, then activation.
-    /// A `fresh` acquisition skips the warm pool.
+    /// Warm-parked, then pooled-fresh, then activate; under `fresh` the warm
+    /// list is not consulted.
     pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
@@ -548,17 +522,13 @@ impl InstancePool {
         Ok((Arc::new(Slot::new(id, ctx, inst)), AcquireSource::Activated))
     }
 
-    /// Apply a disposition, discarding if reset fails or an idle pool is full.
+    /// The only way back into the pool.
     pub fn release(&self, slot: Arc<Slot>, d: Disposition) {
         match d.kind() {
             DispositionKind::Warm => {
-                debug_assert_ne!(
-                    self.lifecycle,
-                    HandlerLifecycle::Fresh,
-                    "a `fresh` instance may never be warmed"
-                );
                 if self.lifecycle == HandlerLifecycle::Fresh {
-                    // Fresh reuse requires reset even if a caller supplies Warm.
+                    // Fails closed to the hygienic side: residue never leaks
+                    // from a fresh app whatever produced the disposition.
                     return self.release(slot, policy_reset());
                 }
                 slot.park(crate::now_ms());
@@ -593,7 +563,6 @@ impl InstancePool {
         }
     }
 
-    /// Discard all idle entries and return the number removed.
     pub fn drain_idle(&self) -> usize {
         let mut n = 0;
         for s in self
@@ -607,13 +576,6 @@ impl InstancePool {
             n += 1;
         }
         n
-    }
-
-    /// Clone the current idle-pool slot references for inspection.
-    pub fn idle_parked(&self) -> Vec<Arc<Slot>> {
-        let mut v = self.warm.lock().clone();
-        v.extend(self.fresh.lock().iter().cloned());
-        v
     }
 }
 
@@ -635,7 +597,6 @@ mod tests {
         )
     }
 
-    /// Check the listed transition pairs, including no exit from Discarded.
     #[test]
     fn lifecycle_transitions_match_the_spec_table() {
         use LifecycleTier::*;
@@ -652,27 +613,38 @@ mod tests {
                 assert_eq!(
                     a.may_transition_to(b),
                     legal.contains(&(a, b)),
-                    "{a:?} -> {b:?}"
+                    "{a:?} -> {b:?} disagrees with the tier table"
                 );
             }
         }
-        assert!(!Hibernated.may_transition_to(Parked));
-        assert!(!Discarded.may_transition_to(Hot));
+        assert!(
+            !Hibernated.may_transition_to(Parked),
+            "a wake makes an instance Hot, never Parked"
+        );
+        assert!(
+            !Discarded.may_transition_to(Hot),
+            "the only exit from Discarded is a fresh activation, a new slot"
+        );
     }
 
-    /// The second entry is refused while the first guard owns the instance.
     #[test]
     fn a_second_call_into_a_busy_instance_is_impossible() {
         let p = pool(HandlerLifecycle::Reuse);
         let (slot, _) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
+            .expect("acquire");
         let guard = slot.enter().expect("first entry");
-        assert_eq!(slot.enter().err(), Some(EnterError::Busy));
-        assert_eq!(slot.state(), LifecycleTier::Hot);
+        assert_eq!(
+            slot.enter().err(),
+            Some(EnterError::Busy),
+            "the first entry holds the instance"
+        );
+        assert_eq!(slot.state(), LifecycleTier::Hot, "an entered slot is Hot");
         drop(guard);
-        // Once the call returns, the instance is available again.
-        assert!(slot.enter().is_ok());
+        assert!(
+            slot.enter().is_ok(),
+            "the instance is available again once the call returns"
+        );
     }
 
     #[test]
@@ -680,35 +652,41 @@ mod tests {
         let p = pool(HandlerLifecycle::Reuse);
         let (slot, _) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
+            .expect("acquire");
         slot.park(0);
-        slot.hibernate("k".into(), vec![]).unwrap();
+        slot.hibernate("k".into(), vec![]).expect("hibernate");
         assert_eq!(
             slot.enter().err(),
-            Some(EnterError::NotResident(LifecycleTier::Hibernated))
+            Some(EnterError::NotResident(LifecycleTier::Hibernated)),
+            "a hibernated slot has no memory to call into"
         );
     }
 
-    /// Capture eligibility requires a parked slot with no call in flight.
     #[test]
     fn capture_is_refused_unless_parked() {
         let p = pool(HandlerLifecycle::Reuse);
         let (slot, _) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
-        let guard = slot.enter().unwrap();
-        assert!(!slot.is_capture_eligible());
+            .expect("acquire");
+        let guard = slot.enter().expect("enter");
+        assert!(
+            !slot.is_capture_eligible(),
+            "a slot with a call in flight is not capturable"
+        );
         assert_eq!(
             slot.hibernate("k".into(), vec![]),
-            Err(HibernateRefused::Hot)
+            Err(HibernateRefused::Hot),
+            "hibernating a Hot slot is refused"
         );
         drop(guard);
         slot.park(0);
-        assert!(slot.is_capture_eligible());
-        assert!(slot.hibernate("k".into(), vec![]).is_ok());
+        assert!(slot.is_capture_eligible(), "a parked slot is capturable");
+        assert!(
+            slot.hibernate("k".into(), vec![]).is_ok(),
+            "hibernating a parked slot succeeds"
+        );
     }
 
-    /// Fresh completion selects reset or discard after pending work ends.
     #[test]
     fn fresh_never_decides_warm() {
         use Completion::*;
@@ -720,44 +698,48 @@ mod tests {
                 }
             }
         }
-        // And the specific rows.
         assert_eq!(
             decide(HandlerLifecycle::Fresh, Done, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Reset))
+            RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
+            "a completed fresh dispatch resets"
         );
         assert_eq!(
             decide(HandlerLifecycle::Fresh, Done, true),
             RequestEnd::RetainedForWaitUntil,
-            "reset waits for outstanding background work"
+            "the reset is owed only after WaitUntil work completes"
         );
         assert_eq!(
             decide(HandlerLifecycle::Reuse, Done, false),
-            RequestEnd::Disposed(Disposition(DispositionKind::Warm))
+            RequestEnd::Disposed(Disposition(DispositionKind::Warm)),
+            "a completed reuse dispatch stays warm"
         );
         for lc in [HandlerLifecycle::Fresh, HandlerLifecycle::Reuse] {
             assert_eq!(
                 decide(lc, BudgetKill, false),
                 RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
-                "a budget-killed instance is discarded"
+                "a killed instance is never reused"
             );
             assert_eq!(
                 decide(lc, Trapped, false),
-                RequestEnd::Disposed(Disposition(DispositionKind::Discard))
+                RequestEnd::Disposed(Disposition(DispositionKind::Discard)),
+                "a trapped instance is never reused"
             );
-            assert_eq!(decide(lc, Parked, false), RequestEnd::Parked);
+            assert_eq!(
+                decide(lc, Parked, false),
+                RequestEnd::Parked,
+                "a parked dispatch is still in flight"
+            );
         }
     }
 
-    /// Fresh acquisition reuses a reset slot without consulting the warm pool.
     #[test]
     fn fresh_never_touches_the_warm_pool() {
         let p = pool(HandlerLifecycle::Fresh);
         let (a, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .unwrap();
-        assert_eq!(src, AcquireSource::Activated);
+            .expect("acquire");
+        assert_eq!(src, AcquireSource::Activated, "an empty pool activates");
         let id_a = a.id;
-        // Finish a request the way the cell does.
         let RequestEnd::Disposed(d) = decide(HandlerLifecycle::Fresh, Completion::Done, false)
         else {
             panic!("expected a terminal disposition");
@@ -765,15 +747,18 @@ mod tests {
         p.release(a, d);
         let (warm, fresh) = p.idle_counts();
         assert_eq!(warm, 0, "a fresh app must never populate the warm pool");
-        assert_eq!(fresh, 1);
+        assert_eq!(fresh, 1, "the reset instance is pooled");
 
-        // Successful reset keeps the slot available in the reset pool.
         let (b, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .unwrap();
-        assert_eq!(src, AcquireSource::PooledFresh);
-        assert_eq!(b.id, id_a);
-        assert!(b.is_pristine());
+            .expect("acquire");
+        assert_eq!(
+            src,
+            AcquireSource::PooledFresh,
+            "the next acquisition draws the reset instance"
+        );
+        assert_eq!(b.id, id_a, "the same slot comes back");
+        assert!(b.is_pristine(), "and it carries no residue");
     }
 
     #[test]
@@ -781,11 +766,11 @@ mod tests {
         let p = pool(HandlerLifecycle::Reuse);
         let (a, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
-        assert_eq!(src, AcquireSource::Activated);
+            .expect("acquire");
+        assert_eq!(src, AcquireSource::Activated, "an empty pool activates");
         let (b, _) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
+            .expect("acquire");
         let warm_id = a.id;
         let fresh_id = b.id;
         p.release(a, Disposition(DispositionKind::Warm));
@@ -793,36 +778,35 @@ mod tests {
 
         let (got, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
-        assert_eq!(src, AcquireSource::WarmParked);
-        assert_eq!(got.id, warm_id);
+            .expect("acquire");
+        assert_eq!(src, AcquireSource::WarmParked, "warm first");
+        assert_eq!(got.id, warm_id, "and it is the warm instance");
 
         let (got, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
-        assert_eq!(src, AcquireSource::PooledFresh);
-        assert_eq!(got.id, fresh_id);
+            .expect("acquire");
+        assert_eq!(src, AcquireSource::PooledFresh, "then pooled fresh");
+        assert_eq!(got.id, fresh_id, "and it is the reset instance");
 
         let (_, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
-        assert_eq!(src, AcquireSource::Activated);
+            .expect("acquire");
+        assert_eq!(src, AcquireSource::Activated, "then a cold activation");
     }
 
-    /// A budget-killed instance is removed from both idle pools.
     #[test]
     fn a_killed_instance_leaves_the_pool_entirely() {
         let p = pool(HandlerLifecycle::Reuse);
         let (a, _) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
-            .unwrap();
+            .expect("acquire");
         let RequestEnd::Disposed(d) =
             decide(HandlerLifecycle::Reuse, Completion::BudgetKill, false)
         else {
-            panic!()
+            panic!("a kill is terminal")
         };
         p.release(a, d);
-        assert_eq!(p.idle_counts(), (0, 0));
-        assert_eq!(p.live(), 0);
+        assert_eq!(p.idle_counts(), (0, 0), "a killed instance is not pooled");
+        assert_eq!(p.live(), 0, "and it is no longer live");
     }
 }

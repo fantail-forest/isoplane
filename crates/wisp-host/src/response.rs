@@ -1,19 +1,15 @@
-//! Response building and streaming.
-//!
-//! The guest may return `done` with a body-stream handle and continue
-//! producing chunks via write futures under `WaitUntil` semantics. So a
-//! response handle outlives the call that returned `done`, and the instance
-//! stays alive until the stream finishes — which is why the `fresh` reset is
-//! owed *after the response **and any `WaitUntil` work***, not after `done`.
+//! Response building. A guest may return `done` with a streaming response
+//! handle and keep appending chunks through write futures under `WaitUntil`,
+//! so a response outlives the call that returned `done` and the `fresh` reset
+//! is owed after the response and any `WaitUntil` work, not after `done`.
 
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
 use wisp_abi::dispatch::ResponseHead;
 
-/// A response under construction. `resp_new` creates one, `resp_write` appends
-/// (an Unbounded future — a stream cannot be buffered across hibernation),
-/// `resp_finish` closes it.
+/// A response under construction: `resp_new` creates one, `resp_write`
+/// appends, `resp_finish` closes it.
 #[derive(Debug, Clone)]
 pub struct Response {
     pub head: ResponseHead,
@@ -29,9 +25,6 @@ impl Response {
         }
         v
     }
-    pub fn byte_len(&self) -> usize {
-        self.head.body.len() + self.chunks.iter().map(|c| c.len()).sum::<usize>()
-    }
 }
 
 #[derive(Default)]
@@ -41,13 +34,8 @@ pub struct ResponseTable {
 }
 
 impl ResponseTable {
-    pub fn new(head: &ResponseHead) -> Self {
-        let _ = head;
-        Self::default()
-    }
-
+    /// Handles start at 1; 0 is "no response" in `PollStatus::Done`.
     pub fn create(&mut self, head: ResponseHead) -> u32 {
-        // Handle 0 is "no response" in `PollStatus::Done`, so start at 1.
         self.next += 1;
         let h = self.next;
         self.open.insert(
@@ -96,13 +84,6 @@ impl ResponseTable {
             .get(&handle)
             .is_some_and(|r| r.head.streaming && !r.finished)
     }
-
-    pub fn len(&self) -> usize {
-        self.open.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.open.is_empty()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,20 +121,35 @@ mod tests {
     fn streaming_appends_after_done() {
         let mut t = ResponseTable::default();
         let h = t.create(head(true));
-        assert!(t.is_streaming(h));
-        t.write(h, b"-one".to_vec()).unwrap();
-        t.write(h, b"-two".to_vec()).unwrap();
-        t.finish(h).unwrap();
-        assert!(!t.is_streaming(h));
-        assert_eq!(t.take(h).unwrap().body(), b"head-one-two");
+        assert!(
+            t.is_streaming(h),
+            "an unfinished streaming response is open"
+        );
+        t.write(h, b"-one".to_vec()).expect("write");
+        t.write(h, b"-two".to_vec()).expect("write");
+        t.finish(h).expect("finish");
+        assert!(!t.is_streaming(h), "a finished response is no longer open");
+        assert_eq!(
+            t.take(h).expect("the response").body(),
+            b"head-one-two",
+            "chunks follow the head in write order"
+        );
     }
 
     #[test]
     fn writes_after_finish_are_refused() {
         let mut t = ResponseTable::default();
         let h = t.create(head(true));
-        t.finish(h).unwrap();
-        assert_eq!(t.write(h, vec![1]), Err(ResponseError::AlreadyFinished));
-        assert_eq!(t.write(999, vec![1]), Err(ResponseError::NoSuchHandle));
+        t.finish(h).expect("finish");
+        assert_eq!(
+            t.write(h, vec![1]),
+            Err(ResponseError::AlreadyFinished),
+            "a finished response takes no more chunks"
+        );
+        assert_eq!(
+            t.write(999, vec![1]),
+            Err(ResponseError::NoSuchHandle),
+            "an unknown handle is refused"
+        );
     }
 }

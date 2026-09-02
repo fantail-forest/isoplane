@@ -1,23 +1,7 @@
-//! The real [`Activator`]: `wisp-engine`'s template and slot machinery,
-//! wrapped in the seam the cell codes against.
-//!
-//! There is nothing to this file, and that is the point. Activation is four
-//! steps — map the template memfd `MAP_PRIVATE`, initialize mutable
-//! globals and tables from the template's sealed values, bind the import
-//! vtable to this instance's tenant context, call `wisp-handle` — and all four
-//! live in `wisp-engine` because all four touch wasmtime. The cell's interest
-//! in an instance begins after that: which tier it is in, whose CPU it is
-//! burning, and what happens to its memory next.
-//!
-//! The one thing worth stating here is why the template image is held as an
-//! `Arc` at construction rather than borrowed per call: it is the baseline for
-//! every hibernation page-diff, taken on an execution-pool thread while
-//! the engine's own copy stays mapped read-only and shared by every instance
-//! of the module on the machine.
-//!
-//! It used to be `Arc::new(template.memory_image().to_vec())` — a **second**
-//! full copy of the image per module per cell, for a baseline the engine was
-//! already holding. It is now the engine's own `Arc`, shared.
+//! The real [`Activator`]: `wisp-engine`'s template and instance machinery
+//! behind the seam the cell codes against. The template image is held as the
+//! engine's own `Arc`, shared by every instance of the module, because it is
+//! the baseline for every hibernation page diff.
 
 use std::sync::Arc;
 
@@ -46,9 +30,9 @@ impl EngineActivator {
         }
     }
 
-    /// Compile and pre-stage a template, then wrap it. The module bytes are
-    /// hostile input to the compiler, so this expects to be called with an
-    /// artifact the validator sandbox has already produced.
+    /// Compiles and pre-stages a template. The module bytes are hostile input
+    /// to the compiler, so this expects an artifact the validator sandbox has
+    /// already produced.
     pub fn load(
         engine: Arc<WispEngine>,
         module: ModuleId,
@@ -58,25 +42,15 @@ impl EngineActivator {
         Ok(Self::new(engine, template, module))
     }
 
-    /// Load by **mapping** a precompiled artifact out of `cache_dir`,
-    /// compiling one into it only if it is not already there.
-    ///
-    /// This is what a cell should call. [`EngineActivator::load`] copies the
-    /// compiled artifact into anonymous memory and makes all of it resident;
-    /// this maps it, so the code and the memory image are page cache —
-    /// demand-paged, evictable, and shared between every mapping of the same
-    /// artifact, and the template's memfd shmem stops existing. The gap is
-    /// widest for a large pre-initialized template.
-    ///
-    /// Returns whether it had to compile. A cell that reports `true` on every
-    /// load has a cache that is not working, which is worth being able to see:
-    /// the compile is the expensive half, and it leaves the compiled artifact
-    /// resident in this process for good.
+    /// Loads by mapping a precompiled artifact out of `cache_dir`, compiling
+    /// one into it only if it is not already there, and returns whether it had
+    /// to compile. Unlike [`EngineActivator::load`], the code and memory image
+    /// are page cache: demand-paged, evictable, and shared between every
+    /// mapping of the same artifact.
     ///
     /// # Safety
     /// `cache_dir` must be a directory this node owns, holding only artifacts
     /// produced by an engine equal to `engine`. See [`WispEngine::load_mapped`].
-    #[allow(unsafe_code)] // wasmtime's `deserialize_file` contract; see above.
     pub unsafe fn load_mapped(
         engine: Arc<WispEngine>,
         module: ModuleId,

@@ -1,16 +1,4 @@
-//! The import vtable end to end.
-//!
-//! [`super`]'s `cell.rs` drives whole requests; this file drives the *imports*,
-//! because several of the rules are properties of a single host call rather
-//! than of a request:
-//!
-//! * The SSRF policy has to be enforced on the way out of `http_fetch`, on
-//!   the address that was pinned, with no second DNS lookup anywhere.
-//! * The subrequest cap is per dispatch, so it has to reset per dispatch.
-//! * "Log CPU counts against the dispatch budget" has to be *measurable*
-//!   or it is not a control.
-//! * `WaitUntil` has to actually extend the instance's life past the
-//!   response.
+//! The import vtable driven one host call at a time.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,7 +9,7 @@ use wisp_abi::config::{HandlerLifecycle, Limits};
 use wisp_abi::result::{FetchResponse, FutureError, ResultRecord};
 use wisp_engine::{HostBindings, ImportCall};
 
-use wisp_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services};
+use wisp_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services, Tenancy};
 use wisp_host::egress::HostEgressPolicy;
 use wisp_host::fakes::*;
 use wisp_host::futures::{FutureTable, INVALID_FUTURE};
@@ -68,11 +56,14 @@ fn vtable(limits: Limits, resolve_to: &str, allowlist: Option<Vec<String>>) -> V
     });
     let ctx = Arc::new(InstanceCtx::new(
         InstanceId(1),
-        ModuleId::new("app", "v1"),
-        "acme",
-        limits,
-        HandlerLifecycle::Reuse,
-        allowlist,
+        Tenancy {
+            module: ModuleId::new("app", "v1"),
+            tenant: "acme".into(),
+            limits,
+
+            lifecycle: HandlerLifecycle::Reuse,
+            allowlist,
+        },
         meters.clone(),
         Some(rt),
     ));
@@ -101,7 +92,7 @@ fn fetch_payload(url: &str) -> Vec<u8> {
 async fn settle(v: &Vt, id: u64) -> ResultRecord {
     for _ in 0..500 {
         if let Some((got, res)) = v.futures.take_ready(v.ctx.instance) {
-            assert_eq!(got, id);
+            assert_eq!(got, id, "the ready result is the future being awaited");
             return res;
         }
         tokio::time::sleep(Duration::from_millis(2)).await;
@@ -109,11 +100,6 @@ async fn settle(v: &Vt, id: u64) -> ResultRecord {
     panic!("future {id} never settled");
 }
 
-/// **`http_fetch` enforces SSRF policy host-side.**
-///
-/// The guest asks for an RFC1918 address and gets a typed `Denied` — through
-/// the future, because there is no import that waits, so even a refusal is
-/// delivered asynchronously.
 #[tokio::test]
 async fn fetch_to_a_private_address_is_denied_through_the_future() {
     let mut v = vtable(Limits::default(), "10.0.0.5:80", None);
@@ -122,7 +108,7 @@ async fn fetch_to_a_private_address_is_denied_through_the_future() {
         payload: &fetch_payload("http://internal.example/"),
         scalars: [0; 3],
     });
-    assert_ne!(id, INVALID_FUTURE);
+    assert_ne!(id, INVALID_FUTURE, "the fetch was allocated a future");
     match settle(&v, id).await {
         ResultRecord::Err(FutureError::Denied(msg)) => {
             assert!(msg.contains("10.0.0.5"), "{msg}");
@@ -133,16 +119,12 @@ async fn fetch_to_a_private_address_is_denied_through_the_future() {
         }
         other => panic!("SSRF target was not denied: {other:?}"),
     }
-    // And nothing was dialled.
     assert!(
         v.fetcher.connected_to.lock().is_empty(),
         "the host connected to a private address"
     );
 }
 
-/// **Resolve-then-pin.** The fetch path is handed a `SocketAddr` and
-/// never sees the hostname again, so a DNS answer that changes after the
-/// check has nothing left to influence.
 #[tokio::test]
 async fn the_fetch_connects_to_the_pinned_address() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -156,7 +138,7 @@ async fn the_fetch_connects_to_the_pinned_address() {
         panic!("fetch failed: {res:?}")
     };
     let resp: FetchResponse = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(resp.status, 200);
+    assert_eq!(resp.status, 200, "the fake fetcher answers 200");
     assert_eq!(
         *v.fetcher.connected_to.lock(),
         vec!["93.184.216.34:80".parse::<SocketAddr>().unwrap()],
@@ -164,7 +146,6 @@ async fn the_fetch_connects_to_the_pinned_address() {
     );
 }
 
-/// **The optional per-app allowlist.**
 #[tokio::test]
 async fn a_host_off_the_allowlist_is_refused() {
     let mut v = vtable(
@@ -183,10 +164,6 @@ async fn a_host_off_the_allowlist_is_refused() {
     }
 }
 
-/// **Subrequests are capped per dispatch.**
-///
-/// Per *dispatch*: the allowance has to come back when the next work item
-/// starts, or a long-lived Durable Instance would run out of egress forever.
 #[tokio::test]
 async fn the_subrequest_cap_is_per_dispatch() {
     let mut v = vtable(
@@ -208,7 +185,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
         pending_futures_per_dispatch: 6,
     }
     .subrequests_per_dispatch;
-    assert_eq!(cap, 20);
+    assert_eq!(cap, 20, "the free plan's subrequest cap");
 
     assert_eq!(
         Limits {
@@ -220,7 +197,9 @@ async fn the_subrequest_cap_is_per_dispatch() {
             pending_futures_per_dispatch: 6
         }
         .pending_futures_per_dispatch,
-        6
+        6,
+        "the futures cap is lower than the subrequest cap, so subrequests are drained one at a \
+         time here"
     );
 
     let payload = fetch_payload("http://example.com/");
@@ -249,37 +228,41 @@ async fn the_subrequest_cap_is_per_dispatch() {
         ResultRecord::Err(FutureError::Denied(m)) => assert!(m.contains("subrequest cap"), "{m}"),
         other => panic!("the 21st subrequest was allowed: {other:?}"),
     }
-    assert_eq!(v.ctx.subrequests(), cap + 1);
-    // The refusal arrives as a policy denial through the future, not as a
-    // trap: the guest can catch it and carry on, which is the difference
-    // between "that call is not allowed" and "your dispatch is over".
-    assert_eq!(v.ctx.take_trap(), None);
+    assert_eq!(
+        v.ctx.subrequests(),
+        cap + 1,
+        "the refused subrequest was counted"
+    );
+    assert_eq!(
+        v.ctx.take_trap(),
+        None,
+        "a policy denial is not a trap; the guest can catch it and carry on"
+    );
 
-    // A new dispatch starts with a full allowance.
     v.ctx.begin_dispatch(1_001, 2);
-    assert_eq!(v.ctx.subrequests(), 0);
+    assert_eq!(
+        v.ctx.subrequests(),
+        0,
+        "a new dispatch starts with a full allowance"
+    );
     let id = v.bindings.call_future(ImportCall {
         import: "http_fetch",
         payload: &payload,
         scalars: [0; 3],
     });
-    assert!(matches!(settle(&v, id).await, ResultRecord::Ok(_)));
+    assert!(
+        matches!(settle(&v, id).await, ResultRecord::Ok(_)),
+        "the fetch succeeds"
+    );
 }
 
-/// **Log CPU counts against the dispatch budget.**
-///
-/// The mechanism is not a separate accounting pass: `log_emit` runs on the
-/// execution-pool thread inside the dispatch's Hot interval, so
-/// `CLOCK_THREAD_CPUTIME_ID` is already ticking and the tenant is already
-/// paying. This asserts the cost is real and attributed, which is what makes
-/// log-as-compute pointless rather than merely discouraged.
 #[tokio::test]
 async fn logging_costs_the_tenant_cpu() {
     let output = TestLogCapture::default();
     let subscriber = output.dispatch();
     let _subscriber = tracing::dispatcher::set_default(&subscriber);
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
-    assert_eq!(v.meters.log_cpu_ns(), 0);
+    assert_eq!(v.meters.log_cpu_ns(), 0, "nothing has logged yet");
     let line = vec![b'x'; 512];
     for _ in 0..200 {
         v.bindings.call_sync(ImportCall {
@@ -289,8 +272,6 @@ async fn logging_costs_the_tenant_cpu() {
         });
     }
     assert!(v.meters.log_cpu_ns() > 0, "logging was free");
-    // And volume is bounded per dispatch independently of CPU, so a tenant
-    // cannot turn the log sink into free storage either.
     assert_eq!(output.records().len(), 200);
     let before = output.records().len();
     let big = vec![b'y'; 256 * 1024];
@@ -307,7 +288,6 @@ async fn logging_costs_the_tenant_cpu() {
     );
 }
 
-/// **`wait_until` extends the instance's lifetime past the response.**
 #[tokio::test]
 async fn wait_until_keeps_work_alive_past_the_response() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -324,29 +304,29 @@ async fn wait_until_keeps_work_alive_past_the_response() {
         }),
         0
     );
-    assert!(v.futures.wait_until_outstanding(v.ctx.instance));
+    assert!(
+        v.futures.wait_until_outstanding(v.ctx.instance),
+        "the marked future is outstanding"
+    );
 
-    // Ending the dispatch reclaims ordinary handles but not this one.
     v.futures.end_dispatch(v.ctx.instance, 1);
     assert!(
         v.futures.wait_until_outstanding(v.ctx.instance),
         "WaitUntil work must survive the end of the dispatch"
     );
 
-    // Marking an unknown future is refused rather than silently accepted.
     assert_eq!(
         v.bindings.call_sync(ImportCall {
             import: "wait_until",
             payload: &[],
             scalars: [99_999, 0, 0]
         }),
-        -1
+        -1,
+        "marking an unknown future is refused"
     );
 }
 
 
-/// **The wake router is told about every completion, and only about
-/// completions that have an owner.**
 #[tokio::test]
 async fn completions_signal_the_wake_router() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -361,12 +341,17 @@ async fn completions_signal_the_wake_router() {
         }
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
-    assert_eq!(*v.wake.signalled.lock(), vec![v.ctx.instance]);
-    assert!(matches!(settle(&v, id).await, ResultRecord::Ok(_)));
+    assert_eq!(
+        *v.wake.signalled.lock(),
+        vec![v.ctx.instance],
+        "the completion signalled the owning instance once"
+    );
+    assert!(
+        matches!(settle(&v, id).await, ResultRecord::Ok(_)),
+        "the fetch succeeds"
+    );
 }
 
-/// Entropy requests from different calls and instances reach the host generator
-/// without reusing a cached answer.
 #[tokio::test]
 async fn entropy_is_never_reused_across_calls_or_instances() {
     let mut a = vtable(Limits::default(), "93.184.216.34:80", None);
@@ -383,12 +368,12 @@ async fn entropy_is_never_reused_across_calls_or_instances() {
                 },
                 &mut buf,
             );
-            assert_eq!(n, 32);
+            assert_eq!(n, 32, "the whole buffer is filled");
             assert!(seen.insert(buf.to_vec()), "entropy repeated");
         }
     }
-    assert_eq!(seen.len(), 200);
-    assert_eq!(a.ctx.entropy_calls(), 100);
+    assert_eq!(seen.len(), 200, "every draw is distinct");
+    assert_eq!(a.ctx.entropy_calls(), 100, "every draw is counted");
 }
 
 #[derive(Clone, Default)]

@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use wisp_abi::calls::*;
-use wisp_abi::dispatch::DispatchRecord;
-use wisp_abi::host::PinnedTarget;
+use wisp_abi::dispatch::{DispatchRecord};
+use wisp_abi::host::{PinnedTarget};
 use wisp_abi::result::*;
 use wisp_abi::status::{PollStatus, TrapCode};
 use wisp_abi::PAGE_SIZE;
@@ -23,60 +23,57 @@ use crate::instances::Activator;
 use crate::meters::CpuInterval;
 use crate::ModuleId;
 
-/// One step of a fake guest's program. Each step is what the guest does for
-/// one call into it — `wisp_handle` or `wisp_wake`.
+/// What the scripted guest does for one call into it.
 #[derive(Debug, Clone)]
 pub enum Step {
-    /// Return `done` with a response.
-    Done { status: u16, body: Vec<u8> },
+    Done {
+        status: u16,
+        body: Vec<u8>,
+    },
     /// Issue imports and return `pending`.
-    Park { imports: Vec<(&'static str, u64)> },
-    /// Return `trapped`.
+    Park {
+        imports: Vec<(&'static str, u64)>,
+    },
     Trap(TrapCode),
-    /// Burn CPU on the calling thread until the **hard** deadline at B+G
-    /// kills it. Real CPU, on a real pool thread, killed by a real deadline
-    /// check.
-    ///
-    /// It crosses B, is offered grace — the vtable's `enter_grace` runs, so
-    /// the cancellation future completes and imports poison exactly as they
-    /// would under wasmtime — and **ignores it**, which is the definition of
-    /// an uncooperative guest. It ends tombstoned.
+    /// Burn CPU past the budget, ignore the grace window, and be hard-killed
+    /// at the deadline.
     Spin,
-    /// The cooperative counterpart: burn CPU past B, notice grace, then
-    /// unwind and return `done`. The **clean** kill.
-    ///
-    /// `unwind_us` is how long the unwind itself takes — the `finally` blocks
-    /// and `await using` disposals that a clean kill lets run. It must be less
-    /// than G or this becomes a `Spin` with extra steps, which is precisely
-    /// the boundary the conformance tests pin down.
-    CooperativeSpin { unwind_us: u64 },
-    /// Touch `pages` pages of linear memory, so the dirty set is measurable.
-    Dirty { pages: usize },
-    /// Emit `times` log lines of `bytes` each, then return `done`. Log CPU
-    /// counts against the dispatch budget, and this is what makes that
-    /// measurable.
-    Log { bytes: usize, times: usize },
-    /// Issue `http_fetch` for `url` `times` over, then park. Exercises the
-    /// egress policy and the subrequest cap through the real vtable.
-    Fetch { url: String, times: usize },
+    /// Burn CPU past the budget, notice grace, unwind for `unwind_us` and
+    /// return `done`: the clean kill. `unwind_us` past the grace window turns
+    /// this into a `Spin`.
+    CooperativeSpin {
+        unwind_us: u64,
+    },
+    /// Touch `pages` pages of linear memory.
+    Dirty {
+        pages: usize,
+    },
+    /// Emit `times` log lines of `bytes` each, then return `done`.
+    Log {
+        bytes: usize,
+        times: usize,
+    },
+    /// Issue `http_fetch` for `url` `times` over, then park.
+    Fetch {
+        url: String,
+        times: usize,
+    },
     /// Record the bytes returned by `entropy_fill`.
-    Entropy { bytes: usize },
+    Entropy {
+        bytes: usize,
+    },
     /// Return the received dispatch record as the response body.
     EchoRecord,
 }
 
-/// The scripted behaviour of a fake module.
 #[derive(Debug, Clone, Default)]
 pub struct FakeBehaviour {
-    /// The program for the first call into a fresh instance, then subsequent
-    /// calls. Exhausting it means "return done with 200".
+    /// One step per call into the instance; exhausted means `done` with 200.
     pub program: Vec<Step>,
-    /// Emulates a deferred lazy initializer: the guest checks a flag in
-    /// linear memory and, if unset, "initialises" and increments the counter.
-    /// The observed pre-call value is written into the response body, so a
+    /// A deferred lazy initializer: the guest checks a flag in linear memory,
+    /// sets it if unset, and reports the value it observed in the body, so a
     /// test can see whether the instance carried residue.
     pub lazy_init_probe: bool,
-    /// Bytes of linear memory. Kept tiny by default so tests are fast.
     pub memory_bytes: usize,
 }
 
@@ -99,22 +96,14 @@ impl FakeBehaviour {
         self.lazy_init_probe = true;
         self
     }
-    pub fn with_memory(mut self, bytes: usize) -> Self {
-        self.memory_bytes = bytes;
-        self
-    }
 }
 
-/// Offset of the lazy-init flag in the fake guest's linear memory.
 const LAZY_INIT_FLAG: usize = 0;
-/// Offset of the "how many times did the lazy initializer run" counter.
 const LAZY_INIT_RUNS: usize = 8;
 
 pub struct FakeInstance {
     /// Every `(future, result)` this instance was woken with, shared with the
-    /// [`FakeActivator`] so a test can assert what the *guest* observed rather
-    /// than what the future table thinks it sent — the guarantee is about the
-    /// guest's view.
+    /// [`FakeActivator`] so a test asserts what the guest observed.
     pub wakes_seen: Arc<Mutex<Vec<(u64, ResultRecord)>>>,
     bindings: Box<dyn HostBindings>,
     template: Arc<Vec<u8>>,
@@ -122,20 +111,12 @@ pub struct FakeInstance {
     program: VecDeque<Step>,
     behaviour: FakeBehaviour,
     image: InstanceImage,
-    /// True whenever no call into the guest is executing — which in a
-    /// callback-CPS ABI is *always*, between calls. There is no engine stack
-    /// to be suspended, so a suspended instance is at a serializable point by
-    /// construction.
     stack_empty: bool,
-    /// Whether the last call returned `pending` — invariant 3's predicate, and
-    /// what `is_parked` is about.
     last_parked: bool,
-    /// Whether the last call left this instance usable at all: a trap or a
-    /// budget kill leaves arbitrary memory, so it is never capturable.
+    /// A trap or a kill leaves arbitrary memory, never capturable.
     survived_last_call: bool,
     dirty_pages: usize,
     gc_hints: u32,
-    /// Every entropy draw this module's instances have made.
     entropy: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
@@ -152,7 +133,7 @@ impl FakeInstance {
                 let runs = u64::from_le_bytes(
                     self.memory[LAZY_INIT_RUNS..LAZY_INIT_RUNS + 8]
                         .try_into()
-                        .unwrap(),
+                        .expect("an 8-byte slice"),
                 );
                 self.memory[LAZY_INIT_RUNS..LAZY_INIT_RUNS + 8]
                     .copy_from_slice(&(runs + 1).to_le_bytes());
@@ -165,9 +146,6 @@ impl FakeInstance {
 
         let step = self.program.pop_front().unwrap_or(Step::Done {
             status: 200,
-            // The probe value is the whole point: `0` means this dispatch saw
-            // a pristine instance, `1` means it saw a previous request's
-            // residue.
             body: vec![observed_init],
         });
 
@@ -183,18 +161,8 @@ impl FakeInstance {
                     },
                     streaming: false,
                 };
-                let payload = postcard::to_allocvec(&head).unwrap();
-                let h = self.bindings.call_sync(ImportCall {
-                    import: "resp_new",
-                    payload: &payload,
-                    scalars: [0; 3],
-                });
-                self.bindings.call_sync(ImportCall {
-                    import: "resp_finish",
-                    payload: &[],
-                    scalars: [h as u64, 0, 0],
-                });
-                PollStatus::Done { response: h as u32 }
+                let h = self.respond(head);
+                PollStatus::Done { response: h }
             }
             Step::Park { imports } => {
                 for (name, scalar) in imports {
@@ -205,9 +173,6 @@ impl FakeInstance {
                         scalars: [scalar, 0, 0],
                     });
                     if fid == crate::futures::INVALID_FUTURE {
-                        // The pending-futures cap refused us. A real
-                        // guest cannot proceed either; the cell converts the
-                        // latched trap after we return.
                         break;
                     }
                 }
@@ -250,13 +215,12 @@ impl FakeInstance {
                 PollStatus::Done { response: 0 }
             }
             Step::Fetch { url, times } => {
-                let payload = postcard::to_allocvec(&FetchRequest {
+                let payload = enc(&FetchRequest {
                     method: "GET".into(),
                     url,
                     headers: vec![],
                     body: vec![],
-                })
-                .unwrap();
+                });
                 for _ in 0..times {
                     self.bindings.call_future(ImportCall {
                         import: "http_fetch",
@@ -270,28 +234,15 @@ impl FakeInstance {
                 let body = rec
                     .map(|r| postcard::to_allocvec(r).unwrap_or_default())
                     .unwrap_or_default();
-                let head = wisp_abi::dispatch::ResponseHead {
+                let h = self.respond(wisp_abi::dispatch::ResponseHead {
                     status: 200,
                     headers: vec![],
                     body,
                     streaming: false,
-                };
-                let payload = postcard::to_allocvec(&head).unwrap();
-                let h = self.bindings.call_sync(ImportCall {
-                    import: "resp_new",
-                    payload: &payload,
-                    scalars: [0; 3],
                 });
-                self.bindings.call_sync(ImportCall {
-                    import: "resp_finish",
-                    payload: &[],
-                    scalars: [h as u64, 0, 0],
-                });
-                PollStatus::Done { response: h as u32 }
+                PollStatus::Done { response: h }
             }
             Step::Spin | Step::CooperativeSpin { .. } => {
-                // Real CPU on the real calling thread, and a real deadline
-                // check delivering the two kill phases in the right order.
                 let cooperative = matches!(step, Step::CooperativeSpin { .. });
                 let unwind_ns = match step {
                     Step::CooperativeSpin { unwind_us } => unwind_us * 1_000,
@@ -311,13 +262,8 @@ impl FakeInstance {
                     let now = budget.spent_ns + cpu.elapsed_ns();
                     if !entered_grace && now >= b_ns {
                         entered_grace = true;
-                        // Exactly what the engine's epoch callback does at B:
-                        // complete the cancellation future and poison this
-                        // dispatch's imports.
                         self.bindings.enter_grace();
                         if cooperative {
-                            // The unwind: `finally` blocks, disposals, and the
-                            // return. Accounted like any other CPU.
                             let stop = cpu.elapsed_ns() + unwind_ns;
                             while cpu.elapsed_ns() < stop {
                                 for i in 0..1_000u64 {
@@ -337,8 +283,6 @@ impl FakeInstance {
                 self.stack_empty = true;
                 self.last_parked = false;
                 if cooperative {
-                    // The slot is reusable. This is a *return*, not a trap,
-                    // so nothing about the instance is arbitrary.
                     self.survived_last_call = true;
                     return DispatchOutcome {
                         status: PollStatus::Done { response: 0 },
@@ -361,7 +305,6 @@ impl FakeInstance {
                     wall_ns: wall.elapsed().as_nanos() as u64,
                     trap: Some(TrapInfo {
                         kind: TrapKind::BudgetExceeded,
-                        // No unwinding, no finally, no cleanup quantum.
                         message: "cpu budget exceeded at the B+G hard deadline; terminated \
                                   without unwinding"
                             .into(),
@@ -373,7 +316,6 @@ impl FakeInstance {
             }
         };
 
-        let _ = rec;
         self.stack_empty = true;
         let completion = Completion::from_status(status);
         self.last_parked = completion == Completion::Parked;
@@ -396,28 +338,36 @@ impl FakeInstance {
         }
     }
 
-    /// How many times the deferred lazy initializer ran in this instance's
-    /// memory. Under `fresh` this is 1 on every dispatch; under `reuse` it
-    /// stops incrementing once the instance is warm.
-    pub fn lazy_init_runs(&self) -> u64 {
-        u64::from_le_bytes(
-            self.memory[LAZY_INIT_RUNS..LAZY_INIT_RUNS + 8]
-                .try_into()
-                .unwrap(),
-        )
+    /// `resp_new` then `resp_finish` through the vtable, returning the handle.
+    fn respond(&mut self, head: wisp_abi::dispatch::ResponseHead) -> u32 {
+        let payload = enc(&head);
+        let h = self.bindings.call_sync(ImportCall {
+            import: "resp_new",
+            payload: &payload,
+            scalars: [0; 3],
+        });
+        self.bindings.call_sync(ImportCall {
+            import: "resp_finish",
+            payload: &[],
+            scalars: [h as u64, 0, 0],
+        });
+        h as u32
     }
+}
+
+fn enc<T: serde::Serialize>(v: &T) -> Vec<u8> {
+    postcard::to_allocvec(v).expect("a fixed-shape payload built here encodes")
 }
 
 /// Encode the supported request payload for a scripted import.
 fn fake_payload_for(name: &'static str) -> Vec<u8> {
     match name {
-        "http_fetch" => postcard::to_allocvec(&FetchRequest {
+        "http_fetch" => enc(&FetchRequest {
             method: "GET".into(),
             url: "http://example.com/".into(),
             headers: vec![],
             body: vec![],
-        })
-        .unwrap(),
+        }),
         _ => Vec::new(),
     }
 }
@@ -431,6 +381,7 @@ impl InstanceOps for FakeInstance {
         self.run(budget, None)
     }
     fn gc_hint(&mut self, _pressure: u8) -> DispatchOutcome {
+        // Zeroes the upper half, enough for the delta size to respond.
         self.gc_hints += 1;
         let half = self.memory.len() / 2;
         for b in &mut self.memory[half..] {
@@ -448,8 +399,6 @@ impl InstanceOps for FakeInstance {
         }
     }
     fn reset(&mut self) -> anyhow::Result<()> {
-        // `madvise(MADV_DONTNEED)` on the private mapping restores template
-        // contents; globals/tables re-sealed.
         self.memory.clear();
         self.memory.extend_from_slice(&self.template);
         self.memory.resize(self.behaviour.memory_bytes, 0);
@@ -462,8 +411,6 @@ impl InstanceOps for FakeInstance {
         self.stack_empty && self.last_parked
     }
     fn is_capture_eligible(&self) -> bool {
-        // The fake models the stack directly, so "empty stack and the last
-        // call did not trap" is the whole of the capture condition here.
         self.stack_empty && self.survived_last_call
     }
     fn memory(&mut self) -> &mut [u8] {
@@ -485,8 +432,8 @@ impl InstanceOps for FakeInstance {
     }
 }
 
-/// A fake template. Its "pre-initialized memory image" is a deterministic
-/// pattern, which is enough for a page diff to be meaningful.
+/// A fake template whose memory image is a deterministic pattern, so a page
+/// diff means something.
 pub struct FakeActivator {
     module: ModuleId,
     hash: ModuleHash,
@@ -507,8 +454,6 @@ impl FakeActivator {
         } else {
             behaviour.memory_bytes
         };
-        // A non-trivial template image, so "differs from the template" means
-        // something in the page diff.
         let image: Vec<u8> = (0..bytes)
             .map(|i| ((i / PAGE_SIZE) as u8).wrapping_mul(31))
             .collect();
@@ -526,7 +471,6 @@ impl FakeActivator {
             entropy: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    /// What every instance of this module has been woken with, in order.
     pub fn wakes(&self) -> Vec<(u64, ResultRecord)> {
         self.wakes_seen.lock().clone()
     }
@@ -573,24 +517,20 @@ impl Activator for FakeActivator {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hibernation
-// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Bindings targets
-// ---------------------------------------------------------------------------
 
-/// Records the address it was told to connect to, so a test can prove the
-/// **pinned** address was used and the name was never re-resolved.
+
+
+
+
+
+
+/// Records the address it was told to connect to.
 #[derive(Default)]
 pub struct FakeFetcher {
     pub connected_to: Mutex<Vec<std::net::SocketAddr>>,
     pub bodies: Mutex<HashMap<u32, VecDeque<Vec<u8>>>>,
-    /// When set, `read_body` never resolves — an honest model of a streaming
-    /// transfer that is still in flight. The Unbounded future case only means
-    /// anything while a transfer is outstanding, so a test that wants to
-    /// observe it has to be able to keep one outstanding.
+    /// When set, `read_body` never resolves: a streaming transfer in flight.
     stall: std::sync::atomic::AtomicBool,
 }
 
@@ -634,8 +574,16 @@ impl crate::bindings::Fetcher for FakeFetcher {
     }
 }
 
-/// A [`crate::bindings::WakeSink`] that just records, for tests that do not
-/// want a whole cell.
+
+
+
+
+
+
+
+
+
+/// A [`crate::bindings::WakeSink`] that records, for tests without a cell.
 #[derive(Default)]
 pub struct RecordingWake {
     pub signalled: Mutex<Vec<crate::InstanceId>>,

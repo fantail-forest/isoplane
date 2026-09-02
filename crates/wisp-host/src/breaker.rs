@@ -1,14 +1,8 @@
-//! The hang breaker.
-//!
-//! An instance killed at budget is discarded; repeated budget kills for the
-//! same (module, route) trip a breaker that fails subsequent dispatches fast
-//! until the breaker cools or a new version deploys.
-//!
-//! The breaker is *not* an isolation mechanism. The isolation is already done
-//! by the time we get here: a spinner occupies only its own execution-pool
-//! thread and the kernel preempts it, so the blast radius is the offender's
-//! own requests. The breaker exists to stop burning a whole CPU budget per
-//! request to learn the same thing repeatedly.
+//! The hang breaker: repeated hard budget kills for one (module, route) fail
+//! subsequent dispatches fast until the breaker cools or a new version
+//! deploys. Isolation is already done by the time a kill happens; the breaker
+//! exists to stop burning a whole CPU budget per request to learn the same
+//! thing again.
 
 use std::collections::HashMap;
 
@@ -16,9 +10,8 @@ use parking_lot::Mutex;
 
 use crate::ModuleId;
 
-/// The key a breaker cools per. Version is part of `ModuleId`, so "a new
-/// version deploys" resets the breaker for free — a deploy simply produces a
-/// key that has never tripped.
+/// The key a breaker cools per. Version is part of `ModuleId`, so a deploy
+/// produces a key that has never tripped.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BreakerKey {
     pub module: ModuleId,
@@ -28,8 +21,7 @@ pub struct BreakerKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakerState {
     Closed,
-    /// Failing fast. Subsequent dispatches are refused without entering the
-    /// guest at all, which is the point: no CPU is spent to relearn.
+    /// Dispatches are refused without entering the guest.
     Open {
         until_ms: u64,
     },
@@ -60,7 +52,7 @@ struct Entry {
     kills: u32,
     first_kill_ms: u64,
     open_until_ms: u64,
-    /// Set while a single probe dispatch is in flight after cooldown, so a
+    /// Set while the single probe dispatch after a cooldown is in flight, so a
     /// flood does not all get through at once.
     probing: bool,
 }
@@ -78,8 +70,8 @@ impl HangBreaker {
         }
     }
 
-    /// Admission check. `Err(until_ms)` means fail fast — the dispatch never
-    /// reaches an execution-pool thread.
+    /// `Err(until_ms)` means fail fast: the dispatch never reaches an
+    /// execution-pool thread.
     pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<(), u64> {
         let mut g = self.entries.lock();
         let Some(e) = g.get_mut(key) else {
@@ -89,8 +81,8 @@ impl HangBreaker {
             return Ok(());
         }
         if now_ms >= e.open_until_ms {
-            // Cooled. Let exactly one probe through; if it is killed too, the
-            // breaker re-opens on the first kill rather than after three.
+            // Cooled: exactly one probe goes through, and a kill of the probe
+            // reopens the breaker on that kill alone.
             if e.probing {
                 return Err(e.open_until_ms);
             }
@@ -100,12 +92,11 @@ impl HangBreaker {
         Err(e.open_until_ms)
     }
 
-    /// A dispatch was killed at its CPU budget: abrupt, with no unwinding.
+    /// A dispatch was hard-killed at its CPU budget.
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
         let mut g = self.entries.lock();
         let e = g.entry(key.clone()).or_default();
         if e.probing {
-            // The probe failed. Straight back open.
             e.probing = false;
             e.open_until_ms = now_ms + self.cfg.cooldown_ms;
             return;
@@ -121,8 +112,7 @@ impl HangBreaker {
         }
     }
 
-    /// A dispatch completed normally. Success closes the breaker: the tenant
-    /// pushed a fix, or the hang was input-dependent.
+    /// A dispatch completed normally, which closes the breaker.
     pub fn record_success(&self, key: &BreakerKey) {
         let mut g = self.entries.lock();
         if let Some(e) = g.get_mut(key) {
@@ -142,20 +132,10 @@ impl HangBreaker {
         }
     }
 
-    /// A breaker clears when it cools **or a new version deploys**. A new
-    /// version has a different `ModuleId`, so a deploy clears it for free and
-    /// this only exists for the case where an operator wants to clear a key by
-    /// hand.
+    /// An operator's manual override; a deploy clears the breaker on its own
+    /// by producing a new key.
     pub fn clear_module(&self, module: &ModuleId) {
         self.entries.lock().retain(|k, _| &k.module != module);
-    }
-
-    pub fn open_count(&self, now_ms: u64) -> usize {
-        self.entries
-            .lock()
-            .values()
-            .filter(|e| e.open_until_ms > now_ms)
-            .count()
     }
 }
 
@@ -180,21 +160,22 @@ mod tests {
     fn trips_after_threshold_and_fails_fast() {
         let b = HangBreaker::new(BreakerConfig::default());
         let k = key("/spin");
-        assert!(b.check(&k, 0).is_ok());
+        assert!(b.check(&k, 0).is_ok(), "a fresh key is closed");
         b.record_kill(&k, 0);
         b.record_kill(&k, 100);
         assert!(b.check(&k, 200).is_ok(), "two kills must not trip it");
         b.record_kill(&k, 200);
-        assert_eq!(b.state(&k, 250), BreakerState::Open { until_ms: 5_200 });
+        assert_eq!(
+            b.state(&k, 250),
+            BreakerState::Open { until_ms: 5_200 },
+            "the third kill opens it for the cooldown"
+        );
         assert!(
             b.check(&k, 250).is_err(),
-            "third kill must fail subsequent dispatches fast"
+            "the third kill must fail subsequent dispatches fast"
         );
     }
 
-    /// The breaker is per (module, route): a hang on `/spin` must not fail
-    /// `/healthz`. The blast radius of a hang is the offender's own requests,
-    /// and the breaker must not widen it.
     #[test]
     fn other_routes_are_unaffected() {
         let b = HangBreaker::default();
@@ -202,17 +183,22 @@ mod tests {
         for t in 0..3 {
             b.record_kill(&spin, t * 10);
         }
-        assert!(b.check(&spin, 100).is_err());
-        assert!(b.check(&key("/healthz"), 100).is_ok());
-        assert!(b
-            .check(
+        assert!(b.check(&spin, 100).is_err(), "the offending route is open");
+        assert!(
+            b.check(&key("/healthz"), 100).is_ok(),
+            "a hang on one route must not fail another"
+        );
+        assert!(
+            b.check(
                 &BreakerKey {
                     module: ModuleId::new("other", "v1"),
                     route: "/spin".into()
                 },
                 100
             )
-            .is_ok());
+            .is_ok(),
+            "a hang in one module must not fail another"
+        );
     }
 
     #[test]
@@ -222,12 +208,15 @@ mod tests {
         for t in 0..3 {
             b.record_kill(&k, t);
         }
-        assert!(b.check(&k, 1_000).is_err());
-        // After the cooldown one probe is admitted, and only one.
-        assert!(b.check(&k, 6_000).is_ok());
+        assert!(b.check(&k, 1_000).is_err(), "open during the cooldown");
+        assert!(b.check(&k, 6_000).is_ok(), "one probe after the cooldown");
         assert!(b.check(&k, 6_001).is_err(), "only one probe may pass");
         b.record_success(&k);
-        assert_eq!(b.state(&k, 6_002), BreakerState::Closed);
+        assert_eq!(
+            b.state(&k, 6_002),
+            BreakerState::Closed,
+            "a successful probe closes it"
+        );
     }
 
     #[test]
@@ -237,13 +226,14 @@ mod tests {
         for t in 0..3 {
             b.record_kill(&k, t);
         }
-        assert!(b.check(&k, 6_000).is_ok());
+        assert!(b.check(&k, 6_000).is_ok(), "the probe is admitted");
         b.record_kill(&k, 6_050);
-        assert!(b.check(&k, 6_100).is_err());
+        assert!(
+            b.check(&k, 6_100).is_err(),
+            "a killed probe reopens the breaker on that kill alone"
+        );
     }
 
-    /// A new version deploys and the breaker is gone, because the key
-    /// contains the version.
     #[test]
     fn a_new_version_starts_closed() {
         let b = HangBreaker::default();
@@ -255,6 +245,9 @@ mod tests {
             module: ModuleId::new("app", "v2"),
             route: "/spin".into(),
         };
-        assert!(b.check(&v2, 100).is_ok());
+        assert!(
+            b.check(&v2, 100).is_ok(),
+            "the version is in the key, so a deploy starts closed"
+        );
     }
 }

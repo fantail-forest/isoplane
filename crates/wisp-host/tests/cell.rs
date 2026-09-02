@@ -1,3 +1,7 @@
+//! Cell-level tests against [`wisp_host::fakes`]. What is not faked is what
+//! each claim is about: the spinner burns real CPU on a real execution thread
+//! and is killed by a real deadline, and parked instances hold real timers.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,10 +15,6 @@ use wisp_host::egress::HostEgressPolicy;
 use wisp_host::fakes::*;
 use wisp_host::{Activator, ModuleId, Resolver};
 
-// ---------------------------------------------------------------------------
-// harness
-// ---------------------------------------------------------------------------
-
 struct Fixed(Vec<std::net::SocketAddr>);
 impl Resolver for Fixed {
     fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<std::net::SocketAddr>, String> {
@@ -24,49 +24,26 @@ impl Resolver for Fixed {
 
 struct Rig {
     cell: Arc<Cell>,
-    #[allow(dead_code)]
     fetcher: Arc<FakeFetcher>,
 }
 
-type FakeServices = (Arc<Services>, Arc<FakeFetcher>);
-
-fn services_resolving(addr: &str) -> FakeServices {
-    let fetcher = Arc::new(FakeFetcher::default());
-    let egress = Arc::new(HostEgressPolicy::new(
-        Box::new(Fixed(vec![addr.parse().unwrap()])),
-        1024,
-        1 << 30,
-    ));
-    let svc = Arc::new(Services {
-        egress,
-        fetcher: fetcher.clone(),
-    });
-    (svc, fetcher)
-}
-
-fn services() -> FakeServices {
-    let fetcher = Arc::new(FakeFetcher::default());
-    let egress = Arc::new(HostEgressPolicy::new(
-        Box::new(Fixed(vec!["93.184.216.34:80".parse().unwrap()])),
-        1024,
-        1 << 30,
-    ));
-    let svc = Arc::new(Services {
-        egress,
-        fetcher: fetcher.clone(),
-    });
-    (svc, fetcher)
-}
-
 fn rig(cfg: CellConfig) -> Rig {
-    let (svc, fetcher) = services();
-    let cell = Cell::new(cfg, svc);
-    Rig { cell, fetcher }
+    rig_resolving(cfg, "93.184.216.34:80")
 }
 
+/// A cell whose egress resolver answers every name with `addr`.
 fn rig_resolving(cfg: CellConfig, addr: &str) -> Rig {
-    let (svc, fetcher) = services_resolving(addr);
-    let cell = Cell::new(cfg, svc);
+    let fetcher = Arc::new(FakeFetcher::default());
+    let egress = Arc::new(HostEgressPolicy::new(
+        Box::new(Fixed(vec![addr.parse().expect("a literal address")])),
+        1024,
+        1 << 30,
+    ));
+    let svc = Arc::new(Services {
+        egress,
+        fetcher: fetcher.clone(),
+    });
+    let cell = Cell::new(cfg, svc).expect("a cell starts");
     Rig { cell, fetcher }
 }
 
@@ -107,15 +84,9 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
 
 const T: Duration = Duration::from_secs(10);
 
-/// A host timer long enough that it will not fire during any test. Parking on
-/// it is how a test holds an instance in the Parked tier long enough to look
-/// at it. Timers are host futures, not guest loops, so the instance costs
-/// nothing while it waits, which is the point of most of these tests.
+/// A host timer that will not fire during any test; parking on it holds an
+/// instance Parked for as long as a test needs to look at it.
 const PARK_MS: u64 = 600_000;
-
-// ---------------------------------------------------------------------------
-// Kills are abrupt and self-limiting
-// ---------------------------------------------------------------------------
 
 /// A spinner occupies only its own execution-pool thread and the CPU budget
 /// kills it without unwinding; another tenant's parked instance is still woken
@@ -142,9 +113,7 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
         )
         .unwrap();
 
-    // `fresh` so every request gets a pristine clone and therefore a fresh
-    // copy of the park-then-respond program — which is also the `fresh` reset
-    // path being exercised incidentally.
+    // `fresh`, so every request gets a fresh copy of the program.
     let victim = Arc::new(FakeActivator::named(
         ModuleId::new("victim", "v1"),
         FakeBehaviour::program([
@@ -269,22 +238,8 @@ fn wake_once(r: &Rig, module: &ModuleId) {
     assert_eq!(out.slices, 2, "expected dispatch + one wake");
 }
 
-// ---------------------------------------------------------------------------
-// Residue
-// ---------------------------------------------------------------------------
-
-/// **`fresh` guarantees no residue; `reuse` allows it.**
-///
-/// The fake guest carries a deferred-lazy-initializer probe: on each dispatch
-/// it checks a flag in linear memory, initialises if unset, and reports the
-/// value it *observed*. `0` means it saw a pristine instance; `1` means it saw
-/// a previous request's residue.
-///
-/// The claim for `fresh` is strong — no request can observe residue of any
-/// prior request, which is what turns "tenant code shouldn't leak state
-/// between its own users" from a code-review hope into a structural
-/// impossibility — so the assertion is a universal over many requests, not a
-/// spot check.
+/// The fake guest's lazy-init probe reports `0` for a pristine instance and
+/// `1` for a previous request's residue.
 #[test]
 fn fresh_leaves_no_residue_reuse_does() {
     let r = rig(CellConfig::for_test("residue"));
@@ -327,9 +282,8 @@ fn fresh_leaves_no_residue_reuse_does() {
                     observed.iter().all(|v| *v == 0),
                     "a `fresh` dispatch observed residue: {observed:?}"
                 );
-                // And it recorded 1.5x per request for the privilege.
                 let m = r.cell.meters(&module).unwrap();
-                assert_eq!(m.dispatches(), 25);
+                assert_eq!(m.dispatches(), 25, "every dispatch is counted");
             }
             HandlerLifecycle::Reuse => {
                 assert_eq!(observed[0], 0, "the first dispatch cannot observe residue");
@@ -344,20 +298,6 @@ fn fresh_leaves_no_residue_reuse_does() {
     r.cell.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// Future classes across hibernation
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// The pending-futures cap
-// ---------------------------------------------------------------------------
-
-/// **The simultaneous-pending-futures cap is enforced.**
-///
-/// Bounded pending futures are one of the three factors in the *structural*
-/// anti-abuse residency bound — memory ceiling × bounded pending
-/// futures × evictability — which is what lets the platform never meter
-/// wall-clock time. So exceeding it is a trap, not a warning.
 #[test]
 fn the_pending_futures_cap_traps_the_guest() {
     let free = rig(CellConfig {
@@ -373,7 +313,7 @@ fn the_pending_futures_cap_traps_the_guest() {
         pending_futures_per_dispatch: 6,
     }
     .pending_futures_per_dispatch;
-    assert_eq!(limit, 6);
+    assert_eq!(limit, 6, "the free plan's cap");
 
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("greedy", "v1"),
@@ -421,8 +361,12 @@ fn the_pending_futures_cap_traps_the_guest() {
         Completion::Trapped,
         "the cap did not trap the guest"
     );
-    assert_eq!(out.status, 500);
-    assert_eq!(r.cell.metrics().pending_cap_rejections, 1);
+    assert_eq!(out.status, 500, "a trap is a 500");
+    assert_eq!(
+        r.cell.metrics().pending_cap_rejections,
+        1,
+        "the cap refusal is counted"
+    );
 
     let ok = Arc::new(FakeActivator::named(
         ModuleId::new("higher-limit-app", "v1"),
@@ -463,21 +407,16 @@ fn the_pending_futures_cap_traps_the_guest() {
         ),
         "the higher configured future cap was not applied"
     );
-    assert_eq!(paid.cell.metrics().pending_cap_rejections, 0);
+    assert_eq!(
+        paid.cell.metrics().pending_cap_rejections,
+        0,
+        "the standard plan was never capped"
+    );
     drop(rx);
     free.cell.shutdown();
     paid.cell.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Admission
-// ---------------------------------------------------------------------------
-
-/// **Overflow queues at admission; the cell sheds before it saturates, and the
-/// hang breaker fails repeat offenders fast.**
 #[test]
 fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     let r = rig(CellConfig {
@@ -513,15 +452,19 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
                 T,
             )
             .unwrap();
-        assert_eq!(out.completion, Completion::BudgetKill);
+        assert_eq!(
+            out.completion,
+            Completion::BudgetKill,
+            "the spinner was killed"
+        );
         killed_cpu.push(out.cpu_ns);
     }
-    // Every kill cost real CPU — that is what the breaker exists to stop
-    // paying.
-    assert!(killed_cpu.iter().all(|c| *c > 5_000_000), "{killed_cpu:?}");
+    assert!(
+        killed_cpu.iter().all(|c| *c > 5_000_000),
+        "every kill cost real CPU: {killed_cpu:?}"
+    );
     let activations_before = act.activation_count();
 
-    // The fourth request is refused without entering the guest at all.
     let mut rec = http(&r.cell, &module, "/hang");
     rec.dispatch_id = 99;
     rec.cpu_budget_ms = 10;
@@ -536,7 +479,7 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
             T,
         )
         .unwrap();
-    assert_eq!(out.status, 503);
+    assert_eq!(out.status, 503, "the breaker answers 503");
     assert_eq!(out.trap.as_deref(), Some("breaker_open"));
     assert_eq!(out.cpu_ns, 0, "the breaker burned CPU to say no");
     assert_eq!(
@@ -544,11 +487,14 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
         activations_before,
         "the breaker activated an instance to reject the request"
     );
-    assert_eq!(r.cell.metrics().breaker_rejections, 1);
+    assert_eq!(
+        r.cell.metrics().breaker_rejections,
+        1,
+        "the rejection is counted"
+    );
     r.cell.shutdown();
 }
 
-/// **The scrape the harness reads.**
 #[test]
 fn the_metrics_endpoint_decomposes_the_lifecycle() {
     let r = rig(CellConfig::for_test("metrics"));
@@ -570,17 +516,9 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         r.cell
             .dispatch_blocking(&module, Target::Handler { route: "/".into() }, rec, T)
             .unwrap();
-        // `dispatch_blocking` returns when the RESPONSE is sent, which comes
-        // before the instance goes back to the pool — the tenant is not
-        // made to wait for the platform's bookkeeping. So a client that fires
-        // the next request the instant the last one lands can genuinely race
-        // the release and pay for a second activation, on four exec threads.
-        //
-        // That race is a real property of the system and not a bug; what it
-        // is not is the subject of this test, which is about the steady state:
-        // only the first request paid for an activation. Waiting
-        // for the instance to be parked makes the assertion measure that
-        // rather than the scheduler.
+        // The response leaves before the instance is pooled, so a client that
+        // fires the next request at once can race the release and pay for a
+        // second activation; waiting for the pool measures the steady state.
         assert!(
             wait_for(
                 || r.cell
@@ -610,25 +548,18 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
         );
     }
     let json: serde_json::Value = serde_json::from_str(&r.cell.metrics_json()).unwrap();
-    assert_eq!(json["dispatches"], 5);
-    // Acquisition-source visibility: only the first request paid for an
-    // activation; the rest were served warm.
-    assert_eq!(json["served_activated"], 1);
-    assert_eq!(json["served_warm"], 4);
+    assert_eq!(
+        json["dispatches"], 5,
+        "the json scrape carries the counters"
+    );
+    assert_eq!(
+        json["served_activated"], 1,
+        "only the first request paid for an activation"
+    );
+    assert_eq!(json["served_warm"], 4, "the rest were served warm");
     r.cell.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// WaitUntil, logging and egress through a whole request
-// ---------------------------------------------------------------------------
-
-/// **`WaitUntil` work outlives the response, and under `fresh` the reset is
-/// owed only after it finishes.**
-///
-/// The guarantee is worded "after the response **and any `WaitUntil` work**
-/// completes" precisely because the two are not the same moment. The
-/// response here comes back at 202 while a 10-minute host timer is still
-/// outstanding, and the instance is still alive.
 #[test]
 fn wait_until_keeps_the_instance_alive_past_the_response() {
     let r = rig(CellConfig::for_test("waituntil"));
@@ -666,9 +597,6 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
     );
     assert_eq!(out.body, b"accepted");
 
-    // The response is delivered, the background future is still outstanding,
-    // and the instance is therefore still resident and Parked rather than
-    // reset back into the pool.
     let instance = out.instance;
     assert!(
         r.cell.futures().wait_until_outstanding(instance),
@@ -681,12 +609,6 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
     r.cell.shutdown();
 }
 
-/// **Log CPU counts against the dispatch budget.**
-///
-/// Not a separate accounting pass — `log_emit` runs on the execution-pool
-/// thread inside the dispatch's Hot interval, so the tenant's own CPU meter
-/// is already ticking while it formats. A guest that logs ten thousand lines
-/// pays for ten thousand lines, which is what makes log-as-compute pointless.
 #[test]
 fn logging_is_charged_to_the_dispatch_that_logs() {
     let r = rig(CellConfig::for_test("logcpu"));
@@ -741,31 +663,25 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
         )
         .unwrap();
 
-    eprintln!(
-        "log cost: 1 line = {} µs CPU, 2000 = {} µs",
-        q.cpu_ns / 1000,
-        l.cpu_ns / 1000
-    );
     assert!(
         l.cpu_ns > q.cpu_ns * 4,
         "logging 2000 lines cost {} ns vs {} ns for one; logs are close to free",
         l.cpu_ns,
         q.cpu_ns
     );
-    assert!(r.cell.meters(&lm).unwrap().log_cpu_ns() > 0);
+    assert!(
+        r.cell.meters(&lm).unwrap().log_cpu_ns() > 0,
+        "the log CPU share is recorded"
+    );
     r.cell.shutdown();
 }
 
-/// **Egress policy through a whole request: the guest cannot reach an RFC1918
-/// address, and the refusal arrives as a typed future error rather than a
-/// hang.**
 #[test]
 fn a_guest_cannot_fetch_a_private_address() {
     let r = rig_resolving(CellConfig::for_test("ssrf"), "169.254.169.254:80");
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("prober", "v1"),
         FakeBehaviour::program([Step::Fetch {
-            // The cloud metadata endpoint: the target this control exists for.
             url: "http://169.254.169.254/latest/meta-data/".into(),
             times: 1,
         }]),
@@ -808,8 +724,6 @@ fn a_guest_cannot_fetch_a_private_address() {
     r.cell.shutdown();
 }
 
-/// Instances cloned from the same template make fresh host entropy requests.
-/// These checks concern the host calls, not arbitrary guest-owned RNG state.
 #[test]
 fn clones_of_one_template_never_share_entropy() {
     let r = rig(CellConfig::for_test("entropy"));
@@ -818,8 +732,7 @@ fn clones_of_one_template_never_share_entropy() {
         FakeBehaviour::program([Step::Entropy { bytes: 32 }]),
     ));
     let module = act.module().clone();
-    // `fresh`: every dispatch is a pristine clone of the same template, which
-    // is the worst case for this property.
+    // `fresh`: every dispatch is a clone of the same template.
     r.cell
         .register_module(
             "acme",
@@ -843,7 +756,7 @@ fn clones_of_one_template_never_share_entropy() {
             .unwrap();
     }
     let draws = act.entropy.lock().clone();
-    assert_eq!(draws.len(), 50);
+    assert_eq!(draws.len(), 50, "every dispatch drew entropy");
     let unique: std::collections::HashSet<Vec<u8>> = draws.into_iter().collect();
     assert_eq!(
         unique.len(),
@@ -857,24 +770,8 @@ fn clones_of_one_template_never_share_entropy() {
     r.cell.shutdown();
 }
 
-/// `submit_with` puts many dispatches on one channel, and each result is
-/// matchable to its request.
-///
-/// Both halves matter and the second is the one that needs a test.
-/// [`Cell::submit`] hands back a receiver per request, which is right for a
-/// test holding a few dozen parked instances and unusable for a load
-/// generator: a hundred thousand requests a second is a hundred thousand
-/// allocations and a hundred thousand receivers to poll, and a generator built
-/// that way measures itself rather than the cell. So the shared-channel form
-/// exists — and the moment results share a channel, arrival order stops
-/// carrying any information about which request each one answers, because a
-/// wake may land on any pool thread.
-///
-/// The test forces exactly that: one slow dispatch is submitted **first** and
-/// fifty fast ones behind it, so the first result off the channel is provably
-/// not the first request in. Without `DispatchResult::dispatch_id` there is
-/// nothing to correlate on and every latency figure built this way would be
-/// attributed to the wrong request.
+/// One slow dispatch is submitted first and fifty fast ones behind it, so
+/// the first result off the shared channel is not the first request in.
 #[test]
 fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {
@@ -883,9 +780,6 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
         ..CellConfig::for_test("share")
     });
 
-    // Parks on a real host timer, then answers. 250 ms is far longer than the
-    // fifty fast dispatches need, so the ordering this test asserts is a
-    // property of the design and not a race.
     let slow = Arc::new(FakeActivator::named(
         ModuleId::new("slow", "v1"),
         FakeBehaviour::program([
@@ -989,24 +883,10 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     r.cell.shutdown();
 }
 
-/// A shed submission is reported as shed rather than going quiet.
-///
-/// The contract `submit` has, restated for the shared-channel form: an
-/// admission-queue overflow returns `false`. A generator that ignored that and
-/// waited for a result would hang; one that treated `false` as "no answer is
-/// coming" is right. What must never happen is silence with no signal, which
-/// is what an early draft did by returning `()`.
-///
-/// **The fixture is a spinner, and the first draft's parker is why.** A parked
-/// dispatch does not occupy its execution-pool thread — that is the entire
-/// point of invariant 3 — so with a parking guest the exec thread drains the
-/// queue as fast as the test fills it, and whether anything sheds is a race
-/// between the submitting loop and the pool. It passed about five runs in six.
-/// A spinner genuinely holds its thread until its CPU budget kills it, so with
-/// one exec thread and a one-deep queue the outcome is determined: one Hot,
-/// one queued, the rest shed. Waiting for `hot_count() == 1` before filling
-/// removes the other half of the race, which is whether the pool had dequeued
-/// the first submission yet.
+/// A spinner holds its thread until its budget kills it, so with one thread
+/// and a one-deep lane the outcome is determined: one Hot, one queued, the
+/// rest shed. A parking guest would drain the lane as fast as the test fills
+/// it.
 #[test]
 fn a_shed_submission_says_so_rather_than_going_quiet() {
     let r = rig(CellConfig {
@@ -1030,8 +910,6 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let (tx, rx) = std::sync::mpsc::sync_channel::<wisp_host::DispatchResult>(128);
     let mut rec = http(&r.cell, &module, "/spin");
     rec.dispatch_id = 0;
-    // Test-local, for the reason above: this needs a spinner that holds the one
-    // Hot slot and then dies, not one that runs for the plan's whole budget.
     rec.cpu_budget_ms = 50;
     assert!(r.cell.submit_with(
         &module,
@@ -1051,10 +929,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     for i in 1..64u64 {
         let mut rec = http(&r.cell, &module, "/spin");
         rec.dispatch_id = i;
-        // **Every one of them, not just the first.** The one that gets queued
-        // behind the Hot spinner runs too, and the drain below waits two
-        // seconds for its result — so a record left on the plan's budget makes
-        // this test fail on a timeout rather than on anything it asserts.
+        // The queued one runs too, and the drain below waits two seconds.
         rec.cpu_budget_ms = 50;
         if r.cell.submit_with(
             &module,
@@ -1074,16 +949,12 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
         accepted, 2,
         "one Hot and one queued; everything else must shed at admission"
     );
-    assert_eq!(shed, 62);
+    assert_eq!(shed, 62, "the rest were shed");
     assert!(
         r.cell.metrics().shed >= 62,
         "the cell must count what it shed"
     );
 
-    // Every accepted submission answers, and nothing shed produces a result on
-    // the channel — so a caller can account for each submission as exactly one
-    // of the two outcomes, which is what makes a completion count usable as a
-    // denominator.
     let mut got = 0;
     while rx.recv_timeout(Duration::from_secs(2)).is_ok() {
         got += 1;

@@ -1,64 +1,26 @@
-//! # `wisp-host` — the cell
+//! The cell: the runtime data plane that owns kernel objects, runs guest code
+//! and holds the memory that is the tenant's state.
 //!
-//! A cell is the runtime data plane: the thing that owns kernel objects, runs
-//! guest code, and holds the memory that *is* the tenant's state. Three
-//! properties are what everything here exists to make operationally true.
+//! Two thread classes. The cell's tokio reactor threads own all I/O: a
+//! completion arrives, [`futures::FutureTable`] maps its id to the owning
+//! instance, and a wake is enqueued. Execution-pool threads run Hot dispatches
+//! as synchronous calls into the engine, never the engine's async mode, whose
+//! epoch yielding runs on fibers, hidden native stacks that a parked instance
+//! could not be captured out of. There is no scheduler here: a CPU-bound
+//! tenant occupies its own pool thread and the kernel preempts it. What the
+//! cell controls is admission, a bounded queue per worker and a shed when it
+//! is full.
 //!
-//! **Two thread classes per cell.** The cell's tokio reactor threads own all
-//! I/O — a completion arrives, the [`futures::FutureTable`] maps future id →
-//! owning instance, and the wake is enqueued. Execution-pool threads ([`cell::Cell`]) run
-//! Hot dispatches as *synchronous* calls into the engine. Deliberately not the
-//! engine's async mode: its epoch-yielding is implemented with fibers, i.e.
-//! hidden native stacks, which invariant 3 forbids. A native stack exists only
-//! while a dispatch is Hot.
+//! Two guarantees are carried by the type system rather than by review. The
+//! only `&mut dyn InstanceOps` in this crate comes from
+//! [`instances::CallGuard`], obtained by moving the instance out of its slot,
+//! so a reentrant call finds an empty slot. And a `fresh` instance is reset or
+//! discarded after its dispatch because [`instances::Disposition`] has one
+//! producer, [`instances::decide`], and no value of it means "keep a fresh
+//! instance warm".
 //!
-//! **Fairness is the kernel's job.** There is no scheduler in this
-//! crate. A CPU-bound tenant occupies its own pool thread and the OS preempts
-//! it; that is the design and it is the incumbent's real contract. What the
-//! cell *does* control is admission: a cap on concurrently Hot dispatches, an
-//! overflow queue, and shedding before saturation.
-//!
-//! **Eviction is legal from Parked at any time.** [`instances`] is a
-//! real state machine over Hot / Parked / Hibernated / Discarded, and
-//! [`hibernate_policy`] is the idle trajectory that walks instances down it
-//! with no tenant involvement.
-//!
-//! ## What the type system is made to carry
-//!
-//! Two guarantees are the kind that decay into code-review folklore unless the
-//! compiler holds them, so they are encoded rather than documented:
-//!
-//! * **Reentrancy** — the host must not call into an instance while a previous
-//!   call into it has not returned. The only `&mut dyn
-//!   InstanceOps` in this crate comes from [`instances::CallGuard`], which is
-//!   obtained by *moving* the instance out of its slot. A second entry finds
-//!   an empty slot. Violating the rule is not discouraged, it is
-//!   unrepresentable.
-//! * **The `fresh` guarantee** — a `fresh` instance is reset or discarded after
-//!   the dispatch and any `WaitUntil` work, with no exceptions. The caller of a
-//!   dispatch never chooses the disposition:
-//!   [`instances::DispatchLease::finish`] consumes the lease and derives it.
-//!   There is no API that returns a `fresh` instance to the warm pool, which is
-//!   what makes the guarantee structural rather than a hope.
-//!
-//! ## Deviations
-//!
-//! * **tokio, not io_uring.** The reactor role is a tokio runtime. The
-//!   architecture — reactors own I/O and route wakes, exec-pool threads run
-//!   dispatches — is the part that matters.
-//! * **Cells are thread groups, not processes.** The seccomp'd process
-//!   boundary is simulated; the trust-tier partitioning logic is real.
-//! * **Per-tenant CPU weighting is absent.** cgroup v2 threaded controllers
-//!   would supply it. Fairness here is whatever the OS scheduler gives a set of
-//!   equal-weight threads — statistical, kernel-grade fairness, but with no
-//!   per-tenant weighting. See [`cell::CellConfig::exec_threads`].
-
-// Two places in this crate are `unsafe`, and both are excused by name rather
-// than by relaxing the rule: `meters::read_clock_ns`, for `clock_gettime`, and
-// `activator::EngineActivator::load_mapped`, which maps a compiled artifact
-// from a file and therefore carries wasmtime's own `deserialize_file`
-// contract. Everything else is denied.
-#![deny(unsafe_code)]
+//! A cell is a thread group within one process, not a seccomp'd process, and
+//! fairness between tenants is whatever the kernel gives equal-weight threads.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -90,9 +52,9 @@ pub use net::PinnedHttpFetcher;
 
 pub type Result<T> = anyhow::Result<T>;
 
-/// A deployed module version. A deploy invalidates memory: templates are
-/// per-version, so this is also the identity a hibernation delta is bound to
-/// and the key the hang breaker cools per.
+/// A deployed module version. Templates are per version, so this is also the
+/// identity a hibernation delta is bound to and the key the hang breaker
+/// cools per.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ModuleId {
     pub app: String,
@@ -114,9 +76,8 @@ impl fmt::Display for ModuleId {
     }
 }
 
-/// Cell-local identity of a slot. Not stable across cells — a migrated
-/// instance gets a new one, which is fine because instances are portable
-/// *memory*, not portable identities.
+/// Cell-local identity of a slot. A migrated instance gets a new one, because
+/// instances are portable memory, not portable identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InstanceId(pub u64);
 
@@ -134,9 +95,8 @@ impl InstanceId {
     }
 }
 
-/// Coarse wall clock in milliseconds. Hosts may use real time; guests get the
-/// frozen slice clock instead — the whole point being that the guest cannot
-/// construct a timer.
+/// Coarse wall clock in milliseconds. Guests never see it; they get the frozen
+/// slice clock, so no timer is constructible in-guest.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -144,43 +104,13 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Raw `CLOCK_MONOTONIC` nanoseconds, with no per-process origin subtracted,
-/// so a reading here is on the same scale as a bare `clock_gettime` anywhere
-/// else in the process.
-///
-/// Aborting on an unreadable clock is deliberate: every consumer subtracts on
-/// **unsigned** times, so a failed read flattened to `0` does not produce a
-/// missing duration, it produces one near 2^64 in whichever direction hurts
-/// most. `try_mono_ns` is the form to use where "could not read" is a fact the
-/// caller wants to hold.
-pub fn mono_ns() -> u64 {
-    match try_mono_ns() {
-        Some(t) => t,
-        None => mono_clock_failed(),
-    }
-}
-
-/// The fallible read. `None` is a failed `clock_gettime`; `Some(0)` is a clock
-/// that genuinely reads zero, and those are different facts.
-pub fn try_mono_ns() -> Option<u64> {
+/// Raw `CLOCK_MONOTONIC` nanoseconds, with no per-process origin subtracted.
+/// `None` is a failed read, counted in [`meters::clock_read_failures`]; every
+/// consumer subtracts on unsigned times, so a read flattened to zero would
+/// produce a duration near 2^64 rather than a missing one.
+pub fn mono_ns() -> Option<u64> {
     meters::try_read_mono_ns()
 }
 
-/// Out of line and `#[cold]`, so the hot path carries a never-taken branch.
-#[cold]
-#[inline(never)]
-fn mono_clock_failed() -> ! {
-    let errno = std::io::Error::last_os_error();
-    eprintln!(
-        "wisp-host: clock_gettime(CLOCK_MONOTONIC) did not return a usable time (errno: \
-         {errno}). Every interval this cell reports is measured against that clock and every \
-         consumer subtracts on unsigned times, so continuing would produce elapsed times near \
-         2^64 rather than no times at all. Aborting instead."
-    );
-    std::process::abort();
-}
-
-/// `CLOCK_THREAD_CPUTIME_ID` for the calling thread. This is **the sole
-/// compute meter**: exact under kernel preemption and immune to wall-clock
-/// noise, which is exactly why park time need never be metered.
+/// `CLOCK_THREAD_CPUTIME_ID` for the calling thread: the sole compute meter.
 pub use meters::read_thread_cpu_ns as thread_cpu_ns;

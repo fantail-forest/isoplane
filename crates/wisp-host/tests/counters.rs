@@ -1,29 +1,5 @@
-//! **Every counter the benchmark differences into a published figure, moved on
-//! purpose.**
-//!
-//! A counter is a claim about what the platform did, and it is only worth
-//! anything if something has proved it can move. The failure mode these tests
-//! exist for is the one an audit found across
-//! `cell.rs`: counters that **cannot move**. A structurally-zero counter is
-//! not a metric reading low, it is four different facts wearing the same
-//! number — "never incremented", "no events", "no dispatches", and "every
-//! dispatch paid full price" — and no dashboard, alert or bench verdict built
-//! on it can tell them apart.
-//!
-//! So each test below constructs the event and asserts the counter changed.
-//! Where a counter is one half of an identity — `dispatches` versus the 409s
-//! that precede it, `tombstones` versus `hard_kills + traps` — the identity is
-//! asserted too, because a pair of counters that agree by accident is the next
-//! bug rather than the fix.
-//!
-//! | Defect | Counter | Test |
-//! |---|---|---|
-//! | H1 | `served_warm` / `served_hibernation_wake` / `served_activated` on the durable path | [`a_durable_dispatch_records_how_it_was_served`], [`a_hibernated_identity_is_served_as_a_wake_not_as_warm`] |
-//! | H2 | `capture_write_failures` | [`a_failed_delta_write_is_not_counted_as_a_capture`] |
-//! | H3 | `traps` disjoint from `hard_kills` | [`a_hard_kill_is_not_counted_as_a_trap`] |
-//! | H4 | `futures_shed_capture` | [`futures_shed_is_a_capture_signal_not_a_load_signal`] |
-//! | H5 | `single_writer_refusals` | [`the_single_writer_409_is_counted_and_is_not_a_dispatch`] |
-//! | H6 | `tombstone_refusals` | [`a_host_call_into_a_tombstone_is_refused_and_counted`] |
+//! Each cell counter is moved by the event it counts. Where a counter is one
+//! half of an identity, the identity is asserted too.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,13 +14,8 @@ use wisp_host::fakes::*;
 use wisp_host::instances::EnterError;
 use wisp_host::{Activator, LifecycleTier, ModuleId, Resolver};
 
-// ---------------------------------------------------------------------------
-// harness
-// ---------------------------------------------------------------------------
-
 const T: Duration = Duration::from_secs(10);
-/// A host timer long enough that it never fires during a test. Parking on it
-/// is how a test holds an instance Parked long enough to look at it.
+/// A host timer that never fires during a test.
 const PARK_MS: u64 = 600_000;
 
 struct Fixed(Vec<std::net::SocketAddr>);
@@ -70,7 +41,7 @@ fn rig(cfg: CellConfig) -> Rig {
         fetcher: fetcher.clone(),
     });
     Rig {
-        cell: Cell::new(cfg, svc),
+        cell: Cell::new(cfg, svc).expect("a cell starts"),
         fetcher,
     }
 }
@@ -110,7 +81,6 @@ fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
     cond()
 }
 
-/// Register one fake module and hand back its id.
 fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     let act = Arc::new(FakeActivator::named(ModuleId::new(name, "v1"), behaviour));
     let module = act.module().clone();
@@ -120,29 +90,8 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
     module
 }
 
-// ---------------------------------------------------------------------------
-// H1 — "served without paying for an activation", on the path that
-//      actually runs
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// H2 — a capture that did not happen
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// H3 — traps and hard kills are different events
-// ---------------------------------------------------------------------------
-
-/// **`tombstones == hard_kills + traps`, and it is only checkable because the
-/// two terms are disjoint.**
-///
-/// `traps` was incremented in the shared `Trapped | BudgetKill` arm, after the
-/// `if killed { … hard_kills … }` block, which made `traps ⊇ hard_kills`. The
-/// documented invariant was then false *by construction*: a correct
-/// implementation gave `tombstones == traps`, and `hard_kills + traps`
-/// overshot by exactly `hard_kills`. The blast table prints `hard kills`,
-/// `clean kills` and `tombstones` as adjacent rows, so a reader summing down
-/// the column double-counted every hard kill.
+/// `tombstones == hard_kills + traps` is checkable only because the two terms
+/// are disjoint.
 #[test]
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
@@ -157,9 +106,6 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     let spinner = app(&r, "spinner", FakeBehaviour::program([Step::Spin]));
 
     let mut rec = http(&r.cell, &trapper, "/trap");
-    // **The test's budget, not the plan's.** The spinner below has to reach
-    // B+G inside `T`, so this is a bound on the test's own runtime rather than
-    // a statement about the plan's limits — and it must not move when those do.
     rec.cpu_budget_ms = 50;
     let out = r
         .cell
@@ -190,7 +136,7 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     assert_eq!(out.status, 503, "a hard budget kill is a 503");
 
     let m = r.cell.metrics();
-    assert_eq!(m.hard_kills, 1);
+    assert_eq!(m.hard_kills, 1, "the spin was hard-killed");
     assert_eq!(
         m.traps, 1,
         "the budget kill was counted as a trap as well as a kill"
@@ -199,44 +145,18 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     assert_eq!(
         m.tombstones,
         m.hard_kills + m.traps,
-        "the tombstone identity. If `traps` overshoots by exactly `hard_kills` the two are \
-         sharing an increment again"
+        "the tombstone identity; `traps` overshooting by exactly `hard_kills` means the two \
+         share an increment"
     );
     r.cell
         .metrics_raw()
         .tombstone_invariant()
         .expect("tombstone invariant");
 
-    // The tenant-level meters keep the same split, so a per-tenant trap rate
-    // is not inflated by kills either.
     assert_eq!(m.tenants["acme"].traps, 2, "both are faults for the tenant");
     r.cell.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// H4 — a capture signal is not a load signal
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// H5 — the single-writer refusal, counted on the platform side
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// H6 — the negative control for the tombstone rule
-// ---------------------------------------------------------------------------
-
-/// **A host call into a tombstone is refused, and the refusal is counted.**
-///
-/// `tombstone_refusals` had zero write sites in the workspace. Its own doc
-/// says why that is fatal: it is the negative control for the rule, and a
-/// green dashboard with it permanently at zero and no failing probe is
-/// unfalsifiable. It was permanently at zero, so the unfalsifiable dashboard
-/// it warns about was the one that existed.
-///
-/// `Cell::slot` deliberately answers from the tombstone ring so a
-/// kill-then-call gets an instance that **refuses** rather than a `None` that
-/// reads as "no such instance". `Cell::with_instance` is that door with the
-/// counter on it.
 #[test]
 fn a_host_call_into_a_tombstone_is_refused_and_counted() {
     let r = rig(CellConfig::for_test("tombstone-refusal"));
@@ -258,7 +178,7 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
             T,
         )
         .unwrap();
-    assert_eq!(out.status, 500);
+    assert_eq!(out.status, 500, "a trap is a 500");
     let killed = out.instance;
     assert_eq!(
         r.cell.tombstoned_instances(),
@@ -271,8 +191,6 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
         "nothing has called it yet"
     );
 
-    // wasmtime would run this instance if asked, so the refusal is the cell's
-    // to make — and the cell's to count.
     let refused = r.cell.with_instance(killed, |i| i.is_parked());
     assert!(
         matches!(refused, Err(EnterError::Tombstoned)),
@@ -284,12 +202,13 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
         "the refusal happened and the negative control did not move"
     );
 
-    // It counts refusals, not tombstones: asking twice is two refusals.
     let _ = r.cell.with_instance(killed, |i| i.is_parked());
-    assert_eq!(r.cell.metrics().tombstone_refusals, 2);
+    assert_eq!(
+        r.cell.metrics().tombstone_refusals,
+        2,
+        "it counts refusals, not tombstones: asking twice is two refusals"
+    );
 
-    // And an instance this cell never had is "not here", which is a different
-    // fact and must not inflate the control.
     let missing = r
         .cell
         .with_instance(wisp_host::InstanceId(u64::MAX), |i| i.is_parked());
@@ -348,33 +267,12 @@ fn per_worker_queues_serve_every_dispatch_exactly_once() {
     r.cell.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// The wake router's silent drop
-// ---------------------------------------------------------------------------
-
-/// **A completion that cannot be delivered is counted, not swallowed.**
-///
-/// `CellWake::signal` maps an instance id through a table of `Weak<Slot>`. When
-/// the id is absent, or the `Weak` no longer upgrades, the old code took the
-/// `if let Some` and fell off the end: no wake enqueued, no counter, no log.
-///
-/// That is not a no-op. `FutureTable::complete` has *already* run by then — it
-/// is what produced the owner id — so the result is sitting in the table marked
-/// `Ready` on the owner's queue, and the enqueue that would have sent a worker
-/// to collect it is the thing that did not happen. Any dispatch awaiting that
-/// future is never answered: on `dispatch_blocking` it waits out its whole
-/// timeout, and on the shared-channel path the load generator uses it never
-/// learns anything at all.
-///
-/// The two halves are asserted separately because they fail separately: the
-/// counter says the drop was seen, and `has_ready` says the drop stranded
-/// something real. Without the second half the counter could be moved by a
-/// wake that had nothing behind it.
+/// The counter says the drop was seen; `has_ready` says it stranded a real
+/// result.
 #[test]
 fn a_completion_for_an_instance_that_is_gone_is_counted_rather_than_dropped_in_silence() {
     let r = rig(CellConfig::for_test("wake-dropped"));
-    // Never resident, so the wake router's index has no entry for it and
-    // `Weak::upgrade` cannot succeed.
+    // Never resident, so the wake router cannot reach it.
     let ghost = wisp_host::InstanceId::alloc();
     let fid = r
         .cell
@@ -393,28 +291,19 @@ fn a_completion_for_an_instance_that_is_gone_is_counted_rather_than_dropped_in_s
     let m = r.cell.metrics();
     assert_eq!(
         m.wakes_dropped, 1,
-        "a completion arrived for an unreachable instance and nothing counted it — which is \
-         how a request that simply stops looks from the outside"
+        "a completion arrived for an unreachable instance and nothing counted it"
     );
-    assert_eq!(
-        m.wakes, 0,
-        "no wake was enqueued, so none may be counted: the two counters have to disagree here \
-         or neither of them means anything"
-    );
+    assert_eq!(m.wakes, 0, "no wake was enqueued, so none may be counted");
     assert!(
         r.cell.futures().has_ready(ghost),
         "the completion was written into the table before the wake was dropped, so the result \
-         is stranded — this is what the counter is a receipt for"
+         is stranded"
     );
     r.cell.shutdown();
 }
 
-/// The control for the test above: a completion that **is** deliverable moves
-/// `wakes` and leaves `wakes_dropped` alone.
-///
-/// A counter that only ever goes up is indistinguishable from one wired to the
-/// wrong branch, so the drop count is worth nothing without a case that must
-/// not move it.
+/// The control: a deliverable completion moves `wakes` and not the drop
+/// count.
 #[test]
 fn a_deliverable_completion_moves_wakes_and_not_the_drop_count() {
     let r = rig(CellConfig::for_test("wake-delivered"));
@@ -452,7 +341,7 @@ fn a_deliverable_completion_moves_wakes_and_not_the_drop_count() {
     let out = rx
         .recv_timeout(T)
         .expect("the woken dispatch never answered");
-    assert_eq!(out.status, 200);
+    assert_eq!(out.status, 200, "the dispatch was served");
 
     let m = r.cell.metrics();
     assert_eq!(m.wakes, 1, "the wake was enqueued and must be counted");
