@@ -1,5 +1,6 @@
 [package]
 name = "impure-cctor"
+description = "Fixture guest with three init units, one of which reads the clock, for pre-initialisation deferral tests"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true

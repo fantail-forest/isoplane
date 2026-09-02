@@ -1,5 +1,6 @@
 [package]
 name = "bigheap"
+description = "Fixture guest that dirties a known number of pages, for hibernation delta-size and density tests"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
