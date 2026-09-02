@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Fail on comment prose the comment rules in AGENTS.md forbid.
+
+    scripts/prose-gate <path>...    scan the comments under each path
+    scripts/prose-gate --self-test  prove every pattern fires, and none fires on clean prose
+
+Exits non-zero on any finding. With no paths the scope is empty and the gate
+passes; the scope is the path list on the gate line in AGENTS.md.
+
+This is a floor, not the review: it reads whole-line comments in Rust, C# and
+shell and matches a fixed vocabulary. The reader is the pass.
+"""
+
+import os
+import re
+import sys
+
+COMMENT_MARKERS = {
+    ".rs": ("//",),
+    ".cs": ("//",),
+    ".sh": ("#",),
+    "": ("#",),
+}
+
+SIZE_OR_TIME_UNIT = (
+    r"(?:ns|us|µs|ms|s|secs?|seconds?|min|mins?|minutes?|hours?|"
+    r"bytes?|B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)"
+)
+
+PATTERNS = [
+    ("narration", re.compile(r"\b(?:used to|no longer|previously|formerly|replaces)\b", re.I)),
+    ("commit-hash", re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\b")),
+    ("not-built-here", re.compile(r"\bnot built here\b", re.I)),
+    ("in-production", re.compile(r"\bin production this would\b", re.I)),
+    ("in-a-real", re.compile(r"\bin a real\b", re.I)),
+    ("absolute-figure", re.compile(r"\b\d[\d,._]*[\s-]?" + SIZE_OR_TIME_UNIT + r"\b")),
+]
+
+SELF_TEST_FIXTURE = {
+    "narration": [
+        "// This used to be a mutex.",
+        "// The origin is no longer subtracted.",
+        "// Previously the check sat after the delete.",
+        "// Formerly a trait.",
+        "// This replaces the hashed shard index.",
+    ],
+    "commit-hash": ["// The race c7d7730 describes from the other side."],
+    "not-built-here": ["// Not built here: per-tenant CPU weighting."],
+    "in-production": ["// In production this would be a seccomp'd process."],
+    "in-a-real": ["// In a real deployment the spool is replicated."],
+    "absolute-figure": [
+        "// The hold is 26.6 ns at eight tenants.",
+        "// A shard is 384 bytes, so 256 of them are 96 KiB.",
+        "// Init completes within 10 s of CPU and 512 MB.",
+        "// Two 128-byte-padded counters.",
+    ],
+}
+
+CLEAN_FIXTURE = [
+    "// A shard on a cacheline of its own, so two threads do not write one line.",
+    "// Sized above the execution pool: 256 shards against a 64-thread pool.",
+    "// V2 is checked here; the workspace declares rust-version 1.88.",
+    "// The `wasi:io/poll@0.2.0` entries are all trap-on-call.",
+    "// Rounded up to a power of two, so the mask is always valid.",
+    "// An empty ring hands the job straight back, which is the shed.",
+]
+
+
+def comment_lines(path):
+    ext = os.path.splitext(path)[1]
+    markers = COMMENT_MARKERS.get(ext)
+    if markers is None:
+        return
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for n, line in enumerate(f, 1):
+                text = line.strip()
+                if n == 1 and text.startswith("#!"):
+                    continue
+                if any(text.startswith(m) for m in markers):
+                    yield n, text
+    except OSError as e:
+        print(f"prose-gate: cannot read {path}: {e}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def findings_in(text):
+    return [(name, m.group(0)) for name, rx in PATTERNS for m in rx.finditer(text)]
+
+
+def files_under(paths):
+    for p in paths:
+        if os.path.isfile(p):
+            yield p
+            continue
+        for root, dirs, files in os.walk(p):
+            dirs[:] = sorted(d for d in dirs if d not in ("target", "obj", "bin", "node_modules"))
+            for f in sorted(files):
+                yield os.path.join(root, f)
+
+
+def scan(paths):
+    count = 0
+    for path in files_under(paths):
+        for n, text in comment_lines(path):
+            for name, hit in findings_in(text):
+                print(f"{path}:{n}: {name}: {hit!r}")
+                count += 1
+    return count
+
+
+def self_test():
+    failed = False
+    for name, lines in SELF_TEST_FIXTURE.items():
+        for line in lines:
+            if name not in {n for n, _ in findings_in(line)}:
+                print(f"self-test: {name} did not fire on {line!r}")
+                failed = True
+    for line in CLEAN_FIXTURE:
+        for name, hit in findings_in(line):
+            print(f"self-test: {name} fired on clean prose {line!r} at {hit!r}")
+            failed = True
+    if failed:
+        return 1
+    print("prose-gate: self-test passed")
+    return 0
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
+    if any(a.startswith("-") for a in argv):
+        print(__doc__, file=sys.stderr)
+        return 2
+    if not argv:
+        print("prose-gate: empty scope, nothing scanned")
+        return 0
+    n = scan(argv)
+    if n:
+        print(f"prose-gate: {n} finding(s)")
+        return 1
+    print("prose-gate: clean")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
