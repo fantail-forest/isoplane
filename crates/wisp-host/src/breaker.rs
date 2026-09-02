@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use parking_lot::Mutex;
 
 use crate::ModuleId;
 
@@ -60,39 +61,18 @@ struct Entry {
 
 pub struct HangBreaker {
     cfg: BreakerConfig,
-    entries: crate::lockstats::CountedMutex<HashMap<BreakerKey, Entry>>,
+    entries: Mutex<HashMap<BreakerKey, Entry>>,
 }
 
 impl HangBreaker {
-    /// What waiting for the breaker table cost. See `lockstats`.
-    pub fn lock_stats(&self) -> crate::lockstats::LockSample {
-        self.entries.stats().snapshot()
-    }
-
     pub fn new(cfg: BreakerConfig) -> Self {
-        Self { cfg, entries: crate::lockstats::CountedMutex::new(HashMap::new()) }
+        Self { cfg, entries: Mutex::new(HashMap::new()) }
     }
 
     /// Admission check. `Err(until_ms)` means fail fast — the dispatch never
     /// reaches an execution-pool thread.
     pub fn check(&self, key: &BreakerKey, now_ms: u64) -> Result<(), u64> {
-        self.check_marked(key, now_ms, &mut None)
-    }
-
-    /// [`HangBreaker::check`], marking the wait for `entries` separately from
-    /// the work done under it.
-    ///
-    /// **A triple.** The hold hashes three strings, which is long enough
-    /// against the cost of a mark for the wait and the hold to be worth
-    /// separating.
-    pub fn check_marked(
-        &self,
-        key: &BreakerKey,
-        now_ms: u64,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) -> Result<(), u64> {
         let mut g = self.entries.lock();
-        crate::marks::mark(marks, crate::marks::Mark::BreakerLockAcquired);
         let Some(e) = g.get_mut(key) else { return Ok(()) };
         if e.open_until_ms == 0 {
             return Ok(());
@@ -111,30 +91,7 @@ impl HangBreaker {
 
     /// A dispatch was killed at its CPU budget: abrupt, with no unwinding.
     pub fn record_kill(&self, key: &BreakerKey, now_ms: u64) {
-        self.record_kill_marked(key, now_ms, &mut None)
-    }
-
-    /// [`HangBreaker::record_kill`], marking the wait for `entries` separately
-    /// from the work done under it.
-    ///
-    /// **A triple.** `HashMap::entry` takes the key by value, so the hold
-    /// begins by cloning a `BreakerKey` — a `ModuleId`'s two `String`s plus
-    /// the route — and only then hashes it. That is well past what a mark
-    /// costs.
-    ///
-    /// This is the **second** time one request touches this lock: the first
-    /// was the admission check in `Cell::submit_with_marks`, a whole dispatch
-    /// earlier, under entirely different contention. Its own label rather than
-    /// a second observation of `breaker.check.*`, so a row cannot pool the
-    /// two.
-    pub fn record_kill_marked(
-        &self,
-        key: &BreakerKey,
-        now_ms: u64,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) {
         let mut g = self.entries.lock();
-        crate::marks::mark(marks, crate::marks::Mark::BreakerKillAcquired);
         let e = g.entry(key.clone()).or_default();
         if e.probing {
             // The probe failed. Straight back open.
@@ -155,11 +112,6 @@ impl HangBreaker {
 
     /// A dispatch completed normally. Success closes the breaker: the tenant
     /// pushed a fix, or the hang was input-dependent.
-    /// **Deliberately unmarked.** It runs after `Cell::respond` has sent the
-    /// reply, and the trace travels inside the reply — so there is nothing
-    /// left on this thread to mark with, and the work is past the request's
-    /// own elapsed time in any case. See `crate::marks` on where the trace
-    /// ends.
     pub fn record_success(&self, key: &BreakerKey) {
         let mut g = self.entries.lock();
         if let Some(e) = g.get_mut(key) {

@@ -65,29 +65,6 @@ fn scalar_count(def: &imports::ImportDef) -> usize {
 /// Implemented by [`crate::Cell`]; a no-op in unit tests.
 pub trait WakeSink: Send + Sync + 'static {
     fn signal(&self, owner: InstanceId);
-
-    /// [`WakeSink::signal`], carrying the readings the completion path took
-    /// before it got here **and the dispatch they belong to**.
-    ///
-    /// A separate method with a default rather than extra parameters on
-    /// `signal`, so that a sink which has nothing to do with tracing — and
-    /// there are three — does not have to mention the instrument at all. Only
-    /// the cell's own sink overrides it.
-    ///
-    /// `dispatch` is the dispatch that **created the future**, not the one
-    /// running when it completed. Those differ, and the difference is the
-    /// point: a wake is addressed to an instance, but the readings it carries
-    /// — and the trace they would be filed into — belong to the request that
-    /// awaited it. See [`crate::metrics::Metrics::stale_wakes`].
-    fn signal_traced(
-        &self,
-        owner: InstanceId,
-        dispatch: u64,
-        stamps: Option<std::sync::Arc<crate::marks::WakeStamps>>,
-    ) {
-        let _ = (dispatch, stamps);
-        self.signal(owner);
-    }
 }
 
 pub struct NoWake;
@@ -129,62 +106,19 @@ pub struct CellRuntime {
     /// The reactor. Reactor threads own **all** I/O; an execution-pool
     /// thread never awaits anything, it only returns.
     pub reactor: tokio::runtime::Handle,
-    /// A copy of [`crate::cell::CellConfig::stage_sample_every`], so a reactor
-    /// thread can decide whether this completion's path into the cell is worth
-    /// measuring without reaching back into the cell for the answer.
-    ///
-    /// Zero is off, and off is the common case: this is the only thing between
-    /// an untraced cell and two `RDTSCP`s on every completion.
-    pub stage_sample_every: u64,
 }
 
 impl CellRuntime {
-    /// **A host future has completed; route the wake, and time the path.**
+    /// A host future has completed: route the wake.
     ///
-    /// One function rather than two, and that is the point of it existing.
-    /// There are two ways a completion reaches the cell — the vtable's own
-    /// `settle`, which is every future a guest awaits, and
-    /// `Cell::complete_future`, which is the control plane, the proxy and the
-    /// tests — and they used to be two copies of the same three lines. The
-    /// first version of this instrument measured only the second, so most
-    /// requests in a real run arrived carrying nothing. Nothing about that
-    /// looked wrong in the table; the counts simply differed.
-    ///
-    /// **The two readings before the sampling decision are unavoidable.** The
-    /// predicate runs on a dispatch id and the dispatch id is inside the future
-    /// table, under the lock the second reading brackets — so while
-    /// `stage_sample_every` is non-zero, every completion pays two `RDTSCP`s.
-    /// At zero it pays one relaxed load and a branch.
+    /// One function rather than two: the vtable's own `settle`, which is every
+    /// future a guest awaits, and `Cell::complete_future`, which is the control
+    /// plane, the proxy and the tests, both come through here.
     pub fn settle_future(&self, id: u64, res: wisp_abi::result::ResultRecord) {
-        let taking = self.stage_sample_every != 0;
-        // The wait for the outside world closes at this instruction, not three
-        // locks later where the wake is enqueued.
-        let arrived = if taking {
-            crate::marks::stamp()
-        } else {
-            crate::marks::NO_STAMP
-        };
-        let done = self.futures.complete_marked(id, res, taking);
-        let WakeTarget::Instance(owner) = done.target else {
+        let WakeTarget::Instance(owner) = self.futures.complete(id, res) else {
             return;
         };
-        // The dispatch id is known now, so the readings can be kept or thrown
-        // away. The allocation below is the instrument's own and lands inside
-        // the span ending at `WakeIndexWanted`, which says so.
-        let stamps = (taking && crate::cell::stage_sampled(done.dispatch, self.stage_sample_every))
-            .then(|| {
-                let st = Arc::new(crate::marks::WakeStamps::default());
-                st.arrived.set(arrived);
-                st.complete_acquired.set(done.acquired);
-                st.complete_released.take();
-                st
-            });
-        // `done.dispatch` travels with the wake from here. It was already read
-        // — the sampling predicate above runs on it — and it is the only place
-        // it can be read: the future table knows which dispatch registered the
-        // future, and by the time a worker pops the wake the instance may be
-        // running a different one.
-        self.wake.signal_traced(owner, done.dispatch, stamps);
+        self.wake.signal(owner);
     }
 }
 

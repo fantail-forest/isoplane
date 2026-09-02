@@ -201,17 +201,7 @@ impl Slot {
     ///
     /// A second entry into this slot is refused while its guard is alive.
     pub fn enter(&self) -> Result<CallGuard<'_>, EnterError> {
-        self.enter_marked(&mut None)
-    }
-
-    /// [`Slot::enter`], marking the wait for the sandbox lock separately from
-    /// the work done under it.
-    pub fn enter_marked(
-        &self,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) -> Result<CallGuard<'_>, EnterError> {
         let mut g = self.inner.lock();
-        crate::marks::mark(marks, crate::marks::Mark::SlotEnterAcquired);
         if g.tombstoned {
             return Err(EnterError::Tombstoned);
         }
@@ -537,20 +527,6 @@ impl InstancePool {
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
     {
-        self.acquire_marked(make_ctx, &mut None)
-    }
-
-    /// Acquire an instance, recording idle-pool lookup separately from activation.
-    pub fn acquire_marked<F>(
-        &self,
-        make_ctx: F,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
-    where
-        F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
-    {
-        use crate::marks::Mark;
-        crate::marks::mark(marks, Mark::PoolLockWanted);
         let pooled = (self.lifecycle == HandlerLifecycle::Reuse)
             .then(|| self.warm.lock().pop())
             .flatten()
@@ -561,16 +537,13 @@ impl InstancePool {
                     (s, AcquireSource::PooledFresh)
                 })
             });
-        crate::marks::mark(marks, Mark::PoolLockReleased);
         if let Some(hit) = pooled {
             return Ok(hit);
         }
         let id = InstanceId::alloc();
         let ctx = make_ctx(id);
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
-        crate::marks::mark(marks, Mark::ActivationBegan);
         let inst = self.activator.activate(bindings)?;
-        crate::marks::mark(marks, Mark::ActivationEnded);
         self.live.fetch_add(1, Ordering::Relaxed);
         Ok((Arc::new(Slot::new(id, ctx, inst)), AcquireSource::Activated))
     }

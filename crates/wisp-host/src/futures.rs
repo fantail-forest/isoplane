@@ -113,18 +113,6 @@ impl Default for FutureTable {
 }
 
 impl FutureTable {
-    /// **Nothing to report: there is no longer a lock here to wait for.**
-    ///
-    /// The table was one `CountedMutex` over two maps and this returned its
-    /// sample. Both maps are `scc` now and the only remaining exclusion is one
-    /// instance's own, which one-dispatch-per-instance keeps uncontended.
-    /// `Cell::lock_stats` omits the row rather than printing this zero — a
-    /// zero is a measurement and "there is nothing here to measure" is not
-    /// one.
-    pub fn lock_stats(&self) -> crate::lockstats::LockSample {
-        crate::lockstats::LockSample::default()
-    }
-
     /// This instance's future state, creating it on first use.
     fn owned_of(&self, owner: InstanceId) -> Arc<OwnedFutures> {
         // Cloned out and the bucket released before any caller locks it: the
@@ -207,24 +195,7 @@ impl FutureTable {
     /// allocate would be a dispatch that can only ever be hard-killed, which
     /// is precisely the outcome the two-phase kill exists to make rare.
     pub fn alloc_cancellation(&self, owner: InstanceId, dispatch: u64) -> u64 {
-        self.alloc_cancellation_marked(owner, dispatch, &mut None)
-    }
-
-    /// [`FutureTable::alloc_cancellation`], marking the wait for the table's
-    /// lock separately from the work done under it.
-    ///
-    /// **A triple, not a pair.** The hold is two map inserts and a set
-    /// insert, any of which can grow — comfortably above what a mark costs, so
-    /// the wait and the hold are separable and worth separating. This is a
-    /// global lock every dispatch takes.
-    pub fn alloc_cancellation_marked(
-        &self,
-        owner: InstanceId,
-        dispatch: u64,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) -> u64 {
         let arc = self.owned_of(owner);
-        crate::marks::mark(marks, crate::marks::Mark::CancelAllocAcquired);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         arc.inner.lock().pending.insert(id);
         let _ = self.entries.insert_sync(
@@ -243,29 +214,6 @@ impl FutureTable {
     /// A reactor thread completed a host future. Maps id → owning instance and
     /// makes the result deliverable; the caller enqueues the wake.
     pub fn complete(&self, id: u64, result: ResultRecord) -> WakeTarget {
-        self.complete_marked(id, result, false).target
-    }
-
-    /// [`FutureTable::complete`], reading the counter after the lock and
-    /// handing back the dispatch the future belonged to.
-    ///
-    /// **Both extras are needed before the caller can decide anything.** The
-    /// sampling predicate runs on a dispatch id, and the dispatch id is inside
-    /// this table under this lock — so a reading of the wait for the lock has
-    /// to be taken before the cell knows whether it wants one. `taking` is
-    /// therefore "is this cell tracing at all", not "is this request sampled",
-    /// and while it is true every completion pays one `RDTSCP`. At zero
-    /// sampling it is false and the cost is a branch.
-    ///
-    /// **A triple**, with [`crate::marks::Mark::CompletionArrived`] as the left
-    /// edge: the hold is a lookup, two writes, a `pending` removal, a
-    /// per-dispatch decrement and a `ready` push, comfortably past a mark.
-    pub fn complete_marked(&self, id: u64, result: ResultRecord, taking: bool) -> Completed {
-        let acquired = if taking {
-            crate::marks::stamp()
-        } else {
-            crate::marks::NO_STAMP
-        };
         // **One hop, no owner lookup.** The entry carries its owner, which is
         // the whole reason this path stopped being the hard one.
         let mut result = Some(result);
@@ -278,20 +226,8 @@ impl FutureTable {
             Ok((e.owner.clone(), e.dispatch))
         });
         let (arc, dispatch) = match found {
-            None => {
-                return Completed {
-                    target: WakeTarget::Orphan,
-                    dispatch: 0,
-                    acquired,
-                }
-            }
-            Some(Err(dispatch)) => {
-                return Completed {
-                    target: WakeTarget::Duplicate,
-                    dispatch,
-                    acquired,
-                }
-            }
+            None => return WakeTarget::Orphan,
+            Some(Err(_)) => return WakeTarget::Duplicate,
             Some(Ok(pair)) => pair,
         };
         // The bucket is released before this lock is taken — see `owned_of`.
@@ -302,11 +238,7 @@ impl FutureTable {
         }
         o.ready.push_back(id);
         drop(o);
-        Completed {
-            target: WakeTarget::Instance(arc.instance()),
-            dispatch,
-            acquired,
-        }
+        WakeTarget::Instance(arc.instance())
     }
 
     /// Pull the next deliverable result for `owner`. The exec-pool thread calls
@@ -314,23 +246,8 @@ impl FutureTable {
     /// is how a completion that lands mid-dispatch is delivered *after* the
     /// current call returns rather than reentrantly.
     pub fn take_ready(&self, owner: InstanceId) -> Option<(u64, ResultRecord)> {
-        self.take_ready_marked(owner, &mut None)
-    }
-
-    /// [`FutureTable::take_ready`], marking the wait for the table separately
-    /// from the work done under it.
-    ///
-    /// **A triple.** The hold is a loop popping and removing across three
-    /// structures, and it is taken on every resumed slice, so the wait and the
-    /// hold are worth telling apart.
-    pub fn take_ready_marked(
-        &self,
-        owner: InstanceId,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) -> Option<(u64, ResultRecord)> {
         let arc = self.existing(owner)?;
         let mut o = arc.inner.lock();
-        crate::marks::mark(marks, crate::marks::Mark::TakeReadyAcquired);
         loop {
             let id = o.ready.pop_front()?;
             // Owned held across an `entries` op: the one nesting direction
@@ -355,7 +272,6 @@ impl FutureTable {
 
 
 
-
     pub fn pending_for_dispatch(&self, owner: InstanceId, dispatch: u64) -> u32 {
         self.existing(owner)
             .and_then(|a| a.inner.lock().per_dispatch.get(&dispatch).copied())
@@ -369,21 +285,10 @@ impl FutureTable {
 
     /// Reclaim pending futures owned by the completed dispatch.
     pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) {
-        self.end_dispatch_marked(owner, dispatch, &None)
-    }
-
-    /// Reclaim pending futures owned by the completed dispatch.
-    pub fn end_dispatch_marked(
-        &self,
-        owner: InstanceId,
-        dispatch: u64,
-        marks: &Option<crate::marks::RequestMarks>,
-    ) {
         let Some(arc) = self.existing(owner) else {
             return;
         };
         let mut o = arc.inner.lock();
-        crate::marks::mark(marks, crate::marks::Mark::EndDispatchAcquired);
         o.per_dispatch.remove(&dispatch);
         let undelivered: Vec<u64> = o.pending.iter().chain(o.ready.iter()).copied().collect();
         let doomed: Vec<u64> = undelivered
@@ -405,16 +310,6 @@ impl FutureTable {
     /// is the mechanical form of cleanup living outside the sandbox
     /// lifetime.
     pub fn release_instance(&self, owner: InstanceId) {
-        self.release_instance_marked(owner, &None)
-    }
-
-    /// Release instance futures and record lock timing.
-    pub fn release_instance_marked(
-        &self,
-        owner: InstanceId,
-        marks: &Option<crate::marks::RequestMarks>,
-    ) {
-        crate::marks::mark(marks, crate::marks::Mark::ReleaseInstanceAcquired);
         let Some(arc) = self.by_instance.remove_sync(&owner).map(|(_, a)| a) else {
             return;
         };
@@ -461,19 +356,6 @@ impl FutureTable {
     pub fn live_futures(&self) -> usize {
         self.entries.len()
     }
-}
-
-/// What [`FutureTable::complete_marked`] found, plus what it measured.
-#[derive(Debug, Clone, Copy)]
-pub struct Completed {
-    pub target: WakeTarget,
-    /// The dispatch the future was registered against. `0` when the id was not
-    /// in the table at all — which is also not a dispatch, so nothing that
-    /// reads this can be confused by it.
-    pub dispatch: u64,
-    /// The counter, read immediately after the table's lock was acquired.
-    /// [`crate::marks::NO_STAMP`] when the cell is not tracing.
-    pub acquired: crate::marks::Stamp,
 }
 
 

@@ -136,25 +136,11 @@ impl Default for Histogram {
 pub struct Metrics {
     pub dispatches: AtomicU64,
     pub wakes: AtomicU64,
-    /// **Wakes raised inside the cell rather than by a reactor**, which is the
-    /// shape with no completion path to measure.
-    ///
-    /// `Cell::queue_wake` is used when a completion lands while the dispatch is
-    /// still Hot: by the time the request parks there is nothing left to wait
-    /// for, so the wake is queued directly rather than routed through
-    /// `CellWake::signal_traced`. It never passes the future table's completion
-    /// lock or the wake router's index, so a traced one of these carries
-    /// `park.wait` and nothing before it — no `futures.complete.wait`, no
-    /// `wake.index`.
-    ///
-    /// **It is not counted in [`Metrics::wakes`]**, which counts what the wake
-    /// router handled; before this counter these were invisible in the metrics
-    /// entirely.
-    ///
-    /// Read it as *how common that shape is*, not as a reconciliation of the
-    /// span table's row counts. It is over every wake, and the span rows are
-    /// over the sampled ones, so the two do not subtract — the same trap
-    /// `Metrics::stale_wakes` had to have its prose corrected for three times.
+    /// Wakes raised inside the cell rather than by a reactor: `Cell::queue_wake`
+    /// is used when a completion lands while the dispatch is still Hot, so the
+    /// wake is queued directly rather than routed through `CellWake::signal`.
+    /// Not counted in [`Metrics::wakes`], which counts what the wake router
+    /// handled.
     pub in_cell_wakes: AtomicU64,
     /// **Completions that arrived for an instance nobody could hand them to.**
     ///
@@ -173,53 +159,6 @@ pub struct Metrics {
     /// no metric, logged nothing, and left `dispatches` claiming the request
     /// was still in flight.
     pub wakes_dropped: AtomicU64,
-    /// **Wakes that reached a worker after the dispatch they belonged to had
-    /// ended**, and were therefore run without a trace.
-    ///
-    /// A wake is queued for an *instance* but its readings belong to a
-    /// *dispatch*: the completion it carries was awaited by whichever dispatch
-    /// created the future. `Cell::active` holds one entry per instance, so if
-    /// that dispatch has finished and a new one has begun on the same
-    /// instance, the trace `Cell::run_wake` finds there belongs to a request
-    /// that never waited for this completion. Filing the wake's readings into
-    /// it invents spans for the new request — and readings taken before that
-    /// request's trace began wrap when they are differenced against its
-    /// origin, which is the 8,384,783,978,118.09 ms `park.wait` that found
-    /// this.
-    ///
-    /// The wake still runs: the result is real and the instance is the right
-    /// one to deliver it to. Only the trace is refused.
-    ///
-    /// **No request loses a trace to this, in either of the two shapes it
-    /// takes.** The common stale wake finds an empty table and runs no slice at
-    /// all — several completions for one instance produce several wakes and
-    /// the first one's loop drains them — so the request on the slot never
-    /// notices it. One that finds ready work goes on to run a slice for
-    /// whoever holds the instance now, and picks the trace up at that point
-    /// (`Mark::WakeAdopted`), because that slice is the current request's guest
-    /// time and CPU whatever rang the doorbell.
-    ///
-    /// **What this counts is wakes, and only some of them cost a report
-    /// anything.** Every mismatch increments it, including the common one that
-    /// runs nothing — and that one changes no trace at all: the request on the
-    /// slot is resumed later by a wake of its own and closes its pause under an
-    /// ordinary `park.wait`, exactly as if this had never happened. Only the
-    /// second shape shows up in a table, and what it costs there is the wake
-    /// path's *breakdown* for that one resumption: the lane wait, the futex
-    /// round trip and the completion's arrival are readings from a dispatch
-    /// that has already answered, so they are refused and the pause they would
-    /// have closed is reported as `park.wait.unattributed` instead.
-    ///
-    /// So this is an **upper bound on the number of `park.wait.unattributed`
-    /// pauses, not a count of them**, and not a count of traces lost — that
-    /// number is zero. Distinguishing the two shapes would need a second
-    /// counter incremented where the adoption happens; there is no way to
-    /// recover the split from this one.
-    ///
-    /// An instrument fault all the same, beside [`Metrics::wakes_dropped`] and
-    /// `SpanBreakdown::stale_marks`: two labels over one pause is a thing a
-    /// reader has to be told about before adding the rows up.
-    pub stale_wakes: AtomicU64,
     pub traps: AtomicU64,
     /// Every CPU-budget kill, clean and hard. Kept as the total so a dashboard
     /// built against v1.1 still reads something true.
@@ -404,26 +343,7 @@ impl Metrics {
     }
 
     pub fn record_tenant(&self, tenant: &str, cpu_ns: u64, trapped: bool) {
-        self.record_tenant_marked(tenant, cpu_ns, trapped, &mut None)
-    }
-
-    /// [`Metrics::record_tenant`], marking the wait for `by_tenant` separately
-    /// from the work done under it.
-    ///
-    /// **A triple.** The hold allocates a `String` from the tenant name and
-    /// then walks a `BTreeMap` — 26.6 ns at eight tenants, and it grows with
-    /// the tenant count, so on a run with many it is the hold rather than the
-    /// wait that moves. `by_tenant` is not a `CountedMutex` and appears in no
-    /// row of `Cell::lock_stats`, so nothing else measures it at all.
-    pub fn record_tenant_marked(
-        &self,
-        tenant: &str,
-        cpu_ns: u64,
-        trapped: bool,
-        marks: &mut Option<crate::marks::RequestMarks>,
-    ) {
         let mut g = self.by_tenant.lock();
-        crate::marks::mark(marks, crate::marks::Mark::TenantRecordAcquired);
         let e = g.entry(tenant.to_string()).or_default();
         e.dispatches += 1;
         e.cpu_ns += cpu_ns;
@@ -485,7 +405,6 @@ impl Metrics {
             wakes: l(&self.wakes),
             in_cell_wakes: l(&self.in_cell_wakes),
             wakes_dropped: l(&self.wakes_dropped),
-            stale_wakes: l(&self.stale_wakes),
             traps: l(&self.traps),
             budget_kills: l(&self.budget_kills),
             clean_kills: l(&self.clean_kills),
@@ -602,9 +521,6 @@ pub struct MetricsSnapshot {
     /// Completions whose owning instance could not be reached, so no wake was
     /// enqueued. See [`Metrics::wakes_dropped`].
     pub wakes_dropped: u64,
-    /// Wakes served after their dispatch had ended, and so run untraced. See
-    /// [`Metrics::stale_wakes`].
-    pub stale_wakes: u64,
     pub traps: u64,
     pub budget_kills: u64,
     pub clean_kills: u64,
@@ -665,7 +581,6 @@ impl MetricsSnapshot {
             ("wakes", self.wakes.to_string()),
             ("in_cell_wakes", self.in_cell_wakes.to_string()),
             ("wakes_dropped", self.wakes_dropped.to_string()),
-            ("stale_wakes", self.stale_wakes.to_string()),
             ("traps", self.traps.to_string()),
             ("budget_kills", self.budget_kills.to_string()),
             ("clean_kills", self.clean_kills.to_string()),

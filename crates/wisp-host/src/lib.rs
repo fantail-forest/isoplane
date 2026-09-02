@@ -53,10 +53,8 @@
 //!   equal-weight threads — statistical, kernel-grade fairness, but with no
 //!   per-tenant weighting. See [`cell::CellConfig::exec_threads`].
 
-// Three places in this crate are `unsafe`, and all three are excused by name
-// rather than by relaxing the rule: `meters::read_clock_ns`, for
-// `clock_gettime`; the whole of `tsc_marks`, which is supplied code reading the
-// CPU's timestamp counter through the `RDTSCP` intrinsic; and
+// Two places in this crate are `unsafe`, and both are excused by name rather
+// than by relaxing the rule: `meters::read_clock_ns`, for `clock_gettime`, and
 // `activator::EngineActivator::load_mapped`, which maps a compiled artifact
 // from a file and therefore carries wasmtime's own `deserialize_file`
 // contract. Everything else is denied.
@@ -74,20 +72,11 @@ pub mod egress;
 pub mod fakes;
 pub mod futures;
 pub mod instances;
-pub mod lockstats;
-pub mod marks;
 pub mod meters;
 pub mod metrics;
 pub mod net;
 pub mod response;
-pub mod trace;
-/// Timestamp samples on x86-64, with an empty interface on other architectures.
-#[cfg(target_arch = "x86_64")]
-pub mod tsc_marks;
-#[cfg(not(target_arch = "x86_64"))]
-#[path = "tsc_marks_stub.rs"]
-pub mod tsc_marks;
-
+mod sharded_map;
 pub use activator::EngineActivator;
 pub use bindings::{CellBindings, InstanceCtx};
 pub use breaker::{BreakerState, HangBreaker};
@@ -155,34 +144,15 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Raw `CLOCK_MONOTONIC` nanoseconds.
+/// Raw `CLOCK_MONOTONIC` nanoseconds, with no per-process origin subtracted,
+/// so a reading here is on the same scale as a bare `clock_gettime` anywhere
+/// else in the process.
 ///
-/// **One epoch, shared with every other crate in this process.** This used to
-/// subtract a per-process origin captured on its own first call, which made a
-/// reading here and a reading from `wisp_bench::schedule::mono_ns` — a bare
-/// `clock_gettime(CLOCK_MONOTONIC)` — two numbers on two scales that look
-/// exactly alike. Subtracting one from the other yields the machine's uptime
-/// or, through a `saturating_sub`, a clean zero; neither reads as wrong.
-///
-/// The origin bought nothing. The load generator and the cell run in **one
-/// process**, calling each other directly, so there was never a second process
-/// for which an agreed origin would have been necessary — and there is no
-/// second process now, so a raw reading is exactly as comparable and one
-/// subtraction cheaper.
-///
-/// The per-request stage timings are now taken with the CPU's timestamp
-/// counter rather than with this clock (see [`marks`]), so this is no longer
-/// on the measurement path. It is still what the cell stamps request
-/// scheduling and its own coarse intervals with, and having those on the same
-/// scale as everyone else's readings costs nothing and removes a whole class
-/// of silent subtraction error.
-///
-/// Aborting on an unreadable clock is deliberate and is the same decision
-/// `wisp_bench::schedule::mono_ns` takes for the same reason: every consumer
-/// subtracts on **unsigned** times, so a failed read flattened to `0` does not
-/// produce a missing duration, it produces one near 2^64 in whichever
-/// direction hurts most. `try_mono_ns` is the form to use where "could not
-/// read" is a fact the caller wants to hold.
+/// Aborting on an unreadable clock is deliberate: every consumer subtracts on
+/// **unsigned** times, so a failed read flattened to `0` does not produce a
+/// missing duration, it produces one near 2^64 in whichever direction hurts
+/// most. `try_mono_ns` is the form to use where "could not read" is a fact the
+/// caller wants to hold.
 pub fn mono_ns() -> u64 {
     match try_mono_ns() {
         Some(t) => t,
