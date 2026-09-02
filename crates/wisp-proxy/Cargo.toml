@@ -2,6 +2,7 @@
 name = "wisp-proxy"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 description = "HTTP proxy with route resolution, admission control and request dispatch"
 

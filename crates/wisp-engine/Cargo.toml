@@ -2,6 +2,7 @@
 name = "wisp-engine"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 description = "wasmtime embedding: template pre-init, instance slots, CoW activation, epoch budgets, thread-CPU metering"
 

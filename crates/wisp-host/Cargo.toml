@@ -2,6 +2,7 @@
 name = "wisp-host"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 description = "The cell: reactor threads, execution pool, future table, wake router, import vtable, meters, lifecycle tiers"
 

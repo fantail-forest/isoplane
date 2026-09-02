@@ -1678,10 +1678,10 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#;
     match wat::parse_str(relaxed) {
         Ok(wasm) => {
-            let err = e
-                .load_template(&wasm)
-                .err()
-                .expect("V2: relaxed SIMD must be rejected");
+            let err = match e.load_template(&wasm) {
+                Ok(_) => panic!("V2: relaxed SIMD must be rejected"),
+                Err(err) => err,
+            };
             eprintln!(
                 "  V2 `relaxed SIMD`: rejected -> {}",
                 format!("{err:#}").lines().next().unwrap()
@@ -1714,13 +1714,13 @@ fn threads_shared_memory_and_atomics_are_rejected_by_the_engine() {
 /// A guest that imports `wasi:*` as well as `wisp`, with the `cabi_realloc`
 /// export the canonical ABI needs to return a `list<u8>`.
 fn pal_guest(handle: &str) -> Vec<u8> {
-    let imports = format!(
+    let imports = String::from(
         r#"
   (import "wasi:clocks/monotonic-clock@0.2.0" "now" (func $wasi_now (result i64)))
   (import "wasi:random/random@0.2.0" "get-random-bytes" (func $wasi_random (param i64 i32)))
   (import "wasi:cli/exit@0.2.0" "exit" (func $wasi_exit (param i32)))
   (import "wasi:cli/environment@0.2.0" "get-environment" (func $wasi_env (param i32)))
-"#
+"#,
     );
     let funcs = r#"
   ;; The canonical ABI's allocator. A bump allocator over a fixed arena is

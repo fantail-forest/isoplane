@@ -203,9 +203,8 @@ pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
         }
         let _ = writeln!(
             o,
-            "\n    {} {}",
+            "\n    {} — this module would not deploy. There is no dynamic-linking escape hatch.",
             st.red("REJECTED"),
-            "— this module would not deploy. There is no dynamic-linking escape hatch."
         );
     } else {
         let _ = writeln!(

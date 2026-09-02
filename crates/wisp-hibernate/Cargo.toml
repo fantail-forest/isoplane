@@ -2,6 +2,7 @@
 name = "wisp-hibernate"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 description = "Snapshot identity and local storage primitives"
 

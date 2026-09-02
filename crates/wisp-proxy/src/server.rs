@@ -163,7 +163,7 @@ impl Proxy {
             query: parts
                 .uri
                 .query()
-                .map(|q| parse_query(q))
+                .map(parse_query)
                 .unwrap_or_default(),
             headers: parts
                 .headers

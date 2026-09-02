@@ -64,14 +64,10 @@ impl Histogram {
         self.sum.fetch_add(v, Ordering::Relaxed);
         // Decided *before* the lock: at `sample_every == 0` this method takes
         // no lock at all, which is the whole point of the knob.
-        // `%` rather than `is_multiple_of`: the workspace declares
-        // `rust-version = "1.85"` and that method landed in 1.87. Clippy
-        // suggests it because this crate does not inherit the workspace MSRV.
-        #[allow(clippy::manual_is_multiple_of)]
         let keep = match self.sample_every.load(Ordering::Relaxed) {
             0 => false,
             1 => true,
-            k => n % k == 0,
+            k => n.is_multiple_of(k),
         };
         if !keep {
             return;

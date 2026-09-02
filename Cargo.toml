@@ -16,7 +16,7 @@ exclude = ["crates/spike", "guests"]
 version = "0.1.0"
 edition = "2021"
 license-file = "LICENSE.txt"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 wisp-abi       = { path = "crates/wisp-abi" }

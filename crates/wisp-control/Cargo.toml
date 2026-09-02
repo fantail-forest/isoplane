@@ -2,6 +2,7 @@
 name = "wisp-control"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 description = "WebAssembly module validation and pre-initialization"
 

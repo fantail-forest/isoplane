@@ -10,6 +10,8 @@ use wisp_engine::ModuleHash;
 use wizer::wasmtime as wt;
 use wizer::Wizer;
 
+type LinkerFactory = Rc<dyn Fn(&wt::Engine) -> anyhow::Result<wizer::Linker>>;
+
 /// Initialization declared-memory limit.
 pub use crate::validator::INIT_MEMORY_LIMIT_BYTES;
 
@@ -386,9 +388,11 @@ pub fn read_deferred_init_section(wasm: &[u8]) -> Vec<u32> {
                 }
                 let n = u32::from_le_bytes(d[..4].try_into().unwrap()) as usize;
                 return d[4..]
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .take(n)
-                    .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                    .map(|c| u32::from_le_bytes(*c))
                     .collect();
             }
         }
@@ -559,10 +563,7 @@ fn wizen(wasm: &[u8], init_func: &str, state: Arc<Mutex<Sandbox>>) -> anyhow::Re
 /// Define allowed initialization bindings and record denied operations so
 /// the guest can skip the recorded unit on a later attempt. Attempts restart
 /// sandbox state; prior host effects are not rolled back.
-fn sealed_linker(
-    state: Arc<Mutex<Sandbox>>,
-    wasi: Vec<WasiImport>,
-) -> Rc<dyn Fn(&wt::Engine) -> anyhow::Result<wizer::Linker>> {
+fn sealed_linker(state: Arc<Mutex<Sandbox>>, wasi: Vec<WasiImport>) -> LinkerFactory {
     Rc::new(move |engine: &wt::Engine| {
         let mut linker: wizer::Linker = wt::Linker::new(engine);
         install_pal_adapter(&mut linker, engine, &wasi, &state)?;

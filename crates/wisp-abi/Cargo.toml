@@ -2,6 +2,7 @@
 name = "wisp-abi"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license-file.workspace = true
 description = "The wisp:platform@1 contract: dispatch/result records, poll status and the canonical import table."
 

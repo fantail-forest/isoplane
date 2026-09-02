@@ -28,7 +28,9 @@ struct Rig {
     fetcher: Arc<FakeFetcher>,
 }
 
-fn services_resolving(addr: &str) -> (Arc<Services>, Arc<FakeFetcher>) {
+type FakeServices = (Arc<Services>, Arc<FakeFetcher>);
+
+fn services_resolving(addr: &str) -> FakeServices {
     let fetcher = Arc::new(FakeFetcher::default());
     let egress = Arc::new(HostEgressPolicy::new(
         Box::new(Fixed(vec![addr.parse().unwrap()])),
@@ -42,7 +44,7 @@ fn services_resolving(addr: &str) -> (Arc<Services>, Arc<FakeFetcher>) {
     (svc, fetcher)
 }
 
-fn services() -> (Arc<Services>, Arc<FakeFetcher>) {
+fn services() -> FakeServices {
     let fetcher = Arc::new(FakeFetcher::default());
     let egress = Arc::new(HostEgressPolicy::new(
         Box::new(Fixed(vec!["93.184.216.34:80".parse().unwrap()])),
@@ -365,7 +367,7 @@ fn fresh_leaves_no_residue_reuse_does() {
             HandlerLifecycle::Reuse => {
                 assert_eq!(observed[0], 0, "the first dispatch cannot observe residue");
                 assert!(
-                    observed[1..].iter().any(|v| *v == 1),
+                    observed[1..].contains(&1),
                     "`reuse` must let per-instance memoization pay off: {observed:?}"
                 );
                 let m = r.cell.meters(&module).unwrap();
