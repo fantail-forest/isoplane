@@ -59,7 +59,6 @@ impl Dispatcher for FakeCell {
         req: HttpRequest,
     ) -> anyhow::Result<HttpReply> {
         if self.breaker_is_tripped(&format!("{}:{}", target.app, req.path)) {
-            // Proxy-owned headers are filtered from guest responses.
             return Ok(HttpReply {
                 status: 503,
                 headers: vec![("retry-after".into(), "5".into())],
@@ -83,7 +82,7 @@ impl Dispatcher for FakeCell {
                 ("content-type".into(), "application/json".into()),
                 ("x-wisp-version".into(), target.version.clone()),
             ],
-            body: serde_json::to_vec(&body).unwrap(),
+            body: body.to_string().into_bytes(),
             streaming: false,
         })
     }

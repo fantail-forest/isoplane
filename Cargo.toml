@@ -65,6 +65,7 @@ tempfile    = "3"
 # both wasmtime versions use, or `install` would scope a pool nobody consults.
 rayon       = "1"
 base64      = "0.22"
+sha1        = "0.10"
 
 # Line tables preserve source locations for workspace development backtraces.
 [profile.dev]

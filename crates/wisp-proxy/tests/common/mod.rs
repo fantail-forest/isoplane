@@ -1,9 +1,4 @@
-//! Test rig: drives the real proxy over a real TCP socket.
-//!
-//! Nothing here mocks the proxy. The only fake is the cell (`FakeCell`), which
-//! is the thing on the other side of the seam under test.
-
-#![allow(dead_code, reason = "Shared HTTP helpers are compiled by test binaries exercising different subsets.")]
+//! Drives the real proxy over a real TCP socket; the only fake is the cell.
 
 pub mod fake;
 
@@ -30,8 +25,8 @@ pub async fn start(cell: Arc<FakeCell>, routes: Arc<LocalRouteTable>, cfg: Proxy
     let metrics = Arc::new(ProxyMetrics::new());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
+        .expect("route setup");
+    let addr = listener.local_addr().expect("route setup");
     let proxy = Proxy::new(routes.clone(), cell.clone(), metrics.clone(), cfg);
     tokio::spawn(proxy.clone().serve(listener));
     Rig {
@@ -95,11 +90,13 @@ pub async fn request(
     headers: &[(&str, &str)],
     body: Vec<u8>,
 ) -> HttpResponse {
-    let stream = TcpStream::connect(addr).await.unwrap();
+    let stream = TcpStream::connect(addr).await.expect("route setup");
     let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
-        .unwrap();
+        .expect("route setup");
     tokio::spawn(async move {
+        // The connection ends when the response has been read; an error here
+        // surfaces as a failed send_request below.
         let _ = conn.await;
     });
     let mut b = Request::builder()
@@ -109,8 +106,8 @@ pub async fn request(
     for (k, v) in headers {
         b = b.header(*k, *v);
     }
-    let req = b.body(Full::new(Bytes::from(body))).unwrap();
-    let resp = sender.send_request(req).await.unwrap();
+    let req = b.body(Full::new(Bytes::from(body))).expect("route setup");
+    let resp = sender.send_request(req).await.expect("route setup");
     let status = resp.status();
     let headers = resp.headers().clone();
     let body = resp.into_body().collect().await.unwrap().to_bytes();

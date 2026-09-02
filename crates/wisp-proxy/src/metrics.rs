@@ -4,15 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use wisp_abi::host::CodeTier;
 
-/// A fixed-bucket log histogram over microseconds.
-///
-/// Deliberately not a t-digest: p50/p99 to within one bucket is all the
-/// exposition needs, and a lock-free array of counters can be updated from
-/// every request thread without becoming the bottleneck it is supposed to be
-/// measuring.
+/// A fixed-bucket log histogram over microseconds: four buckets per octave,
+/// updated lock-free from every request thread.
 #[derive(Debug)]
 pub struct Histogram {
-    /// bucket i covers [2^(i/4), 2^((i+1)/4)) µs — 4 buckets per octave.
     buckets: [AtomicU64; Self::N],
     count: AtomicU64,
     sum_us: AtomicU64,
@@ -39,8 +34,7 @@ impl Histogram {
         if us == 0 {
             return 0;
         }
-        // 4 buckets per power of two: index = 4*log2(us), floored.
-        let hi = 63 - us.leading_zeros() as usize; // floor(log2)
+        let hi = 63 - us.leading_zeros() as usize;
         let frac = ((us >> hi.saturating_sub(2)) & 0b11) as usize;
         let idx = if hi >= 2 { hi * 4 + frac } else { hi * 4 };
         idx.min(Self::N - 1)
@@ -107,7 +101,6 @@ pub struct ProxyMetrics {
     pub requests_404: AtomicU64,
     pub requests_shed: AtomicU64,
     pub requests_failed: AtomicU64,
-    /// Dispatches labeled with the baseline compiler tier.
     pub dispatches_tier_fast: AtomicU64,
     pub dispatches_tier_optimized: AtomicU64,
 
@@ -116,9 +109,9 @@ pub struct ProxyMetrics {
     pub route_resolutions_total: AtomicU64,
     pub route_generation: AtomicU64,
 
-    /// End-to-end, proxy-observed.
+    /// End to end, as the proxy sees it.
     pub request_latency: Histogram,
-    /// Time spent in the admission queue before a permit was granted.
+    /// Time in the admission queue before a permit was granted.
     pub admission_wait: Histogram,
 }
 
@@ -147,9 +140,15 @@ mod tests {
             h.record_us(i);
         }
         let p50 = h.p50_us();
-        assert!((400.0..=640.0).contains(&p50), "p50 was {p50}");
+        assert!(
+            (400.0..=640.0).contains(&p50),
+            "p50 of 1..=1000 must land in the bucket around 500, was {p50}"
+        );
         let p99 = h.p99_us();
-        assert!((960.0..=1300.0).contains(&p99), "p99 was {p99}");
+        assert!(
+            (960.0..=1300.0).contains(&p99),
+            "p99 of 1..=1000 must land in the bucket around 990, was {p99}"
+        );
     }
 
     #[test]
@@ -158,14 +157,14 @@ mod tests {
         for i in [1u64, 5, 50, 500, 5_000, 50_000] {
             h.record_us(i);
         }
-        assert!(h.p50_us() <= h.p99_us());
-        assert_eq!(h.count(), 6);
+        assert!(h.p50_us() <= h.p99_us(), "p50 cannot exceed p99");
+        assert_eq!(h.count(), 6, "every sample is counted");
     }
 
     #[test]
-    fn empty_histogram_reports_zero_not_nan() {
+    fn an_empty_histogram_reports_zero_not_nan() {
         let h = Histogram::new();
-        assert_eq!(h.p50_us(), 0.0);
-        assert_eq!(h.mean_us(), 0.0);
+        assert_eq!(h.p50_us(), 0.0, "no samples is a zero quantile");
+        assert_eq!(h.mean_us(), 0.0, "no samples is a zero mean");
     }
 }

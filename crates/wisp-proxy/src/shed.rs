@@ -1,17 +1,8 @@
-//! Admission control: the proxy sheds before cells saturate.
-//!
-//! Two knobs, and the second is the interesting one:
-//!
-//! * `max_in_flight` — how many dispatches may be Hot in the cells at once.
-//! * `max_queued` — how many callers may *wait* for a slot before the proxy
-//!   starts refusing.
-//!
-//! Without the second knob a proxy under overload converts a CPU shortage into
-//! an unbounded queue, and every request then times out having consumed a
-//! thread and a socket. Shedding at the edge is what keeps the failure mode
-//! "some requests get a fast 503" rather than "all requests get a slow 504" —
-//! and it is the proxy's job because cells queue at admission, and the shed
-//! has to happen before that queue exists.
+//! Admission control: `max_in_flight` dispatches may be hot in the cells at
+//! once, and `max_queued` callers may wait for a slot before the proxy
+//! refuses. Without the second knob an overloaded proxy turns a CPU shortage
+//! into an unbounded queue where every request times out having held a
+//! thread and a socket.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -37,8 +28,9 @@ impl Default for ShedConfig {
 }
 
 pub enum Admit {
-    Granted(#[allow(dead_code)] OwnedSemaphorePermit),
-    /// Refused at the edge. The caller should answer 503 with `Retry-After`.
+    /// Held for the dispatch; dropping it frees the slot.
+    Granted { _permit: OwnedSemaphorePermit },
+    /// Refused at the edge: answer 503 with `Retry-After`.
     Shed,
 }
 
@@ -68,11 +60,10 @@ impl AdmissionControl {
     }
 
     pub async fn admit(&self) -> Admit {
-        // Fast path: a free slot means no queue at all.
         if let Ok(p) = self.sem.clone().try_acquire_owned() {
-            return Admit::Granted(p);
+            return Admit::Granted { _permit: p };
         }
-        // Reserve a queue slot *before* awaiting, so the depth check reflects
+        // Reserve the queue slot before awaiting, so the depth check counts
         // waiters rather than lagging behind them.
         let depth = self.queued.fetch_add(1, Ordering::AcqRel) + 1;
         if depth > self.cfg.max_queued {
@@ -81,15 +72,20 @@ impl AdmissionControl {
             return Admit::Shed;
         }
         let t0 = Instant::now();
-        let permit = self
-            .sem
-            .clone()
-            .acquire_owned()
-            .await
-            .expect("admission semaphore is never closed");
+        let acquired = self.sem.clone().acquire_owned().await;
         self.queued.fetch_sub(1, Ordering::AcqRel);
-        self.metrics.admission_wait.record(t0.elapsed());
-        Admit::Granted(permit)
+        match acquired {
+            Ok(permit) => {
+                self.metrics.admission_wait.record(t0.elapsed());
+                Admit::Granted { _permit: permit }
+            }
+            // Nothing closes the semaphore; if it were closed, refusing is
+            // the only answer that does not overcommit the cells.
+            Err(_) => {
+                self.metrics.requests_shed.fetch_add(1, Ordering::Relaxed);
+                Admit::Shed
+            }
+        }
     }
 }
 
@@ -108,9 +104,12 @@ mod tests {
         );
         let mut held = Vec::new();
         for _ in 0..3 {
-            assert!(matches!(ac.admit().await, Admit::Granted(_)));
-            held.push(());
+            match ac.admit().await {
+                Admit::Granted { _permit } => held.push(_permit),
+                Admit::Shed => panic!("a request within the in-flight cap must be granted"),
+            }
         }
+        assert_eq!(ac.queued(), 0, "nothing queued while slots were free");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -124,32 +123,38 @@ mod tests {
             metrics.clone(),
         ));
 
-        // Occupy the only slot.
         let held = match ac.admit().await {
-            Admit::Granted(p) => p,
-            Admit::Shed => panic!("first admit must be granted"),
+            Admit::Granted { _permit } => _permit,
+            Admit::Shed => panic!("the first admit must be granted"),
         };
 
-        // Two waiters fit in the queue.
         let waiters: Vec<_> = (0..2)
             .map(|_| {
                 let ac = ac.clone();
-                tokio::spawn(async move { matches!(ac.admit().await, Admit::Granted(_)) })
+                tokio::spawn(async move { matches!(ac.admit().await, Admit::Granted { .. }) })
             })
             .collect();
 
-        // Give the waiters time to actually enqueue.
         while ac.queued() < 2 {
             tokio::task::yield_now().await;
         }
 
-        // The third is refused at the edge rather than queued behind them.
-        assert!(matches!(ac.admit().await, Admit::Shed));
-        assert_eq!(metrics.requests_shed.load(Ordering::Relaxed), 1);
+        assert!(
+            matches!(ac.admit().await, Admit::Shed),
+            "a caller beyond the queue depth is refused at the edge"
+        );
+        assert_eq!(
+            metrics.requests_shed.load(Ordering::Relaxed),
+            1,
+            "the shed is counted"
+        );
 
         drop(held);
         for w in waiters {
-            assert!(w.await.unwrap());
+            assert!(
+                w.await.expect("waiter task"),
+                "a queued caller is granted once the slot frees"
+            );
         }
     }
 
@@ -163,12 +168,15 @@ mod tests {
             Arc::new(ProxyMetrics::new()),
         ));
         let p = match ac.admit().await {
-            Admit::Granted(p) => p,
-            _ => unreachable!(),
+            Admit::Granted { _permit } => _permit,
+            Admit::Shed => panic!("the first admit must be granted"),
         };
-        assert_eq!(ac.in_flight(), 1);
+        assert_eq!(ac.in_flight(), 1, "the permit is counted in flight");
         drop(p);
-        assert_eq!(ac.in_flight(), 0);
-        assert!(matches!(ac.admit().await, Admit::Granted(_)));
+        assert_eq!(ac.in_flight(), 0, "dropping the permit frees the slot");
+        assert!(
+            matches!(ac.admit().await, Admit::Granted { .. }),
+            "the freed slot is granted again"
+        );
     }
 }

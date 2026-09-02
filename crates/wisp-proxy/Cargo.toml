@@ -12,9 +12,6 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
-# NOTE: no `wisp-control` dependency. The proxy consumes a *resolved* route
-# through the `routes::RouteResolver` trait so that it compiles and is testable
-# without the control plane; `wispd` supplies the control-plane-backed impl.
 tokio = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }

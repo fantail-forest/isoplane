@@ -1,4 +1,4 @@
-//! HTTP routing, admission and guest response tests over real TCP.
+//! End-to-end proxy tests over real TCP, driven as a browser or `curl` would.
 
 mod common;
 
@@ -12,10 +12,6 @@ use wisp_proxy::{ProxyConfig, ShedConfig};
 
 
 
-// ---------------------------------------------------------------------------
-// Routing
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn http_request_resolves_to_a_version_and_reaches_the_cell() {
     let rig = start(
@@ -26,14 +22,26 @@ async fn http_request_resolves_to_a_version_and_reaches_the_cell() {
     .await;
     let r = get(rig.addr, "quotes.wisp.dev", "/api/quote", &[]).await;
 
-    assert_eq!(r.status, 200);
-    assert_eq!(r.header("x-wisp-version"), Some("v1"));
-    assert_eq!(r.header("x-wisp-tier"), Some("optimized"));
-    assert_eq!(r.json()["app"], "quotes");
-    assert_eq!(r.json()["version"], "v1");
-    assert_eq!(r.json()["tenant"], "acme");
-    assert_eq!(r.json()["path"], "/api/quote");
-    assert_eq!(rig.cell.http_dispatches(), 1);
+    assert_eq!(r.status, 200, "a routed request is served");
+    assert_eq!(
+        r.header("x-wisp-version"),
+        Some("v1"),
+        "the selected version served it"
+    );
+    assert_eq!(
+        r.header("x-wisp-tier"),
+        Some("optimized"),
+        "the version's tier is reported"
+    );
+    assert_eq!(r.json()["app"], "quotes", "the cell saw the routed app");
+    assert_eq!(r.json()["version"], "v1", "the cell saw the routed version");
+    assert_eq!(r.json()["tenant"], "acme", "the cell saw the tenant");
+    assert_eq!(r.json()["path"], "/api/quote", "the cell saw the path");
+    assert_eq!(
+        rig.cell.http_dispatches(),
+        1,
+        "exactly one dispatch reached the cell"
+    );
 }
 
 #[tokio::test]
@@ -45,13 +53,12 @@ async fn an_unrouted_host_is_a_404_and_never_reaches_a_cell() {
     )
     .await;
     let r = get(rig.addr, "nobody.wisp.dev", "/", &[]).await;
-    assert_eq!(r.status, 404);
-    assert_eq!(rig.cell.http_dispatches(), 0);
+    assert_eq!(r.status, 404, "an unrouted host is refused at the edge");
+    assert_eq!(rig.cell.http_dispatches(), 0, "no cell was consulted");
 }
 
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
+
 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -102,7 +109,7 @@ async fn the_proxy_sheds_before_the_cells_saturate() {
     let codes: Vec<u16> = futures::future::join_all(tasks)
         .await
         .into_iter()
-        .map(|r| r.unwrap())
+        .map(|r| r.expect("request task"))
         .collect();
 
     let shed = codes.iter().filter(|c| **c == 503).count();
@@ -112,20 +119,18 @@ async fn the_proxy_sheds_before_the_cells_saturate() {
         served > 0,
         "shedding must not refuse everything, got {codes:?}"
     );
-    assert_eq!(shed + served, 8);
+    assert_eq!(shed + served, 8, "every request was either served or shed");
     assert_eq!(
         metrics
             .requests_shed
             .load(std::sync::atomic::Ordering::Relaxed) as usize,
-        shed
+        shed,
+        "every shed is counted"
     );
     serving.abort();
     let _ = serving.await;
 }
 
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 
 
 
@@ -136,48 +141,62 @@ async fn the_proxy_sheds_before_the_cells_saturate() {
 
 #[tokio::test]
 async fn a_cell_s_503_reaches_the_client_with_its_headers() {
-    // Repeated budget kills trip a breaker that fails subsequent
-    // dispatches fast until it cools or a new version deploys.
     let cell = Arc::new(FakeCell::new());
     let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
     assert_eq!(
         get(rig.addr, "quotes.wisp.dev", "/spin", &[]).await.status,
-        200
+        200,
+        "the route serves before the breaker trips"
     );
 
     cell.trip_breaker("quotes:/spin");
     let r = get(rig.addr, "quotes.wisp.dev", "/spin", &[]).await;
-    assert_eq!(r.status, 503);
-    assert_eq!(r.body, "hang breaker tripped");
-    assert_eq!(r.header("retry-after"), Some("5"));
-    // Other routes on the same app are unaffected — blast radius is the
-    // offending (module, route), not the tenant.
+    assert_eq!(r.status, 503, "the cell's status is passed through");
+    assert_eq!(
+        r.body, "hang breaker tripped",
+        "the cell's body is passed through"
+    );
+    assert_eq!(
+        r.header("retry-after"),
+        Some("5"),
+        "the cell's retry-after header is passed through"
+    );
     assert_eq!(
         get(rig.addr, "quotes.wisp.dev", "/healthy", &[])
             .await
             .status,
-        200
+        200,
+        "another route on the same app is unaffected"
     );
 
     cell.reset_breaker("quotes:/spin");
     assert_eq!(
         get(rig.addr, "quotes.wisp.dev", "/spin", &[]).await.status,
-        200
+        200,
+        "the route serves again once the cell allows it"
     );
 }
 
-/// The `x-wisp-*` namespace is the platform's: a guest that could set
-/// `x-wisp-version` could lie to its own operator about which build served a
-/// request.
 #[tokio::test]
 async fn a_guest_cannot_forge_platform_headers() {
     let cell = Arc::new(FakeCell::new());
     let rig = start(cell.clone(), standard_routes(), ProxyConfig::default()).await;
-    rig.routes.insert(quotes_target("v2", wisp_abi::host::CodeTier::Fast), &["quotes.wisp.dev".into()]).unwrap();
+    rig.routes.insert(quotes_target("v2", wisp_abi::host::CodeTier::Fast), &["quotes.wisp.dev".into()]).expect("install deployment");
     let r = get(rig.addr, "quotes.wisp.dev", "/", &[]).await;
-    // FakeCell's reply sets x-wisp-version to the target version; the proxy
-    // drops the guest's copy and writes its own. Exactly one survives.
-    assert_eq!(r.headers.get_all("x-wisp-version").iter().count(), 1);
-    assert_eq!(r.header("x-wisp-version"), Some("v2"));
-    assert_eq!(r.header("x-wisp-tier"), Some("fast"));
+    // The fake's reply sets x-wisp-version itself.
+    assert_eq!(
+        r.headers.get_all("x-wisp-version").iter().count(),
+        1,
+        "the guest's copy of a platform header is dropped, not merged"
+    );
+    assert_eq!(
+        r.header("x-wisp-version"),
+        Some("v2"),
+        "the surviving value is the proxy's"
+    );
+    assert_eq!(
+        r.header("x-wisp-tier"),
+        Some("fast"),
+        "the tier header is the proxy's"
+    );
 }
