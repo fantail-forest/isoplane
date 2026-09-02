@@ -23,12 +23,16 @@ contract — read it when you are working on the platform, writing a fixture, or
 want to see the ABI without a language runtime in the way.
 :::
 
-:::info Everything runs in the sandbox
-Anything that executes guest WebAssembly — and **every performance number** —
-goes through `scripts/dev`, which runs inside a
-[sysbox](https://github.com/nestybox/sysbox)-isolated container. This is not a
-style preference: the prototype uses `mmap`, `madvise`, `clock_gettime` and
-procfs in ways that should not be pointed at a host kernel namespace, and a
-number taken on the host was not taken where the system runs. See
+:::info `scripts/dev` is the path of least setup
+Every command in these tutorials is written as `scripts/dev <cmd>`, which runs
+it inside `wisp-dev:latest` — the image carrying Rust's wasm targets, .NET 10,
+`wasm-tools` and wasi-sdk, started under a
+[sysbox](https://github.com/nestybox/sysbox)-isolated runtime. That is the
+sensible place to instantiate untrusted guest code, and the only place where
+the toolchain is guaranteed to be present.
+
+It is not a requirement of the code. Drop the `scripts/dev` prefix and the same
+commands run wherever the toolchain is installed; performance numbers taken
+there are labelled with the machine they came off, like every other run. See
 [Use the sandbox](../how-to/use-the-sandbox.md).
 :::

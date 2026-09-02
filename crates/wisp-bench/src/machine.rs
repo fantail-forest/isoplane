@@ -35,8 +35,6 @@ pub struct Machine {
     #[serde(alias = "total_memory_bytes")]
     pub host_total_memory_bytes: u64,
     pub kernel: String,
-    /// Environment metadata from the shared measurement helper.
-    pub sandbox: SandboxDescriptor,
     /// The cgroup this process is accounted to, and its caps.
     pub cgroup: CgroupDescriptor,
     /// The evidence behind `physical_cores`, and every sysfs read that did not
@@ -93,24 +91,6 @@ pub struct CacheDomain {
 /// Default for a missing serialized [`CacheDomain::size_known`] field.
 fn yes() -> bool {
     true
-}
-
-/// The environment label observed by the shared measurement helper.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SandboxDescriptor {
-    /// `sysbox sandbox` / `container (not sysbox)` / `host`, from
-    /// `wisp_acceptance::sandbox::Provenance::label`.
-    pub provenance: String,
-}
-
-impl SandboxDescriptor {
-    /// Captures the environment label from the shared measurement helper.
-    pub fn probe() -> Self {
-        let p = wisp_acceptance::sandbox::detect();
-        Self {
-            provenance: p.label().to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -431,7 +411,6 @@ impl Machine {
             l3_domains,
             host_total_memory_bytes: read_meminfo_kb("MemTotal").unwrap_or(0) * 1024,
             kernel: read_trim("/proc/sys/kernel/osrelease").unwrap_or_default(),
-            sandbox: SandboxDescriptor::probe(),
             cgroup: probe_cgroup(),
             topology: Topology {
                 physical_cores_from_core_ids: from_ids,
@@ -447,8 +426,8 @@ impl Machine {
         anyhow::ensure!(
             self.topology.errors.is_empty(),
             "this machine's topology did not read soundly, so no per-core figure taken on it \
-             would mean anything:\n  - {}\nsysfs is virtualised under sysbox; check that \
-             /sys/devices/system/cpu is mounted and readable in this container.",
+             would mean anything:\n  - {}\nsysfs is often virtualised or masked in a \
+             container; check that /sys/devices/system/cpu is mounted and readable here.",
             self.topology.errors.join("\n  - ")
         );
         Ok(())
@@ -838,7 +817,7 @@ mod tests {
     use super::*;
 
     /// A cpu that does not exist has no `thread_siblings_list`, which is
-    /// the same read failure sysbox can produce for one that does. The old
+    /// the same read failure a container can produce for one that does. The old
     /// code answered `vec![cpu]` — every logical cpu its own physical core —
     /// and this asserts the read now refuses instead.
     #[test]

@@ -9,22 +9,24 @@ behaviors; they do not establish a general security or snapshot guarantee.
 
 ## Running it
 
-These commands use the repository toolchain image through Docker and the
-Sysbox runtime. The WebAssembly runtime remains the guest isolation boundary.
+`scripts/dev` runs a command in the repository toolchain image with the
+Sysbox runtime. Install Docker and the required runtime before using these
+commands. The WebAssembly runtime remains the guest isolation boundary.
 
 ```bash
 docker build -t wisp-dev:latest .        # rust + .NET 10 + wasm tooling
-```
 
-`scripts/dev <cmd>` runs any command in that sandbox:
-
-```bash
 ./scripts/dev cargo test --workspace     # the full suite
 ./scripts/dev bash                       # a shell inside it
 ```
 
-Build and measurement commands need their declared toolchain and inputs.
-Record the machine and execution environment when comparing measurements.
+It is a convention, not a gate. Nothing in the crates, the tests, the
+acceptance runner or the benchmark suite checks what it is running under: drop
+the prefix and they build and run wherever their toolchain does. `cargo build`
+on the host is fine and faster.
+
+`scripts/dev` uses your uid for its container and manages the container
+that it creates.
 
 ## Layout
 

@@ -52,11 +52,10 @@ use wisp_control::validator::{self, ViolationCode as V};
 /// These modules used to be committed, and this function used to be a `panic!`
 /// telling you the checkout was broken. The argument for committing them was
 /// that building them needs a .NET SDK most checkouts lack — which describes
-/// checkouts that cannot run this test either, since the Dockerfile installs
-/// the SDK and `scripts/dev` is the enforced environment for every build and
-/// test here. The cost of the old rule was six tracked binaries that went stale
-/// the moment anyone edited the shared PAL, with tests still asserting against
-/// them.
+/// checkouts that cannot run this test either. The SDK is a prerequisite of the
+/// test, not of the build, and `scripts/dev` already has it installed. The cost
+/// of the old rule was six tracked binaries that went stale the moment anyone
+/// edited the shared PAL, with tests still asserting against them.
 ///
 /// So the fixture is built the way a Rust test dependency is: on demand, by the
 /// thing that needs it. `--if-stale` makes the common case a 39 ms no-op, and
@@ -99,8 +98,8 @@ fn artifact(name: &str) -> Vec<u8> {
 }
 
 /// A host with the two capabilities the adapter draws on. Nothing is called
-/// here — these tests compose the adapter over real modules without running
-/// guest code, which belongs in the sandbox.
+/// here — these tests compose the adapter over real modules without ever
+/// running guest code.
 struct Host;
 impl PalSource for Host {
     fn slice_clock_ms(&mut self) -> u64 {

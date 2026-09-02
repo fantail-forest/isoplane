@@ -25,11 +25,11 @@
 //! `guests/dotnet/out/wisp_guest_dotnet_stock.wasm` is **built by this test**,
 //! via `guests/build-dotnet.sh --if-stale`. It used to be committed, on the
 //! argument that building it needs a .NET SDK most checkouts do not have — but
-//! that describes checkouts which cannot run this test either: the Dockerfile
-//! installs the SDK and `scripts/dev` is the enforced environment for every
-//! build and test in this repo. What the old rule actually bought was six
-//! tracked binaries that went stale the moment anyone edited the shared PAL,
-//! with tests still asserting against them.
+//! that describes checkouts which cannot run this test either. The SDK is a
+//! prerequisite of the test, not of the build, and `scripts/dev` already has
+//! it installed. What the old rule actually bought was six tracked binaries
+//! that went stale the moment anyone edited the shared PAL, with tests still
+//! asserting against them.
 //!
 //! The rule that survives is the one that mattered: this test **fails** rather
 //! than skips. A skip buys nothing and costs the thing that matters — a green

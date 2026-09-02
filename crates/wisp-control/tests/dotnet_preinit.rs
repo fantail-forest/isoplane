@@ -13,7 +13,8 @@
 //! to pre-initialize — which is what makes it the most interesting result the
 //! control plane can contribute.
 //!
-//! Runs in the sandbox like everything else that instantiates guest wasm.
+//! Builds its own .NET fixture on demand, so it runs wherever the SDK is —
+//! `scripts/dev` being the checkout that already has one.
 
 use std::time::Instant;
 
@@ -27,11 +28,10 @@ use wisp_control::validator;
 /// These modules used to be committed, and this function used to be a `panic!`
 /// telling you the checkout was broken. The argument for committing them was
 /// that building them needs a .NET SDK most checkouts lack — which describes
-/// checkouts that cannot run this test either, since the Dockerfile installs
-/// the SDK and `scripts/dev` is the enforced environment for every build and
-/// test here. The cost of the old rule was six tracked binaries that went stale
-/// the moment anyone edited the shared PAL, with tests still asserting against
-/// them.
+/// checkouts that cannot run this test either. The SDK is a prerequisite of the
+/// test, not of the build, and `scripts/dev` already has it installed. The cost
+/// of the old rule was six tracked binaries that went stale the moment anyone
+/// edited the shared PAL, with tests still asserting against them.
 ///
 /// So the fixture is built the way a Rust test dependency is: on demand, by the
 /// thing that needs it. `--if-stale` makes the common case a no-op, and the

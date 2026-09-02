@@ -8,7 +8,9 @@ sidebar_position: 7
 
 ## `scripts/dev`
 
-Runs any command inside `wisp-dev:latest` under `--runtime=sysbox-runc`.
+Runs any command inside `wisp-dev:latest` under `--runtime=sysbox-runc`. It
+is a convenience — the image carries the toolchain — not something the code
+requires; every command below also runs wherever that toolchain is installed.
 
 ```
 scripts/dev <command>...
