@@ -108,8 +108,6 @@ pub struct ImportDef {
     pub sensitive: bool,
     /// Included in the baseline initialization import set.
     pub init_visible: bool,
-    /// The WIT function in `wit/wisp-platform.wit` this lowers from.
-    pub wit: &'static str,
     /// What this capability is *for*, in one sentence, for a tenant reading
     /// the manifest rather than the table.
     ///
@@ -136,7 +134,7 @@ const BUF_TO_VOID: Sig = Sig { params: &[I32, I32], results: &[] };
 const BUF_TO_I32: Sig = Sig { params: &[I32, I32], results: &[I32] };
 
 macro_rules! imp {
-    ($name:literal, $group:ident, $sig:expr, $kind:expr, $wit:literal, $why:literal) => {
+    ($name:literal, $group:ident, $sig:expr, $kind:expr, $why:literal) => {
         ImportDef {
             name: $name,
             group: Group::$group,
@@ -145,7 +143,6 @@ macro_rules! imp {
             buf: BufSpec::In(0),
             sensitive: false,
             init_visible: false,
-            wit: $wit,
             why: $why,
         }
     };
@@ -158,20 +155,20 @@ const FUT: ImportKind = ImportKind::Future;
 pub const IMPORTS: &[ImportDef] = &[
     // ---- core -------------------------------------------------------------
     // Guest panic. Available at init so a failed pre-init reports usefully.
-    ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC, "-",
+    ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \
          trapping anonymously") },
     // A forbidden unit causes a bounded retry that defers that unit.
     // Earlier allowed external effects are not rolled back.
     ImportDef {
         init_visible: true,
-        ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_begin", Core, Sig { params: &[I32], results: &[] }, SYNC, "-",
+        ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_begin", Core, Sig { params: &[I32], results: &[] }, SYNC,
             "names the init unit about to run, so a trap inside it can be attributed to that unit \
              and deferred") }
     },
     ImportDef {
         init_visible: true,
-        ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_deferred", Core, Sig { params: &[I32], results: &[I32] }, SYNC, "-",
+        ..ImportDef { buf: BufSpec::None, ..imp!("init_unit_deferred", Core, Sig { params: &[I32], results: &[I32] }, SYNC,
             "asks whether this unit was deferred on a previous attempt; non-zero means skip it on \
              the replay") }
     },
@@ -179,7 +176,7 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef {
         init_visible: true,
         sensitive: true,
-        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_hash_seed", Core, BUF_TO_VOID, SYNC, "-",
+        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_hash_seed", Core, BUF_TO_VOID, SYNC,
             "A per-attempt string-hash seed, separate from host entropy requests.") }
     },
 
@@ -193,7 +190,7 @@ pub const IMPORTS: &[ImportDef] = &[
     // its buffer with a zero-length probe.
     ImportDef {
         init_visible: true,
-        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC, "-",
+        ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC,
             "the init-visible config blob, so a config parse happens once at deploy time instead of \
              once per activation; returns the blob's FULL length, so a guest can size its buffer \
              with a zero-length probe") }
@@ -202,39 +199,39 @@ pub const IMPORTS: &[ImportDef] = &[
     // ---- observability ----------------------------------------------------
     // Log CPU counts against the dispatch budget, which is what stops
     // log-as-compute abuse.
-    ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC, "observe.emit",
+    ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "structured log at `trace=0` .. `error=4`; the CPU counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
-    imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC, "observe.span-begin",
+    imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC,
         "opens a trace span and returns its id, for correlating work inside one dispatch"),
-    ImportDef { buf: BufSpec::None, ..imp!("trace_span_end", Observe, Sig { params: &[I32], results: &[] }, SYNC, "observe.span-end",
+    ImportDef { buf: BufSpec::None, ..imp!("trace_span_end", Observe, Sig { params: &[I32], results: &[] }, SYNC,
         "closes the span with that id; unbalanced spans are the guest's problem, not the host's") },
 
     // ---- clock & entropy --------------------------------------------------
     // Coarse (1 ms) and FROZEN intra-slice: removes the
     // measurement primitive most Spectre-class attacks need. NOT init-visible
     // — a cctor that reads the clock is impure and gets deferred.
-    ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC, "clock.now-coarse",
+    ImportDef { buf: BufSpec::None, ..imp!("clock_now_coarse", Clock, Sig { params: &[], results: &[I64] }, SYNC,
         "Reads the host coarse clock; use host deadline futures to wait.") },
-    ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT, "clock.deadline-in",
+    ImportDef { buf: BufSpec::None, ..imp!("clock_deadline_in", Clock, Sig { params: &[I64], results: &[I64] }, FUT,
         "a timer as a host future, so waiting is never a guest loop burning budget") },
     // Requests bytes through the host entropy interface; captured guest values remain captured.
-    ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC, "entropy.fill",
+    ImportDef { buf: BufSpec::Out(0), ..imp!("entropy_fill", Entropy, BUF_TO_VOID, SYNC,
         "Host CSPRNG bytes for this request; values already stored in guest memory remain part of captured state.") },
 
     // ---- outbound http ----------------------------------
-    imp!("http_fetch", Http, BUF_TO_FUTURE, FUT, "http.fetch",
+    imp!("http_fetch", Http, BUF_TO_FUTURE, FUT,
         "Issues an outbound request through the host egress policy and completes with its response head."),
     // A response-body read completes through a host-owned future.
-    ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT, "http.read-body",
+    ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
         "Reads the next chunk of a response body through a host-owned future.") },
 
     // ---- inbound response -------------------------------------------------
-    imp!("resp_new", Response, BUF_TO_I32, SYNC, "-",
+    imp!("resp_new", Response, BUF_TO_I32, SYNC,
         "opens a response from a `ResponseHead` and returns its handle"),
-    ImportDef { buf: BufSpec::In(1), ..imp!("resp_write", Response, Sig { params: &[I32, I32, I32], results: &[I64] }, FUT, "-",
+    ImportDef { buf: BufSpec::In(1), ..imp!("resp_write", Response, Sig { params: &[I32, I32, I32], results: &[I64] }, FUT,
         "appends a streamed chunk to an open response") },
-    ImportDef { buf: BufSpec::None, ..imp!("resp_finish", Response, Sig { params: &[I32], results: &[] }, SYNC, "-",
+    ImportDef { buf: BufSpec::None, ..imp!("resp_finish", Response, Sig { params: &[I32], results: &[] }, SYNC,
         "ends the response, after which the handle is spent") },
 
 
@@ -256,7 +253,7 @@ pub const IMPORTS: &[ImportDef] = &[
     // grace has begun it is <= 0 and keeps falling, so a guest can tell "at
     // budget" from "deep into grace" and decide how much unwinding it can
     // still afford.
-    ImportDef { buf: BufSpec::None, ..imp!("budget_remaining_ns", Ctx, Sig { params: &[], results: &[I64] }, SYNC, "ctx.budget-remaining-ns",
+    ImportDef { buf: BufSpec::None, ..imp!("budget_remaining_ns", Ctx, Sig { params: &[], results: &[I64] }, SYNC,
         "signed nanoseconds left against this dispatch's CPU budget; negative once the dispatch is \
          in its grace window and still falling, so a guest can tell `at budget` from `deep into \
          grace` and decide how much unwinding it can still afford") },
@@ -269,7 +266,7 @@ pub const IMPORTS: &[ImportDef] = &[
     // global so the host reads it for free; an import costs one host call per
     // GC phase, which is the honest PoC shape and keeps the bit's owner
     // unambiguous.
-    ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC, "ctx.unsafe-to-trap",
+    ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC,
         "the runtime layer's unsafe-to-trap bit, set around GC phases and scheduler queue \
          mutations. Grace entry defers while it is set and the hard deadline ignores it, so a \
          pinned bit buys exactly the grace window and nothing more") },

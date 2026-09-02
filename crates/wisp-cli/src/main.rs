@@ -193,7 +193,6 @@ fn doctor_json<V: AsViolationJson>(
             "kind": doctor::kind_label(i.kind),
             "sensitive": i.sensitive,
             "init_visible": i.init_visible,
-            "wit": i.wit,
         })).collect::<Vec<_>>(),
         "undeclared": r.undeclared.iter().map(|u| format!("{}.{}", u.module, u.field)).collect::<Vec<_>>(),
         // The PAL entries are declared too, and what a consumer needs from

@@ -304,7 +304,6 @@ fn doctor_has_a_machine_readable_form() {
     assert_eq!(v["capabilities"][0]["name"], "http_fetch");
     assert_eq!(v["capabilities"][0]["group"], "http");
     assert_eq!(v["capabilities"][0]["kind"], "future");
-    assert_eq!(v["capabilities"][0]["wit"], "http.fetch");
     assert!(v["blake3"].as_str().unwrap().len() == 64);
 }
 
