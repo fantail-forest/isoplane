@@ -124,14 +124,9 @@ impl Default for AdminListen {
 
 /// A named execution cell.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CellConfig {
     pub name: String,
-    #[serde(default = "default_max_hot")]
-    pub max_hot: usize,
-}
-
-fn default_max_hot() -> usize {
-    32
 }
 
 /// Selects additional runtime initialization imports.
@@ -230,8 +225,6 @@ pub enum ConfigError {
     DuplicateApp(String),
     #[error("proxy.max_in_flight must be at least 1 (got {0}): a node that admits nothing is not a node")]
     ZeroInFlight(usize),
-    #[error("cell `{cell}` has max_hot = 0")]
-    ZeroMaxHot { cell: String },
 }
 
 impl NodeConfig {
@@ -251,11 +244,9 @@ impl NodeConfig {
             cells: vec![
                 CellConfig {
                     name: "cell-0".into(),
-                    max_hot: 16,
                 },
                 CellConfig {
                     name: "cell-1".into(),
-                    max_hot: 32,
                 },
             ],
             apps: vec![AppConfig {
@@ -290,11 +281,6 @@ impl NodeConfig {
         }
         if self.proxy.max_in_flight == 0 {
             return Err(ConfigError::ZeroInFlight(self.proxy.max_in_flight));
-        }
-        if let Some(c) = self.cells.iter().find(|c| c.max_hot == 0) {
-            return Err(ConfigError::ZeroMaxHot {
-                cell: c.name.clone(),
-            });
         }
         let mut seen = BTreeSet::new();
         for c in &self.cells {
@@ -449,18 +435,30 @@ versions = [{{ id = "v1" }}]
     }
 
     #[test]
-    fn degenerate_capacity_settings_are_refused_at_startup() {
+    fn a_zero_in_flight_cap_is_refused_at_startup() {
         let mut c = NodeConfig::dev_default();
         c.proxy.max_in_flight = 0;
-        assert_eq!(c.validate(), Err(ConfigError::ZeroInFlight(0)));
-
-        let mut c = NodeConfig::dev_default();
-        c.cells[0].max_hot = 0;
         assert_eq!(
             c.validate(),
-            Err(ConfigError::ZeroMaxHot {
-                cell: "cell-0".into()
-            })
+            Err(ConfigError::ZeroInFlight(0)),
+            "a node that admits nothing is not a node"
+        );
+    }
+
+    #[test]
+    fn a_cell_key_the_daemon_does_not_read_is_refused_at_load() {
+        let err = NodeConfig::from_toml(
+            r#"
+node = "n"
+[[cells]]
+name = "c"
+max_hot = 16
+"#,
+        )
+        .expect_err("a removed key must not load silently");
+        assert!(
+            err.to_string().contains("max_hot"),
+            "the refusal must name the key so the operator can delete it: {err}"
         );
     }
 

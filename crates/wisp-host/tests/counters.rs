@@ -147,7 +147,6 @@ fn app(r: &Rig, name: &str, behaviour: FakeBehaviour) -> ModuleId {
 fn a_hard_kill_is_not_counted_as_a_trap() {
     let r = rig(CellConfig {
         exec_threads: 4,
-        max_hot: 4,
         ..CellConfig::for_test("traps")
     });
     let trapper = app(

@@ -126,7 +126,6 @@ const PARK_MS: u64 = 600_000;
 fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     let r = rig(CellConfig {
         exec_threads: 4,
-        max_hot: 4,
         ..CellConfig::for_test("c7")
     });
 
@@ -483,7 +482,6 @@ fn the_pending_futures_cap_traps_the_guest() {
 fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     let r = rig(CellConfig {
         exec_threads: 2,
-        max_hot: 2,
         ..CellConfig::for_test("breaker")
     });
     let act = Arc::new(FakeActivator::named(
@@ -881,7 +879,6 @@ fn clones_of_one_template_never_share_entropy() {
 fn many_dispatches_share_one_channel_and_stay_matchable() {
     let r = rig(CellConfig {
         exec_threads: 4,
-        max_hot: 4,
         queue_depth_per_worker: 64,
         ..CellConfig::for_test("share")
     });
@@ -1014,7 +1011,6 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
 fn a_shed_submission_says_so_rather_than_going_quiet() {
     let r = rig(CellConfig {
         exec_threads: 1,
-        max_hot: 1,
         queue_depth_per_worker: 1,
         ..CellConfig::for_test("shed")
     });

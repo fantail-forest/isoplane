@@ -77,7 +77,6 @@ fn config(dir: &std::path::Path) -> NodeConfig {
     };
     cfg.cells = vec![CellConfig {
         name: "cell-1".into(),
-        max_hot: 4,
     }];
     cfg.apps = vec![AppConfig {
         name: "quotes".into(),

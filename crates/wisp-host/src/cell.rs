@@ -29,11 +29,10 @@
 //! So this module does **not** time-slice guests, does not run a run-queue
 //! with priorities, and does not preempt anybody. What it does control is
 //! *admission*: a bounded queue and a shed when it is full. Concurrency is
-//! bounded by the size of the execution pool rather than by any admission
-//! check — `CellConfig::max_hot` is configured and never enforced. A spinner
-//! burns its own thread until the CPU budget kills it, and the blast radius —
-//! the offender's own requests — is a consequence of that arrangement rather
-//! than a feature bolted on top.
+//! bounded by the size of the execution pool. A spinner burns its own thread
+//! until the CPU budget kills it, and the blast radius — the offender's own
+//! requests — is a consequence of that arrangement rather than a feature
+//! bolted on top.
 //!
 //! **Not built here:** per-tenant CPU weighting via cgroup v2 threaded `cpu`
 //! controllers, and core-scheduling cookies that would keep trust tiers from
@@ -72,8 +71,6 @@ pub struct CellConfig {
     pub exec_threads: usize,
     /// Reactor worker threads. These own all I/O.
     pub reactor_threads: usize,
-    /// Configured hot-dispatch concurrency value.
-    pub max_hot: usize,
     /// Dispatches one worker's lane holds before the cell sheds. Each
     /// execution thread has its own lane, so the cell as a whole holds
     /// `exec_threads` times this.
@@ -93,7 +90,6 @@ impl Default for CellConfig {
             name: "cell-0".into(),
             exec_threads: cores * 4,
             reactor_threads: cores.max(2),
-            max_hot: cores * 4,
             queue_depth_per_worker: 64,
             max_idle_per_module: 64,
             wall_ms_cap: 30_000,
@@ -110,7 +106,6 @@ impl CellConfig {
             name: name.into(),
             exec_threads: 4,
             reactor_threads: 2,
-            max_hot: 4,
             sweep_interval_ms: 25,
             ..Default::default()
         }
@@ -708,9 +703,8 @@ impl Cell {
     /// **Three residues, all real.** Named rather than waved at, because the
     /// point of catching a panic is not to make it look like nothing happened:
     ///
-    /// 1. The `hot` gauge keeps its increment. Nothing gates admission on it —
-    ///    `CellConfig::max_hot` is configured and never enforced — so this is
-    ///    telemetry drift and not a wedge.
+    /// 1. The `hot` gauge keeps its increment. Nothing gates admission on it,
+    ///    so this is telemetry drift and not a wedge.
     /// 2. **The instance leaks out of its pool.** `finish_and_release` never
     ///    ran, so the slot is neither released, reset, nor discarded. It stays
     ///    in `residents` and keeps showing in the residency gauges, which is
@@ -2509,7 +2503,6 @@ mod cell_tests {
         let cell = Cell::new(
             CellConfig {
                 exec_threads: 1,
-                max_hot: 1,
                 ..CellConfig::for_test("panic-dispatch")
             },
             services(),
