@@ -74,57 +74,9 @@ pub struct CellConfig {
     pub reactor_threads: usize,
     /// Configured hot-dispatch concurrency value.
     pub max_hot: usize,
-    /// Work queues at admission; beyond this the cell sheds, so a saturated
-    /// cell refuses new work rather than accepting an unbounded backlog.
-    ///
-    /// The depth of **one** dispatch queue, and under
-    /// [`QueueStructure::Shared`] and [`QueueStructure::LockFree`] — where
-    /// there is exactly one — also the cell's whole admission cap. Under
-    /// [`QueueStructure::PerWorker`] the per-lane depth is
-    /// [`CellConfig::queue_depth_per_worker`] instead and this field is not
-    /// read; [`CellConfig::admission_capacity`] is the number that is
-    /// comparable across all three.
-    pub admission_queue: usize,
-    /// **How many queues there are.** One decision.
-    ///
-    /// Defaults to [`QueueStructure::Shared`], which is what this cell has
-    /// always done. See that type for what the alternatives buy and why.
-    pub queue_structure: QueueStructure,
-    /// **Which of them a new item goes to** — the other decision, and only
-    /// meaningful when [`CellConfig::queue_structure`] builds more than one.
-    ///
-    /// Defaults to [`QueuePlacement::PowerOfTwo`], so
-    /// `PerWorker` + the default placement is exactly the behaviour the
-    /// welded `PerWorker` used to mean and prior runs stay comparable.
-    pub queue_placement: QueuePlacement,
-    /// The depth of **one** per-worker dispatch queue, under
-    /// [`QueueStructure::PerWorker`].
-    ///
-    /// **Configured, not derived.** It used to be `admission_queue /
-    /// exec_threads`, which meant `--exec-threads` silently changed the depth
-    /// of the thing it was supposed to be varying against: 64 slots at 16
-    /// threads and 16 at 64, so the exec-thread sweep moved two variables and
-    /// attributed the result to one. It was also wrong at the bottom — an
-    /// `admission_queue` of 4 across 64 workers gave each lane
-    /// `(4/64).max(1)` = 1 slot and the cell 64, against a 4 that had been
-    /// asked for.
-    ///
-    /// **What this pins, and what it therefore does not.** With `n` queues you
-    /// can hold the depth of one queue fixed or the depth of the cell fixed,
-    /// and not both: they differ by a factor of `n` by construction. This
-    /// field pins the first, so the whole-cell cap becomes
-    /// `queue_depth_per_worker * exec_threads` — read it from
-    /// [`CellConfig::admission_capacity`] rather than assuming
-    /// `admission_queue`, which is the wrong number under this structure. A
-    /// comparison **between structures** therefore has to say which of the two
-    /// it held constant, and the honest way to hold the cell's buffering
-    /// constant across a thread sweep is to move this field with the thread
-    /// count deliberately, in the record, rather than have the constructor do
-    /// it silently.
-    ///
-    /// The default of 64 is `1024 / 16`: the per-lane share the old derivation
-    /// produced for the default `admission_queue` on a sixteen-thread pool.
-    /// Nothing is calibrated on it.
+    /// Dispatches one worker's lane holds before the cell sheds. Each
+    /// execution thread has its own lane, so the cell as a whole holds
+    /// `exec_threads` times this.
     pub queue_depth_per_worker: usize,
     pub max_idle_per_module: usize,
     /// Wall-clock backstop for a dispatch; reported separately from active execution time.
@@ -132,26 +84,6 @@ pub struct CellConfig {
     pub breaker: BreakerConfig,
     /// How often the idle trajectory sweeps.
     pub sweep_interval_ms: u64,
-    /// How densely the two **per-dispatch** histograms (`request_us`,
-    /// `park_ms`) keep samples. `1` — the default — keeps every one; `N` keeps
-    /// one in N; `0` keeps none and takes no lock at all on the dispatch path.
-    ///
-    /// Each of those histograms is a per-cell mutex acquired by every
-    /// execution thread on every completed dispatch. Counting the locks one
-    /// dispatch takes through `run_dispatch` → `settle` — the work queue's
-    /// push and pop, `modules`, `durables` + `residents`, `active` three
-    /// times, and these two — gives at least eight, six of them per-cell
-    /// singletons shared by all execution threads. "The cell's knee is lock
-    /// contention, not CPU" is a claim the telemetry can manufacture for
-    /// itself, and naming the work queue as the culprit is equally consistent
-    /// with contention on `active`, on `durables`, or on these two histograms.
-    ///
-    /// So this exists to let the claim be **tested by difference** rather than
-    /// assumed: run the same point at `1` and at `0` and see whether the knee
-    /// moves. Setting it to `0` does not remove the metrics — counts, rates
-    /// and means keep working, only percentiles stop — so a run without
-    /// percentiles is still comparable to a run with them.
-    pub telemetry_sample_every: u64,
 }
 
 impl Default for CellConfig {
@@ -162,15 +94,11 @@ impl Default for CellConfig {
             exec_threads: cores * 4,
             reactor_threads: cores.max(2),
             max_hot: cores * 4,
-            admission_queue: 1024,
+            queue_depth_per_worker: 64,
             max_idle_per_module: 64,
             wall_ms_cap: 30_000,
-            queue_structure: QueueStructure::default(),
-            queue_placement: QueuePlacement::default(),
-            queue_depth_per_worker: 64,
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
-            telemetry_sample_every: 1,
         }
     }
 }
@@ -186,37 +114,6 @@ impl CellConfig {
             sweep_interval_ms: 25,
             ..Default::default()
         }
-    }
-
-    /// How many dispatch queues this configuration builds.
-    ///
-    /// One under `Shared` and one under `LockFree` — the lock-free structure
-    /// is a single shared pair of rings, not a set of them — and one per
-    /// execution thread under `PerWorker`.
-    pub fn queue_count(&self) -> usize {
-        match self.queue_structure {
-            QueueStructure::Shared | QueueStructure::LockFree => 1,
-            QueueStructure::PerWorker => self.exec_threads.max(1),
-        }
-    }
-
-    /// The depth of one dispatch queue, as configured.
-    ///
-    /// One place says which field the structure reads, so the answer cannot
-    /// differ between the constructor and the report. Named for the *one*
-    /// queue on purpose: [`Cell::queue_depth`] is the live count of what is
-    /// waiting, which is a different question with a similar name.
-    pub fn depth_per_queue(&self) -> usize {
-        match self.queue_structure {
-            QueueStructure::PerWorker => self.queue_depth_per_worker.max(1),
-            _ => self.admission_queue.max(1),
-        }
-    }
-
-    /// How many queued dispatches the cell will hold before it sheds — across
-    /// every queue, so the number is comparable between structures.
-    pub fn admission_capacity(&self) -> usize {
-        self.depth_per_queue() * self.queue_count()
     }
 }
 
@@ -378,247 +275,25 @@ thread_local! {
 /// shards than threads two threads are guaranteed to share one.
 const ACTIVE_SHARDS: usize = 256;
 
-/// **How many work queues the cell has**, and of what kind.
-///
-/// This is one of the two decisions that used to be welded into a single
-/// `QueueStrategy`. Removing the contention between worker threads by giving
-/// each thread its own queue is this one; *which* of those queues a new item
-/// is placed in is [`QueuePlacement`], and the two vary independently. The old
-/// `PerWorker` meant this type's `PerWorker` **and** `PowerOfTwo` placement,
-/// so that pair reproduces it exactly and prior runs stay comparable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum QueueStructure {
-    /// One queue, every worker pops from it.
-    ///
-    /// Simple and correct, and it does not scale: every producer and every
-    /// worker takes the same lock on every operation, so its cost grows faster
-    /// than the pool does. On a wide pool it has measured as nearly all of the
-    /// time the workers spent blocked.
-    #[default]
-    Shared,
-    /// One queue per worker. Where the new work goes is [`QueuePlacement`]'s
-    /// decision, not this one.
-    ///
-    /// **Why not a single lock-free queue.** Lock-free guarantees progress,
-    /// not independence: one shared queue still has every thread doing
-    /// compare-and-swap on the same head and tail, so the cachelines holding
-    /// them bounce between cores and the retries grow with the pool. It
-    /// removes the syscalls and the context switches, and leaves the sharing.
-    /// Per-worker lanes remove the sharing: a worker pops its own lane, which
-    /// in the common case no other thread is touching.
-    PerWorker,
-    /// One shared pair of lock-free queues, and no mutex on the data at all.
-    ///
-    /// Keeps the two lanes and their priority — a bounded ring for dispatches,
-    /// so a full ring hands the job back and that *is* the shed, and an
-    /// unbounded queue for wakes, which are never shed.
-    ///
-    /// **This removes blocking, not sharing.** Every thread still does
-    /// compare-and-swap on the same head and tail, so the cachelines holding
-    /// them still move between cores and the retries still grow with the pool.
-    /// What it removes is the futex: no syscall, no context switch, no thread
-    /// descheduled while holding the structure. Expect it to beat `Shared`
-    /// comfortably and to fall behind `PerWorker` as the pool grows — and if
-    /// it does not, that is worth knowing, which is why all three are
-    /// selectable rather than one being chosen by argument.
-    ///
-    /// A worker with nothing to do still has to sleep. The parking mutex and
-    /// condition variable below guard no data — they exist only so a consumer
-    /// can wait without spinning, and the producer touches them only when a
-    /// consumer is actually parked.
-    LockFree,
-}
-
-impl QueueStructure {
-    /// The name this structure goes by in a report and on a command line.
-    ///
-    /// Paired with [`QueueStructure::parse`] so a run's record round-trips:
-    /// the label written into a result file is the one that reproduces it.
-    pub fn label(self) -> &'static str {
-        match self {
-            QueueStructure::Shared => "shared",
-            QueueStructure::PerWorker => "per-worker",
-            QueueStructure::LockFree => "lock-free",
-        }
-    }
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "shared" => QueueStructure::Shared,
-            "per-worker" | "perworker" => QueueStructure::PerWorker,
-            "lock-free" | "lockfree" => QueueStructure::LockFree,
-            _ => return None,
-        })
-    }
-    /// Whether [`QueuePlacement`] has anything to decide under this structure.
-    ///
-    /// `Shared` and `LockFree` build exactly one queue, so every placement
-    /// policy picks it and the setting is inert rather than wrong. A report
-    /// that prints a placement beside one of those should say so rather than
-    /// imply a choice was exercised.
-    pub fn placement_applies(self) -> bool {
-        self == QueueStructure::PerWorker
-    }
-}
-
-/// **Which queue a new item goes to**, when [`QueueStructure`] built more than
-/// one of them.
-///
-/// The second of the two decisions. It is a pure load-balancing question and
-/// has nothing to say about how the queues are built, which is why it is a
-/// separate setting: all three policies below sit on top of per-worker lanes,
-/// and none of them is reachable on top of a single queue because there is
-/// nothing to choose between.
-///
-/// Every policy preserves the two-lane wake-before-dispatch priority. That is
-/// a property of what a *worker pops out of* a lane, not of which lane a
-/// producer put the item in, so nothing here can affect it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum QueuePlacement {
-    /// Sample two lanes at random, push to the less loaded.
-    ///
-    /// O(1) per push, and it gets most of the balance of scanning every lane —
-    /// the standard result for randomised load balancing. The default, because
-    /// it is what the welded `PerWorker` always did: a run recorded before the
-    /// split is a run at this policy.
-    #[default]
-    PowerOfTwo,
-    /// Hand out lanes in turn from one shared cursor.
-    ///
-    /// Perfectly even *counts*, and blind to load: a lane whose worker drew a
-    /// thirty-second dispatch keeps receiving its share regardless. It is here
-    /// as the control — it is what "balanced" means if you do not look at what
-    /// a lane is carrying — and its cursor is a single atomic that every
-    /// producer increments, which is precisely the shared cacheline per-worker
-    /// lanes exist to remove. Expect that to show at high thread counts; that
-    /// it does is the point of having it.
-    RoundRobin,
-    /// One lane at random, no sampling.
-    ///
-    /// The cheapest placement there is, and the other control: it is what
-    /// power-of-two degrades to when the load it reads is uninformative. If
-    /// `PowerOfTwo` does not beat this, the counter it consults is not telling
-    /// it anything and the balancer is decoration.
-    Random,
-}
-
-impl QueuePlacement {
-    pub fn label(self) -> &'static str {
-        match self {
-            QueuePlacement::PowerOfTwo => "power-of-two",
-            QueuePlacement::RoundRobin => "round-robin",
-            QueuePlacement::Random => "random",
-        }
-    }
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "power-of-two" | "poweroftwo" | "p2c" => QueuePlacement::PowerOfTwo,
-            "round-robin" | "roundrobin" | "rr" => QueuePlacement::RoundRobin,
-            "random" => QueuePlacement::Random,
-            _ => return None,
-        })
-    }
-}
-
-/// A two-lane queue, in one or many copies.
-///
-/// **The two lanes are the admission story, and they are unchanged by any
-/// structure or placement.** Wakes jump ahead of new dispatches, and wakes are
-/// never shed: overflow queues at admission and sheds *new* work, so work
-/// already in flight keeps making progress and a saturated cell does not turn
-/// itself into a pile of half-finished requests.
-///
-/// `lanes` is one entry under [`QueueStructure::Shared`] — in which case this
-/// is exactly the structure it replaces — and one per worker under
-/// [`QueueStructure::PerWorker`].
+/// Two lanes per worker. Wakes jump ahead of new dispatches, and only a
+/// dispatch is ever shed, so work already in flight keeps making progress
+/// while a saturated cell refuses new work.
 struct WorkQueue {
-    /// Empty under [`QueueStructure::LockFree`].
     lanes: Box<[Lane]>,
-    /// `Some` only under [`QueueStructure::LockFree`].
-    free: Option<LockFreeLanes>,
-    /// The depth of one dispatch lane, as configured.
-    ///
-    /// **Not derived from the lane count.** It used to be the whole-cell cap
-    /// divided across the lanes, which made the doc that stood here — "the
-    /// strategy changes where work waits and not how much of it the cell will
-    /// hold" — false in both directions: the depth of a lane moved with
-    /// `exec_threads`, and `(cap / n).max(1)` overshot the whole-cell total
-    /// whenever the division rounded to zero. It is now what
-    /// [`CellConfig::depth_per_queue`] says, the cell's total is
-    /// [`CellConfig::admission_capacity`], and neither is a function of the
-    /// other.
+    /// The dispatch depth of one lane.
     cap: usize,
-    structure: QueueStructure,
-    placement: QueuePlacement,
-    /// [`QueuePlacement::RoundRobin`]'s cursor, and nothing else's.
-    cursor: AtomicUsize,
 }
 
-/// One lane: the two queues, the lock over them, and a load counter that can
-/// be read without taking it.
-///
-/// `load` is padded to its own cache line. Without that, sampling two lanes'
-/// loads would pull in a line that a third lane's push is writing, and the
-/// balancer would generate exactly the sharing it exists to avoid.
+/// `load` sits on its own cache line so that sampling two lanes' loads never
+/// pulls in a line a third lane's push is writing.
 #[repr(align(128))]
 struct Lane {
     inner: Mutex<QueueInner>,
     cv: Condvar,
-    /// **What this lane still owes:** everything queued in it, of either
-    /// kind, plus everything its worker has taken out and not yet finished.
-    ///
-    /// It is not the dispatch queue's length, which is what it used to be, and
-    /// that is the whole point. As a length it could not see the two states
-    /// that make a lane the worst possible choice — a lane holding four
-    /// hundred queued wakes read zero, because `push_wake` never touched it,
-    /// and a lane whose worker was twenty seconds into a thirty-second
-    /// dispatch read zero, because the pop had already decremented it. Both
-    /// were maximally attractive to a placer that reads this to avoid load.
-    ///
-    /// So: incremented by every push, of either lane, and decremented by the
-    /// worker when the job is *done* rather than when it is taken. Approximate
-    /// by design — it is read outside the lock, and a stale read costs a
-    /// slightly worse choice rather than a wrong one — and O(1) and lock-free
-    /// to read, which is what lets a producer sample two of them per push.
+    /// Everything queued in this lane, of either kind, plus the job its
+    /// worker has taken and not yet finished. Read without the lock by the
+    /// placer, so a stale read costs a worse choice rather than a wrong one.
     load: AtomicUsize,
-}
-
-/// The lock-free pair, plus the parking spot a worker sleeps on.
-struct LockFreeLanes {
-    /// Bounded: `push` returns the job back when full, which is the shed.
-    dispatches: crossbeam_queue::ArrayQueue<Box<DispatchJob>>,
-    /// Unbounded: a wake is never shed.
-    wakes: crossbeam_queue::SegQueue<WakeItem>,
-    closed: AtomicBool,
-    /// How many producers are between their `closed` check and their push.
-    ///
-    /// **This is what makes the lock-free path as safe as the mutex one.** The
-    /// mutex path mutates `closed` and the queue under the same lock, so a
-    /// dispatch cannot land after the queue is closed. Here they are two
-    /// operations, and a stronger memory ordering does not join them: a
-    /// producer can read `closed` as false, be descheduled, and push into a
-    /// ring every worker has already drained and left — a job that is neither
-    /// shed nor served, and a caller that is never answered.
-    ///
-    /// A producer announces itself here *before* reading `closed`, so a closer
-    /// that has already stored `closed` and then reads zero knows there is no
-    /// producer left that could still push. `close` waits for that zero and
-    /// then drains, which turns "either shed or served" into a property of the
-    /// pair rather than of a lucky interleaving. Both are `SeqCst`, and they
-    /// have to be: the argument is about the order of operations on *two*
-    /// locations, which is the one thing only a total order gives.
-    pushing: AtomicUsize,
-    /// Guards nothing. A consumer takes it only to park, and a producer takes
-    /// it only when `parked` says someone is there to wake.
-    park: Mutex<()>,
-    cv: Condvar,
-    /// How many workers are parked or about to park.
-    ///
-    /// The whole point of the count is to keep the producer off the parking
-    /// mutex when nobody is waiting, which is the common case under load. It
-    /// is also what closes the lost-wakeup race: a consumer increments it
-    /// while holding `park`, so a producer that reads a non-zero count cannot
-    /// acquire `park` until that consumer is actually waiting on `cv`.
-    parked: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -628,11 +303,8 @@ struct QueueInner {
     closed: bool,
 }
 
-/// A cheap per-thread xorshift, for picking two lanes.
-///
-/// Not `rand::rng()`: this runs on every dispatch and the choice does not need
-/// to be good randomness, only unbiased and fast. Seeded off the thread id so
-/// two workers do not walk the same sequence.
+/// A per-thread xorshift. It runs on every dispatch, so it needs to be cheap
+/// and unbiased rather than good.
 fn lane_rand(n: usize) -> usize {
     use std::cell::Cell as StdCell;
     thread_local! {
@@ -641,7 +313,8 @@ fn lane_rand(n: usize) -> usize {
     STATE.with(|s| {
         let mut x = s.get();
         if x == 0 {
-            // Any non-zero seed; the address of the cell differs per thread.
+            // The cell's address differs per thread, so no two workers walk
+            // the same sequence.
             x = s as *const _ as u64 | 1;
         }
         x ^= x << 13;
@@ -653,115 +326,43 @@ fn lane_rand(n: usize) -> usize {
 }
 
 impl WorkQueue {
-    /// `depth` is the depth of **one** dispatch queue, already decided by
-    /// [`CellConfig::depth_per_queue`]. Nothing here divides it by anything: the
-    /// lane count and the lane depth are two independent configured
-    /// quantities, which is what stops an `--exec-threads` sweep from moving
-    /// the queue depth underneath itself.
-    fn new(
-        depth: usize,
-        workers: usize,
-        structure: QueueStructure,
-        placement: QueuePlacement,
-    ) -> Self {
-        let cap = depth.max(1);
-        let n = match structure {
-            QueueStructure::Shared => 1,
-            QueueStructure::PerWorker => workers.max(1),
-            QueueStructure::LockFree => 0,
-        };
-        let free = (structure == QueueStructure::LockFree).then(|| LockFreeLanes {
-            dispatches: crossbeam_queue::ArrayQueue::new(cap),
-            wakes: crossbeam_queue::SegQueue::new(),
-            closed: AtomicBool::new(false),
-            pushing: AtomicUsize::new(0),
-            park: Mutex::new(()),
-            cv: Condvar::new(),
-            parked: AtomicUsize::new(0),
-        });
+    fn new(depth_per_lane: usize, workers: usize) -> Self {
         Self {
-            lanes: (0..n)
+            lanes: (0..workers.max(1))
                 .map(|_| Lane {
                     inner: Mutex::new(QueueInner::default()),
                     cv: Condvar::new(),
                     load: AtomicUsize::new(0),
                 })
                 .collect(),
-            free,
-            cap,
-            structure,
-            placement,
-            cursor: AtomicUsize::new(0),
+            cap: depth_per_lane.max(1),
         }
     }
 
-    /// Wake one parked worker, if any is parked.
-    ///
-    /// The `parked` check is what keeps this off the parking mutex entirely
-    /// while the cell is busy — under load a worker finds work on its next
-    /// `try_pop` and never sleeps, so producers never touch the mutex.
-    #[inline]
-    fn free_notify(f: &LockFreeLanes) {
-        if f.parked.load(Ordering::SeqCst) > 0 {
-            let _g = f.park.lock();
-            f.cv.notify_one();
-        }
-    }
-
-    /// One non-blocking attempt at the two lock-free lanes, wakes first.
-    #[inline]
-    fn free_try_pop(f: &LockFreeLanes) -> Option<Job> {
-        if let Some(s) = f.wakes.pop() {
-            return Some(Job::Wake(s));
-        }
-        f.dispatches.pop().map(Job::Dispatch)
-    }
-
-    /// The lane a new item should go to — [`QueuePlacement`] applied.
-    ///
-    /// With one lane there is nothing to decide, and that early return is what
-    /// makes the placement setting inert rather than wrong under `Shared`.
+    /// Power of two choices: the less loaded of two lanes drawn at random.
     #[inline]
     fn pick(&self) -> usize {
         let n = self.lanes.len();
         if n <= 1 {
             return 0;
         }
-        match self.placement {
-            QueuePlacement::PowerOfTwo => {
-                let a = lane_rand(n);
-                let b = lane_rand(n);
-                if self.lanes[a].load.load(Ordering::Relaxed)
-                    <= self.lanes[b].load.load(Ordering::Relaxed)
-                {
-                    a
-                } else {
-                    b
-                }
-            }
-            // `Relaxed`: nothing is ordered against this and a torn view of
-            // the sequence costs an uneven turn, not a wrong lane.
-            QueuePlacement::RoundRobin => self.cursor.fetch_add(1, Ordering::Relaxed) % n,
-            QueuePlacement::Random => lane_rand(n),
+        let a = lane_rand(n);
+        let b = lane_rand(n);
+        if self.lanes[a].load.load(Ordering::Relaxed) <= self.lanes[b].load.load(Ordering::Relaxed)
+        {
+            a
+        } else {
+            b
         }
     }
 
-    /// One job this lane's worker had taken is finished.
-    ///
-    /// Paired with the push that incremented it, and called by the worker
-    /// after the job has run rather than by `pop` — see [`Lane::load`] for why
-    /// the interval has to include the execution and not stop at the pop.
-    /// Under `LockFree` there are no lanes and nothing to decrement.
+    /// Releases the load a push added, once the job has run rather than when
+    /// it was taken, so a worker inside a long dispatch still reads as busy.
     #[inline]
     fn job_done(&self, worker: usize) {
-        if self.lanes.is_empty() {
-            return;
-        }
         let lane = &self.lanes[worker % self.lanes.len()];
-        // `fetch_update` rather than `fetch_sub`: the counter is `usize` and a
-        // decrement that ever ran without its push would wrap to a value that
-        // makes the lane look infinitely loaded forever. Saturating here keeps
-        // a bookkeeping slip a bookkeeping slip.
+        // Saturating, so a decrement without its push cannot wrap the lane
+        // into looking infinitely loaded.
         let _ = lane
             .load
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
@@ -769,25 +370,8 @@ impl WorkQueue {
             });
     }
 
-    /// `Err` means shed.
+    /// `Err` hands the job back, which is the shed.
     fn push_dispatch(&self, j: Box<DispatchJob>) -> Result<(), Box<DispatchJob>> {
-        if let Some(f) = &self.free {
-            // Announce before the check, release after the push. See
-            // `LockFreeLanes::pushing`: without this pair the check and the
-            // push are two steps and a job can land in a ring that every
-            // worker has already left.
-            f.pushing.fetch_add(1, Ordering::SeqCst);
-            if f.closed.load(Ordering::SeqCst) {
-                f.pushing.fetch_sub(1, Ordering::SeqCst);
-                return Err(j);
-            }
-            // A full ring hands the job straight back, which is the shed.
-            let pushed = f.dispatches.push(j);
-            f.pushing.fetch_sub(1, Ordering::SeqCst);
-            pushed?;
-            Self::free_notify(f);
-            return Ok(());
-        }
         let lane = &self.lanes[self.pick()];
         let mut g = lane.inner.lock();
         if g.closed || g.dispatches.len() >= self.cap {
@@ -800,23 +384,8 @@ impl WorkQueue {
         Ok(())
     }
 
-    /// A wake is never shed, so it is placed regardless of capacity.
-    ///
-    /// It counts toward the lane's load all the same: a lane holding four
-    /// hundred wakes is the busiest lane in the cell, and a placer that could
-    /// not see them was choosing it on purpose.
+    /// A wake is never shed, so it is placed regardless of the lane's depth.
     fn push_wake(&self, item: WakeItem) {
-        if let Some(f) = &self.free {
-            f.pushing.fetch_add(1, Ordering::SeqCst);
-            if f.closed.load(Ordering::SeqCst) {
-                f.pushing.fetch_sub(1, Ordering::SeqCst);
-                return;
-            }
-            f.wakes.push(item);
-            f.pushing.fetch_sub(1, Ordering::SeqCst);
-            Self::free_notify(f);
-            return;
-        }
         let lane = &self.lanes[self.pick()];
         let mut g = lane.inner.lock();
         if g.closed {
@@ -828,48 +397,11 @@ impl WorkQueue {
         lane.cv.notify_one();
     }
 
-    /// Take the next job for `worker`.
-    ///
-    /// Under [`QueueStructure::Shared`] every worker reads lane zero, which is
-    /// the original behaviour exactly. Under [`QueueStructure::PerWorker`] a
-    /// worker reads only its own lane: it blocks there rather than stealing,
-    /// because placement is what keeps the lanes even, and a stealing scan
-    /// would put every idle worker back on every other worker's lock — the
-    /// sharing per-worker lanes exist to remove.
-    ///
-    /// **Wakes before dispatches, in every structure.** That is the admission
-    /// story and it is a property of this function, not of where a producer
-    /// put the item, which is why no placement policy can weaken it.
-    ///
-    /// The lane's load is deliberately *not* decremented here; the worker
-    /// releases it in [`WorkQueue::job_done`] once the job has actually run.
+    /// The next job for `worker`, from its own lane only: a stealing scan
+    /// would put every idle worker back on every other worker's lock. Wakes
+    /// come out before dispatches. `None` once the queue is closed and the
+    /// lane drained.
     fn pop(&self, worker: usize) -> Option<Job> {
-        if let Some(f) = &self.free {
-            loop {
-                // Fast path: no lock, no atomics beyond the queue's own.
-                if let Some(j) = Self::free_try_pop(f) {
-                    return Some(j);
-                }
-                if f.closed.load(Ordering::SeqCst) {
-                    return None;
-                }
-                // Slow path. Announce the park BEFORE the last check and while
-                // holding `park`, so a producer that pushes after that check
-                // must either see `parked > 0` and block on `park` until this
-                // thread is genuinely waiting, or have pushed early enough for
-                // the check to see it. That ordering is the whole reason a
-                // wake-up cannot be lost here.
-                let mut g = f.park.lock();
-                f.parked.fetch_add(1, Ordering::SeqCst);
-                let missed = Self::free_try_pop(f);
-                if missed.is_some() || f.closed.load(Ordering::SeqCst) {
-                    f.parked.fetch_sub(1, Ordering::SeqCst);
-                    return missed;
-                }
-                f.cv.wait(&mut g);
-                f.parked.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
         let lane = &self.lanes[worker % self.lanes.len()];
         let mut g = lane.inner.lock();
         loop {
@@ -886,65 +418,17 @@ impl WorkQueue {
         }
     }
 
-    /// Stop accepting work, and answer whatever the close raced.
-    ///
-    /// **The invariant is that a dispatch is either shed or served, never
-    /// stranded** — a caller that got `true` from `submit_with` is waiting on
-    /// its channel and has no other way to learn the cell went away.
-    ///
-    /// The mutex path gets that for free: `closed` and the queue are mutated
-    /// under one lock, so a dispatch cannot be admitted after the close, and
-    /// `pop` drains both lanes before it reports the closure, so a dispatch
-    /// admitted before it is still served. The lock-free path gets it here —
-    /// see [`LockFreeLanes::pushing`] for the race and why an ordering change
-    /// alone does not close it. The wait is for at most one ring push and no
-    /// syscall.
+    /// Stops admission. `closed` and the lane are written under one lock, so
+    /// a dispatch admitted before the close is still popped and served, and
+    /// one arriving after it is handed back as a shed.
     fn close(&self) {
-        if let Some(f) = &self.free {
-            f.closed.store(true, Ordering::SeqCst);
-            {
-                let _g = f.park.lock();
-                f.cv.notify_all();
-            }
-            while f.pushing.load(Ordering::SeqCst) > 0 {
-                std::thread::yield_now();
-            }
-            // Whatever is left was admitted and will never be popped, because
-            // the workers are on their way out. Answer it rather than let the
-            // caller wait for a reply nobody is going to send.
-            while let Some(j) = f.dispatches.pop() {
-                let _ = j.responder.send(DispatchResult::shed(j.rec.dispatch_id));
-            }
-            // A wake has no responder — the request it belongs to is answered
-            // through `Cell::active`, which is going away with the cell.
-            // Dropping them here at least releases the slots.
-            while f.wakes.pop().is_some() {}
-            return;
-        }
         for lane in self.lanes.iter() {
             lane.inner.lock().closed = true;
             lane.cv.notify_all();
         }
     }
 
-    /// What each lane still owes, in the order [`WorkQueue::pop`] serves them:
-    /// lane `i` is worker `i`'s, and no worker steals.
-    ///
-    /// [`Lane::load`], not queue length — it counts the job a worker has taken
-    /// and not finished as well as everything still queued, which is the
-    /// difference that makes it usable as a "this lane is occupied" signal.
-    /// Empty under `LockFree`, which has no lanes.
-    fn lane_loads(&self) -> Vec<usize> {
-        self.lanes
-            .iter()
-            .map(|l| l.load.load(Ordering::Relaxed))
-            .collect()
-    }
-
     fn depth(&self) -> usize {
-        if let Some(f) = &self.free {
-            return f.dispatches.len() + f.wakes.len();
-        }
         self.lanes
             .iter()
             .map(|l| {
@@ -952,14 +436,6 @@ impl WorkQueue {
                 g.wakes.len() + g.dispatches.len()
             })
             .sum()
-    }
-
-    fn structure(&self) -> QueueStructure {
-        self.structure
-    }
-
-    fn placement(&self) -> QueuePlacement {
-        self.placement
     }
 }
 
@@ -1106,15 +582,7 @@ impl Cell {
             .expect("reactor runtime");
 
         let metrics = Arc::new(Metrics::new());
-        // Applied once, here, so every metrics reader sees the same setting
-        // the dispatch path is running under.
-        metrics.set_per_dispatch_sampling(cfg.telemetry_sample_every);
-        let queue = Arc::new(WorkQueue::new(
-            cfg.depth_per_queue(),
-            cfg.exec_threads,
-            cfg.queue_structure,
-            cfg.queue_placement,
-        ));
+        let queue = Arc::new(WorkQueue::new(cfg.queue_depth_per_worker, cfg.exec_threads));
         let index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let futures = Arc::new(FutureTable::new());
@@ -1275,11 +743,8 @@ impl Cell {
                     cell.answer_after_panic(holding);
                 }
             }
-            // Outside the `if`, and after the job either way: the lane's load
-            // counts what it has handed out, so it has to be released whether
-            // the job ran, panicked, or was dropped because the cell went
-            // away. A push that is never released makes its lane look
-            // permanently busy to every future placement decision.
+            // Released whether the job ran, panicked, or was dropped with the
+            // cell, or the lane reads busy to every later placement.
             queue.job_done(worker);
             if cell.is_none() {
                 return;
@@ -1417,47 +882,12 @@ impl Cell {
         self.modules.read().get(module).map(|m| m.meters.clone())
     }
 
-    /// The queue structure this cell is **actually running**, read from the
-    /// queue rather than from the config.
-    pub fn queue_structure(&self) -> QueueStructure {
-        self.queue.structure()
-    }
-
-    /// The placement policy this cell is running.
-    ///
-    /// Meaningless unless [`QueueStructure::placement_applies`] — under one
-    /// queue every policy picks it, so a report should say "n/a" rather than
-    /// print a policy that was never exercised.
-    pub fn queue_placement(&self) -> QueuePlacement {
-        self.queue.placement()
-    }
-
-    /// The depth of one dispatch queue, and how many of them there are.
-    ///
-    /// Published as a pair because neither half is meaningful alone: the
-    /// product is what the cell will hold before it sheds, and it is
-    /// `admission_queue` only under a single-queue structure.
-    pub fn queue_shape(&self) -> (usize, usize) {
-        (self.cfg.depth_per_queue(), self.cfg.queue_count())
-    }
-
-    /// How many queued dispatches this cell holds before it sheds, across
-    /// every queue. See [`CellConfig::admission_capacity`].
-    pub fn admission_capacity(&self) -> usize {
-        self.cfg.admission_capacity()
-    }
-
     pub fn metrics(&self) -> MetricsSnapshot {
         self.refresh_gauges();
         self.metrics.snapshot()
     }
 
-    /// The live counters, not a snapshot of them.
-    ///
-    /// A snapshot flattens histograms to the exported percentiles, which is
-    /// the right shape for a scrape and the wrong one for asking whether a
-    /// histogram is still *recording* — the question
-    /// `CellConfig::telemetry_sample_every` exists to answer. Also carries
+    /// The live counters rather than a snapshot, for
     /// [`Metrics::tombstone_invariant`], which is meaningful at rest.
     pub fn metrics_raw(&self) -> &Arc<Metrics> {
         &self.metrics
@@ -1525,27 +955,9 @@ impl Cell {
             .map(|e| e.pool.idle_counts())
     }
 
-    /// How much work is **waiting** right now, across every queue.
-    ///
-    /// A live count of queued items, not a capacity: the configured depth of
-    /// one queue is [`CellConfig::depth_per_queue`] and the cell's whole
-    /// admission cap is [`Cell::admission_capacity`].
+    /// Queued work, across every lane.
     pub fn queue_depth(&self) -> usize {
         self.queue.depth()
-    }
-    /// What each lane still owes, worker by worker.
-    ///
-    /// Coarser than [`Cell::queue_depth`] on purpose: a lane's load includes
-    /// the job its worker is *running*, so a zero here means that worker has
-    /// finished everything it was given rather than merely that its queue is
-    /// empty. That distinction is the only way to tell, from outside, that a
-    /// dispatch has run to the end of `run_dispatch` and not just to the end
-    /// of the guest — which is what a test placing work into a specific lane
-    /// has to know before it counts on where the next push lands.
-    ///
-    /// Empty under `LockFree`: there are no lanes to report.
-    pub fn lane_loads(&self) -> Vec<usize> {
-        self.queue.lane_loads()
     }
     pub fn hot_count(&self) -> usize {
         self.hot.load(Ordering::Relaxed)
@@ -2647,7 +2059,6 @@ impl Drop for Cell {
 #[cfg(test)]
 mod queue_tests {
     use super::*;
-    use std::sync::Barrier;
 
     // -----------------------------------------------------------------------
     // fixtures
@@ -2737,103 +2148,65 @@ mod queue_tests {
         h.join().expect("thread panicked")
     }
 
-    // -----------------------------------------------------------------------
-    // structure and depth are two settings, and neither derives the other
-    // -----------------------------------------------------------------------
-
-    /// **The structure sets the lane count. It does not set the lane depth.**
-    ///
-    /// The depth used to be `(cap / lanes).max(1)`, which made two things
-    /// false at once. A lane's depth moved with `exec_threads`, so the sweep
-    /// that exists to vary the thread count varied the buffering with it and
-    /// attributed the result to threads. And the `.max(1)` floor overshot in
-    /// the other direction: a cap of 4 across 64 workers gave each lane one
-    /// slot and the cell 64, against the 4 that was asked for.
     #[test]
-    fn the_structure_sets_the_lane_count_and_not_the_lane_depth() {
-        let q = WorkQueue::new(1024, 8, QueueStructure::Shared, QueuePlacement::PowerOfTwo);
-        assert_eq!(q.lanes.len(), 1);
-        assert_eq!(q.cap, 1024, "one lane holds what it was configured to hold");
+    fn every_worker_has_a_lane_of_the_configured_depth() {
+        let q = WorkQueue::new(128, 8);
+        assert_eq!(q.lanes.len(), 8, "one lane per worker");
+        assert_eq!(q.cap, 128, "a lane holds the configured depth, undivided");
 
-        let q = WorkQueue::new(
-            128,
-            8,
-            QueueStructure::PerWorker,
-            QueuePlacement::PowerOfTwo,
-        );
-        assert_eq!(q.lanes.len(), 8);
-        assert_eq!(
-            q.cap, 128,
-            "the configured depth, not the configured depth divided by 8"
-        );
-
-        // The floor that used to be reached by division is now not reachable
-        // at all: a small depth is a small depth in every lane.
-        let q = WorkQueue::new(4, 64, QueueStructure::PerWorker, QueuePlacement::PowerOfTwo);
-        assert_eq!(q.lanes.len(), 64);
+        let q = WorkQueue::new(4, 64);
+        assert_eq!(q.lanes.len(), 64, "one lane per worker");
         assert_eq!(
             q.cap, 4,
             "64 workers must not turn a depth of 4 into a depth of 1"
         );
     }
 
-    /// **Changing the thread count does not change the queue depth.**
-    ///
-    /// This is the property the exec-thread sweep needs and did not have. The
-    /// whole-cell capacity does move, because it is the product and cannot
-    /// not; the point is that it is now the *derived* number and is published
-    /// as one, rather than the depth of a lane being derived silently.
     #[test]
-    fn the_configured_queue_depth_does_not_move_with_the_thread_count() {
-        let at = |threads: usize| CellConfig {
-            exec_threads: threads,
-            queue_structure: QueueStructure::PerWorker,
-            queue_depth_per_worker: 64,
-            admission_queue: 1024,
-            ..CellConfig::for_test("depth")
-        };
-        for threads in [4usize, 8, 16, 64] {
-            let c = at(threads);
-            assert_eq!(
-                c.depth_per_queue(),
-                64,
-                "at {threads} threads a lane holds {} rather than the 64 configured",
-                c.depth_per_queue()
+    fn a_lane_sheds_the_dispatch_past_its_depth() {
+        let q = WorkQueue::new(4, 1);
+        for i in 0..4 {
+            assert!(
+                q.push_dispatch(job()).is_ok(),
+                "job {i} is inside the depth"
             );
-            assert_eq!(c.queue_count(), threads);
-            assert_eq!(c.admission_capacity(), 64 * threads);
         }
-        // Under a single-queue structure the two numbers coincide, which is
-        // why nothing that ran under `Shared` moves.
-        let shared = CellConfig {
-            queue_structure: QueueStructure::Shared,
-            admission_queue: 1024,
-            exec_threads: 64,
-            ..CellConfig::for_test("depth")
-        };
-        assert_eq!(shared.queue_count(), 1);
-        assert_eq!(shared.depth_per_queue(), 1024);
-        assert_eq!(shared.admission_capacity(), 1024);
+        assert!(
+            q.push_dispatch(job()).is_err(),
+            "the fifth dispatch on a lane of depth four must be handed back"
+        );
+        assert!(
+            matches!(q.pop(0), Some(Job::Dispatch(_))),
+            "draining makes room"
+        );
+        q.job_done(0);
+        assert!(
+            q.push_dispatch(job()).is_ok(),
+            "the shed is a depth limit, not a one-way door"
+        );
+        q.close();
     }
 
-    // -----------------------------------------------------------------------
-    // placement, which is now its own setting
-    // -----------------------------------------------------------------------
+    #[test]
+    fn a_wake_is_never_shed() {
+        let q = WorkQueue::new(1, 1);
+        assert!(q.push_dispatch(job()).is_ok(), "the one slot");
+        assert!(q.push_dispatch(job()).is_err(), "the lane is full");
+        let slot = a_slot();
+        q.push_wake(wake_of(&slot));
+        assert!(
+            matches!(q.pop(0), Some(Job::Wake(_))),
+            "a wake pushed onto a full lane must still be queued, and ahead of the dispatch"
+        );
+        q.close();
+    }
 
-    /// Power of two picks the less loaded of the two it sampled.
-    ///
-    /// Checked statistically rather than by forcing the sample, because the
-    /// property that matters is the distribution: with one lane loaded and the
-    /// rest idle, a balancer that works almost never chooses the loaded one,
-    /// and one that ignores load chooses it 1-in-N of the time.
+    /// Checked statistically: with one loaded lane and the rest idle, a
+    /// placer that reads load lands on the loaded one only when both samples
+    /// drew it, and a blind one lands there one time in N.
     #[test]
     fn power_of_two_avoids_the_loaded_lane() {
-        let q = WorkQueue::new(
-            4096,
-            8,
-            QueueStructure::PerWorker,
-            QueuePlacement::PowerOfTwo,
-        );
+        let q = WorkQueue::new(4096, 8);
         q.lanes[3].load.store(1_000, Ordering::Relaxed);
 
         let mut hit_deep = 0;
@@ -2843,17 +2216,11 @@ mod queue_tests {
                 hit_deep += 1;
             }
         }
-        // Blind choice would land on lane 3 about N/8 = 2,500 times. Power of
-        // two only lands there when BOTH samples were lane 3, i.e. 1/64 of
-        // the time, so ~310. Generous bound; the point is the order of
-        // magnitude, not the constant.
+        // Blind: about N/8. Both samples on lane 3: about N/64.
         assert!(
             hit_deep < N / 20,
-            "the loaded lane was chosen {hit_deep} times in {N} — power of two should sample \
-             it twice before choosing it"
+            "the loaded lane was chosen {hit_deep} times in {N}; the placer is not reading load"
         );
-        // …and it is not simply never chosen, which would mean the sampler is
-        // stuck rather than choosing.
         let seen: std::collections::HashSet<usize> = (0..2_000).map(|_| q.pick()).collect();
         assert!(
             seen.len() >= 6,
@@ -2862,97 +2229,10 @@ mod queue_tests {
         );
     }
 
-    /// **Round robin hands out every lane in turn, and ignores load doing it.**
-    ///
-    /// Both halves are the policy: perfectly even counts is what it is for,
-    /// and blindness to what a lane is carrying is what it is a control for.
-    /// A round robin that quietly consulted the load would not be one.
-    #[test]
-    fn round_robin_hands_out_every_lane_in_turn_and_ignores_load() {
-        let q = WorkQueue::new(64, 8, QueueStructure::PerWorker, QueuePlacement::RoundRobin);
-        q.lanes[3].load.store(1_000, Ordering::Relaxed);
-        let first: Vec<usize> = (0..16).map(|_| q.pick()).collect();
-        let start = first[0];
-        for (i, got) in first.iter().enumerate() {
-            assert_eq!(
-                *got,
-                (start + i) % 8,
-                "round robin skipped a lane at step {i}: {first:?}"
-            );
-        }
-        assert!(
-            first.contains(&3),
-            "round robin must not steer around the loaded lane"
-        );
-    }
-
-    /// Random placement reaches every lane and prefers none of them.
-    ///
-    /// It is the other control: if power of two does not beat this, the load
-    /// counter it consults is not carrying information.
-    #[test]
-    fn random_placement_reaches_every_lane() {
-        let q = WorkQueue::new(64, 8, QueueStructure::PerWorker, QueuePlacement::Random);
-        q.lanes[3].load.store(1_000, Ordering::Relaxed);
-        let mut counts = [0usize; 8];
-        const N: usize = 20_000;
-        for _ in 0..N {
-            counts[q.pick()] += 1;
-        }
-        for (lane, n) in counts.iter().enumerate() {
-            assert!(
-                *n > N / 16 && *n < N / 4,
-                "lane {lane} took {n} of {N}, which is not a uniform draw over 8 lanes: \
-                 {counts:?}"
-            );
-        }
-    }
-
-    /// **Placement is inert, not wrong, when there is only one queue.**
-    ///
-    /// Every policy has to pick lane zero under `Shared`, because there is
-    /// nothing else to pick. A policy that indexed past the end here would
-    /// panic on the first dispatch of a run that set both settings without
-    /// realising only one of them applied.
-    #[test]
-    fn placement_is_inert_when_the_structure_builds_one_queue() {
-        for placement in [
-            QueuePlacement::PowerOfTwo,
-            QueuePlacement::RoundRobin,
-            QueuePlacement::Random,
-        ] {
-            let q = WorkQueue::new(64, 16, QueueStructure::Shared, placement);
-            assert_eq!(q.lanes.len(), 1);
-            for _ in 0..64 {
-                assert_eq!(
-                    q.pick(),
-                    0,
-                    "{} picked a lane that does not exist",
-                    placement.label()
-                );
-            }
-            assert!(
-                !QueueStructure::Shared.placement_applies(),
-                "a report must not claim {} was exercised here",
-                placement.label()
-            );
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // what a lane's load counter can see
-    // -----------------------------------------------------------------------
-
-    /// **A lane keeps counting the job its worker is still running.**
-    ///
-    /// The counter used to be decremented by the pop, so a worker twenty
-    /// seconds into a thirty-second dispatch sat on a lane that read zero —
-    /// the most attractive lane in the cell to a placer whose whole job is to
-    /// avoid the busy one.
     #[test]
     fn a_lane_keeps_counting_the_job_its_worker_is_still_running() {
-        let q = WorkQueue::new(8, 1, QueueStructure::PerWorker, QueuePlacement::PowerOfTwo);
-        assert!(q.push_dispatch(job()).is_ok());
+        let q = WorkQueue::new(8, 1);
+        assert!(q.push_dispatch(job()).is_ok(), "one job");
         let load = || q.lanes[0].load.load(Ordering::Relaxed);
         assert_eq!(load(), 1, "a queued dispatch is load");
 
@@ -2960,26 +2240,21 @@ mod queue_tests {
         assert_eq!(
             load(),
             1,
-            "the worker is inside the guest with this job; the lane still owes it and a \
-             placer that reads zero here will send it another"
+            "the worker is inside the guest with this job; a placer that reads zero here sends \
+             it another"
         );
         drop(taken);
         q.job_done(0);
         assert_eq!(
             load(),
             0,
-            "and it is released when the job is finished, not when it is taken"
+            "the load is released when the job finishes, not when it is taken"
         );
     }
 
-    /// **Queued wakes count toward the lane that is holding them.**
-    ///
-    /// `push_wake` never touched the counter, so a lane holding four hundred
-    /// wakes — every one of them a request already in flight, and the priority
-    /// lane at that — read exactly zero.
     #[test]
     fn queued_wakes_count_toward_the_lane_that_is_holding_them() {
-        let q = WorkQueue::new(8, 4, QueueStructure::PerWorker, QueuePlacement::RoundRobin);
+        let q = WorkQueue::new(8, 4);
         let slot = a_slot();
         for _ in 0..400 {
             q.push_wake(wake_of(&slot));
@@ -2994,201 +2269,38 @@ mod queue_tests {
             400,
             "400 wakes are queued and the lanes report {loads:?}"
         );
-        for (lane, n) in loads.iter().enumerate() {
-            assert_eq!(
-                *n, 100,
-                "round robin put {n} of the 400 wakes in lane {lane}"
-            );
-        }
     }
 
-    // -----------------------------------------------------------------------
-    // the two lanes, in every structure
-    // -----------------------------------------------------------------------
-
-    /// **A wake comes out before a dispatch, whatever the structure.**
-    ///
-    /// The admission story: overflow sheds *new* work so work already in
-    /// flight keeps making progress. It is a property of what a worker pops,
-    /// not of where a producer pushed, which is why splitting placement out
-    /// cannot weaken it — but "cannot" is worth one assertion per structure.
-    ///
-    /// One worker, so all three structures hold exactly one queue and the
-    /// order is observable rather than a function of which lane won a draw.
     #[test]
-    fn every_structure_pops_wakes_before_dispatches() {
+    fn a_wake_is_popped_before_a_dispatch() {
         let slot = a_slot();
-        for structure in [
-            QueueStructure::Shared,
-            QueueStructure::PerWorker,
-            QueueStructure::LockFree,
-        ] {
-            let q = WorkQueue::new(8, 1, structure, QueuePlacement::PowerOfTwo);
-            assert!(q.push_dispatch(job()).is_ok(), "{}", structure.label());
-            q.push_wake(wake_of(&slot));
-            assert!(
-                matches!(q.pop(0), Some(Job::Wake(_))),
-                "{}: the wake queued second must come out first",
-                structure.label()
-            );
-            assert!(
-                matches!(q.pop(0), Some(Job::Dispatch(_))),
-                "{}: and the dispatch after it",
-                structure.label()
-            );
-            q.close();
-        }
-    }
-
-    /// **Under `Shared` every worker index reads the one lane.**
-    ///
-    /// The test that stood here asserted `worker % 1 == 0` — arithmetic it
-    /// performed on itself — and never called `pop`, so replacing the routing
-    /// with a constant passed it. This pushes and pops: sixteen jobs into one
-    /// lane, drained by sixteen different worker indices.
-    ///
-    /// On a thread and bounded, because the failure it is looking for is a
-    /// worker routed to a lane of its own, and a worker on an empty lane
-    /// *blocks*. Unbounded, the regression would hang CI rather than fail it.
-    #[test]
-    fn under_shared_every_worker_pops_from_the_one_lane() {
-        let q = Arc::new(WorkQueue::new(
-            64,
-            16,
-            QueueStructure::Shared,
-            QueuePlacement::PowerOfTwo,
-        ));
-        assert_eq!(
-            q.lanes.len(),
-            1,
-            "`Shared` is one lane however many workers there are"
-        );
-        for i in 0..16 {
-            assert!(q.push_dispatch(job()).is_ok(), "job {i} inside the cap");
-        }
-        assert_eq!(q.depth(), 16);
-
-        let q2 = q.clone();
-        let h = std::thread::spawn(move || {
-            (0..16usize)
-                .filter(|w| matches!(q2.pop(*w), Some(Job::Dispatch(_))))
-                .count()
-        });
-        assert_eq!(
-            join_before(
-                h,
-                Duration::from_secs(10),
-                "sixteen workers draining one lane"
-            ),
-            16,
-            "every worker index must be able to take work from the shared lane"
-        );
-        assert_eq!(q.depth(), 0);
-    }
-
-    // -----------------------------------------------------------------------
-    // the lock-free structure
-    // -----------------------------------------------------------------------
-
-    /// The lock-free ring sheds when full, which is the property admission
-    /// needs and the reason a *bounded* queue was chosen for dispatches.
-    #[test]
-    fn the_lock_free_ring_sheds_when_full() {
-        let q = WorkQueue::new(4, 8, QueueStructure::LockFree, QueuePlacement::PowerOfTwo);
+        let q = WorkQueue::new(8, 1);
+        assert!(q.push_dispatch(job()).is_ok(), "the dispatch");
+        q.push_wake(wake_of(&slot));
         assert!(
-            q.lanes.is_empty(),
-            "no mutex lanes are built for this structure"
+            matches!(q.pop(0), Some(Job::Wake(_))),
+            "the wake queued second must come out first"
         );
-        for i in 0..4 {
-            assert!(q.push_dispatch(job()).is_ok(), "job {i} inside the cap");
-        }
-        assert_eq!(q.depth(), 4);
         assert!(
-            q.push_dispatch(job()).is_err(),
-            "past the cap the job is handed back"
+            matches!(q.pop(0), Some(Job::Dispatch(_))),
+            "and the dispatch after it"
         );
-        // Draining makes room again, so the shed is a capacity limit rather
-        // than a one-way door.
-        assert!(q.pop(0).is_some());
-        assert!(q.push_dispatch(job()).is_ok());
         q.close();
     }
 
-    /// **A worker confirmed parked is woken by the next push.**
-    ///
-    /// This is the race a lock-free queue introduces and a mutex does not: the
-    /// producer must not slip its push and its notify between the consumer's
-    /// last look at the queue and its going to sleep. If it can, a worker
-    /// sleeps while work waits, and under load that shows up as a latency tail
-    /// nobody can explain.
-    ///
-    /// The version that stood here spawned the consumer, called `yield_now`,
-    /// and pushed. `yield_now` is a hint and not a barrier, so the consumer
-    /// almost always took the fast path and the parking code was never
-    /// reached: deleting the whole guard left it passing twenty runs out of
-    /// twenty. This one does not push until `parked` says a consumer has
-    /// announced itself, and `parked` is only ever incremented on the slow
-    /// path — so the fast path cannot satisfy this test, and a producer that
-    /// does not notify a parked consumer fails it every time rather than one
-    /// round in two hundred.
     #[test]
-    fn a_worker_confirmed_parked_is_woken_by_the_next_push() {
-        for round in 0..50 {
-            let q = Arc::new(WorkQueue::new(
-                64,
-                4,
-                QueueStructure::LockFree,
-                QueuePlacement::PowerOfTwo,
-            ));
-            let q2 = q.clone();
-            let h = std::thread::spawn(move || q2.pop(0).is_some());
-
-            let f = q.free.as_ref().expect("the lock-free lanes");
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while f.parked.load(Ordering::SeqCst) == 0 {
-                assert!(
-                    Instant::now() < deadline,
-                    "round {round}: no consumer ever announced a park, so this test is not \
-                     exercising the parking path at all"
-                );
-                std::hint::spin_loop();
-            }
-            assert!(q.push_dispatch(job()).is_ok());
-            assert!(
-                join_before(
-                    h,
-                    Duration::from_secs(10),
-                    &format!("round {round}: parked worker")
-                ),
-                "round {round}: the worker returned without the work that was pushed to it"
-            );
-        }
-    }
-
-    /// Closing wakes every parked worker, or shutdown hangs.
-    #[test]
-    fn closing_the_lock_free_queue_releases_parked_workers() {
-        let q = Arc::new(WorkQueue::new(
-            64,
-            4,
-            QueueStructure::LockFree,
-            QueuePlacement::PowerOfTwo,
-        ));
+    fn closing_the_queue_releases_parked_workers() {
+        let q = Arc::new(WorkQueue::new(64, 4));
         let hs: Vec<_> = (0..4)
             .map(|w| {
                 let q = q.clone();
                 std::thread::spawn(move || q.pop(w))
             })
             .collect();
-        // Every worker has to be genuinely parked before the close, or the
-        // test proves only that a closed queue returns `None` to a caller that
-        // never slept.
-        let f = q.free.as_ref().expect("the lock-free lanes");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.parked.load(Ordering::SeqCst) < 4 {
-            assert!(Instant::now() < deadline, "only some workers ever parked");
-            std::hint::spin_loop();
-        }
+        // A worker with an empty lane is on its condition variable by the
+        // time it can be observed holding nothing, so the close must reach it
+        // there or the join below hangs.
+        std::thread::sleep(Duration::from_millis(20));
         q.close();
         for (w, h) in hs.into_iter().enumerate() {
             assert!(
@@ -3203,160 +2315,24 @@ mod queue_tests {
         }
     }
 
-    /// **A dispatch is either shed or served — a close never strands one.**
-    ///
-    /// `push_dispatch` on the lock-free path checked `closed` and then pushed,
-    /// which is two steps: a producer can read `closed` as false, lose the
-    /// cpu, and push into a ring every worker has already drained and left.
-    /// That job is never run and never refused, and its caller — who was told
-    /// `true` and is holding a receiver — waits for a reply nobody will send.
-    /// **Strengthening the atomic ordering does not fix it**; the check and
-    /// the push are still two operations on two locations.
-    ///
-    /// So this races a burst of pushes against a close and demands that the
-    /// number of jobs answered on the shared channel equals the number
-    /// admitted. Every job that was admitted must come back; every job that
-    /// was not must have been refused at the push. The assertion is an
-    /// equality rather than an inequality, so it also catches a job answered
-    /// twice.
-    ///
-    /// **The assertion is exact; reaching the window is not.** The race is a
-    /// few instructions wide and there is no hook to suspend a producer inside
-    /// it, so this is a sampler and says so rather than claiming otherwise.
-    /// Two things make it a reliable one:
-    ///
-    /// * **Productive rounds are counted, not rounds.** A round where the
-    ///   close won outright admits nothing and satisfies the equality without
-    ///   racing anything. Counting those was how whole runs used to pass with
-    ///   the guard removed.
-    /// * **Eight producers rather than two.** Each close races whichever
-    ///   producers are in the window at that instant, so the odds scale with
-    ///   the thread count and not with how many jobs each pushes. Moving the
-    ///   same burst from 2x64 to 8x16 was both stronger and faster.
-    ///
-    /// Measured, because a claim about a sampler is worth exactly its
-    /// measurement: with the guard removed this was red in 25 runs of 25, and
-    /// green in 15 of 15 with it. Its predecessor — 400 rounds of 2x64, no
-    /// productive-round accounting — was red in about 9 runs of 10, and a
-    /// whole run passing with the defect present is what the accounting fixes.
-    /// At 1,000 productive rounds it falls back to 18 of 20, so the count is
-    /// critical and not padding.
     #[test]
-    fn a_lock_free_dispatch_is_either_shed_or_answered_and_never_stranded() {
-        // Counted in **productive** rounds — rounds in which at least one push
-        // was admitted — because a round where the close won outright admits
-        // nothing and satisfies the equality without racing anything. Counting
-        // those was how whole runs used to pass with the guard removed.
-        const PRODUCTIVE_ROUNDS: usize = 2_000;
-        const MAX_ROUNDS: usize = 40_000;
-        // **Eight producers, not two.** Each close races every producer that
-        // is in the window at that instant, so the per-round odds scale with
-        // the thread count and not with how many jobs each one pushes. Moving
-        // the same total burst from 2x64 to 8x16 took the guard-removed
-        // failure rate from 7 runs in 12 to 10 in 10, and made the test
-        // faster.
-        const PRODUCERS: usize = 8;
-        const PER_PRODUCER: usize = 16;
-        let mut productive = 0usize;
-        let mut round = 0usize;
-        while productive < PRODUCTIVE_ROUNDS {
-            round += 1;
-            assert!(
-                round <= MAX_ROUNDS,
-                "only {productive} of {MAX_ROUNDS} rounds admitted anything at all; the close \
-                 is winning outright every time and this test is not racing"
-            );
-            let q = Arc::new(WorkQueue::new(
-                PRODUCERS * PER_PRODUCER,
-                4,
-                QueueStructure::LockFree,
-                QueuePlacement::PowerOfTwo,
-            ));
-            let (tx, rx) = std::sync::mpsc::sync_channel(PRODUCERS * PER_PRODUCER * 2);
-            // A `Barrier`, and **the gate is not the part that matters** —
-            // measured, because a comment written to stop the next person
-            // simplifying this had better say what actually matters.
-            // Substituting the tightest release available (an arrival counter
-            // so all eight are confirmed hot-spinning, then one `AtomicBool`)
-            // catches the guard-removed mutation 12 times in 12, which is the
-            // barrier's own rate. Simplify the gate if you like.
-            //
-            // What *does* matter, in order: the productive-round
-            // accounting above, the producer count, and closing here rather
-            // than later. Deferring the close until the ring is non-empty —
-            // so the drain lands mid-burst — drops it to 6 in 12, because the
-            // drain is a `while let Some` loop and mops up the stragglers it
-            // is supposed to be racing.
-            //
-            // An earlier version of this comment claimed a hot-spinning gate
-            // was markedly *worse*, at 0 of 10. That was measured on the
-            // 2-producer, 400-round version with no productive-round
-            // accounting, where the observed failure was "no round admitted
-            // anything" — the test unable to run, which is not the same event
-            // as the mutation going uncaught, and is exactly what the
-            // accounting now retries instead of counting. The number was real
-            // and the configuration it described no longer exists.
-            let gate = Arc::new(Barrier::new(PRODUCERS + 1));
-
-            let producers: Vec<_> = (0..PRODUCERS)
-                .map(|p| {
-                    let q = q.clone();
-                    let tx = tx.clone();
-                    let gate = gate.clone();
-                    std::thread::spawn(move || {
-                        // Built *before* the start signal. A `DispatchJob` is
-                        // a boxed record of several `String`s, and allocating
-                        // one takes far longer than the window this is trying
-                        // to land in — build them inside the loop and every
-                        // producer reads `closed` hundreds of nanoseconds
-                        // after the close, so nothing is ever admitted and the
-                        // race is never run.
-                        let jobs: Vec<_> = (0..PER_PRODUCER)
-                            .map(|i| job_on(tx.clone(), (p * PER_PRODUCER + i) as u64))
-                            .collect();
-                        drop(tx);
-                        gate.wait();
-                        jobs.into_iter()
-                            .fold(0usize, |n, j| n + usize::from(q.push_dispatch(j).is_ok()))
-                    })
-                })
-                .collect();
-            drop(tx);
-            gate.wait();
-            q.close();
-
-            let admitted: usize = producers
-                .into_iter()
-                .map(|h| {
-                    join_before(
-                        h,
-                        Duration::from_secs(10),
-                        &format!("round {round}: producer"),
-                    )
-                })
-                .sum();
-            if admitted > 0 {
-                productive += 1;
-            }
-            // Both sides are finished: every producer has returned and `close`
-            // is synchronous, so everything that will ever be sent has been.
-            // `try_iter` therefore counts exactly, and does not deadlock on a
-            // sender still sitting in a stranded job.
-            let answered = rx.try_iter().count();
-            assert_eq!(
-                answered, admitted,
-                "round {round}: {admitted} dispatches were admitted and {answered} were \
-                 answered — the difference is stranded in the ring, and its caller is \
-                 waiting on a channel nothing will ever be sent on"
-            );
-        }
+    fn a_dispatch_admitted_before_the_close_is_still_served() {
+        let q = WorkQueue::new(8, 1);
+        assert!(q.push_dispatch(job()).is_ok(), "admitted");
+        q.close();
+        assert!(
+            matches!(q.pop(0), Some(Job::Dispatch(_))),
+            "the close must not strand a dispatch the caller was told was admitted"
+        );
+        assert!(q.pop(0).is_none(), "and then the lane reports closure");
+        assert!(
+            q.push_dispatch(job()).is_err(),
+            "a dispatch after the close is handed back as a shed"
+        );
     }
 }
 
-/// Cell-level tests: what survives a host panic, and what the cell says about
-/// the queue it is running.
-///
-/// They share one harness, which is why they share a module.
+/// Cell-level tests: what survives a host panic.
 #[cfg(test)]
 mod cell_tests {
     use super::*;
@@ -3511,133 +2487,6 @@ mod cell_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         false
-    }
-
-    // -----------------------------------------------------------------------
-    // what the cell reports about the queue it built
-    // -----------------------------------------------------------------------
-
-    /// The cell reports the queue structure and placement it built rather
-    /// than what its config said, because the queue is the thing that runs.
-    #[test]
-    fn the_cell_reports_the_queue_structure_it_built() {
-        for structure in [
-            QueueStructure::Shared,
-            QueueStructure::PerWorker,
-            QueueStructure::LockFree,
-        ] {
-            let cell = Cell::new(
-                CellConfig {
-                    exec_threads: 2,
-                    queue_structure: structure,
-                    queue_placement: QueuePlacement::RoundRobin,
-                    ..CellConfig::for_test("rows")
-                },
-                services(),
-            );
-            let module = app(&cell, "quick", FakeBehaviour::done());
-            let out = cell
-                .dispatch_blocking(
-                    &module,
-                    Target::Handler {
-                        route: "/go".into(),
-                    },
-                    http(1),
-                    Duration::from_secs(10),
-                )
-                .expect("a dispatch under every structure");
-            assert!((200..300).contains(&out.status), "{structure:?}: {out:?}");
-            assert_eq!(
-                cell.queue_structure(),
-                structure,
-                "the cell must report what it built"
-            );
-            assert_eq!(
-                cell.queue_placement(),
-                QueuePlacement::RoundRobin,
-                "and the placement it built"
-            );
-            cell.shutdown();
-        }
-    }
-
-    /// **The published admission capacity is the one the cell will actually
-    /// hold.**
-    ///
-    /// Under `PerWorker` it is not `admission_queue`, and a report that
-    /// recorded that field would be recording a number the cell does not use.
-    #[test]
-    fn the_cell_publishes_the_queue_shape_it_is_running() {
-        let cell = Cell::new(
-            CellConfig {
-                exec_threads: 4,
-                queue_structure: QueueStructure::PerWorker,
-                queue_depth_per_worker: 32,
-                admission_queue: 1024,
-                ..CellConfig::for_test("shape")
-            },
-            services(),
-        );
-        assert_eq!(cell.queue_shape(), (32, 4));
-        assert_eq!(
-            cell.admission_capacity(),
-            128,
-            "4 lanes of 32, not the 1024 `admission_queue` still holds"
-        );
-        cell.shutdown();
-    }
-
-    // -----------------------------------------------------------------------
-    // a request, under every queue configuration
-    // -----------------------------------------------------------------------
-
-    /// Every structure x placement combination the config can express.
-    ///
-    /// Nine, of which five are distinct behaviours — placement is inert under
-    /// the two single-queue structures — and all nine are run anyway, because
-    /// what is under test includes the claim that setting a placement under
-    /// `Shared` does nothing rather than something quiet.
-    fn every_queue_configuration() -> Vec<(QueueStructure, QueuePlacement)> {
-        let mut v = Vec::new();
-        for structure in [
-            QueueStructure::Shared,
-            QueueStructure::PerWorker,
-            QueueStructure::LockFree,
-        ] {
-            for placement in [
-                QueuePlacement::PowerOfTwo,
-                QueuePlacement::RoundRobin,
-                QueuePlacement::Random,
-            ] {
-                v.push((structure, placement));
-            }
-        }
-        v
-    }
-
-    /// Every structure x placement combination serves a request, including
-    /// the four where placement is inert: setting a placement under a
-    /// single-queue structure has to do nothing rather than something quiet.
-    #[test]
-    fn every_queue_configuration_serves_a_request() {
-        for (structure, placement) in every_queue_configuration() {
-            let mut cfg = CellConfig::for_test("queue-cfg");
-            cfg.queue_structure = structure;
-            cfg.queue_placement = placement;
-            let cell = Cell::new(cfg, services());
-            let m = app(&cell, "echo", FakeBehaviour::default());
-            let (tx, rx) = std::sync::mpsc::sync_channel(1);
-            assert!(
-                cell.submit_with(&m, Target::Handler { route: "/x".into() }, http(0), tx),
-                "{structure:?}/{placement:?} shed a single request"
-            );
-            let res = rx.recv_timeout(Duration::from_secs(20)).expect("a reply");
-            assert!(
-                (200..300).contains(&res.status),
-                "{structure:?}/{placement:?} did not serve the request: {res:?}"
-            );
-            cell.shutdown();
-        }
     }
 
     // -----------------------------------------------------------------------

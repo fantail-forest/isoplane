@@ -45,7 +45,6 @@ zstd        = "0.13"
 blake3      = "1"
 hex         = "0.4"
 rand        = "0.9"
-crossbeam-queue = "0.3"
 scc            = "3.8"    # the future table's maps, on the wake path
 rusqlite    = { version = "0.37", features = ["bundled"] }
 hyper       = { version = "1", features = ["full"] }

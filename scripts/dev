@@ -164,11 +164,6 @@ fi
 
 PORTS=()
 for p in ${WISP_PORTS:-}; do PORTS+=(-p "$p"); done
-# Additional Docker run arguments, split into words.
-EXTRA=()
-# shellcheck disable=SC2206
-[ -n "${WISP_RUN_ARGS:-}" ] && EXTRA=(${WISP_RUN_ARGS})
-
 # ONE definition of the container, so the first attempt and any retry cannot
 # differ. They used to be two copies and the copies had already drifted: the
 # retry dropped `--label wisp.created=...`, so a container recovered from a
@@ -177,7 +172,6 @@ create_container() {
   d run -d --name "$NAME" --runtime=sysbox-runc \
     --label "$LABEL" --label "wisp.created=$(date -u +%FT%TZ)" \
     --user "$(id -u):$(id -g)" \
-    "${EXTRA[@]}" \
     -v "$ROOT:/wisp" \
     -v wisp-ctarget:/ctarget \
     -v wisp-cargo-registry:/opt/cargo/registry \
@@ -313,7 +307,7 @@ done
 EXEC=(docker exec)
 for v in "${!WISP_@}"; do
   case "$v" in
-    WISP_IMAGE|WISP_CONTAINER_NAME|WISP_RUN_ARGS|WISP_PORTS|WISP_PROBE_TIMEOUT|WISP_DOCKER_TIMEOUT|WISP_START_WAIT) continue ;;
+    WISP_IMAGE|WISP_CONTAINER_NAME|WISP_PORTS|WISP_PROBE_TIMEOUT|WISP_DOCKER_TIMEOUT|WISP_START_WAIT) continue ;;
   esac
   EXEC+=(-e "$v=${!v}")
 done

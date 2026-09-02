@@ -78,10 +78,10 @@ WISP_OUT=wisp_guest_dotnet_compat ./scripts/dev guests/dotnet/build.sh -p:WispCo
 ```
 
 `docker exec` inherits nothing from the calling shell, so this is explicit
-forwarding rather than something that happens for free. The seven variables
+forwarding rather than something that happens for free. The six variables
 that configure the container itself — `WISP_IMAGE`, `WISP_CONTAINER_NAME`,
-`WISP_RUN_ARGS`, `WISP_PORTS`, `WISP_PROBE_TIMEOUT`, `WISP_DOCKER_TIMEOUT`,
-`WISP_START_WAIT` — are excluded, so a nested `scripts/dev` cannot inherit a
+`WISP_PORTS`, `WISP_PROBE_TIMEOUT`, `WISP_DOCKER_TIMEOUT`, `WISP_START_WAIT` —
+are excluded, so a nested `scripts/dev` cannot inherit a
 name or an image it was not asked for.
 
 Anything outside the `WISP_*` prefix is not forwarded; set it inside the

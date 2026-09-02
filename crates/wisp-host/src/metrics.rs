@@ -15,29 +15,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
-/// A bounded-sample latency distribution. Exact percentiles over the retained
-/// window rather than approximations over all time — the window is what an
-/// operator is looking at anyway.
+/// A bounded-sample latency distribution: exact percentiles over the retained
+/// window rather than approximations over all time.
 #[derive(Debug)]
 pub struct Histogram {
     samples: Mutex<Vec<u64>>,
     cap: usize,
     count: AtomicU64,
     sum: AtomicU64,
-    /// 1 = keep every sample (the default), N = keep one in N, 0 = keep none.
-    ///
-    /// The sample window is behind a `Mutex`, and a histogram on the
-    /// per-dispatch path is therefore a per-cell singleton lock taken by every
-    /// execution thread on every dispatch. At the densities the campaign runs
-    /// that is not free, and "the cell's knee is lock contention" is a claim
-    /// the telemetry itself can manufacture. This knob makes the claim
-    /// testable by difference: run the same point with the two per-dispatch
-    /// histograms unsampled and see whether the knee moves.
-    ///
-    /// `count` and `sum` are updated regardless of the setting, so turning
-    /// sampling down never turns a metric into a zero — it costs percentiles,
-    /// not the rate or the mean. See [`Metrics::set_per_dispatch_sampling`].
-    sample_every: AtomicU64,
 }
 
 impl Histogram {
@@ -47,31 +32,11 @@ impl Histogram {
             cap,
             count: AtomicU64::new(0),
             sum: AtomicU64::new(0),
-            sample_every: AtomicU64::new(1),
         }
-    }
-    /// Keep one sample in `n`. `0` disables the sample window entirely, which
-    /// is the configuration that removes the lock from the dispatch path;
-    /// `count()`, `mean()` and the exported rate keep working.
-    pub fn set_sample_every(&self, n: u64) {
-        self.sample_every.store(n, Ordering::Relaxed);
-    }
-    pub fn sample_every(&self) -> u64 {
-        self.sample_every.load(Ordering::Relaxed)
     }
     pub fn record(&self, v: u64) {
-        let n = self.count.fetch_add(1, Ordering::Relaxed) + 1;
+        self.count.fetch_add(1, Ordering::Relaxed);
         self.sum.fetch_add(v, Ordering::Relaxed);
-        // Decided *before* the lock: at `sample_every == 0` this method takes
-        // no lock at all, which is the whole point of the knob.
-        let keep = match self.sample_every.load(Ordering::Relaxed) {
-            0 => false,
-            1 => true,
-            k => n.is_multiple_of(k),
-        };
-        if !keep {
-            return;
-        }
         let mut s = self.samples.lock();
         if s.len() < self.cap {
             s.push(v);
@@ -84,13 +49,6 @@ impl Histogram {
     }
     pub fn count(&self) -> u64 {
         self.count.load(Ordering::Relaxed)
-    }
-    /// How many samples the percentile window is holding. Distinct from
-    /// [`Histogram::count`], which counts every observation whether or not
-    /// sampling retained it — and the difference between the two is exactly
-    /// what [`Histogram::set_sample_every`] trades away.
-    pub fn retained(&self) -> usize {
-        self.samples.lock().len()
     }
     pub fn percentile(&self, p: f64) -> u64 {
         let mut s = self.samples.lock().clone();
@@ -373,29 +331,6 @@ impl Metrics {
                  exactly hard_kills the two are sharing an increment again"
             ))
         }
-    }
-
-    /// How densely the two **per-dispatch** histograms sample.
-    ///
-    /// `request_us` and `park_ms` are recorded on every completed dispatch and
-    /// each takes a per-cell mutex shared by every execution thread — two of
-    /// the eight or so lock acquisitions a dispatch pays. "The cell's knee is
-    /// lock contention" is a claim the telemetry can manufacture for itself.
-    /// Setting this to `0` removes both locks from the dispatch path — the
-    /// counts, rates and means survive, only the percentiles stop — so the
-    /// claim can be tested by difference instead of assumed.
-    ///
-    /// Deliberately not a removal and not a compile-time feature: these
-    /// metrics are wanted, and a run without them has to be a *run*,
-    /// comparable against one with them, not a different binary.
-    pub fn set_per_dispatch_sampling(&self, n: u64) {
-        self.request_us.set_sample_every(n);
-        self.park_ms.set_sample_every(n);
-    }
-
-    /// What [`Metrics::set_per_dispatch_sampling`] is currently set to.
-    pub fn per_dispatch_sampling(&self) -> u64 {
-        self.request_us.sample_every()
     }
 
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -806,59 +741,6 @@ mod tests {
         assert!(e.contains("tombstones (4)"), "{e}");
         assert!(e.contains("hard_kills (4)"), "{e}");
         assert!(e.contains("traps (4)"), "{e}");
-    }
-
-    /// **Sampling costs percentiles and nothing else.**
-    ///
-    /// `request_us` and `park_ms` are recorded on every completed dispatch,
-    /// and each `record` takes a per-cell mutex shared by every execution
-    /// thread. Making them optional is what lets "the cell's knee is lock
-    /// contention" be tested by difference instead of assumed — but only if
-    /// switching them off leaves a *comparable run* rather than a hole in the
-    /// scrape. So: count, sum and mean survive at any setting; only the
-    /// retained window changes.
-    #[test]
-    fn sampling_gives_up_percentiles_and_keeps_the_rate() {
-        let every = Histogram::new(1000);
-        let one_in_four = Histogram::new(1000);
-        one_in_four.set_sample_every(4);
-        let off = Histogram::new(1000);
-        off.set_sample_every(0);
-
-        for i in 1..=100u64 {
-            every.record(i);
-            one_in_four.record(i);
-            off.record(i);
-        }
-
-        for h in [&every, &one_in_four, &off] {
-            assert_eq!(
-                h.count(),
-                100,
-                "the observation count is not a sampled quantity"
-            );
-            assert!((h.mean() - 50.5).abs() < 0.001, "nor is the mean");
-        }
-        assert_eq!(every.retained(), 100);
-        assert_eq!(one_in_four.retained(), 25);
-        assert_eq!(
-            off.retained(),
-            0,
-            "at 0 the record path takes no lock and keeps nothing"
-        );
-
-        assert_eq!(every.p50(), 50);
-        // A quarter of the samples still describes the distribution.
-        assert!(
-            (one_in_four.p50() as i64 - 50).abs() <= 8,
-            "p50 was {}",
-            one_in_four.p50()
-        );
-        assert_eq!(
-            off.p50(),
-            0,
-            "no window, no percentile — and 0 is what an empty window reads"
-        );
     }
 
     /// Every metric is present and scrapeable. The harness reads this

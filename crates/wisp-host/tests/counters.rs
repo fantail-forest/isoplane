@@ -24,7 +24,6 @@
 //! | H4 | `futures_shed_capture` | [`futures_shed_is_a_capture_signal_not_a_load_signal`] |
 //! | H5 | `single_writer_refusals` | [`the_single_writer_409_is_counted_and_is_not_a_dispatch`] |
 //! | H6 | `tombstone_refusals` | [`a_host_call_into_a_tombstone_is_refused_and_counted`] |
-//! | H7 | per-dispatch histogram sampling | [`the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path`] |
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -307,184 +306,47 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
     r.cell.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// H7 — the telemetry must be removable, so the claim about it can be tested
-// ---------------------------------------------------------------------------
-
-/// **The two per-dispatch histograms can be taken off the dispatch path
-/// without taking the metrics off the scrape.**
-///
-/// `request_us` and `park_ms` are recorded on every completed dispatch and
-/// each takes a per-cell mutex shared by every execution thread. The campaign
-/// publishes "the cell's knee is lock contention, not CPU" and names the work
-/// queue as the prime suspect — an inference equally consistent with
-/// contention on `active`, on `durables`, or on these two. Part of what the
-/// density campaign measures may be its own telemetry, and the only way to
-/// know is to run the same point with and without them.
-///
-/// So this asserts the shape that makes that experiment possible: at
-/// `telemetry_sample_every: 0` the histograms take no lock, the percentiles go
-/// quiet, and **the counts and the rest of the scrape keep working** — a run
-/// without them is still a run, comparable against a run with them.
-#[test]
-fn the_per_dispatch_histograms_can_be_taken_off_the_dispatch_path() {
-    let r = rig(CellConfig {
-        telemetry_sample_every: 0,
-        ..CellConfig::for_test("no-hist")
-    });
-    let module = app(&r, "quick", FakeBehaviour::done());
-
-    for n in 0..5 {
-        let rec = http(&r.cell, &module, "/go");
-        let out = r
-            .cell
-            .dispatch_blocking(
-                &module,
-                Target::Handler {
-                    route: "/go".into(),
-                },
-                rec,
-                T,
-            )
-            .unwrap();
-        assert_eq!(out.status, 200, "dispatch {n} failed");
-    }
-
-    let raw = r.cell.metrics_raw();
-    assert_eq!(raw.per_dispatch_sampling(), 0);
-    // `respond` runs before `finish_and_release`, so the response can arrive
-    // a hair before the request timer is recorded. The count is the assertion;
-    // the wait is only so the assertion is not a race.
-    assert!(
-        wait_for(|| raw.request_us.count() == 5, Duration::from_secs(5)),
-        "turning sampling off must not turn the metric into a zero — the count is what keeps \
-         the rate honest, and it read {}",
-        raw.request_us.count()
-    );
-    assert_eq!(
-        raw.request_us.p50(),
-        0,
-        "with no retained samples there is no percentile to give"
-    );
-
-    let m = r.cell.metrics();
-    assert_eq!(m.dispatches, 5, "the rest of the scrape is unaffected");
-    assert!(r.cell.metrics_text().contains("wisp_cell_request_p50_us 0"));
-
-    // The default is every sample, and the same workload then has a
-    // percentile — which is what makes the pair a difference and not a
-    // different binary.
-    let sampled = rig(CellConfig::for_test("hist"));
-    let module = app(&sampled, "quick", FakeBehaviour::done());
-    for _ in 0..5 {
-        let rec = http(&sampled.cell, &module, "/go");
-        sampled
-            .cell
-            .dispatch_blocking(
-                &module,
-                Target::Handler {
-                    route: "/go".into(),
-                },
-                rec,
-                T,
-            )
-            .unwrap();
-    }
-    assert_eq!(sampled.cell.metrics_raw().per_dispatch_sampling(), 1);
-    assert!(wait_for(
-        || sampled.cell.metrics_raw().request_us.count() == 5,
-        Duration::from_secs(5)
-    ));
-    assert_eq!(
-        sampled.cell.metrics_raw().request_us.retained(),
-        5,
-        "the default configuration must retain samples; without them the comparison this test \
-         exists to make is between two identical zeros"
-    );
-    assert_eq!(
-        raw.request_us.retained(),
-        0,
-        "at sampling 0 the window is empty — which is what removes the lock from the dispatch \
-         path, and the only thing that is given up"
-    );
-    r.cell.shutdown();
-    sampled.cell.shutdown();
-}
-
-/// **Per-worker queues serve every dispatch, exactly once.**
-///
-/// `QueueStructure::PerWorker` gives each worker its own two-lane queue, and
-/// the default `QueuePlacement::PowerOfTwo` places new work by sampling two
-/// lanes and taking the less loaded. That is a change to the one structure
-/// every dispatch passes through, so the property that matters is not
-/// throughput — it is that nothing is lost, nothing is run twice, and the rule
-/// that wakes are never shed still holds.
-///
-/// The counters are what make "exactly once" checkable: the four acquisition
-/// sources are exhaustive over admitted dispatches, so a duplicate would show
-/// as a sum larger than `dispatches` and a loss as a caller that never got a
-/// reply. All three structures are driven through the same load so the
-/// comparison is like for like.
+/// The four acquisition sources are exhaustive over admitted dispatches, so a
+/// job popped twice shows as a sum larger than `dispatches` and a lost one as
+/// a caller that never got a reply.
 #[test]
 fn per_worker_queues_serve_every_dispatch_exactly_once() {
-    for strategy in [
-        wisp_host::cell::QueueStructure::Shared,
-        wisp_host::cell::QueueStructure::PerWorker,
-        wisp_host::cell::QueueStructure::LockFree,
-    ] {
-        let mut cfg = CellConfig::for_test("qstrat");
-        cfg.exec_threads = 8;
-        cfg.queue_structure = strategy;
-        let r = rig(cfg);
-        let module = app(&r, "http", FakeBehaviour::done());
+    let mut cfg = CellConfig::for_test("lanes");
+    cfg.exec_threads = 8;
+    let r = rig(cfg);
+    let module = app(&r, "http", FakeBehaviour::done());
 
-        const BATCHES: u64 = 16;
-        const EACH: u64 = 8;
-        let mut ok = 0u64;
-        for i in 0..BATCHES {
-            let path = format!("/batch/{i}");
-            let target = Target::Handler {
-                route: path.clone(),
-            };
-            for n in 1..=EACH {
-                let mut record = http(&r.cell, &module, &path);
-                record.cpu_budget_ms = 50;
-                let out = r
-                    .cell
-                    .dispatch_blocking(&module, target.clone(), record, T)
-                    .unwrap_or_else(|e| panic!("{strategy:?}: dispatch {i}/{n} lost: {e:?}"));
-                assert_eq!(
-                    out.status, 200,
-                    "{strategy:?}: dispatch {i}/{n}: {:?}",
-                    out.trap
-                );
-                ok += 1;
-            }
+    const BATCHES: u64 = 16;
+    const EACH: u64 = 8;
+    for i in 0..BATCHES {
+        let path = format!("/batch/{i}");
+        let target = Target::Handler {
+            route: path.clone(),
+        };
+        for n in 1..=EACH {
+            let mut record = http(&r.cell, &module, &path);
+            record.cpu_budget_ms = 50;
+            let out = r
+                .cell
+                .dispatch_blocking(&module, target.clone(), record, T)
+                .unwrap_or_else(|e| panic!("dispatch {i}/{n} lost: {e:?}"));
+            assert_eq!(out.status, 200, "dispatch {i}/{n}: {:?}", out.trap);
         }
-        assert_eq!(
-            ok,
-            BATCHES * EACH,
-            "{strategy:?}: every caller must get a reply"
-        );
-
-        let m = r.cell.metrics();
-        assert_eq!(
-            m.dispatches,
-            BATCHES * EACH,
-            "{strategy:?}: the cell must have run exactly what was submitted — more means a job \
-             was popped twice, fewer means one was dropped"
-        );
-        assert_eq!(
-            m.served_warm + m.served_pooled_fresh + m.served_hibernation_wake + m.served_activated,
-            m.dispatches,
-            "{strategy:?}: the acquisition sources stay exhaustive whichever queue was used"
-        );
-        assert_eq!(
-            m.shed, 0,
-            "{strategy:?}: this load is far inside the admission cap"
-        );
-        r.cell.shutdown();
     }
+
+    let m = r.cell.metrics();
+    assert_eq!(
+        m.dispatches,
+        BATCHES * EACH,
+        "more means a job was popped twice, fewer means one was dropped"
+    );
+    assert_eq!(
+        m.served_warm + m.served_pooled_fresh + m.served_hibernation_wake + m.served_activated,
+        m.dispatches,
+        "the acquisition sources stay exhaustive over every lane"
+    );
+    assert_eq!(m.shed, 0, "this load is far inside the admission depth");
+    r.cell.shutdown();
 }
 
 // ---------------------------------------------------------------------------
