@@ -31,5 +31,4 @@ The response uses Prometheus text exposition format. Read the `# HELP` and
 | `x-wisp-version` | The immutable version this request was routed to |
 | `x-wisp-tier` | `fast` or `optimized` code tier |
 
-`x-wisp-*` is the platform's namespace: guest-set headers in it are stripped,
-because a guest that could set `x-wisp-version` could lie to your dashboard.
+`x-wisp-*` is the platform's namespace; guest-set headers in it are stripped.

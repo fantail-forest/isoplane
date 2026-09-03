@@ -21,25 +21,15 @@ its compiled code reaches; the validator checks the resulting module. The SDK so
 
 ```
 guest-sdks/dotnet/
-  Wisp.Sdk.csproj         the SDK library - names no tenant type
-  Wisp.Guest.props        the critical guest build settings, imported by each guest
-  build-guest.sh          the one build driver; a guest's build.sh wraps it
-  native/wisp_pal.c       the PAL shim - read it before touching the build
-  Abi/Imports.cs          the `wisp` import module
-  Abi/Exports.cs          Exports<TRouter>: the five host exports, generic over the router
-  Abi/PollStatus.cs       the packed u64
-  Abi/Postcard.cs         a minimal postcard codec (six shapes, not a port)
-  Abi/Records.cs          DispatchRecord / ResultRecord decoding
+  Wisp.Sdk.csproj         the SDK library; names no tenant type
+  Wisp.Guest.props        the guest build settings, imported by each guest
+  build-guest.sh          the build driver; a guest's build.sh wraps it
+  native/wisp_pal.c       the PAL shim
+  Abi/                    the import declarations, the exports, the wire codec
   Runtime/                the continuation queue and the future table
-  Sdk/Bindings.cs         HTTP request, response and context
-  Sdk/Routers.cs          IWispRouter and HandlerRouter
+  Sdk/                    HTTP request, response, context and routing
 
 guests/dotnet/            the reference guest
-  src/Entrypoint.cs       the alias that names this module's entrypoint
-  src/App/Api.cs          the handler
-  src/App/Compat.cs       the compatibility probe
-  check.sh                HTTP response and sample memory-copy checks
-  hostcheck/src/bin/      wisp-validate: runs the REAL validator
 ```
 
 ## Declaring the entrypoint
@@ -64,21 +54,19 @@ method on a generic class.
 
 ```bash
 scripts/dev guests/dotnet/build.sh                  # -> out/wisp_guest_dotnet.wasm
-scripts/dev guests/dotnet/check.sh                  # assert the ABI and the empty stack
-scripts/dev guests/dotnet/check.sh --wasi=trap      # the decisive negative test
-scripts/dev guests/dotnet/check.sh --density 200    # per-instance RSS
+scripts/dev guests/dotnet/check.sh                  # the hostcheck harness
+scripts/dev guests/dotnet/check.sh --wasi=trap      # every non-`wisp` import traps if called
+scripts/dev guests/dotnet/check.sh --density 200    # marginal RSS per instance
 ```
 
-wasi-sdk 29.0 lives in the `wisp-dev` image with `WASI_SDK_PATH` preset;
-`build.sh` will fetch it if it is genuinely absent, but that fallback cannot
-succeed under `scripts/dev`, which runs as your uid while `/opt` is root-owned.
-That is why it moved into the image. NuGet packages live in the `wisp-nuget`
-Docker volume, so only the first build pays restore.
+wasi-sdk lives in the `wisp-dev` image with `WASI_SDK_PATH` set;
+`build-guest.sh` refuses, naming the fix, if it is absent. NuGet packages live
+in the `wisp-nuget` volume, so only the first build pays restore.
 
 ### Build flavours
 
 `WISP_OUT=<basename>` changes the output filename, so flavours can coexist
-under `out/` and be compared against each other:
+under `out/`:
 
 ```bash
 WISP_OUT=wisp_guest_dotnet_compat  scripts/dev guests/dotnet/build.sh -p:WispCompatProbe=true
@@ -87,71 +75,40 @@ WISP_OUT=wisp_guest_dotnet_entropy scripts/dev guests/dotnet/build.sh -p:WispEnt
 
 | Property | Effect |
 |---|---|
-| `-p:WispMemoryMaxBytes=N` | The declared memory maximum. `67108864` sets a 64 MiB ceiling. |
-| `-p:WispCompatProbe=true` | Adds LINQ, source-generated `Regex` and source-generated `System.Text.Json`. Off by default; enables the compatibility probe. |
-| `-p:WispEntropyProbe=true` | Adds the clone-uniqueness probe |
+| `-p:WispMemoryMaxBytes=N` | The declared memory maximum; `67108864` sets a 64 MiB ceiling. The .NET runtime reserves a share at start-up, leaving little headroom |
+| `-p:WispCompatProbe=true` | Adds LINQ, source-generated `Regex` and source-generated `System.Text.Json`, which widen the BCL surface the PAL has to cover |
+| `-p:WispEntropyProbe=true` | Adds the clone-uniqueness probe, for `check.sh --entropy-clone` |
 | `-p:NativeDebugSymbols=true` | Keeps symbol names, for finding a stray import |
 
-## Three settings you must not "clean up"
+## Settings not to clean up
 
-They live in `guest-sdks/dotnet/Wisp.Guest.props`, which every guest imports —
-so a guest's own `.csproj` is four lines and none of this is in it. That is
-deliberate: these are not stylistic, and each one, removed, breaks the build in
-a way that names nothing useful. Importing them rather than copying them means
-a correction lands once.
-
-The build depends on each of these:
+`guest-sdks/dotnet/Wisp.Guest.props` carries them, with the reason beside
+each, so a guest's own `.csproj` is an import, a project reference and an
+assembly name. Three decide whether a flat core module comes out at all:
 
 | Setting | Failure mode if removed |
 |---|---|
-| **No `<PublishAot>`** | NativeAOT-LLVM is not integrated into the .NET SDK. `PublishAot` sends the build down the shipping NativeAOT path, which looks for `Microsoft.NETCore.App.Runtime.NativeAOT.wasi-wasm` — a package that does not exist. `PublishTrimmed` + `SelfContained` is the documented entry point. |
-| `<MSBuildEnableWorkloadResolver>false</…>` | The `wasi-experimental` (Mono) workload claims the `wasi-wasm` RID and injects a 12 MB Mono interpreter. |
-| `<LinkerFlavor>lld</LinkerFlavor>` | The default linker componentizes the output and then rejects named host imports for not being a WIT interface. Plain `wasm-ld` gives the flat core module WISP loads. |
+| No `<PublishAot>` | That path looks for a NativeAOT runtime package that does not exist for `wasi-wasm`; `PublishTrimmed` plus `SelfContained` is the entry point |
+| `<MSBuildEnableWorkloadResolver>false</…>` | The Mono `wasi-experimental` workload otherwise claims the runtime identifier and injects its interpreter |
+| `<LinkerFlavor>lld</LinkerFlavor>` | The default linker componentizes the output and rejects named host imports for not being a WIT interface |
 
-Plus two linker arguments:
-
-```xml
-<LinkerArg Include="-Wl,--export=__stack_pointer" />
-<LinkerArg Include="-Wl,--max-memory=$(WispMemoryMaxBytes)" />
-```
-
-The first exports the shadow stack pointer so the sample harness can compare it
-before and after a completed call. The second overrides the toolchain's own
-2 GiB maximum, which validator rule V3 rejects when it exceeds the configured ceiling;
-`wasm-ld` honours the last `--max-memory` flag, and ours is appended after the
-toolchain's.
-
-`<OutputType>library</OutputType>` — not `Exe` — because a WISP guest is a
-reactor with named exports, not a command. That gets `-mexec-model=reactor` and
-`_initialize`.
-
-The runtime cannot read the environment, so every GC knob is baked in at build
-time (`System.GC.Server=false`, `System.GC.Concurrent=false`).
-
-A guest's own `.csproj` holds only what is that guest's: its `AssemblyName`, the
-import and project reference above, any `EmbeddedResource`, and any build
-flavours it defines. See
-[Starting a project from scratch](../tutorials/first-csharp-guest.md#starting-a-project-from-scratch).
+Plus two linker arguments: `--export=__stack_pointer`, so the hostcheck
+harness can read the shadow stack pointer, and
+`--max-memory=$(WispMemoryMaxBytes)`, which overrides the toolchain's own
+2 GiB maximum. `<OutputType>library</OutputType>` makes the module a reactor
+with named exports rather than a command, and the GC settings are baked in
+because the PAL answers the environment with an empty list.
 
 ## The PAL shim
 
-Out of the box NativeAOT-LLVM leaves **32 `wasi:*` imports** in the module:
-ambient filesystem, stdio, a fine-grained clock, a second entropy source. Every
-one is an undeclared capability and the validator rejects all 32 under rule V1.
-Three of them are genuinely called, so trapping them is not an option either.
-
-`guest-sdks/dotnet/native/wisp_pal.c` defines the `__wasm_import_*` symbols wasi-libc leaves
-undefined, so `wasm-ld` resolves them locally and emits **no** wasi import. The
-three live ones are re-expressed as `wisp::clock_now_coarse`,
-`wisp::entropy_fill` and a locally computed empty environment — all already
-declared. The module's whole import list becomes `wisp`, and the validator
-accepts it.
-
-**The PAL is a closure over the BCL surface your code touches, not a fixed
-list.** Adding LINQ, `Regex` and `System.Text.Json` pulled in 12 more wasi
-imports. `build.sh` therefore fails the build if anything outside `wisp`
-survives, and tells you how to find the missing symbol. If you add a NuGet
-reference and the build fails here, that is the gate working.
+NativeAOT-LLVM's wasi-libc reaches `wasi:*` imports through undefined C
+symbols; some the runtime calls while coming up. `native/wisp_pal.c` defines
+them, answering the clock, entropy and environment from imports already in
+`wisp_abi::imports::IMPORTS` and aborting by name on everything else, so the
+module's import list is `wisp` and nothing else. The set covers the BCL
+surface the guests so far touch, and `build-guest.sh` fails the build if a
+new import appears; see
+[Debug a rejected module](debug-a-rejected-module.md#the-c-case-a-new-wasi-import-appeared).
 
 ## What `check.sh` asserts
 
@@ -180,21 +137,13 @@ initialized image copies its captured configuration and random state.
 ## Captured randomness
 
 `check.sh --entropy-clone` compares the probe output from two copies of one
-initialized sample image. It reports which supported fields repeat in those
-samples; it is not a cryptographic uniqueness guarantee.
-
-Values and generator state already written to guest memory remain captured.
-A new preparation can draw different entropy while reuse of that image copies
-what it holds.
+initialized sample image. It reports repeated supported fields in those samples,
+not a cryptographic uniqueness guarantee. Values and generator state already
+written to guest memory remain captured.
 
 ## Pinned versions
 
-| | |
-|---|---|
-| `Microsoft.DotNet.ILCompiler.LLVM` | `10.0.0-rc.1.26357.1` (dnceng `dotnet-experimental`) |
-| wasi-sdk | 29.0 (clang 21.1.4) — the version the ILCompiler package expects |
-| .NET SDK | 10.0.400 |
-
-Pinned in `guest-sdks/dotnet/Wisp.Guest.props` on purpose: the experimental feed publishes
-builds that are not mutually compatible, and an unpinned float is a build that
-breaks on someone else's machine on a different day.
+`Wisp.Guest.props` pins the ILCompiler.LLVM package, and the `Dockerfile` pins
+the .NET SDK channel and the wasi-sdk release the package expects. The
+experimental feed publishes builds that are not mutually compatible, so an
+unpinned float is a build that breaks on someone else's machine.

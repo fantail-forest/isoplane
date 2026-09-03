@@ -7,45 +7,25 @@ slug: /
 
 # WISP
 
-WISP is a WASM-based serverless platform where the isolation boundary is the
-WebAssembly sandbox rather than the CLR or a hypervisor. Instances park on I/O
-with an **empty stack**.
+WISP hosts customer-written .NET applications as WebAssembly guests. The
+isolation boundary is the WASM sandbox, not the CLR and not a hypervisor.
+Guests are pre-initialised at deploy time into a memory template, activate
+copy-on-write from it, and park with an empty stack while waiting on host I/O.
 
 ## The target is .NET
 
-WISP exists to run **ordinary C# as-is** — async/await, LINQ, generics, source
-generators, spans, `System.Text.Json` — compiled to WebAssembly. Not a dialect,
-not a transpiler. Whether that actually works is the claim that decides whether
-WISP is a product or an interesting runtime, so it is the claim everything else
-here is built to support.
-
-So the guest ecosystem this platform is for is .NET. There is also a **Rust
-SDK**, and it matters, but it is a *reference implementation of the guest
-contract*: a few thousand lines with no bundled runtime, used to prove the ABI
-is implementable and to support guest fixtures. It is not the audience.
-
-Read the two SDK pages with that asymmetry in mind:
-
-| | |
-|---|---|
-| C# SDK | **The target.** What a tenant writes. |
-| Rust SDK | The reference implementation of the contract, and the fixture guests. |
-
-Where a mechanism is currently more complete on the Rust side, this
-documentation says so on the page that documents it rather than implying
-parity.
+A tenant writes ordinary C#, with async/await, LINQ, generics and source
+generators, and compiles it with NativeAOT-LLVM to a core wasm module against
+the `Wisp.Sdk` library. There is also a Rust SDK, which the platform's own
+fixture guests are written against; it is not the audience.
 
 ## Where to go
-
-This documentation follows the [Diátaxis](https://diataxis.fr) framework. The
-four sections answer four different questions, and mixing them is what makes
-documentation unreadable:
 
 | If you want to… | Go to |
 |---|---|
 | Get something running for the first time | [Tutorials](tutorials/index.md) |
 | Accomplish a specific task you already understand | [How-to guides](how-to/index.md) |
-| Look up a flag, a port, a record layout, a limit | [Reference](reference/index.md) |
+| Look up a port, an endpoint or a header | [Reference](reference/index.md) |
 | Understand why the system is shaped this way | [Explanation](explanation/index.md) |
 
 The fastest path from a clean checkout to something you can poke is the

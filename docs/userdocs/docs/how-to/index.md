@@ -6,7 +6,7 @@ sidebar_label: Overview
 
 # How-to guides
 
-Task-oriented recipes. Each assumes you already know what you want and why —
+Task-oriented recipes. Each assumes you already know what you want and why;
 if you do not, start with a [tutorial](../tutorials/index.md) or read the
 [explanation](../explanation/index.md).
 

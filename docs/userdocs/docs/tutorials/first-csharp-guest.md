@@ -16,10 +16,10 @@ and checks its HTTP response and sample state-copy behavior.
 ./scripts/dev guests/dotnet/build.sh
 ```
 
-wasi-sdk 29.0 ships **in the image** and `WASI_SDK_PATH` is already set, so the
-build goes straight to compiling the PAL shim and publishing. The first run
-restores NuGet packages into the `wisp-nuget` volume; subsequent runs skip that
-too. The output lands at `guests/dotnet/out/wisp_guest_dotnet.wasm`.
+wasi-sdk ships in the image with `WASI_SDK_PATH` set, so the build goes
+straight to compiling the PAL shim and publishing. The first run restores
+NuGet packages into the `wisp-nuget` volume. The output lands at
+`guests/dotnet/out/wisp_guest_dotnet.wasm`.
 
 The build prints the module's imported functions. The validator checks them
 against the host interface; use the validator step below after changing the
@@ -45,15 +45,15 @@ checks the executed sample path.
 
 ## 3. Write the handler
 
-The tenant-facing file is `guests/dotnet/src/App/Api.cs`, and the interesting
-thing about it is that there is nothing interesting in it:
+The tenant-facing file is `guests/dotnet/src/App/Api.cs`:
 
 ```csharp
 using System.Threading.Tasks;
+using Wisp.Durable;
 
 namespace Wisp.App;
 
-public sealed class Api
+public sealed class Api : IWispHandler
 {
     public Task<Response> HandleAsync(Request req, Ctx ctx)
     {
@@ -69,9 +69,8 @@ keep that response contract when running these fixture checks. The SDK source un
 
 ## 4. Run it through the validator
 
-`wisp doctor` derives the capability manifest from the bytes alone. The
-authority for rules V1–V4 is `wisp-control::validate`, and the C# guest ships
-a small binary that runs the real one:
+`wisp doctor` runs the validator against the module. The C# guest also ships
+a small binary that runs it directly:
 
 ```bash
 ./scripts/dev cargo run --release --features validator --bin wisp-validate \
@@ -79,7 +78,7 @@ a small binary that runs the real one:
 ```
 
 Expect `ACCEPTED`. If you add a NuGet reference and it turns into a rejection,
-that is [the gate working](#why-the-pal-shim-exists), not a bug.
+see [why the PAL shim exists](#why-the-pal-shim-exists).
 
 ## Starting a project from scratch
 
@@ -110,15 +109,12 @@ The `.csproj` is short because everything critical lives in the SDK's
 </ItemGroup>
 ```
 
-That props file is where the three eccentric-looking settings live — no
-`<PublishAot>`, `<MSBuildEnableWorkloadResolver>false</...>`,
-`<LinkerFlavor>lld</LinkerFlavor>` — along with the two linker arguments that
-decide whether the module passes validator rule V3. They are documented in
-[build guide](../how-to/build-a-csharp-guest.md#three-settings-you-must-not-clean-up).
-Importing them rather than copying them is the point: a correction lands once.
+That props file is where the settings that decide whether a flat core module
+comes out live, along with the linker argument that decides whether the
+module passes validator rule V3. They are described in
+[Build a C# guest](../how-to/build-a-csharp-guest.md#settings-not-to-clean-up).
 
 To set a 64 MiB maximum, build with `-p:WispMemoryMaxBytes=67108864`.
-The sample harness reports its initialized linear-memory size.
 
 ### Shipping a front end
 
@@ -139,23 +135,20 @@ A handler can return an embedded asset in its HTTP response.
 
 ## Why the PAL shim exists
 
-Out of the box NativeAOT-LLVM leaves **32 `wasi:*` imports** in the module:
+Out of the box NativeAOT-LLVM leaves `wasi:*` imports in the module: an
 ambient filesystem, stdio, a fine-grained clock, a second entropy source.
-Every one of them is an undeclared capability, and the validator rejects all
-32 under rule V1. Three are genuinely called, so trapping them is not an
+Every one is an undeclared capability the validator rejects under rule V1,
+and a few are called while the runtime comes up, so trapping them is not an
 option either.
 
-`guest-sdks/dotnet/native/wisp_pal.c` defines the `__wasm_import_*` symbols that
-wasi-libc leaves undefined, so `wasm-ld` resolves them locally and emits **no**
-wasi import. The three live ones are re-expressed as `wisp::clock_now_coarse`,
-`wisp::entropy_fill`, and a locally computed empty environment — all already
-in the declared capability set.
+`guest-sdks/dotnet/native/wisp_pal.c` defines the `__wasm_import_*` symbols
+wasi-libc leaves undefined, so `wasm-ld` resolves them locally and emits no
+wasi import. The live ones are answered from `wisp::clock_now_coarse`,
+`wisp::entropy_fill` and a locally computed empty environment.
 
-**The PAL is a closure over the BCL surface you touch, not a fixed list.**
-Adding LINQ, source-generated `Regex` and source-generated `System.Text.Json`
-pulled in 12 more wasi imports. `build.sh` fails the build if anything outside
-`wisp` survives, and prints the command that shows you the missing symbol's
-name and signature:
+The PAL covers the BCL surface the guests so far touch, and a new library can
+reach past it. `build.sh` fails the build if anything outside `wisp`
+survives; find the missing symbol's name and signature with:
 
 ```bash
 ./scripts/dev guests/dotnet/build.sh -p:NativeDebugSymbols=true
@@ -166,4 +159,4 @@ Then define that symbol in `guest-sdks/dotnet/native/wisp_pal.c`.
 
 ## Where next
 
-- [Why suspension implies an empty stack](../explanation/invariants.md#invariant-3--suspension-implies-an-empty-stack).
+- [Why suspension implies an empty stack](../explanation/invariants.md#invariant-3-suspension-implies-an-empty-stack).

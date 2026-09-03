@@ -16,11 +16,9 @@ docker build -t wisp-dev:latest .
 ```
 
 This installs Rust with the `wasm32-unknown-unknown` and `wasm32-wasip1`
-targets, .NET 10, `wasm-tools`, and wasi-sdk 29.0. It also pre-creates the
-cache mountpoints owned by your uid, which is what makes
-`--user $(id -u):$(id -g)` usable under sysbox's user-namespace remap.
-
-If your uid is not 1000, pass it:
+targets, the .NET SDK, `wasm-tools` and wasi-sdk. It also pre-creates the
+cache mountpoints owned by your uid, which is what lets the container run as
+you. If your uid is not 1000, pass it:
 
 ```bash
 docker build -t wisp-dev:latest \
@@ -31,7 +29,7 @@ Check that the container answers:
 
 ```bash
 ./scripts/dev --status
-./scripts/dev bash -lc 'rustc --version && dotnet --version && wasm-tools --version && $WASI_SDK_PATH/bin/clang --version | head -1'
+./scripts/dev bash -lc 'rustc --version && dotnet --version && wasm-tools --version'
 ```
 
 ## 2. Stop the optional container
@@ -40,11 +38,10 @@ Check that the container answers:
 ./scripts/dev --stop
 ```
 
-`scripts/dev --reap` removes your own stopped containers and nothing
-else — it never touches a container it did not create.
+`scripts/dev --reap` removes your own stopped containers and nothing else.
 
 ## Where next
 
 - Write a guest: [Your first C# guest](first-csharp-guest.md) or
-  [Your first Rust guest](first-rust-guest.md).
+  [The Rust reference guest](first-rust-guest.md).
 - Understand the execution model: [The four invariants](../explanation/invariants.md).
