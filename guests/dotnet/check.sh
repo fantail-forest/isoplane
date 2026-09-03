@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Check the managed HTTP fixture response and completed-state memory copy.
-# Runs INSIDE the wisp-dev container:  scripts/dev guests/dotnet/check.sh
+# Run the C# guest under the hostcheck harness in guests/dotnet/hostcheck.
 #
-#   --wasi=pal    (default) implement only the measured runtime-PAL set;
-#                 every other wasi import traps if called
-#   --wasi=trap   every non-`wisp` import traps — for this fixture execution
+#   scripts/dev guests/dotnet/check.sh [--wasi=pal|trap|stub] [--density N]
+#
+#   --wasi=pal    (default) bind the runtime PAL set; every other wasi import
+#                 traps if called
+#   --wasi=trap   every non-`wisp` import traps
 #   --wasi=stub   nothing traps; enumerate which imports are reachable
 #   --density N   activate N instances and report marginal RSS
 #   --compat      expect the compatibility probe response; build with the probe enabled

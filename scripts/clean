@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Reclaim build artifacts. Rust build trees for a workspace containing
-# wasmtime get very large very fast, so this is worth running between phases
-# of work rather than only at the end.
+# Reclaim build intermediates.
 #
-#   scripts/clean            # cheap: caches and intermediates only, no rebuild
+#   scripts/clean            # caches and intermediates only, no rebuild
 #   scripts/clean --all      # everything, including compiled output
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,24 +9,18 @@ cd "$ROOT"
 
 before=$(du -sm . 2>/dev/null | cut -f1)
 
-# Always safe: pure caches and intermediates. Nothing here is an input to
-# anything; the worst case is a slower next build.
 JUNK="target/debug/incremental target/release/incremental
       guests/target guests/dotnet/src/obj guests/dotnet/src/bin
       guests/dotnet/obj
       guest-sdks/dotnet/obj guest-sdks/dotnet/bin"
 
-# A container build that wrote into the bind mount can leave trees owned by a
-# uid the host user cannot unlink. Try the cheap path first and retry through
-# the container, which may hold the uid that owns them.
+# A container build may have left trees the host user cannot unlink.
 if ! rm -rf $JUNK 2>/dev/null; then
   "$ROOT/scripts/dev" bash -c "cd /wisp && rm -rf $JUNK" >/dev/null 2>&1 || true
 fi
 find . -name '*.rs.bk' -delete 2>/dev/null || true
 
 if [ "${1:-}" = "--all" ]; then
-  # A container build can leave a target the host user cannot remove; retry
-  # the delete from inside the container.
   if [ -d target ] && [ ! -w target ]; then
     "$ROOT/scripts/dev" rm -rf /wisp/target
   else

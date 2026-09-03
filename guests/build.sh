@@ -3,9 +3,6 @@
 #
 #   scripts/dev guests/build.sh            # build all
 #   scripts/dev guests/build.sh --if-stale # only when a source is newer than an output
-#
-# Guests are built for size: the release profile in guests/Cargo.toml is
-# opt-level="z" + lto + panic="abort" + strip.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,12 +12,11 @@ IF_STALE=0
 [ "${1:-}" = "--if-stale" ] && IF_STALE=1
 
 # Tests call this concurrently from several test binaries; the second caller
-# blocks, then finds everything fresh.
-LOCK="$ROOT/.build.lock"
-if [ -z "${WISP_BUILD_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
-  export WISP_BUILD_LOCKED=1
-  exec flock "$LOCK" "$0" "$@"
-fi
+# blocks, then finds everything fresh. The lock lives on fd 9, which every
+# child below is started without, so nothing a build leaves running can keep
+# the next caller waiting.
+exec 9>"$ROOT/.build.lock"
+command -v flock >/dev/null 2>&1 && flock 9
 
 # The guests depend on the Rust SDK and the contract crate by path, so a
 # change to either is a change to every module.
@@ -50,12 +46,15 @@ if [ "$IF_STALE" = 1 ] && is_fresh; then
 fi
 TARGET=wasm32-unknown-unknown
 PROFILE=release
-# Separate guest build outputs avoid locking the parent host build directory.
+# A target directory of the guests' own: a host `cargo test` that runs this
+# holds the lock on its build directory, and a nested cargo sharing it would
+# wait on its parent forever.
 TDIR="${CARGO_TARGET_DIR:+${CARGO_TARGET_DIR%/}/guests}"
 TDIR="${TDIR:-$ROOT/target}"
 export CARGO_TARGET_DIR="$TDIR"
 
-# WISP_BUILD_QUIET skips informational size and import/export reports.
+# WISP_BUILD_QUIET drops the size and import/export reports, which a test
+# running this never reads, and keeps every check.
 QUIET="${WISP_BUILD_QUIET:-}"
 mkdir -p "$OUT"
 cd "$ROOT"
@@ -63,18 +62,15 @@ cd "$ROOT"
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
 [ -n "${WISP_OFFLINE:-}" ] && CARGO_FLAGS+=(--offline)
 
-# Check tools before replacing existing outputs.
+# Everything this script needs is checked before anything is deleted.
 preflight_missing=()
 command -v cargo >/dev/null 2>&1 || preflight_missing+=(
   "cargo is not on PATH -- the guests are a cargo workspace of their own")
-# rustup prints a target-libdir for any triple it can name, installed or not,
-# and only creates the directory when the target is really there.
+# rustup prints a target-libdir for any triple it can name and creates the
+# directory only when the target is installed.
 if ! libdir=$(rustc --print target-libdir --target "$TARGET" 2>/dev/null) || [ ! -d "$libdir" ]; then
   preflight_missing+=("the $TARGET std is not installed (rustup target add $TARGET)")
 fi
-# V2 is checked with this, and an unverified guest is not known to be a legal
-# WISP module. V1 -- the capability surface -- needs nothing here: it is
-# checked by `wisp_control::validate` from a Rust test, not by this script.
 command -v wasm-tools >/dev/null 2>&1 || preflight_missing+=(
   "wasm-tools is not on PATH, so V2 could not be checked")
 if [ "${#preflight_missing[@]}" -ne 0 ]; then
@@ -94,13 +90,13 @@ GUESTS=(quotes-api misbehaver bigheap impure-cctor undeclared-import)
 echo "==> building guests for $TARGET ($PROFILE)"
 for g in "${GUESTS[@]}"; do
   rm -f "$OUT/$g.wasm"
-  cargo build -p "$g" "${CARGO_FLAGS[@]}"
+  cargo build -p "$g" "${CARGO_FLAGS[@]}" 9>&-
   cp "$TDIR/$TARGET/$PROFILE/${g//-/_}.wasm" "$OUT/$g.wasm"
 done
 
 # V1 fixture, variant 2: an undeclared MODULE rather than an undeclared field.
 rm -f "$OUT/foreign-module.wasm"
-cargo build -p undeclared-import --features foreign-module "${CARGO_FLAGS[@]}"
+cargo build -p undeclared-import --features foreign-module "${CARGO_FLAGS[@]}" 9>&-
 cp "$TDIR/$TARGET/$PROFILE/undeclared_import.wasm" "$OUT/foreign-module.wasm"
 
 if [ -z "$QUIET" ]; then
@@ -119,18 +115,12 @@ if [ -z "$QUIET" ]; then
   done
 fi
 
-
 echo
 echo "==> validation (threads/atomics OFF, as rule V2 requires)"
-# Every module must pass V2, the two V1 fixtures included: an undeclared import
-# is a capability question, not a well-formedness one, and both fixtures are
-# otherwise perfectly ordinary wasm.
+# The two V1 fixtures included: an undeclared import is a capability question,
+# not a well-formedness one.
 v2_failed=()
 for f in "$OUT"/*.wasm; do
-  # V2: threads / shared memory / atomics OFF, relaxed SIMD OFF, exceptions
-  # beyond the profile OFF. With those disabled the blocking instructions
-  # (`memory.atomic.wait*`/`notify`) fail bytecode validation outright, which
-  # is the layer that makes blocking inexpressible in-sandbox.
   if wasm-tools validate -f=-threads,-shared-everything-threads,-relaxed-simd,-exceptions,-legacy-exceptions "$f" 2>/dev/null; then
     echo "  ok        $(basename "$f")"
   else
@@ -155,9 +145,10 @@ if [ -z "$QUIET" ]; then
   done
 fi
 
-echo
-echo "==> V1 (capability surface) is checked by the validator, not by this script"
-# Import names and signatures are checked by the host validator tests.
+# V1, the capability surface, is checked by `wisp_control::validate` in the
+# `real_guests` test, which holds every module in the manifest to a recorded
+# verdict; a shell copy of the import table would drift and could not check
+# signatures.
 
 if [ "${#v2_failed[@]}" -ne 0 ]; then
   rm -f "$MANIFEST"
@@ -170,8 +161,7 @@ if [ "${#v2_failed[@]}" -ne 0 ]; then
   exit 1
 fi
 
-# The manifest is what tests enumerate, so it is written only once every
-# module in it has been built and verified.
+# Written only once every module in it has been built and verified.
 printf '%s\n' "${GUESTS[@]}" foreign-module > "$MANIFEST"
 echo
 echo "==> wrote $(wc -l < "$MANIFEST") modules to $OUT"

@@ -1,58 +1,52 @@
-# WISP — proof of concept
+# WISP
 
-A WASM host prototype where the isolation boundary is the WASM sandbox.
-Guests return with an empty stack while waiting on host I/O. The host owns
-the resources that can make a parked guest ready to run.
+WISP hosts customer-written .NET applications as WebAssembly guests. The
+isolation boundary is the WASM sandbox, not the CLR and not a hypervisor.
+Guests are pre-initialised at deploy time into a memory template, activate
+copy-on-write from it, park with an empty stack while waiting on host I/O, and
+can be hibernated as a delta against the template and woken later. The host is
+Rust; the guest SDK is C#.
 
-This is an experimental implementation. Tests exercise specific runtime
-behaviors; they do not establish a general security or snapshot guarantee.
+[`AGENTS.md`](AGENTS.md) is the engineering handbook: architecture, tooling,
+the rules code is held to, and the four invariants every host mechanism
+derives from. [`docs/userdocs/`](docs/userdocs/) is the documentation site.
 
-## Running it
+## Building and testing
 
-`scripts/dev` runs a command in the repository toolchain image with the
-Sysbox runtime. Install Docker and the required runtime before using these
-commands. The WebAssembly runtime remains the guest isolation boundary.
+The whole toolchain (Rust with the wasm targets, the .NET SDK, `wasm-tools`,
+wasi-sdk) ships in one container image. A checkout with those tools installed
+locally needs no container; the crates, tests and scripts never require one.
 
-```bash
-docker build -t wisp-dev:latest .        # rust + .NET 10 + wasm tooling
+```sh
+docker build -t wisp-dev:latest .          # the toolchain image, once
+scripts/dev cargo test --workspace         # the full suite, inside it
+scripts/dev bash                           # a shell inside it
+scripts/dev --stop                         # remove your container when done
 
-./scripts/dev cargo test --workspace     # the full suite
-./scripts/dev bash                       # a shell inside it
+cargo build --workspace --all-targets      # on a host with the toolchain
+cargo test --workspace
 ```
 
-It is a convention, not a gate. Nothing in the crates or the tests checks what
-it is running under: drop the prefix and they build and run wherever their
-toolchain does. `cargo build` on the host is fine and faster.
+Tests that need a guest module build it on demand through the `wisp-fixtures`
+crate, which runs `guests/build.sh` and `guests/build-dotnet.sh` and fails
+naming the missing tool when the toolchain is absent.
 
 ## Layout
 
-| Path                                     | What it is                                                                                                                                                                                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crates/wisp-abi`                         | Host/guest records, poll statuses and allowed capability definitions. |
-| `crates/wisp-engine`                     | The sandbox boundary: wasmtime, templates, slots, CPU budgets, metering.                                                                                                                                                                             |
-| `crates/wisp-control`                     | Module validation and application preparation. |
-| `crates/wisp-host`                       | The cell: reactors, execution pool, future table, import vtable, lifecycle tiers.                                                                                                                                                                    |
-| `crates/wisp-hibernate`                   | Snapshot identity primitives. |
-| `crates/wisp-proxy`, `wispd`, `wisp-cli` | Termination and routing, the node daemon, the `wisp` command.                                                                                                                                                                                        |
-| `guests/`                                | The guest SDK and demo guests, including deliberately hostile ones.                                                                                                                                                                                  |
+The host crates live under `crates/`; each manifest carries a `description`,
+and that is the crate inventory:
 
-## The four invariants
+```sh
+cargo metadata --no-deps --format-version 1 \
+  | jq -r '.packages[] | "\(.name): \(.description)"'
+```
 
-The runtime is organized around four constraints:
-
-1. **Represent resumable state explicitly.** At supported return boundaries,
-   sandbox state and records of host-owned resources describe what can resume.
-   Local snapshots require defined preservation, rebinding or loss behavior for
-   each resource type.
-2. **Keep wake sources in the host.** The host owns sockets, timers and futures,
-   including their lifetimes and costs while a guest is parked.
-3. **Suspend on an empty stack.** A guest parks by returning control to the host.
-   A live native execution stack is not a checkpoint.
-4. **Route capabilities through the host interface.** Validation and linking
-   enforce the allowed imports. Other language representations require
-   generation or drift checks against the contract.
-
-## Execution boundaries
-
-A guest parks by returning control to the host. The host retains explicit
-ownership of pending I/O and its wake sources.
+| Path                  | What it is                                                                |
+| --------------------- | ------------------------------------------------------------------------- |
+| `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `wispd` and the `wisp` command. |
+| `guest-sdks/dotnet`    | The C# guest SDK. |
+| `guest-sdks/rust`      | Internal Rust helpers for guest test fixtures. |
+| `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |
+| `docs/userdocs`       | The Docusaurus documentation site.                                        |
+| `docs/opinion-registry` | How software is built here.                                             |
+| `scripts/`            | `scripts/dev` runs a command in the toolchain container; `scripts/clean` reclaims build intermediates. |

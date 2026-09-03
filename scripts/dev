@@ -1,38 +1,38 @@
 #!/usr/bin/env bash
-# Run a command in the configured development container.
-# Usage: scripts/dev <command> [args...]
+# Run a command inside the wisp-dev toolchain container.
+#
+#   scripts/dev cargo test --workspace
+#   scripts/dev bash
+#   WISP_CONTAINER_NAME=wisp-foo scripts/dev ...
+#   scripts/dev --stop       # remove this name's container
+#   scripts/dev --reap       # remove all of our own stopped containers
+#   scripts/dev --status     # what we own, and whether it responds
+#
+# The container runs as the invoking uid, so nothing it writes into the bind
+# mount is unremovable from the host. Every container this script creates is
+# labelled with that uid, and it removes nothing unlabelled: other containers
+# on the machine are not ours. It never starts a container behind one that
+# is hung, since that is how one stuck container jams the daemon for everyone.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${WISP_IMAGE:-wisp-dev:latest}"
 NAME="${WISP_CONTAINER_NAME:-wisp-$(id -u)-shared}"
-LABEL="wisp.owner=$(id -u)"          # rule 5: our ownership mark
+LABEL="wisp.owner=$(id -u)"
 PROBE_TIMEOUT="${WISP_PROBE_TIMEOUT:-15}"
 DOCKER_TIMEOUT="${WISP_DOCKER_TIMEOUT:-60}"
-# How long to wait for a container someone ELSE is starting. Not a cleanup
-# window: `created` and `restarting` are what the winner of a startup race
-# looks like for a moment, and reaping one is how a live container gets
-# deleted out from under the caller that made it.
+# How long to wait for a container someone else is starting: `created` and
+# `restarting` are what the winner of a startup race looks like for a moment.
 START_WAIT="${WISP_START_WAIT:-30}"
 
 d() { timeout "$DOCKER_TIMEOUT" docker "$@"; }
 
-# --- rule 5 ------------------------------------------------------------------
-# `docker inspect` fails for two entirely different reasons and only one of
-# them means "there is nothing here":
-#
-#   * the object does not exist          -> absent, and creating one is right
-#   * the daemon did not answer in time  -> we know NOTHING, and creating one
-#                                           is rule 3 inverted
-#
-# The version this replaces mapped both to `absent`, so a `timeout` kill (exit
-# 124, empty output) landed on the happy path of "start a new container" --
-# the one state in which starting another is exactly what jams the sandbox.
-# Every one of these helpers therefore allowlists the outcomes it understands
-# and refuses on everything else.
+# `docker inspect` fails both when the object does not exist and when the
+# daemon did not answer, and only the first means a container may be created;
+# a daemon that did not answer is the one case in which creating another is
+# what jams it. So each helper allowlists the outcomes it understands and
+# refuses on everything else.
 
-# The full state vocabulary docker reports. An answer outside it is not a
-# state and must not be treated as one.
 _is_docker_state() {
   case "$1" in
     created|running|paused|restarting|removing|exited|dead) return 0 ;;
@@ -40,11 +40,7 @@ _is_docker_state() {
   esac
 }
 
-# The two texts docker uses for "no such object". Matched case-insensitively
-# because the wording differs by subcommand and by version -- docker 29 says
-# `error: no such object: NAME` for `docker inspect` and
-# `Error response from daemon: No such container: NAME` for
-# `docker container inspect`. Nothing else counts as absence.
+# The wording differs by subcommand and by docker version.
 _says_absent() {
   case "${1,,}" in
     *"no such object"*|*"no such container"*) return 0 ;;
@@ -53,7 +49,7 @@ _says_absent() {
 }
 
 # Prints the state and returns 0; returns 2 having said why, if it could not
-# find out. Callers must treat 2 as "stop", never as "absent".
+# find out.
 state_of() {
   local n="$1" out rc=0
   out=$(d inspect -f '{{.State.Status}}' "$n" 2>&1) || rc=$?
@@ -67,8 +63,7 @@ state_of() {
   return 2
 }
 
-# 0 = ours, 1 = exists and is NOT ours, 2 = absent, 3 = docker would not say.
-# Rule 5 is not a guess, so 3 is never treated as either 0 or 1.
+# 0 = ours, 1 = exists and is not ours, 2 = absent, 3 = docker would not say.
 owner_of() {
   local n="$1" out rc=0
   out=$(d inspect -f '{{index .Config.Labels "wisp.owner"}}' "$n" 2>&1) || rc=$?
@@ -86,17 +81,15 @@ remove_if_ours() {
   owner_of "$n" || rc=$?
   case $rc in
     0) d rm -f "$n" >/dev/null 2>&1 || true; return 0 ;;
-    2) return 0 ;;                      # nothing there; nothing to remove
+    2) return 0 ;;
     1) echo "refusing to remove '$n': not labelled $LABEL (not ours)" >&2; return 1 ;;
     *) echo "refusing to remove '$n': docker would not say who owns it" >&2; return 1 ;;
   esac
 }
 
-# The id of a container that carries OUR label and has exactly this name, or
-# nothing. Asked of the daemon rather than scraped out of an error message: an
-# error string is not a data structure, and the id inside a name-conflict
-# message is the id of whoever *holds* the name -- which, when four points
-# start at once against one name, is the winner's live container.
+# The id of a container carrying our label under exactly this name, from the
+# daemon's own listing: the id in a name-conflict error is whoever holds the
+# name, which in a startup race is the winner's live container.
 # 0 = printed an id, 1 = we own nothing by that name, 2 = could not ask.
 our_id_named() {
   local want="$1" listing nm id
@@ -108,30 +101,20 @@ our_id_named() {
   return 1
 }
 
-# --- rule 3 ------------------------------------------------------------------
-# A container can be "running" and still be useless. Probe it before trusting
-# it, and treat a non-responsive one as a hard stop rather than a reason to
-# create another.
+# A container can be "running" and still be useless.
 responsive() {
   timeout "$PROBE_TIMEOUT" docker exec "$1" true >/dev/null 2>&1
 }
 
 case "${1:-}" in
   --stop)
-    # `&& echo` made the refusal a *condition*, so errexit skipped it and the
-    # `exit 0` below reported success on a container we had just declined to
-    # touch. A refusal is a failure and has to leave through a failing status.
     remove_if_ours "$NAME" || exit 71
     echo "stopped $NAME"
     exit 0
     ;;
   --reap)
-    # rule 4/5: only our own, and only the ones already stopped.
-    #
-    # Listed first and looped second: a process substitution's failure is not
-    # visible to the loop, so a daemon that never answered used to read as an
-    # empty list and print "reaped 0" -- a true-looking sentence about a
-    # question that was never asked.
+    # Listed first and looped second, so a daemon that did not answer is a
+    # failure rather than an empty list.
     if ! listing=$(d ps -a --filter "label=$LABEL" --filter "status=exited" --format '{{.Names}}'); then
       echo "could not list our containers; reaped nothing" >&2
       exit 69
@@ -158,16 +141,12 @@ case "${1:-}" in
 esac
 
 if ! d info >/dev/null 2>&1; then
-  echo "docker daemon is not responding; refusing to queue work behind it (rule 3)" >&2
+  echo "docker daemon is not responding; refusing to queue work behind it" >&2
   exit 69
 fi
 
 PORTS=()
 for p in ${WISP_PORTS:-}; do PORTS+=(-p "$p"); done
-# ONE definition of the container, so the first attempt and any retry cannot
-# differ. They used to be two copies and the copies had already drifted: the
-# retry dropped `--label wisp.created=...`, so a container recovered from a
-# ghost was missing the label `--status` reports on.
 create_container() {
   d run -d --name "$NAME" --runtime=sysbox-runc \
     --label "$LABEL" --label "wisp.created=$(date -u +%FT%TZ)" \
@@ -191,8 +170,7 @@ refuse_hung() {
   cat >&2 <<MSG
 '$NAME' is running but did not answer a probe within ${PROBE_TIMEOUT}s.
 
-Refusing to start another container behind a hung one (rule 3) -- that is
-what jams the sandbox for everyone. Investigate, then:
+Refusing to start another container behind a hung one. Investigate, then:
     scripts/dev --stop
 MSG
   exit 70
@@ -209,25 +187,14 @@ await_running() {
     [ "$st" = absent ] && return 1
     sleep 1
   done
-  echo "'$n' has been in state '$st' for ${START_WAIT}s; refusing to reap a container someone may be starting (rule 5)" >&2
+  echo "'$n' has been in state '$st' for ${START_WAIT}s; refusing to reap a container someone may be starting" >&2
   return 2
 }
 
-# Getting to a usable container, as a small bounded state machine.
-#
-# It is a loop rather than a straight line because the name can be taken
-# between our check and our `run` when invocations start concurrently.
-# The loop handles the following states:
-#
-#   * `created`/`restarting` is what the WINNER of that race looks like for a
-#     moment. It is waited for, never removed. The version this replaces
-#     removed it -- and then, when `run` failed on the name conflict, scraped
-#     a 12+ hex run out of docker's error text and `rm -f`'d that, which in
-#     the race is the winner's live container and in an unrelated pull error
-#     is a `sha256:` digest.
-#   * nothing is removed without `remove_if_ours` (rule 5), and a ghost's id
-#     comes from the daemon's own label-filtered listing, never from a string.
-#   * a state we could not read is a stop, not an absence (rule 3).
+# A loop rather than a straight line, because the name can be taken between
+# the check and the `run` when several callers start at once against one
+# container name. `created`/`restarting` is what the winner of that race looks
+# like for a moment, and is waited for, never removed.
 attempt=0
 while :; do
   attempt=$((attempt + 1))
@@ -239,45 +206,37 @@ while :; do
   st=$(state_of "$NAME") || exit 73
   case "$st" in
     running)
-      responsive "$NAME" || refuse_hung      # rule 2 + 3
+      responsive "$NAME" || refuse_hung
       break
       ;;
     created|restarting|removing)
-      # Someone else is mid-start, or mid-remove. All three are transient and
-      # resolve on their own; none of them is a leftover to reap.
       rc=0; await_running "$NAME" || rc=$?
       [ "$rc" = 2 ] && exit 74
       continue
       ;;
     paused)
-      # Deliberate, and it will not resolve by waiting. Refuse now rather than
-      # spend START_WAIT discovering that, and say the true reason.
-      echo "'$NAME' is paused; somebody paused it on purpose. Refusing to remove it (rule 5)." >&2
+      echo "'$NAME' is paused; somebody paused it on purpose. Refusing to remove it." >&2
       echo "    docker unpause $NAME     # or: scripts/dev --stop" >&2
       exit 74
       ;;
     exited|dead)
-      remove_if_ours "$NAME" || exit 71      # rule 4
+      remove_if_ours "$NAME" || exit 71
       continue
       ;;
     absent) ;;
   esac
 
-  # The name looked free. Try to claim it.
   if err=$(create_container 2>&1); then
-    continue                                 # re-read the state; do not assume
+    continue                                 # re-read the state
   fi
 
-  # It did not start. The only question worth asking is who holds the name,
-  # and the daemon is asked -- the error text is not consulted for it.
   st=$(state_of "$NAME") || { echo "$err" >&2; exit 73; }
   if [ "$st" != absent ]; then
-    continue                                 # someone won the race; the loop handles it
+    continue                                 # someone won the race
   fi
 
-  # docker refused, and yet nothing answers to the name. A "ghost" -- a name
-  # the daemon still holds but can no longer inspect -- is the one recoverable
-  # case, and it is recoverable only if it is provably ours.
+  # docker refused, yet nothing answers to the name: a name the daemon still
+  # holds but can no longer inspect. Recoverable only if it is provably ours.
   rc=0; ghost=$(our_id_named "$NAME") || rc=$?
   if [ "$rc" = 0 ] && [ -n "$ghost" ]; then
     echo "clearing ghost container name '$NAME' ($ghost): carries $LABEL but docker cannot inspect it" >&2
@@ -291,19 +250,9 @@ while :; do
   exit 72
 done
 
-# Forward the caller's `WISP_*` environment into the container.
-#
-# `docker exec` inherits nothing from this shell, so the flavour switches the
-# guest builders document -- `WISP_OUT=... scripts/dev guests/dotnet/build.sh`
-# in guests/dotnet/README.md, `WISP_OFFLINE=1` in guests/build.sh -- silently
-# did nothing: the variable was set on THIS process and the build inside the
-# container used its default. The failure mode is the worst kind, a build that
-# succeeds and writes the wrong file, which is how a "flavour" comparison ends
-# up comparing a module against itself.
-#
-# The script's own control variables are excluded: they configure the
-# container, and passing them inward would let a nested `scripts/dev` inherit a
-# name or an image it was not asked for.
+# Forward the caller's `WISP_*` environment into the container, since `docker
+# exec` inherits nothing; the script's own control variables stay out so a
+# nested `scripts/dev` does not inherit a name or an image it was not given.
 EXEC=(docker exec)
 for v in "${!WISP_@}"; do
   case "$v" in

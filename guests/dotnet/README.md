@@ -1,78 +1,43 @@
 # `guests/dotnet`
 
-C# HTTP handler and runtime probes compiled with NativeAOT-LLVM to a core
-WebAssembly module for the host interface.
+The reference C# guest: a Handler written in ordinary C# against
+`guest-sdks/dotnet`, compiled with NativeAOT-LLVM to a core wasm module that
+imports from the `wisp` module and nothing else.
 
 ## Build and check
 
-The commands below use the repository development helper.
-
-```bash
+```sh
 scripts/dev guests/dotnet/build.sh                  # -> out/wisp_guest_dotnet.wasm
-scripts/dev guests/dotnet/check.sh                  # asserts the ABI and invariant 3
-scripts/dev guests/dotnet/check.sh --wasi=trap      # the decisive V1 experiment
-scripts/dev guests/dotnet/check.sh --density 200    # per-instance RSS
+scripts/dev guests/dotnet/check.sh                  # the hostcheck harness
+scripts/dev guests/dotnet/check.sh --wasi=trap      # every non-`wisp` import traps if called
+scripts/dev guests/dotnet/check.sh --density 200    # marginal RSS per instance
 ```
 
-`--wasi=` controls how non-`wisp` imports are bound: `pal` (default) implements
-only the measured runtime-PAL set, `trap` makes every one abort if called, and
-`stub` enumerates which are reachable. Since the PAL shim landed all three
-report zero non-`wisp` imports; they stay as the regression guard for a
-toolchain bump that reintroduces some.
+`build.sh` wraps the SDK's `build-guest.sh`, which compiles the PAL shim,
+publishes the project, and fails the build if any import outside module
+`wisp` survives. `-p:WispMemoryMaxBytes=67108864` declares a 64 MiB memory ceiling.
 
-Set a 64 MiB ceiling (validator rule V3) with
-`-p:WispMemoryMaxBytes=67108864`.
+## Flavours
 
-`WISP_OUT=<basename>` changes the output filename so flavours can coexist under
-`out/` and be compared against each other:
+One project builds focused probe modules; `WISP_OUT` names their output.
+The build script selects the fixture set for this revision.
 
-```bash
-WISP_OUT=wisp_guest_dotnet_compat  scripts/dev guests/dotnet/build.sh -p:WispCompatProbe=true
-WISP_OUT=wisp_guest_dotnet_entropy scripts/dev guests/dotnet/build.sh -p:WispEntropyProbe=true
-```
+| Module                            | Built with                                    | What it is                                                                                |
+| --------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `wisp_guest_dotnet`               |                                               | The Handler.                                                                              |
+| `wisp_guest_dotnet_compat`        | `-p:WispCompatProbe=true`                     | The Handler plus LINQ, source-generated `Regex` and `System.Text.Json`, which widen the BCL surface the PAL has to cover. |
+| `wisp_guest_dotnet_entropy`       | `-p:WispEntropyProbe=true`                    | Reports five sources of randomness, for `check.sh --entropy-clone`.                        |
+| `wisp_guest_dotnet_stock`         | `-p:WispPalObject=`                           | Built without the PAL shim, so it carries the raw `wasi:*` imports; the import gate refuses it by design, and `wisp-engine`'s `dotnet_pal` test reads it. |
 
-## Initialization copies
-
-The clone probe compares values after copying a prepared guest image.
-Stateful generators and values initialized before capture can repeat in each
-copy. This does not imply that later host entropy requests repeat.
-
-```bash
-WISP_OUT=wisp_guest_dotnet_entropy scripts/dev guests/dotnet/build.sh -p:WispEntropyProbe=true
-scripts/dev cargo run --release --bin wisp-dotnet-hostcheck \
-    --manifest-path guests/dotnet/hostcheck/Cargo.toml -- \
-    guests/dotnet/out/wisp_guest_dotnet_entropy.wasm --entropy-clone
-```
-
-
-wasi-sdk 29.0 ships in the `wisp-dev` image alongside .NET and wasm-tools;
-`build.sh` refuses with the rebuild command if it is not there. (It used to
-install it itself, which could not work: the container runs as the invoking uid
-and `/opt` is root-owned, so the untar failed and the build carried on to a
-confusing failure further down.) NuGet packages live in the `wisp-nuget` docker
-volume, so only the first build pays restore.
-
-Enable the optional LINQ, generated Regex and generated JSON probe with:
-
-```bash
-scripts/dev guests/dotnet/build.sh -p:WispCompatProbe=true
-```
+The clone probe compares initialized values after copying a prepared guest
+image. Stateful generators created before capture can repeat across those
+copies; later requests to host entropy remain separate operations.
 
 ## The PAL
 
 The PAL connects runtime operations to the declared host interface. Validation
 and linking determine which host capabilities the module can reach. See the
 SDK source and build inputs for the implementation used by this revision.
-
-## Layout
-
-`src/` contains the fixture entrypoint and probes. The project selects their
-build settings. The hostcheck harness lives in `hostcheck/`.
-
-```bash
-scripts/dev cargo run --release --features validator --bin wisp-validate \
-    --manifest-path guests/dotnet/hostcheck/Cargo.toml
-```
 
 ## Build settings
 
@@ -86,7 +51,7 @@ The [hostcheck harness](hostcheck/) exercises this fixture through host calls.
 Its assertions apply to the specific guest state and resource setup under test;
 they do not establish portability of arbitrary host resources or live stacks.
 
-## Toolchain inputs
+## Layout
 
-The [fixture project](src/) and its imported build files record the compiler
-and linker inputs. Use those inputs when reproducing this revision's build.
+`src/` contains the fixture entrypoint and probes. The project selects their
+build settings. The hostcheck harness lives in `hostcheck/`.

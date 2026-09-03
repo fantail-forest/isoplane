@@ -1,55 +1,43 @@
 # `guests/`
 
-The Rust guest fixtures form a separate Cargo workspace targeting
-`wasm32-unknown-unknown`, with a size-tuned release profile. Internal Rust
-helpers supply async execution, capability bindings and arena allocation.
+The guest modules the host tests drive, and the C# samples. The Rust guests
+are a Cargo workspace of their own, targeting `wasm32-unknown-unknown` under
+a size-tuned release profile; the Rust guest SDK in `../guest-sdks/rust` is a
+member of it. The C# guests reference the SDK in `../guest-sdks/dotnet`.
 
 ## Building
 
-Use [the guest build script](build.sh) for the fixture set at this revision.
-The SDK unit tests use the native target so the executor can be exercised
-without a WebAssembly engine.
-
-```bash
-scripts/dev guests/build.sh          # -> guests/out/*.wasm, sizes, import/export dump
-scripts/dev bash -lc 'cd guests && cargo test -p wisp-guest'
+```sh
+scripts/dev guests/build.sh                       # Rust guests -> guests/out/*.wasm
+scripts/dev guests/build-dotnet.sh                # C# guests   -> guests/*/out/*.wasm
+scripts/dev guests/build.sh --if-stale            # only when a source is newer
+scripts/dev guests/build-dotnet.sh --if-stale
 ```
 
-## Parking and wake-up
+Both scripts take a lock, so concurrent callers serialise. Host tests do not
+run them by hand: a test that needs a module calls the `wisp-fixtures` crate,
+which runs the right script with `--if-stale` and fails naming the missing
+tool (`cargo` with the wasm32 target, `wasm-tools`, `dotnet`, wasi-sdk) rather
+than skipping. `guests/build.sh` writes `guests/out/manifest`, the list of
+modules it built, once every one of them has passed `wasm-tools validate` with
+threads, shared memory, atomics, relaxed SIMD and exceptions disabled.
 
-The executor polls ready tasks and returns to the host when no task is ready.
-A host-future wake starts another guest call on a fresh stack. Async locals
-remain in guest memory; a live native stack is not a checkpoint. The host owns
-I/O resources and their lifetimes while the guest is parked.
+Each Rust module declares one linear memory with a 128 MiB maximum, set by `--max-memory` in `guests/.cargo/config.toml`; Rust's linker
+emits no maximum by default.
 
-The [workspace manifest](Cargo.toml) identifies the internal Rust helper crate.
-Local snapshot support needs defined preservation, rebinding or loss behavior
-for each host resource; returning from a slice does not make resources portable.
+## The Rust guests
 
-## HTTP handlers and capabilities
+| Module | Purpose |
+| --- | --- |
+| `quotes-api` | `Handler` fixture for host futures, response streaming and initialization units. |
+| `misbehaver` | Hostile execution fixtures: loops, sync-over-async, allocation pressure and explicit traps. |
+| `impure-cctor` | Initialization-unit fixture for bounded deferral and retry. |
+| `bigheap` | Dirties a chosen number of pages and parks for local snapshot measurements. |
+| `undeclared-import` | Validator fixtures importing an undeclared field or a foreign module. |
 
-`Handler::new` constructs per-instance state. `Handler::handle` receives a
-request and context and returns an async response. `export_handler!` connects
-that handler to the host exports. `Ctx::spawn` schedules background work that
-can continue after a response while the host drives its futures.
 
-Use [the contract definitions](../crates/wisp-abi/src/imports.rs) for interfaces.
-The module imports determine which declared host capabilities it can request;
-validation and linking enforce those declarations.
+## The C# guests
 
-## Memory and initialization
-
-The Rust arena allocator keeps live object addresses fixed. Snapshot hints
-zero free regions and can reclaim a free tail; they do not shrink WebAssembly
-linear memory.
-
-Rust fixtures enumerate initialization units explicitly. A preparation attempt
-may defer a forbidden unit and retry within the host's bound. Discarding guest
-state does not undo earlier allowed external effects. Captured guest memory
-retains values produced during allowed initialization.
-
-## Fixtures
-
-Each fixture has a focused crate directory. Host tests exercise the relevant
-runtime behavior or validator rejection; the build script selects the modules
-for this revision. Fixture names and source are the maintained inventory.
+| Directory   | What it is                                                                                         |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `dotnet/`   | The reference guest, built in several flavours. See `dotnet/README.md`.                             |
