@@ -523,8 +523,6 @@ impl Activator for FakeActivator {
 
 
 
-
-
 /// Records the address it was told to connect to.
 #[derive(Default)]
 pub struct FakeFetcher {

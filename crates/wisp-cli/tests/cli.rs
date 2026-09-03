@@ -109,8 +109,8 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
             &[
                 ("wisp", "http_fetch"),
                 ("wisp", "http_body_read"),
-                ("wisp", "init_hash_seed"),
                 ("wisp", "clock_now_coarse"),
+                ("wisp", "init_hash_seed"),
             ],
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
@@ -125,8 +125,8 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
     for name in [
         "http_fetch",
         "http_body_read",
-        "init_hash_seed",
         "clock_now_coarse",
+        "init_hash_seed",
     ] {
         assert!(
             out.stdout.contains(name),

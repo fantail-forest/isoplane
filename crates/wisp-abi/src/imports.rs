@@ -227,8 +227,6 @@ pub const IMPORTS: &[ImportDef] = &[
 
     // ---- sockets ----------------------------------------------------------
 
-    // ---- secrets ----------------------------------------------------------
-
 
     // ---- the kill-cooperation ABI ------------------------------------------
     // Both engine-owned rather than in the bindings vtable: the budget state
@@ -279,7 +277,6 @@ mod tests {
             assert!(seen.insert(i.name), "duplicate import {}", i.name);
         }
     }
-
 
     /// The baseline initialization import set excludes these I/O groups.
     #[test]

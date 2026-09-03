@@ -493,10 +493,10 @@ mod tests {
     }
 
     #[test]
-    fn no_delegation_reaches_an_io_or_secret_capability() {
+    fn no_delegation_reaches_an_io_capability() {
         use imports::Group::*;
         let forbidden = [
-            Http, Kv, Blob, Queue, Sql, Durable, Socket, Secret, Service, Response, Ctx,
+            Http, Kv, Blob, Queue, Sql, Durable, Socket, Service, Response, Ctx,
         ];
         for p in delegated() {
             let Some(cap) = p.disposition.capability() else {
@@ -505,8 +505,7 @@ mod tests {
             let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
             assert!(
                 !forbidden.contains(&def.group),
-                "{} delegates to `{cap}` in group {:?}; a WASI import must not be a door to \
-                 I/O or secrets",
+                "{} delegates to `{cap}` in group {:?}; a WASI import must not be a door to I/O",
                 p.full_name(),
                 def.group
             );

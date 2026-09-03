@@ -326,7 +326,6 @@ async fn wait_until_keeps_work_alive_past_the_response() {
     );
 }
 
-
 #[tokio::test]
 async fn completions_signal_the_wake_router() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);

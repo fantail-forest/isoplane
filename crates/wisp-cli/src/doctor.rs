@@ -247,7 +247,7 @@ mod tests {
             &[
                 ("wisp", "http_body_read"),
                 ("wisp", "http_fetch"),
-                ("wisp", "init_hash_seed"),
+                ("wisp", "resp_new"),
             ],
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
@@ -256,7 +256,7 @@ mod tests {
         let names: Vec<_> = r.declared.iter().map(|i| i.name).collect();
         assert_eq!(
             names,
-            vec!["init_hash_seed", "http_fetch", "http_body_read"],
+            vec!["http_fetch", "http_body_read", "resp_new"],
             "declared imports come out in table order"
         );
         assert!(r.has_memory, "the memory export is seen");
