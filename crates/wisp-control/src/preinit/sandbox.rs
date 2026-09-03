@@ -12,7 +12,9 @@ use wisp_abi::imports::{self, ImportDef};
 use wizer::wasmtime as wt;
 
 use super::wasi::{install_pal_adapter, WasiImport};
-use super::{func_type, is_no_unit, InitPal};
+use wisp_abi::config::InitSandbox;
+
+use super::{func_type, is_no_unit};
 
 pub(super) type LinkerFactory = Rc<dyn Fn(&wt::Engine) -> anyhow::Result<wizer::Linker>>;
 
@@ -32,13 +34,13 @@ pub(super) struct Sandbox {
     pub(super) refusals: u32,
     pub(super) logs: Vec<String>,
     pub(super) seed_reads: u32,
-    pal: InitPal,
+    pal: InitSandbox,
     pub(super) pal_calls: BTreeMap<&'static str, u32>,
     entropy_draws: u64,
 }
 
 impl Sandbox {
-    pub(super) fn new(config: Vec<u8>, deferred: BTreeSet<u32>, pal: InitPal) -> Self {
+    pub(super) fn new(config: Vec<u8>, deferred: BTreeSet<u32>, pal: InitSandbox) -> Self {
         Sandbox {
             seed: rand::random(),
             config,
@@ -57,7 +59,7 @@ impl Sandbox {
 
     /// Admits application entropy in every unit; other PAL access keeps its mode/scope policy.
     pub(super) fn serves(&self, name: &str) -> bool {
-        name == "entropy_fill" || (self.current_unit.is_none() && self.pal.serves(name))
+        name == "entropy_fill" || (self.current_unit.is_none() && super::serves(self.pal, name))
     }
 
     pub(super) fn count_pal_call(&mut self, name: &'static str) {

@@ -4,10 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
-use wisp_abi::config::{HandlerLifecycle, Limits};
-use wisp_abi::host::CodeTier;
+use wisp_abi::config::{
+    HandlerLifecycle, InitSandbox, Limits, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     #[serde(default = "default_node_name")]
     pub node: String,
@@ -19,38 +21,27 @@ pub struct NodeConfig {
     pub cells: Vec<CellConfig>,
     #[serde(default)]
     pub apps: Vec<AppConfig>,
-    /// Directory for local node data.
+    /// Directory for local node artifacts.
     #[serde(default = "default_data_dir")]
     pub data_dir: std::path::PathBuf,
     #[serde(default)]
     pub engine: EngineLimits,
 }
 
-/// The engine sizing a real node's cells share.
-///
-/// These are a node-level setting rather than a constant because they are not
-/// free: the pooling allocator reserves `max_instances × (max_memory + guard)`
-/// of virtual address space up front. That costs no physical memory, but the
-/// usable address space is finite and a handful of engines can exhaust it — so
-/// a machine running several nodes, or a test binary building several, has to
-/// be able to say "smaller". Leaving this unconfigurable is how you get a node
-/// that works alone and fails in a fleet.
+/// The engine sizing a real node's cells share. The pooling allocator
+/// reserves `max_instances × (max_memory + guard)` of address space up front,
+/// so several nodes on one machine have to be able to say "smaller".
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EngineLimits {
-    /// Ceiling on concurrently resident instances per engine. Raising it
-    /// raises the address-space reservation; lowering it caps density.
+    /// Ceiling on concurrently resident instances per engine.
     #[serde(default = "default_max_instances")]
     pub max_instances: u32,
     /// Per-instance linear-memory ceiling.
     #[serde(default = "default_max_memory_mib")]
     pub max_memory_mib: u64,
-    /// The reserved guard region, which is what lets Cranelift elide explicit
-    /// bounds checks.
-    ///
-    /// Address space, not memory, and it bounds density rather than guests:
-    /// the pool reserves `max_instances × (max_memory_mib + this)`, so a bigger
-    /// guard buys back fewer configurable instances. See
-    /// `wisp_engine::EngineConfig`.
+    /// The guard region after each memory, which lets Cranelift elide
+    /// bounds checks. Address space, not memory.
     #[serde(default = "default_guard_mib")]
     pub guard_mib: u64,
 }
@@ -84,6 +75,7 @@ fn default_node_name() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProxyListen {
     pub listen: SocketAddr,
     #[serde(default = "default_max_in_flight")]
@@ -102,7 +94,7 @@ fn default_max_queued() -> usize {
 impl Default for ProxyListen {
     fn default() -> Self {
         ProxyListen {
-            listen: "127.0.0.1:8787".parse().unwrap(),
+            listen: SocketAddr::from(([127, 0, 0, 1], DEFAULT_PROXY_PORT)),
             max_in_flight: default_max_in_flight(),
             max_queued: default_max_queued(),
         }
@@ -110,6 +102,7 @@ impl Default for ProxyListen {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AdminListen {
     pub listen: SocketAddr,
 }
@@ -117,7 +110,7 @@ pub struct AdminListen {
 impl Default for AdminListen {
     fn default() -> Self {
         AdminListen {
-            listen: "127.0.0.1:8788".parse().unwrap(),
+            listen: SocketAddr::from(([127, 0, 0, 1], DEFAULT_ADMIN_PORT)),
         }
     }
 }
@@ -129,29 +122,8 @@ pub struct CellConfig {
     pub name: String,
 }
 
-/// Selects additional runtime initialization imports.
-/// Application entropy admission is independent of this selector.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum InitSandbox {
-    /// Uses the default initialization capability policy.
-    #[default]
-    Sealed,
-    /// Permits additional runtime imports when the host records no active initialization unit.
-    #[serde(rename = "runtime-bringup", alias = "runtime-bring-up")]
-    RuntimeBringUp,
-}
-
-impl InitSandbox {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InitSandbox::Sealed => "sealed",
-            InitSandbox::RuntimeBringUp => "runtime-bringup",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub name: String,
     pub tenant: String,
@@ -159,7 +131,7 @@ pub struct AppConfig {
     pub limits: Limits,
     #[serde(default)]
     pub lifecycle: HandlerLifecycle,
-    /// Cell selected for this application's instances.
+    /// Which cell this app's instances run in.
     pub cell: String,
     #[serde(default)]
     pub hosts: Vec<String>,
@@ -167,10 +139,7 @@ pub struct AppConfig {
     pub path_prefix: String,
     #[serde(default)]
     pub versions: Vec<VersionConfig>,
-    /// Non-secret vars the tenant marks `init-visible`, handed to the sealed
-    /// init sandbox as a data blob so config parsing happens once at deploy
-    /// time instead of once per activation. Runtime secrets are declared by
-    /// name elsewhere and are never available here.
+    /// Non-secret vars handed to the init sandbox as a data blob.
     #[serde(default)]
     pub init_visible_vars: BTreeMap<String, String>,
     /// Additional runtime initialization capability policy.
@@ -184,31 +153,14 @@ fn default_path_prefix() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VersionConfig {
     pub id: String,
-    #[serde(default)]
-    pub tier: TierConfig,
-    /// Local module path. Requests fail when no module is installed.
+    /// The module to deploy for this version at startup. `None` is routable
+    /// with nothing to run: a request for it fails naming the missing
+    /// template.
     #[serde(default)]
     pub wasm: Option<std::path::PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum TierConfig {
-    /// Fast compilation tier.
-    #[default]
-    Fast,
-    Optimized,
-}
-
-impl From<TierConfig> for CodeTier {
-    fn from(t: TierConfig) -> Self {
-        match t {
-            TierConfig::Fast => CodeTier::Fast,
-            TierConfig::Optimized => CodeTier::Optimized,
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -232,14 +184,11 @@ impl NodeConfig {
         Ok(toml::from_str(s)?)
     }
 
-    /// Two execution cells and one demonstration application.
+    /// Two cells and one app.
     pub fn dev_default() -> Self {
         NodeConfig {
             node: "wisp-dev".into(),
-            proxy: ProxyListen {
-                listen: "127.0.0.1:8787".parse().unwrap(),
-                ..Default::default()
-            },
+            proxy: ProxyListen::default(),
             admin: AdminListen::default(),
             cells: vec![
                 CellConfig {
@@ -263,7 +212,6 @@ impl NodeConfig {
                 path_prefix: "/".into(),
                 versions: vec![VersionConfig {
                     id: "v1".into(),
-                    tier: TierConfig::Fast,
                     wasm: None,
                 }],
                 init_visible_vars: BTreeMap::new(),
@@ -274,7 +222,7 @@ impl NodeConfig {
         }
     }
 
-    /// The startup gate. Everything here is a refusal, never a warning.
+    /// The startup gate: a refusal, never a warning.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.cells.is_empty() {
             return Err(ConfigError::NoCells);
@@ -298,8 +246,6 @@ impl NodeConfig {
         let configured_cells: std::collections::BTreeSet<&str> =
             self.cells.iter().map(|cell| cell.name.as_str()).collect();
 
-        // Which apps landed on which cell, in declaration order so the error
-        // names the first offending pair rather than an arbitrary one.
         for app in &self.apps {
             if !configured_cells.contains(app.cell.as_str()) {
                 return Err(ConfigError::NoSuchCell {
@@ -442,6 +388,32 @@ versions = [{{ id = "v1" }}]
             c.validate(),
             Err(ConfigError::ZeroInFlight(0)),
             "a node that admits nothing is not a node"
+        );
+    }
+
+    #[test]
+    fn a_version_key_the_daemon_does_not_read_is_refused_at_load() {
+        let err = NodeConfig::from_toml(
+            r#"
+node = "n"
+[[cells]]
+name = "c"
+[[apps]]
+name = "a"
+tenant = "t"
+limits.module_bytes_compressed = 20971520
+limits.instance_memory_max = 134217728
+limits.cpu_ms_per_http_dispatch = 30000
+limits.subrequests_per_dispatch = 200
+limits.pending_futures_per_dispatch = 64
+cell = "c"
+versions = [{ id = "v1", tier = "fast" }]
+"#,
+        )
+        .expect_err("a removed key must not load silently");
+        assert!(
+            err.to_string().contains("tier"),
+            "the refusal must name the key so the operator can delete it: {err}"
         );
     }
 

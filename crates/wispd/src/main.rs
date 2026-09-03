@@ -16,14 +16,9 @@ fn effective_config(args: &Args) -> anyhow::Result<NodeConfig> {
     Ok(cfg)
 }
 
-/// `--precompile`: build the artifact this node's cells will map, then exit.
-///
-/// The engine is built from the *node's* configuration, because a `.cwasm` is
-/// only loadable by an engine whose fingerprint matches the one that produced
-/// it — `(module hash, engine version, µarch)`. Compiling with a
-/// differently configured engine writes a file every cell will refuse, which is
-/// the check working rather than a bug, and is why this lives in `wispd` rather
-/// than in a standalone tool.
+/// Build the artifact this node's cells will map, then exit. The engine is
+/// built from the node's configuration because a `.cwasm` is loadable only by
+/// an engine whose fingerprint matches the one that produced it.
 #[cfg(feature = "real-backends")]
 fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<()> {
     let wasm = std::fs::read(wasm_path)
@@ -47,7 +42,6 @@ fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// Report that this build has no compiler.
 #[cfg(not(feature = "real-backends"))]
 fn precompile(_cfg: &NodeConfig, _wasm_path: &std::path::Path) -> anyhow::Result<()> {
     anyhow::bail!(

@@ -38,6 +38,8 @@ hex = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-proxy = { workspace = true }
 
+# Optional so that a `--no-default-features` build is a fake-cell daemon
+# without wasmtime; on by default.
 wisp-control   = { workspace = true, optional = true }
 wisp-host      = { workspace = true, optional = true }
 wisp-hibernate = { workspace = true, optional = true }
@@ -53,11 +55,6 @@ real-backends = [
 ]
 
 [dev-dependencies]
-tokio = { workspace = true }
-wisp-proxy = { workspace = true }
-async-trait = { workspace = true }
-# The real-cell test assembles its guest from hand-written .wat, for the same
-# reason wisp-engine's tests do: a guest-SDK bug must not be mistakable for a
-# wiring bug.
 wat = { workspace = true }
+tempfile = { workspace = true }
 wisp-fixtures = { workspace = true }

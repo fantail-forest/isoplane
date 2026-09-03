@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use wisp_abi::config::InitSandbox;
 use wisp_abi::imports;
 use wisp_engine::ModuleHash;
 use wizer::wasmtime as wt;
@@ -46,30 +47,17 @@ fn is_no_unit(id: u32) -> bool {
     id == NO_UNIT || id == NO_UNIT_ALT
 }
 
-/// Selects additional runtime initialization imports.
-/// Application entropy admission is independent of this selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum InitPal {
-    /// Uses the default initialization capability policy.
-    #[default]
-    Sealed,
-    /// Permits additional runtime imports when the host records no active initialization unit.
-    RuntimeBringUp,
-}
-
 /// Runtime PAL names considered by the additional capability policy.
 /// Application entropy is admitted separately from this mode and scope list.
 pub const RUNTIME_PAL: &[&str] = &["clock_now_coarse", "entropy_fill"];
 
-impl InitPal {
-    fn serves(self, name: &str) -> bool {
-        self == InitPal::RuntimeBringUp && RUNTIME_PAL.contains(&name)
-    }
+fn serves(pal: InitSandbox, name: &str) -> bool {
+    pal == InitSandbox::RuntimeBringUp && RUNTIME_PAL.contains(&name)
 }
 
 #[derive(Default)]
 pub struct PreInitializer {
-    pal: InitPal,
+    pal: InitSandbox,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +125,7 @@ impl PreInitializer {
         Self::default()
     }
 
-    pub fn with_pal(mut self, pal: InitPal) -> Self {
+    pub fn with_pal(mut self, pal: InitSandbox) -> Self {
         self.pal = pal;
         self
     }

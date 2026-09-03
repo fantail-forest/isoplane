@@ -5,7 +5,7 @@
 //! and needs no adapter. Each acceptance has a rejection beside it.
 
 use wasmtime::{Engine, Linker, Module};
-use wisp_abi::config::Limits;
+use wisp_abi::config::{InitSandbox, Limits};
 use wisp_control::validator::{self, ViolationCode as V};
 use wisp_engine::pal::{self, PalSource};
 
@@ -216,7 +216,7 @@ fn the_stock_dotnet_module_pre_initializes_through_the_adapter() {
     validator::validate(&wasm, Limits::default()).expect("must validate first");
 
     let out = wisp_control::PreInitializer::new()
-        .with_pal(wisp_control::InitPal::RuntimeBringUp)
+        .with_pal(InitSandbox::RuntimeBringUp)
         .run(
             &wasm,
             &wisp_control::PreInitRequest {
@@ -231,7 +231,7 @@ fn the_stock_dotnet_module_pre_initializes_through_the_adapter() {
     );
 
     let again = wisp_control::PreInitializer::new()
-        .with_pal(wisp_control::InitPal::RuntimeBringUp)
+        .with_pal(InitSandbox::RuntimeBringUp)
         .run(
             &wasm,
             &wisp_control::PreInitRequest {
@@ -258,7 +258,7 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
     validator::validate(&wasm, Limits::default()).expect("must validate");
 
     let out = wisp_control::PreInitializer::new()
-        .with_pal(wisp_control::InitPal::RuntimeBringUp)
+        .with_pal(InitSandbox::RuntimeBringUp)
         .run(
             &wasm,
             &wisp_control::PreInitRequest {

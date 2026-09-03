@@ -2,8 +2,9 @@
 //! its first call with the managed runtime already up and no init entry left
 //! to run.
 
+use wisp_abi::config::InitSandbox;
 use wisp_abi::config::Limits;
-use wisp_control::preinit::{InitPal, PreInitRequest, PreInitializer};
+use wisp_control::preinit::{PreInitRequest, PreInitializer};
 use wisp_control::validator;
 
 #[test]
@@ -15,7 +16,7 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
         // The managed runtime comes up outside any init unit, so its clock and
         // entropy reads are answered from the escrowed seed; a tenant static
         // constructor doing the same still traps and defers.
-        .with_pal(InitPal::RuntimeBringUp)
+        .with_pal(InitSandbox::RuntimeBringUp)
         .run(
             &wasm,
             &PreInitRequest {

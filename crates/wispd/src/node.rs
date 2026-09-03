@@ -9,6 +9,4 @@ pub struct DeployStage {
     pub name: String,
     /// Observed elapsed milliseconds.
     pub ms: f64,
-    /// Whether the producer marked this stage as simulated.
-    pub simulated: bool,
 }

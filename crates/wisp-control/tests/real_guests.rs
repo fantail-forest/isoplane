@@ -1,7 +1,7 @@
 //! Validation and initializer replay against prepared guest modules.
 
 
-use wisp_abi::config::{Limits, };
+use wisp_abi::config::{InitSandbox, Limits, };
 use wisp_control::preinit::{PreInitRequest, PreInitializer};
 use wisp_control::validator::{self, ViolationCode as V};
 

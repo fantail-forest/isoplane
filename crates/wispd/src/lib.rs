@@ -1,7 +1,6 @@
 //! Node configuration and measurements.
 
 pub mod admin;
-/// The command line, shared with the documentation generator.
 pub mod cli;
 pub mod config;
 pub mod logs;

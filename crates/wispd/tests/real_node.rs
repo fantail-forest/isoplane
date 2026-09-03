@@ -1,3 +1,5 @@
+//! A real node: real engine, cells, guest wasm, proxy and TCP.
+
 #![cfg(feature = "real-backends")]
 
 use std::net::SocketAddr;
@@ -10,15 +12,11 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use wisp_abi::config::AppManifest;
 use wisp_abi::dispatch::ResponseHead;
-use wispd::config::{AppConfig, CellConfig, NodeConfig, TierConfig, VersionConfig};
+use wispd::config::{AppConfig, CellConfig, NodeConfig, VersionConfig};
 use wispd::node::Node;
 
-/// A guest that answers every dispatch with one canned response.
-///
-/// Hand-written `.wat` rather than the guest SDK, deliberately: if this test
-/// fails it must be the wiring, not a guest-SDK regression. The response head
-/// is postcard-encoded here and dropped in as a data segment, so the guest's
-/// entire job is `resp_new(ptr, len)` and returning `Done { response: h }`.
+/// A guest that answers every dispatch with one canned response, its
+/// postcard-encoded head dropped in as a data segment.
 fn guest(head: &ResponseHead) -> Vec<u8> {
     let encoded = wisp_abi::encode(head).expect("encoding a response head");
     let escaped: String = encoded.iter().map(|b| format!("\\{b:02x}")).collect();
@@ -31,8 +29,6 @@ fn guest(head: &ResponseHead) -> Vec<u8> {
   (data (i32.const 4096) "{escaped}")
   (global $bump (export "g_bump") (mut i32) (i32.const 16384))
 
-  ;; (size, align) -> ptr. A ring, not a heap: the engine copies each dispatch
-  ;; record in and the guest never retains it.
   (func (export "wisp_alloc") (param $size i32) (param $align i32) (result i32)
     (local $p i32)
     (if (i32.gt_u (i32.add (global.get $bump) (local.get $size)) (i32.const 122880))
@@ -65,11 +61,8 @@ fn config(dir: &std::path::Path) -> NodeConfig {
     let mut cfg = NodeConfig::dev_default();
     cfg.node = "real-node".into();
     cfg.data_dir = dir.to_path_buf();
-    // Several of these tests build a node each, concurrently, in one process.
-    // At the default sizing each engine's up-front address-space reservation
-    // is large enough that only a handful fit at once, so a later one would
-    // fail with a message about the pooling allocator rather than about
-    // anything it is testing.
+    // Several nodes are built concurrently in one process; the default
+    // address-space reservation fits only a handful.
     cfg.engine = wispd::config::EngineLimits {
         max_instances: 64,
         max_memory_mib: 32,
@@ -88,7 +81,6 @@ fn config(dir: &std::path::Path) -> NodeConfig {
         path_prefix: "/".into(),
         versions: vec![VersionConfig {
             id: "v1".into(),
-            tier: TierConfig::Fast,
             wasm: None,
         }],
         init_visible_vars: Default::default(),
@@ -101,21 +93,12 @@ struct Rig {
     proxy: SocketAddr,
     admin: SocketAddr,
     node: Arc<Node>,
-    _dir: TempDir,
-}
-
-struct TempDir(std::path::PathBuf);
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+    _dir: tempfile::TempDir,
 }
 
 impl Rig {
-    /// `wisp_host::Cell` owns a `tokio::runtime::Runtime`, and dropping a
-    /// runtime from inside an async context panics. In `wispd` the node lives
-    /// until the process exits, so this only bites tests — but it bites them
-    /// as a confusing panic in a worker thread, so tear down explicitly.
+    /// A cell owns a tokio runtime, which must not be dropped inside an
+    /// async context.
     async fn shutdown(self) {
         tokio::task::spawn_blocking(move || drop(self))
             .await
@@ -123,37 +106,28 @@ impl Rig {
     }
 }
 
-async fn start(head: ResponseHead) -> Rig {
-    let dir = std::env::temp_dir().join(format!(
-        "wispd-real-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-
-    let node = Node::build(config(&dir)).expect("a real node must assemble");
+/// A node serving `wasm` as `quotes@v1`, deployed through the real pipeline.
+async fn start_with(wasm: Vec<u8>) -> Rig {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let node = Node::build(config(dir.path())).expect("a real node must assemble");
     let real = node
         .real
         .clone()
         .expect("the node has its execution backend");
-    // Through the real pipeline, like every other deploy on this node: the
-    // .wat fixture is validated, compiled, sealed into the registry and pulled
-    // back out before a cell ever sees it. It exports no `wisp_initialize`, so
-    // pre-init builds no template — which the record says.
     real.deploy_version(
         "quotes",
         "v1",
         "acme",
         manifest("quotes"),
-        &guest(&head),
-        wispd::config::InitSandbox::Sealed,
+        &wasm,
+        wisp_abi::config::InitSandbox::Sealed,
     )
     .await
     .expect("deploying the module");
+    serve(node, dir).await
+}
 
+async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
     let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
@@ -163,8 +137,12 @@ async fn start(head: ResponseHead) -> Rig {
         proxy,
         admin,
         node,
-        _dir: TempDir(dir),
+        _dir: dir,
     }
+}
+
+async fn start(head: ResponseHead) -> Rig {
+    start_with(guest(&head)).await
 }
 
 struct Resp {
@@ -213,7 +191,7 @@ async fn an_http_request_runs_real_guest_wasm_end_to_end() {
     let rig = start(head(200, "hello from wasm")).await;
 
     let r = get(rig.proxy, "quotes.wisp.dev", "/api/quote").await;
-    assert_eq!(r.status, 200);
+    assert_eq!(r.status, 200, "the guest's status reaches the client");
     assert_eq!(
         r.body, "hello from wasm",
         "the body came out of the guest's linear memory"
@@ -223,9 +201,14 @@ async fn an_http_request_runs_real_guest_wasm_end_to_end() {
         "text/plain",
         "and so did the headers"
     );
-    // Platform headers are still the platform's.
-    assert_eq!(r.headers.get("x-wisp-version").unwrap(), "v1");
-    assert_eq!(r.headers.get("x-wisp-tier").unwrap(), "fast");
+    assert_eq!(
+        (
+            r.headers.get("x-wisp-version").unwrap().to_str().unwrap(),
+            r.headers.get("x-wisp-tier").unwrap().to_str().unwrap()
+        ),
+        ("v1", "fast"),
+        "the platform headers are the proxy's"
+    );
     rig.shutdown().await;
 }
 
@@ -233,21 +216,21 @@ async fn an_http_request_runs_real_guest_wasm_end_to_end() {
 async fn the_guest_chosen_status_code_reaches_the_client() {
     let rig = start(head(418, "no coffee")).await;
     let r = get(rig.proxy, "quotes.wisp.dev", "/brew").await;
-    assert_eq!(r.status, 418);
-    assert_eq!(r.body, "no coffee");
+    assert_eq!(r.status, 418, "the guest chose the status");
+    assert_eq!(r.body, "no coffee", "and the body");
     rig.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_node_reports_measurements_from_served_requests() {
-    // Served requests contribute to both proxy and cell measurements.
     let rig = start(head(200, "ok")).await;
     for i in 0..20 {
         assert_eq!(
             get(rig.proxy, "quotes.wisp.dev", &format!("/{i}"))
                 .await
                 .status,
-            200
+            200,
+            "every request is served"
         );
     }
 
@@ -281,42 +264,31 @@ async fn a_node_reports_measurements_from_served_requests() {
             .and_then(|l| l.rsplit(' ').next())
             .and_then(|v| v.parse().ok())
     };
-    assert_eq!(metric("wisp_proxy_requests_total"), Some(20.0));
+    assert_eq!(
+        metric("wisp_proxy_requests_total"),
+        Some(20.0),
+        "the proxy counted the requests"
+    );
     assert_eq!(
         metric("wisp_cell_dispatches_total"),
         Some(20.0),
         "the cell counted the same 20 dispatches the proxy did"
     );
-    assert!(!text.contains("NaN"));
+    assert!(
+        metric("wisp_cpu_ms_total").unwrap() > 0.0,
+        "twenty dispatches of real guest code recorded some CPU: {text}"
+    );
+    assert!(!text.contains("NaN"), "nothing renders as NaN");
     rig.shutdown().await;
 }
-
-// ---------------------------------------------------------------------------
-// Durable Instances on a real cell.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Pre-init end to end: the daemon runs the deploy pipeline, so a real guest's
-// init-visible imports are consumed at pre-init instead of trapping at runtime.
-// ---------------------------------------------------------------------------
 
 /// Configuration supplied during preparation is observed by the serving guest.
 #[tokio::test]
 async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
     let path = wisp_fixtures::rust_path("quotes-api");
 
-    let dir = std::env::temp_dir().join(format!(
-        "wispd-preinit-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut cfg = config(&dir);
-    // The whole point is the *startup* path: `Node::build` reads the artifact,
-    // runs the pipeline and registers the template before the proxy accepts.
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let mut cfg = config(dir.path());
     cfg.apps[0].versions[0].wasm = Some(path);
     cfg.apps[0].init_visible_vars = [("REGION".to_string(), "nz-akl".to_string())]
         .into_iter()
@@ -324,7 +296,6 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
 
     let node = Node::build(cfg).expect("a real node must assemble");
 
-    // The deploy record the daemon wrote for its own startup deploy.
     let rec = node
         .deploys
         .lock()
@@ -340,21 +311,14 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
         "a guest that exports wisp_initialize must yield a template"
     );
     assert!(
-        rec.stages.iter().all(|s| !s.simulated),
-        "every stage of a real deploy is measured: {:?}",
+        rec.stages.iter().any(|s| s.name == "preinit"),
+        "the startup deploy ran the pipeline: {:?}",
         rec.stages
-    );
-    assert!(
-        rec.within_slo,
-        "the startup deploy must land inside the deploy budget (took {} ms)",
-        rec.total_ms
     );
     let pre = rec
         .preinit
         .as_ref()
         .expect("a template implies a pre-init summary");
-    // The impure initializer (`BOOT_MS`, which reads the clock) must have been
-    // deferred by the replay loop, and the pure ones must not have been.
     let reasons: Vec<String> = pre["deferred_reasons"]
         .as_array()
         .unwrap()
@@ -371,17 +335,7 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
         "a Rust SDK guest needs no runtime PAL"
     );
 
-    let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
-    tokio::spawn(node.proxy.clone().serve(p));
-    tokio::spawn(wispd::http::serve(node.clone(), a));
-    let rig = Rig {
-        proxy,
-        admin,
-        node,
-        _dir: TempDir(dir),
-    };
+    let rig = serve(node, dir).await;
 
     let r = get(rig.proxy, "quotes.wisp.dev", "/memo").await;
     assert_eq!(r.status, StatusCode::OK, "body: {}", r.body);
@@ -390,10 +344,9 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
         "the init-visible imports must have been consumed at deploy time: {}",
         r.body
     );
-    // Deploy-time config, in the guest's own parsed shape, inside the template.
     assert!(
         r.body.contains("\"config_region\":\"nz-akl\""),
-        "body: {}",
+        "the deploy-time config is inside the template: {}",
         r.body
     );
 

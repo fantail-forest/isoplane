@@ -22,6 +22,33 @@ pub struct HandlerConfig {
     pub lifecycle: HandlerLifecycle,
 }
 
+/// Selects additional runtime initialization imports.
+/// Application entropy admission is independent of this selector.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InitSandbox {
+    /// Uses the default initialization capability policy.
+    #[default]
+    Sealed,
+    /// Permits additional runtime imports when the host records no active initialization unit.
+    #[serde(rename = "runtime-bringup", alias = "runtime-bring-up")]
+    RuntimeBringUp,
+}
+
+impl InitSandbox {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InitSandbox::Sealed => "sealed",
+            InitSandbox::RuntimeBringUp => "runtime-bringup",
+        }
+    }
+}
+
+/// The ports a node listens on unless configured otherwise, shared with the
+/// CLI's defaults.
+pub const DEFAULT_PROXY_PORT: u16 = 8787;
+pub const DEFAULT_ADMIN_PORT: u16 = 8788;
+
 /// Per-app: whether an instance may serve more than one dispatch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

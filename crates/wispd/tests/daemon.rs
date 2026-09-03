@@ -2,9 +2,8 @@
 
 #[test]
 fn the_binary_accepts_a_partitioned_config() {
-    let dir = std::env::temp_dir().join(format!("wispd-test-ok-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("good.toml");
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("good.toml");
     std::fs::write(
         &path,
         r#"
@@ -47,8 +46,7 @@ versions = [{ id = "v1" }]
     assert_eq!(
         out.status.code(),
         Some(0),
-        "{}",
+        "a partitioned config is accepted: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }

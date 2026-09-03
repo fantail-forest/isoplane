@@ -6,5 +6,5 @@ pub mod preinit;
 pub mod validator;
 
 #[cfg(feature = "preinit")]
-pub use preinit::{InitPal, PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};
+pub use preinit::{PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};
 pub use validator::{validate, ValidationReport, Violation, ViolationCode};

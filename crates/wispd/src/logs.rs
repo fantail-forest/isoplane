@@ -13,6 +13,7 @@ where
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer);
+    // A second `init` in one process (tests) keeps the first subscriber.
     if json {
         let _ = builder.json().with_current_span(true).try_init();
     } else {

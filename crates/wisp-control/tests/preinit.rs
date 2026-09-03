@@ -1,6 +1,7 @@
 //! Initialization inputs and captured state.
 
-use wisp_control::preinit::{InitPal, PreInitError, PreInitRequest, PreInitializer};
+use wisp_abi::config::InitSandbox;
+use wisp_control::preinit::{PreInitError, PreInitRequest, PreInitializer};
 use wisp_engine::ModuleHash;
 
 /// Four explicit guest units build a seed-derived table, request a clock,
@@ -379,7 +380,7 @@ fn a_template_cannot_re_read_the_hash_seed_at_runtime() {
 fn runtime_bringup_defers_unit_clocks_and_captures_entropy() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
     let out = PreInitializer::new()
-        .with_pal(InitPal::RuntimeBringUp)
+        .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .expect("pre-init must converge");
 
@@ -424,7 +425,7 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
     );
 
     let out = PreInitializer::new()
-        .with_pal(InitPal::RuntimeBringUp)
+        .with_pal(InitSandbox::RuntimeBringUp)
         .run(&wasm, &req(&wasm))
         .expect("a runtime must be able to come up");
     println!("PAL calls: {:?}", out.pal_calls);

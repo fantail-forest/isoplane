@@ -1,13 +1,10 @@
 //! Local preparation and execution cells behind the HTTP dispatcher.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 use wisp_abi::host::RouteTarget;
-
-// The real data plane: engine + cells behind the proxy's `Dispatcher`.
 
 use std::path::Path;
 
@@ -16,13 +13,8 @@ use wisp_abi::host::{Dispatcher, HttpReply};
 use wisp_host::ModuleId;
 use wisp_host::{Cell, EngineActivator};
 
-/// A node's cells, wired to the real engine, and the adapter that puts them
-/// behind [`wisp_abi::host::Dispatcher`].
-///
-/// The adapter lives in `wispd` rather than in `wisp-host` because it is
-/// assembly: it needs to know the node's *placement* (which app runs on which
-/// cell), which is a property of this node's configuration and not of any
-/// cell. `wisp-host` deliberately knows nothing about routes.
+/// The node's cells on one engine, and the placement that puts an app on
+/// one of them.
 pub struct RealCells {
     engine: Arc<wisp_engine::WispEngine>,
     cells: Vec<Arc<Cell>>,
@@ -33,19 +25,13 @@ pub struct RealCells {
     tenants: Arc<RwLock<HashMap<String, String>>>,
 }
 
-/// What a real node needs on disk. All local.
+/// What a real node keeps on disk.
 pub struct RealPaths {
     /// Private local preparation output.
     pub registry: std::path::PathBuf,
-    /// Compiled template artifacts, one `.meta` + `.cwasm` pair per
-    /// `(module hash, engine version, µarch)`.
-    ///
-    /// Separate from `registry` because these are *mapped*, not read: a cell
-    /// loads a template with `Module::deserialize_file`, so the bytes have to
-    /// be a bare `.cwasm` starting at offset 0 of a file this node owns and
-    /// never rewrites. The registry's blobs are enveloped and content-checked
-    /// on every read, which is the right shape for distribution and the wrong
-    /// shape for a mapping.
+    /// Compiled templates, one `.meta` and `.cwasm` pair per
+    /// `(module hash, engine version, micro-architecture)`. Apart from the
+    /// registry because these files are mapped and never rewritten.
     pub artifacts: std::path::PathBuf,
 }
 
@@ -80,26 +66,19 @@ impl Dispatcher for RealCells {
     }
 }
 
-// The admin surface over real cells.
-
 /// Reads measurements from the execution cells.
 pub struct RealNodeAdmin {
     cells: Arc<RealCells>,
-    clock_skew_ms: std::sync::atomic::AtomicU64,
 }
 
 impl RealNodeAdmin {
     /// Retains the execution cells whose measurements are reported.
     pub fn new(cells: Arc<RealCells>) -> Self {
-        RealNodeAdmin {
-            cells,
-            clock_skew_ms: std::sync::atomic::AtomicU64::new(0),
-        }
+        RealNodeAdmin { cells }
     }
 
-    /// Sum the counters across cells, take the max of the quantiles. Returns
-    /// `None` for a node with no cells, which `snapshot` renders as zeroes
-    /// rather than inventing a `Default` the cell never defined.
+    /// Counters summed across cells, quantiles at their maximum, tenants
+    /// merged. `None` for a node with no cells.
     fn merged(&self) -> Option<wisp_host::MetricsSnapshot> {
         let mut acc: Option<wisp_host::MetricsSnapshot> = None;
         for c in self.cells.cells() {
@@ -118,10 +97,14 @@ impl RealNodeAdmin {
                     a.hot += s.hot;
                     a.delta_bytes += s.delta_bytes;
                     a.hibernation_wakes += s.hibernation_wakes;
-                    // Quantiles do not add. Taking the max across cells is the
-                    // conservative reading — a node is as slow as its slowest
-                    // cell, and a tail hidden by averaging is a tail nobody
-                    // fixes.
+                    for (tenant, t) in s.tenants {
+                        let e = a.tenants.entry(tenant).or_default();
+                        e.dispatches += t.dispatches;
+                        e.cpu_ns += t.cpu_ns;
+                        e.traps += t.traps;
+                    }
+                    // Quantiles do not add; a node is as slow as its slowest
+                    // cell.
                     a.activation_p50_us = a.activation_p50_us.max(s.activation_p50_us);
                     a.activation_p99_us = a.activation_p99_us.max(s.activation_p99_us);
                     a.hibernation_wake_p50_us =
@@ -148,9 +131,7 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
         };
         crate::admin::NodeSnapshot {
             dispatches_total: m.dispatches,
-            // Recorded CPU is the thread CPU clock over Hot intervals,
-            // and the cell is the only thing that can measure it.
-            cpu_ms_total: 0.0,
+            cpu_ms_total: m.tenants.values().map(|t| t.cpu_ns).sum::<u64>() as f64 / 1e6,
             activation: crate::admin::Latency {
                 p50_us: m.activation_p50_us,
                 p99_us: m.activation_p99_us,
@@ -164,7 +145,6 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
             instances_hot: m.hot,
             instances_parked: m.parked,
             instances_hibernated: m.hibernated,
-            // The cell reports dirty *pages*; the exposition wants bytes.
             dirty_set_bytes: vec![
                 m.dirty_pages_p50 * wisp_abi::PAGE_SIZE as u64,
                 m.dirty_pages_p99 * wisp_abi::PAGE_SIZE as u64,
@@ -175,7 +155,6 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
             delta_storage_bytes: m.delta_bytes,
             traps_total: m.traps,
             breaker_trips: m.breaker_rejections,
-            // The critical bit: these are measurements, not a demo.
         }
     }
 }

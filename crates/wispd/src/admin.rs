@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 pub trait NodeAdmin: Send + Sync + 'static {
-    /// The metric list, as far as the node can honestly answer it.
+    /// Current node measurements.
     fn snapshot(&self) -> NodeSnapshot;
 }
 
@@ -16,8 +16,7 @@ pub struct Latency {
 }
 
 impl Latency {
-    /// Nearest-rank, over a sample vector. Used by the fake; a real cell
-    /// supplies its own reduction.
+    /// Nearest-rank quantiles over a sample vector.
     pub fn from_samples(mut s: Vec<u64>) -> Self {
         if s.is_empty() {
             return Latency::default();
@@ -35,25 +34,17 @@ impl Latency {
     }
 }
 
-/// Dispatches, CPU-ms, p50/p99 activation and wake, live/parked/hibernated
-/// instance counts, dirty-set size distribution, delta storage bytes, GC time
-/// share, trap rate.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NodeSnapshot {
     pub dispatches_total: u64,
+    /// Recorded CPU: the thread clock over hot intervals, summed over tenants.
     pub cpu_ms_total: f64,
-    /// Pre-reduced rather than sampled because a real cell already keeps these
-    /// and re-deriving them from a sample vector would be strictly less
-    /// accurate than what it can hand over.
     pub activation: Latency,
     pub wake: Latency,
     pub instances_hot: u64,
     pub instances_parked: u64,
     pub instances_hibernated: u64,
-    /// Deltas above a configured threshold trigger advisory telemetry, so this is
-    /// kept as raw samples rather than pre-reduced quantiles: the reduction
-    /// belongs in the exporter, and a test that wants the distribution should
-    /// be able to have it.
+    /// Raw samples; the exporter reduces them.
     pub dirty_set_bytes: Vec<u64>,
     pub delta_storage_bytes: u64,
     pub traps_total: u64,
