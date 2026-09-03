@@ -1,6 +1,8 @@
 //! HTTP proxy routing, admission and request measurements.
 
+mod dispatch;
 pub mod metrics;
+mod request;
 pub mod routes;
 pub mod server;
 pub mod shed;
