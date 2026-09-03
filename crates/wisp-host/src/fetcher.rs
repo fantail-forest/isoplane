@@ -1,9 +1,8 @@
-//! Outbound HTTP through pinned destinations. [`PinnedHttpFetcher`]
-//! connects to the address the egress policy pinned and uses the URL only for
-//! the request line and the `Host` header; nothing here resolves a name, which
-//! is what makes DNS rebinding impossible after the check. There is no TLS
-//! crate in the workspace, so `https://` egress is refused rather than
-//! downgraded.
+//! Outbound HTTP. [`PinnedHttpFetcher`] connects to the address the egress
+//! policy pinned and uses the URL only for the request line and the `Host`
+//! header; nothing here resolves a name, which is what makes DNS rebinding
+//! impossible after the check. There is no TLS crate in the workspace, so
+//! `https://` egress is refused rather than downgraded.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -22,7 +21,8 @@ use wisp_abi::result::{BodyChunk, FetchResponse, FutureError};
 
 use crate::bindings::Fetcher;
 
-/// Responses at or below this size are returned inline rather than through a body handle.
+/// Bodies at or below this size come back inline, which makes the whole
+/// `http_fetch` future Bounded and therefore lossless across hibernation.
 pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
 
 pub struct PinnedHttpFetcher {
