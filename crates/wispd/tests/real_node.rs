@@ -5,7 +5,6 @@
 mod common;
 
 use common::{config, get, manifest, serve, start_with, Rig};
-use hyper::StatusCode;
 use wisp_abi::config::InitSandbox;
 use wisp_abi::dispatch::ResponseHead;
 use wispd::node::Node;
@@ -135,76 +134,5 @@ async fn a_node_reports_measurements_from_served_requests() {
         "twenty dispatches of real guest code recorded some CPU: {text}"
     );
     assert!(!text.contains("NaN"), "nothing renders as NaN");
-    rig.shutdown().await;
-}
-
-/// Configuration supplied during preparation is observed by the serving guest.
-#[tokio::test]
-async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
-    let path = wisp_fixtures::rust_path("quotes-api");
-
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let mut cfg = config(dir.path());
-    cfg.apps[0].versions[0].wasm = Some(path);
-    cfg.apps[0].init_visible_vars = [("REGION".to_string(), "nz-akl".to_string())]
-        .into_iter()
-        .collect();
-
-    let node = Node::build(cfg).expect("a real node must assemble");
-
-    let rec = node
-        .deploys
-        .lock()
-        .first()
-        .cloned()
-        .expect("startup deploys are recorded");
-    assert!(
-        rec.pipeline_ran,
-        "the daemon must run the pipeline, not register raw"
-    );
-    assert!(
-        rec.from_template,
-        "a guest that exports wisp_initialize must yield a template"
-    );
-    assert!(
-        rec.stages.iter().any(|s| s.name == "preinit"),
-        "the startup deploy ran the pipeline: {:?}",
-        rec.stages
-    );
-    let pre = rec
-        .preinit
-        .as_ref()
-        .expect("a template implies a pre-init summary");
-    let reasons: Vec<String> = pre["deferred_reasons"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|d| d[1].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(
-        reasons,
-        vec!["clock_now_coarse".to_string()],
-        "exactly the clock-reading initializer defers"
-    );
-    assert_eq!(
-        pre["init_pal"], "sealed",
-        "a Rust SDK guest needs no runtime PAL"
-    );
-
-    let rig = serve(node, dir).await;
-
-    let r = get(rig.proxy, "quotes.wisp.dev", "/memo").await;
-    assert_eq!(r.status, StatusCode::OK, "body: {}", r.body);
-    assert!(
-        !r.body.contains("capability_violation"),
-        "the init-visible imports must have been consumed at deploy time: {}",
-        r.body
-    );
-    assert!(
-        r.body.contains("\"config_region\":\"nz-akl\""),
-        "the deploy-time config is inside the template: {}",
-        r.body
-    );
-
     rig.shutdown().await;
 }

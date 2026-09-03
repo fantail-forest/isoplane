@@ -1,4 +1,5 @@
-//! Daemon command configuration.
+//! `wispd --check`: config validation from the binary's exit code and
+//! stderr, independent of a running node.
 
 #[test]
 fn the_binary_accepts_a_partitioned_config() {
@@ -7,6 +8,7 @@ fn the_binary_accepts_a_partitioned_config() {
     std::fs::write(
         &path,
         r#"
+deployment = "development"
 node = "n1"
 
 [[cells]]

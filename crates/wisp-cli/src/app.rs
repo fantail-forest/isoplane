@@ -59,6 +59,57 @@ impl CliManifest {
     }
 }
 
+/// Resolve application budgets and an optional memory-only override.
+pub fn resolve_limits(
+    memory_flag: Option<u64>,
+    module: &std::path::Path,
+) -> anyhow::Result<(wisp_abi::config::Limits, String)> {
+    let from_module = module
+        .canonicalize()
+        .ok()
+        .and_then(|module| module.parent().map(std::path::Path::to_path_buf));
+    let mut selected = None;
+    for start in [from_module, std::env::current_dir().ok()]
+        .into_iter()
+        .flatten()
+    {
+        let mut directory = Some(start.as_path());
+        while let Some(path) = directory {
+            if let Some((manifest, source)) = CliManifest::load(path)? {
+                selected = Some(match manifest.limits {
+                    Some(limits) => (limits, format!("limits in {}", source.display())),
+                    None => (
+                        wisp_abi::config::Limits::default(),
+                        format!(
+                            "{} declares no `limits`; using the default",
+                            source.display()
+                        ),
+                    ),
+                });
+                break;
+            }
+            directory = path.parent();
+        }
+        if selected.is_some() {
+            break;
+        }
+    }
+    let (mut limits, source) = selected.unwrap_or_else(|| {
+        (
+            wisp_abi::config::Limits::default(),
+            "no wisp.toml found; using the default".into(),
+        )
+    });
+    if let Some(memory) = memory_flag {
+        limits.instance_memory_max = memory;
+        return Ok((
+            limits,
+            format!("--guest-memory-bytes; other limits from {source}"),
+        ));
+    }
+    Ok((limits, source))
+}
+
 /// `v-<epoch-secs>-<hash8>`: sortable, and anchored to the module bytes.
 pub fn derive_version(module: Option<&[u8]>, now_s: u64) -> String {
     let h = match module {

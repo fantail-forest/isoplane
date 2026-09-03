@@ -1,9 +1,10 @@
 //! The `wisp` command.
 
+
 use std::io::IsTerminal as _;
-use std::path::PathBuf;
 
 use clap::Parser;
+use wisp_cli::app::resolve_limits;
 use wisp_cli::cli::{Cli, Cmd};
 use wisp_cli::render::Style;
 use wisp_cli::{doctor, render};
@@ -43,7 +44,13 @@ async fn run() -> anyhow::Result<()> {
                 let violations: &[()] = &[];
                 println!(
                     "{}",
-                    doctor_json(&report, limits, &limits_from, rejected, violations)?
+                    render::doctor::doctor_json(
+                        &report,
+                        limits,
+                        &limits_from,
+                        rejected,
+                        violations
+                    )?
                 );
             } else {
                 print!(
@@ -91,118 +98,7 @@ async fn run() -> anyhow::Result<()> {
                 std::process::exit(2);
             }
         }
+
     }
     Ok(())
-}
-
-fn resolve_limits(
-    memory_flag: Option<u64>,
-    module: &std::path::Path,
-) -> anyhow::Result<(wisp_abi::config::Limits, String)> {
-    let from_module = module
-        .canonicalize()
-        .ok()
-        .and_then(|module| module.parent().map(std::path::Path::to_path_buf));
-    let mut selected = None;
-    for start in [from_module, std::env::current_dir().ok()]
-        .into_iter()
-        .flatten()
-    {
-        let mut directory = Some(start.as_path());
-        while let Some(path) = directory {
-            if let Some((manifest, source)) = wisp_cli::app::CliManifest::load(path)? {
-                selected = Some(match manifest.limits {
-                    Some(limits) => (limits, format!("limits in {}", source.display())),
-                    None => (
-                        wisp_abi::config::Limits::default(),
-                        format!(
-                            "{} declares no `limits`; using the default",
-                            source.display()
-                        ),
-                    ),
-                });
-                break;
-            }
-            directory = path.parent();
-        }
-        if selected.is_some() {
-            break;
-        }
-    }
-    let (mut limits, source) = selected.unwrap_or_else(|| {
-        (
-            wisp_abi::config::Limits::default(),
-            "no wisp.toml found; using the default".into(),
-        )
-    });
-    if let Some(memory) = memory_flag {
-        limits.instance_memory_max = memory;
-        return Ok((
-            limits,
-            format!("--guest-memory-bytes; other limits from {source}"),
-        ));
-    }
-    Ok((limits, source))
-}
-
-/// A violation as JSON, behind a trait so `--json` has the same shape with
-/// and without the validator linked in.
-trait AsViolationJson {
-    fn as_json(&self) -> serde_json::Value;
-}
-
-impl AsViolationJson for () {
-    fn as_json(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
-}
-
-#[cfg(feature = "control")]
-impl AsViolationJson for wisp_control::Violation {
-    fn as_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "code": format!("{:?}", self.code),
-            "subject": self.subject,
-            "detail": self.detail,
-        })
-    }
-}
-
-fn doctor_json<V: AsViolationJson>(
-    r: &doctor::Report,
-    limits: wisp_abi::config::Limits,
-    limits_from: &str,
-    rejected: bool,
-    violations: &[V],
-) -> anyhow::Result<String> {
-    Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "bytes": r.bytes,
-        "blake3": r.blake3,
-        "limits": limits,
-    "guest_memory_bytes": limits.instance_memory_max,
-        "limits_from": limits_from,
-        "validator": cfg!(feature = "control"),
-        "violations": violations.iter().map(AsViolationJson::as_json).collect::<Vec<_>>(),
-        "rejected": rejected,
-        "capabilities": r.declared.iter().map(|i| serde_json::json!({
-            "name": i.name,
-            "group": doctor::group_name(i.group),
-            "kind": doctor::kind_label(i.kind),
-            "sensitive": i.sensitive,
-            "init_visible": i.init_visible,
-        })).collect::<Vec<_>>(),
-        "undeclared": r.undeclared.iter().map(|u| format!("{}.{}", u.module, u.field)).collect::<Vec<_>>(),
-        "pal": r.pal.iter().map(|p| serde_json::json!({
-            "name": p.full_name(),
-            "delegates_to": p.disposition.capability(),
-            "traps": !p.disposition.is_delegated(),
-        })).collect::<Vec<_>>(),
-        "missing_required_exports": r.missing_required_exports,
-        "missing_optional_exports": r.missing_optional_exports,
-    }))?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 }
