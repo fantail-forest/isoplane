@@ -449,3 +449,127 @@ pub const CLOCK_QUANTUM_NS: i64 = 1_000_000;
 
 /// Ceiling on one `get-random-bytes` draw.
 pub const MAX_ENTROPY_BYTES: u64 = crate::imports::MAX_OUT_BUFFER_BYTES as u64;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::imports;
+
+    #[test]
+    fn every_pal_entry_has_a_distinct_name() {
+        let mut seen = std::collections::BTreeSet::new();
+        for p in PAL_IMPORTS {
+            assert!(
+                seen.insert((p.module, p.func)),
+                "duplicate PAL entry {}",
+                p.full_name()
+            );
+        }
+    }
+
+    #[test]
+    fn every_pal_entry_is_a_wasi_name() {
+        for p in PAL_IMPORTS {
+            assert!(is_wasi(p.module), "{} is not a wasi: module", p.full_name());
+            assert_ne!(
+                p.module,
+                imports::HOST_MODULE,
+                "a wisp import does not belong in the PAL table"
+            );
+        }
+    }
+
+    #[test]
+    fn every_delegation_targets_a_real_platform_capability() {
+        for p in delegated() {
+            if let Some(cap) = p.disposition.capability() {
+                assert!(
+                    imports::lookup(cap).is_some(),
+                    "{} delegates to `{cap}`, which is not in IMPORTS",
+                    p.full_name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_delegation_reaches_an_io_or_secret_capability() {
+        use imports::Group::*;
+        let forbidden = [
+            Http, Kv, Blob, Queue, Sql, Durable, Socket, Secret, Service, Response, Ctx,
+        ];
+        for p in delegated() {
+            let Some(cap) = p.disposition.capability() else {
+                continue;
+            };
+            let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
+            assert!(
+                !forbidden.contains(&def.group),
+                "{} delegates to `{cap}` in group {:?}; a WASI import must not be a door to \
+                 I/O or secrets",
+                p.full_name(),
+                def.group
+            );
+            assert!(
+                !def.sensitive,
+                "{} delegates to `{cap}`, which is marked sensitive",
+                p.full_name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_adapter_draws_on_exactly_two_platform_capabilities() {
+        assert_eq!(
+            delegation_targets(),
+            vec!["clock_now_coarse", "entropy_fill"],
+            "a third delegation target is a new channel into the sandbox"
+        );
+    }
+
+    #[test]
+    fn the_denied_interfaces_are_trap_on_call_without_exception() {
+        for p in PAL_IMPORTS {
+            let denied = p.module.starts_with("wasi:filesystem/")
+                || p.module.starts_with("wasi:sockets/")
+                || p.module == IO_STREAMS
+                || p.module == IO_POLL
+                || p.module == CLI_STDIN
+                || p.module == CLI_STDOUT
+                || p.module == CLI_STDERR
+                || p.module == WALL_CLOCK;
+            if denied {
+                assert_eq!(
+                    p.disposition,
+                    Disposition::TrapOnCall,
+                    "{} is in a denied interface and must trap on call",
+                    p.full_name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn signatures_are_declared_exactly_for_delegated_entries() {
+        for p in PAL_IMPORTS {
+            assert_eq!(
+                p.sig.is_some(),
+                p.disposition.is_delegated(),
+                "{}: a delegated entry runs a body against its signature and a trap stub has \
+                 none to check",
+                p.full_name()
+            );
+        }
+    }
+
+    #[test]
+    fn every_pal_entry_states_why() {
+        for p in PAL_IMPORTS {
+            assert!(
+                p.why.len() > 20,
+                "{} has no usable rationale",
+                p.full_name()
+            );
+        }
+    }
+}

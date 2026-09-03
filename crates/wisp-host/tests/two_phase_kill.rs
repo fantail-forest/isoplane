@@ -1,10 +1,8 @@
 //! The two-phase kill through a real cell with a real wasm guest,
 //! `guests/misbehaver`: `/cooperative` reads `budget_remaining_ns` and is
 //! cleanly killed, `/spin` never checks and is hard-killed at the deadline,
-//! and `/gc_pin` pins the unsafe-to-trap bit and is hard-killed anyway. A
-//! missing guest fails the test naming the build step rather than skipping.
+//! and `/gc_pin` pins the unsafe-to-trap bit and is hard-killed anyway.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,18 +31,7 @@ impl Resolver for NoDns {
 }
 
 fn misbehaver_wasm() -> Vec<u8> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/wisp-host has a grandparent")
-        .to_path_buf();
-    let p = root.join("guests/out/misbehaver.wasm");
-    std::fs::read(&p).unwrap_or_else(|e| {
-        panic!(
-            "cannot read {}: {e}. Build the guests first: scripts/dev guests/build.sh",
-            p.display()
-        )
-    })
+    wisp_fixtures::rust("misbehaver")
 }
 
 fn services() -> Arc<Services> {

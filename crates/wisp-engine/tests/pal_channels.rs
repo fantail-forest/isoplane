@@ -20,27 +20,22 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wasmtime::{Engine, Instance, Linker, Module, Store};
-use wisp_control::pal::{self, PalSource, CLOCK_QUANTUM_NS};
+use wisp_abi::pal::CLOCK_QUANTUM_NS;
+use wisp_engine::pal::{self, PalSource};
 
 // ---------------------------------------------------------------------------
 // the host side: exactly the two `wisp:platform` capabilities, no more
 // ---------------------------------------------------------------------------
 
-/// What `wisp-engine` hands a guest, reduced to the two capabilities the
-/// adapter is allowed to draw on (`StoreState::clock_ms` and the CSPRNG
-/// behind `entropy_fill`).
-///
-/// `slice_ms` is *frozen*: the engine samples the clock once per dispatch
-/// slice and every `clock_now_coarse` in that slice reads the same field
-/// (`wisp-engine/src/linker.rs`). Advancing it is what a wake or a
-/// future-returning import does, and the tests below do it explicitly so
-/// "frozen" is distinguishable from "stopped".
+/// Controlled clock and distinct byte sequences for exercising the PAL
+/// adapters. Tests advance the clock explicitly and count source calls;
+/// this fixture does not model production entropy generation.
 struct Host {
     slice_ms: u64,
-    /// Every reach into the CSPRNG. If the adapter ever cached a draw this
+    /// Every reach into the source. If the adapter ever cached a draw this
     /// stops tracking the guest's call count, which is the whole hazard.
     entropy_calls: usize,
-    csprng: u64,
+    source_state: u64,
 }
 
 impl Host {
@@ -48,7 +43,7 @@ impl Host {
         Host {
             slice_ms,
             entropy_calls: 0,
-            csprng: 0x243F_6A88_85A3_08D3,
+            source_state: 0x243F_6A88_85A3_08D3,
         }
     }
 }
@@ -60,11 +55,11 @@ impl PalSource for Host {
     fn entropy_fill(&mut self, out: &mut [u8]) -> wasmtime::Result<()> {
         self.entropy_calls += 1;
         for b in out.iter_mut() {
-            self.csprng = self
-                .csprng
+            self.source_state = self
+                .source_state
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
-            *b = (self.csprng >> 33) as u8;
+            *b = (self.source_state >> 33) as u8;
         }
         Ok(())
     }
@@ -121,7 +116,8 @@ fn engine() -> Engine {
 }
 
 fn module(e: &Engine, wat: &str) -> Module {
-    Module::new(e, wat).expect("fixture must assemble")
+    let wasm = wat::parse_str(wat).expect("fixture must assemble");
+    Module::new(e, wasm).expect("fixture must compile")
 }
 
 /// Instantiate `GUEST` against **the real adapter** (`pal::link`).
@@ -342,17 +338,16 @@ fn negative_control_a_quantized_but_unfrozen_clock_fails_too() {
 }
 
 // ---------------------------------------------------------------------------
-// rule 2 — entropy delegation without cached answers.
+// rule 2 — forwarding entropy requests to the supplied source.
 // ---------------------------------------------------------------------------
 
-/// Checks that the adapter delegates draws without reusing cached answers.
-/// Guest values or PRNG state can still be retained in captured template memory.
-fn entropy_adds_no_channel(draws: &[Vec<u8>], source_calls: usize) -> Result<(), String> {
+/// The deterministic fixture supplies a distinct response to every call.
+/// Observing those responses checks adapter forwarding, not the randomness
+/// or uniqueness of values captured in guest memory.
+fn adapter_preserves_fixture_draws(draws: &[Vec<u8>], source_calls: usize) -> Result<(), String> {
     if source_calls != draws.len() {
         return Err(format!(
-            "{} guest draws reached the host CSPRNG {source_calls} time(s) — the contract is a \
-             draw PER CALL; anything else is a cached stream, and a cached stream in a \
-             template is shared by every clone of it",
+            "{} guest draws reached the fixture source {source_calls} time(s); expected one PER CALL",
             draws.len()
         ));
     }
@@ -360,8 +355,7 @@ fn entropy_adds_no_channel(draws: &[Vec<u8>], source_calls: usize) -> Result<(),
         for j in (i + 1)..draws.len() {
             if draws[i] == draws[j] {
                 return Err(format!(
-                    "draws {i} and {j} are byte-identical ({:02x?}) — two calls returning the \
-                     same bytes is exactly the clone-uniqueness hazard that must stay absent",
+                    "draws {i} and {j} repeat ({:02x?}) despite distinct fixture responses",
                     &draws[i][..draws[i].len().min(8)]
                 ));
             }
@@ -371,7 +365,7 @@ fn entropy_adds_no_channel(draws: &[Vec<u8>], source_calls: usize) -> Result<(),
 }
 
 #[test]
-fn the_delegated_csprng_adds_no_channel() {
+fn each_entropy_request_reaches_the_source() {
     let (mut store, instance) = with_adapter(1_000);
     let draw = instance
         .get_typed_func::<(i64, i32), ()>(&mut store, "draw")
@@ -387,12 +381,8 @@ fn the_delegated_csprng_adds_no_channel() {
         draws.push(read(&mut store, &instance, ptr as usize, len as usize));
     }
     let calls = store.data().entropy_calls;
-    println!("{} draws, {calls} CSPRNG reaches", draws.len());
-    entropy_adds_no_channel(&draws, calls).expect("the adapter must add no entropy channel");
-
-    // The bytes arrived through the guest's own allocator, so every
-    // pointer handed back is inside guest memory and distinct per draw.
-    assert!(draws.iter().all(|d| d.len() == 32));
+    adapter_preserves_fixture_draws(&draws, calls)
+        .expect("the adapter must preserve each fixture response");
 }
 
 /// A zero-length draw is legal and must not allocate or trap — `arc4random_buf`
@@ -409,22 +399,22 @@ fn a_zero_length_draw_is_the_empty_list() {
     assert_eq!(read_list(&mut store, &instance, 64), (0, 0));
 }
 
-/// A cached adapter answer must fail the same predicate.
+/// A deliberately cached fixture draw must fail the same predicate.
 #[test]
-fn negative_control_a_cached_csprng_fails_the_no_new_channels_check() {
+fn negative_control_cached_or_repeated_fixture_draws_fail() {
     let cached = vec![vec![0xab; 32], vec![0xab; 32], vec![0xab; 32]];
-    let verdict = entropy_adds_no_channel(&cached, 1);
+    let verdict = adapter_preserves_fixture_draws(&cached, 1);
     println!("negative control verdict: {verdict:?}");
     assert!(
         verdict.is_err(),
-        "a cached RNG stream MUST fail; that is the whole rule"
+        "a cached draw must fail the forwarding check"
     );
     assert!(verdict.unwrap_err().contains("PER CALL"));
 
     // And the subtler variant: the host is reached per call, but the source
-    // returns the same bytes anyway (a template-baked seed).
+    // repeats one fixture response instead of forwarding distinct responses.
     let repeated = vec![vec![7u8; 16], vec![7u8; 16]];
-    assert!(entropy_adds_no_channel(&repeated, 2).is_err());
+    assert!(adapter_preserves_fixture_draws(&repeated, 2).is_err());
 }
 
 // ---------------------------------------------------------------------------

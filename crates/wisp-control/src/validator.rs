@@ -36,7 +36,7 @@ use wasmparser::{
 use wisp_abi::config::Limits;
 use wisp_abi::imports::{self, ImportDef, ImportKind, Sig, Ty};
 
-use crate::pal::{self, Disposition, PalDef};
+use wisp_abi::pal::{self, Disposition, PalDef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViolationCode {

@@ -772,15 +772,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-queue"
-version = "0.3.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "803d13fb3b09d88be9f4dbc29062c66b19bf7170867ceb746d2a8689bf6c7a26"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4182,6 +4173,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
@@ -4191,6 +4183,7 @@ dependencies = [
  "wat",
  "wisp-abi",
  "wisp-engine",
+ "wisp-fixtures",
  "wizer",
  "zstd",
 ]
@@ -4212,7 +4205,12 @@ dependencies = [
  "wasmtime 48.0.0",
  "wat",
  "wisp-abi",
+ "wisp-fixtures",
 ]
+
+[[package]]
+name = "wisp-fixtures"
+version = "0.1.0"
 
 [[package]]
 name = "wisp-hibernate"
@@ -4243,7 +4241,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "crossbeam-queue",
  "futures",
  "http-body-util",
  "hyper",
@@ -4261,6 +4258,7 @@ dependencies = [
  "tracing-subscriber",
  "wisp-abi",
  "wisp-engine",
+ "wisp-fixtures",
  "wisp-hibernate",
 ]
 
@@ -4316,6 +4314,7 @@ dependencies = [
  "wisp-abi",
  "wisp-control",
  "wisp-engine",
+ "wisp-fixtures",
  "wisp-hibernate",
  "wisp-host",
  "wisp-proxy",

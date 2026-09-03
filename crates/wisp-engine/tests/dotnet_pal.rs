@@ -5,43 +5,9 @@
 
 use wisp_engine::{EngineConfig, WispEngine};
 
-fn stock_module() -> (String, Vec<u8>) {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/wisp-engine has a grandparent")
-        .to_path_buf();
-    // The script is a no-op when the fixture is fresh and takes a lock,
-    // because cargo runs test binaries concurrently.
-    let script = root.join("guests/build-dotnet.sh");
-    let out = std::process::Command::new("bash")
-        .arg(&script)
-        .arg("--if-stale")
-        .current_dir(&root)
-        .output()
-        .unwrap_or_else(|e| panic!("could not run {}: {e}", script.display()));
-    assert!(
-        out.status.success(),
-        "{} failed, so the stock .NET fixture could not be built:\n{}{}",
-        script.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-
-    let p = root.join("guests/dotnet/out/wisp_guest_dotnet_stock.wasm");
-    let bytes = std::fs::read(&p).unwrap_or_else(|e| {
-        panic!(
-            "{} is still missing after a successful build: {e}; that is a bug in \
-             guests/build-dotnet.sh",
-            p.display()
-        )
-    });
-    (p.display().to_string(), bytes)
-}
-
 #[test]
 fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
-    let (path, wasm) = stock_module();
+    let wasm = wisp_fixtures::dotnet("wisp_guest_dotnet_stock");
 
     let e = WispEngine::new(EngineConfig {
         max_instances: 8,
@@ -53,8 +19,8 @@ fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
 
     let t = e.load_template(&wasm).unwrap_or_else(|err| {
         panic!(
-            "the stock .NET module at {path} did not load: {err:#}; if this is an undeclared \
-             import, the PAL whitelist is the wrong size"
+            "the stock .NET module did not load: {err:#}; if this is an undeclared import, \
+             the PAL whitelist is the wrong size"
         )
     });
 

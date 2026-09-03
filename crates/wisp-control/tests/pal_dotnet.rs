@@ -34,67 +34,16 @@
 //!   scripts/dev guests/dotnet/build.sh -p:WispPalObject= -p:WispCompatProbe=true
 //! ```
 //!
-//! (`build.sh` exits 1 on its own import gate — that gate is the guest-side
-//! rule and this test is about the platform-side one — but the module is
-//! written out before it fires.) They are built on demand by the helper below
-//! rather than committed, and a missing one is a hard failure rather than a
-//! skip: skipping would trade a real assertion for a green test that asserted
-//! nothing.
+//! `build.sh` exits 1 on its own import gate, which is the guest-side rule,
+//! but writes the module out before the gate fires.
 
 use wasmtime::{Engine, Linker, Module};
 use wisp_abi::config::Limits;
-use wisp_control::pal::{self, PalSource};
 use wisp_control::validator::{self, ViolationCode as V};
-
-/// Build the C# guest fixtures if they are missing or stale, then hand back the
-/// bytes.
-///
-/// These modules used to be committed, and this function used to be a `panic!`
-/// telling you the checkout was broken. The argument for committing them was
-/// that building them needs a .NET SDK most checkouts lack — which describes
-/// checkouts that cannot run this test either. The SDK is a prerequisite of the
-/// test, not of the build, and `scripts/dev` already has it installed. The cost
-/// of the old rule was six tracked binaries that went stale the moment anyone
-/// edited the shared PAL, with tests still asserting against them.
-///
-/// So the fixture is built the way a Rust test dependency is: on demand, by the
-/// thing that needs it. `--if-stale` makes the common case a 39 ms no-op, and
-/// the script takes an flock because cargo runs test binaries concurrently.
-fn dotnet_fixture(name: &str) -> Vec<u8> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/<crate> has a grandparent")
-        .to_path_buf();
-    let script = root.join("guests/build-dotnet.sh");
-    let out = std::process::Command::new("bash")
-        .arg(&script)
-        .arg("--if-stale")
-        .current_dir(&root)
-        .output()
-        .unwrap_or_else(|e| panic!("could not run {}: {e}", script.display()));
-    assert!(
-        out.status.success(),
-        "{} failed, so the C# fixtures could not be built:\n{}{}",
-        script.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-
-    let p = root.join("guests/dotnet/out").join(format!("{name}.wasm"));
-    std::fs::read(&p).unwrap_or_else(|e| {
-        panic!(
-            "{} is still missing after a successful build: {e}\n\n\
-             Either the build script no longer produces this fixture, or its \n\
-             name changed. Both are bugs in guests/build-dotnet.sh rather than \n\
-             in your checkout.",
-            p.display()
-        )
-    })
-}
+use wisp_engine::pal::{self, PalSource};
 
 fn artifact(name: &str) -> Vec<u8> {
-    dotnet_fixture(name)
+    wisp_fixtures::dotnet(name)
 }
 
 /// A host with the two capabilities the adapter draws on. Nothing is called

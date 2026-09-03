@@ -875,7 +875,7 @@ fn install_pal_adapter(
     wasi: &[WasiImport],
     state: &Arc<Mutex<Sandbox>>,
 ) -> anyhow::Result<()> {
-    use crate::pal::{self, Disposition};
+    use wisp_abi::pal::{self, Disposition};
 
     for imp in wasi {
         let cvt = |t: &wasmparser::ValType| match t {

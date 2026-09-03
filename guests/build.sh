@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Build every guest to guests/out/*.wasm.
+# Build every Rust guest to guests/out/*.wasm and list them in guests/out/manifest.
 #
-# Usage: scripts/dev guests/build.sh
+#   scripts/dev guests/build.sh            # build all
+#   scripts/dev guests/build.sh --if-stale # only when a source is newer than an output
 #
 # Guests are built for size: the release profile in guests/Cargo.toml is
 # opt-level="z" + lto + panic="abort" + strip.
@@ -9,6 +10,44 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$ROOT/out"
+MANIFEST="$OUT/manifest"
+IF_STALE=0
+[ "${1:-}" = "--if-stale" ] && IF_STALE=1
+
+# Tests call this concurrently from several test binaries; the second caller
+# blocks, then finds everything fresh.
+LOCK="$ROOT/.build.lock"
+if [ -z "${WISP_BUILD_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
+  export WISP_BUILD_LOCKED=1
+  exec flock "$LOCK" "$0" "$@"
+fi
+
+# The guests depend on the Rust SDK and the contract crate by path, so a
+# change to either is a change to every module.
+newest_source() {
+  find "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/wisp-abi" \
+       \( -name out -o -name target -o -name dotnet \) -prune -o \
+       -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \
+                  -o -name 'config.toml' -o -name 'build.sh' \) \
+       -printf '%T@\n' 2>/dev/null | sort -rn | head -1
+}
+
+is_fresh() {
+  [ -f "$MANIFEST" ] || return 1
+  local src; src=$(newest_source); : "${src:=0}"
+  local g f t
+  while read -r g; do
+    f="$OUT/$g.wasm"
+    [ -f "$f" ] || return 1
+    t=$(stat -c %Y "$f")
+    awk -v a="$t" -v b="$src" 'BEGIN { exit !(a >= b) }' || return 1
+  done < "$MANIFEST"
+}
+
+if [ "$IF_STALE" = 1 ] && is_fresh; then
+  echo "==> $OUT is up to date"
+  exit 0
+fi
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 # Separate guest build outputs avoid locking the parent host build directory.
@@ -120,10 +159,8 @@ echo
 echo "==> V1 (capability surface) is checked by the validator, not by this script"
 # Import names and signatures are checked by the host validator tests.
 
-echo
-echo "==> wrote $(ls -1 "$OUT"/*.wasm | wc -l) modules to $OUT"
-
 if [ "${#v2_failed[@]}" -ne 0 ]; then
+  rm -f "$MANIFEST"
   echo >&2
   echo "BUILD FAILED -- the modules are on disk and at least one is not a legal" >&2
   echo "WISP guest, so nothing here is measuring the platform tenants get:" >&2
@@ -132,3 +169,9 @@ if [ "${#v2_failed[@]}" -ne 0 ]; then
   done
   exit 1
 fi
+
+# The manifest is what tests enumerate, so it is written only once every
+# module in it has been built and verified.
+printf '%s\n' "${GUESTS[@]}" foreign-module > "$MANIFEST"
+echo
+echo "==> wrote $(wc -l < "$MANIFEST") modules to $OUT"

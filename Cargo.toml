@@ -9,6 +9,7 @@ members = [
     "crates/wisp-proxy",
     "crates/wispd",
     "crates/wisp-cli",
+    "crates/wisp-fixtures",
 ]
 exclude = ["crates/spike", "guests"]
 
@@ -27,6 +28,7 @@ wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
 wispd          = { path = "crates/wispd" }
 wisp-cli       = { path = "crates/wisp-cli" }
+wisp-fixtures  = { path = "crates/wisp-fixtures" }
 
 anyhow      = "1"
 thiserror   = "2"

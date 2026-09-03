@@ -303,19 +303,7 @@ async fn a_node_reports_measurements_from_served_requests() {
 /// Configuration supplied during preparation is observed by the serving guest.
 #[tokio::test]
 async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime() {
-    // `guests/out/*.wasm` is gitignored build output, so on a fresh clone this
-    // fixture is absent and everything below is skipped. `cargo test` has no
-    // way to report "did not run" — a skipped test is a green test, and a green
-    // test that proved nothing reads exactly like one that proved something —
-    // so the message below says what was not proven rather than announcing a
-    // skip as if it were a result.
-    let Some(path) = quotes_api_path() else {
-        eprintln!(
-            "NOT PROVEN: guests/out/quotes-api.wasm is absent, so this test asserted nothing \
-             about pre-init. Build it with `scripts/dev guests/build.sh`."
-        );
-        return;
-    };
+    let path = wisp_fixtures::rust_path("quotes-api");
 
     let dir = std::env::temp_dir().join(format!(
         "wispd-preinit-{}-{}",
@@ -410,10 +398,4 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     );
 
     rig.shutdown().await;
-}
-
-fn quotes_api_path() -> Option<std::path::PathBuf> {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests/out/quotes-api.wasm");
-    path.exists().then_some(path)
 }

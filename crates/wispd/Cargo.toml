@@ -60,3 +60,4 @@ async-trait = { workspace = true }
 # reason wisp-engine's tests do: a guest-SDK bug must not be mistakable for a
 # wiring bug.
 wat = { workspace = true }
+wisp-fixtures = { workspace = true }

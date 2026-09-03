@@ -522,24 +522,6 @@ fn engine_profile_has_the_dangerous_proposals_off() {
     assert!(f.sign_extension());
 }
 
-/// Checks the compiled undeclared-import guest when that optional fixture is present.
-#[test]
-fn real_undeclared_import_guest_if_present() {
-    let candidates = [
-        "../../guests/undeclared-import/undeclared-import.wasm",
-        "../../guests/target/wasm32-unknown-unknown/release/undeclared_import.wasm",
-        "../../guests/undeclared-import/target/wasm32-unknown-unknown/release/undeclared_import.wasm",
-    ];
-    let Some(path) = candidates.iter().find(|p| std::path::Path::new(p).exists()) else {
-        eprintln!("skipped: guests/undeclared-import/ not built yet");
-        return;
-    };
-    let wasm = std::fs::read(path).unwrap();
-    println!("fixture `{path}` ({} bytes):", wasm.len());
-    let got = codes(&wasm, Limits::default());
-    assert!(got.contains(&V::V1UndeclaredImport), "got {got:?}");
-}
-
 // ---------------------------------------------------------------------------
 // the WASI PAL adapter, and rule V1 around it
 // ---------------------------------------------------------------------------

@@ -38,3 +38,4 @@ blake3 = { workspace = true }
 # engine bug.
 wat = { workspace = true }
 tempfile = { workspace = true }
+wisp-fixtures = { workspace = true }

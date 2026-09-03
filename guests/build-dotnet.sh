@@ -52,15 +52,6 @@ if [ -z "${WISP_BUILD_DOTNET_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; t
   exec flock "$LOCK" "$0" "$@"
 fi
 
-if ! command -v dotnet >/dev/null 2>&1; then
-  {
-    echo "FATAL: no .NET SDK on PATH, so the C# guest fixtures cannot be built."
-    echo "They are no longer committed. Run this in the sandbox, where the SDK lives:"
-    echo "    scripts/dev guests/build-dotnet.sh"
-  } >&2
-  exit 1
-fi
-
 # name | output path | guest dir | extra dotnet publish args | expect-gate-fail
 #
 # `_stock` means "without the PAL shim object", i.e. the raw NativeAOT-LLVM
@@ -97,9 +88,27 @@ is_stale() {
 SRC_T=$(newest_source)
 : "${SRC_T:=0}"
 
+if [ "$IF_STALE" = 1 ]; then
+  fresh=1
+  for spec in "${FIXTURES[@]}"; do
+    IFS='|' read -r name out dir extra gate <<<"$spec"
+    if is_stale "$out" "$SRC_T"; then fresh=0; break; fi
+  done
+  if [ "$fresh" = 1 ]; then
+    echo "==> C# fixtures are up to date"
+    exit 0
+  fi
+fi
 
-
-
+# Checked only once a build is needed: fresh fixtures need no SDK.
+if ! command -v dotnet >/dev/null 2>&1; then
+  {
+    echo "FATAL: no .NET SDK on PATH, so the C# guest fixtures cannot be built."
+    echo "Run this in the sandbox, where the SDK lives:"
+    echo "    scripts/dev guests/build-dotnet.sh"
+  } >&2
+  exit 1
+fi
 
 rc=0
 built=0 skipped=0

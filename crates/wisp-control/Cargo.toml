@@ -33,6 +33,8 @@ rayon = { workspace = true, optional = true }
 [dev-dependencies]
 wat = { workspace = true }
 tokio = { workspace = true }
+tempfile = { workspace = true }
+wisp-fixtures = { workspace = true }
 
 [features]
 # Consumers that only validate modules can disable initialization support.

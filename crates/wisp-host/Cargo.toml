@@ -30,3 +30,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+wisp-fixtures = { workspace = true }

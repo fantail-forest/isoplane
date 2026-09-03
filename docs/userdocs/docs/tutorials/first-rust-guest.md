@@ -21,7 +21,8 @@ This walkthrough adds a small HTTP handler with an asynchronous host timer.
 ```
 
 `guests/` is a separate Cargo workspace targeting `wasm32-unknown-unknown`.
-The build script copies completed modules into `guests/out/`.
+The build script copies completed modules into `guests/out/` and records the
+built modules in `guests/out/manifest`.
 
 ## 2. Create a crate
 
