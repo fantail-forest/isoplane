@@ -31,8 +31,10 @@ use crate::sharded_map::ShardedMap;
 
 mod hibernate;
 mod queue;
+mod wake;
 use crate::{InstanceId, ModuleId};
 use queue::{DispatchJob, Job, WakeItem, WorkQueue};
+use wake::CellWake;
 
 #[derive(Debug, Clone)]
 pub struct CellConfig {
@@ -202,33 +204,6 @@ struct ActiveRequest {
     slices: u32,
     acquired: &'static str,
     budget: CpuBudget,
-}
-
-/// Routes completions onto the exec pool. Weak references, so a discarded
-/// instance's late completion is a no-op rather than a resurrection.
-struct CellWake {
-    queue: Arc<WorkQueue>,
-    index: Arc<Mutex<HashMap<InstanceId, Weak<Slot>>>>,
-    metrics: Arc<Metrics>,
-}
-
-impl WakeSink for CellWake {
-    fn signal(&self, owner: InstanceId) {
-        let slot = self.index.lock().get(&owner).and_then(Weak::upgrade);
-        let Some(s) = slot else {
-            // The result is already Ready in the future table; for a live
-            // instance this is a request that is never answered.
-            self.metrics.wakes_dropped.fetch_add(1, Ordering::Relaxed);
-            tracing::debug!(
-                instance = %owner,
-                "a completion arrived for an instance that is no longer resident; the wake \
-                 is dropped and any dispatch awaiting it will not be answered"
-            );
-            return;
-        };
-        self.metrics.wakes.fetch_add(1, Ordering::Relaxed);
-        self.queue.push_wake(WakeItem { slot: s });
-    }
 }
 
 pub struct Cell {
