@@ -65,6 +65,7 @@ tempfile    = "3"
 # here so guest preparation can bound that pool; must resolve to the same rayon
 # both wasmtime versions use, or `install` would scope a pool nobody consults.
 rayon       = "1"
+wizer       = "10"
 base64      = "0.22"
 sha1        = "0.10"
 

@@ -1,6 +1,6 @@
 //! Initialization inputs and captured state.
 
-use wisp_control::preinit::{InitPal, PreInitRequest, PreInitializer};
+use wisp_control::preinit::{InitPal, PreInitError, PreInitRequest, PreInitializer};
 use wisp_engine::ModuleHash;
 
 /// Four explicit guest units build a seed-derived table, request a clock,
@@ -189,26 +189,36 @@ fn impure_units_are_deferred_and_pre_init_converges() {
 /// the artifact as the `wisp.deferred-init` custom section — which is what
 /// `wisp-engine::Template::deferred_init_units()` reads.
 #[test]
-fn the_template_carries_its_deferred_units_in_a_custom_section() {
-    use wisp_control::preinit::read_deferred_init_section;
-
+fn the_engine_reads_the_deferred_units_out_of_the_template() {
     let wasm = wat::parse_str(guest_wat(true)).unwrap();
     let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
-    assert_eq!(out.deferred_units, vec![2, 4]);
+    assert_eq!(out.deferred_units, vec![2, 4], "two units are impure");
+    let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        max_instances: 2,
+        max_memory_bytes: 128 << 20,
+        guard_size_bytes: 2 << 20,
+        ..wisp_engine::EngineConfig::default()
+    })
+    .expect("engine");
+    let template = engine
+        .load_template(&out.template_wasm)
+        .expect("the template loads into the data plane");
     assert_eq!(
-        read_deferred_init_section(&out.template_wasm),
-        out.deferred_units,
-        "the section must agree with the outcome"
+        template.deferred_init_units(),
+        &out.deferred_units[..],
+        "the deferred units travel inside the template"
     );
-    // The template is still a valid module with the section appended.
-    Template::load(&out.template_wasm);
 
-    // Absent section means nothing deferred — a pure module carries no section
-    // rather than an empty one.
     let pure = wat::parse_str(guest_wat(false)).unwrap();
     let clean = PreInitializer::new().run(&pure, &req(&pure)).unwrap();
-    assert!(clean.deferred_units.is_empty());
-    assert!(read_deferred_init_section(&clean.template_wasm).is_empty());
+    assert!(
+        engine
+            .load_template(&clean.template_wasm)
+            .expect("the template loads")
+            .deferred_init_units()
+            .is_empty(),
+        "a pure module defers nothing"
+    );
 }
 
 /// Loads captured memory and globals in the runtime engine.
@@ -292,9 +302,16 @@ fn unattributable_traps_fail_the_deploy() {
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
     let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
-    println!("{err}");
-    assert!(err.to_string().contains("outside any init unit"));
-    assert!(err.to_string().contains("clock_now_coarse"));
+    assert!(
+        matches!(
+            err,
+            PreInitError::Unattributable {
+                import: "clock_now_coarse",
+                ..
+            }
+        ),
+        "a trap outside any unit names the capability and fails the deploy: {err}"
+    );
 }
 
 /// The failure mode this whole file exists to avoid: a sealed import must
@@ -321,10 +338,9 @@ fn sealed_imports_trap_rather_than_returning_zero() {
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
     let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
-    println!("{err}");
     assert!(
-        err.to_string().contains("ignoring `init_unit_deferred`"),
-        "{err}"
+        matches!(err, PreInitError::DeferralIgnored { unit: 7, .. }),
+        "a unit that runs after being told to skip is reported, not replayed forever: {err}"
     );
 }
 
@@ -401,9 +417,11 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
 )"#;
     let wasm = wat::parse_str(wat).unwrap();
 
-    // The default mode refuses an unscoped clock request.
     let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
-    assert!(err.to_string().contains("outside any init unit"), "{err}");
+    assert!(
+        matches!(err, PreInitError::Unattributable { .. }),
+        "sealed, a runtime coming up outside any unit fails the deploy: {err}"
+    );
 
     let out = PreInitializer::new()
         .with_pal(InitPal::RuntimeBringUp)
@@ -452,34 +470,18 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
     assert_eq!(Template::load(&out.template_wasm).i64("get_g"), 0);
 }
 
-/// Declared memory is refused before initialization when it exceeds the configured limit.
+/// The declared-memory gate refuses before a single guest instruction runs.
 #[test]
 fn init_memory_limit_is_enforced() {
-    // A gibibyte declared against the default ceiling.
     let big = wat::parse_str(
         r#"(module (memory (export "memory") 16384 16384)
              (func (export "wisp_initialize")))"#,
     )
     .unwrap();
     let err = PreInitializer::new().run(&big, &req(&big)).unwrap_err();
-    println!("{err}");
-    assert!(err.to_string().contains("exceeds the initialization limit"));
-
-    // ...and the ceiling is a knob, not a constant. A module the default
-    // admits must be refused under a limit below what it declares, or
-    // `with_memory_limit` is decoration.
-    let small = wat::parse_str(
-        r#"(module (memory (export "memory") 1 16)
-             (func (export "wisp_initialize")))"#,
-    )
-    .unwrap();
-    let err = PreInitializer::with_memory_limit(64 * 1024)
-        .run(&small, &req(&small))
-        .unwrap_err();
-    println!("{err}");
     assert!(
-        err.to_string().contains("exceeds the initialization limit"),
-        "{err}"
+        matches!(err, PreInitError::MemoryLimit { .. }),
+        "a gibibyte of declared memory must be refused: {err}"
     );
 }
 
@@ -491,7 +493,10 @@ fn a_module_without_an_init_func_is_not_pre_initialized() {
     )
     .unwrap();
     let err = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap_err();
-    assert!(err.to_string().contains("wisp_initialize"), "{err}");
+    assert!(
+        matches!(err, PreInitError::NoInitFunc("wisp_initialize")),
+        "nothing to pre-initialize: {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------

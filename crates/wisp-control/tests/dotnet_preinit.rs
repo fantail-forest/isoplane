@@ -53,7 +53,7 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
 
 fn engine() -> wasmtime::Engine {
     let mut cfg = wasmtime::Config::new();
-    wisp_control::pipeline::engine_profile(&mut cfg);
+    wisp_control::aot::engine_profile(&mut cfg);
     wasmtime::Engine::new(&cfg).expect("engine")
 }
 

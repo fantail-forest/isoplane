@@ -1,31 +1,8 @@
-//! Deploy-time validation.
-//!
-//! This is where invariant 4 stops being an aspiration and becomes a checked
-//! property: the import list is a complete, auditable capability manifest,
-//! checked at deploy time. The four rules below are the whole of it, and the
-//! first one is the one that matters — an undeclared import is an attempted
-//! capability, and there is deliberately no dynamic-linking escape hatch to
-//! work around it.
-//!
-//! Note the ordering: because the validator refuses threads/atomics (V2) and
-//! undeclared imports (V1), *blocking is not expressible inside the sandbox at
-//! all*. It is not policed at runtime; it is absent from the language the
-//! guest is allowed to speak.
-//!
-//! ## How V2 is implemented, and why that way
-//!
-//! With the threads feature off, `memory.atomic.wait*`/`notify` *fail bytecode
-//! validation*. So V2 is not a
-//! bespoke opcode scanner — a scanner would be a second, weaker copy of the
-//! engine's own rules and would drift from it. Instead [`ENGINE_FEATURES`]
-//! declares the profile once, and V2 is "run `wasmparser`'s validator with
-//! exactly the feature set the engine is configured with, and report what it
-//! says." The validator and the engine then cannot disagree, because they are
-//! reading the same constant.
-//!
-//! `wisp-engine` is expected to mirror [`ENGINE_FEATURES`] into its
-//! `wasmtime::Config`. The check exists in both places, but only one of them
-//! gets to define it.
+//! Deploy-time validation. The import list is the capability manifest (V1),
+//! and with threads and atomics outside the engine profile (V2) blocking is
+//! not expressible inside the sandbox at all. V2 is `wasmparser`'s validator
+//! run with [`ENGINE_FEATURES`], the one declaration of the profile the
+//! engine is configured from, so the two cannot disagree.
 
 use std::collections::BTreeSet;
 
@@ -34,7 +11,7 @@ use wasmparser::{
     WasmFeatures,
 };
 use wisp_abi::config::Limits;
-use wisp_abi::imports::{self, ImportDef, ImportKind, Sig, Ty};
+use wisp_abi::imports::{self, ImportDef, Sig, Ty};
 
 use wisp_abi::pal::{self, Disposition, PalDef};
 
@@ -66,10 +43,7 @@ pub enum ViolationCode {
 pub struct Violation {
     pub code: ViolationCode,
     pub detail: String,
-    /// The offending import or export, when the rule is about one. `wisp
-    /// doctor` prints this next to the capability manifest, so a tenant sees
-    /// *which* symbol lost them the deploy rather than having to read it out
-    /// of prose.
+    /// The offending import or export, when the rule is about one.
     pub subject: Option<String>,
 }
 
@@ -97,8 +71,6 @@ impl std::fmt::Display for Violation {
 }
 
 impl Violation {
-    /// The three fields `wisp doctor` renders: a stable code, the symbol at
-    /// fault, and the human sentence.
     pub fn parts(&self) -> (ViolationCode, Option<&str>, &str) {
         (self.code, self.subject.as_deref(), &self.detail)
     }
@@ -106,56 +78,38 @@ impl Violation {
 
 #[derive(Debug, Clone, Default)]
 pub struct ValidationReport {
-    /// The complete capability surface this module requested — the auditable
-    /// manifest of invariant 4, and what a tenant sees in the deploy output.
+    /// Every capability the module requested, in table order, including
+    /// those reached through a delegated WASI import.
     pub capabilities: Vec<&'static str>,
     pub memory_pages_max: Option<u32>,
     pub function_count: u32,
     pub module_bytes: u64,
-    /// Declared initial size of the single linear memory, in 64 KiB pages.
-    /// This is the size the template image starts at.
+    /// Declared initial size of the linear memory, in 64 KiB pages.
     pub memory_pages_initial: Option<u32>,
-    /// Total custom-section bytes (V4 heuristic input, and the thing that
-    /// makes a 50 MB "module" that is 49 MB of debug info visible).
     pub custom_section_bytes: u64,
-    /// Which optional exports are present: `wisp_gc_hint` gates the
-    /// pre-hibernation compaction hint, `wisp_initialize` gates pre-init.
     pub optional_exports: Vec<&'static str>,
-    /// WASI PAL adapter: every `wasi:*` import the deploy-time
-    /// composition will satisfy for this module, in table order.
-    ///
-    /// This is kept **separate** from `capabilities` on purpose. The
-    /// capability a delegated import resolves to is added to `capabilities`
-    /// — a module that reaches the CSPRNG through `wasi:random` holds the
-    /// `entropy_fill` capability and the manifest must say so — but the fact
-    /// that it arrived through a WASI door is itself audit-relevant, and a
-    /// report that merged the two would lose it.
+    /// Every `wasi:*` import the PAL adapter composes for this module, in
+    /// table order. Separate from `capabilities` so the door a capability
+    /// arrived through stays visible.
     pub pal: Vec<&'static PalDef>,
 }
 
 impl ValidationReport {
-    /// Does this module opt in to pre-initialization? A module without
-    /// `wisp_initialize` is deployable — it simply has an empty template.
     pub fn has_initialize(&self) -> bool {
         self.optional_exports
             .contains(&imports::exports::INITIALIZE)
     }
 
-    /// The tenant-facing capability manifest. This is deliberately rendered
-    /// as a list of *powers granted*, not a list of symbols: invariant 4 says
-    /// the import list IS the capability manifest, so it should read like one
-    /// in the deploy output too.
+    /// The capability manifest as a tenant reads it: powers granted by
+    /// group, what was not requested, and what arrived through the PAL.
     pub fn manifest(&self) -> String {
-        use std::fmt::Write as _;
-        let mut s = String::new();
-        let _ = writeln!(
-            s,
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!(
             "capability manifest ({} imports declared):",
             self.capabilities.len()
-        );
+        ));
         let mut groups: Vec<(&'static str, Vec<&'static ImportDef>)> = Vec::new();
-        for name in &self.capabilities {
-            let def = imports::lookup(name).expect("capabilities come from the table");
+        for def in self.capabilities.iter().filter_map(|n| imports::lookup(n)) {
             let g = group_label(def);
             match groups.iter_mut().find(|(l, _)| *l == g) {
                 Some((_, v)) => v.push(def),
@@ -164,23 +118,18 @@ impl ValidationReport {
         }
         for (label, defs) in &groups {
             let names: Vec<&str> = defs.iter().map(|d| d.name).collect();
-            let _ = writeln!(s, "  {label:<14} {}", names.join(", "));
+            lines.push(format!("  {label:<14} {}", names.join(", ")));
         }
-        // The absences are the interesting half of a capability manifest.
         let denied: Vec<&str> = imports::IMPORTS
             .iter()
             .filter(|d| !self.capabilities.contains(&d.name))
             .map(|d| d.name)
             .collect();
-        let _ = writeln!(
-            s,
+        lines.push(format!(
             "  {:<14} {} imports NOT requested and therefore unreachable",
             "denied",
             denied.len()
-        );
-        // A delegated WASI import must appear here as what it delegates
-        // to. The capability is already counted above; this block is what
-        // stops it from having arrived *silently*.
+        ));
         if !self.pal.is_empty() {
             let delegated: Vec<&&PalDef> = self
                 .pal
@@ -188,18 +137,17 @@ impl ValidationReport {
                 .filter(|p| p.disposition.is_delegated())
                 .collect();
             let trapped = self.pal.len() - delegated.len();
-            let _ = writeln!(
-                s,
+            lines.push(format!(
                 "  {:<14} {} wasi:* imports composed at deploy (PAL adapter):",
                 "wasi-pal",
                 self.pal.len()
-            );
+            ));
             for p in &delegated {
                 let to = match p.disposition.capability() {
                     Some(cap) => format!("delegates to `{cap}`"),
                     None => "answers empty; no such capability exists".to_string(),
                 };
-                let _ = writeln!(s, "  {:<14}   {} -> {to}", "", p.full_name());
+                lines.push(format!("  {:<14}   {} -> {to}", "", p.full_name()));
             }
             let mut ifaces: Vec<&str> = self
                 .pal
@@ -209,25 +157,23 @@ impl ValidationReport {
                 .collect();
             ifaces.sort_unstable();
             ifaces.dedup();
-            let _ = writeln!(
-                s,
+            lines.push(format!(
                 "  {:<14}   {trapped} trap-on-call across {} interface(s): {}",
                 "",
                 ifaces.len(),
                 ifaces.join(", ")
-            );
+            ));
         }
         if let Some(max) = self.memory_pages_max {
-            let _ = writeln!(
-                s,
+            lines.push(format!(
                 "  {:<14} 1 linear memory, {} .. {} pages ({} MiB max)",
                 "memory",
                 self.memory_pages_initial.unwrap_or(0),
                 max,
                 (max as u64 * 65_536) >> 20
-            );
+            ));
         }
-        s
+        lines.join("\n") + "\n"
     }
 }
 
@@ -244,12 +190,8 @@ fn group_label(d: &ImportDef) -> &'static str {
     }
 }
 
-/// The engine profile: **one** declaration of which WebAssembly proposals the
-/// platform speaks, consumed by V2 here and mirrored into the engine's
-/// `wasmtime::Config` — defense in depth: same rule, two places, one
-/// definition.
-///
-/// Every subtraction below matters:
+/// The WebAssembly proposals the platform speaks, enforced here as V2 and
+/// configured into the engine from this one definition.
 ///
 /// * `threads` / `shared_everything_threads` — V2. No threads means no shared
 ///   memory, no atomics, and therefore **no counting thread**: the measurement
@@ -262,10 +204,8 @@ fn group_label(d: &ImportDef) -> &'static str {
 ///   suspension. Engine-suspended stacks are exactly the thing invariant 3
 ///   exists to forbid, so the proposal that reintroduces them is off at the
 ///   bytecode level.
-/// * `tail_call` — tail-calls-to-imports would be a trick outside the declared
-///   world. Conservative reading: the proposal is off. If a real .NET
-///   NativeAOT-LLVM module needs it, this is the one line to revisit — and
-///   the V1 allowlist still covers the "outside the world" half.
+/// * `tail_call` — off as a conservative reading; a tail call to an import
+///   is still covered by V1.
 /// * `multi_memory` / `memory64` — exactly one linear memory, 32-bit. V3 says
 ///   the same thing structurally; both are checked.
 /// * `gc` / `gc_types` — the guest ships its own GC inside linear memory, so
@@ -275,8 +215,8 @@ fn group_label(d: &ImportDef) -> &'static str {
 ///   removes `externref`, which is the right answer for a different reason: no
 ///   host pointers ever enter guest memory, and every host resource in this
 ///   platform is an opaque `u32` handle instead.
-/// * `component_model` — the documented PoC deviation: the same world,
-///   lowered to a flat core-wasm ABI under module `wisp`.
+/// * `component_model` — the world is lowered to a flat core-wasm ABI under
+///   module `wisp`.
 pub const ENGINE_FEATURES: WasmFeatures = {
     let f = WasmFeatures::WASM2
         .union(WasmFeatures::EXTENDED_CONST)
@@ -305,8 +245,8 @@ pub const ENGINE_FEATURES: WasmFeatures = {
     )
 };
 
-/// Rejects on ANY violation; a module is deployable only if all four rules
-/// hold. Runs inside a resource-capped, network-less sandbox.
+/// Every violation, not the first: a tenant learns everything wrong with an
+/// artifact in one round trip.
 pub fn validate(
     wasm: &[u8],
     budgets: Limits,
@@ -317,21 +257,12 @@ pub fn validate(
         ..Default::default()
     };
 
-    // --- structural pass: V1 (shape), V3, V4 ------------------------------
-    // Done with the streaming parser rather than the validator so that a
-    // module which fails V2 still produces a complete, useful report: a
-    // tenant should learn everything wrong with an artifact in one round
-    // trip, not one violation per deploy attempt.
-    // A component is not a core module, and the difference is visible in the
-    // 8-byte header — worth checking before the parser, so the rejection can
-    // say *why* rather than "unexpected section": component types must match
-    // the declared world, and the PoC's world is lowered to core wasm.
+    // The header says component or module, and the rejection can say which.
     if is_component(wasm) {
         return Err(vec![Violation::new(
             ViolationCode::V1UndeclaredImport,
-            "artifact is a WebAssembly *component*; this platform build lowers \
-             wisp:platform@1 to a flat core-wasm ABI under module `wisp` (documented \
-             deviation) and links no component imports",
+            "artifact is a WebAssembly component; this platform lowers wisp:platform@1 to a \
+             flat core-wasm ABI under module `wisp` and links no component imports",
         )]);
     }
 
@@ -350,12 +281,10 @@ pub fn validate(
         }
     }
 
-    // --- V2: the engine's own bytecode validation, with our feature set ---
+    // The structural scan runs first so a module that fails V2 still gets a
+    // complete report; a second parse with every feature on tells "uses a
+    // proposal the profile turns off" from "malformed".
     if let Err(e) = Validator::new_with_features(ENGINE_FEATURES).validate_all(wasm) {
-        // Distinguishing "uses a proposal we turned off" from "is simply
-        // malformed" costs one more parse and makes the rejection message
-        // actionable, which matters because V2 rejections are the ones a
-        // tenant is most likely to think are our bug.
         let malformed = Validator::new_with_features(WasmFeatures::all())
             .validate_all(wasm)
             .is_err();
@@ -377,15 +306,11 @@ pub fn validate(
     }
 }
 
-/// Core module header is `\0asm 01 00 00 00`; a component's layer field
-/// (bytes 6..8) is `01 00`.
+/// A component's layer field (bytes 6..8) is `01 00`; a core module's is
+/// `00 00`.
 fn is_component(wasm: &[u8]) -> bool {
     wasm.len() >= 8 && wasm[0..4] == [0x00, 0x61, 0x73, 0x6d] && wasm[6..8] == [0x01, 0x00]
 }
-
-// ---------------------------------------------------------------------------
-// structural scan
-// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 struct Scan {
@@ -394,9 +319,8 @@ struct Scan {
     imports: Vec<(String, String, TypeRef)>,
     memories: Vec<MemoryType>,
     exports: Vec<(String, ExternalKind, u32)>,
-    /// Type index of every function, in function-index-space order: imported
-    /// functions first, then defined ones. Needed to type-check *exports*,
-    /// which are named by index.
+    /// Type index of every function in index-space order, imports first, so
+    /// an export named by index can be type-checked.
     func_type_of: Vec<u32>,
     imported_funcs: u32,
     defined_funcs: u32,
@@ -409,8 +333,6 @@ struct Scan {
     type_count: u32,
     element_segments: u32,
     data_segments: u32,
-    /// A core module that contains nested modules/components is not the
-    /// artifact shape the PoC accepts: a deploy uploads one module.
     nested: bool,
 }
 
@@ -420,10 +342,7 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
         match payload? {
             Payload::Version { encoding, .. } => {
                 if encoding != wasmparser::Encoding::Module {
-                    anyhow::bail!(
-                        "expected a core wasm module; got a component. The PoC lowers \
-                         wisp:platform@1 to a flat core-wasm ABI (documented deviation)"
-                    );
+                    anyhow::bail!("expected a core wasm module; got a component");
                 }
             }
             Payload::TypeSection(r) => {
@@ -440,11 +359,9 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                 }
             }
             Payload::ImportSection(r) => {
-                // `into_imports` flattens the compact-import encodings. Those
-                // encodings are outside the engine profile (V2 rejects them),
-                // but the *scan* still has to read them, or a module could
-                // hide an undeclared import from V1 behind an encoding V2
-                // would have caught second.
+                // The compact-import encodings are outside the profile, and
+                // still scanned: an undeclared import must not hide behind an
+                // encoding V2 rejects second.
                 for imp in r.into_imports() {
                     let imp = imp?;
                     if let Some(t) = func_type_index(&imp.ty) {
@@ -452,7 +369,6 @@ fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                         s.func_type_of.push(t);
                     }
                     if let TypeRef::Memory(m) = imp.ty {
-                        // An imported memory is still a memory for V3.
                         s.memories.push(m);
                     }
                     s.imports
@@ -516,15 +432,19 @@ fn func_type_index(t: &TypeRef) -> Option<u32> {
     }
 }
 
-/// Exports are functions or a memory; `FuncExact` is the compact-import
-/// spelling of the same thing.
+fn kind_label(ty: &TypeRef) -> &'static str {
+    match ty {
+        TypeRef::Memory(_) => "a memory",
+        TypeRef::Table(_) => "a table",
+        TypeRef::Global(_) => "a global",
+        TypeRef::Tag(_) => "a tag",
+        TypeRef::Func(_) | TypeRef::FuncExact(_) => "a function",
+    }
+}
+
 fn kind_matches(got: ExternalKind, want: ExternalKind) -> bool {
     got == want || (want == ExternalKind::Func && got == ExternalKind::FuncExact)
 }
-
-// ---------------------------------------------------------------------------
-// V1 — the capability surface
-// ---------------------------------------------------------------------------
 
 fn ty_matches(want: Ty, got: ValType) -> bool {
     matches!(
@@ -599,19 +519,11 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
 
     let mut seen: BTreeSet<&'static str> = BTreeSet::new();
     for (module, field, ty) in &s.imports {
-        // The whole of invariant 4 lives in this branch: there is no fallback
-        // path, no "unknown module is linked dynamically", no host-provided
-        // libc. If it is not in the table, the module does not deploy.
         let Some(def) = (if module == imports::HOST_MODULE {
             imports::lookup(field)
         } else {
             None
         }) else {
-            // WASI PAL adapter. A `wasi:*` import that is in the
-            // enumerated whitelist is satisfied at deploy by composition —
-            // delegated to a `wisp:platform` capability under the
-            // no-new-channels rule, or given a trap-on-call stub. Anything
-            // else, `wasi:*` or not, is still an attempted capability.
             match pal::lookup(module, field) {
                 Some(p) => {
                     check_pal_import(p, ty, s, &mut seen, report, v);
@@ -649,11 +561,6 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
                     if sig_matches(&def.sig, params, results) {
                         seen.insert(def.name);
                     } else {
-                        // Name-only checking would be theatre: a module could
-                        // declare `kv_get` with a different shape and reach
-                        // host memory through a type confusion. The engine
-                        // would refuse to link it, but the *deploy* is where
-                        // a tenant is entitled to hear about it.
                         v.push(Violation::about(
                             ViolationCode::V1SignatureMismatch,
                             def.name,
@@ -677,34 +584,22 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
             None => v.push(Violation::new(
                 ViolationCode::V1SignatureMismatch,
                 format!(
-                    "import `wisp`.`{}` is declared as {} — every entry in the world is a \
-                     function; importing a memory/table/global from the host would put a \
-                     host object inside the sandbox: no host pointers ever enter \
-                     guest memory",
+                    "import `wisp`.`{}` is declared as {}; every entry in the world is a \
+                     function, and a host memory, table or global inside the sandbox would be \
+                     a host pointer in guest memory",
                     def.name,
-                    match ty {
-                        TypeRef::Memory(_) => "a memory",
-                        TypeRef::Table(_) => "a table",
-                        TypeRef::Global(_) => "a global",
-                        TypeRef::Tag(_) => "a tag",
-                        TypeRef::Func(_) | TypeRef::FuncExact(_) => unreachable!(),
-                    }
+                    kind_label(ty)
                 ),
             )),
         }
     }
 
-    // Report in table order, not module order: the manifest is the platform's
-    // document, not the tenant's. `seen` includes capabilities reached
-    // through the PAL adapter: a module that draws entropy via `wasi:random`
-    // holds `entropy_fill`, and a manifest that omitted it would be a lie of
-    // the exact kind invariant 4 exists to prevent.
+    // Table order, not module order: the manifest is the platform's document.
     report.capabilities = imports::IMPORTS
         .iter()
         .map(|d| d.name)
         .filter(|n| seen.contains(n))
         .collect();
-    // Table order, again for the auditor's benefit rather than the module's.
     report.pal.sort_by_key(|p| {
         pal::PAL_IMPORTS
             .iter()
@@ -713,13 +608,9 @@ fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
     });
 }
 
-/// WASI PAL adapter. One whitelisted `wasi:*` import.
-///
-/// The signature is checked for **delegated** entries only — see
-/// [`crate::pal::PalDef::sig`]: a delegated import gets a real body run
-/// against its declared type, so a mismatch is a type confusion reaching host
-/// code; a trap-on-call stub is generated from the module's own type and
-/// traps before it reads an argument.
+/// A delegated entry runs a body against its declared type, so its
+/// signature is checked; a trap-on-call stub is generated from the module's
+/// own type and traps before it reads an argument.
 fn check_pal_import(
     p: &'static PalDef,
     ty: &TypeRef,
@@ -769,10 +660,7 @@ fn check_pal_import(
         }
     }
 
-    // The delegated capability is a capability this module holds. Recording
-    // it here is what keeps the tenant-facing manifest honest.
-    if let Some(cap) = p.disposition.capability() {
-        let def = imports::lookup(cap).expect("pal::tests asserts every target is real");
+    if let Some(def) = p.disposition.capability().and_then(imports::lookup) {
         seen.insert(def.name);
     }
     report.pal.push(p);
@@ -787,9 +675,6 @@ fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
         };
         match s.exports.iter().find(|(n, _, _)| n == required) {
             Some((_, k, idx)) if kind_matches(*k, want_kind) => {
-                // A function export with the right name and the wrong type is
-                // a deploy-time bug the tenant should hear about now, not a
-                // link failure on the first request.
                 if want_kind == ExternalKind::Func {
                     if let Some(want) = imports::exports::signature(required) {
                         match s
@@ -852,10 +737,6 @@ fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>
     }
 }
 
-// ---------------------------------------------------------------------------
-// V3 — memory shape
-// ---------------------------------------------------------------------------
-
 fn check_memory(s: &Scan, budgets: Limits, report: &mut ValidationReport, v: &mut Vec<Violation>) {
     let ceiling_bytes = budgets.instance_memory_max;
     let ceiling_pages = ceiling_bytes / wisp_abi::WASM_PAGE_SIZE as u64;
@@ -874,10 +755,6 @@ fn check_memory(s: &Scan, budgets: Limits, report: &mut ValidationReport, v: &mu
 
     for m in &s.memories {
         if m.shared {
-            // A shared memory is the *representation* of threads. It is
-            // refused here as well as by V2 because it is its own rule: even
-            // if some future engine profile enabled atomics for
-            // single-threaded use, sharing would still be forbidden.
             v.push(Violation::new(
                 ViolationCode::V3MemoryShape,
                 "linear memory is declared `shared` — threads and shared memory are off \
@@ -922,17 +799,10 @@ fn check_memory(s: &Scan, budgets: Limits, report: &mut ValidationReport, v: &mu
     }
 }
 
-// ---------------------------------------------------------------------------
-// V4 — structural resource bombs
-// ---------------------------------------------------------------------------
-
 fn check_bombs(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>) {
     report.function_count = s.imported_funcs.saturating_add(s.defined_funcs);
     report.custom_section_bytes = s.custom_section_bytes;
 
-    // These are compile bombs, not runtime bombs: Cranelift compilation of
-    // tenant bytes is parsing hostile input, and the cheapest
-    // defense against a pathological compile is to not start it.
     let mut bomb = |cond: bool, detail: String| {
         if cond {
             v.push(Violation::new(ViolationCode::V4ResourceBomb, detail));
@@ -1001,45 +871,7 @@ fn check_bombs(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>) 
     );
 }
 
-/// Which capability groups a validated module actually holds — used by the
-/// registry to record what a version was permitted to do at the time it was
-/// sealed, so a later audit does not have to re-derive it from bytes.
-pub fn capability_kinds(report: &ValidationReport) -> Vec<(&'static str, &'static str)> {
-    report
-        .capabilities
-        .iter()
-        .filter_map(|n| imports::lookup(n))
-        .map(|d| {
-            (
-                d.name,
-                match d.kind {
-                    ImportKind::Sync => "sync",
-                    ImportKind::Future => "future",
-                },
-            )
-        })
-        .collect()
-}
-
-/// Ceiling on the linear memory a module may declare at pre-init time.
-///
-/// Checked before a single guest instruction runs, so a module that declares
-/// more memory than the platform would ever hand it fails the deploy instead
-/// of making wizer try to allocate it.
-///
-/// It is a *second* gate rather than a new rule: V3 already refuses a declared
-/// memory above the application memory ceiling, and this value equals the largest
-/// of those ceilings. What it still covers is a caller that reaches
-/// `PreInitializer` directly, without a prior `validate`.
-///
-/// There was a companion CPU ceiling here. It was removed: it measured elapsed
-/// time *after* the build returned, so it could never catch an initializer
-/// that failed to terminate, and the only thing it could actually do was fail
-/// a slow but successful template build. Bounding init CPU belongs in a
-/// resource-capped worker with an rlimit, not here.
-pub const INIT_MEMORY_LIMIT_BYTES: u64 = 512 << 20;
-
-/// V4 published limits. Real numbers so tenants can design against them.
+/// The V4 limits, published so tenants can design against them.
 pub mod limits {
     pub const MAX_FUNCTIONS: u32 = 200_000;
     pub const MAX_LOCALS_PER_FUNCTION: u32 = 50_000;

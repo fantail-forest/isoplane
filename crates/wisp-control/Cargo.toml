@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "WebAssembly module validation and pre-initialization"
+description = "WebAssembly module validation, pre-initialization and native compilation"
 
 [dependencies]
+rand = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -14,20 +15,16 @@ tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-engine = { workspace = true }
 async-trait = { workspace = true }
-tokio = { workspace = true }
 wasmparser = { workspace = true }
 # Wizer's engine produces WebAssembly bytes for the separate execution engine.
-wizer = { version = "10", optional = true }
+wizer = { workspace = true, optional = true }
 wasmtime = { workspace = true, features = ["default", "winch"] }
 blake3 = { workspace = true }
 hex = { workspace = true }
-toml = { workspace = true }
 serde_json = { workspace = true }
 zstd = { workspace = true }
-rand = { workspace = true }
 parking_lot = { workspace = true }
-libc = { workspace = true }
-# Pre-init only: bounds wizer's compile pool. See `preinit::PREINIT_COMPILE_THREADS`.
+libc = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -39,4 +36,4 @@ wisp-fixtures = { workspace = true }
 [features]
 # Consumers that only validate modules can disable initialization support.
 default = ["preinit"]
-preinit = ["dep:wizer", "dep:rayon"]
+preinit = ["dep:wizer", "dep:rayon", "dep:libc"]

@@ -33,10 +33,8 @@ blake3 = { workspace = true }
 wasmparser = { workspace = true }
 reqwest = { version = "0.12", features = ["json"], default-features = false }
 
-# The authority for V1-V4. `default-features = false` drops `preinit`, which
-# pulls wizer and with it a second wasmtime (36) alongside the data plane's 48.
-# `doctor` only validates, so one engine is enough — see the note above
-# `[features]` in wisp-control's manifest.
+# `doctor` only validates, so `default-features = false` drops `preinit` and
+# the second wasmtime wizer embeds.
 #
 # A path dependency rather than `workspace = true`: cargo IGNORES a member's
 # `default-features = false` when the workspace's own entry does not set it,
