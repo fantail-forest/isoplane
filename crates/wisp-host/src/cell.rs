@@ -29,6 +29,7 @@ use crate::meters::Meters;
 use crate::metrics::{Metrics, MetricsSnapshot};
 use crate::sharded_map::ShardedMap;
 
+mod hibernate;
 mod queue;
 use crate::{InstanceId, ModuleId};
 use queue::{DispatchJob, Job, WakeItem, WorkQueue};
@@ -1322,20 +1323,6 @@ impl Cell {
         let r = g.get(&id)?;
         let t = r.slot.ctx.responses.lock();
         t.get(handle).map(|resp| resp.body())
-    }
-
-    /// Discards an instance and releases its host futures without saving guest memory.
-    pub fn discard_instance(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
-        let slot = self
-            .slot(id)
-            .ok_or_else(|| anyhow::anyhow!("no such instance {id}"))?;
-        if slot.state() == LifecycleTier::Hot {
-            anyhow::bail!("instance {id} is Hot; eviction is from Parked, not from a live stack");
-        }
-        self.rt.futures.release_instance(id);
-        self.forget(&slot);
-        slot.discard();
-        Ok(())
     }
 
     pub fn is_quarantined(&self, tenant: &str) -> bool {
