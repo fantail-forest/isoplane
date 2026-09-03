@@ -43,7 +43,7 @@ async fn run() -> anyhow::Result<()> {
                 let violations: &[()] = &[];
                 println!(
                     "{}",
-                    doctor_json(&report, limits, &limits_from, rejected, violations)
+                    doctor_json(&report, limits, &limits_from, rejected, violations)?
                 );
             } else {
                 print!(
@@ -145,11 +145,8 @@ fn resolve_limits(
     Ok((limits, source))
 }
 
-/// A validator violation as JSON.
-///
-/// Behind a trait so the shape of `--json` does not depend on whether
-/// `wisp-control` is linked in: without it the caller passes an empty `&[()]`
-/// and the key is present and empty, rather than absent.
+/// A violation as JSON, behind a trait so `--json` has the same shape with
+/// and without the validator linked in.
 trait AsViolationJson {
     fn as_json(&self) -> serde_json::Value;
 }
@@ -177,12 +174,12 @@ fn doctor_json<V: AsViolationJson>(
     limits_from: &str,
     rejected: bool,
     violations: &[V],
-) -> String {
-    serde_json::to_string_pretty(&serde_json::json!({
+) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
         "bytes": r.bytes,
         "blake3": r.blake3,
         "limits": limits,
-"guest_memory_bytes": limits.instance_memory_max,
+    "guest_memory_bytes": limits.instance_memory_max,
         "limits_from": limits_from,
         "validator": cfg!(feature = "control"),
         "violations": violations.iter().map(AsViolationJson::as_json).collect::<Vec<_>>(),
@@ -195,8 +192,6 @@ fn doctor_json<V: AsViolationJson>(
             "init_visible": i.init_visible,
         })).collect::<Vec<_>>(),
         "undeclared": r.undeclared.iter().map(|u| format!("{}.{}", u.module, u.field)).collect::<Vec<_>>(),
-        // The PAL entries are declared too, and what a consumer needs from
-        // them is which `wisp` capability each one actually reaches.
         "pal": r.pal.iter().map(|p| serde_json::json!({
             "name": p.full_name(),
             "delegates_to": p.disposition.capability(),
@@ -204,37 +199,10 @@ fn doctor_json<V: AsViolationJson>(
         })).collect::<Vec<_>>(),
         "missing_required_exports": r.missing_required_exports,
         "missing_optional_exports": r.missing_optional_exports,
-    }))
-    .unwrap()
+    }))?)
 }
-
-// ---------------------------------------------------------------------------
-// `wisp dev`
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_watcher_notices_the_newest_file_and_ignores_build_output() {
-        let dir = std::env::temp_dir().join(format!("wisp-watch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("src")).unwrap();
-        std::fs::create_dir_all(dir.join("target")).unwrap();
-        std::fs::write(dir.join("src/a.cs"), "x").unwrap();
-        let before = newest_mtime(&dir);
-        assert!(before > 0);
-
-        // `target/` churns on every build; watching it would reload forever.
-        std::fs::write(dir.join("target/huge.bin"), "y").unwrap();
-        assert_eq!(
-            newest_mtime(&dir),
-            before,
-            "build output must not trigger a reload"
-        );
-
-        assert_eq!(newest_mtime(&dir.join("does-not-exist")), 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

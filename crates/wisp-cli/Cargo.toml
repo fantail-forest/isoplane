@@ -27,32 +27,21 @@ wisp-abi = { workspace = true, features = ["host"] }
 toml = { workspace = true }
 hex = { workspace = true }
 blake3 = { workspace = true }
-# `wisp doctor` reads the import section directly. This is presentation of the
-# capability manifest, NOT validation: `wisp-control::validate` is the
-# authority for V1-V4 and is linked in by the (default-on) `control` feature.
 wasmparser = { workspace = true }
-reqwest = { version = "0.12", features = ["json"], default-features = false }
+reqwest = { workspace = true }
 
 # `doctor` only validates, so `default-features = false` drops `preinit` and
-# the second wasmtime wizer embeds.
-#
-# A path dependency rather than `workspace = true`: cargo IGNORES a member's
-# `default-features = false` when the workspace's own entry does not set it,
-# with a warning and no other effect. Taking it as `workspace = true` here
-# would silently link both engines.
+# the second wasmtime wizer embeds. A path dependency because cargo ignores a
+# member's `default-features = false` on a `workspace = true` entry.
 wisp-control = { path = "../wisp-control", optional = true, default-features = false }
 
 [features]
-# On by default. `wisp doctor` is only worth running if it runs the real
-# validator: a CLI that tells a tenant to rebuild it from source before it will
-# answer the question is a CLI that answers the question at deploy time
-# instead, which is the loop this exists to shorten.
+# Include the full validator in local module checks by default.
 default = ["control"]
 control = ["dep:wisp-control"]
 
 [dev-dependencies]
 tokio = { workspace = true }
-# `tests/cli.rs` builds its fixture modules from the signatures in
-# `wisp_abi::imports`, because the validator `doctor` now runs checks them.
 wat = { workspace = true }
+tempfile = { workspace = true }
 

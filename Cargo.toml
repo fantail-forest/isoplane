@@ -67,6 +67,7 @@ tempfile    = "3"
 rayon       = "1"
 wizer       = "10"
 base64      = "0.22"
+reqwest     = { version = "0.12", features = ["json"], default-features = false }
 sha1        = "0.10"
 
 # Line tables preserve source locations for workspace development backtraces.

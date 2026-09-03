@@ -1,4 +1,4 @@
-//! Local application manifest parsing and validation limits.
+//! Application identity, numeric budgets, lifecycle and local artifact location.
 
 use serde::Deserialize;
 
@@ -37,7 +37,8 @@ impl CliManifest {
         Ok(Some((toml::from_str(&text)?, path)))
     }
 
-    /// The nearest `wisp.toml` at or above `start`.
+    /// The nearest `wisp.toml` at or above `start`, for a `doctor` pointed at
+    /// a built artifact away from its app.
     pub fn find(start: &std::path::Path) -> anyhow::Result<Option<(Self, std::path::PathBuf)>> {
         let mut dir = Some(start);
         while let Some(d) = dir {
@@ -58,8 +59,7 @@ impl CliManifest {
     }
 }
 
-/// A version id derived from the module bytes plus the wall clock: immutable,
-/// content-anchored, and sortable. `v-<epoch-secs>-<hash8>`.
+/// `v-<epoch-secs>-<hash8>`: sortable, and anchored to the module bytes.
 pub fn derive_version(module: Option<&[u8]>, now_s: u64) -> String {
     let h = match module {
         Some(bytes) => hex::encode(&blake3::hash(bytes).as_bytes()[..4]),
@@ -80,8 +80,15 @@ mod tests {
             a, b,
             "different bytes must be a different immutable version"
         );
-        assert_eq!(a, derive_version(Some(b"module a"), 100));
-        assert!(a.starts_with("v-100-"));
+        assert_eq!(
+            a,
+            derive_version(Some(b"module a"), 100),
+            "the same bytes at the same second are the same version"
+        );
+        assert!(
+            a.starts_with("v-100-"),
+            "the second comes first, so ids sort"
+        );
     }
 
     #[test]
@@ -99,7 +106,7 @@ lifecycle = "fresh"
 "#,
         )
         .unwrap();
-        assert_eq!(m.name.as_deref(), Some("quotes"));
+        assert_eq!(m.name.as_deref(), Some("quotes"), "name is read");
         assert_eq!(
             m.limits,
             Some(wisp_abi::config::Limits {
@@ -108,19 +115,23 @@ lifecycle = "fresh"
                 cpu_ms_per_http_dispatch: 10,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6
-            })
+            }),
+            "`limits` maps onto the limits"
         );
         assert_eq!(
             m.lifecycle(),
-            Some(wisp_abi::config::HandlerLifecycle::Fresh)
+            Some(wisp_abi::config::HandlerLifecycle::Fresh),
+            "`handlers.lifecycle` maps onto the lifecycle"
         );
-        assert_eq!(m.hosts, vec!["quotes.wisp.dev"]);
+        assert_eq!(m.hosts, vec!["quotes.wisp.dev"], "hosts are read");
     }
 
     #[test]
     fn an_empty_manifest_is_legal() {
         let m: CliManifest = toml::from_str("").unwrap();
-        assert!(m.name.is_none());
-        assert!(m.limits.is_none());
+        assert!(
+            m.name.is_none() && m.limits.is_none(),
+            "every field is optional"
+        );
     }
 }

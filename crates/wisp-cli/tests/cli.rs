@@ -1,29 +1,18 @@
 //! The `wisp` binary, driven as a user would drive it.
-//!
-//! `wisp doctor` gets the most attention here because it is where the claim
-//! that "what can this code do?" is a static question meets a user — and a
-//! claim like that is only worth what its user-visible answer is worth.
 
 use std::process::Command;
 
 const WISP: &str = env!("CARGO_BIN_EXE_wisp");
 
-/// A minimal core-wasm module: the given imports, one memory, and the given
-/// exports — each carrying the signature the world declares for it.
-///
-/// The signatures are read out of `wisp_abi` rather than written here. They
-/// used to be `() -> ()` for everything, which was fine while `doctor` only
-/// matched names; the validator it now runs checks types (V1SignatureMismatch),
-/// and a fixture with hand-written types would only be testing that two copies
-/// of the world had not yet drifted. A name the world does not know gets
-/// `() -> ()` — in those cases the name is what is under test.
+/// A core module with the given imports and exports, each carrying the
+/// signature the world declares for it; a name the world does not know gets
+/// `() -> ()`.
 fn module(imports: &[(&str, &str)], exports: &[&str]) -> Vec<u8> {
     module_with(imports, exports, None)
 }
 
-/// [`module`], with a declared memory maximum in pages. The maximum is the one
-/// thing in a module that is legal on one limits and not on another, which makes
-/// it the fixture for limits-sensitivity.
+/// [`module`] with a declared memory maximum, which is legal on one limits and
+/// not on another.
 fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32>) -> Vec<u8> {
     use wisp_abi::imports::{Sig, Ty};
 
@@ -57,9 +46,6 @@ fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32
 
     let mut wat = String::from("(module\n");
     for (module_, field) in imports {
-        // Module-aware, the way the classifier is: `kv_get` is a signature in
-        // the `wisp` table and `get-random-bytes` is one in the PAL table, and
-        // the validator checks both.
         let declared = if *module_ == wisp_abi::imports::HOST_MODULE {
             wisp_abi::imports::lookup(field).map(|d| d.sig)
         } else {
@@ -82,20 +68,19 @@ fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32
     wat.push_str(&format!("  (memory{export} {limits})\n"));
     for e in exports.iter().filter(|e| **e != "memory") {
         let sig = signature(wisp_abi::imports::exports::signature(e));
-        // `unreachable` is well-typed under any result type, so one body
-        // serves every export.
         wat.push_str(&format!("  (func (export \"{e}\"){sig} unreachable)\n"));
     }
     wat.push_str(")\n");
     wat::parse_str(&wat).expect("the fixture is well-formed wat")
 }
 
-fn write_module(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("wisp-cli-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join(name);
+/// A module written to its own temporary directory, which lives as long as
+/// the returned guard.
+fn write_module(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let p = dir.path().join(name);
     std::fs::write(&p, bytes).unwrap();
-    p
+    (dir, p)
 }
 
 struct Out {
@@ -118,7 +103,7 @@ fn run(args: &[&str]) -> Out {
 
 #[test]
 fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
-    let p = write_module(
+    let (_dir, p) = write_module(
         "good.wasm",
         &module(
             &[
@@ -133,8 +118,10 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
     let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(0), "stderr: {}", out.stderr);
 
-    // The manifest itself.
-    assert!(out.stdout.contains("CAPABILITY MANIFEST"));
+    assert!(
+        out.stdout.contains("CAPABILITY MANIFEST"),
+        "the manifest is printed"
+    );
     for name in [
         "http_fetch",
         "http_body_read",
@@ -150,23 +137,30 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
         out.stdout.contains("http_body_read") && out.stdout.contains("future"),
         "future-returning imports remain visible"
     );
-    assert!(out.stdout.contains("sensitive"));
-    // The plain-English answer, which is the actual point of the command.
-    assert!(out.stdout.contains("SO: THIS CODE CAN"));
-    assert!(out.stdout.contains("make outbound HTTP requests"));
-    assert!(out
-        .stdout
-        .contains("no threads, no files, no ambient sockets"));
-    assert!(out
-        .stdout
-        .contains("✓ every import is a declared capability"));
+    assert!(
+        out.stdout.contains("sensitive"),
+        "sensitive imports are marked"
+    );
+    assert!(
+        out.stdout.contains("SO: THIS CODE CAN")
+            && out.stdout.contains("make outbound HTTP requests"),
+        "the plain-English answer names each capability group"
+    );
+    assert!(
+        out.stdout
+            .contains("no threads, no files, no ambient sockets"),
+        "what a module cannot do is stated"
+    );
+    assert!(
+        out.stdout
+            .contains("✓ every import is a declared capability"),
+        "a clean module gets a clean verdict"
+    );
 }
 
 #[test]
 fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
-    // V1. The two undeclared imports here are the two things a real
-    // module would most plausibly try to smuggle in.
-    let p = write_module(
+    let (_dir, p) = write_module(
         "bad.wasm",
         &module(
             &[
@@ -178,31 +172,29 @@ fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
         ),
     );
     let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(2), "a rejected module must exit non-zero");
-    assert!(out.stdout.contains("V1"));
-    assert!(out.stdout.contains("wasi_snapshot_preview1.fd_write"));
-    assert!(out.stdout.contains("env.pthread_create"));
-    assert!(out.stdout.contains("REJECTED"));
-    assert!(out.stdout.contains("no dynamic-linking escape hatch"));
+    assert_eq!(out.code, Some(2), "a rejected module must exit 2");
+    assert!(
+        out.stdout.contains("V1")
+            && out.stdout.contains("wasi_snapshot_preview1.fd_write")
+            && out.stdout.contains("env.pthread_create"),
+        "each undeclared import is named under its rule: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("REJECTED") && out.stdout.contains("no dynamic-linking escape hatch"),
+        "the verdict is stated: {}",
+        out.stdout
+    );
 }
 
-/// A C# guest linked without the PAL object file imports `wasi:*` directly,
-/// and the deploy-time composition satisfies every one of those from the
-/// enumerated whitelist. The module is valid — `wisp_control::validate`
-/// accepts it — so `doctor` must too.
-///
-/// This is the regression for a build-breaking bug: `doctor` classified any
-/// import outside module `wisp` as undeclared, its verdict was OR-ed into the
-/// exit code, and the SDK's post-link MSBuild target then failed the build of
-/// a guest that would have deployed. Two checkers that can disagree is the
-/// defect; the fix is that both read `wisp_abi::pal`.
+/// The whole PAL whitelist is accepted, as the validator accepts it.
 #[test]
 fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
     let pal: Vec<(&str, &str)> = wisp_abi::pal::PAL_IMPORTS
         .iter()
         .map(|d| (d.module, d.func))
         .collect();
-    let p = write_module(
+    let (_dir, p) = write_module(
         "pal.wasm",
         &module(&pal, &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"]),
     );
@@ -214,40 +206,35 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
         "the whole whitelist must be accepted:\n{}",
         out.stdout
     );
-    assert!(!out.stdout.contains("REJECTED"), "{}", out.stdout);
-
-    // Present in the manifest rather than silently dropped from it: the claim
-    // this command exists to make is that the list is complete.
-    assert!(out.stdout.contains("WASI PAL ADAPTER"), "{}", out.stdout);
+    assert!(
+        !out.stdout.contains("REJECTED"),
+        "a whitelisted import is not a rejection: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("WASI PAL ADAPTER"),
+        "the PAL entries are listed, not dropped: {}",
+        out.stdout
+    );
     assert!(
         out.stdout
             .contains("wasi:random/random@0.2.0::get-random-bytes"),
-        "{}",
-        out.stdout
-    );
-    // A delegated entry IS the capability it names, so the plain-English
-    // answer has to include it even though nothing imports `wisp.entropy_fill`.
-    assert!(
-        out.stdout.contains("delegates to wisp.entropy_fill"),
-        "{}",
+        "a PAL entry is named in full: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("draw randomness from the host CSPRNG"),
-        "{}",
+        out.stdout.contains("delegates to wisp.entropy_fill")
+            && out.stdout.contains("draw randomness from the host CSPRNG"),
+        "a delegated entry is the capability it names: {}",
         out.stdout
     );
-    // A stubbed one reaches nothing, and must not be read as a capability.
-    // The whole whitelist is imported here and exactly one bullet comes out of
-    // it: `get-random-bytes` delegates to `entropy_fill`, `environment` is
-    // `Delegate(Nothing)`, the clock's group has no bullet, and every other
-    // entry traps. Anything more would mean a trap had been counted as a
-    // capability.
     assert!(
         out.stdout.contains("stub: traps when called"),
-        "{}",
+        "a trap-on-call entry is marked as one: {}",
         out.stdout
     );
+    // Of the whole whitelist only `get-random-bytes` reaches a capability with
+    // a bullet; a second bullet would mean a trap was counted as one.
     let bullets: Vec<_> = out
         .stdout
         .lines()
@@ -256,11 +243,9 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
     assert_eq!(bullets.len(), 1, "{bullets:?}");
 }
 
-/// And a `wasi:*` import that is NOT on the whitelist is still a rejection —
-/// the fix must not have become "anything spelled `wasi:` is fine".
 #[test]
 fn a_wasi_import_outside_the_whitelist_is_still_refused() {
-    let p = write_module(
+    let (_dir, p) = write_module(
         "offwhitelist.wasm",
         &module(
             &[("wasi:sockets/tcp@0.2.0", "[method]tcp-socket.start-connect")],
@@ -268,29 +253,42 @@ fn a_wasi_import_outside_the_whitelist_is_still_refused() {
         ),
     );
     let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(2), "{}", out.stdout);
-    assert!(out.stdout.contains("wasi:sockets/tcp"), "{}", out.stdout);
+    assert_eq!(
+        out.code,
+        Some(2),
+        "a wasi import off the whitelist is rejected: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("wasi:sockets/tcp"),
+        "the import is named: {}",
+        out.stdout
+    );
 }
 
 #[test]
 fn doctor_notices_a_module_that_cannot_be_activated_at_all() {
-    let p = write_module(
+    let (_dir, p) = write_module(
         "noexports.wasm",
         &module(&[("wisp", "http_fetch")], &["memory"]),
     );
     let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(2));
+    assert_eq!(
+        out.code,
+        Some(2),
+        "a module the host cannot enter is rejected"
+    );
     assert!(
         out.stdout
             .contains("required export `wisp_handle` is missing"),
-        "{}",
+        "the missing export is named: {}",
         out.stdout
     );
 }
 
 #[test]
 fn doctor_has_a_machine_readable_form() {
-    let p = write_module(
+    let (_dir, p) = write_module(
         "json.wasm",
         &module(
             &[("wisp", "http_fetch")],
@@ -298,18 +296,28 @@ fn doctor_has_a_machine_readable_form() {
         ),
     );
     let out = run(&["--json", "doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(0));
+    assert_eq!(out.code, Some(0), "a clean module exits 0");
     let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("valid json");
-    assert_eq!(v["rejected"], false);
-    assert_eq!(v["capabilities"][0]["name"], "http_fetch");
-    assert_eq!(v["capabilities"][0]["group"], "http");
-    assert_eq!(v["capabilities"][0]["kind"], "future");
-    assert!(v["blake3"].as_str().unwrap().len() == 64);
+    assert_eq!(v["rejected"], false, "the verdict is in the JSON");
+    assert_eq!(
+        (
+            &v["capabilities"][0]["name"],
+            &v["capabilities"][0]["group"],
+            &v["capabilities"][0]["kind"]
+        ),
+        (&"http_fetch".into(), &"http".into(), &"future".into()),
+        "each capability carries its name, group and kind"
+    );
+    assert_eq!(
+        v["blake3"].as_str().unwrap().len(),
+        64,
+        "the hash is the full blake3 hex"
+    );
 }
 
 #[test]
 fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
-    let p = write_module(
+    let (_dir, p) = write_module(
         "pure.wasm",
         &module(
             &[("wisp", "log_emit"), ("wisp", "resp_new")],
@@ -317,14 +325,15 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
         ),
     );
     let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(0));
-    assert!(out.stdout.contains("it holds no I/O capability at all"));
+    assert_eq!(out.code, Some(0), "a pure module is accepted");
+    assert!(
+        out.stdout.contains("it holds no I/O capability at all"),
+        "and says it holds no I/O capability: {}",
+        out.stdout
+    );
 }
 
-/// The derived manifest and the real validator answer different questions, and
-/// `doctor`'s exit code has to be the union: this module's imports and exports
-/// are all declared and correctly typed — the manifest says yes — and it is
-/// still refused on smaller, for a reason only the validator knows.
+/// A module the manifest passes and the validator refuses on the smaller limits.
 #[cfg(feature = "control")]
 #[test]
 fn doctor_fails_a_module_the_manifest_alone_would_pass() {
@@ -333,7 +342,7 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
         &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         Some(2048),
     );
-    let p = write_module("bigmem.wasm", &m);
+    let (_dir, p) = write_module("bigmem.wasm", &m);
 
     let ok = run(&[
         "--no-color",
@@ -363,22 +372,25 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
         "the same module is over the configured ceiling: {}",
         bad.stdout
     );
-    // The manifest, which is all `doctor` used to consult, is still happy.
-    assert!(bad
-        .stdout
-        .contains("✓ every import is a declared capability"));
-    assert!(bad.stdout.contains("V3MemoryShape"), "{}", bad.stdout);
+    assert!(
+        bad.stdout
+            .contains("✓ every import is a declared capability"),
+        "the manifest alone would have passed it: {}",
+        bad.stdout
+    );
+    assert!(
+        bad.stdout.contains("V3MemoryShape"),
+        "the validator names the rule: {}",
+        bad.stdout
+    );
     assert!(bad.stdout.contains("numeric limits from"), "{}", bad.stdout);
 }
 
-/// And the limits is not something the user has to remember to pass: it comes
-/// from the app's own `wisp.toml`, found from the module outwards. A `doctor`
-/// that judged against `Limits::default()` regardless would pass this module and
-/// `deploy` would then refuse it.
 #[cfg(feature = "control")]
 #[test]
 fn doctor_takes_numeric_limits_from_the_app_manifest() {
-    let dir = std::env::temp_dir().join(format!("wisp-cli-freeapp-{}", std::process::id()));
+    let tmp = tempfile::tempdir().expect("a temporary directory");
+    let dir = tmp.path().to_path_buf();
     std::fs::create_dir_all(dir.join("out")).unwrap();
     std::fs::write(
         dir.join("wisp.toml"),
@@ -397,18 +409,34 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     .unwrap();
 
     let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(2), "{}", out.stdout);
-    assert!(out.stdout.contains("numeric limits from"), "{}", out.stdout);
-    assert!(out.stdout.contains("wisp.toml"), "{}", out.stdout);
-    assert!(out.stdout.contains("V3MemoryShape"), "{}", out.stdout);
+    assert_eq!(
+        out.code,
+        Some(2),
+        "the app's limits refuses the module: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("numeric limits from") && out.stdout.contains("wisp.toml"),
+        "the limits and where it came from are stated: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("V3MemoryShape"),
+        "the validator names the rule: {}",
+        out.stdout
+    );
 }
 
 #[test]
 fn a_garbage_module_is_an_error_not_a_panic() {
-    let p = write_module("garbage.wasm", b"this is not wasm");
+    let (_dir, p) = write_module("garbage.wasm", b"this is not wasm");
     let out = run(&["doctor", p.to_str().unwrap()]);
-    assert_eq!(out.code, Some(1));
-    assert!(!out.stderr.contains("panicked"), "stderr: {}", out.stderr);
+    assert_eq!(out.code, Some(1), "garbage is a command failure");
+    assert!(
+        !out.stderr.contains("panicked"),
+        "and not a panic: {}",
+        out.stderr
+    );
 }
 
 #[test]
@@ -417,4 +445,60 @@ fn every_documented_subcommand_exists() {
     for cmd in ["dev", "doctor"] {
         assert!(help.contains(cmd), "`wisp {cmd}` is missing from --help");
     }
+}
+
+#[cfg(feature = "control")]
+#[test]
+fn a_numeric_memory_override_keeps_other_admission_limits_and_capability_checks() {
+    let (_directory, path) = write_module(
+        "bounded-large.wasm",
+        &module_with(&[], wisp_abi::imports::exports::REQUIRED, Some(8192)),
+    );
+    let out = run(&[
+        "--json",
+        "doctor",
+        path.to_str().unwrap(),
+        "--guest-memory-bytes",
+        "536870912",
+    ]);
+    assert_eq!(
+        out.code,
+        Some(0),
+        "a bounded explicit memory override must pass: {} {}",
+        out.stdout,
+        out.stderr
+    );
+    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(verdict["guest_memory_bytes"], 536870912_u64);
+    assert_eq!(
+        verdict["limits"]["module_bytes_compressed"], 20971520_u64,
+        "a memory flag must preserve the application size allowance"
+    );
+    let (_directory, path) = write_module(
+        "hostile-large.wasm",
+        &module_with(
+            &[("outside", "io")],
+            wisp_abi::imports::exports::REQUIRED,
+            Some(8192),
+        ),
+    );
+    let out = run(&[
+        "--json",
+        "doctor",
+        path.to_str().unwrap(),
+        "--guest-memory-bytes",
+        "536870912",
+    ]);
+    assert_eq!(
+        out.code,
+        Some(2),
+        "a memory flag cannot grant another capability: {} {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("V1UndeclaredImport"),
+        "the actual validator must explain the rejection: {}",
+        out.stdout
+    );
 }

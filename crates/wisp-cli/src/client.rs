@@ -2,8 +2,7 @@
 
 use serde_json::Value;
 
-/// Renders one structured log line so it reads in the useful order: the
-/// lifecycle event first, then the fields that explain it.
+/// One structured log line as `time level target message fields`.
 pub fn format_log_line(line: &str, color: bool) -> String {
     let st = crate::render::Style::new(color);
     let Ok(v) = serde_json::from_str::<Value>(line) else {
@@ -51,14 +50,20 @@ mod tests {
         let line = r#"{"timestamp":"2026-08-24T10:00:00Z","level":"INFO","target":"wispd",
             "fields":{"message":"guest log","module":"quotes@v1","dispatch":7}}"#;
         let out = format_log_line(line, false);
-        assert!(out.contains("guest log"));
-        assert!(out.contains("module=\"quotes@v1\""));
-        assert!(out.contains("dispatch=7"));
-        assert!(out.contains("10:00:00Z"));
+        assert!(out.contains("guest log"), "the message is rendered: {out}");
+        assert!(
+            out.contains("module=\"quotes@v1\"") && out.contains("dispatch=7"),
+            "the other fields follow it: {out}"
+        );
+        assert!(out.contains("10:00:00Z"), "the time is rendered: {out}");
     }
 
     #[test]
     fn a_non_json_line_passes_through_unchanged() {
-        assert_eq!(format_log_line("plain text", false), "plain text");
+        assert_eq!(
+            format_log_line("plain text", false),
+            "plain text",
+            "a line that is not JSON is not touched"
+        );
     }
 }

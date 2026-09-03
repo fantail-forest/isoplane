@@ -1,4 +1,7 @@
-//! Inspect the capabilities and entry points declared by a WebAssembly module.
+//! The capability manifest `wisp doctor` prints: a module's imports read
+//! against `wisp_abi::imports` and `wisp_abi::pal`, with the policy bits that
+//! decide what each capability costs. Presentation only; the validator in
+//! `wisp-control` decides whether the module deploys.
 
 use std::collections::BTreeMap;
 
@@ -15,20 +18,13 @@ pub struct ModuleImport {
 pub struct Report {
     pub bytes: usize,
     pub blake3: String,
-    /// Imports that are in the platform's manifest, in canonical order.
+    /// Imports in the capability table, in table order.
     pub declared: Vec<&'static ImportDef>,
-    /// `wasi:*` imports in the enumerated PAL whitelist
-    /// ([`wisp_abi::pal::PAL_IMPORTS`]). These are declared — the deploy-time
-    /// composition satisfies each one by delegating to a `wisp:platform`
-    /// capability or by a stub that traps when called.
-    ///
-    /// They are a bucket of their own rather than being folded into
-    /// `declared` because they are not the same kind of thing: a `wisp` import
-    /// IS a capability, whereas a PAL entry is a BCL call that the adapter
-    /// either forwards to one or refuses. A tenant reading the manifest needs
-    /// to see which.
+    /// Imports in the PAL whitelist, kept apart from `declared` because a
+    /// PAL entry is a call the adapter forwards to a capability or refuses,
+    /// not a capability itself.
     pub pal: Vec<&'static PalDef>,
-    /// Imports that are in neither table — each one is a V1 rejection.
+    /// Imports in neither table.
     pub undeclared: Vec<ModuleImport>,
     pub exports: Vec<String>,
     pub missing_required_exports: Vec<&'static str>,
@@ -37,18 +33,9 @@ pub struct Report {
 }
 
 impl Report {
-    /// V1: an import in neither `wisp_abi::imports::IMPORTS` nor
-    /// `wisp_abi::pal::PAL_IMPORTS` is an attempted capability and the module
-    /// is rejected. There is no dynamic-linking escape hatch, so this is
-    /// decidable from the bytes alone.
-    ///
-    /// This is a strict subset of what `wisp_control::validate` checks — both
-    /// conditions below are V1 violations there, and it additionally checks
-    /// signatures (V1), the engine profile (V2), memory shape (V3) and the
-    /// resource-bomb bounds (V4). So it is the exit-code verdict only in a
-    /// build without the validator; see `resolve_plan`'s caller. Keeping it as
-    /// a second opinion alongside the validator is what produced a build that
-    /// refused a module the validator accepts.
+    /// The two V1 conditions readable from the import and export names. A
+    /// strict subset of what the validator checks, so it decides the exit
+    /// code only in a build without the validator.
     pub fn would_be_rejected(&self) -> bool {
         !self.undeclared.is_empty() || !self.missing_required_exports.is_empty()
     }
@@ -61,15 +48,8 @@ impl Report {
         m
     }
 
-    /// Every `wisp` capability this module can reach, whether it imports it
-    /// directly or gets there through the PAL.
-    ///
-    /// A module that never imports `wisp.entropy_fill` but calls
-    /// `wasi:random/random`'s `get-random-bytes` has exactly that capability,
-    /// because the adapter forwards it there — so a manifest that listed only
-    /// the direct imports would understate what the code can do. Entries whose
-    /// disposition is `TrapOnCall` (or `Delegate(Nothing)`) reach nothing and
-    /// contribute nothing here, which is the whole point of those spellings.
+    /// Every capability the module can reach, directly or through a
+    /// delegated PAL entry.
     pub fn effective_capabilities(&self) -> Vec<&'static ImportDef> {
         let mut out = self.declared.clone();
         for def in self
@@ -85,8 +65,7 @@ impl Report {
         out
     }
 
-    /// The one-line answer to "what can this code do?", in the terms a tenant
-    /// (or their auditor) actually cares about.
+    /// What the module can do, one sentence per capability group.
     pub fn plain_english(&self) -> Vec<String> {
         let mut out = Vec::new();
         let reachable = self.effective_capabilities();
@@ -132,8 +111,6 @@ pub fn kind_label(k: ImportKind) -> &'static str {
     }
 }
 
-/// What each policy bit *means*, spelled out. The point of `wisp doctor` is
-/// not to dump a table but to make the consequence legible.
 pub fn kind_note(i: &ImportDef) -> &'static str {
     match i.kind {
         ImportKind::Sync => "returns immediately; cannot block",
@@ -141,8 +118,6 @@ pub fn kind_note(i: &ImportDef) -> &'static str {
     }
 }
 
-/// Read a module's imports and exports and diff them against the platform's
-/// canonical manifest.
 pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
     use wasmparser::{Parser, Payload};
 
@@ -157,20 +132,13 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
     for payload in Parser::new(0).parse_all(wasm) {
         match payload? {
             Payload::ImportSection(reader) => {
-                // `into_imports_with_offsets` flattens the compact-import
-                // encodings, so a module cannot hide a capability behind a
-                // grouped import form.
+                // The compact-import encodings are flattened, so a grouped
+                // import cannot hide a capability.
                 for imp in reader.into_imports_with_offsets() {
                     let (_, imp) = imp?;
-                    // The same three-way split `wisp_control::validator`
-                    // makes, in the same order, so that "is this import
-                    // declared" has ONE answer. Reading the import section is
-                    // presentation; agreeing with the authority about what is
-                    // in the tables is not optional.
+                    // The same three-way split the validator makes.
                     match imports::lookup(imp.name) {
                         Some(def) if imp.module == imports::HOST_MODULE => found.push(def),
-                        // Right name, wrong module: still an undeclared
-                        // capability. The module name is part of the identity.
                         _ => match pal::lookup(imp.module, imp.name) {
                             Some(p) => pal_found.push(p),
                             None => report.undeclared.push(ModuleImport {
@@ -196,8 +164,6 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
         }
     }
 
-    // Canonical order, deduplicated: a module may import the same function
-    // twice, but it has the capability once.
     let mut seen = std::collections::BTreeSet::new();
     report.declared = imports::IMPORTS
         .iter()
@@ -232,9 +198,8 @@ pub fn analyse(wasm: &[u8]) -> anyhow::Result<Report> {
 mod tests {
     use super::*;
 
-    /// A minimal module hand-assembled as bytes: header, type section, import
-    /// section, memory + function exports. Enough to exercise the reader
-    /// without a wat dependency in this crate.
+    /// A module assembled by hand: one `() -> ()` type, the imports, one
+    /// memory, the exports.
     fn module(imports_: &[(&str, &str)], exports: &[&str]) -> Vec<u8> {
         let mut m = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
@@ -287,19 +252,26 @@ mod tests {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
         let r = analyse(&m).unwrap();
-        assert!(!r.would_be_rejected());
+        assert!(!r.would_be_rejected(), "every import is declared");
         let names: Vec<_> = r.declared.iter().map(|i| i.name).collect();
-        assert_eq!(names, vec!["init_hash_seed", "http_fetch", "http_body_read"]);
-        assert!(r.has_memory);
-        assert_eq!(r.missing_required_exports, Vec::<&str>::new());
+        assert_eq!(
+            names,
+            vec!["init_hash_seed", "http_fetch", "http_body_read"],
+            "declared imports come out in table order"
+        );
+        assert!(r.has_memory, "the memory export is seen");
+        assert_eq!(
+            r.missing_required_exports,
+            Vec::<&str>::new(),
+            "every required export is present"
+        );
         assert_eq!(
             r.missing_optional_exports,
-            vec!["wisp_gc_hint", "wisp_initialize"]
+            vec!["wisp_gc_hint", "wisp_initialize"],
+            "the optional exports are reported as absent"
         );
     }
 
-    /// V1: an undeclared import is an attempted capability, and the module is
-    /// rejected. This is where the capability manifest gets its teeth.
     #[test]
     fn an_undeclared_import_is_a_rejection() {
         let m = module(
@@ -307,18 +279,20 @@ mod tests {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
         let r = analyse(&m).unwrap();
-        assert!(r.would_be_rejected());
+        assert!(
+            r.would_be_rejected(),
+            "an undeclared import rejects the module"
+        );
         assert_eq!(
             r.undeclared,
             vec![ModuleImport {
                 module: "env".into(),
                 field: "socket".into()
-            }]
+            }],
+            "the undeclared import is named"
         );
     }
 
-    /// A declared *name* under a different module is still not a capability
-    /// this platform granted.
     #[test]
     fn the_right_name_under_the_wrong_module_is_still_undeclared() {
         let m = module(
@@ -326,16 +300,29 @@ mod tests {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
         let r = analyse(&m).unwrap();
-        assert!(r.would_be_rejected());
-        assert_eq!(r.undeclared[0].module, "wasi_snapshot_preview1");
+        assert!(
+            r.would_be_rejected(),
+            "the module name is part of an import's identity"
+        );
+        assert_eq!(
+            r.undeclared[0].module, "wasi_snapshot_preview1",
+            "the offending module is named"
+        );
     }
 
     #[test]
     fn a_module_missing_a_required_export_is_not_deployable() {
         let m = module(&[("wisp", "http_body_read")], &["wisp_alloc", "memory"]);
         let r = analyse(&m).unwrap();
-        assert!(r.would_be_rejected());
-        assert_eq!(r.missing_required_exports, vec!["wisp_handle", "wisp_wake"]);
+        assert!(
+            r.would_be_rejected(),
+            "a module the host cannot enter is rejected"
+        );
+        assert_eq!(
+            r.missing_required_exports,
+            vec!["wisp_handle", "wisp_wake"],
+            "every missing export is named"
+        );
     }
 
 
@@ -351,7 +338,8 @@ mod tests {
                 .iter()
                 .map(|i| i.name)
                 .collect::<Vec<_>>(),
-            vec!["init_hash_seed"]
+            vec!["init_hash_seed"],
+            "the sensitive import is listed"
         );
     }
 
@@ -364,7 +352,8 @@ mod tests {
         let r = analyse(&m).unwrap();
         assert_eq!(
             r.plain_english(),
-            vec!["nothing but compute and reply — it holds no I/O capability at all".to_string()]
+            vec!["nothing but compute and reply — it holds no I/O capability at all".to_string()],
+            "logging and replying are not I/O capabilities"
         );
     }
 
@@ -374,19 +363,34 @@ mod tests {
             &[("wisp", "http_body_read"), ("wisp", "http_body_read")],
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         );
-        assert_eq!(analyse(&m).unwrap().declared.len(), 1);
+        assert_eq!(
+            analyse(&m).unwrap().declared.len(),
+            1,
+            "importing a function twice grants it once"
+        );
     }
 
     #[test]
     fn the_hash_is_content_addressed() {
         let a = module(&[("wisp", "http_body_read")], &["memory"]);
         let b = module(&[("wisp", "http_fetch")], &["memory"]);
-        assert_ne!(analyse(&a).unwrap().blake3, analyse(&b).unwrap().blake3);
-        assert_eq!(analyse(&a).unwrap().blake3, analyse(&a).unwrap().blake3);
+        assert_ne!(
+            analyse(&a).unwrap().blake3,
+            analyse(&b).unwrap().blake3,
+            "different bytes, different hash"
+        );
+        assert_eq!(
+            analyse(&a).unwrap().blake3,
+            analyse(&a).unwrap().blake3,
+            "the hash is a function of the bytes"
+        );
     }
 
     #[test]
     fn garbage_is_an_error_not_a_panic() {
-        assert!(analyse(b"not a wasm module at all").is_err());
+        assert!(
+            analyse(b"not a wasm module at all").is_err(),
+            "garbage is an error, not a panic"
+        );
     }
 }

@@ -1,6 +1,15 @@
 //! Terminal output.
 
-use std::fmt::Write as _;
+/// Output assembled a line at a time.
+#[derive(Default)]
+struct Out(String);
+
+impl Out {
+    fn line(&mut self, args: std::fmt::Arguments<'_>) {
+        self.0.push_str(&args.to_string());
+        self.0.push('\n');
+    }
+}
 
 pub struct Style {
     pub color: bool,
@@ -74,28 +83,32 @@ pub fn bytes_human(n: u64) -> String {
     }
 }
 
-/// `wisp doctor` — the capability manifest.
+
+
+
+/// The capability manifest.
 pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
     use crate::doctor::{kind_label, kind_note};
-    let mut o = String::new();
+    let mut o = Out::default();
 
-    let _ = writeln!(o, "\n  {} {}", st.bold("wisp doctor"), path);
-    let _ = writeln!(
-        o,
+    o.line(format_args!("\n  {} {}", st.bold("wisp doctor"), path));
+    o.line(format_args!(
         "  {} {}  blake3 {}",
         st.dim("module"),
         bytes_human(r.bytes as u64),
         st.dim(&r.blake3[..16])
-    );
+    ));
 
-    let _ = writeln!(o, "\n  {}", st.bold("CAPABILITY MANIFEST"));
-    let _ = writeln!(
-        o,
+    o.line(format_args!("\n  {}", st.bold("CAPABILITY MANIFEST")));
+    o.line(format_args!(
         "  {}",
         st.dim("the complete, auditable list. Anything not below is unreachable.")
-    );
+    ));
     if r.declared.is_empty() {
-        let _ = writeln!(o, "    {}", st.dim("(no platform imports at all)"));
+        o.line(format_args!(
+            "    {}",
+            st.dim("(no platform imports at all)")
+        ));
     }
     for (group, imports) in r.by_group() {
         for (i, imp) in imports.iter().enumerate() {
@@ -107,38 +120,36 @@ pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
             if imp.init_visible {
                 flags.push("init-visible");
             }
-            let _ = writeln!(
-                o,
+            o.line(format_args!(
                 "    {:<10} {:<20} {:<18} {}",
                 st.dim(label),
                 imp.name,
                 kind_label(imp.kind),
                 st.dim(kind_note(imp))
-            );
+            ));
             if !flags.is_empty() {
                 let note = if imp.sensitive {
                     "results may contain sensitive data; guest state may retain copies"
                 } else {
                     "allowed during initialization"
                 };
-                let _ = writeln!(
-                    o,
+                o.line(format_args!(
                     "    {:<10} {:<20} {}",
                     "",
                     "",
                     st.dim(&format!("↳ {} · {}", flags.join(", "), note))
-                );
+                ));
             }
         }
     }
 
     if !r.pal.is_empty() {
-        let _ = writeln!(o, "\n  {}", st.bold("WASI PAL ADAPTER"));
+        o.line(format_args!("\n  {}", st.bold("WASI PAL ADAPTER")));
         for line in [
             "`wasi:*` imports the BCL emits, satisfied at deploy by composition. A delegated",
             "one IS the capability it names; a stubbed one is nothing. Neither adds a channel.",
         ] {
-            let _ = writeln!(o, "  {}", st.dim(line));
+            o.line(format_args!("  {}", st.dim(line)));
         }
         for p in &r.pal {
             let (mark, note) = match p.disposition.capability() {
@@ -149,71 +160,74 @@ pub fn doctor(st: &Style, path: &str, r: &crate::doctor::Report) -> String {
                 ),
                 None => (st.yellow("!"), "stub: traps when called".into()),
             };
-            let _ = writeln!(o, "    {} {:<66} {}", mark, p.full_name(), st.dim(&note));
+            o.line(format_args!(
+                "    {} {:<66} {}",
+                mark,
+                p.full_name(),
+                st.dim(&note)
+            ));
         }
     }
 
-    let _ = writeln!(o, "\n  {}", st.bold("SO: THIS CODE CAN"));
+    o.line(format_args!("\n  {}", st.bold("SO: THIS CODE CAN")));
     for line in r.plain_english() {
-        let _ = writeln!(o, "    • {line}");
+        o.line(format_args!("    • {line}"));
     }
-    let _ = writeln!(
-        o,
+    o.line(format_args!(
         "  {}",
         st.dim("  and nothing else — no threads, no files, no ambient sockets, no syscalls.")
-    );
+    ));
 
-    let _ = writeln!(o, "\n  {}", st.bold("EXPORTS"));
+
+    o.line(format_args!("\n  {}", st.bold("EXPORTS")));
     let mut line = String::from("    ");
     for e in wisp_abi::imports::exports::REQUIRED {
         let ok = !r.missing_required_exports.contains(e);
-        let _ = write!(
-            line,
+        line.push_str(&format!(
             "{} {}   ",
             if ok { st.green("✓") } else { st.red("✗") },
             e
-        );
+        ));
     }
-    let _ = writeln!(o, "{line}");
+    o.line(format_args!("{line}"));
     let mut line = String::from("    ");
     for e in wisp_abi::imports::exports::OPTIONAL {
         let ok = !r.missing_optional_exports.contains(e);
-        let _ = write!(
-            line,
+        line.push_str(&format!(
             "{} {}   ",
             if ok { st.green("✓") } else { st.dim("·") },
             st.dim(&format!("{e} (optional)"))
-        );
+        ));
     }
-    let _ = writeln!(o, "{line}");
+    o.line(format_args!("{line}"));
 
-    let _ = writeln!(o, "\n  {}", st.bold("DEPLOY VERDICT"));
+    o.line(format_args!("\n  {}", st.bold("DEPLOY VERDICT")));
     if r.would_be_rejected() {
         for u in &r.undeclared {
-            let _ = writeln!(
-                o,
+            o.line(format_args!(
                 "    {} V1  import `{}.{}` is not in the platform's capability manifest",
                 st.red("✗"),
                 u.module,
                 u.field
-            );
+            ));
         }
         for e in &r.missing_required_exports {
-            let _ = writeln!(o, "    {} required export `{e}` is missing", st.red("✗"));
+            o.line(format_args!(
+                "    {} required export `{e}` is missing",
+                st.red("✗")
+            ));
         }
-        let _ = writeln!(
-            o,
+        o.line(format_args!(
             "\n    {} — this module would not deploy. There is no dynamic-linking escape hatch.",
             st.red("REJECTED"),
-        );
+        ));
     } else {
-        let _ = writeln!(
-            o,
+        o.line(format_args!(
             "    {} every import is a declared capability; every required export is present",
             st.green("✓")
-        );
+        ));
     }
-    o
+    o.0
 }
 
 #[cfg(test)]
@@ -222,25 +236,31 @@ mod tests {
 
     #[test]
     fn bars_are_proportional_and_bounded() {
-        assert_eq!(bar(0.0, 4), "····");
-        assert_eq!(bar(1.0, 4), "████");
-        assert_eq!(bar(0.5, 4), "██··");
+        assert_eq!(bar(0.0, 4), "····", "empty");
+        assert_eq!(bar(1.0, 4), "████", "full");
+        assert_eq!(bar(0.5, 4), "██··", "half");
         assert_eq!(bar(9.0, 4), "████", "fractions above 1 clamp");
-        assert_eq!(bar(-1.0, 4), "····");
+        assert_eq!(bar(-1.0, 4), "····", "fractions below 0 clamp");
     }
 
     #[test]
     fn byte_sizes_read_like_sizes() {
-        assert_eq!(bytes_human(512), "512 B");
-        assert_eq!(bytes_human(2048), "2.0 KB");
-        assert_eq!(bytes_human(5 << 20), "5.0 MB");
+        assert_eq!(bytes_human(512), "512 B", "bytes stay bytes");
+        assert_eq!(bytes_human(2048), "2.0 KB", "kilobytes");
+        assert_eq!(bytes_human(5 << 20), "5.0 MB", "megabytes");
     }
 
     #[test]
     fn style_is_plain_when_colour_is_off() {
         let st = Style::new(false);
-        assert_eq!(st.red("x"), "x");
-        assert_eq!(st.bold("x"), "x");
-        assert!(Style::new(true).red("x").contains('\x1b'));
+        assert_eq!(st.red("x"), "x", "no escape codes without colour");
+        assert_eq!(st.bold("x"), "x", "no escape codes without colour");
+        assert!(
+            Style::new(true).red("x").contains('\x1b'),
+            "escape codes with colour"
+        );
     }
+
+
+
 }

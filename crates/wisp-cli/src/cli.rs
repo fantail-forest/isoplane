@@ -1,7 +1,4 @@
-//! The `wisp` command line, as types.
-//!
-//! Here rather than in `main.rs` so that exactly one definition of the command
-//! surface exists. The doc comments below are what a tenant reads in `--help`.
+//! The `wisp` command line. The doc comments are the `--help` text.
 
 use std::path::PathBuf;
 
@@ -38,7 +35,9 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
 
-    /// Inspect a WebAssembly module's host interface and validation status.
+    /// Print a module's capability manifest and the validator's verdict on
+    /// it, judged against the app's limits. Needs no node. Exits 2 if the
+    /// module would be rejected.
     Doctor {
         /// The `.wasm` to inspect.
         module: PathBuf,
