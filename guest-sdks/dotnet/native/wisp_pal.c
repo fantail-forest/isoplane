@@ -24,7 +24,7 @@ extern int64_t wisp_clock_now_coarse(void);
 __attribute__((import_module("wisp"), import_name("entropy_fill")))
 extern void wisp_entropy_fill(uint8_t *buf, int32_t len);
 
-/* Name an unsupported PAL entry before trapping so the failure is diagnosable. */
+/* A dead PAL entry was reached: abort naming it. */
 #define WISP_PAL_DEAD(name)                                                    \
     do {                                                                       \
         static const char m[] = "wisp: guest reached unsupported PAL entry "    \
@@ -35,9 +35,8 @@ extern void wisp_entropy_fill(uint8_t *buf, int32_t len);
 
 /* ---- live: environment -------------------------------------------------- */
 
-/* `get-environment() -> list<tuple<string, string>>`. The canonical ABI
- * returns it through a caller-supplied area holding (ptr, len). Zero length is
- * an empty list and needs no allocation. */
+/* `get-environment() -> list<tuple<string, string>>`, returned through a
+ * caller-supplied (ptr, len) area. */
 void __wasm_import_environment_get_environment(int32_t retptr)
 {
     uint32_t *ret = (uint32_t *)(uintptr_t)retptr;
@@ -45,7 +44,7 @@ void __wasm_import_environment_get_environment(int32_t retptr)
     ret[1] = 0;
 }
 
-/* Monotonic clock. */
+/* ---- live: monotonic clock ---------------------------------------------- */
 
 /* Convert the host's coarse millisecond clock to WASI nanoseconds. The
  * host owns the clock sample for the serving slice. */
@@ -54,7 +53,7 @@ int64_t __wasm_import_monotonic_clock_now(void)
     return wisp_clock_now_coarse() * 1000000LL;
 }
 
-/* Wall clock. */
+/* ---- live: wall clock --------------------------------------------------- */
 
 /* The canonical datetime result uses a 16-byte, 8-aligned area: seconds at
  * offset 0 and nanoseconds at offset 8. Both adapters derive from the host's
@@ -64,10 +63,8 @@ void __wasm_import_wall_clock_now(int32_t retptr)
 {
     int64_t ms = wisp_clock_now_coarse();
     if (ms < 0) {
-        /* The host contract is Unix epoch milliseconds and cannot legitimately
-         * be negative. Clamping rather than trusting it keeps the unsigned
-         * division below from turning one bad host value into a wildly wrong
-         * date the guest would then persist. */
+        /* Epoch milliseconds cannot be negative; a clamp keeps the unsigned
+         * division below from producing a date the guest would persist. */
         ms = 0;
     }
     uint64_t *seconds = (uint64_t *)(uintptr_t)retptr;
@@ -76,12 +73,11 @@ void __wasm_import_wall_clock_now(int32_t retptr)
     *nanoseconds = (uint32_t)((uint64_t)ms % 1000u) * 1000000u;
 }
 
-/* Entropy. */
+/* ---- live: entropy ------------------------------------------------------ */
 
-/* `get-random-bytes(len: u64) -> list<u8>`. The callee allocates; wasi-libc
- * frees the result with `free`, so `malloc` is the correct allocator. This
- * path is NOT optional: .NET seeds object-header hash codes from `Random`,
- * and wasi-libc turns a failed draw into `_Exit`. */
+/* `get-random-bytes(len: u64) -> list<u8>`. The callee allocates with
+ * `malloc`; wasi-libc frees with `free`. .NET seeds object-header hash codes
+ * from it during start-up, and wasi-libc turns a failed draw into `_Exit`. */
 void __wasm_import_random_get_random_bytes(int64_t len, int32_t retptr)
 {
     uint32_t *ret = (uint32_t *)(uintptr_t)retptr;
@@ -101,9 +97,6 @@ void __wasm_import_random_get_random_bytes(int64_t len, int32_t retptr)
 }
 
 /* ---- dead: linked by the .NET PAL, never reached ----------------------- */
-/* Verified unreachable by `guests/dotnet/check.sh --wasi=trap`. Kept as loud
- * aborts rather than removed, because "never reached" is a measurement about
- * one toolchain build, not a guarantee. */
 
 /* (param i32) */
 void __wasm_import_io_error_error_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/error drop"); }
@@ -148,13 +141,7 @@ void __wasm_import_filesystem_method_descriptor_read_via_stream(int32_t a, int64
 void __wasm_import_filesystem_method_descriptor_write_via_stream(int32_t a, int64_t b, int32_t c) { (void)a; (void)b; (void)c; WISP_PAL_DEAD("filesystem write-via-stream"); }
 void __wasm_import_streams_method_input_stream_blocking_read(int32_t a, int64_t b, int32_t c) { (void)a; (void)b; (void)c; WISP_PAL_DEAD("io/streams blocking-read"); }
 
-/* ---- dead: pulled in by the wider BCL surface -------------------------- */
-/* Referencing LINQ, source-generated Regex or System.Text.Json makes the .NET
- * PAL link its directory and file-open paths, which adds the entries below.
- * None is reachable either, but the fact that the set GREW with the BCL surface
- * is the point: this file is a closure over what the tenant's code drags in,
- * not a fixed list, and `build.sh` fails the build if a new one appears rather
- * than letting it become an undeclared capability. */
+/* ---- dead: pulled in by LINQ, Regex and System.Text.Json --------------- */
 
 /* (param i32) */
 void __wasm_import_filesystem_directory_entry_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("filesystem dir-entry-stream drop"); }

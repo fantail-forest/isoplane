@@ -10,10 +10,9 @@ namespace Wisp.Abi;
 ///                          trapped -> trap code
 /// </code>
 ///
-/// <see cref="Pending"/> is the whole of the suspension mechanism. It is a
-/// <em>return value</em>, not a yield: producing it unwinds the wasm stack all
-/// the way back to the host, which is why a parked instance is at a
-/// serializable point by construction rather than by convention.
+/// <see cref="Pending"/> is a return value, not a yield: producing it unwinds
+/// the wasm stack back to the host, which is what leaves a parked instance
+/// with nothing on any stack.
 /// </summary>
 internal static class PollStatus
 {

@@ -6,37 +6,28 @@ using Wisp.Abi;
 namespace Wisp.Runtime;
 
 /// <summary>
-/// The other half of the wisp scheduler: the map from host future ids to
-/// <see cref="TaskCompletionSource{TResult}"/> slots.
-///
-/// Every entry is a promise the HOST holds the trigger for. The guest owns no
-/// timer, no socket and no thread — only this dictionary, which lives in linear
-/// memory and therefore survives a snapshot along with everything else.
+/// The map from host future ids to the tasks awaiting them. Every entry is a
+/// promise the host holds the trigger for, and the map lives in linear
+/// memory, so it survives a capture with everything else.
 /// </summary>
 internal static class FutureTable
 {
     private static readonly Dictionary<ulong, TaskCompletionSource<ResultRecord>> Pending = new();
 
-    /// <summary>The guest's own ceiling on simultaneous pending futures. The
-    /// host enforces the plan's <c>pending_futures_per_dispatch</c> as well;
-    /// this one makes a runaway fan-out
-    /// <see cref="TrapCode.TooManyFutures"/> rather than a dictionary that
-    /// grows until the cell dies.</summary>
+    /// <summary>
+    /// The guest's own ceiling on pending futures, so a runaway fan-out is a
+    /// <see cref="TrapCode.TooManyFutures"/> trap rather than unbounded
+    /// growth.
+    /// </summary>
     internal const int MaxPending = 128;
 
     internal static int Count => Pending.Count;
 
     /// <summary>
-    /// Registers a future id returned by an import and yields the task the
-    /// guest awaits.
-    ///
-    /// <c>RunContinuationsAsynchronously</c> is not an optimisation here, it
-    /// is a correctness requirement: without it <see cref="Complete"/> would
-    /// run the awaiting continuation inline, on the stack of <c>wisp_wake</c>,
-    /// beneath the host's own frame. It would still be correct, but the
-    /// scheduler would no longer be the single place continuations run, and
-    /// the "queue empty implies stack empty" argument above would stop being
-    /// checkable in one place.
+    /// Registers a future id an import returned and yields the task the
+    /// guest awaits. <c>RunContinuationsAsynchronously</c> keeps the
+    /// continuation on the scheduler's queue rather than running it inline
+    /// under <c>wisp_wake</c>'s frame.
     /// </summary>
     internal static Task<ResultRecord> Register(long futureId)
     {
@@ -49,11 +40,8 @@ internal static class FutureTable
     }
 
     /// <summary>
-    /// Delivers a completion from <c>wisp_wake</c>.
-    ///
-    /// Wake order for distinct futures is unspecified, so this must not care
-    /// which one arrives. An id we do not know is not an error — the host may
-    /// complete a future the guest already abandoned.
+    /// Delivers a completion from <c>wisp_wake</c>. An unknown id is a future
+    /// the guest already abandoned.
     /// </summary>
     internal static bool Complete(long futureId, ResultRecord result)
     {

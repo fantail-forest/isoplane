@@ -3,17 +3,13 @@ using System;
 namespace Wisp.Abi;
 
 /// <summary>
-/// The subset of <c>wisp-abi::dispatch::DispatchRecord</c> the PoC handler
-/// reads. Fields are decoded in the Rust struct's declaration order because
-/// postcard writes structs as bare, unframed field sequences — the order IS
-/// the format.
+/// The subset of <c>wisp-abi::dispatch::DispatchRecord</c> the SDK reads,
+/// decoded in the Rust struct's field order.
 /// </summary>
 public sealed class DispatchRecord
 {
     internal ulong DispatchId;
     internal DispatchKind Kind;
-    /// <summary>The host cancels by completing this future; the guest
-    /// observes it at its next await. It is never an entrancy.</summary>
     internal ulong CancelFuture;
     internal uint CpuBudgetMs;
     internal ulong NowMs;
@@ -42,12 +38,10 @@ public sealed class DispatchRecord
                 break;
 
             default:
-                
-                
                 throw new PostcardException();
         }
 
-        // TraceContext { trace_id, span_id, sampled } (W3C propagation)
+        // TraceContext { trace_id, span_id, sampled }
         r.SkipBytes();
         r.SkipBytes();
         r.Bool();
@@ -59,7 +53,7 @@ public sealed class DispatchRecord
     }
 }
 
-/// <summary>Discriminant order of <c>wisp-abi::dispatch::DispatchKind</c>.</summary>
+/// <summary>Mirrors <c>wisp-abi::dispatch::DispatchKind</c>.</summary>
 public enum DispatchKind : uint
 {
     /// <summary>
@@ -93,7 +87,7 @@ internal sealed class ResultRecord
     }
 }
 
-/// <summary>Error discriminants in the Rust guest host-interface contract.</summary>
+/// <summary>Mirrors <c>wisp-abi::result::FutureError</c>.</summary>
 internal enum FutureError : uint
 {
 

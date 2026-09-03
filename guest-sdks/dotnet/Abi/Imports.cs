@@ -4,58 +4,18 @@ using System.Runtime.InteropServices;
 namespace Wisp.Abi;
 
 /// <summary>
-/// The host import surface, module <c>"wisp"</c>.
-///
-/// These signatures are the C# side of <c>wisp-abi::imports::IMPORTS</c>.
-/// Every name and every signature here must appear in that table verbatim; the
-/// deploy-time validator rejects anything else, so a typo is a deploy failure
-/// rather than a runtime bug.
-///
-/// <c>[WasmImportLinkage]</c> is what makes the emitted wasm say
-/// <c>(import "wisp" "kv_get" ...)</c> rather than routing through a
-/// PInvoke stub. Without it the import lands in whatever module wasm-ld
-/// defaults to and the validator rejects the module.
+/// The host imports the SDK reaches, module <c>"wisp"</c>. Every entry is
+/// held to <c>wisp-abi::imports::IMPORTS</c> by
+/// <c>crates/wisp-abi/tests/dotnet_sdk_drift.rs</c>, and each has a wrapper
+/// in <c>Sdk/</c>; an import with no wrapper is a capability the SDK does not
+/// offer. <c>[WasmImportLinkage]</c> is what makes the emitted wasm import
+/// from module <c>wisp</c> rather than through a PInvoke stub.
 /// </summary>
 internal static unsafe partial class H
 {
-    // ---- core ------------------------------------------------------------
-
-    [WasmImportLinkage]
-    [DllImport("wisp", EntryPoint = "abort")]
-    internal static extern void Abort(byte* msg, int len);
-
-    // ---- observability ---------------------------------------------------
-    // Log CPU counts against the dispatch budget. Cheap, but not free.
-
     [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "log_emit")]
     internal static extern void LogEmit(int level, byte* ptr, int len);
-
-    // ---- clock -----------------------------------------------------------
-    // Millisecond granularity, frozen intra-slice. Not init-visible: a cctor
-    // that reads the clock is impure and is deferred to first touch.
-
-    [WasmImportLinkage]
-    [DllImport("wisp", EntryPoint = "clock_now_coarse")]
-    internal static extern long ClockNowCoarse();
-
-    [WasmImportLinkage]
-    [DllImport("wisp", EntryPoint = "clock_deadline_in")]
-    internal static extern long ClockDeadlineIn(long ms);
-
-    // ---- entropy ---------------------------------------------------------
-
-    [WasmImportLinkage]
-    [DllImport("wisp", EntryPoint = "entropy_fill")]
-    internal static extern void EntropyFill(byte* ptr, int len);
-
-    // ---- outbound http ---------------------------------------------------
-
-    [WasmImportLinkage]
-    [DllImport("wisp", EntryPoint = "http_fetch")]
-    internal static extern long HttpFetch(byte* ptr, int len);
-
-    // ---- inbound response ------------------------------------------------
 
     [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "resp_new")]

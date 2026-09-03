@@ -4,21 +4,11 @@ using System.Text;
 namespace Wisp.Abi;
 
 /// <summary>
-/// A hand-rolled decoder/encoder for the subset of the postcard wire format
-/// the guest actually needs.
-///
-/// This is deliberately NOT a port of postcard. The PoC needs six shapes —
-/// varint, bool, string, byte-vector, option, enum discriminant — and porting
-/// the rest would be a serializer project, not evidence for claim C10. In a
-/// real SDK this file is generated from the same table that generates
-/// <c>wisp-abi</c>'s Rust types, so the two sides cannot drift.
-///
-/// Format notes (postcard 1.x):
-///   * all unsigned integers wider than a byte are LEB128 varints;
-///   * <c>String</c> and <c>Vec&lt;u8&gt;</c> are varint length + bytes;
-///   * <c>Option&lt;T&gt;</c> is 0x00 | 0x01 + payload;
-///   * an enum is a varint discriminant followed by the variant's fields;
-///   * a struct is just its fields in declaration order, with no framing.
+/// The subset of the postcard wire format the SDK reads and writes: varints,
+/// bools, strings, byte vectors, options and enum discriminants. Postcard
+/// writes a struct as its fields in declaration order with no framing, an
+/// option as a 0 or a 1 and the payload, and an enum as a varint
+/// discriminant and the variant's fields.
 /// </summary>
 internal ref struct PostcardReader
 {
@@ -70,7 +60,6 @@ internal ref struct PostcardReader
 
     internal string Str() => Encoding.UTF8.GetString(Bytes());
 
-    /// <summary>Skips a value we decode the shape of but do not need.</summary>
     internal void SkipBytes() => Bytes();
 
     /// <summary>Skips a <c>Vec&lt;(String, String)&gt;</c>.</summary>
@@ -133,13 +122,9 @@ internal sealed class PostcardWriter
 }
 
 /// <summary>
-/// A malformed dispatch or result encoding, or a trigger this guest cannot receive.
-///
-/// The entrypoint converts it to <see cref="TrapCode.Protocol"/>: the dispatch
-/// fails and the instance is discarded, rather than being answered wrongly.
+/// A malformed dispatch or result encoding, or a trigger this guest cannot
+/// receive. The entrypoint converts it to <see cref="TrapCode.Protocol"/>.
 /// </summary>
 public sealed class PostcardException : Exception
 {
-    // The guest build sets UseSystemResourceKeys=true, so exception messages
-    // are resource keys anyway and carrying one here would buy nothing.
 }

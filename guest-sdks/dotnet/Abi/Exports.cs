@@ -8,19 +8,13 @@ using Wisp.Runtime;
 namespace Wisp.Abi;
 
 /// <summary>
-/// The guest exports, as core-wasm functions.
-///
-/// <c>[UnmanagedCallersOnly]</c> is what makes NativeAOT-LLVM emit a real
-/// wasm export with the exact name the host linker looks for; the resulting
-/// module exports <c>wisp_alloc</c>, <c>wisp_handle</c>, <c>wisp_wake</c>,
-/// <c>wisp_gc_hint</c>, <c>wisp_initialize</c> and <c>memory</c>, which is
-/// <c>wisp-abi::imports::exports::REQUIRED</c> plus both optionals.
-///
-/// Nothing here may throw across the boundary: an escaping managed exception
-/// in an <c>UnmanagedCallersOnly</c> frame is a runtime abort, and the host
-/// would see a wasm trap with no code. Every entrypoint therefore catches and
-/// converts to <see cref="PollStatus.Trapped"/> — a trap fails the dispatch
-/// and discards the instance, never retried on the same memory.
+/// The bodies of the guest's exports (<c>wisp_alloc</c>, <c>wisp_handle</c>,
+/// <c>wisp_wake</c>, <c>wisp_initialize</c>, <c>wisp_gc_hint</c>), generic
+/// over what routes a dispatch. A guest's own <c>[UnmanagedCallersOnly]</c>
+/// methods delegate here, since that attribute cannot sit on a generic class.
+/// Nothing here throws across the boundary: an escaping exception in an
+/// <c>UnmanagedCallersOnly</c> frame is a runtime abort with no trap code, so
+/// every entrypoint converts to <see cref="PollStatus.Trapped"/>.
 /// </summary>
 public static unsafe class Exports<TRouter>
     where TRouter : IWispRouter, new()
@@ -40,18 +34,10 @@ public static unsafe class Exports<TRouter>
         _router.Boot();
     }
 
-    // -----------------------------------------------------------------------
-    // wisp_alloc(size, align) -> ptr
-    // -----------------------------------------------------------------------
-
     /// <summary>
-    /// Host→guest data enters via <c>wisp_alloc</c> + copy. No host pointer
-    /// ever enters guest memory, so this hands back an offset into our own
-    /// linear memory and nothing else.
-    ///
-    /// The contract with the host is that every pointer passed to
-    /// <c>wisp_handle</c> / <c>wisp_wake</c> came from here, because those
-    /// entrypoints free it once they have copied it onto the GC heap.
+    /// Where the host copies a dispatch or result record. Every pointer the
+    /// host passes to <c>wisp_handle</c> or <c>wisp_wake</c> came from here,
+    /// and those entrypoints free it once they have copied it onto the heap.
     /// </summary>
     public static int Alloc(int size, int align)
     {
@@ -76,13 +62,8 @@ public static unsafe class Exports<TRouter>
         return copy;
     }
 
-    // -----------------------------------------------------------------------
-    // wisp_handle(ptr, len) -> poll-status
-    // -----------------------------------------------------------------------
-
     /// <summary>
-    /// A new top-level work item. Returns <c>done</c>, <c>pending</c> or
-    /// <c>trapped</c>; <see cref="PollStatus"/> encodes no fourth outcome.
+    /// A new dispatch. Returns <c>done</c>, <c>pending</c> or <c>trapped</c>.
     /// </summary>
     public static long Handle(int ptr, int len)
     {
@@ -106,8 +87,6 @@ public static unsafe class Exports<TRouter>
             _ctx = new Ctx((long)d.NowMs, d.CpuBudgetMs);
             FutureTable.Reset();
 
-            // Kicking the handler off runs it synchronously up to its first
-            // incomplete await, exactly as .NET always has.
             _root = _router!.Route(d, _ctx);
 
             return Settle();
@@ -118,10 +97,7 @@ public static unsafe class Exports<TRouter>
         }
         catch (PostcardException)
         {
-            // A trigger this module exports no handler for. It decoded
-            // cleanly, so the host is misrouting rather than corrupting, and
-            // Protocol is the code that says so — reached from `Route`, which
-            // is outside the decode-only catch above.
+            // From `Route`: a trigger this module has no handler for.
             return PollStatus.Trapped(TrapCode.Protocol);
         }
         catch (Exception e)
@@ -130,14 +106,9 @@ public static unsafe class Exports<TRouter>
         }
     }
 
-    // -----------------------------------------------------------------------
-    // wisp_wake(future, ptr, len) -> poll-status
-    // -----------------------------------------------------------------------
-
     /// <summary>
-    /// A host future completed. Delivery order for distinct futures is
-    /// unspecified and the guest must not assume one — the .NET Task model
-    /// already does not.
+    /// A host future completed. Distinct futures complete in no particular
+    /// order.
     /// </summary>
     public static long Wake(long future, int ptr, int len)
     {
@@ -158,8 +129,6 @@ public static unsafe class Exports<TRouter>
 
             Log(1, "wisp_wake enter: future=" + future.ToString());
 
-            // Completing the TCS does not run the continuation here: it Posts
-            // it to the wisp scheduler's queue, which Settle() then drains.
             FutureTable.Complete(future, r);
 
             return Settle();
@@ -180,33 +149,24 @@ public static unsafe class Exports<TRouter>
         try
         {
             Boot();
-            // Force the pieces a first dispatch would otherwise pay for: the
-            // GC heap, the Task machinery, and the postcard codec's buffers.
             var warm = new PostcardWriter(64);
             warm.Varint(1);
             warm.Str("wisp");
             GC.KeepAlive(warm.Span.Length);
 #if WISP_ENTROPY_PROBE
-            // Under the probe only: also do what pre-init is FOR (building
-            // dictionaries, DI containers), so `--entropy-clone` measures the
-            // realistic template rather than a minimal one.
             Wisp.App.EntropyProbe.WarmLikePreInit();
 #endif
         }
         catch
         {
-            // A failed warm-up is not a failed deploy: the work simply happens
-            // lazily on the first dispatch, which is today's behaviour anyway.
+            // A failed warm-up is not a failed deploy: the work happens on
+            // the first dispatch instead.
         }
     }
 
-    // -----------------------------------------------------------------------
-    // wisp_gc_hint(pressure)
-    // -----------------------------------------------------------------------
-
     /// <summary>
-    /// Requests a best-effort compacting collection; pressure of two or more selects
-    /// aggressive collection. This does not guarantee that unused memory is zeroed.
+    /// Called before a hibernation capture. A compacting collection leaves
+    /// the freed tail zeroed, and zeroed pages compress out of the delta.
     /// </summary>
     public static void GcHint(int pressure)
     {
@@ -220,13 +180,11 @@ public static unsafe class Exports<TRouter>
         }
     }
 
-    // -----------------------------------------------------------------------
-    // The one place a dispatch can end.
-    // -----------------------------------------------------------------------
-
     /// <summary>
-    /// Drains runnable continuations and reports the root task status.
-    /// An incomplete root returns pending; this does not prove it has a host wake source.
+    /// Runs the scheduler to quiescence. If the root task is still incomplete
+    /// once <see cref="WispSynchronizationContext.Drain"/> returns, it is
+    /// waiting on a host future with its state on the heap, and returning
+    /// <c>pending</c> leaves nothing of the dispatch on the wasm stack.
     /// </summary>
     private static long Settle()
     {
@@ -243,9 +201,6 @@ public static unsafe class Exports<TRouter>
         if (root.IsFaulted || root.IsCanceled)
         {
             _root = null;
-            // The handler's own exception, not ours. Same reasoning as
-            // `Panic`: the type name is the only diagnostic that survives
-            // `UseSystemResourceKeys` and `StackTraceSupport=false`.
             Exception? inner = root.Exception?.GetBaseException();
             return inner is null ? PollStatus.Trapped(TrapCode.Panic) : Panic(inner);
         }
@@ -253,11 +208,7 @@ public static unsafe class Exports<TRouter>
         Response resp = root.Result;
         _root = null;
 
-        // ResponseHead { status: u16, headers: Vec<(String,String)>, body,
-        //                streaming: bool }
-        //
-        // `headers` is length-prefixed, so "no headers" is a 0 and not an
-        // omission. A response without a content type uses the empty header list.
+        // ResponseHead { status, headers, body, streaming }
         var w = new PostcardWriter(resp.Body.Length + 64);
         w.Varint(resp.Status);
         if (resp.ContentType is null)
@@ -285,11 +236,8 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// A `Trapped(Panic)` with no diagnostic is a support ticket nobody can
-    /// answer. The guest build turns exception messages into resource keys
-    /// (`UseSystemResourceKeys`) and turns stack traces off, so the type name
-    /// is what is left — and it is enough to tell a tenant bug from a missing
-    /// platform capability.
+    /// Logs the exception's type name, which is the diagnostic that survives
+    /// <c>UseSystemResourceKeys</c> and no stack traces, then traps.
     /// </summary>
     private static long Panic(Exception e)
     {
@@ -299,7 +247,7 @@ public static unsafe class Exports<TRouter>
         }
         catch
         {
-            // Never let diagnosis be the thing that breaks the trap path.
+            // Diagnosis must not be what breaks the trap path.
         }
         return PollStatus.Trapped(TrapCode.Panic);
     }
@@ -311,9 +259,8 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// <c>Console.Write*</c> is shimmed onto the log import. Going through the
-    /// import rather than stdout is what keeps <c>wasi:cli/stdout</c> out of
-    /// the module's capability manifest.
+    /// The log import; stdout would put <c>wasi:cli/stdout</c> in the module's
+    /// imports.
     /// </summary>
     private static void Log(int level, string message)
     {

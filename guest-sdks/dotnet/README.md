@@ -1,6 +1,6 @@
 # `guest-sdks/dotnet` — the C# WISP guest SDK
 
-The shared C# guest SDK supplies host bindings, async execution and managed APIs.
+One SDK, referenced by every .NET guest.
 
 | | |
 |---|---|

@@ -4,17 +4,8 @@ using Wisp.Abi;
 namespace Wisp.Durable;
 
 /// <summary>
-/// What routes a decoded dispatch to guest code.
-///
-/// This is the seam that lets one SDK serve many guests. <see cref="Exports{T}"/>
-/// holds every line of the five host exports — the allocation handshake, the
-/// poll-status packing, the trap conversion, the future table — and knows
-/// nothing about any particular guest. A guest supplies one of these, and the
-/// SDK never has to name a tenant type.
-///
-/// It is the C# analogue of the Rust SDK's <c>export_handler!</c> /
-/// <c>export_durable!</c>: the same one-line declaration of "this class is the
-/// entrypoint", expressed as a generic argument because there is no macro.
+/// What routes a decoded dispatch to guest code. <see cref="Exports{T}"/>
+/// is generic over one of these, so the SDK names no tenant type.
 /// </summary>
 public interface IWispRouter
 {
@@ -22,30 +13,29 @@ public interface IWispRouter
     void Boot();
 
     /// <summary>
-    /// Route one decoded dispatch. A trigger this guest cannot receive must
-    /// throw <see cref="PostcardException"/>, which the entrypoint turns into
-    /// <see cref="TrapCode.Protocol"/> — the dispatch fails and the instance is
-    /// discarded, rather than answering wrongly.
+    /// Route one decoded dispatch. A trigger this guest cannot receive throws
+    /// <see cref="PostcardException"/>, which the entrypoint turns into
+    /// <see cref="TrapCode.Protocol"/>.
     /// </summary>
     Task<Response> Route(DispatchRecord d, Ctx ctx);
 }
 
 /// <summary>
-/// A Handler: HTTP in, response out, instance drawn from a pool.
+/// A Handler: an HTTP request in, a response out.
 /// </summary>
 public interface IWispHandler
 {
     /// <summary>
-    /// Handle one HTTP request. Whether the instance behind <c>this</c> is reused
-    /// between requests or reset first is <c>wisp.toml</c>'s <c>lifecycle</c>, and a
-    /// handler may not depend on either answer.
+    /// Handle one HTTP request. Whether the instance is reused between
+    /// requests or reset first is the app's <c>lifecycle</c> setting, and a
+    /// handler depends on neither.
     /// </summary>
     Task<Response> HandleAsync(Request req, Ctx ctx);
 }
 
 /// <summary>
-/// Routes to a Handler. A Handler may only ever receive
-/// <see cref="DispatchKind.Http"/>; every other trigger is a host misrouting.
+/// Routes HTTP dispatches to a Handler; any other trigger is a
+/// <see cref="PostcardException"/>.
 /// </summary>
 public sealed class HandlerRouter<TApp> : IWispRouter
     where TApp : IWispHandler, new()
@@ -58,8 +48,7 @@ public sealed class HandlerRouter<TApp> : IWispRouter
     public void Boot() => _app = new TApp();
 
     /// <summary>
-    /// Routes an HTTP dispatch to the app. Any other trigger is a host misrouting
-    /// and throws <see cref="PostcardException"/>.
+    /// Routes an HTTP dispatch to the app.
     /// </summary>
     public Task<Response> Route(DispatchRecord d, Ctx ctx)
     {

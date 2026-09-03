@@ -6,10 +6,8 @@ using Wisp.Runtime;
 namespace Wisp;
 
 /// <summary>
-/// A capability call the host refused or could not complete.
-///
-/// <see cref="WispError"/> carries which, so a caller can tell a stale fencing
-/// epoch from an I/O failure — the two mean opposite things about whether to retry.
+/// A capability call the host refused or could not complete;
+/// <see cref="WispError"/> says which.
 /// </summary>
 public sealed class BindingException : Exception
 {
@@ -21,8 +19,8 @@ public sealed class BindingException : Exception
 }
 
 /// <summary>
-/// The request as the handler sees it. Only the fields the PoC handler needs
-/// are decoded; the full HTTP surface is out of scope here.
+/// The request as a handler sees it: the method and the path. The query,
+/// headers and body arrive in the dispatch record and are not decoded.
 /// </summary>
 public sealed class Request
 {
@@ -37,22 +35,14 @@ public sealed class Request
     internal Request(string method, string path) { Method = method; Path = path; }
 }
 
-/// <summary>The response builder. Handed to the host via <c>resp_new</c>.</summary>
+/// <summary>A response: a status, an optional content type and a body.</summary>
 public sealed class Response
 {
     internal ushort Status { get; }
     internal byte[] Body { get; }
     /// <summary>
-    /// <c>null</c> means the encoded <c>ResponseHead</c> carries an EMPTY
-    /// header list, not a header with an empty value.
-    ///
-    /// The distinction is on the wire and it is why this is nullable rather
-    /// than defaulted: a Durable Instance reply rides the response handle
-    /// (there is no typed DI reply import), and the Rust SDK's
-    /// <c>Response::new(status, body)</c> builds one with no headers at all.
-    /// A C# guest that always emitted a <c>content-type</c> would put extra
-    /// bytes through <c>resp_new</c> on every dispatch, on one side of a
-    /// language comparison only.
+    /// <c>null</c> encodes an empty header list, which is what a Durable
+    /// Instance reply carries.
     /// </summary>
     internal string? ContentType { get; }
 
@@ -76,37 +66,32 @@ public sealed class Response
         new(status, System.Text.Encoding.UTF8.GetBytes(json), "application/json");
 
     /// <summary>
-    /// Bytes with no headers — the shape a DI reply takes. The array is
-    /// taken by reference and handed to the host as-is; callers that reuse a
-    /// buffer must copy before passing it here.
+    /// Bytes with no headers, the shape a Durable Instance reply takes. The
+    /// array is handed to the host as is, so a reused buffer must be copied
+    /// first.
     /// </summary>
     public static Response Raw(byte[] body, ushort status = 200) =>
         new(status, body, null);
 
     /// <summary>
-    /// Bytes with an explicit content type. <c>Raw</c> is the right default for
-    /// a benchmark guest, where the extra bytes through <c>resp_new</c> on
-    /// every dispatch would land on one side of a language comparison only.
-    /// This guest serves a page to a browser, so the header has to be real: a
-    /// reply with no <c>content-type</c> leaves the browser to MIME-sniff, and
-    /// a sniff is a guess.
+    /// Bytes with an explicit content type, for a reply a client has to be
+    /// told the type of.
     /// </summary>
     public static Response Bytes(byte[] body, string? contentType, ushort status = 200) =>
         new(status, body, contentType);
 }
 
 /// <summary>
-/// The per-dispatch context. <c>WaitUntil</c> extends the instance's life past
-/// the response for fire-and-forget work, bounded by the CPU budget — exactly
-/// as in Workers.
+/// The per-dispatch context.
 /// </summary>
 public sealed class Ctx
 {
-    /// <summary>Millisecond granularity, and frozen for the whole dispatch
-    /// slice. Code MUST NOT assume high-resolution timing.</summary>
+    /// <summary>
+    /// The clock at dispatch start, in milliseconds, frozen for the slice.
+    /// </summary>
     public long NowMs { get; }
     /// <summary>
-    /// CPU-ms this dispatch may use before it is killed. See the plan limits.
+    /// CPU milliseconds this dispatch may use before it is killed.
     /// </summary>
     public uint CpuBudgetMs { get; }
 
