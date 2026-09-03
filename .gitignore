@@ -1,7 +1,8 @@
 /target
 /crates/spike/target
 /guests/target
-/guests/out/*.wasm
+/guests/out/
+/guests/.build.lock
 **/*.rs.bk
 .wisp-data/
 
@@ -18,17 +19,9 @@ wispd-data-todo/
 # local .data output for manual testing
 .data/
 
-# C# guest fixtures. Built on demand by guests/build-dotnet.sh, which the tests
-# that read them invoke themselves — the same contract guests/out/*.wasm has
-# always had. They were tracked until it was pointed out that "most checkouts
-# lack a .NET SDK" describes checkouts that cannot run these tests either: the
-# Dockerfile installs the SDK and scripts/dev is the enforced environment. Six
-# stale binaries that tests asserted against were the cost of the old rule.
+# Guest fixtures, built on demand by guests/build-dotnet.sh.
 guests/dotnet/out/*.wasm
-# Per-flavour MSBuild intermediates, so flavours of one guest can build
-# concurrently (see WISP_BUILD_ID in guest-sdks/dotnet/build-guest.sh).
 guests/*/obj-*/
 guests/.build-dotnet.lock
-# Build output of the SDK library itself; tracked by accident, never a fixture.
 guest-sdks/dotnet/bin/
 guest-sdks/dotnet/obj/
