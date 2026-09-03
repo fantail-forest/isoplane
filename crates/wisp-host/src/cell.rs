@@ -1325,10 +1325,6 @@ impl Cell {
         t.get(handle).map(|resp| resp.body())
     }
 
-    pub fn is_quarantined(&self, tenant: &str) -> bool {
-        self.quarantined.lock().iter().any(|t| t == tenant)
-    }
-
     /// Idempotent.
     pub fn shutdown(&self) {
         self.stop(false);
