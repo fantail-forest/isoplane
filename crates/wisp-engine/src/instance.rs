@@ -4,24 +4,19 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{bail, Context};
-use wasmtime::error::Context as WtContext;
-use wasmtime::{Global, Memory, Ref, Store, Table, TypedFunc, Val};
+use anyhow::bail;
+use wasmtime::{Global, Memory, Store, Table, TypedFunc};
 
 use wisp_abi::dispatch::DispatchRecord;
 use wisp_abi::result::ResultRecord;
-use wisp_abi::status::{PollStatus, TrapCode};
+use wisp_abi::status::PollStatus;
 
 use crate::budget::{CpuBudget, KillPhase, TrapKind};
+use crate::call::{call_entry, classify, trap_code_of_kind, trap_kind_of_code};
 use crate::meter::try_thread_cpu_nanos;
-use crate::snapshot::GlobalValue;
-use crate::state::{
-    AllocFailed, BudgetExceeded, GuestAbort, Kill, Meter, Reentrancy, StoreState, WallCapExceeded,
-};
+use crate::state::{Meter, Reentrancy, StoreState};
 use crate::template::TemplateInner;
-use crate::{
-    Completion, DispatchOutcome, EngineInner, InstanceImage, InstanceOps, Result, TrapInfo,
-};
+use crate::{DispatchOutcome, EngineInner, InstanceImage, Result, TrapInfo};
 
 /// The wasmtime side of an activation. Separate from [`Instance`] so that
 /// `reset` can drop the whole thing, returning the slot to the pool, and build
@@ -61,7 +56,7 @@ impl std::fmt::Debug for Instance {
     }
 }
 
-enum Entry<'a> {
+pub(crate) enum Entry<'a> {
     Handle(&'a DispatchRecord),
     Wake(u64, &'a ResultRecord),
     GcHint(u8),
@@ -274,169 +269,70 @@ impl Instance {
     }
 }
 
-fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<u64> {
-    match entry {
-        Entry::Handle(rec) => {
-            let bytes = postcard::to_allocvec(rec)
-                .map_err(wasmtime::Error::new)
-                .context("encoding dispatch record")?;
-            let (ptr, len) = handoff(live, &bytes)?;
-            let f = live.f_handle.clone();
-            Ok(f.call(&mut live.store, (ptr, len))? as u64)
-        }
-        Entry::Wake(future, res) => {
-            let bytes = postcard::to_allocvec(res)
-                .map_err(wasmtime::Error::new)
-                .context("encoding result record")?;
-            let (ptr, len) = handoff(live, &bytes)?;
-            let f = live.f_wake.clone();
-            Ok(f.call(&mut live.store, (future as i64, ptr, len))? as u64)
-        }
-        Entry::GcHint(pressure) => {
-            if let Some(f) = live.f_gc_hint.clone() {
-                f.call(&mut live.store, pressure as i32)?;
-            }
-            Ok(PollStatus::Done { response: 0 }.encode())
-        }
-        Entry::Initialize => {
-            if let Some(f) = live.f_initialize.clone() {
-                f.call(&mut live.store, ())?;
-            }
-            Ok(PollStatus::Done { response: 0 }.encode())
-        }
-    }
+/// What the host does to a live instance. A trait so `wisp-host` can be
+/// tested against a fake engine.
+pub trait InstanceOps {
+    /// Run a dispatch to completion, park, or kill.
+    fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome;
+    /// Deliver a completed host future.
+    fn wake(&mut self, future: u64, res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome;
+    /// Called before hibernation capture so the guest GC can compact and zero
+    /// the freed tail; zeroed pages compress out of the delta.
+    fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
+    /// Drop the store, which returns the slot to the pool, and instantiate
+    /// the template again.
+    fn reset(&mut self) -> Result<()>;
+    /// True only when the last call returned `pending` and wasmtime reports
+    /// no wasm frame on the native stack.
+    fn is_parked(&self) -> bool;
+    /// True when the instance may be captured: the stack is empty, the last
+    /// call ended in a state the instance survives, and it is not tombstoned.
+    /// Weaker than [`InstanceOps::is_parked`] on purpose: an instance that
+    /// returned `done` and went idle is the case hibernation is about.
+    fn is_capture_eligible(&self) -> bool;
+    /// Linear memory; empty for an instance with no live store.
+    fn memory(&mut self) -> &mut [u8];
+    fn memory_len(&self) -> usize;
+    /// Globals and tables. Linear memory is diffed by `wisp-hibernate`.
+    fn capture_mutable_state(&mut self) -> Result<InstanceImage>;
+    fn restore_mutable_state(&mut self, img: &InstanceImage) -> Result<()>;
 }
 
-/// Host-to-guest data enters via `wisp_alloc` plus a copy; the guest owns the
-/// allocation.
-fn handoff(live: &mut Live, bytes: &[u8]) -> wasmtime::Result<(i32, i32)> {
-    let len = i32::try_from(bytes.len())
-        .map_err(wasmtime::Error::new)
-        .context("record too large for the guest ABI")?;
-    let alloc = live.f_alloc.clone();
-    let ptr = alloc.call(&mut live.store, (len, 8))?;
-    if ptr == 0 {
-        return Err(AllocFailed { size: bytes.len() }.into());
-    }
-    let mem = live.memory;
-    let data = mem.data_mut(&mut live.store);
-    let start = ptr as u32 as usize;
-    let end = WtContext::context(
-        start.checked_add(bytes.len()),
-        "wisp_alloc pointer overflow",
-    )?;
-    WtContext::context(
-        data.get_mut(start..end),
-        "wisp_alloc returned a pointer outside linear memory",
-    )?
-    .copy_from_slice(bytes);
-    Ok((ptr, len))
+/// How a call into the guest ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    Done,
+    /// Returned `pending`: empty stack, futures registered.
+    Parked,
+    /// Guest fault. The instance is discarded.
+    Trapped,
+    /// Still executing at B+G and terminated without unwinding. The instance
+    /// is tombstoned: its memory is a state no execution produced.
+    BudgetKill,
+    /// Entered grace and returned inside it. The request still fails, but the
+    /// instance is consistent and its slot reusable.
+    CleanKill,
 }
 
-/// The engine's own reasons are recorded in the store rather than recovered
-/// from the error chain, so budget kills and capability violations are
-/// classified exactly instead of by matching wasmtime's message strings.
-fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
-    let d = live.store.data();
-
-    if let Some(kill) = d.kill {
-        let kind = TrapKind::BudgetExceeded;
-        let message = match kill {
-            Kill::CpuHard => err
-                .downcast_ref::<BudgetExceeded>()
-                .map(|b| b.to_string())
-                .unwrap_or_else(|| "cpu budget exceeded".into()),
-            Kill::Wall => err
-                .downcast_ref::<WallCapExceeded>()
-                .map(|w| format!("{w} (wall-clock backstop, not a CPU meter)"))
-                .unwrap_or_else(|| "wall-clock backstop tripped".into()),
-        };
-        return TrapInfo { kind, message };
-    }
-
-    if let Some(v) = err.downcast_ref::<crate::state::CapabilityViolation>() {
-        return TrapInfo {
-            kind: TrapKind::CapabilityViolation,
-            message: v.to_string(),
-        };
-    }
-    if let Some(a) = err.downcast_ref::<GuestAbort>() {
-        return TrapInfo {
-            kind: TrapKind::GuestPanic,
-            message: a.to_string(),
-        };
-    }
-    if let Some(a) = err.downcast_ref::<AllocFailed>() {
-        return TrapInfo {
-            kind: TrapKind::OutOfMemory,
-            message: a.to_string(),
-        };
-    }
-    if let Some(r) = err.downcast_ref::<Reentrancy>() {
-        return TrapInfo {
-            kind: TrapKind::Other,
-            message: r.to_string(),
-        };
-    }
-    if d.limits.oom {
-        return TrapInfo {
-            kind: TrapKind::OutOfMemory,
-            message: format!("linear memory growth refused at the plan ceiling: {err}"),
-        };
-    }
-
-    if let Some(t) = err.downcast_ref::<wasmtime::Trap>() {
-        use wasmtime::Trap as T;
-        let kind = match t {
-            // An epoch deadline with no recorded reason was reached outside a
-            // slice; still a budget kill from the tenant's point of view.
-            T::Interrupt | T::OutOfFuel => TrapKind::BudgetExceeded,
-            T::UnreachableCodeReached => TrapKind::GuestPanic,
-            T::AllocationTooLarge => TrapKind::OutOfMemory,
-            T::StackOverflow
-            | T::MemoryOutOfBounds
-            | T::HeapMisaligned
-            | T::TableOutOfBounds
-            | T::IndirectCallToNull
-            | T::BadSignature
-            | T::IntegerOverflow
-            | T::IntegerDivisionByZero
-            | T::BadConversionToInteger
-            | T::NullReference
-            | T::ArrayOutOfBounds
-            | T::CastFailure
-            | T::AtomicWaitNonSharedMemory => TrapKind::Sandbox,
-            _ => TrapKind::Other,
-        };
-        return TrapInfo {
-            kind,
-            message: format!("{err}"),
-        };
-    }
-
-    TrapInfo {
-        kind: TrapKind::Other,
-        message: format!("{err:#}"),
-    }
-}
-
-fn trap_kind_of_code(c: TrapCode) -> TrapKind {
-    match c {
-        TrapCode::Panic => TrapKind::GuestPanic,
-        TrapCode::OutOfMemory => TrapKind::OutOfMemory,
-        TrapCode::CapabilityViolation => TrapKind::CapabilityViolation,
-        TrapCode::Protocol | TrapCode::TooManyFutures | TrapCode::Unknown => TrapKind::Other,
-    }
-}
-
-fn trap_code_of_kind(k: TrapKind) -> TrapCode {
-    match k {
-        TrapKind::GuestPanic => TrapCode::Panic,
-        TrapKind::OutOfMemory => TrapCode::OutOfMemory,
-        TrapKind::CapabilityViolation => TrapCode::CapabilityViolation,
-        TrapKind::BudgetExceeded | TrapKind::Tombstoned | TrapKind::Sandbox | TrapKind::Other => {
-            TrapCode::Unknown
+impl Completion {
+    pub fn from_status(s: PollStatus) -> Self {
+        match s {
+            PollStatus::Done { .. } => Completion::Done,
+            PollStatus::Pending => Completion::Parked,
+            PollStatus::Trapped { .. } => Completion::Trapped,
         }
+    }
+    /// Whether the instance may be reused.
+    pub fn instance_survives(self) -> bool {
+        matches!(
+            self,
+            Completion::Done | Completion::Parked | Completion::CleanKill
+        )
+    }
+    /// Whether the instance is tombstoned. wasmtime does not poison a store
+    /// after a trap, so the platform does.
+    pub fn tombstones(self) -> bool {
+        matches!(self, Completion::Trapped | Completion::BudgetKill)
     }
 }
 
@@ -474,7 +370,7 @@ impl InstanceOps for Instance {
         data.limits.oom = false;
         data.scratch.clear();
 
-        match crate::instantiate(&self.engine, &self.template, data) {
+        match crate::activate::instantiate(&self.engine, &self.template, data) {
             Ok(live) => self.live = Some(live),
             Err(e) => {
                 self.tombstone = Some("the template could not be re-instantiated after a reset");
@@ -524,98 +420,10 @@ impl InstanceOps for Instance {
     }
 
     fn capture_mutable_state(&mut self) -> Result<InstanceImage> {
-        if let Some(why) = self.tombstone {
-            bail!(
-                "refusing to capture a tombstoned instance ({why}); its memory is a state no \
-                 execution produced"
-            );
-        }
-        let template = self.template.clone();
-        let live = anyhow::Context::context(self.live.as_mut(), "instance has no live store")?;
-
-        let mut globals = Vec::with_capacity(live.globals.len());
-        for g in &live.globals {
-            let v = g.get(&mut live.store);
-            globals.push(GlobalValue::of(v, &live.store)?);
-        }
-
-        // wasmtime's public API cannot name a funcref by function index, so a
-        // table mutation can be detected but not represented in a delta.
-        let table_mutations = Vec::new();
-        for (i, t) in live.tables.iter().enumerate() {
-            let baseline = template
-                .table_nullness
-                .get(i)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let size = t.size(&live.store);
-            let table_name = template
-                .tables
-                .get(i)
-                .map(|(n, _)| n.as_str())
-                .unwrap_or("?");
-            if size as usize != baseline.len() {
-                bail!(
-                    "table `{table_name}` grew from {} to {size} entries; table mutations cannot \
-                     be represented in a delta",
-                    baseline.len()
-                );
-            }
-            for (slot, was_non_null) in baseline.iter().enumerate() {
-                let now_non_null = match t.get(&mut live.store, slot as u64) {
-                    Some(Ref::Func(f)) => f.is_some(),
-                    Some(Ref::Extern(e)) => e.is_some(),
-                    Some(_) => true,
-                    None => false,
-                };
-                if now_non_null != *was_non_null {
-                    bail!(
-                        "table `{table_name}` slot {slot} changed since activation; table \
-                         mutations cannot be represented in a delta"
-                    );
-                }
-            }
-        }
-
-        Ok(InstanceImage {
-            globals,
-            table_mutations,
-            memory_pages: live.memory.size(&live.store) as u32,
-        })
+        crate::capture::capture_mutable_state(self)
     }
 
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> Result<()> {
-        if self.tombstone.is_some() {
-            bail!("refusing to restore into a tombstoned instance");
-        }
-        if !img.table_mutations.is_empty() {
-            bail!("table mutations cannot be applied: wasmtime exposes no function-index to funcref mapping");
-        }
-        let live = anyhow::Context::context(self.live.as_mut(), "instance has no live store")?;
-
-        // Grow first, so the delta pages `wisp-hibernate` writes through
-        // `memory()` have somewhere to land.
-        let cur = live.memory.size(&live.store) as u32;
-        if img.memory_pages > cur {
-            live.memory
-                .grow(&mut live.store, (img.memory_pages - cur) as u64)
-                .map_err(anyhow::Error::from)
-                .context("growing linear memory to the captured size")?;
-        }
-
-        if img.globals.len() != live.globals.len() {
-            bail!(
-                "delta carries {} globals but this template has {}; a delta is only valid \
-                 against its own module hash and ABI rev",
-                img.globals.len(),
-                live.globals.len()
-            );
-        }
-        for (g, v) in live.globals.iter().zip(&img.globals) {
-            g.set(&mut live.store, Val::from(*v))
-                .map_err(anyhow::Error::from)
-                .context("restoring a mutable global")?;
-        }
-        Ok(())
+        crate::capture::restore_mutable_state(self, img)
     }
 }

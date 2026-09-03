@@ -5,7 +5,29 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use wisp_engine::{HostBindings, ImportCall};
+use wisp_engine::{EngineConfig, HostBindings, ImportCall, Instance, Template, WispEngine};
+
+/// A small engine: the guard is not the default because every test process
+/// would otherwise reserve tens of GiB of address space per engine it builds.
+pub fn small_engine_config() -> EngineConfig {
+    EngineConfig {
+        max_instances: 64,
+        max_memory_bytes: 4 << 20,
+        epoch_tick_us: 200,
+        pooling: true,
+        spectre_mitigations: true,
+        guard_size_bytes: 2 << 20,
+    }
+}
+
+pub fn test_engine() -> WispEngine {
+    WispEngine::new(small_engine_config()).expect("engine")
+}
+
+pub fn activate(e: &WispEngine, t: &Template) -> Instance {
+    e.activate(t, Box::new(TestBindings::new(Recorder::default())))
+        .expect("activation")
+}
 
 /// A bump allocator plus the required exports; `handle` and `wake` are the
 /// bodies of `wisp_handle` and `wisp_wake`. The allocator wraps rather than
@@ -67,12 +89,6 @@ pub fn guest(
 
 /// `PollStatus::Done { response: 0 }` as the packed `i64` the ABI expects.
 pub const DONE: &str = "(i64.const 0)";
-/// `PollStatus::Pending`.
-pub const PENDING: &str = "(i64.const 1)";
-
-pub fn import(name: &str, params: &str, results: &str) -> String {
-    format!(r#"(import "wisp" "{name}" (func ${name} {params} {results}))"#)
-}
 
 /// Records what the guest asked for, and hands back a coarse clock that
 /// advances on every read, so a frozen-clock test is testing the engine's
@@ -106,12 +122,6 @@ impl TestBindings {
             fill_byte: 0xAB,
             allow_fill: true,
             full_length: None,
-        }
-    }
-    pub fn init_sandbox(rec: Recorder) -> Self {
-        Self {
-            init_sandbox: true,
-            ..Self::new(rec)
         }
     }
     fn note(&self, call: &ImportCall<'_>) {
@@ -154,25 +164,5 @@ impl HostBindings for TestBindings {
 
     fn is_init_sandbox(&self) -> bool {
         self.init_sandbox
-    }
-}
-
-/// A `DispatchRecord` with nothing interesting in it.
-pub fn http_dispatch(id: u64) -> wisp_abi::dispatch::DispatchRecord {
-    use wisp_abi::dispatch::*;
-    DispatchRecord {
-        dispatch_id: id,
-        kind: DispatchKind::Http(HttpRequest {
-            method: "GET".into(),
-            url: "https://example.test/x".into(),
-            path: "/x".into(),
-            query: vec![],
-            headers: vec![("host".into(), "example.test".into())],
-            body: vec![],
-        }),
-        trace: TraceContext::default(),
-        cancel_future: 0,
-        cpu_budget_ms: 30_000,
-        now_ms: 1_700_000_000_000,
     }
 }
