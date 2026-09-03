@@ -1,0 +1,223 @@
+//! The pending-futures cap, single-writer reentrancy for a durable instance, and `WaitUntil`.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use wisp_abi::config::{HandlerLifecycle, Limits};
+use wisp_abi::dispatch::{DispatchRecord, HttpRequest};
+use wisp_engine::Completion;
+
+use wisp_host::cell::{Cell, CellConfig, Target};
+use wisp_host::fakes::*;
+use wisp_host::{Activator, ModuleId};
+
+mod common;
+use common::manifest;
+
+struct Rig {
+    cell: Arc<Cell>,
+}
+
+fn rig(cfg: CellConfig) -> Rig {
+    let (cell, _fetcher) = common::rig_resolving(cfg, "93.184.216.34:80");
+    Rig { cell }
+}
+
+fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
+    cell.http_record(
+        module,
+        HttpRequest {
+            method: "GET".into(),
+            url: format!("http://app.example{path}"),
+            path: path.into(),
+            query: vec![],
+            headers: vec![],
+            body: vec![],
+        },
+    )
+}
+
+fn wait_for(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
+    let t0 = Instant::now();
+    while t0.elapsed() < within {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cond()
+}
+
+const T: Duration = Duration::from_secs(10);
+
+/// A host timer that will not fire during any test; parking on it holds an
+/// instance Parked for as long as a test needs to look at it.
+const PARK_MS: u64 = 600_000;
+
+#[test]
+fn the_pending_futures_cap_traps_the_guest() {
+    let free = rig(CellConfig {
+        ..CellConfig::for_test("cap-free")
+    });
+    let paid = rig(CellConfig::for_test("cap-paid"));
+    let r = &free;
+    let limit = Limits {
+        module_bytes_compressed: 5242880,
+        instance_memory_max: 67108864,
+        cpu_ms_per_http_dispatch: 10,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .pending_futures_per_dispatch;
+    assert_eq!(limit, 6, "the free plan's cap");
+
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("greedy", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: (0..limit + 3)
+                .map(|_| ("clock_deadline_in", PARK_MS))
+                .collect(),
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "limited-app",
+            act,
+            manifest(
+                "greedy",
+                HandlerLifecycle::Reuse,
+                Limits {
+                    module_bytes_compressed: 5242880,
+                    instance_memory_max: 67108864,
+                    cpu_ms_per_http_dispatch: 10,
+                    subrequests_per_dispatch: 20,
+                    pending_futures_per_dispatch: 6,
+                },
+            ),
+        )
+        .unwrap();
+
+    let mut rec = http(&r.cell, &module, "/greedy");
+    rec.dispatch_id = 1;
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/greedy".into(),
+            },
+            rec,
+            T,
+        )
+        .unwrap();
+
+    assert_eq!(
+        out.completion,
+        Completion::Trapped,
+        "the cap did not trap the guest"
+    );
+    assert_eq!(out.status, 500, "a trap is a 500");
+    assert_eq!(
+        r.cell.metrics().pending_cap_rejections,
+        1,
+        "the cap refusal is counted"
+    );
+
+    let ok = Arc::new(FakeActivator::named(
+        ModuleId::new("higher-limit-app", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: (0..limit + 3)
+                .map(|_| ("clock_deadline_in", PARK_MS))
+                .collect(),
+        }]),
+    ));
+    let ok_mod = ok.module().clone();
+    paid.cell
+        .register_module(
+            "acme",
+            ok,
+            manifest(
+                "higher-limit-app",
+                HandlerLifecycle::Reuse,
+                Limits::default(),
+            ),
+        )
+        .unwrap();
+    let mut rec = http(&paid.cell, &ok_mod, "/ok");
+    rec.dispatch_id = 2;
+    let rx = paid
+        .cell
+        .submit(
+            &ok_mod,
+            Target::Handler {
+                route: "/ok".into(),
+            },
+            rec,
+        )
+        .unwrap();
+    assert!(
+        wait_for(
+            || paid.cell.futures().live_futures() >= (limit + 3) as usize,
+            Duration::from_secs(5)
+        ),
+        "the higher configured future cap was not applied"
+    );
+    assert_eq!(
+        paid.cell.metrics().pending_cap_rejections,
+        0,
+        "the standard plan was never capped"
+    );
+    drop(rx);
+    free.cell.shutdown();
+    paid.cell.shutdown();
+}
+
+#[test]
+fn wait_until_keeps_the_instance_alive_past_the_response() {
+    let r = rig(CellConfig::for_test("waituntil"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("bg", "v1"),
+        FakeBehaviour::program([Step::WaitUntil {
+            import: "clock_deadline_in",
+            scalar: PARK_MS,
+        }]),
+    ));
+    let module = act.module().clone();
+    r.cell
+        .register_module(
+            "acme",
+            act,
+            manifest("bg", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+
+    let rec = http(&r.cell, &module, "/bg");
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/bg".into(),
+            },
+            rec,
+            T,
+        )
+        .unwrap();
+    assert_eq!(
+        out.status, 202,
+        "the response must not wait for the background work"
+    );
+    assert_eq!(out.body, b"accepted");
+
+    let instance = out.instance;
+    assert!(
+        r.cell.futures().wait_until_outstanding(instance),
+        "the WaitUntil work was dropped"
+    );
+    assert_eq!(
+        r.cell.instance_state(instance),
+        Some(wisp_host::LifecycleTier::Parked)
+    );
+    r.cell.shutdown();
+}

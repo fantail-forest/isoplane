@@ -19,8 +19,8 @@ use wisp_engine::{
     ModuleHash,
 };
 
-use crate::instances::Activator;
 use crate::meters::CpuInterval;
+use crate::pool::Activator;
 use crate::ModuleId;
 
 /// What the scripted guest does for one call into it.

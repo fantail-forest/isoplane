@@ -14,7 +14,7 @@ use wisp_host::activator::EngineActivator;
 use wisp_host::cell::{Cell, CellConfig, DispatchResult, Services, Target};
 use wisp_host::egress::HostEgressPolicy;
 use wisp_host::fakes::*;
-use wisp_host::instances::EnterError;
+use wisp_host::slot::EnterError;
 use wisp_host::{ModuleId, Resolver};
 
 /// Large enough that the grace window takes its 10% branch rather than the

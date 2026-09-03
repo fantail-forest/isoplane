@@ -13,10 +13,10 @@
 //!
 //! Two guarantees are carried by the type system rather than by review. The
 //! only `&mut dyn InstanceOps` in this crate comes from
-//! [`instances::CallGuard`], obtained by moving the instance out of its slot,
+//! [`slot::CallGuard`], obtained by moving the instance out of its slot,
 //! so a reentrant call finds an empty slot. And a `fresh` instance is reset or
-//! discarded after its dispatch because [`instances::Disposition`] has one
-//! producer, [`instances::decide`], and no value of it means "keep a fresh
+//! discarded after its dispatch because [`disposition::Disposition`] has one
+//! producer, [`disposition::decide`], and no value of it means "keep a fresh
 //! instance warm".
 //!
 //! A cell is a thread group within one process, not a seccomp'd process, and
@@ -29,26 +29,31 @@ pub mod activator;
 pub mod bindings;
 pub mod breaker;
 pub mod cell;
+pub mod cpu_clock;
 pub mod dispatcher;
+pub mod disposition;
 pub mod egress;
 pub mod fakes;
 pub mod futures;
-pub mod instances;
 pub mod meters;
 pub mod metrics;
 pub mod net;
+pub mod pool;
 pub mod response;
 mod sharded_map;
+pub mod slot;
 pub use activator::EngineActivator;
 pub use bindings::{CellBindings, InstanceCtx};
 pub use breaker::{BreakerState, HangBreaker};
 pub use cell::{Cell, CellConfig, DispatchResult, Services, Target};
+pub use disposition::Disposition;
 pub use egress::{DenyReason, HostEgressPolicy, Resolver};
 pub use futures::{FutureTable, PendingCapError};
-pub use instances::{Activator, CallGuard, Disposition, LifecycleTier};
 pub use meters::Meters;
 pub use metrics::MetricsSnapshot;
 pub use net::PinnedHttpFetcher;
+pub use pool::Activator;
+pub use slot::{CallGuard, LifecycleTier};
 
 pub type Result<T> = anyhow::Result<T>;
 

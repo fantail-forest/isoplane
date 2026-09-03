@@ -9,7 +9,7 @@ use parking_lot::{Condvar, Mutex};
 use wisp_abi::dispatch::DispatchRecord;
 
 use super::{DispatchResult, Target};
-use crate::instances::Slot;
+use crate::slot::Slot;
 use crate::ModuleId;
 
 pub(super) enum Job {
@@ -200,7 +200,7 @@ impl WorkQueue {
 mod queue_tests {
     use super::*;
     use crate::bindings::InstanceCtx;
-    use crate::instances::InstancePool;
+    use crate::pool::InstancePool;
     use std::time::{Duration, Instant};
     use wisp_abi::config::{HandlerLifecycle, Limits};
 

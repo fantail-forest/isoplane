@@ -2,7 +2,9 @@
 //! The coarse clock is fixed for each serving slice.
 //! Scalar arguments follow declaration order after the buffer pair.
 
+mod http;
 mod instance;
+mod observability;
 mod runtime;
 
 pub use instance::{InstanceCtx, Tenancy};
@@ -13,15 +15,12 @@ use std::sync::Arc;
 
 use rand::RngCore;
 
-use wisp_abi::calls::*;
-use wisp_abi::dispatch::ResponseHead;
 use wisp_abi::imports::{self, ImportKind};
 use wisp_abi::result::*;
 use wisp_abi::status::TrapCode;
 use wisp_engine::{HostBindings, ImportCall};
 
 use crate::futures::INVALID_FUTURE;
-use crate::meters::CpuInterval;
 
 /// What each import's `scalars` entries mean; the contract crate's `BufSpec`
 /// is the authority on where the buffer pair sits.
@@ -57,13 +56,13 @@ impl CellBindings {
         self.ctx.take_out_buffer()
     }
 
-    fn rt(&self) -> Option<&Arc<CellRuntime>> {
+    pub(super) fn rt(&self) -> Option<&Arc<CellRuntime>> {
         self.ctx.rt.as_ref()
     }
 
     /// A refusal latches [`TrapCode::TooManyFutures`], because `call_future`
     /// returns a bare `u64` and cannot trap directly.
-    fn alloc(&self, import: &'static str) -> Option<u64> {
+    pub(super) fn alloc(&self, import: &'static str) -> Option<u64> {
         let rt = self.rt()?;
         let dispatch = self.ctx.dispatch_id();
         match rt.futures.alloc(
@@ -84,19 +83,19 @@ impl CellBindings {
         }
     }
 
-    fn settle(rt: &Arc<CellRuntime>, id: u64, res: ResultRecord) {
+    pub(super) fn settle(rt: &Arc<CellRuntime>, id: u64, res: ResultRecord) {
         rt.settle_future(id, res);
     }
 
     /// For policy refusals: the guest still learns through the future.
-    fn settle_now(&self, id: u64, res: ResultRecord) -> u64 {
+    pub(super) fn settle_now(&self, id: u64, res: ResultRecord) -> u64 {
         if let Some(rt) = self.rt() {
             Self::settle(rt, id, res);
         }
         id
     }
 
-    fn decode<T: serde::de::DeserializeOwned>(&self, payload: &[u8]) -> Option<T> {
+    pub(super) fn decode<T: serde::de::DeserializeOwned>(&self, payload: &[u8]) -> Option<T> {
         match postcard::from_bytes(payload) {
             Ok(v) => Some(v),
             Err(e) => {
@@ -106,32 +105,41 @@ impl CellBindings {
             }
         }
     }
-
-    fn check_subrequest(&self) -> Result<(), FutureError> {
-        let n = self.ctx.subrequests.fetch_add(1, Ordering::Relaxed) + 1;
-        if n > self.ctx.limits.subrequests_per_dispatch {
-            return Err(FutureError::Denied(format!(
-                "subrequest cap of {} per dispatch exceeded",
-                self.ctx.limits.subrequests_per_dispatch
-            )));
-        }
-        Ok(())
-    }
 }
 
-fn ok_bytes<T: serde::Serialize>(v: &T) -> ResultRecord {
+pub(super) fn ok_bytes<T: serde::Serialize>(v: &T) -> ResultRecord {
     match ResultRecord::ok(v) {
         Ok(r) => r,
         Err(e) => ResultRecord::Err(FutureError::Io(format!("encode: {e}"))),
     }
 }
 
-fn from_typed<T: serde::Serialize>(r: Result<T, FutureError>) -> ResultRecord {
+pub(super) fn from_typed<T: serde::Serialize>(r: Result<T, FutureError>) -> ResultRecord {
     match r {
         Ok(v) => ok_bytes(&v),
         Err(e) => ResultRecord::Err(e),
     }
 }
+
+/// Spawns `$body` on the cell's reactor and settles `$id` with its result;
+/// every future-class arm that hands work to a service uses this. Written at
+/// module scope, rather than nested in `call_future`, so every domain module
+/// can invoke it; item paths are fully qualified since a glob-imported name
+/// does not carry through a macro's hygiene into another file's invocation.
+macro_rules! spawn {
+    ($rt:expr, $id:expr, |$svc:ident| $body:expr) => {{
+        let rt = $rt;
+        let id = $id;
+        let rt2 = rt.clone();
+        rt.reactor.spawn(async move {
+            let $svc = rt2.services.clone();
+            let res: wisp_abi::result::ResultRecord = $body;
+            CellBindings::settle(&rt2, id, res);
+        });
+        return id;
+    }};
+}
+pub(super) use spawn;
 
 impl HostBindings for CellBindings {
     fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
@@ -163,26 +171,10 @@ impl HostBindings for CellBindings {
         let Some(rt) = self.rt().cloned() else {
             return id;
         };
-        let ctx = self.ctx.clone();
-        let tenant = ctx.tenant.clone();
-        let payload = call.payload.to_vec();
-        let scalars = call.scalars;
-
-        macro_rules! spawn {
-            (|$svc:ident| $body:expr) => {{
-                let rt2 = rt.clone();
-                rt.reactor.spawn(async move {
-                    let $svc = rt2.services.clone();
-                    let res: ResultRecord = $body;
-                    CellBindings::settle(&rt2, id, res);
-                });
-                return id;
-            }};
-        }
 
         match def.name {
             "clock_deadline_in" => {
-                let ms = scalars[0];
+                let ms = call.scalars[0];
                 let rt2 = rt.clone();
                 rt.reactor.spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
@@ -191,69 +183,9 @@ impl HostBindings for CellBindings {
                 id
             }
 
-            "http_fetch" => {
-                let Some(req) = self.decode::<FetchRequest>(&payload) else {
-                    return self.settle_now(
-                        id,
-                        ResultRecord::Err(FutureError::Denied("malformed fetch request".into())),
-                    );
-                };
-                if let Err(e) = self.check_subrequest() {
-                    rt.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
-                    return self.settle_now(id, ResultRecord::Err(e));
-                }
-                // The check blocks on `getaddrinfo`, so it runs on the
-                // reactor's blocking pool.
-                let allowlist = ctx.allowlist.clone();
-                let rt2 = rt.clone();
-                rt.reactor.spawn(async move {
-                    let svc = rt2.services.clone();
-                    let checked = {
-                        let egress = svc.egress.clone();
-                        let url = req.url.clone();
-                        tokio::task::spawn_blocking(move || {
-                            egress.check_typed(&url, allowlist.as_deref())
-                        })
-                        .await
-                    };
-                    let res = match checked {
-                        Ok(Ok(pinned)) => {
-                            let out = svc.fetcher.fetch(pinned, req).await;
-                            if let Ok(r) = &out {
-                                svc.egress.record_bytes(
-                                    r.body_inline.as_ref().map_or(0, |b| b.len()) as u64,
-                                );
-                            }
-                            svc.egress.release_connection();
-                            from_typed(out)
-                        }
-                        Ok(Err(deny)) => {
-                            tracing::warn!(tenant = %tenant, reason = %deny, "egress denied");
-                            rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
-                            ResultRecord::Err(FutureError::Denied(deny.to_string()))
-                        }
-                        Err(e) => ResultRecord::Err(FutureError::Io(format!("egress check: {e}"))),
-                    };
-                    CellBindings::settle(&rt2, id, res);
-                });
-                id
-            }
-            "http_body_read" => {
-                let handle = scalars[0] as u32;
-                let max = scalars[1] as usize;
-                spawn!(|svc| from_typed(svc.fetcher.read_body(handle, max).await))
-            }
-
-            "resp_write" => {
-                let handle = scalars[0] as u32;
-                let res = match ctx.responses.lock().write(handle, payload) {
-                    Ok(n) => {
-                        ResultRecord::Ok(postcard::to_allocvec(&(n as u32)).unwrap_or_default())
-                    }
-                    Err(e) => ResultRecord::Err(FutureError::Io(format!("resp_write: {e:?}"))),
-                };
-                self.settle_now(id, res)
-            }
+            "http_fetch" => self.http_fetch(rt, id, call.payload),
+            "http_body_read" => self.http_body_read(rt, id, call.scalars),
+            "resp_write" => self.resp_write(id, call.payload, call.scalars),
 
             other => {
                 tracing::error!(import = other, "future-class import with no route");
@@ -287,43 +219,9 @@ impl HostBindings for CellBindings {
             "init_unit_begin" => 0,
             "init_unit_deferred" => 0,
 
-            // Log CPU is already on the dispatch's meter; the interval makes
-            // the share visible and the byte cap bounds volume.
-            "log_emit" => {
-                let cpu = CpuInterval::start();
-                let level = call.scalars[0] as u8;
-                let n = call.payload.len() as u32;
-                let used = ctx.log_bytes.fetch_add(n, Ordering::Relaxed) + n;
-                if used > MAX_LOG_BYTES_PER_DISPATCH {
-                    return 0;
-                }
-                let fields = String::from_utf8_lossy(call.payload).to_string();
-                tracing::info!(
-                    tenant = %ctx.tenant,
-                    module = %ctx.module,
-                    instance = %ctx.instance,
-                    dispatch = ctx.dispatch_id(),
-                    at_ms = ctx.slice_clock_ms(),
-                    level,
-                    %fields,
-                    "guest log"
-                );
-                ctx.meters.record_log_cpu(cpu.elapsed_ns());
-                0
-            }
-            "trace_span_begin" => {
-                let name = String::from_utf8_lossy(call.payload).to_string();
-                let id = ctx.next_span.fetch_add(1, Ordering::Relaxed) as i32;
-                ctx.spans.lock().insert(id, (name, ctx.slice_clock_ms()));
-                id as i64
-            }
-            "trace_span_end" => {
-                let id = call.scalars[0] as i32;
-                if let Some((name, at)) = ctx.spans.lock().remove(&id) {
-                    tracing::debug!(tenant = %ctx.tenant, span = %name, began_ms = at, "span end");
-                }
-                0
-            }
+            "log_emit" => self.log_emit(call.payload, call.scalars),
+            "trace_span_begin" => self.trace_span_begin(call.payload),
+            "trace_span_end" => self.trace_span_end(call.scalars),
 
             "clock_now_coarse" => ctx.slice_clock_ms() as i64,
 
@@ -335,19 +233,8 @@ impl HostBindings for CellBindings {
                 -1
             }
 
-            "resp_new" => {
-                let Some(head) = self.decode::<ResponseHead>(call.payload) else {
-                    return 0;
-                };
-                ctx.responses.lock().create(head) as i64
-            }
-            "resp_finish" => {
-                let h = call.scalars[0] as u32;
-                match ctx.responses.lock().finish(h) {
-                    Ok(()) => 0,
-                    Err(_) => -1,
-                }
-            }
+            "resp_new" => self.resp_new(call.payload),
+            "resp_finish" => self.resp_finish(call.scalars),
 
             // Answered by the engine before reaching this vtable; an engine
             // that does not intercept them gets "budget untouched, bit clear"
@@ -413,8 +300,6 @@ impl HostBindings for CellBindings {
     }
 }
 
-const MAX_LOG_BYTES_PER_DISPATCH: u32 = 256 * 1024;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,7 +317,7 @@ mod tests {
         }
     }
 
-    fn ctx() -> Arc<InstanceCtx> {
+    pub(super) fn ctx() -> Arc<InstanceCtx> {
         Arc::new(InstanceCtx::for_test(
             InstanceId(1),
             HandlerLifecycle::Reuse,
@@ -440,7 +325,11 @@ mod tests {
         ))
     }
 
-    fn call<'a>(import: &'static str, payload: &'a [u8], scalars: [u64; 3]) -> ImportCall<'a> {
+    pub(super) fn call<'a>(
+        import: &'static str,
+        payload: &'a [u8],
+        scalars: [u64; 3],
+    ) -> ImportCall<'a> {
         ImportCall {
             import,
             payload,
@@ -630,65 +519,6 @@ mod tests {
     }
 
     #[test]
-    fn logs_are_structured_charged_and_bounded() {
-        let output = TestLogCapture::default();
-        let subscriber = output.dispatch();
-        let _subscriber = tracing::dispatcher::set_default(&subscriber);
-        let c = ctx();
-        c.begin_dispatch(10, 1);
-        let mut b = CellBindings::new(c.clone());
-        b.call_sync(call("log_emit", b"{\"msg\":\"hello\"}", [2, 0, 0]));
-        assert_eq!(output.records().len(), 1, "the line is emitted");
-        assert_eq!(output.records()[0].level, 2, "with its level");
-
-        let big = vec![b'x'; 64 * 1024];
-        for _ in 0..8 {
-            b.call_sync(call("log_emit", &big, [2, 0, 0]));
-        }
-        assert!(
-            output.records().len() < 9,
-            "the per-dispatch log byte cap did not bite"
-        );
-        c.begin_dispatch(11, 2);
-        b.call_sync(call("log_emit", b"after", [2, 0, 0]));
-        assert!(
-            output.records().iter().any(|l| l.fields == "after"),
-            "a new dispatch gets a fresh allowance"
-        );
-    }
-
-    #[test]
-    fn responses_are_built_through_the_vtable() {
-        let c = ctx();
-        let mut b = CellBindings::new(c.clone());
-        let head = ResponseHead {
-            status: 201,
-            headers: vec![],
-            body: b"hi".to_vec(),
-            streaming: false,
-        };
-        let h = b.call_sync(call(
-            "resp_new",
-            &postcard::to_allocvec(&head).expect("encode"),
-            [0; 3],
-        ));
-        assert_eq!(h, 1, "the first response handle");
-        assert_eq!(
-            b.call_sync(call("resp_finish", &[], [h as u64, 0, 0])),
-            0,
-            "finishing a live handle succeeds"
-        );
-        assert_eq!(
-            b.call_sync(call("resp_finish", &[], [99, 0, 0])),
-            -1,
-            "finishing an unknown handle is refused"
-        );
-        let r = c.responses.lock().take(h as u32).expect("the response");
-        assert_eq!(r.head.status, 201, "the head is the guest's");
-        assert!(r.finished, "and it is finished");
-    }
-
-    #[test]
     fn the_two_call_paths_do_not_accept_each_others_imports() {
         let c = ctx();
         let mut b = CellBindings::new(c.clone());
@@ -708,65 +538,5 @@ mod tests {
             Some(TrapCode::Protocol),
             "and is a protocol error"
         );
-    }
-
-    #[derive(Clone, Default)]
-    struct TestLogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    #[derive(Debug, serde::Deserialize)]
-    struct TestGuestLog {
-        level: u8,
-        fields: String,
-    }
-
-    impl TestLogCapture {
-        fn dispatch(&self) -> tracing::Dispatch {
-            tracing::Dispatch::new(
-                tracing_subscriber::fmt()
-                    .json()
-                    .with_ansi(false)
-                    .with_max_level(tracing::Level::TRACE)
-                    .with_writer(self.clone())
-                    .finish(),
-            )
-        }
-
-        fn records(&self) -> Vec<TestGuestLog> {
-            let bytes = self.0.lock().expect("test writer mutex").clone();
-            String::from_utf8(bytes)
-                .expect("tracing emits UTF-8")
-                .lines()
-                .filter_map(|line| {
-                    let event: serde_json::Value =
-                        serde_json::from_str(line).expect("tracing JSON event");
-                    (event["fields"]["message"] == "guest log").then(|| {
-                        serde_json::from_value(event["fields"].clone())
-                            .expect("the guest logging boundary emits level and text")
-                    })
-                })
-                .collect()
-        }
-    }
-
-    impl std::io::Write for TestLogCapture {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("test writer mutex")
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for TestLogCapture {
-        type Writer = Self;
-
-        fn make_writer(&'writer self) -> Self::Writer {
-            self.clone()
-        }
     }
 }

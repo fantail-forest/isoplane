@@ -11,7 +11,7 @@ use wisp_abi::status::TrapCode;
 use wisp_host::cell::{Cell, CellConfig, Services, Target};
 use wisp_host::egress::HostEgressPolicy;
 use wisp_host::fakes::*;
-use wisp_host::instances::EnterError;
+use wisp_host::slot::EnterError;
 use wisp_host::{Activator, LifecycleTier, ModuleId, Resolver};
 
 const T: Duration = Duration::from_secs(10);

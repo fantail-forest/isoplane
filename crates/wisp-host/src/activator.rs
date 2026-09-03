@@ -9,7 +9,7 @@ use wisp_engine::{
     HostBindings, Instance, InstanceOps, MemoryImage, ModuleHash, Template, WispEngine,
 };
 
-use crate::instances::Activator;
+use crate::pool::Activator;
 use crate::ModuleId;
 
 pub struct EngineActivator {
