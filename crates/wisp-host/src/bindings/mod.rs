@@ -2,27 +2,26 @@
 //! The coarse clock is fixed for each serving slice.
 //! Scalar arguments follow declaration order after the buffer pair.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+mod instance;
+mod runtime;
+
+pub use instance::{InstanceCtx, Tenancy};
+pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
+
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
 use rand::RngCore;
 
 use wisp_abi::calls::*;
-use wisp_abi::config::{HandlerLifecycle, Limits};
 use wisp_abi::dispatch::ResponseHead;
 use wisp_abi::imports::{self, ImportKind};
 use wisp_abi::result::*;
 use wisp_abi::status::TrapCode;
 use wisp_engine::{HostBindings, ImportCall};
 
-use crate::egress::HostEgressPolicy;
-use crate::futures::{FutureTable, WakeTarget, INVALID_FUTURE};
-use crate::meters::{CpuInterval, Meters};
-use crate::metrics::Metrics;
-use crate::response::ResponseTable;
-use crate::{InstanceId, ModuleId};
+use crate::futures::INVALID_FUTURE;
+use crate::meters::CpuInterval;
 
 /// What each import's `scalars` entries mean; the contract crate's `BufSpec`
 /// is the authority on where the buffer pair sits.
@@ -38,219 +37,6 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     // Answered by the engine and never reaching this vtable, but declared.
     ("unsafe_to_trap", &["on"]),
 ];
-
-/// How a completed host future gets back to an execution-pool thread.
-pub trait WakeSink: Send + Sync + 'static {
-    fn signal(&self, owner: InstanceId);
-}
-
-#[async_trait::async_trait]
-pub trait Fetcher: Send + Sync + 'static {
-    /// `target.addr` is the pinned address from the egress check; an
-    /// implementation that re-resolves `target.url` has thrown the rebinding
-    /// control away.
-    async fn fetch(
-        &self,
-        target: wisp_abi::host::PinnedTarget,
-        req: FetchRequest,
-    ) -> Result<FetchResponse, FutureError>;
-
-    async fn read_body(&self, handle: u32, max_len: usize) -> Result<BodyChunk, FutureError>;
-}
-
-/// Everything the vtable routes to.
-pub struct Services {
-    pub egress: Arc<HostEgressPolicy>,
-    pub fetcher: Arc<dyn Fetcher>,
-}
-
-/// The per-cell machinery an instance's bindings share; per-instance state
-/// lives in [`InstanceCtx`].
-pub struct CellRuntime {
-    pub services: Arc<Services>,
-    pub futures: Arc<FutureTable>,
-    pub metrics: Arc<Metrics>,
-    pub wake: Arc<dyn WakeSink>,
-    /// Reactor threads own all I/O; an execution thread never awaits.
-    pub reactor: tokio::runtime::Handle,
-}
-
-impl CellRuntime {
-    /// The one completion path, for the vtable's own futures and for
-    /// `Cell::complete_future`.
-    pub fn settle_future(&self, id: u64, res: wisp_abi::result::ResultRecord) {
-        let WakeTarget::Instance(owner) = self.futures.complete(id, res) else {
-            return;
-        };
-        self.wake.signal(owner);
-    }
-}
-
-/// Whose instance this is and under what terms.
-#[derive(Debug, Clone)]
-pub struct Tenancy {
-    pub module: ModuleId,
-    pub tenant: String,
-    pub limits: Limits,
-    pub lifecycle: HandlerLifecycle,
-    pub allowlist: Option<Vec<String>>,
-}
-
-/// The per-instance half of the vtable's state, shared between the slot and
-/// the [`CellBindings`] moved into the engine at activation, so the cell can
-/// freeze the clock, read the trap latch and collect the response for an
-/// instance whose bindings it no longer owns.
-pub struct InstanceCtx {
-    pub instance: InstanceId,
-    pub module: ModuleId,
-    pub tenant: String,
-    pub limits: Limits,
-    pub lifecycle: HandlerLifecycle,
-    pub allowlist: Option<Vec<String>>,
-    pub meters: Arc<Meters>,
-    /// `None` in tests that exercise the slot machinery without a cell.
-    pub rt: Option<Arc<CellRuntime>>,
-
-    /// The frozen slice clock, written once per slice by the cell.
-    clock_ms: AtomicU64,
-    /// The current top-level work item, the unit the future cap applies to.
-    dispatch: AtomicU64,
-    subrequests: AtomicU32,
-    /// Bounds log volume independently of the CPU it already costs.
-    log_bytes: AtomicU32,
-    entropy_calls: AtomicU64,
-    /// A trap the vtable owes the guest but cannot raise from a call that
-    /// returns an `i64`; the cell converts it after the call returns.
-    trap_latch: Mutex<Option<TrapCode>>,
-    /// Set when the dispatch enters its grace window: every import it calls
-    /// then returns `Cancelled` at once, so the unwind has something to unwind
-    /// for and no new work starts on budget the dispatch does not have.
-    cancelled: AtomicBool,
-    /// The dispatch's implicit cancellation future; the host cancels by
-    /// completing it, never by entering the instance.
-    cancel_future: AtomicU64,
-    /// Host-to-guest bytes for `entropy_fill`, copied in by the engine after
-    /// the call.
-    out_buffer: Mutex<Vec<u8>>,
-    pub responses: Mutex<ResponseTable>,
-    spans: Mutex<HashMap<i32, (String, u64)>>,
-    next_span: AtomicU32,
-}
-
-impl InstanceCtx {
-    pub fn new(
-        instance: InstanceId,
-        tenancy: Tenancy,
-        meters: Arc<Meters>,
-        rt: Option<Arc<CellRuntime>>,
-    ) -> Self {
-        Self {
-            instance,
-            module: tenancy.module,
-            tenant: tenancy.tenant,
-            limits: tenancy.limits,
-            tier: tenancy.tier,
-            lifecycle: tenancy.lifecycle,
-            allowlist: tenancy.allowlist,
-            meters,
-            rt,
-            clock_ms: AtomicU64::new(0),
-            dispatch: AtomicU64::new(0),
-            subrequests: AtomicU32::new(0),
-            log_bytes: AtomicU32::new(0),
-            entropy_calls: AtomicU64::new(0),
-            trap_latch: Mutex::new(None),
-            cancelled: AtomicBool::new(false),
-            cancel_future: AtomicU64::new(0),
-            out_buffer: Mutex::new(Vec::new()),
-            responses: Mutex::new(ResponseTable::default()),
-            spans: Mutex::new(HashMap::new()),
-            next_span: AtomicU32::new(1),
-        }
-    }
-
-    /// A context with no cell behind it, for tests of the slot machinery.
-    pub fn for_test(instance: InstanceId, lifecycle: HandlerLifecycle, limits: Limits) -> Self {
-        Self::new(
-            instance,
-            Tenancy {
-                module: ModuleId::new("test", "v1"),
-                tenant: "t".into(),
-                limits,
-                lifecycle,
-                allowlist: None,
-            },
-            Arc::new(Meters::new()),
-            None,
-        )
-    }
-
-    /// Freezes the coarse clock for one slice. Monotonic per instance, so a
-    /// host clock stepping backwards is not visible inside the sandbox.
-    pub fn begin_slice(&self, now_ms: u64, dispatch: u64) {
-        let prev = self.clock_ms.load(Ordering::Relaxed);
-        self.clock_ms.store(now_ms.max(prev), Ordering::Relaxed);
-        self.dispatch.store(dispatch, Ordering::Relaxed);
-    }
-
-    /// Resets the per-dispatch counters, including the poison, which under
-    /// `reuse` may be left from a clean kill a moment ago.
-    pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
-        self.subrequests.store(0, Ordering::Relaxed);
-        self.log_bytes.store(0, Ordering::Relaxed);
-        self.cancelled.store(false, Ordering::Relaxed);
-        self.cancel_future.store(0, Ordering::Relaxed);
-        self.begin_slice(now_ms, dispatch);
-    }
-
-    pub fn set_cancel_future(&self, id: u64) {
-        self.cancel_future.store(id, Ordering::Relaxed);
-    }
-
-    pub fn cancel_future(&self) -> u64 {
-        self.cancel_future.load(Ordering::Relaxed)
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
-    }
-
-    /// Returns false if already poisoned, so the cancellation future is
-    /// completed exactly once.
-    pub fn poison_imports(&self) -> bool {
-        !self.cancelled.swap(true, Ordering::Relaxed)
-    }
-
-    pub fn slice_clock_ms(&self) -> u64 {
-        self.clock_ms.load(Ordering::Relaxed)
-    }
-    pub fn dispatch_id(&self) -> u64 {
-        self.dispatch.load(Ordering::Relaxed)
-    }
-    pub fn subrequests(&self) -> u32 {
-        self.subrequests.load(Ordering::Relaxed)
-    }
-    pub fn entropy_calls(&self) -> u64 {
-        self.entropy_calls.load(Ordering::Relaxed)
-    }
-    pub fn take_trap(&self) -> Option<TrapCode> {
-        self.trap_latch.lock().take()
-    }
-    /// Without consuming it: the cell decides whether a call ends in a
-    /// tombstone while it still holds the guard, and `take_trap` comes later.
-    pub fn has_trap(&self) -> bool {
-        self.trap_latch.lock().is_some()
-    }
-    pub fn latch_trap(&self, code: TrapCode) {
-        let mut g = self.trap_latch.lock();
-        if g.is_none() {
-            *g = Some(code);
-        }
-    }
-    pub fn take_out_buffer(&self) -> Vec<u8> {
-        std::mem::take(&mut self.out_buffer.lock())
-    }
-}
 
 /// One per instance, moved into the engine at activation.
 pub struct CellBindings {
@@ -632,6 +418,8 @@ const MAX_LOG_BYTES_PER_DISPATCH: u32 = 256 * 1024;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::InstanceId;
+    use wisp_abi::config::{HandlerLifecycle, Limits};
     use wisp_abi::imports::IMPORTS;
 
     /// Scalars an import carries, per the contract crate's `BufSpec`.
