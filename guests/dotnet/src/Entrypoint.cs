@@ -6,15 +6,10 @@ namespace Wisp;
 
 /// <summary>
 /// This module's five core-wasm exports, each delegating to the SDK's
-/// generic implementation. The `using Guest = …` alias above is the whole
-/// declaration; it is the C# analogue of the Rust SDK's
-/// <c>export_handler!(Api)</c>.
-///
-/// The methods are boilerplate, and exist only because
+/// generic implementation; the <c>using Guest = …</c> alias above is the
+/// whole declaration. The methods exist because
 /// <c>[UnmanagedCallersOnly]</c> cannot be applied to a method of a generic
-/// class while NativeAOT-LLVM needs the attribute to emit a wasm export under
-/// the exact name the host linker looks for. A finished SDK would source-
-/// generate this file from the alias.
+/// class while NativeAOT-LLVM needs the attribute to emit a wasm export.
 /// </summary>
 internal static class Entrypoint
 {

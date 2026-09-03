@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Build every C# guest fixture, one at a time.
 #
-#   scripts/dev guests/build-dotnet.sh            # build all six
+#   scripts/dev guests/build-dotnet.sh            # build all seven
 #   scripts/dev guests/build-dotnet.sh --if-stale # only what is out of date
 #
-# Serial because five of the six are one .csproj under different properties,
+# Serial because six of the seven are one .csproj under different properties,
 # sharing `src/obj`, `src/bin`, `obj/wisp_pal.o` and the SDK project reference;
 # building them concurrently hit three distinct MSBuild races (a duplicate
 # AssemblyInfo from an intermediate directory inside `src/`, and two

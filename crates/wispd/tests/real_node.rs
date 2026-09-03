@@ -2,17 +2,12 @@
 
 #![cfg(feature = "real-backends")]
 
-use std::net::SocketAddr;
-use std::sync::Arc;
+mod common;
 
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::{Request, StatusCode};
-use hyper_util::rt::TokioIo;
-use tokio::net::TcpStream;
-use wisp_abi::config::AppManifest;
+use common::{config, get, manifest, serve, start_with, Rig};
+use hyper::StatusCode;
+use wisp_abi::config::InitSandbox;
 use wisp_abi::dispatch::ResponseHead;
-use wispd::config::{AppConfig, CellConfig, NodeConfig, VersionConfig};
 use wispd::node::Node;
 
 /// A guest that answers every dispatch with one canned response, its
@@ -53,128 +48,6 @@ fn guest(head: &ResponseHead) -> Vec<u8> {
     wat::parse_str(&src).expect("fixture .wat must assemble")
 }
 
-fn manifest(name: &str) -> AppManifest {
-    toml::from_str(&format!("name = \"{name}\"")).expect("a minimal manifest is valid")
-}
-
-fn config(dir: &std::path::Path) -> NodeConfig {
-    let mut cfg = NodeConfig::dev_default();
-    cfg.node = "real-node".into();
-    cfg.data_dir = dir.to_path_buf();
-    // Several nodes are built concurrently in one process; the default
-    // address-space reservation fits only a handful.
-    cfg.engine = wispd::config::EngineLimits {
-        max_instances: 64,
-        max_memory_mib: 32,
-        guard_mib: 64,
-    };
-    cfg.cells = vec![CellConfig {
-        name: "cell-1".into(),
-    }];
-    cfg.apps = vec![AppConfig {
-        name: "quotes".into(),
-        tenant: "acme".into(),
-        limits: Default::default(),
-        lifecycle: Default::default(),
-        cell: "cell-1".into(),
-        hosts: vec!["quotes.wisp.dev".into()],
-        path_prefix: "/".into(),
-        versions: vec![VersionConfig {
-            id: "v1".into(),
-            wasm: None,
-        }],
-        init_visible_vars: Default::default(),
-        init_sandbox: Default::default(),
-    }];
-    cfg
-}
-
-struct Rig {
-    proxy: SocketAddr,
-    admin: SocketAddr,
-    node: Arc<Node>,
-    _dir: tempfile::TempDir,
-}
-
-impl Rig {
-    /// A cell owns a tokio runtime, which must not be dropped inside an
-    /// async context.
-    async fn shutdown(self) {
-        tokio::task::spawn_blocking(move || drop(self))
-            .await
-            .unwrap();
-    }
-}
-
-/// A node serving `wasm` as `quotes@v1`, deployed through the real pipeline.
-async fn start_with(wasm: Vec<u8>) -> Rig {
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let node = Node::build(config(dir.path())).expect("a real node must assemble");
-    let real = node
-        .real
-        .clone()
-        .expect("the node has its execution backend");
-    real.deploy_version(
-        "quotes",
-        "v1",
-        "acme",
-        manifest("quotes"),
-        &wasm,
-        wisp_abi::config::InitSandbox::Sealed,
-    )
-    .await
-    .expect("deploying the module");
-    serve(node, dir).await
-}
-
-async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
-    let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
-    tokio::spawn(node.proxy.clone().serve(p));
-    tokio::spawn(wispd::http::serve(node.clone(), a));
-    Rig {
-        proxy,
-        admin,
-        node,
-        _dir: dir,
-    }
-}
-
-async fn start(head: ResponseHead) -> Rig {
-    start_with(guest(&head)).await
-}
-
-struct Resp {
-    status: StatusCode,
-    body: String,
-    headers: hyper::HeaderMap,
-}
-
-async fn get(addr: SocketAddr, host: &str, path: &str) -> Resp {
-    let stream = TcpStream::connect(addr).await.unwrap();
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let req = Request::builder()
-        .uri(path)
-        .header("host", host)
-        .body(Full::new(Bytes::new()))
-        .unwrap();
-    let r = sender.send_request(req).await.unwrap();
-    let status = r.status();
-    let headers = r.headers().clone();
-    let body = r.into_body().collect().await.unwrap().to_bytes();
-    Resp {
-        status,
-        headers,
-        body: String::from_utf8_lossy(&body).into_owned(),
-    }
-}
-
 fn head(status: u16, body: &str) -> ResponseHead {
     ResponseHead {
         status,
@@ -182,6 +55,10 @@ fn head(status: u16, body: &str) -> ResponseHead {
         body: body.as_bytes().to_vec(),
         streaming: false,
     }
+}
+
+async fn start(head: ResponseHead) -> Rig {
+    start_with(guest(&head), InitSandbox::Sealed).await
 }
 
 // ---------------------------------------------------------------------------
@@ -234,28 +111,7 @@ async fn a_node_reports_measurements_from_served_requests() {
         );
     }
 
-    let stream = TcpStream::connect(rig.admin).await.unwrap();
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let req = Request::builder()
-        .uri("/metrics")
-        .header("host", "localhost")
-        .body(Full::new(Bytes::new()))
-        .unwrap();
-    let body = sender
-        .send_request(req)
-        .await
-        .unwrap()
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
-    let text = String::from_utf8_lossy(&body).into_owned();
+    let text = get(rig.admin, "localhost", "/metrics").await.body;
 
     let metric = |name: &str| -> Option<f64> {
         text.lines()

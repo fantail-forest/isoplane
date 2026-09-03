@@ -1,10 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The reference C# guest. Everything critical about HOW a C# guest is
-    built lives in the SDK's Wisp.Guest.props, which every guest imports; this
-    file holds only what is this guest's own — its name, and the three build
-    flavours that exist to measure things.
+    The reference C# guest: its name, and its build flavours. How a C# guest
+    is built lives in the SDK's Wisp.Guest.props.
   -->
   <Import Project="../../../guest-sdks/dotnet/Wisp.Guest.props" />
 
@@ -16,9 +14,7 @@
     <ProjectReference Include="../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
   </ItemGroup>
 
-  <!-- The BCL compatibility probe (App/Compat.cs). Off by default: the
-       shipped guest is a hello-world Handler and its size stays comparable to
-       one. `-p:WispCompatProbe=true` turns it on. -->
+  <!-- The BCL compatibility probe (App/Compat.cs). -->
   <PropertyGroup Condition="'$(WispCompatProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_COMPAT_PROBE</DefineConstants>
   </PropertyGroup>
