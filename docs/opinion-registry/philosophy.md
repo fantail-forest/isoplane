@@ -6,7 +6,7 @@ Mandatory reading. These principles cut across every concern category and inform
 
 The correct path should be the easiest path. Structure code, interfaces, and infrastructure so that developers and AI agents naturally fall into doing the right thing. When a mistake keeps happening, don't fix it by adding documentation or call-site boilerplate; fix the default.
 
-A deep module with a simple interface is a pit of success. A clock that tests must inject is a pit of success. A fixture build that tests refuse to run themselves is a pit of success. A host interface with one definition that every other representation is generated from is a pit of success.
+A deep module with a simple interface is a pit of success. A clock that tests must inject is a pit of success. A shared helper that builds missing or stale fixtures for tests is a pit of success. A host interface with one definition that every other representation is generated from is a pit of success.
 
 **The test:** if doing the wrong thing requires less effort than doing the right thing, the design is backwards. Fix the design, not the developer.
 

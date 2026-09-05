@@ -50,7 +50,7 @@ When adding a feature, write one test and one implementation at a time, through 
 
 ## Each test has a single reason to fail
 
-One behaviour per test. If a test name contains "and", split it. When a test fails, the name alone should say what broke.
+One behaviour per test. Split independent behaviours, not names containing a particular word. When a test fails, the name alone should say what broke.
 
 **Not this:** A scenario with eleven checks under one name.
 

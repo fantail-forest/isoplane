@@ -3,8 +3,9 @@
 > Read this file in full before writing any code.
 >
 > **Not all existing code follows these conventions yet.** That doesn't reduce
-> their authority. New and modified code must conform, and existing code
-> should be brought into compliance when touched.
+> their authority. New and modified code must conform. Bring directly affected existing code
+> into compliance with small, relevant refactors; report larger debt separately
+> rather than expanding the task into an unrelated migration.
 >
 > The rules below follow the **pit of success** philosophy: the correct path
 > must be made to be the easiest path. Structure code so that developers and
@@ -40,11 +41,11 @@ cargo metadata --no-deps --format-version 1 \
 
 ## Tooling Quick Reference
 
-| Tool                     | Pinned in                                               | Notes                                                                                                                                            |
+| Tool                     | Configured in                                               | Notes                                                                                                                                            |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | Stable. Nightly is never required for build, test, lint, or docs.                                                                                |
-| **wasmtime**             | `Cargo.toml`                                            | Keep one version across the workspace; a second wasmtime in the dependency graph is a bug, not a cost.                                                |
-| **.NET SDK**             | `Dockerfile` (`DOTNET_CHANNEL`)                         | Pin to one SDK version, not a channel.                                                                                                           |
+| **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile currently selects `stable`. Nightly is never required for build, test, lint, or docs.                                                                                |
+| **wasmtime**             | `Cargo.toml`                                            | Policy: one version across the workspace. See the known toolchain debt below.                                                |
+| **.NET SDK**             | `Dockerfile` (`DOTNET_CHANNEL`)                         | Policy: pin one SDK version. The Dockerfile currently selects a channel.                                                                                                           |
 | **ILCompiler.LLVM**      | `guest-sdks/dotnet/Wisp.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
 | **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` | The gate, green before every commit.                                                                                                             |
@@ -56,6 +57,12 @@ cargo metadata --no-deps --format-version 1 \
 | **Logging**              | `tracing` + `tracing-subscriber` (JSON)                 |                                                                                                                                                  |
 | **Docs site**            | Docusaurus 3 (`docs/userdocs`)                          |                                                                                                                                                  |
 | **Container**            | `scripts/dev`, `Dockerfile`                             | A convenience that carries the whole toolchain. Never make crates, tests, scripts, or docs require, detect, or gate on it.                    |
+
+The current Dockerfile uses floating Rust and .NET selections, and
+`wisp-control` links Wizer with its own Wasmtime. These are known departures
+from reproducible toolchain and single-Wasmtime policy, not patterns to copy.
+Resolve them in focused toolchain changes with guest fixtures and integration
+tests validated; do not fold those migrations into unrelated work.
 
 ## Common Operations
 
@@ -152,7 +159,7 @@ Use the type system so that misuse is a compile error.
 - **Group by purpose, not by kind.** Keep a feature's types, logic, and tests together. No `types.rs` every module reaches into.
 - **Prefer deep modules.** A module, crate, or trait earns its place by hiding complexity behind a simple interface. If the interface is nearly as complex as what it hides, it is moving code around, not reducing what callers need to know.
 - **Use traits to mark boundaries between concerns.** Name a responsibility without leaking how any implementation satisfies it, and keep the trait deep: a consumer uses it through a few methods and never sees the mechanism behind them. Write it from either side, the code that needs it or the code that provides it, and either way keep it generic enough that the other side could be replaced. Anything that touches an external service or infrastructure (a database engine, a message broker, an object store) is consumed through such a trait. A trait nobody consumes is a specification, not code.
-- **Split files by responsibility, not by size.** A file that carries the queue, the lifecycle, the socket handling, and its own tests is four files.
+- **Split files by responsibility, not by size.** Separate queue, lifecycle, and socket responsibilities when they have distinct interfaces. Keep unit tests with the responsibility they exercise.
 - **Watch for architectural momentum.** Adding to a module because "that's where similar things go", past the point where a split would fit better, ossifies the wrong shape.
 
 ### Code Structure
@@ -185,18 +192,18 @@ Tests are not optional. Ship a change to behaviour with the test that would have
 1. **A feature is proven at the level that proves it, in a suite that stays fast.** Validate critical integrations (the SDK against the host, wasmtime, pre-initialisation, the execution engine) with integration tests through their real interfaces. Validate behaviour a customer sees end to end through `wispd`'s listener or the `wisp` command when that runs in reasonable time, with a small number of such tests rather than one per change. A fast suite is a feature of the codebase: replace a slow end-to-end test whenever an integration test could cover it. Code reachable only from fakes or benchmarks is still not a feature.
 2. **Tests are deterministic.** No elapsed-time assertions, no ratios of timings, no "A finished before B". Assert order with explicit sequencing; make time a clock the test controls.
 3. **Every guard fires in a test.** Ship every limit, rejection rule, and budget kill with a test that trips it. A check that has never failed is not a check.
-4. **Tests assert logic; benchmarks measure.** A test passes or fails on a logical assertion about behaviour, never on a thresholded measurement. A benchmark produces a measurement and has no pass or fail at all. Anything that prints a figure, or compares a timing, a rate, or a size against a threshold, is a benchmark, and never lives under `cargo test`.
+4. **Tests assert logic; benchmarks measure.** Tests may assert deterministic quantities and configured limits, including byte sizes, resource accounting, and deadlines advanced with a controlled clock. Machine-dependent performance thresholds belong in benchmarks outside `cargo test`. A benchmark reports measurements without a pass/fail verdict.
 5. **Doubles isolate; they don't cover.** Stubs, fakes, and mocks are welcome in unit tests, and in integration tests that would otherwise reach a third-party service, a slow service, or one that takes more than a simple container to run. A test that exercises a double adds no coverage to the component it replaces; give that component its own tests, especially over the behaviour its consumers depend on.
-6. **Acceptance criteria come from the owner.** Don't derive them from the spec, from a benchmark run, or from a guess at what should hold. If a test would encode a criterion the owner hasn't stated, ask first.
-7. **The suite must not require a container to run within.** It runs on a developer machine with the pinned toolchain. It is fine for the suite to provision temporary infrastructure as containers to test against. Have the test that needs a fixture build it when missing or stale. When a fixture cannot be built, fail the test naming the missing tool: never a skip, never a "not proven" that passes.
+6. **Acceptance criteria come from the owner.** Ask before inventing product behaviour or performance targets. Derive boundary cases and regression tests from approved requirements, established contracts, and the invariants here without further approval. `docs/spec.md` and benchmark results do not establish requirements.
+7. **The suite must not require a container to run within.** It runs on a developer machine with the required toolchain. It is fine for the suite to provision temporary infrastructure as containers to test against. Follow the shared fixture build rules under Common Operations.
 
 ### Structure
 
 - Put unit tests in the module (`#[cfg(test)] mod tests`), integration tests in `crates/<crate>/tests/`, and scenario tests in a top-level directory named for what they are, `scenario-tests/`, driving a real `wispd`. A directory called `tests/` at the root says nothing about what kind of test it holds.
-- One behaviour per test. If the name contains "and", split it.
+- One behaviour per test. Multiple assertions may verify facets of that behaviour, such as a response status and body; split independent behaviours into separate tests.
 - Give every assertion a message that says what is wrong in the system's terms, not what was compared: `assert_eq!(status, 200, "a promoted version must be routable")`, never a bare `assert_eq!`. The values are printed anyway; the message is the diagnosis. In C#, use the message argument or FluentAssertions' `because:`.
 - Name tests like a spec: `a_websocket_survives_its_instance_hibernating`.
-- Give every test its own temporary directory, created uniquely for that test, never a pid-based or shared path.
+- Give each test that writes files its own uniquely created temporary directory, never a pid-based or shared path. Shared fixture build outputs follow the locked helper rules under Common Operations.
 - Keep shared harness code in one `tests/common/` per crate, not copied into each file.
 - Make every scenario check an assertion. Prose explaining what a check would mean is not a check.
 
@@ -223,7 +230,7 @@ Work happens iteratively. Each iteration of the planning cycle goes develop, val
 - **Validate** is a retrospective. Review whether the work done during development achieved the iteration's goal: run the tests that prove it, on this machine, and read the result. Then reflect on the deviations from the plan that were necessary to reach that goal, why they were necessary, and what they say about the plan. If the goal can't be demonstrated with the tools available, the iteration is not done, and saying so is the deliverable.
 - **Replan** with what the first two phases taught. Rework the plan only when a lesson warrants it: that may mean a different path for the steps ahead, or revising the goal itself. Don't carry forward a plan that validation contradicted; leave alone a plan it confirmed. Explain a decision that changed in the commit that changes it.
 - **Stop and report** when an iteration needs a breaking change to a shared contract (the host interface, the PAL, a wire format, the config schema), when a rule here would have to be broken, or when the task as given conflicts with what validation showed.
-- **Done** means the change is built, its tests pass, the gates are green, and the report says exactly what was verified and what was not.
+- **Done** means the applicable validation passed and the report says exactly what was verified and what was not. Code changes require builds and relevant tests; commits require the lint and format gates above. For prose-only changes, review the diff, check links and consistency, and run `git diff --check`; runtime tests are unnecessary unless executable examples or generated references changed.
 
 ## Workflow & Architecture Notes
 
@@ -280,21 +287,17 @@ Opinions define the direction, not the status quo. When existing code doesn't fo
 ## Agent Behavior Guidelines
 
 1. **Understand before you act.** Read the code, the registry section for the area, and the recent history of the files before modifying anything. Check for an existing pattern before inventing one.
-2. **Keep the change focused, and refactor as you go.** No unasked-for features. Refactoring is welcome, and expected when the code you touch falls short of this document, so long as the code is well tested and the refactoring converges on a shape that is more fit for purpose, easier to reason about, and easier to test. Say what you refactored and why.
-3. **Build and test your changes** with the commands above before declaring work complete. A suite whose assertions cannot fail is not a passing suite; say so.
-4. **Ask when uncertain.** Ambiguous requirements, a rule you'd need to break, a shared contract you'd need to break: ask. Don't guess, and don't work around.
-5. **Explain non-obvious decisions** in the commit body or the PR, not in a comment.
-6. **Don't suppress problems.** No `#[allow]`, no `unwrap`, no swallowed `Result`, no fake that makes a red test green, no threshold widened until a test passes.
-7. **Respect existing patterns, unless they contradict the standards.** Check how the codebase already does something before inventing a new way. When an existing pattern contradicts this document or an opinion in the registry, change the pattern; consistency with a wrong pattern is not a virtue.
-8. **Leave the codebase better than you found it.**
-9. **Report faithfully.** Report failing tests with their output, and skipped steps as skipped. "Done" means done and verified on this machine.
-10. **Prose is not a replacement for a working implementation.** A README section, a doc comment, a design note, or a GitHub issue never substitutes for the change itself and the test that proves it.
+2. **Keep the change focused.** Apply the cleanup scope at the top of this file. Report what you refactored and why; do not add unasked-for features.
+3. **Ask about consequential ambiguity.** Ask when requirements leave product behaviour undecided, a rule would need an exception, or a shared contract would break. Make routine implementation choices within established requirements and explain material assumptions. Existing authorization applies; do not ask again for an already approved change.
+4. **Respect existing patterns within these standards.** Improve conflicting patterns in directly affected code within the cleanup scope above; report larger migrations separately.
+5. **Report faithfully.** Follow the validation workflow above. Report failing checks with their output and skipped checks as skipped. Put edit history and change rationale in the commit or PR; durable design rationale may live beside code under Comments & Documentation.
+6. **Prose is not a replacement for a working implementation.** When implementation is requested, deliver the change and the test that proves it. A README, design note, or issue does not substitute for them.
 
 ## Agent skills
 
 ### Issue tracker
 
-Use the repository issue tracker. Don't encode an acceptance criterion in a test before the owner has stated it; ask on the issue.
+Use the repository issue tracker. Apply the acceptance-criteria rule under Testing Standards. Ask in the current conversation unless posting to the issue is authorized.
 
 ### Measurements
 

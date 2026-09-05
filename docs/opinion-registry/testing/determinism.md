@@ -18,11 +18,11 @@ If the behaviour under test is "B is not blocked by A", make A's blocking explic
 
 ## Tests assert logic; benchmarks measure
 
-A test passes or fails on a logical assertion about behaviour: this request got this status, this instance refused this call, this delta restored these bytes. A benchmark produces a measurement and has no verdict. The two do not mix: a test with a threshold on a timing, a rate, or a size is a measurement with a pass mark painted on, green on one machine and red on another, and a benchmark that says "pass" is claiming something no single run can know.
+A test passes or fails on a logical assertion about behaviour: this request got this status, this instance refused this call, this delta restored these bytes. A benchmark produces a measurement and has no verdict. The two do not mix: a test with a machine-dependent performance threshold is a measurement with a pass mark painted on, green on one machine and red on another, and a benchmark that says "pass" is claiming something no single run can know.
 
 **Not this:** A "conformance" test asserting p90 overshoot on thirty samples; a density test asserting a slope from `smaps_rollup`; a scenario runner that renders a verdict from a figure.
 
-**Exception:** A deterministic property that involves a count (a delta of N zeroed pages compresses below M bytes for a fixed input) is a logical assertion, because the same input always produces the same output.
+**Exception:** Deterministic quantities and configured limits are logical assertions: encoded byte sizes for fixed inputs, resource accounting, size-limit rejection, and deadlines advanced with a controlled clock. Derive their expected behaviour from the acceptance-criteria rule in [AGENTS.md](../../../AGENTS.md#principles).
 
 ## Don't test the fake
 
