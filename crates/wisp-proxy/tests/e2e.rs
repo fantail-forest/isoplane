@@ -200,3 +200,94 @@ async fn a_guest_cannot_forge_platform_headers() {
         "the tier header is the proxy's"
     );
 }
+
+
+
+
+#[tokio::test]
+async fn connection_headers_stop_at_the_proxy_while_application_headers_reach_the_guest() {
+    let rig = start(
+        Arc::new(FakeCell::new()),
+        standard_routes(),
+        ProxyConfig::default(),
+    )
+    .await;
+    let response = request(
+        rig.addr,
+        "POST",
+        "quotes.wisp.dev",
+        "/headers",
+        &[
+            ("Connection", "keep-alive, X-Private"),
+            ("Connection", "x-SECOND, TE"),
+            ("x-private", "discard"),
+            ("X-Second", "discard"),
+            ("Keep-Alive", "timeout=5"),
+            ("Proxy-Connection", "keep-alive"),
+            ("Proxy-Authorization", "Basic proxy-only"),
+            ("Proxy-Authenticate", "Basic"),
+            ("TE", "trailers"),
+            ("Trailer", "x-checksum"),
+            ("Transfer-Encoding", "chunked"),
+            ("Upgrade", "other-protocol"),
+            ("Authorization", "Bearer app-token"),
+            ("Cookie", "session=app-cookie"),
+            ("Content-Type", "application/octet-stream"),
+            ("X-Signature", "signed-body"),
+            ("X-Custom", "first"),
+            ("X-Custom", "second"),
+        ],
+        b"payload".to_vec(),
+    )
+    .await;
+    assert_eq!(
+        response.status, 200,
+        "filtering must not prevent a valid request from reaching the guest"
+    );
+    let echoed = response.json();
+    let headers: Vec<(String, String)> = serde_json::from_value(echoed["headers"].clone()).unwrap();
+    for name in [
+        "connection",
+        "x-private",
+        "x-second",
+        "keep-alive",
+        "proxy-connection",
+        "proxy-authorization",
+        "proxy-authenticate",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    ] {
+        assert!(
+            !headers.iter().any(|(key, _)| key == name),
+            "connection-specific {name} must not reach the guest"
+        );
+    }
+    for (name, value) in [
+        ("authorization", "Bearer app-token"),
+        ("cookie", "session=app-cookie"),
+        ("content-type", "application/octet-stream"),
+        ("x-signature", "signed-body"),
+    ] {
+        assert!(
+            headers.contains(&(name.into(), value.into())),
+            "application header {name} must reach the guest unchanged"
+        );
+    }
+    let custom: Vec<_> = headers
+        .iter()
+        .filter(|(name, _)| name == "x-custom")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert_eq!(
+        custom,
+        ["first", "second"],
+        "repeated application values must preserve their order"
+    );
+    assert_eq!(
+        echoed["body"],
+        serde_json::json!(b"payload".to_vec()),
+        "chunk framing must be decoded before delivering the body"
+    );
+}

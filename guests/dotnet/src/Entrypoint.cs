@@ -1,6 +1,10 @@
 using System.Runtime.InteropServices;
 
+#if WISP_REQUEST_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RequestProbe>>;
+#else
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.Api>>;
+#endif
 
 namespace Wisp;
 

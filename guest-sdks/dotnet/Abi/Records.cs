@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Wisp.Abi;
 
@@ -17,6 +18,10 @@ public sealed class DispatchRecord
     // Populated for DispatchKind.Http.
     internal string Method = "";
     internal string Path = "";
+    internal string Url = "";
+    internal KeyValuePair<string, string>[] Query = Array.Empty<KeyValuePair<string, string>>();
+    internal KeyValuePair<string, string>[] Headers = Array.Empty<KeyValuePair<string, string>>();
+    internal byte[] Body = Array.Empty<byte>();
 
     internal static DispatchRecord Decode(ReadOnlySpan<byte> bytes)
     {
@@ -30,11 +35,11 @@ public sealed class DispatchRecord
             case DispatchKind.Http:
                 // HttpRequest { method, url, path, query, headers, body }
                 d.Method = r.Str();
-                r.SkipBytes();          // url
+                d.Url = r.Str();
                 d.Path = r.Str();
-                r.SkipStringPairs();    // query
-                r.SkipStringPairs();    // headers
-                r.SkipBytes();          // body
+                d.Query = r.StringPairs();
+                d.Headers = r.StringPairs();
+                d.Body = r.Bytes().ToArray();
                 break;
 
             default:

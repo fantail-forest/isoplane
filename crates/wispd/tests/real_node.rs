@@ -136,3 +136,227 @@ async fn a_node_reports_measurements_from_served_requests() {
     assert!(!text.contains("NaN"), "nothing renders as NaN");
     rig.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method() {
+    use base64::Engine as _;
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::Request;
+
+    let rig = start_with(
+        wisp_fixtures::dotnet("wisp_guest_dotnet_request"),
+        InitSandbox::RuntimeBringUp,
+    )
+    .await;
+    // CONNECT's authority-form target has no path; this route also admits OPTIONS *.
+    rig.node
+        .routes
+        .add_route("quotes.wisp.dev", "", "quotes")
+        .unwrap();
+    let base64 = base64::engine::general_purpose::STANDARD;
+    for method in [
+        "GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT",
+    ] {
+        for populated in [false, true] {
+            let (uri, path, query) = if method == "CONNECT" {
+                ("quotes.wisp.dev:443", "", "")
+            } else if method == "OPTIONS" && !populated {
+                ("*", "*", "")
+            } else if populated {
+                (
+                    "/probe?tag=one&tag=two&empty=&flag&encoded=%E2%98%83",
+                    "/probe",
+                    "tag=one\ntag=two\nempty=\nflag=\nencoded=%E2%98%83\n",
+                )
+            } else {
+                ("/probe", "/probe", "")
+            };
+            let body: &[u8] = if populated && !matches!(method, "CONNECT" | "TRACE") {
+                b"\0\xff{\"message\":\"hello\"}\r\n"
+            } else {
+                b""
+            };
+            let headers = if populated { "first\nsecond\n" } else { "" };
+            let expected = base64.encode(format!(
+                "{method}\n{uri}\n{path}\n{query}{headers}{}",
+                base64.encode(body)
+            ));
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("host", "quotes.wisp.dev")
+                .header("x-expected", &expected);
+            if populated {
+                builder = builder
+                    .header("X-Probe", "first")
+                    .header("x-probe", "second");
+            }
+            let req = builder
+                .body(Full::new(Bytes::copy_from_slice(body)))
+                .unwrap();
+            let response = common::request(rig.proxy, req).await;
+            assert_eq!(response.status, 200,
+                "the C# handler must receive every supplied field for {method} (populated={populated}): {}", response.body);
+            if !matches!(method, "HEAD" | "CONNECT") {
+                assert_eq!(
+                    response.body, expected,
+                    "the handler must preserve request bytes and repeated fields for {method}"
+                );
+            }
+        }
+    }
+    let invalid = Request::builder()
+        .uri("/probe")
+        .header("host", "quotes.wisp.dev")
+        .header("x-expected", "deliberately-wrong")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    assert_eq!(common::request(rig.proxy, invalid).await.status, 422,
+        "the fixture must reject mismatched request fields, including those checked only by status for HEAD and CONNECT");
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn guest_connection_headers_cannot_control_the_http_response() {
+    let rig = start(ResponseHead {
+        status: 200,
+        headers: vec![
+            ("Connection".into(), "X-Private, x-wisp-version".into()),
+            ("Connection".into(), "X-Other".into()),
+            ("x-private".into(), "discard".into()),
+            ("x-other".into(), "discard".into()),
+            ("keep-alive".into(), "timeout=5".into()),
+            ("proxy-connection".into(), "keep-alive".into()),
+            ("proxy-authenticate".into(), "Basic".into()),
+            ("proxy-authorization".into(), "Basic proxy-only".into()),
+            ("te".into(), "trailers".into()),
+            ("trailer".into(), "x-checksum".into()),
+            ("upgrade".into(), "other-protocol".into()),
+            ("transfer-encoding".into(), "chunked".into()),
+            ("content-length".into(), "9999".into()),
+            ("content-length".into(), "1".into()),
+            ("set-cookie".into(), "a=1; HttpOnly".into()),
+            ("set-cookie".into(), "b=2; Secure".into()),
+            ("content-type".into(), "text/plain".into()),
+        ],
+        body: b"hello".to_vec(),
+        streaming: false,
+    })
+    .await;
+    let response = get(rig.proxy, "quotes.wisp.dev", "/").await;
+    assert_eq!(
+        response.status, 200,
+        "the proxy must serve a guest response with host-owned framing"
+    );
+    assert_eq!(
+        response.body, "hello",
+        "guest length declarations must not truncate the body or make the client wait"
+    );
+    assert_eq!(
+        response.headers["content-length"], "5",
+        "the actual body determines wire length"
+    );
+    for name in [
+        "connection",
+        "x-private",
+        "x-other",
+        "keep-alive",
+        "proxy-connection",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "upgrade",
+        "transfer-encoding",
+    ] {
+        assert!(
+            !response.headers.contains_key(name),
+            "guest connection-specific {name} must not reach the client"
+        );
+    }
+    assert_eq!(
+        response.headers["x-wisp-version"], "v1",
+        "Connection cannot strip authoritative platform metadata"
+    );
+    let cookies: Vec<_> = response
+        .headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect();
+    assert_eq!(
+        cookies,
+        ["a=1; HttpOnly", "b=2; Secure"],
+        "Set-Cookie values must remain separate and ordered"
+    );
+    assert_eq!(
+        response.headers["content-type"], "text/plain",
+        "application response headers must survive filtering"
+    );
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_framing_respects_methods_and_statuses_that_forbid_content() {
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::Request;
+
+    for (method, status, expected_length) in [
+        ("HEAD", 200, None),
+        ("GET", 204, None),
+        ("GET", 205, Some("0")),
+        ("GET", 304, None),
+        ("CONNECT", 200, None),
+    ] {
+        let rig = start(ResponseHead {
+            status,
+            headers: vec![
+                ("content-length".into(), "9999".into()),
+                ("transfer-encoding".into(), "chunked".into()),
+            ],
+            body: b"must not be sent".to_vec(),
+            streaming: false,
+        })
+        .await;
+        rig.node
+            .routes
+            .add_route("quotes.wisp.dev", "", "quotes")
+            .unwrap();
+        let uri = if method == "CONNECT" {
+            "quotes.wisp.dev:443"
+        } else {
+            "/"
+        };
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "quotes.wisp.dev")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let response = common::request(rig.proxy, req).await;
+        assert_eq!(
+            response.status.as_u16(),
+            status,
+            "framing must preserve the final status for {method}"
+        );
+        assert!(
+            response.body.is_empty(),
+            "{method} {status} must not transmit guest content"
+        );
+        assert_eq!(
+            response
+                .headers
+                .get("content-length")
+                .map(|value| value.to_str().unwrap()),
+            expected_length,
+            "{method} {status} must not send an unverified or prohibited length"
+        );
+        assert!(
+            !response.headers.contains_key("transfer-encoding"),
+            "{method} {status} must not inherit guest transfer framing"
+        );
+        rig.shutdown().await;
+    }
+}

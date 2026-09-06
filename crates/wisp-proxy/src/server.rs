@@ -15,8 +15,8 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use wisp_abi::host::{Dispatcher, };
 
-use crate::dispatch::text;
 use crate::metrics::ProxyMetrics;
+use crate::response::text;
 use crate::routes::RouteResolver;
 use crate::shed::{AdmissionControl, Admit, ShedConfig};
 

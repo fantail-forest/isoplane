@@ -1,8 +1,12 @@
 //! HTTP proxy routing, admission and request measurements.
 
+#![forbid(unsafe_code)]
+
 mod dispatch;
+mod headers;
 pub mod metrics;
 mod request;
+mod response;
 pub mod routes;
 pub mod server;
 pub mod shed;

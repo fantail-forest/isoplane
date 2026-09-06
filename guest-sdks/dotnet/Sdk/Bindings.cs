@@ -18,23 +18,6 @@ public sealed class BindingException : Exception
     public int WispError { get; }
 }
 
-/// <summary>
-/// The request as a handler sees it: the method and the path. The query,
-/// headers and body arrive in the dispatch record and are not decoded.
-/// </summary>
-public sealed class Request
-{
-    /// <summary>
-    /// The HTTP method, upper-cased.
-    /// </summary>
-    public string Method { get; }
-    /// <summary>
-    /// The request path, without the query string.
-    /// </summary>
-    public string Path { get; }
-    internal Request(string method, string path) { Method = method; Path = path; }
-}
-
 /// <summary>A response: a status, an optional content type and a body.</summary>
 public sealed class Response
 {

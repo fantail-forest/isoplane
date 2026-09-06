@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 
 namespace Wisp.Abi;
@@ -62,12 +63,15 @@ internal ref struct PostcardReader
 
     internal void SkipBytes() => Bytes();
 
-    /// <summary>Skips a <c>Vec&lt;(String, String)&gt;</c>.</summary>
-    internal void SkipStringPairs()
+    internal KeyValuePair<string, string>[] StringPairs()
     {
-        ulong n = Varint();
-        for (ulong i = 0; i < n; i++) { SkipBytes(); SkipBytes(); }
+        int count = checked((int)Varint());
+        var pairs = new KeyValuePair<string, string>[count];
+        for (int i = 0; i < count; i++)
+            pairs[i] = new KeyValuePair<string, string>(Str(), Str());
+        return pairs;
     }
+
 }
 
 internal sealed class PostcardWriter

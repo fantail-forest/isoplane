@@ -75,6 +75,8 @@ impl Dispatcher for FakeCell {
             "lifecycle": match target.lifecycle { HandlerLifecycle::Reuse => "reuse", HandlerLifecycle::Fresh => "fresh" },
             "method": req.method,
             "path": req.path,
+            "headers": req.headers,
+            "body": req.body,
         });
         Ok(HttpReply {
             status: 200,

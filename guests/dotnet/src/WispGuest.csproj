@@ -14,6 +14,10 @@
     <ProjectReference Include="../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
   </ItemGroup>
 
+  <PropertyGroup Condition="'$(WispRequestProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_REQUEST_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <!-- The BCL compatibility probe (App/Compat.cs). -->
   <PropertyGroup Condition="'$(WispCompatProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_COMPAT_PROBE</DefineConstants>

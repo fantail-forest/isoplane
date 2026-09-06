@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the six C# test fixtures; samples have their own build scripts.
+# Build the C# test fixtures; samples have their own build scripts.
 # Usage: guests/build-dotnet.sh [--if-stale]
 # Serial because the variants share one project's intermediate files.
 set -euo pipefail
@@ -19,6 +19,7 @@ fi
 # `wasi:*` imports NativeAOT-LLVM emits; `wisp-engine`'s `dotnet_pal` test
 # reads it to check what the adapter composes them down to.
 FIXTURES=(
+  "wisp_guest_dotnet_request|$ROOT/dotnet/out/wisp_guest_dotnet_request.wasm|$ROOT/dotnet|-p:WispRequestProbe=true|"
   "wisp_guest_dotnet|$ROOT/dotnet/out/wisp_guest_dotnet.wasm|$ROOT/dotnet||"
   "wisp_guest_dotnet_compat|$ROOT/dotnet/out/wisp_guest_dotnet_compat.wasm|$ROOT/dotnet|-p:WispCompatProbe=true|"
   "wisp_guest_dotnet_entropy|$ROOT/dotnet/out/wisp_guest_dotnet_entropy.wasm|$ROOT/dotnet|-p:WispEntropyProbe=true|"

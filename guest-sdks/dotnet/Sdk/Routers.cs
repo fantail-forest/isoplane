@@ -53,6 +53,6 @@ public sealed class HandlerRouter<TApp> : IWispRouter
     public Task<Response> Route(DispatchRecord d, Ctx ctx)
     {
         if (d.Kind != DispatchKind.Http) throw new PostcardException();
-        return _app!.HandleAsync(new Request(d.Method, d.Path), ctx);
+        return _app!.HandleAsync(new Request(d), ctx);
     }
 }

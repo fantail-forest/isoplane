@@ -28,6 +28,7 @@ The build script selects the fixture set for this revision.
 | `wisp_guest_dotnet_compat`        | `-p:WispCompatProbe=true`                     | The Handler plus LINQ, source-generated `Regex` and `System.Text.Json`, which widen the BCL surface the PAL has to cover. |
 | `wisp_guest_dotnet_entropy`       | `-p:WispEntropyProbe=true`                    | Reports five sources of randomness, for `check.sh --entropy-clone`.                        |
 | `wisp_guest_dotnet_stock`         | `-p:WispPalObject=`                           | Built without the PAL shim, so it carries the raw `wasi:*` imports; the import gate refuses it by design, and `wisp-engine`'s `dotnet_pal` test reads it. |
+| `wisp_guest_dotnet_request` | `-p:WispRequestProbe=true` | Checks HTTP request fields after a host await; driven through the real node for every standard HTTP method. |
 
 The clone probe compares initialized values after copying a prepared guest
 image. Stateful generators created before capture can repeat across those

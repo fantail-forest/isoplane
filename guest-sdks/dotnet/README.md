@@ -56,6 +56,9 @@ evolve with those tests and belong to the separate guest Cargo workspace.
 |---|---|
 | [`../../guests/dotnet`](../../guests/dotnet) | Managed fixtures used by host and SDK tests. |
 
+`Request` exposes `Method`, `Url`, `Path`, `Query`, `Headers` and raw `Body`
+bytes for every HTTP method, preserving repeated query and header pairs.
+
 ## SDK APIs
 
 Use the [managed API source](Sdk/) and [host bindings](Abi/) for the interfaces.

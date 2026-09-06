@@ -107,18 +107,24 @@ pub struct Resp {
 }
 
 pub async fn get(addr: SocketAddr, host: &str, path: &str) -> Resp {
-    let stream = TcpStream::connect(addr).await.unwrap();
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
     let req = Request::builder()
         .uri(path)
         .header("host", host)
         .body(Full::new(Bytes::new()))
         .unwrap();
+    request(addr, req).await
+}
+
+pub async fn request(addr: SocketAddr, req: Request<Full<Bytes>>) -> Resp {
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        if let Err(error) = conn.await {
+            eprintln!("test HTTP connection failed: {error}");
+        }
+    });
     let r = sender.send_request(req).await.unwrap();
     let status = r.status();
     let headers = r.headers().clone();
