@@ -87,6 +87,33 @@ pub fn dotnet(name: &str) -> Vec<u8> {
     read(&path)
 }
 
+/// Stages an isolated C# source fixture for tests of publishing and source reload.
+/// The command under test builds it on demand; no shared build outputs are used.
+pub fn dotnet_project(destination: &Path) -> PathBuf {
+    let root = repo_root();
+    copy_sources(&root.join("guest-sdks/dotnet"), &destination.join("sdk"));
+    copy_sources(&root.join("guests/publish-cs"), &destination.join("app"));
+    std::fs::copy(root.join("nuget.config"), destination.join("nuget.config"))
+        .expect("copy the compiler feed configuration");
+    destination.join("app")
+}
+
+fn copy_sources(source: &Path, destination: &Path) {
+    std::fs::create_dir_all(destination).expect("create isolated C# source directory");
+    for entry in std::fs::read_dir(source).expect("read C# fixture sources") {
+        let entry = entry.expect("read C# source entry");
+        if matches!(entry.file_name().to_str(), Some("bin" | "obj")) {
+            continue;
+        }
+        let target = destination.join(entry.file_name());
+        if entry.file_type().expect("inspect C# source").is_dir() {
+            copy_sources(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copy C# fixture source");
+        }
+    }
+}
+
 /// Prove that a native CPU clock measures work rather than returning a dummy value.
 /// Panics if either read fails or CPU work does not advance the clock.
 pub fn assert_cpu_clock_advances(read_clock: impl Fn() -> Option<u64>) {

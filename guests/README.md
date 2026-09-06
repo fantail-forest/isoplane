@@ -9,9 +9,9 @@ member of it. The C# guests reference the SDK in `../guest-sdks/dotnet`.
 
 ```sh
 scripts/dev guests/build.sh                       # Rust guests -> guests/out/*.wasm
-scripts/dev guests/build-dotnet.sh                # C# guests   -> guests/*/out/*.wasm
+guests/build-dotnet.sh                # C# guests   -> guests/*/out/*.wasm
 scripts/dev guests/build.sh --if-stale            # only when a source is newer
-scripts/dev guests/build-dotnet.sh --if-stale
+guests/build-dotnet.sh --if-stale
 ```
 
 Both scripts take a lock, so concurrent callers serialise. Host tests do not
@@ -41,3 +41,4 @@ emits no maximum by default.
 | Directory   | What it is                                                                                         |
 | ----------- | -------------------------------------------------------------------------------------------------- |
 | `dotnet/`   | The reference guest, built in several flavours. See `dotnet/README.md`.                             |
+| `publish-cs/` | Source fixture staged with an isolated SDK by the CLI's C# publish and reload test. |

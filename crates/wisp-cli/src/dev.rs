@@ -1,5 +1,6 @@
 //! Build, serve and reload a local project using the shared guest runtime.
 
+mod build;
 mod project;
 mod runtime;
 
@@ -12,6 +13,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use wisp_abi::config::InitSandbox;
 use wisp_cli::render::Style;
 
@@ -44,9 +46,22 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
         "opening local development state; another wisp dev may already own this project",
     )?;
     let mut observed = project.fingerprint()?;
-    let prepared = tokio::select! {
-        prepared = prepare(&project) => prepared?,
-        stop = tokio::signal::ctrl_c() => { stop?; return Ok(()); }
+    let prepared = {
+        let cancellation = CancellationToken::new();
+        let preparation = prepare(&project, &cancellation);
+        tokio::pin!(preparation);
+        tokio::select! {
+            prepared = &mut preparation => prepared?,
+            stop = tokio::signal::ctrl_c() => {
+                stop?;
+                cancellation.cancel();
+                preparation.await?;
+                return Ok(());
+            }
+        }
+    };
+    let Some(prepared) = prepared else {
+        return Ok(());
     };
     observed.module = project.fingerprint()?.module;
     let data = project.state_dir();
@@ -66,28 +81,15 @@ fn load(opts: &DevOpts) -> anyhow::Result<Project> {
     )
 }
 
-async fn prepare(project: &Project) -> anyhow::Result<Prepared> {
+async fn prepare(
+    project: &Project,
+    cancellation: &CancellationToken,
+) -> anyhow::Result<Option<Prepared>> {
     if let Some(command) = &project.build {
         println!("  building {}", project.manifest.name);
-        let log_dir = project.root.join(".wisp");
-        std::fs::create_dir_all(&log_dir)?;
-        let log_path = log_dir.join("build.log");
-        let log = std::fs::File::create(&log_path)?;
-        let mut child = tokio::process::Command::new("bash")
-            .args(["-c", command])
-            .current_dir(&project.root)
-            .stdout(log.try_clone()?)
-            .stderr(log)
-            .kill_on_drop(true)
-            .spawn()
-            .context("starting the project's build command")?;
-        let status = child.wait().await?;
-        anyhow::ensure!(
-            status.success(),
-            "build failed ({status}); {}:\n{}",
-            log_path.display(),
-            std::fs::read_to_string(&log_path)?
-        );
+        if !build::run(&project.root, command, cancellation).await? {
+            return Ok(None);
+        }
     }
     let bytes = std::fs::read(&project.module).with_context(|| {
         format!(
@@ -96,13 +98,16 @@ async fn prepare(project: &Project) -> anyhow::Result<Prepared> {
         )
     })?;
     let project = project.clone();
-    tokio::task::spawn_blocking(move || Prepared::build(&project, &bytes)).await?
+    tokio::task::spawn_blocking(move || Prepared::build(&project, &bytes))
+        .await?
+        .map(Some)
 }
 
-type Rebuild =
-    std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<(Project, Prepared)>>>>;
+type Rebuild = std::pin::Pin<
+    Box<dyn std::future::Future<Output = anyhow::Result<Option<(Project, Prepared)>>>>,
+>;
 
-async fn next_build(rebuild: &mut Option<Rebuild>) -> anyhow::Result<(Project, Prepared)> {
+async fn next_build(rebuild: &mut Option<Rebuild>) -> anyhow::Result<Option<(Project, Prepared)>> {
     match rebuild {
         Some(build) => build.await,
         None => std::future::pending().await,
@@ -121,6 +126,7 @@ async fn serve(
     let mut connections = JoinSet::new();
     let current_proxy = Arc::new(parking_lot::RwLock::new(app.proxy.clone()));
     let mut rebuild: Option<Rebuild> = None;
+    let cancellation = CancellationToken::new();
     let mut interval = tokio::time::interval(Duration::from_millis(opts.poll_ms));
     println!(
         "  {} {} at http://{address} (local guest execution)",
@@ -131,7 +137,14 @@ async fn serve(
     tokio::pin!(stop);
     loop {
         tokio::select! {
-            result = &mut stop => { result?; break; }
+            result = &mut stop => {
+                result?;
+                cancellation.cancel();
+                if let Some(build) = rebuild.take() {
+                    build.await?;
+                }
+                break;
+            }
             connection = listener.accept() => {
                 let (stream, peer) = connection?;
                 let current_proxy = current_proxy.clone();
@@ -146,9 +159,10 @@ async fn serve(
                 observed = next;
                 match load(opts) {
                     Ok(next_project) => {
+                        let cancellation = cancellation.clone();
                         rebuild = Some(Box::pin(async move {
-                            let prepared = prepare(&next_project).await?;
-                            Ok((next_project, prepared))
+                            let prepared = prepare(&next_project, &cancellation).await?;
+                            Ok(prepared.map(|prepared| (next_project, prepared)))
                         }));
                     }
                     Err(e) => eprintln!("wisp: reload failed; keeping the last working app: {e:#}"),
@@ -157,7 +171,7 @@ async fn serve(
             result = next_build(&mut rebuild) => {
                 rebuild = None;
                 match result {
-                    Ok((next_project, prepared)) => {
+                    Ok(Some((next_project, prepared))) => {
                         app.proxy.shutdown_sockets();
                         let old = app.clone();
                         tokio::task::spawn_blocking(move || old.cell.shutdown()).await?;
@@ -167,6 +181,7 @@ async fn serve(
                         observed.module = project.fingerprint()?.module;
                         println!("  {} {} at http://{address}", st.green("reloaded"), project.manifest.name);
                     }
+                    Ok(None) => break,
                     Err(e) => {
                         eprintln!("wisp: reload failed; keeping the last working app: {e:#}");
                         observed.module = project.fingerprint()?.module;

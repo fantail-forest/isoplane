@@ -17,6 +17,7 @@ impl Dev {
             .args(["--no-color", "dev", "--port", "0", "--watch"])
             .arg(project)
             .args(args)
+            .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

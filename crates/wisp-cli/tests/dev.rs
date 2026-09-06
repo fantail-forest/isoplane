@@ -6,6 +6,131 @@ mod common;
 use common::{guest, manifest, Dev};
 
 #[tokio::test]
+async fn a_csharp_project_publishes_and_reloads_offline_after_provisioning() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = wisp_fixtures::dotnet_project(dir.path());
+    let published = std::process::Command::new("dotnet")
+        .args([
+            "publish",
+            "PublishGuest.csproj",
+            "-c",
+            "Release",
+            "-o",
+            "out",
+            "--disable-build-servers",
+        ])
+        .current_dir(&app)
+        .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
+        .output()
+        .expect("dotnet SDK must be installed to test C# publishing");
+    assert!(
+        published.status.success(),
+        "direct C# publish must succeed: {}{}",
+        String::from_utf8_lossy(&published.stdout),
+        String::from_utf8_lossy(&published.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&published.stdout).contains("passes validator"),
+        "direct publication must validate its real WASM output: {}",
+        String::from_utf8_lossy(&published.stdout)
+    );
+    std::fs::write(app.join("wisp.toml"), "name='publish-test'\ntenant='test-owner'\nmodule='out/publish_guest.wasm'\n[dev]\ninit_sandbox='runtime-bringup'\nbuild='dotnet publish PublishGuest.csproj -c Release -o out --disable-build-servers -p:WispOffline=true'").unwrap();
+    let mut dev = Dev::start(&app, &[]);
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client
+            .get(&dev.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "first build",
+        "the initial offline development build must execute locally"
+    );
+    let source = app.join("Handler.cs");
+    let original = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, original.replace("first build", "offline rebuild")).unwrap();
+    dev.wait_for("reloaded ");
+    assert_eq!(
+        client
+            .get(&dev.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "offline rebuild",
+        "an offline C# edit must rebuild and execute replacement code"
+    );
+    std::fs::write(&source, "invalid C#").unwrap();
+    dev.wait_for("reload failed; keeping the last working app");
+    assert_eq!(
+        client
+            .get(&dev.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "offline rebuild",
+        "compiler failure must preserve the last working application"
+    );
+    std::fs::write(&source, original.replace("first build", "repaired build")).unwrap();
+    dev.wait_for("reloaded ");
+    assert_eq!(
+        client
+            .get(&dev.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "repaired build",
+        "a repaired C# source must resume development without restarting"
+    );
+    let project = app.join("PublishGuest.csproj");
+    let xml = std::fs::read_to_string(&project).unwrap();
+    std::fs::write(&project, xml.replace("</Project>", r#"
+  <Target Name="HoldCompiler" BeforeTargets="WispCompilePal">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="mkfifo &quot;$(IntermediateOutputPath)cancel-gate&quot;; echo waiting-for-cancel; cat &quot;$(IntermediateOutputPath)cancel-gate&quot;" />
+  </Target>
+</Project>"#)).unwrap();
+    let build_log = app.join(".wisp/build.log");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let log = std::fs::read_to_string(&build_log).unwrap();
+        if log.contains("waiting-for-cancel") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "C# rebuild never reached its cancellation gate: {log}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    dev.stop();
+    let log = std::fs::read_to_string(build_log).unwrap();
+    assert!(
+        log.contains("Attempting to cancel the build")
+            || log.contains("C# publication cancelled")
+            || log.contains("MSB5021"),
+        "stopping local development must interrupt the active C# compiler: {log}"
+    );
+    if log.contains("compiling in local container") {
+        assert!(
+            log.contains("released compiler container"),
+            "local development must await compiler container cleanup: {log}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn local_dev_builds_and_reloads_real_guest_code_and_keeps_a_good_build_on_failure() {
     let dir = tempfile::tempdir().unwrap();
     manifest(dir.path(), "[dev]\nbuild='cp source.wasm app.wasm'");

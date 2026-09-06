@@ -1,0 +1,8 @@
+<Project>
+  <!-- These hostile fixtures expose the BCL imports to the PAL adapter tests. -->
+  <PropertyGroup>
+    <WispValidate>false</WispValidate>
+  </PropertyGroup>
+  <Target Name="WispCompilePal" />
+  <Target Name="WispValidateImports" />
+</Project>

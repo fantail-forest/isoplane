@@ -18,10 +18,11 @@ scripts/setup
 scripts/dev cargo build -p wisp-cli
 ```
 
-Rust is needed to build the CLI from this checkout. Building a C# guest also
-requires the .NET SDK, the pinned NativeAOT-LLVM compiler, wasi-sdk and
-wasm-tools. The pinned compiler currently runs on Linux. On macOS, build WASM
-in a local Linux environment and run the resulting module natively.
+Rust is needed to build the CLI from this checkout. C# development requires
+the .NET 10 SDK. On macOS, install and start Docker Desktop or a compatible
+local Docker runtime. The SDK automatically provisions a pinned Linux compiler
+image on first publish; it runs and reloads the resulting guest natively.
+On Linux, install wasi-sdk 29 and wasm-tools and set `WASI_SDK_PATH`.
 
 ## Rebuild on changes
 

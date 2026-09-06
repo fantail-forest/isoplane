@@ -53,15 +53,24 @@ method on a generic class.
 ## Building
 
 ```bash
-scripts/dev guests/dotnet/build.sh                  # -> out/wisp_guest_dotnet.wasm
-scripts/dev guests/dotnet/check.sh                  # the hostcheck harness
-scripts/dev guests/dotnet/check.sh --wasi=trap      # every non-`wisp` import traps if called
-scripts/dev guests/dotnet/check.sh --density 200    # marginal RSS per instance
+dotnet build guests/dotnet/src/WispGuest.csproj      # IL and IDE diagnostics
+dotnet publish guests/dotnet/src/WispGuest.csproj -c Release
+bash guests/dotnet/build.sh                        # publish and copy into out/
 ```
 
-wasi-sdk lives in the `wisp-dev` image with `WASI_SDK_PATH` set;
-`build-guest.sh` refuses, naming the fix, if it is absent. NuGet packages live
-in the `wisp-nuget` volume, so only the first build pays restore.
+The SDK compiles the PAL and checks imports as part of publication. On macOS,
+install the .NET 10 SDK and start Docker Desktop or a compatible local Docker
+runtime. The first publish provisions the pinned Linux compiler image and
+NuGet cache. Later builds reuse those downloads, with separate intermediate
+files for each invocation. Output belongs to the developer, and the build's
+container is removed when publication finishes or is cancelled.
+
+`dotnet publish -p:WispOffline=true` disables compiler networking and requires
+cached inputs. A missing image or package produces a diagnostic. For automatic
+native execution and source reload, see the [quickstart](../tutorials/quickstart.md).
+
+On Linux, install wasi-sdk 29 and wasm-tools alongside .NET, and set
+`WASI_SDK_PATH`. Publishing continues to use those native tools.
 
 ### Build flavours
 
@@ -106,7 +115,7 @@ symbols; some the runtime calls while coming up. `native/wisp_pal.c` defines
 them, answering the clock, entropy and environment from imports already in
 `wisp_abi::imports::IMPORTS` and aborting by name on everything else, so the
 module's import list is `wisp` and nothing else. The set covers the BCL
-surface the guests so far touch, and `build-guest.sh` fails the build if a
+surface the guests so far touch, and the SDK publish target fails the build if a
 new import appears; see
 [Debug a rejected module](debug-a-rejected-module.md#the-c-case-a-new-wasi-import-appeared).
 
@@ -143,7 +152,8 @@ written to guest memory remain captured.
 
 ## Pinned versions
 
-`Wisp.Guest.props` pins the ILCompiler.LLVM package, and the `Dockerfile` pins
-the .NET SDK channel and the wasi-sdk release the package expects. The
+`Wisp.Guest.props` pins the experimental ILCompiler.LLVM package.
+`guest-sdks/dotnet/Build/Dockerfile` pins the macOS compiler image's .NET SDK,
+wasi-sdk and wasm-tools versions. The
 experimental feed publishes builds that are not mutually compatible, so an
 unpinned float is a build that breaks on someone else's machine.

@@ -28,7 +28,7 @@ def main():
                            and d not in ("out", "target", ".git", "node_modules")]
                 for name in files:
                     path = Path(directory) / name
-                    if path.suffix in (".rs", ".toml", ".lock", ".cs", ".csproj", ".props", ".targets", ".c", ".sh", ".py"):
+                    if path.name == "Dockerfile" or path.suffix in (".rs", ".toml", ".lock", ".cs", ".csproj", ".props", ".targets", ".c", ".sh", ".py"):
                         newest = max(newest, path.stat().st_mtime_ns)
         print(newest)
     elif action == "mtime":

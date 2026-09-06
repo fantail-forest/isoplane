@@ -5,6 +5,7 @@
     is built lives in the SDK's Wisp.Guest.props.
   -->
   <Import Project="../../../guest-sdks/dotnet/Wisp.Guest.props" />
+  <Import Project="Stock.targets" Condition="'$(WispStock)' == 'true'" />
 
   <PropertyGroup>
     <AssemblyName>wisp_guest_dotnet</AssemblyName>

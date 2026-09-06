@@ -23,20 +23,25 @@ and your platform's C compiler first; Linux also needs `bubblewrap` and `socat`.
 ```sh
 scripts/setup                             # sandbox tool and Rust guest tools
 scripts/dev cargo build --workspace --all-targets
-scripts/dev cargo test --workspace
+cargo test --workspace
 scripts/dev                               # interactive sandboxed shell
 ```
 
-The pinned NativeAOT-LLVM C# compiler is published for Linux, not macOS ARM64.
-Build those fixtures with the optional Docker toolchain, then run the host and
-tests natively. Docker Desktop on macOS needs no Sysbox:
+C# builds require the .NET 10 SDK. On macOS, start Docker Desktop or a
+compatible local Docker runtime; the SDK's publish integration automatically
+provisions and uses a pinned Linux compiler image. The host and guest
+execution remain native:
 
 ```sh
-scripts/dev --container --build
-scripts/dev --container guests/build-dotnet.sh --if-stale
-scripts/dev --container --stop
-scripts/dev cargo test --workspace
+guests/build-dotnet.sh --if-stale
+cargo test --workspace
 ```
+
+On macOS, run C# publication tests outside `scripts/dev`: its OS sandbox
+does not expose the local Docker daemon.
+
+The optional repository toolchain image remains available through
+`scripts/dev --container --build` for running Linux toolchain commands.
 
 The sandbox uses a separate home and caches in `.wisp-dev`, permits local TCP
 and package downloads, and does not inherit arbitrary shell credentials. It

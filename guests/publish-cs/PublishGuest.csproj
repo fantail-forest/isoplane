@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../sdk/Wisp.Guest.props" />
+  <PropertyGroup>
+    <AssemblyName>publish_guest</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../sdk/Wisp.Sdk.csproj" />
+  </ItemGroup>
+</Project>

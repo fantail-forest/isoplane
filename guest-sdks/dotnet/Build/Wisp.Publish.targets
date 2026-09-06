@@ -1,0 +1,47 @@
+<Project>
+  <UsingTask TaskName="WispContainerPublish" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)ContainerPublish.cs" />
+    </Task>
+  </UsingTask>
+
+  <Target Name="WispPublishInContainer" BeforeTargets="Publish"
+          Condition="'$(WispContainerBuild)' == 'true'">
+    <PropertyGroup>
+      <WispBuildRoot Condition="'$(WispBuildRoot)' == ''">$([MSBuild]::GetDirectoryNameOfFileAbove('$(MSBuildProjectDirectory)', 'nuget.config'))</WispBuildRoot>
+      <WispBuildRoot Condition="'$(WispBuildRoot)' == ''">$(MSBuildProjectDirectory)</WispBuildRoot>
+      <WispContainerCommandTimeoutSeconds Condition="'$(WispContainerCommandTimeoutSeconds)' == ''">60</WispContainerCommandTimeoutSeconds>
+    </PropertyGroup>
+    <WispContainerPublish ProjectPath="$(MSBuildProjectFullPath)" SourceRoot="$(WispBuildRoot)"
+                          SdkDirectory="$(_WispSdkDirectory)" PublishDirectory="$(PublishDir)"
+                          Configuration="$(Configuration)" Offline="$(WispOffline)"
+                          CacheDirectory="$(WispCompilerCache)"
+                          CommandTimeoutSeconds="$(WispContainerCommandTimeoutSeconds)">
+      <Output TaskParameter="Module" PropertyName="NativeBinary" />
+    </WispContainerPublish>
+  </Target>
+
+  <Target Name="WispCompilePal" BeforeTargets="LinkNativeLlvm"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <PropertyGroup>
+      <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
+      <WispPalObject>$(IntermediateOutputPath)wisp_pal.o</WispPalObject>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(WASI_SDK_PATH)/bin/clang')"
+           Text="wisp: missing wasi-sdk clang at $(WASI_SDK_PATH)/bin/clang; install wasi-sdk 29 and set WASI_SDK_PATH." />
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispPalObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_pal.c&quot;" />
+    <ItemGroup>
+      <LinkerArg Include="&quot;$(WispPalObject)&quot;" />
+    </ItemGroup>
+    <!-- NativeAOT's incremental link inputs do not include LinkerArg. -->
+    <Delete Files="$(NativeBinary)" />
+  </Target>
+
+  <Target Name="WispValidateImports" AfterTargets="LinkNative"
+          BeforeTargets="WispValidateModule"
+          Condition="'$(WispContainerBuild)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
+    <Exec Command="bash &quot;$(_WispSdkDirectory)Build/validate-module.sh&quot; &quot;$(NativeBinary)&quot;" />
+  </Target>
+</Project>

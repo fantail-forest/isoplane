@@ -6,7 +6,7 @@ One SDK, referenced by every .NET guest.
 |---|---|
 | `Wisp.Sdk.csproj` | The library. Compiles to IL and names no tenant type. |
 | `Wisp.Guest.props` | Every critical guest build setting, imported by each guest's `.csproj`. |
-| `build-guest.sh` | The one build driver. A guest's `build.sh` is a two-line wrapper. |
+| `build-guest.sh` | A wrapper that publishes and copies a named module into `out/`. |
 | `native/wisp_pal.c` | The PAL shim. Read it before touching the build. |
 | `Abi/` | The `wisp` imports, the five exports, the postcard codec, the records. |
 | `Runtime/` | The continuation queue and the future table. |
@@ -22,13 +22,38 @@ An entry project emits one set of host exports.
 ## Build a guest
 
 ```bash
-scripts/dev guests/<guest>/build.sh [dotnet publish args...]
+dotnet build guests/dotnet/src/WispGuest.csproj
+dotnet publish guests/dotnet/src/WispGuest.csproj -c Release
 ```
 
-The driver compiles the PAL with the WASI SDK's clang, publishes the guest's
-single `.csproj`, and then **fails the build** if the module imports anything
-outside module `wisp` — the import list is the capability manifest, and a new
-BCL reference can pull in a new wasi import.
+`dotnet build` compiles IL for IDE diagnostics. Publishing compiles the PAL,
+links WASM, and rejects imports outside `wisp`. A guest's `build.sh` uses this
+same MSBuild integration and copies the module into `out/`.
+
+On macOS, install the .NET 10 SDK and start Docker Desktop or a compatible
+local Docker runtime. Publishing provisions the Linux compiler image and
+NuGet cache on first use. It mounts source read-only, uses separate build
+intermediates per invocation, and returns developer-owned output. It removes
+its compiler container on completion or cancellation. `wisp dev` uses the
+same publication path and executes the guest in the native runtime.
+
+After the first online publish, `dotnet publish -p:WispOffline=true` uses the
+cached image and packages with compiler networking disabled. Missing inputs
+are errors naming what needs provisioning. `WispOffline=true` in the
+environment applies the same policy to builds launched by `wisp dev`.
+
+The cache defaults to the user's application-data directory under `Wisp`;
+`-p:WispCompilerCache=/path/to/cache` relocates it. Projects and references are
+mounted beneath the nearest ancestor containing `nuget.config`, or the project
+directory if there is none. Set `-p:WispBuildRoot=/path/to/source` when project
+references or build inputs live outside that tree. The SDK is mounted separately
+when needed. Container control operations have a 60-second default timeout,
+adjustable with `-p:WispContainerCommandTimeoutSeconds=N`.
+
+On Linux, publishing uses the native installed compiler, wasi-sdk 29 and
+wasm-tools. Set `WASI_SDK_PATH` to the wasi-sdk installation. The
+NativeAOT-LLVM package remains experimental; targeting `net10.0` does not make
+it an officially supported .NET WASM distribution.
 
 ## The module is judged by the build that produced it
 

@@ -10,6 +10,15 @@ TOOLS = ROOT / "scripts/fixture-tools.py"
 
 
 class FixtureTests(unittest.TestCase):
+    def test_the_compiler_image_recipe_invalidates_cached_fixtures(self):
+        import os
+        with tempfile.TemporaryDirectory() as scratch:
+            recipe = Path(scratch) / "Dockerfile"
+            recipe.write_text("FROM compiler:pinned")
+            os.utime(recipe, ns=(123456789, 123456789))
+            newest = subprocess.check_output(["python3", str(TOOLS), "newest", scratch], text=True)
+            self.assertEqual(int(newest), 123456789, "fixture freshness must include the pinned compiler image recipe")
+
     def test_source_changes_invalidate_a_fixture_timestamp(self):
         with tempfile.TemporaryDirectory() as scratch:
             source = Path(scratch) / "guest.cs"
