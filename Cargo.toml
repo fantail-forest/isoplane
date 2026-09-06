@@ -26,8 +26,6 @@ wisp-hibernate = { path = "crates/wisp-hibernate" }
 wisp-host      = { path = "crates/wisp-host" }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
-wispd          = { path = "crates/wispd" }
-wisp-cli       = { path = "crates/wisp-cli" }
 wisp-fixtures  = { path = "crates/wisp-fixtures" }
 
 anyhow      = "1"

@@ -77,8 +77,8 @@ impl Histogram {
         }
         let want = (total as f64 * q).ceil() as u64;
         let mut seen = 0u64;
-        for i in 0..Self::N {
-            seen += self.buckets[i].load(Relaxed);
+        for (i, bucket) in self.buckets.iter().enumerate() {
+            seen += bucket.load(Relaxed);
             if seen >= want {
                 return Self::bucket_upper_us(i);
             }
