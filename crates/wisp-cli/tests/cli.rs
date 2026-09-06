@@ -4,6 +4,21 @@ mod common;
 
 use common::run;
 
+#[test]
+fn a_zero_watch_interval_is_refused_before_starting_local_development() {
+    let out = run(&["dev", "--poll-ms", "0"]);
+    assert_eq!(
+        out.code,
+        Some(1),
+        "a zero watch interval must fail before opening project resources"
+    );
+    assert!(
+        out.stderr.contains("--poll-ms must be greater than zero"),
+        "the error must identify the invalid polling interval: {}",
+        out.stderr
+    );
+}
+
 
 
 #[test]

@@ -7,7 +7,6 @@ license-file.workspace = true
 description = "WebAssembly module validation, pre-initialization and native compilation"
 
 [dependencies]
-rand = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -15,25 +14,22 @@ tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-engine = { workspace = true }
 async-trait = { workspace = true }
-wasmparser = { workspace = true }
-# Wizer's engine produces WebAssembly bytes for the separate execution engine.
-wizer = { workspace = true, optional = true }
+wisp-runtime = { workspace = true }
 wasmtime = { workspace = true, features = ["default", "winch"] }
 blake3 = { workspace = true }
 hex = { workspace = true }
 serde_json = { workspace = true }
 zstd = { workspace = true }
 parking_lot = { workspace = true }
-libc = { workspace = true, optional = true }
-rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
+wasmparser = { workspace = true }
 wat = { workspace = true }
 tokio = { workspace = true }
 tempfile = { workspace = true }
 wisp-fixtures = { workspace = true }
 
 [features]
-# Consumers that only validate modules can disable initialization support.
+# Deploy preparation includes guest initialization.
 default = ["preinit"]
-preinit = ["dep:wizer", "dep:rayon", "dep:libc"]
+preinit = ["wisp-runtime/preinit"]

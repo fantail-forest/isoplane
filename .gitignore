@@ -30,3 +30,6 @@ guest-sdks/dotnet/obj/
 /.wisp-dev/
 /scripts/node_modules/
 /scripts/**/__pycache__/
+
+# Local guest development state and build logs.
+.wisp/

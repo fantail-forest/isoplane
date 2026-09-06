@@ -1,9 +1,12 @@
 //! The `wisp` command.
+#![forbid(unsafe_code)]
 
+mod dev;
 
 use std::io::IsTerminal as _;
 
 use clap::Parser;
+use dev::{dev, DevOpts};
 use wisp_cli::app::resolve_limits;
 use wisp_cli::cli::{Cli, Cmd};
 use wisp_cli::render::Style;
@@ -32,7 +35,7 @@ async fn run() -> anyhow::Result<()> {
             let report = doctor::analyse(&bytes)?;
             let (limits, limits_from) = resolve_limits(guest_memory_bytes, &module)?;
             #[cfg(feature = "control")]
-            let verdict = wisp_control::validate(&bytes, limits);
+            let verdict = wisp_runtime::validate(&bytes, limits);
             #[cfg(feature = "control")]
             let rejected = verdict.is_err();
             #[cfg(not(feature = "control"))]
@@ -71,7 +74,7 @@ async fn run() -> anyhow::Result<()> {
                 );
                 #[cfg(feature = "control")]
                 {
-                    println!("\n  {}", st.bold("VALIDATOR (wisp-control)"));
+                    println!("\n  {}", st.bold("VALIDATOR (wisp-runtime)"));
                     match &verdict {
                         Ok(_) => println!("    {} no violations", st.green("✓")),
                         Err(violations) => {
@@ -99,6 +102,38 @@ async fn run() -> anyhow::Result<()> {
             }
         }
 
+        Cmd::Dev {
+            port,
+            watch,
+            no_watch,
+            build,
+            no_build,
+            init_sandbox,
+            poll_ms,
+        } => {
+            let filter = tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+                .from_env()?;
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(filter)
+                .with_writer(std::io::stderr)
+                .try_init()
+                .map_err(|e| anyhow::anyhow!("initializing local runtime logging: {e}"))?;
+            dev(
+                &st,
+                DevOpts {
+                    port,
+                    watch,
+                    no_watch,
+                    build,
+                    no_build,
+                    init_sandbox,
+                    poll_ms,
+                },
+            )
+            .await?;
+        }
     }
     Ok(())
 }

@@ -25,6 +25,7 @@ struct Bound {
 }
 
 impl ProxySocketOps {
+    /// Bind guest handles to sockets owned by this proxy hub.
     pub fn new(hub: Arc<wisp_proxy::SocketHub>) -> Arc<Self> {
         Arc::new(ProxySocketOps {
             hub,
@@ -32,6 +33,7 @@ impl ProxySocketOps {
         })
     }
 
+    /// Register or restore a guest handle and its tenant's socket identity.
     pub fn bind(&self, tenant: &str, handle: u32, proxy_socket_id: u64, tag: &str) {
         self.map.write().insert(
             handle,
@@ -43,6 +45,7 @@ impl ProxySocketOps {
         );
     }
 
+    /// Return the proxy identity of a currently bound guest handle.
     pub fn proxy_socket_id(&self, handle: u32) -> Option<u64> {
         self.map.read().get(&handle).map(|b| b.proxy_socket_id)
     }
@@ -174,25 +177,27 @@ impl wisp_host::durable_seam::SocketOps for ProxySocketOps {
 
 /// The far end of the output gate: a released effect reaches a proxy-owned
 /// socket, and nothing else in the node writes to a DI's sockets.
-pub(super) struct GatedSocketSink {
-    pub(super) sockets: Arc<ProxySocketOps>,
-    pub(super) tenants: Arc<RwLock<HashMap<String, String>>>,
+pub struct GatedSocketSink {
+    /// Socket bindings receiving effects released by the output gate.
+    pub sockets: Arc<ProxySocketOps>,
+    /// App ownership established by the embedding application's routing authority.
+    pub tenants: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl GatedSocketSink {
-    fn tenant_for(&self, id: &DiId) -> String {
+    fn tenant_for(&self, id: &DiId) -> anyhow::Result<String> {
         self.tenants
             .read()
             .get(&id.app)
             .cloned()
-            .unwrap_or_else(|| id.app.clone())
+            .ok_or_else(|| anyhow::anyhow!("no tenant established for {id}"))
     }
 }
 
 #[async_trait::async_trait]
 impl EffectSink for GatedSocketSink {
     async fn deliver(&self, id: &DiId, effect: &EmittedEffect) -> anyhow::Result<Vec<u8>> {
-        let tenant = self.tenant_for(id);
+        let tenant = self.tenant_for(id)?;
         match &effect.effect {
             ExternalEffect::SocketSend { handle, frame } => {
                 self.sockets
@@ -243,6 +248,32 @@ mod tests {
 
     fn target() -> RouteTarget {
         wisp_proxy::fake::fake_target()
+    }
+
+    #[tokio::test]
+    async fn an_effect_without_established_app_ownership_is_refused() {
+        let (_, sockets) = hub_and_ops();
+        let sink = GatedSocketSink {
+            sockets,
+            tenants: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let id = DiId {
+            app: "unowned".into(),
+            class: "Room".into(),
+            name: "lobby".into(),
+        };
+        let effect = EmittedEffect {
+            effect: ExternalEffect::SocketBroadcast {
+                frame: wisp_abi::SocketFrame::Text("private".into()),
+                except_tag: None,
+            },
+            epoch: 1,
+            idempotency_key: wisp_durable::idempotency_key(1, 0, 0),
+        };
+        assert!(
+            sink.deliver(&id, &effect).await.is_err(),
+            "an unowned app must not use its name as a tenant identity"
+        );
     }
 
     #[tokio::test]

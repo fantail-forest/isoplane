@@ -13,6 +13,7 @@ serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }

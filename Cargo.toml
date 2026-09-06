@@ -6,6 +6,7 @@ members = [
     "crates/wisp-hibernate",
     "crates/wisp-host",
     "crates/wisp-control",
+    "crates/wisp-runtime",
     "crates/wisp-proxy",
     "crates/wispd",
     "crates/wisp-cli",
@@ -24,6 +25,7 @@ wisp-abi       = { path = "crates/wisp-abi" }
 wisp-engine    = { path = "crates/wisp-engine" }
 wisp-hibernate = { path = "crates/wisp-hibernate" }
 wisp-host      = { path = "crates/wisp-host" }
+wisp-runtime   = { path = "crates/wisp-runtime", default-features = false }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
 wisp-fixtures  = { path = "crates/wisp-fixtures" }
@@ -35,6 +37,7 @@ serde_json  = "1"
 postcard    = { version = "1", features = ["alloc"] }
 toml        = "0.9"
 tokio       = { version = "1", features = ["full"] }
+tokio-util  = { version = "0.7", features = ["rt"] }
 async-trait = "0.1"
 futures     = "0.3"
 tracing     = "0.1"
@@ -59,6 +62,7 @@ wasmparser  = "0.244"
 wasmtime    = { version = "48", default-features = false }
 wat         = "1"
 tempfile    = "3"
+fd-lock     = "4"
 # Pre-init runs wizer's embedded wasmtime, which compiles through rayon. Named
 # here so guest preparation can bound that pool; must resolve to the same rayon
 # both wasmtime versions use, or `install` would scope a pool nobody consults.

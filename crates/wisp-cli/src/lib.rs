@@ -1,4 +1,5 @@
 //! Local project development and WebAssembly validation.
+#![forbid(unsafe_code)]
 
 pub mod app;
 pub mod cli;

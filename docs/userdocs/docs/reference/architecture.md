@@ -60,5 +60,7 @@ cargo metadata --no-deps --format-version 1 \
   | jq -r '.packages[] | "\(.name): \(.description)"'
 ```
 
+The `wisp dev` command provides embedded local application serving.
+
 See [Workload security and isolation](../explanation/workload-security.md)
 for the guest boundary and host-resource limits.

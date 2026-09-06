@@ -159,7 +159,7 @@ impl AsViolationJson for () {
 }
 
 #[cfg(feature = "control")]
-impl AsViolationJson for wisp_control::Violation {
+impl AsViolationJson for wisp_runtime::Violation {
     fn as_json(&self) -> serde_json::Value {
         serde_json::json!({
             "code": format!("{:?}", self.code),

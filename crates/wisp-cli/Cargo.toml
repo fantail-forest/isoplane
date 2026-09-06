@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "WebAssembly validation"
+description = "Local project development and WebAssembly validation"
 
 [lib]
 name = "wisp_cli"
@@ -30,18 +30,26 @@ blake3 = { workspace = true }
 wasmparser = { workspace = true }
 reqwest = { workspace = true }
 
-# `doctor` only validates, so `default-features = false` drops `preinit` and
-# the second wasmtime wizer embeds. A path dependency because cargo ignores a
-# member's `default-features = false` on a `workspace = true` entry.
-wisp-control = { path = "../wisp-control", optional = true, default-features = false }
+wisp-runtime = { workspace = true, features = ["preinit", "local"] }
+wisp-host = { workspace = true }
+wisp-engine = { workspace = true }
+wisp-hibernate = { workspace = true }
+wisp-proxy = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+rand = { workspace = true }
+fd-lock = { workspace = true }
+zstd = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+tempfile = { workspace = true }
 
 [features]
 # Include the full validator in local module checks by default.
 default = ["control"]
-control = ["dep:wisp-control"]
+control = []
 
 [dev-dependencies]
 tokio = { workspace = true }
 wat = { workspace = true }
-tempfile = { workspace = true }
-
+wisp-fixtures = { workspace = true }

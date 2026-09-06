@@ -45,10 +45,13 @@ wisp-host      = { workspace = true, optional = true }
 wisp-hibernate = { workspace = true, optional = true }
 wisp-engine    = { workspace = true, optional = true }
 
+wisp-runtime = { workspace = true, optional = true, features = ["local"] }
+
 [features]
 default = ["real-backends"]
 real-backends = [
     "dep:wisp-control",
+    "dep:wisp-runtime",
     "dep:wisp-host",
     "dep:wisp-hibernate",
     "dep:wisp-engine",

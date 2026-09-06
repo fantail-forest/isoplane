@@ -149,7 +149,7 @@ close them.
 
 The relevant source and regression suites in the repository are:
 
-- `crates/wisp-control/src/validator/` and
+- `crates/wisp-runtime/src/validator/` and
   `crates/wisp-control/tests/validator_corpus.rs`: import, signature, memory,
   and feature-profile rejection, including threads and stack switching.
 - `crates/wisp-engine/src/wtconfig.rs`, `activate.rs`, `call.rs`, and

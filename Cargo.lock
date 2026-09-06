@@ -2629,6 +2629,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -4142,10 +4143,16 @@ name = "wisp-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64",
  "blake3",
  "clap",
+ "fd-lock",
  "hex",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "rand 0.9.5",
  "reqwest",
  "serde",
  "serde_json",
@@ -4157,7 +4164,13 @@ dependencies = [
  "wasmparser 0.244.0",
  "wat",
  "wisp-abi",
- "wisp-control",
+ "wisp-engine",
+ "wisp-fixtures",
+ "wisp-hibernate",
+ "wisp-host",
+ "wisp-proxy",
+ "wisp-runtime",
+ "zstd",
 ]
 
 [[package]]
@@ -4168,10 +4181,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "hex",
- "libc",
  "parking_lot",
- "rand 0.9.5",
- "rayon",
  "serde",
  "serde_json",
  "tempfile",
@@ -4184,7 +4194,7 @@ dependencies = [
  "wisp-abi",
  "wisp-engine",
  "wisp-fixtures",
- "wizer",
+ "wisp-runtime",
  "zstd",
 ]
 
@@ -4281,9 +4291,37 @@ dependencies = [
  "sha1",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "wisp-abi",
+]
+
+[[package]]
+name = "wisp-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "libc",
+ "parking_lot",
+ "rand 0.9.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "wasmparser 0.244.0",
+ "wat",
+ "wisp-abi",
+ "wisp-engine",
+ "wisp-fixtures",
+ "wisp-host",
+ "wisp-proxy",
+ "wizer",
 ]
 
 [[package]]
@@ -4319,6 +4357,7 @@ dependencies = [
  "wisp-hibernate",
  "wisp-host",
  "wisp-proxy",
+ "wisp-runtime",
 ]
 
 [[package]]
