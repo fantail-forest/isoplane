@@ -2,7 +2,7 @@
 
 ## Refuse to start on invalid configuration, and say everything that is wrong
 
-Parse and validate configuration in full before a port is bound or a store is opened, and don't start a node with invalid configuration. List every problem found in the report, so the operator fixes the file once. A node that starts and discovers a bad value on the first request has already accepted traffic it cannot serve.
+Follow the two startup phases in [Error Handling](../../../AGENTS.md#error-handling). Static checks can report malformed values and inconsistent limits together without opening a database; checking schema compatibility or dependency availability requires resource acquisition. Completing both phases before accepting traffic prevents the first customer request from becoming the startup check.
 
 **Not this:** A config key checked when the code path that reads it first runs.
 
@@ -10,7 +10,7 @@ Parse and validate configuration in full before a port is bound or a store is op
 
 ## End the operation on error, not the process, and never silently
 
-On a failure while handling a request, a dispatch, a wake, or a deploy, end that operation with a structured event carrying its context and let the process continue. When a failure must end the process (a store that cannot open, a listener that cannot bind), emit the same kind of event first. Either way an operator can see what ended and why without a debugger.
+The [error-handling rules](../../../AGENTS.md#error-handling) place responsibility at the boundary that decides the outcome. A wide completion event can carry the failure context without duplicate error records at every propagating layer; startup failures need their own terminal event. The [observability guarantee](../../../AGENTS.md#observability) covers handled failures, not abrupt process loss.
 
 **Not this:** A panic in host bookkeeping taking the cell down; an error swallowed into a `let _ =` so the request simply never answers.
 

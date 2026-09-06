@@ -34,7 +34,7 @@ Focus testing effort where bugs are expensive: the sandbox boundary, budget kill
 
 ## Make every assertion say what is wrong
 
-An assertion failure is read by someone who did not write the test, often months later, from a CI log. The values the macro prints tell them what was compared; the message tells them what it means. Write the message in the system's terms, as the sentence a reader needs: "a promoted version must be routable", not "status was wrong". Clippy's `missing_assert_message` lint enforces this in application code and skips test code by design, so in tests it is a review rule.
+The [assertion-message rule](../../../AGENTS.md#structure) makes failures useful to someone who did not write the test. Compared values show the symptom; a message such as "a promoted version must be routable" identifies the broken system behaviour.
 
 **Not this:** `assert_eq!(status, 200)`; or a message that restates the comparison.
 
@@ -42,7 +42,7 @@ An assertion failure is read by someone who did not write the test, often months
 
 ## Vertical increments, not horizontal layers
 
-When adding a feature, write one test and one implementation at a time, through the interface the feature is consumed by. Don't write all tests first, then all implementation, and don't write the implementation for a layer that has no test yet.
+The [iteration workflow](../../../AGENTS.md#workflow-develop-validate-replan) makes each increment earn its place through a consumed interface. Building several unvalidated layers together can leave a complete-looking subsystem reachable only through fakes.
 
 **Not this:** A durability crate with leases, inbox, outbox, alarms, migration, and rollout, of which the daemon wires a third and the rest is exercised only by the crate's own fakes.
 
@@ -50,7 +50,7 @@ When adding a feature, write one test and one implementation at a time, through 
 
 ## Each test has a single reason to fail
 
-One behaviour per test. Split independent behaviours, not names containing a particular word. When a test fails, the name alone should say what broke.
+The [one-behaviour rule](../../../AGENTS.md#structure) keeps a failing test diagnostic. A response status and body can jointly prove one behaviour; unrelated lifecycle checks under the same name hide which guarantee failed.
 
 **Not this:** A scenario with eleven checks under one name.
 
@@ -66,7 +66,7 @@ A stub, fake, or mock lets a test exercise the code above a boundary without the
 
 ## Ship a red test with its fix
 
-A test that fails on the commit that adds it is a bug report, and bug reports go in the tracker, not the suite. Committing it ignored hides the failure; committing it with the assertion inverted so it passes records the defect as the intended behaviour and breaks the day the defect is fixed. Let a test enter the suite only green, and never leave the suite in a state anyone intends to be red.
+The [prohibition on committing known failures](../../../AGENTS.md#absolute-prohibitions) keeps the suite usable as evidence. An ignored regression hides a defect, while an inverted assertion teaches future maintainers that the defect is intended.
 
 **Not this:** A test asserting that a request returns the wrong status, with a comment saying the right status is coming later.
 

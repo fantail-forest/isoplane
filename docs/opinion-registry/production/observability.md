@@ -1,12 +1,20 @@
 # Observability
 
-## Emit one completion event per top-level operation, guaranteed
+## Prefer wide events at operation boundaries
 
-Have every dispatch, deploy, hibernate, wake, and migration emit exactly one completion event with its identifiers, duration, and outcome, from a guard that runs on success, failure, and panic. Treat these events as the source of truth for load, error rates, latency, and resource usage.
+A wide event brings the identifiers, operation, outcome, duration, resource use, and relevant failure context together in one structured completion, so an operator can investigate an operation without reconstructing it from scattered log lines. Apply the [dispatch completion contract and its limits](../../../AGENTS.md#observability) to dispatches; use the same approach for deploy, hibernate, wake, and migration operations, with the fields meaningful to each. Enrich context through the operation and finalize it at the owning boundary, using nested spans for stage detail rather than separate completion events for each hot interval.
 
 **Not this:** Start and end log lines for every internal function, or only logging on error.
 
-**Exception:** Nested operations that are independently meaningful (a pre-initialisation pass inside a deploy) may emit their own at debug level.
+**Exception:** Independently meaningful nested operations may have their own correlated completion events. Lifecycle transitions and ongoing health signals need events or metrics before an operation finishes.
+
+## Make completion ownership survive handled failures
+
+The execution boundary that catches a host panic owns the dispatch outcome; a completion guard or equivalent ownership mechanism prevents early returns and caught unwinding from dropping or duplicating the record. Exercise success, failure, cancellation, and caught-panic paths through that boundary and observe the completion event. Event emission and durable export are separate concerns: a guard cannot promise delivery after an abort, forced termination, crash, or exporter failure.
+
+**Not this:** Calling a `Drop` guard an exactly-once delivery guarantee, or treating missing telemetry as evidence of zero usage.
+
+**Exception:** Abrupt process loss is outside the handled-outcome guarantee; represent incomplete evidence as incomplete.
 
 ## Emit lifecycle transitions as events with before and after
 

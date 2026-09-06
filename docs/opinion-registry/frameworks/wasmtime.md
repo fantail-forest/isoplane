@@ -1,8 +1,8 @@
 # wasmtime
 
-## Disable engine features explicitly and assert at construction
+## Separate compiled support from guest capabilities
 
-Turn threads, shared memory, multi-memory, relaxed SIMD, and the exceptions proposal off by explicit calls on the engine config, and make the engine refuse to construct if a probe module using any of them validates. Cargo feature unification can compile support back in from another crate's dependency; the assertion is what keeps validation honest.
+Apply the [dependency and capability checks](../../../AGENTS.md#dependency-management) to threads, shared memory, multi-memory, relaxed SIMD, and the exceptions proposal. A resolved Cargo graph describes what Wasmtime can support, while explicit engine configuration and validation decide what a guest may use. Construction probes and hostile-module tests exercise that runtime boundary even when another dependency compiles additional support in.
 
 **Not this:** Trusting `default-features = false` on one crate while another crate pulls wasmtime with defaults, so that an atomics module validates because of a dependency-graph property.
 

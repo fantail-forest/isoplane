@@ -2,7 +2,7 @@
 
 ## Make every guard fire in a test
 
-Ship a check that rejects, refuses, limits, or kills with a test that trips it. A check that has never failed might not exist: it might be compiled out, gated on a flag nobody sets, or checking the wrong thing.
+The [guard coverage rule](../../../AGENTS.md#principles) proves a rejection path is reachable. Without a test that trips it, a check might be compiled out, gated on an unused flag, or checking the wrong condition.
 
 **Not this:** A `debug_assert!` on an engine invariant, compiled out in release, whose doc comment says the check happens at construction, where no such check exists.
 

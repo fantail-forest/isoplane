@@ -107,7 +107,7 @@ leave a container running when you are done.
 ## Dependency Management
 
 - Declare shared dependencies once in `[workspace.dependencies]` and reference them with `workspace = true`. A version string in a crate manifest is a bug.
-- Set dependency feature flags in one place. Feature unification across the workspace can silently re-enable engine capabilities (threads, shared memory), so have the engine assert its required feature set at construction, with a test that proves the assertion fires.
+- Set dependency feature flags in one place and check the resolved dependency graph for unintended features. Cargo features determine compiled support; engine configuration and module validation determine guest capabilities. Explicitly disable forbidden capabilities regardless of feature unification, reject engine construction if capability probes validate, and test that rejection. Run hostile modules through the real validator and engine to prove guests cannot obtain forbidden capabilities.
 - Prefer a maintained crate over a hand-rolled implementation for codecs, queues, protocol framing, TLS, tracing, and metrics.
 - Run a tool that needs a different wasmtime, target, or profile in its own workspace or its own process; never link it into the host build.
 - Share only the contract crate, by path, between the guests workspace and the host workspace.
@@ -122,7 +122,7 @@ These rules are **non-negotiable**. If you can't satisfy a requirement without b
 | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **No `#[allow(...)]`** of rustc or clippy lints                                                                                                 | None. Fix the code. If a lint is wrong for the whole workspace, configure it in `[workspace.lints]` with a one-line reason.                                        |
 | **No `unwrap()` / `expect()`** in non-test code                                                                                                 | `expect("reason")` where the invariant is established in the same function and the reason says so.                                                                 |
-| **No `panic!` as control flow** in the host or daemon                                                                                           | Test code. A panic in a cell takes every tenant on it down.                                                                                                        |
+| **No `panic!` as control flow** in the host or daemon                                                                                           | Test code. An uncontained host panic can disrupt other tenants; contain unwinding at the execution boundary.                                                                                                        |
 | **No assertions on wall-clock time** in tests | A deadline that fails a hung test rather than letting it hang. Benchmarks, which are not tests. Tests take a clock and advance it. |
 | **No stubs in application code.** Leave unimplemented code absent, so a caller fails to compile, not at runtime. | A method a foreign trait forces, or a wire case the other side can already send, may exist, and must return an error naming what is unsupported. Never a fake value, a hard-coded zero, or an injected sleep. Test code may stub freely. |
 | **No configuration without a consumer** (config field, CLI flag, cargo feature, trait method, enum variant with no non-test caller or producer) | A field kept so that previously serialised configuration still loads. Say so where it is declared, and make loading it explicit: accepted and ignored with a warning, or rejected with a migration message. Never silently read into nothing. |
@@ -238,9 +238,9 @@ Work happens iteratively. Each iteration of the planning cycle goes develop, val
 
 Derive every host mechanism from these. A change that breaks one is a product change, not an implementation change, and needs the owner's agreement before code.
 
-1. **Keep all tenant state visible.** Everything an instance is must be capturable by the host: its sandbox state plus whatever the host holds on its behalf, with nothing hidden in threads, kernel objects, or runtime internals.
-2. **Keep every wake source host-owned.** Put sockets, timers, and futures in the host or the proxy, so a sleeping instance holds nothing the platform must keep alive.
-3. **Suspend only on an empty stack.** A guest waits only by returning control to the host with nothing of its own left on any native stack, so a parked instance is bytes that can be captured and moved. Provide no way for a guest to block inside a call. How that is achieved (today, no blocking import and synchronous execution on pool threads) may change; the property may not.
+1. **Keep all tenant state visible.** At a supported return boundary, represent resumable state as sandbox state plus explicit records of what the host holds on its behalf. Native invocation stacks are not checkpoints, and host-owned resources need explicit preservation, rebinding, or loss semantics.
+2. **Keep every wake source host-owned.** Put sockets, timers, and futures in the host or the proxy. A sleeping guest retains handles; the host owns the resources and their lifecycle, including any cost while the guest sleeps.
+3. **Suspend only on an empty stack.** A guest parks only by returning control to the host with no live guest invocation left on a native stack. Capture supported sandbox state at that boundary, with the resource semantics above. Provide no way for a guest to block inside a call. How that is achieved (today, no blocking import and synchronous execution on pool threads) may change; the property may not.
 4. **Route every capability through the host interface.** Offer everything a guest can do to the world, including every form of I/O and anything a syscall would provide, through an interface the guest cannot bypass, so that what a module can reach is a static question, answerable at deploy time.
 
 ### The host interface
@@ -266,14 +266,14 @@ Keep the host interface to one definition. Generate every other representation o
 - **Give errors context**: which tenant, which instance, which operation, what limit. `"budget exceeded"` is not an error message.
 - **Don't catch what you can't handle.** Let traps propagate to the layer that decides the response.
 - **Match errors by variant.** Code that inspects an error's text to decide what happened has the wrong error type.
-- **Fail fast at startup.** Validate configuration in full before anything binds a port or opens a store. On invalid configuration, refuse to start and list every problem, not the first.
+- **Fail fast at startup.** Parse and validate static configuration before acquiring service resources, including binding listeners or opening stores; report all independently detectable configuration problems together. Then acquire resources and validate dependencies and store schemas before accepting traffic. If either phase fails, report the failure and release acquired resources rather than serving with partial initialization.
 - **Fail contained at runtime.** Let an error in one request, dispatch, or deploy end that operation, never the process.
-- **Make every terminal error observable.** Whether it ends the process or ends a request, emit it as a structured event with its context before control leaves. Never let an error path exit silently.
+- **Make every handled terminal error observable.** Record its context and outcome at the boundary that ends the operation or refuses startup. For operations with a completion event, include the error there rather than emitting a duplicate completion. The limits of this guarantee are defined under Observability.
 
 ## Observability
 
-- Prefer structured events and spans for host observability. Plain log lines and standalone metrics have their place where an event or span would be a poor fit; use them there. Never log secrets, tokens, keys, or guest memory in any of them.
-- A dispatch is one work item delivered to an instance (a request, a frame, an alarm), from delivery to its final outcome, across every hot interval it takes between parks. Record one completion per dispatch, with enough to attribute it (who, what, outcome, CPU across its hot intervals, wall time), on every exit path including panic. Treat that record as the source of truth for load, error rates, and resource usage.
+- Prefer wide events: one structured completion enriched with the context and outcome of a logical operation. Use nested spans for stage timing and standalone metrics or plain log lines where they fit better. Never log secrets, tokens, keys, or guest memory in any of them. See the [observability opinion](docs/opinion-registry/production/observability.md) for rationale and examples.
+- A dispatch is one work item delivered to an instance (a request, a frame, an alarm), from delivery to its final outcome, across every hot interval it takes between parks. Record one wide completion event per dispatch, with attribution (who, what), outcome, CPU across its hot intervals, and wall time, for every outcome the host handles, including cancellation and caught unwinding. The execution boundary owns panic containment and finalization; parking does not complete a dispatch. Treat that record as the source of truth for load, error rates, and resource usage. This is an in-process emission requirement, not a guarantee of durable delivery: aborts, forced termination, process crashes, and exporter failures can leave missing records. Do not infer successful completion or zero usage from a missing event.
 - Make where a dispatch's time went observable per request, as nested timed stages, so latency can be decomposed without reading logs. Keep one tracing mechanism in the host for that; don't build a second, bespoke one beside it. How tracing is done may change; that it is one mechanism does not.
 
 ## Opinion Registry
@@ -284,14 +284,21 @@ Opinions define the direction, not the status quo. When existing code doesn't fo
 
 **Before writing code**, read the registry section for the area you're about to touch.
 
+If this file and the registry conflict, notify the owner with links and the
+conflicting text, explain which decision is blocked, and wait for the owner to
+decide. Neither source wins by default. Continue independent work only when it
+does not depend on that decision. Record the resolution in the affected guidance
+so the conflict does not recur.
+
 ## Agent Behavior Guidelines
 
-1. **Understand before you act.** Read the code, the registry section for the area, and the recent history of the files before modifying anything. Check for an existing pattern before inventing one.
-2. **Keep the change focused.** Apply the cleanup scope at the top of this file. Report what you refactored and why; do not add unasked-for features.
-3. **Ask about consequential ambiguity.** Ask when requirements leave product behaviour undecided, a rule would need an exception, or a shared contract would break. Make routine implementation choices within established requirements and explain material assumptions. Existing authorization applies; do not ask again for an already approved change.
-4. **Respect existing patterns within these standards.** Improve conflicting patterns in directly affected code within the cleanup scope above; report larger migrations separately.
-5. **Report faithfully.** Follow the validation workflow above. Report failing checks with their output and skipped checks as skipped. Put edit history and change rationale in the commit or PR; durable design rationale may live beside code under Comments & Documentation.
-6. **Prose is not a replacement for a working implementation.** When implementation is requested, deliver the change and the test that proves it. A README, design note, or issue does not substitute for them.
+1. **Correct consequential factual errors immediately.** If the owner states something materially incorrect, say so before planning or implementing anything that depends on it. Identify the false premise, explain the correction and why it matters, and support it with code, a test, or an authoritative source when available. Distinguish established facts from uncertainty; if unsure, flag the uncertainty immediately and verify before relying on the claim. Do not treat confidence or authority as evidence, silently accommodate a false premise, or defer the correction to the final report. Correct facts without recasting preferences or product decisions as errors. Continue independent work while resolving the premise.
+2. **Understand before you act.** Read the code, the registry section for the area, and the recent history of the files before modifying anything. Check for an existing pattern before inventing one.
+3. **Keep the change focused.** Apply the cleanup scope at the top of this file. Report what you refactored and why; do not add unasked-for features.
+4. **Ask about consequential ambiguity.** Ask when requirements leave product behaviour undecided, a rule would need an exception, or a shared contract would break. Make routine implementation choices within established requirements and explain material assumptions. Existing authorization applies; do not ask again for an already approved change.
+5. **Respect existing patterns within these standards.** Improve conflicting patterns in directly affected code within the cleanup scope above; report larger migrations separately.
+6. **Report faithfully.** Follow the validation workflow above. Report failing checks with their output and skipped checks as skipped. Put edit history and change rationale in the commit or PR; durable design rationale may live beside code under Comments & Documentation.
+7. **Prose is not a replacement for a working implementation.** When implementation is requested, deliver the change and the test that proves it. A README, design note, or issue does not substitute for them.
 
 ## Agent skills
 

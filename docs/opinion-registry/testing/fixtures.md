@@ -2,7 +2,7 @@
 
 ## Build fixtures on demand, through one helper
 
-Have a test that needs a guest module ask one shared helper for it by name, and have the helper build it when missing or stale by running the same script a developer would. Give the helper one lock so concurrent test binaries do not race on the build, and give the guests their own target directory so a nested cargo never waits on the lock its parent holds. Never let a test shell out to a build on its own.
+The [shared fixture rules](../../../AGENTS.md#common-operations) make a clean checkout and a warm checkout exercise the same test. A lock shared across test binaries prevents competing builds; a separate guest target directory prevents nested Cargo from waiting on its parent's lock.
 
 **Not this:** Three test binaries each invoking the guest build script their own way; or a test that stops and tells the developer which command to run.
 
@@ -10,7 +10,7 @@ Have a test that needs a guest module ask one shared helper for it by name, and 
 
 ## Fail, don't skip, when a fixture cannot be built
 
-When a fixture cannot be built, because the toolchain is absent or the build broke, fail the test with the reason. A test that prints "not proven" and passes is a green light that means nothing. A developer who wants to skip those tests filters by name.
+Under the [fixture failure rule](../../../AGENTS.md#common-operations), missing tooling or a failed build remains visible as a test failure. A developer can explicitly filter tests by name, but an automatic skip would make the same green result mean different coverage on different machines.
 
 **Not this:** A pre-initialisation test that reports a gap and returns `Ok` when the module is not on disk.
 
@@ -34,7 +34,7 @@ Write a fixture guest to trip one rule or exercise one mechanism, and keep it as
 
 ## One harness per crate, in `tests/common`
 
-Keep shared setup (a rig, a fixed resolver, a wait helper) in one `tests/common/` module per crate. Copy-pasting it into every test file means several versions that drift and several places a bug has to be fixed.
+The [shared harness rule](../../../AGENTS.md#structure) gives setup one place to evolve. Copies of a rig, resolver, or wait helper drift and multiply the places a harness defect must be fixed.
 
 **Not this:** The same `rig()`, `services()`, and `wait_for()` copied verbatim into every integration test file of a crate.
 
