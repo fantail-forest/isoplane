@@ -56,7 +56,7 @@ cargo metadata --no-deps --format-version 1 \
 | **Wire formats**         | postcard (guest boundary, deltas), JSON (operator API)  |                                                                                                                                                  |
 | **Logging**              | `tracing` + `tracing-subscriber` (JSON)                 |                                                                                                                                                  |
 | **Docs site**            | Docusaurus 3 (`docs/userdocs`)                          |                                                                                                                                                  |
-| **Container**            | `scripts/dev`, `Dockerfile`                             | A convenience that carries the whole toolchain. Never make crates, tests, scripts, or docs require, detect, or gate on it.                    |
+| **Container**            | `scripts/dev --container`, `Dockerfile`                             | A convenience that carries the whole toolchain. Never make crates, tests, scripts, or docs require, detect, or gate on it.                    |
 
 The current Dockerfile uses floating Rust and .NET selections, and
 `wisp-control` links Wizer with its own Wasmtime. These are known departures
@@ -67,10 +67,11 @@ tests validated; do not fold those migrations into unrelated work.
 ## Common Operations
 
 ```sh
-docker build -t wisp-dev:latest .                  # Build the toolchain image once
-scripts/dev <command>                              # Run a command inside it
-scripts/dev bash                                   # A shell inside it
-scripts/dev --stop                                 # Remove your container when done
+scripts/setup                                     # Install native sandbox and guest tools
+scripts/dev <command>                              # Run a native sandboxed command
+scripts/dev                                       # A sandboxed shell
+scripts/dev --container --build                    # Optional Linux toolchain image
+scripts/dev --container --stop                     # Remove your container when done
 
 cargo build --workspace --all-targets              # Build crates, tests, examples
 cargo clippy --workspace --all-targets -- -D warnings
@@ -81,7 +82,7 @@ cargo test -p wisp-host                            # One crate
 cargo test -p wisp-host --test cell                # One integration test binary
 
 scripts/dev guests/build.sh                        # Rust guests -> guests/out/*.wasm
-scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*.wasm
+scripts/dev --container guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*.wasm
 
 cargo run -p wispd -- --config wispd.toml          # Run a node
 cargo run -p wispd -- --config wispd.toml --check  # Validate a config without running
@@ -100,7 +101,7 @@ misses.
 
 **IMPORTANT**: Have a test that needs a guest fixture build it when it is missing or stale, through one shared fixture helper and nothing else. Make the helper safe to call from concurrently running test binaries, and make sure a nested build can never wait on a lock its parent holds. When the toolchain to build a fixture is absent, fail the test naming the missing tool; never skip.
 
-**IMPORTANT**: `scripts/dev` runs you as your own uid and only ever removes
+**IMPORTANT**: `scripts/dev --container` runs you as your own uid and only ever removes
 containers it created. Don't drive Docker directly to work around it, and don't
 leave a container running when you are done.
 

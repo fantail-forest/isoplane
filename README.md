@@ -15,19 +15,33 @@ explains the current enforcement boundaries and limitations.
 
 ## Building and testing
 
-The whole toolchain (Rust with the wasm targets, the .NET SDK, `wasm-tools`,
-wasi-sdk) ships in one container image. A checkout with those tools installed
-locally needs no container; the crates, tests and scripts never require one.
+`scripts/dev` runs commands natively through the pinned open-source
+[Sandbox Runtime](https://github.com/anthropics/sandbox-runtime): Seatbelt on
+macOS and Bubblewrap on Linux. Install Rust, Node.js (20.11 or newer), Python 3,
+and your platform's C compiler first; Linux also needs `bubblewrap` and `socat`.
 
 ```sh
-docker build -t wisp-dev:latest .          # the toolchain image, once
-scripts/dev cargo test --workspace         # the full suite, inside it
-scripts/dev bash                           # a shell inside it
-scripts/dev --stop                         # remove your container when done
-
-cargo build --workspace --all-targets      # on a host with the toolchain
-cargo test --workspace
+scripts/setup                             # sandbox tool and Rust guest tools
+scripts/dev cargo build --workspace --all-targets
+scripts/dev cargo test --workspace
+scripts/dev                               # interactive sandboxed shell
 ```
+
+The pinned NativeAOT-LLVM C# compiler is published for Linux, not macOS ARM64.
+Build those fixtures with the optional Docker toolchain, then run the host and
+tests natively. Docker Desktop on macOS needs no Sysbox:
+
+```sh
+scripts/dev --container --build
+scripts/dev --container guests/build-dotnet.sh --if-stale
+scripts/dev --container --stop
+scripts/dev cargo test --workspace
+```
+
+The sandbox uses a separate home and caches in `.wisp-dev`, permits local TCP
+and package downloads, and does not inherit arbitrary shell credentials. It
+imposes no CPU affinity or minimum core count. See [the sandbox guide](docs/userdocs/docs/how-to/use-the-sandbox.md)
+for manual runs, network access, and the optional container workflow.
 
 Tests that need a guest module build it on demand through the `wisp-fixtures`
 crate, which runs `guests/build.sh` and `guests/build-dotnet.sh` and fails
@@ -51,4 +65,4 @@ cargo metadata --no-deps --format-version 1 \
 | `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |
 | `docs/userdocs`       | The Docusaurus documentation site.                                        |
 | `docs/opinion-registry` | How software is built here.                                             |
-| `scripts/`            | `scripts/dev` runs a command in the toolchain container; `scripts/clean` reclaims build intermediates. |
+| `scripts/`            | `scripts/dev` sandboxes a local command; `scripts/clean` reclaims build intermediates. |

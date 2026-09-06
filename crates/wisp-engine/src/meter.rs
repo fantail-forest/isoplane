@@ -109,4 +109,9 @@ mod tests {
             "a working read must not be counted as a failure"
         );
     }
+
+    #[test]
+    fn the_native_thread_clock_measures_cpu_work() {
+        wisp_fixtures::assert_cpu_clock_advances(try_thread_cpu_nanos);
+    }
 }

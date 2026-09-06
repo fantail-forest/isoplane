@@ -86,3 +86,18 @@ pub fn dotnet(name: &str) -> Vec<u8> {
         .join(format!("{name}.wasm"));
     read(&path)
 }
+
+/// Prove that a native CPU clock measures work rather than returning a dummy value.
+/// Panics if either read fails or CPU work does not advance the clock.
+pub fn assert_cpu_clock_advances(read_clock: impl Fn() -> Option<u64>) {
+    let before = read_clock().expect("the native CPU clock is available");
+    let mut value = 0u64;
+    for i in 0..3_000_000u64 {
+        value = std::hint::black_box(value.wrapping_add(i ^ value));
+    }
+    let after = read_clock().expect("the native CPU clock remains available");
+    assert!(
+        after > before,
+        "CPU work must advance the native clock, including on ARM"
+    );
+}

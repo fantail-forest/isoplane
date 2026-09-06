@@ -24,23 +24,15 @@ fi
 OUT="${WISP_OUT_DIR:-$HERE/out}"
 NAME="${WISP_OUT:-}"
 
-# NativeAOT-LLVM links with the WASI SDK's clang, which also compiles the PAL
-# shim; the ILCompiler package expects this version. It comes from the image.
-WASI_SDK_VERSION="${WASI_SDK_VERSION:-29.0}"
-WASI_SDK_PATH="${WASI_SDK_PATH:-/opt/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux}"
-
+# The pinned experimental compiler feed has Linux builds, but no macOS ARM64 build.
+if [ "$(uname -s)" != Linux ]; then
+  echo "FAIL: the pinned NativeAOT-LLVM compiler requires Linux. Build guests with:" >&2
+  echo "    scripts/dev --container guests/build-dotnet.sh --if-stale" >&2
+  exit 1
+fi
+WASI_SDK_PATH="${WASI_SDK_PATH:-/opt/wasi-sdk}"
 if [ ! -x "$WASI_SDK_PATH/bin/clang" ]; then
-  {
-    echo "FAIL: no wasi-sdk at $WASI_SDK_PATH (looked for bin/clang)."
-    echo
-    echo "It ships in the wisp-dev image alongside .NET and wasm-tools. If this"
-    echo "is the sandbox, the image predates the layer that adds it:"
-    echo "    docker build --build-arg HOST_UID=\$(id -u) --build-arg HOST_GID=\$(id -g) \\"
-    echo "        -t wisp-dev:latest ."
-    echo "    scripts/dev --stop      # so the next run picks the new image up"
-    echo
-    echo "Outside the sandbox, point WASI_SDK_PATH at your own ${WASI_SDK_VERSION} install."
-  } >&2
+  echo "FAIL: missing wasi-sdk clang at $WASI_SDK_PATH/bin/clang; set WASI_SDK_PATH to your installation." >&2
   exit 1
 fi
 export WASI_SDK_PATH
@@ -93,7 +85,7 @@ if [ -n "$stray" ]; then
     echo "    $HERE/build.sh -p:NativeDebugSymbols=true"
     echo "    wasm-tools print $OUT/$NAME.wasm | grep '(import \"wasi'"
   } >&2
-  exit 1
+  exit 3
 fi
 
 echo "==> exports"

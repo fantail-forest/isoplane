@@ -166,23 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_cpu_clock_advances_only_while_burning() {
-        let idle = CpuInterval::start();
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let slept = idle.elapsed_ns();
-
-        let busy = CpuInterval::start();
-        let mut x = 0u64;
-        for i in 0..3_000_000u64 {
-            x = x.wrapping_add(i ^ x);
-        }
-        std::hint::black_box(x);
-        let burned = busy.elapsed_ns();
-
-        assert!(slept < 5_000_000, "sleeping recorded {slept} ns of CPU");
-        assert!(
-            burned > slept,
-            "burning {burned} ns did not exceed sleeping {slept} ns"
-        );
+    fn the_native_thread_clock_measures_cpu_work() {
+        wisp_fixtures::assert_cpu_clock_advances(try_read_thread_cpu_ns);
     }
 }

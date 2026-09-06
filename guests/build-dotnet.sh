@@ -1,26 +1,17 @@
 #!/usr/bin/env bash
-# Build every C# guest fixture, one at a time.
-#
-#   scripts/dev guests/build-dotnet.sh            # build all seven
-#   scripts/dev guests/build-dotnet.sh --if-stale # only what is out of date
-#
-# Serial because six of the seven are one .csproj under different properties,
-# sharing `src/obj`, `src/bin`, `obj/wisp_pal.o` and the SDK project reference;
-# building them concurrently hit three distinct MSBuild races (a duplicate
-# AssemblyInfo from an intermediate directory inside `src/`, and two
-# NETSDK1047 restores over one `obj/`).
-set -uo pipefail
+# Build the six C# test fixtures; samples have their own build scripts.
+# Usage: guests/build-dotnet.sh [--if-stale]
+# Serial because the variants share one project's intermediate files.
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IF_STALE=0
 [ "${1:-}" = "--if-stale" ] && IF_STALE=1
 
-# Test binaries call this concurrently; the second caller blocks, then finds
-# everything fresh. The lock lives on fd 9, and each build below is started
-# without it: an MSBuild node server outlives the build that started it, and
-# one that inherited the lock held every later caller until it was killed.
-exec 9>"$ROOT/.build-dotnet.lock"
-command -v flock >/dev/null 2>&1 && flock 9
+TOOLS="$ROOT/../scripts/fixture-tools.py"
+if [ "${WISP_FIXTURE_LOCK:-}" != "$ROOT/build-dotnet.sh" ]; then
+  exec python3 "$TOOLS" lock "$ROOT/.build-dotnet.lock" "$ROOT/build-dotnet.sh" "$@"
+fi
 
 # name | output path | guest dir | extra dotnet publish args | expect-gate-fail
 #
@@ -38,15 +29,13 @@ FIXTURES=(
 # Coarse on purpose: a per-fixture dependency graph would be a second copy of
 # what MSBuild knows, and a stale fixture costs more than a spare rebuild.
 newest_source() {
-  find "$ROOT/dotnet/src" "$(cd "$ROOT/.." && pwd)/guest-sdks/dotnet" \
-       -type f \( -name '*.cs' -o -name '*.csproj' -o -name '*.props' -o -name '*.c' -o -name '*.sh' \) \
-       -not -path '*/obj*' -not -path '*/bin*' -printf '%T@\n' 2>/dev/null | sort -rn | head -1
+  python3 "$TOOLS" newest "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config"
 }
 
 is_stale() {
   local out="$1" src="$2"
   [ -f "$out" ] || return 0
-  local t; t=$(stat -c %Y "$out" 2>/dev/null || echo 0)
+  local t; t=$(python3 "$TOOLS" mtime "$out")
   awk -v a="$t" -v b="$src" 'BEGIN { exit !(a < b) }'
 }
 
@@ -69,8 +58,7 @@ fi
 if ! command -v dotnet >/dev/null 2>&1; then
   {
     echo "FATAL: no .NET SDK on PATH, so the C# guest fixtures cannot be built."
-    echo "Run this in the sandbox, where the SDK lives:"
-    echo "    scripts/dev guests/build-dotnet.sh"
+    echo "Install the .NET SDK to build C# fixtures."
   } >&2
   exit 1
 fi
@@ -85,8 +73,10 @@ for spec in "${FIXTURES[@]}"; do
   fi
   log=$(mktemp)
   ok=0
+  build_rc=0
+  rm -f "$out"
   # shellcheck disable=SC2086
-  if WISP_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1 9>&-; then ok=1; fi
+  if WISP_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; else build_rc=$?; fi
   built=$((built + 1))
 
   # `build-guest.sh`'s import gate refuses the `_stock` fixtures after the
@@ -94,10 +84,10 @@ for spec in "${FIXTURES[@]}"; do
   if [ "$gate" = "gate-fails" ]; then
     if [ "$ok" = 1 ]; then
       echo "  !! $name: passed the import gate, and it exists to fail it"; rc=1
-    elif [ -s "$out" ]; then
+    elif [ "$build_rc" = 3 ] && [ -s "$out" ]; then
       echo "  ok      $name  (import gate refused it, as this fixture requires)"
     else
-      echo "  FAILED  $name  (no module produced)"; sed 's/^/      /' "$log" >&2; rc=1
+      echo "  FAILED  $name  (compiler failed or import gate did not reject the module)"; sed 's/^/      /' "$log" >&2; rc=1
     fi
   elif [ "$ok" = 1 ]; then
     echo "  ok      $name"

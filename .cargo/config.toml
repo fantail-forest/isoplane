@@ -16,7 +16,7 @@
 # the final named binaries. `scripts/clean --stale` can then reclaim the dead
 # copies without touching anything you actually run.
 #
-# `scripts/dev` overrides this with CARGO_BUILD_BUILD_DIR so that a container
+# `scripts/dev --container` overrides this with CARGO_BUILD_BUILD_DIR so that a container
 # build keeps its intermediates on the `wisp-ctarget` volume rather than writing
 # them back through the bind mount, where they land as trees owned by a uid the
 # host user cannot unlink.

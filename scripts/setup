@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Install native development helpers: scripts/setup
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+npm ci --prefix scripts --ignore-scripts
+rustup target add wasm32-unknown-unknown wasm32-wasip1
+scripts/dev cargo install --locked --version 1.244.0 --root .wisp-dev/tools wasm-tools

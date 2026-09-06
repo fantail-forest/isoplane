@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+# Run a command inside the wisp-dev toolchain container.
+#
+#   scripts/dev --container cargo test --workspace
+#   scripts/dev --container bash
+#   WISP_CONTAINER_NAME=wisp-foo scripts/dev --container ...
+#   scripts/dev --container --stop       # remove this name's container
+#   scripts/dev --container --reap       # remove all of our own stopped containers
+#   scripts/dev --container --status     # what we own, and whether it responds
+#
+# The container runs as the invoking uid, so nothing it writes into the bind
+# mount is unremovable from the host. Every container this script creates is
+# labelled with that uid, and it removes nothing unlabelled: other containers
+# on the machine are not ours. It never starts a container behind one that
+# is hung, since that is how one stuck container jams the daemon for everyone.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="${WISP_IMAGE:-wisp-dev:latest}"
+NAME="${WISP_CONTAINER_NAME:-wisp-$(id -u)-shared}"
+LABEL="wisp.owner=$(id -u)"
+PROBE_TIMEOUT="${WISP_PROBE_TIMEOUT:-15}"
+DOCKER_TIMEOUT="${WISP_DOCKER_TIMEOUT:-60}"
+# How long to wait for a container someone else is starting: `created` and
+# `restarting` are what the winner of a startup race looks like for a moment.
+START_WAIT="${WISP_START_WAIT:-30}"
+
+timed() {
+  python3 -c 'import subprocess, sys
+try:
+    sys.exit(subprocess.run(sys.argv[2:], timeout=float(sys.argv[1])).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)' "$@"
+}
+d() { timed "$DOCKER_TIMEOUT" docker "$@"; }
+
+# `docker inspect` fails both when the object does not exist and when the
+# daemon did not answer, and only the first means a container may be created;
+# a daemon that did not answer is the one case in which creating another is
+# what jams it. So each helper allowlists the outcomes it understands and
+# refuses on everything else.
+
+_is_docker_state() {
+  case "$1" in
+    created|running|paused|restarting|removing|exited|dead) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The wording differs by subcommand and by docker version.
+_says_absent() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    *"no such object"*|*"no such container"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prints the state and returns 0; returns 2 having said why, if it could not
+# find out.
+state_of() {
+  local n="$1" out rc=0
+  out=$(d inspect -f '{{.State.Status}}' "$n" 2>&1) || rc=$?
+  if [ "$rc" = 0 ]; then
+    _is_docker_state "$out" && { printf '%s\n' "$out"; return 0; }
+    echo "docker reported '$out' as the state of '$n', which is not a container state" >&2
+    return 2
+  fi
+  _says_absent "$out" && { echo absent; return 0; }
+  echo "cannot determine the state of '$n': docker inspect exited $rc${out:+ ($out)}" >&2
+  return 2
+}
+
+# 0 = ours, 1 = exists and is not ours, 2 = absent, 3 = docker would not say.
+owner_of() {
+  local n="$1" out rc=0
+  out=$(d inspect -f '{{index .Config.Labels "wisp.owner"}}' "$n" 2>&1) || rc=$?
+  if [ "$rc" = 0 ]; then
+    [ "$out" = "$(id -u)" ] && return 0
+    return 1
+  fi
+  _says_absent "$out" && return 2
+  echo "cannot determine the owner of '$n': docker inspect exited $rc${out:+ ($out)}" >&2
+  return 3
+}
+
+remove_if_ours() {
+  local n="$1" rc=0
+  owner_of "$n" || rc=$?
+  case $rc in
+    0) d rm -f "$n" >/dev/null; return $? ;;
+    2) return 0 ;;
+    1) echo "refusing to remove '$n': not labelled $LABEL (not ours)" >&2; return 1 ;;
+    *) echo "refusing to remove '$n': docker would not say who owns it" >&2; return 1 ;;
+  esac
+}
+
+# The id of a container carrying our label under exactly this name, from the
+# daemon's own listing: the id in a name-conflict error is whoever holds the
+# name, which in a startup race is the winner's live container.
+# 0 = printed an id, 1 = we own nothing by that name, 2 = could not ask.
+our_id_named() {
+  local want="$1" listing nm id
+  listing=$(d ps -a --no-trunc --filter "label=$LABEL" --format '{{.Names}} {{.ID}}' 2>/dev/null) \
+    || return 2
+  while read -r nm id; do
+    [ "$nm" = "$want" ] && { printf '%s\n' "$id"; return 0; }
+  done <<<"$listing"
+  return 1
+}
+
+# A container can be "running" and still be useless.
+responsive() {
+  timed "$PROBE_TIMEOUT" docker exec "$1" true >/dev/null 2>&1
+}
+
+case "${1:-}" in
+  --build)
+    docker build --build-arg "HOST_UID=$(id -u)" --build-arg "HOST_GID=$(id -g)" -t "$IMAGE" "$ROOT"
+    exit $?
+    ;;
+  --stop)
+    remove_if_ours "$NAME" || exit 71
+    echo "stopped $NAME"
+    exit 0
+    ;;
+  --reap)
+    # Listed first and looped second, so a daemon that did not answer is a
+    # failure rather than an empty list.
+    if ! listing=$(d ps -a --filter "label=$LABEL" --filter "status=exited" --format '{{.Names}}'); then
+      echo "could not list our containers; reaped nothing" >&2
+      exit 69
+    fi
+    n=0
+    while read -r c; do
+      [ -z "$c" ] && continue
+      d rm "$c" >/dev/null 2>&1 && { echo "reaped $c"; n=$((n+1)); }
+    done <<<"$listing"
+    echo "reaped $n"
+    exit 0
+    ;;
+  --status)
+    echo "name:  $NAME"
+    st=$(state_of "$NAME") || st="UNKNOWN (docker did not answer)"
+    echo "state: $st"
+    if [ "$st" = running ]; then
+      responsive "$NAME" && echo "probe: OK" || echo "probe: HUNG"
+    fi
+    echo "ours:"
+    d ps -a --filter "label=$LABEL" --format '  {{.Names}}\t{{.Status}}' 2>/dev/null
+    exit 0
+    ;;
+esac
+
+if ! d info >/dev/null 2>&1; then
+  echo "docker daemon is not responding; refusing to queue work behind it" >&2
+  exit 69
+fi
+
+PORTS=()
+for p in ${WISP_PORTS:-}; do PORTS+=(-p "$p"); done
+create_container() {
+  d run -d --name "$NAME" \
+    --label "$LABEL" --label "wisp.created=$(date -u +%FT%TZ)" \
+    --user "$(id -u):$(id -g)" \
+    -v "$ROOT:/wisp" \
+    -v wisp-ctarget:/ctarget \
+    -v wisp-cargo-registry:/opt/cargo/registry \
+    -v wisp-nuget:/nuget \
+    -w /wisp \
+    -e CARGO_TARGET_DIR=/ctarget \
+    -e CARGO_BUILD_BUILD_DIR=/ctarget/build \
+    -e CARGO_HOME=/opt/cargo \
+    -e NUGET_PACKAGES=/nuget \
+    -e HOME=/tmp \
+    -e CARGO_TERM_COLOR=always \
+    -e RUST_BACKTRACE=1 \
+    ${PORTS[@]+"${PORTS[@]}"} "$IMAGE" sleep infinity
+}
+
+refuse_hung() {
+  cat >&2 <<MSG
+'$NAME' is running but did not answer a probe within ${PROBE_TIMEOUT}s.
+
+Refusing to start another container behind a hung one. Investigate, then:
+    scripts/dev --container --stop
+MSG
+  exit 70
+}
+
+# Wait for a container someone else is starting, rather than reaping it.
+# 0 = it is running, 1 = it went away (the name is free again), 2 = it never
+# got there.
+await_running() {
+  local n="$1" i st
+  for ((i = 0; i < START_WAIT; i++)); do
+    st=$(state_of "$n") || return 2
+    [ "$st" = running ] && return 0
+    [ "$st" = absent ] && return 1
+    sleep 1
+  done
+  echo "'$n' has been in state '$st' for ${START_WAIT}s; refusing to reap a container someone may be starting" >&2
+  return 2
+}
+
+# A loop rather than a straight line, because the name can be taken between
+# the check and the `run` when several callers start at once against one
+# container name. `created`/`restarting` is what the winner of that race looks
+# like for a moment, and is waited for, never removed.
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -gt 5 ]; then
+    echo "gave up after 5 attempts to get a usable '$NAME'" >&2
+    exit 75
+  fi
+
+  st=$(state_of "$NAME") || exit 73
+  case "$st" in
+    running)
+      owner_of "$NAME" || { echo "refusing to use a container we do not own" >&2; exit 71; }
+      responsive "$NAME" || refuse_hung
+      break
+      ;;
+    created|restarting|removing)
+      rc=0; await_running "$NAME" || rc=$?
+      [ "$rc" = 2 ] && exit 74
+      continue
+      ;;
+    paused)
+      echo "'$NAME' is paused; somebody paused it on purpose. Refusing to remove it." >&2
+      echo "    docker unpause $NAME     # or: scripts/dev --container --stop" >&2
+      exit 74
+      ;;
+    exited|dead)
+      remove_if_ours "$NAME" || exit 71
+      continue
+      ;;
+    absent) ;;
+  esac
+
+  if err=$(create_container 2>&1); then
+    continue                                 # re-read the state
+  fi
+
+  st=$(state_of "$NAME") || { echo "$err" >&2; exit 73; }
+  if [ "$st" != absent ]; then
+    continue                                 # someone won the race
+  fi
+
+  # docker refused, yet nothing answers to the name: a name the daemon still
+  # holds but can no longer inspect. Recoverable only if it is provably ours.
+  rc=0; ghost=$(our_id_named "$NAME") || rc=$?
+  if [ "$rc" = 0 ] && [ -n "$ghost" ]; then
+    echo "clearing ghost container name '$NAME' ($ghost): carries $LABEL but docker cannot inspect it" >&2
+    d rm -f "$ghost" >/dev/null || exit 71
+    continue
+  fi
+  echo "$err" >&2
+  if [ "$rc" = 1 ]; then
+    echo "(the name '$NAME' is not held by anything labelled $LABEL, so it is not ours to clear)" >&2
+  fi
+  exit 72
+done
+
+# Forward the caller's `WISP_*` environment into the container, since `docker
+# exec` inherits nothing; the script's own control variables stay out so a
+# nested `scripts/dev` does not inherit a name or an image it was not given.
+EXEC=(docker exec)
+for v in "${!WISP_@}"; do
+  case "$v" in
+    WISP_IMAGE|WISP_CONTAINER_NAME|WISP_PORTS|WISP_PROBE_TIMEOUT|WISP_DOCKER_TIMEOUT|WISP_START_WAIT) continue ;;
+  esac
+  EXEC+=(-e "$v=${!v}")
+done
+[ -t 0 ] && EXEC+=(-it)
+EXEC+=("$NAME")
+[ $# -eq 0 ] && set -- bash
+exec "${EXEC[@]}" "$@"

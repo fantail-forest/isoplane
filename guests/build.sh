@@ -11,21 +11,15 @@ MANIFEST="$OUT/manifest"
 IF_STALE=0
 [ "${1:-}" = "--if-stale" ] && IF_STALE=1
 
-# Tests call this concurrently from several test binaries; the second caller
-# blocks, then finds everything fresh. The lock lives on fd 9, which every
-# child below is started without, so nothing a build leaves running can keep
-# the next caller waiting.
-exec 9>"$ROOT/.build.lock"
-command -v flock >/dev/null 2>&1 && flock 9
+TOOLS="$ROOT/../scripts/fixture-tools.py"
+if [ "${WISP_FIXTURE_LOCK:-}" != "$ROOT/build.sh" ]; then
+  exec python3 "$TOOLS" lock "$ROOT/.build.lock" "$ROOT/build.sh" "$@"
+fi
 
 # The guests depend on the Rust SDK and the contract crate by path, so a
 # change to either is a change to every module.
 newest_source() {
-  find "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/wisp-abi" \
-       \( -name out -o -name target -o -name dotnet \) -prune -o \
-       -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \
-                  -o -name 'config.toml' -o -name 'build.sh' \) \
-       -printf '%T@\n' 2>/dev/null | sort -rn | head -1
+  python3 "$TOOLS" newest "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/wisp-abi" "$TOOLS" "$ROOT/build.sh"
 }
 
 is_fresh() {
@@ -35,7 +29,7 @@ is_fresh() {
   while read -r g; do
     f="$OUT/$g.wasm"
     [ -f "$f" ] || return 1
-    t=$(stat -c %Y "$f")
+    t=$(python3 "$TOOLS" mtime "$f")
     awk -v a="$t" -v b="$src" 'BEGIN { exit !(a >= b) }' || return 1
   done < "$MANIFEST"
 }
@@ -52,6 +46,7 @@ PROFILE=release
 TDIR="${CARGO_TARGET_DIR:+${CARGO_TARGET_DIR%/}/guests}"
 TDIR="${TDIR:-$ROOT/target}"
 export CARGO_TARGET_DIR="$TDIR"
+export CARGO_BUILD_BUILD_DIR="$TDIR/build"
 
 # WISP_BUILD_QUIET drops the size and import/export reports, which a test
 # running this never reads, and keeps every check.
@@ -78,8 +73,7 @@ if [ "${#preflight_missing[@]}" -ne 0 ]; then
   for m in "${preflight_missing[@]}"; do
     echo "  - $m" >&2
   done
-  echo "Install the missing tools, then rerun this command:" >&2
-  echo "    scripts/dev guests/build.sh" >&2
+
   exit 1
 fi
 
@@ -90,13 +84,13 @@ GUESTS=(quotes-api misbehaver bigheap impure-cctor undeclared-import)
 echo "==> building guests for $TARGET ($PROFILE)"
 for g in "${GUESTS[@]}"; do
   rm -f "$OUT/$g.wasm"
-  cargo build -p "$g" "${CARGO_FLAGS[@]}" 9>&-
+  cargo build -p "$g" "${CARGO_FLAGS[@]}"
   cp "$TDIR/$TARGET/$PROFILE/${g//-/_}.wasm" "$OUT/$g.wasm"
 done
 
 # V1 fixture, variant 2: an undeclared MODULE rather than an undeclared field.
 rm -f "$OUT/foreign-module.wasm"
-cargo build -p undeclared-import --features foreign-module "${CARGO_FLAGS[@]}" 9>&-
+cargo build -p undeclared-import --features foreign-module "${CARGO_FLAGS[@]}"
 cp "$TDIR/$TARGET/$PROFILE/undeclared_import.wasm" "$OUT/foreign-module.wasm"
 
 if [ -z "$QUIET" ]; then
@@ -104,7 +98,7 @@ if [ -z "$QUIET" ]; then
   echo "==> sizes"
   printf '%-24s %10s %10s %10s\n' MODULE BYTES GZIP ZSTD
   for f in "$OUT"/*.wasm; do
-    raw=$(stat -c %s "$f")
+    raw=$(python3 "$TOOLS" size "$f")
     gz=$(gzip -9 -c "$f" | wc -c)
     if command -v zstd >/dev/null 2>&1; then
       zs=$(zstd -19 -c "$f" 2>/dev/null | wc -c)

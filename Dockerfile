@@ -1,7 +1,4 @@
-# WISP proof-of-concept build & test environment.
-# Intended to be run with `--runtime=sysbox-runc` so the prototype's use of
-# mmap/madvise/cgroups/seccomp is exercised inside a properly sandboxed
-# container rather than against the host kernel namespace.
+# Optional Linux toolchain for NativeAOT-LLVM guest builds.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -39,7 +36,7 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
 
 # --- wasm tooling ----------------------------------------------------------
-RUN cargo install --locked wasm-tools@1.244.0 || cargo install --locked wasm-tools
+RUN cargo install --locked wasm-tools@1.244.0
 
 # --- wasi-sdk (the C# guest's linker and PAL compiler) ----------------------
 # NativeAOT-LLVM shells out to the WASI SDK's clang for the final link, and
@@ -54,20 +51,21 @@ RUN cargo install --locked wasm-tools@1.244.0 || cargo install --locked wasm-too
 # "Cannot mkdir: Permission denied" and the build carried on to a confusing
 # failure further down.
 ARG WASI_SDK_VERSION=29.0
-RUN curl -sSL -o /tmp/wasi-sdk.tar.gz \
-      "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux.tar.gz" \
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) wasi_arch=x86_64 ;; \
+      arm64) wasi_arch=arm64 ;; \
+      *) echo "Unsupported wasi-sdk architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fLsS -o /tmp/wasi-sdk.tar.gz \
+      "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION%%.*}/wasi-sdk-${WASI_SDK_VERSION}-${wasi_arch}-linux.tar.gz" \
     && tar xzf /tmp/wasi-sdk.tar.gz -C /opt \
+    && ln -s "/opt/wasi-sdk-${WASI_SDK_VERSION}-${wasi_arch}-linux" /opt/wasi-sdk \
     && rm /tmp/wasi-sdk.tar.gz \
-    && /opt/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux/bin/clang --version | head -1
-ENV WASI_SDK_PATH=/opt/wasi-sdk-29.0-x86_64-linux
+    && /opt/wasi-sdk/bin/clang --version
+ENV WASI_SDK_PATH=/opt/wasi-sdk
 
-# Cargo/NuGet caches and the container-side target dir are docker volumes.
-# Docker creates a volume's mountpoint root:root when the path does not exist
-# in the image, and sysbox then re-chowns volume contents into the container's
-# uid range -- so a container running as the host user cannot write to them.
-# Creating them here, owned by the invoking uid, is what makes
-# `--user $(id -u):$(id -g)` actually usable. Without this the sandbox fails
-# with "Permission denied" on .cargo-build-lock, which reads like a cargo bug.
+# Cache volumes are writable by the invoking host user.
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 RUN mkdir -p /ctarget /opt/cargo /opt/cargo/registry /nuget /tmp/home \

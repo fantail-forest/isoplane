@@ -51,4 +51,9 @@ mod tests {
             "a deploy whose clock could not be read must not appear to have cost minutes"
         );
     }
+
+    #[test]
+    fn the_native_thread_clock_measures_cpu_work() {
+        wisp_fixtures::assert_cpu_clock_advances(thread_cpu_ns);
+    }
 }

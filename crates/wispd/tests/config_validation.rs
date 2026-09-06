@@ -52,3 +52,20 @@ versions = [{ id = "v1" }]
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn the_todo_sample_configuration_is_accepted_by_the_daemon() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests/todo-cs/wispd.toml");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wispd"))
+        .arg("--config")
+        .arg(path)
+        .arg("--check")
+        .output()
+        .expect("the daemon's configuration checker can be started");
+    assert!(
+        output.status.success(),
+        "the shipped todo sample must be runnable with the current configuration schema: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

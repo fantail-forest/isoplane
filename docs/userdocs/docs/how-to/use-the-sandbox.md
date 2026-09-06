@@ -6,104 +6,112 @@ sidebar_position: 1
 
 # Use the sandbox
 
+`scripts/dev` uses the pinned open-source [Sandbox Runtime](https://github.com/anthropics/sandbox-runtime)
+(SRT) to run local commands with filesystem and network restrictions. It uses
+Seatbelt on macOS and Bubblewrap on Linux. The runtime is a research preview;
+its version and dependency lockfile live in `scripts/`.
 
-`scripts/dev` runs commands in the repository toolchain container. Native
-commands can also run with the corresponding tools installed. This container
-is separate from the WebAssembly guest isolation boundary.
+## Set up native tools
 
-## Build the image
-
-```bash
-docker build -t wisp-dev:latest .
-```
-
-The image carries Rust with the wasm targets, the .NET SDK, `wasm-tools` and
-wasi-sdk, as declared in `Dockerfile`.
-
-The build takes `HOST_UID` and `HOST_GID` build args, defaulting to 1000. They
-pre-create the cache mountpoints owned by your uid, which is what lets the
-container run as you rather than as root:
+Install Rust, Node.js 20.11 or newer, Python 3, and the platform C compiler
+(Xcode Command Line Tools on macOS). On Linux install `bubblewrap` and `socat`.
+Then run:
 
 ```bash
-docker build -t wisp-dev:latest \
-    --build-arg HOST_UID=$(id -u) --build-arg HOST_GID=$(id -g) .
+scripts/setup
+scripts/dev cargo build --workspace --all-targets
+scripts/dev cargo test --workspace
 ```
 
-## Run commands
+Setup installs the pinned SRT dependency, Rust WASM targets, and `wasm-tools`.
+Missing or unusable sandbox support fails the command; it never falls back to
+an unsandboxed run. Tests and builds can still be invoked directly on a host
+with the required tools.
+
+## Build C# guests
+
+The pinned experimental NativeAOT-LLVM compiler has Linux ARM64 and x64 builds,
+but no macOS ARM64 build. Use the optional Linux toolchain on Docker Desktop
+for C# fixtures:
 
 ```bash
-./scripts/dev cargo test --workspace      # the full suite
-./scripts/dev bash                        # an interactive shell
-./scripts/dev guests/build.sh             # build the Rust guests
-./scripts/dev guests/build-dotnet.sh      # build the C# guests
+scripts/dev --container --build
+scripts/dev --container guests/build-dotnet.sh --if-stale
+scripts/dev --container --stop
+scripts/dev cargo test --workspace
 ```
 
-The repository is bind-mounted at `/wisp`, which is the working directory.
-Three volumes carry the caches so a rebuild is not a fresh download:
+The image follows the Docker host architecture and runs as your uid. It uses
+the standard container runtime, with no Sysbox, privileged mode, or Docker
+socket mounted inside it. Fixture outputs are shared through the checkout.
+Native tests reuse fresh fixtures; changing C# sources requires rebuilding
+them on Linux. A missing or stale fixture fails with a message naming the
+required tooling, rather than skipping its tests.
 
-| Volume | Mounted at | Env |
-|---|---|---|
-| `wisp-ctarget` | `/ctarget` | `CARGO_TARGET_DIR=/ctarget` |
-| `wisp-cargo-registry` | `/opt/cargo/registry` | `CARGO_HOME=/opt/cargo` |
-| `wisp-nuget` | `/nuget` | `NUGET_PACKAGES=/nuget` |
+A Linux installation of .NET and wasi-sdk can also build the guests directly;
+set `WASI_SDK_PATH` to its installation directory.
 
-:::caution `./target` is not where your container build went
-Inside the container, binaries are at `/ctarget/release/`, not
-`./target/release/`.
-:::
-
-## Expose ports
-
-Set `WISP_PORTS` before creating a container, or stop its existing container
-first. This opens an interactive shell with the selected port mappings:
+## Run and test manually
 
 ```bash
-./scripts/dev --stop
-WISP_PORTS="8787:8787 8788:8788" ./scripts/dev bash
+scripts/dev                              # interactive shell
+scripts/dev cargo run -p wispd -- --help
+scripts/dev cargo run -p wispd -- --check --config path/to/wispd.toml
+scripts/dev cargo run -p wisp-cli -- --help
+scripts/dev --allow-domain api.example.com cargo test -p wisp-host
 ```
 
-## Pass environment through
+Commands start in the checkout. Native listeners are reachable on localhost;
+bind development servers to loopback. On Linux, SRT's network namespace keeps
+listeners inside the sandbox: use clients in the same sandbox shell.
 
-`WISP_*` variables set on your shell are forwarded into the container:
+The launcher imposes no CPU affinity, CPU quota, or minimum core count. The
+host's execution and reactor pools use ordinary OS scheduling. Linux operators
+can apply `taskset` or service-manager CPU policies explicitly when running
+production or benchmarking workloads outside this development launcher.
+
+## Files and environment
+
+The project is writable except for Git and editor configuration directories.
+Other home-directory contents are hidden except for the selected Rust, .NET,
+and Node tool installations. `.wisp-dev` holds the sandbox home, caches, guest
+tools and temporary files; it is ignored by Git. SRT also permits its standard
+system-device and scratch paths. The sandbox protects the surrounding host;
+commands can modify source files in the checkout.
+
+Package hosts used by Cargo, NuGet, and Rust tooling are allowed through SRT's
+proxy. Other external destinations require `--allow-domain HOST`. Local TCP is
+allowed for integration tests and manual work; local services remain reachable
+on macOS. Unix sockets, including the Docker socket and SSH agent, are not
+allowed. This is development isolation, separate from WISP's WASM guest boundary.
+
+The launcher forwards `WISP_*`, `WASI_SDK_PATH`, `CARGO_BUILD_JOBS`, and terminal
+locale settings. Other variables can be set explicitly inside the sandbox:
 
 ```bash
-WISP_OUT=wisp_guest_dotnet_compat ./scripts/dev guests/dotnet/build.sh -p:WispCompatProbe=true
+scripts/dev env RUST_LOG=debug cargo test -p wisp-host
 ```
 
-The variables that configure the container itself (`WISP_IMAGE`,
-`WISP_CONTAINER_NAME`, `WISP_PORTS`, `WISP_PROBE_TIMEOUT`,
-`WISP_DOCKER_TIMEOUT`, `WISP_START_WAIT`) are not forwarded. Anything outside
-the `WISP_*` prefix is not forwarded either; set it inside the command:
+Run the real sandbox checks outside an existing OS sandbox:
 
 ```bash
-./scripts/dev bash -lc 'RUST_LOG=debug cargo test -p wisp-host'
+python3 -m unittest discover -s scripts/tests
 ```
 
-## Manage containers
+macOS rejects nesting Seatbelt sandboxes. An editor or agent already running
+inside one must launch this workflow through its host-execution permission.
+
+## Optional container lifecycle
 
 ```bash
-./scripts/dev --status    # what we own, and whether it responds
-./scripts/dev --stop      # remove this name's container
-./scripts/dev --reap      # remove all of our own stopped containers
+scripts/dev --container --status
+scripts/dev --container --stop
+scripts/dev --container --reap
 ```
 
-Use a distinct `WISP_CONTAINER_NAME` for an isolated container, and pass the
-name to every invocation, `--stop` included: bare `--stop` targets the default
-shared name.
-
-`stopped <name>` is printed whenever nothing refused the request, and "no
-such container" counts as success, so the line appears for a name that never
-existed. If the distinction matters, check `docker ps`.
-
-## What it refuses
-
-Each refusal has a distinct exit code:
-
-| Situation | Behaviour |
-|---|---|
-| The Docker daemon does not answer | Refuses (exit 69) rather than queuing work behind a wedged daemon |
-| The container is running but does not answer a probe | Refuses (exit 70) rather than starting another behind a hung one |
-| The container exists but is not labelled `wisp.owner=<your uid>` | Refuses to touch it (exit 71) |
-| Docker will not say what state the container is in | Refuses (exit 73 or 74) |
-| The container is `paused` | Refuses; somebody paused it on purpose |
-| The container is `created` or `restarting` | Waits; that is what the winner of a startup race looks like for a moment |
+`WISP_CONTAINER_NAME` selects a container; use the same name when stopping it.
+The script only removes containers labelled with your uid, and refuses to
+queue work behind an unresponsive container. Stop containers when finished.
+Set `WISP_PORTS` before creating a container to publish manual-testing ports.
+`WISP_IMAGE` selects its image. Container build outputs are in `/ctarget`;
+native outputs are in the checkout's `target` directory.

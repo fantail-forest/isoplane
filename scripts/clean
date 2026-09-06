@@ -7,27 +7,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-before=$(du -sm . 2>/dev/null | cut -f1)
+before=$(du -sm . | cut -f1)
 
-JUNK="target/debug/incremental target/release/incremental
+JUNK=(target/debug/incremental target/release/incremental
       guests/target guests/dotnet/src/obj guests/dotnet/src/bin
       guests/dotnet/obj
-      guest-sdks/dotnet/obj guest-sdks/dotnet/bin"
+      guest-sdks/dotnet/obj guest-sdks/dotnet/bin)
 
-# A container build may have left trees the host user cannot unlink.
-if ! rm -rf $JUNK 2>/dev/null; then
-  "$ROOT/scripts/dev" bash -c "cd /wisp && rm -rf $JUNK" >/dev/null 2>&1 || true
-fi
-find . -name '*.rs.bk' -delete 2>/dev/null || true
+rm -rf "${JUNK[@]}"
+find . -name '*.rs.bk' -delete
 
 if [ "${1:-}" = "--all" ]; then
-  if [ -d target ] && [ ! -w target ]; then
-    "$ROOT/scripts/dev" rm -rf /wisp/target
-  else
-    cargo clean 2>/dev/null || rm -rf target
-  fi
+  cargo clean
 fi
 
-after=$(du -sm . 2>/dev/null | cut -f1)
+after=$(du -sm . | cut -f1)
 echo "project: ${before} MB -> ${after} MB  (freed $((before - after)) MB)"
 df -h / | tail -1
