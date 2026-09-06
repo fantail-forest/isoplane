@@ -62,8 +62,7 @@ impl Rig {
         self.dir.path()
     }
 
-    /// A cell owns a tokio runtime, which must not be dropped inside an
-    /// async context.
+    /// Join cell workers without blocking the test's async executor.
     pub async fn shutdown(self) {
         tokio::task::spawn_blocking(move || drop(self))
             .await

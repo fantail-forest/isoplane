@@ -25,6 +25,13 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
+    fn stop(&self) {
+        // Synchronize with the idle check so its wait cannot miss this wake.
+        let _hot = self.hot.lock();
+        self.stop.store(true, Ordering::Release);
+        self.wake.notify_all();
+    }
+
     /// Only the 0 to 1 transition touches the condvar.
     #[inline]
     pub(crate) fn enter_hot(&self) {
@@ -71,8 +78,7 @@ impl Watchdog {
 
 impl Drop for Watchdog {
     fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::Release);
-        self.shared.wake.notify_all();
+        self.shared.stop();
         if let Some(j) = self.join.take() {
             if j.join().is_err() {
                 tracing::error!("the epoch watchdog thread panicked");
@@ -115,5 +121,27 @@ fn run(engine: wasmtime::Engine, shared: Arc<Shared>) {
             next += shared.tick;
             engine.increment_epoch();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopping_an_idle_watchdog_releases_its_waiter() {
+        let watchdog =
+            Watchdog::start(wasmtime::Engine::default(), 200).expect("the watchdog must start");
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let join = std::thread::spawn(move || {
+            drop(watchdog);
+            done_tx
+                .send(())
+                .expect("the shutdown observer must remain available");
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("an idle watchdog must stop without losing its wake notification");
+        join.join().expect("watchdog shutdown must not panic");
     }
 }

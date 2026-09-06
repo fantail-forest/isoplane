@@ -278,7 +278,8 @@ impl Drop for Cell {
     fn drop(&mut self) {
         self.stop(true);
         if let Some(rt) = self.runtime.take() {
-            rt.shutdown_timeout(Duration::from_millis(200));
+            // The last cell reference can be released by an async callback.
+            rt.shutdown_background();
         }
     }
 }

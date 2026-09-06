@@ -38,6 +38,24 @@ fn http(cell: &Cell, module: &ModuleId, path: &str) -> DispatchRecord {
 
 const T: Duration = Duration::from_secs(10);
 
+#[tokio::test]
+async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
+    let r = rig(CellConfig::for_test("async-drop"));
+    let task = r.cell.reactor().spawn(std::future::pending::<()>());
+    r.cell.shutdown();
+    tokio::spawn(async move { drop(r) })
+        .await
+        .expect("dropping a cell in an async task must not panic");
+    let error = tokio::time::timeout(T, task)
+        .await
+        .expect("cell shutdown must not leave reactor tasks running")
+        .expect_err("cell shutdown must cancel pending reactor tasks");
+    assert!(
+        error.is_cancelled(),
+        "reactor tasks must be cancelled without panic"
+    );
+}
+
 /// The fake guest's lazy-init probe reports `0` for a pristine instance and
 /// `1` for a previous request's residue.
 #[test]
