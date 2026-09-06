@@ -50,6 +50,7 @@ const sidebars = {
       link: {type: 'doc', id: 'explanation/index'},
       items: [
         'explanation/invariants',
+        'explanation/workload-security',
         'explanation/lifecycle',
         'explanation/deploy-pipeline',
       ],

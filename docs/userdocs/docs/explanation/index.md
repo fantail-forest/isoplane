@@ -12,5 +12,6 @@ that, see the [how-to guides](../how-to/index.md).
 | Page | Question it answers |
 |---|---|
 | [The four invariants](invariants.md) | What the whole design depends upon, and why everything else follows from it |
+| [Workload security and isolation](workload-security.md) | What the host enforces, how C# guests park, and what capture does not guarantee |
 | [Handler lifecycle](lifecycle.md) | Guest memory, parked I/O and the fresh/reuse policies |
 | [The deploy pipeline](deploy-pipeline.md) | Validation, initialization and compiled artifacts |

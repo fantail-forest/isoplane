@@ -59,3 +59,6 @@ Crate manifests carry the maintained package descriptions:
 cargo metadata --no-deps --format-version 1 \
   | jq -r '.packages[] | "\(.name): \(.description)"'
 ```
+
+See [Workload security and isolation](../explanation/workload-security.md)
+for the guest boundary and host-resource limits.

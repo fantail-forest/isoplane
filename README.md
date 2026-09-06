@@ -9,7 +9,9 @@ Rust; the guest SDK is C#.
 
 [`AGENTS.md`](AGENTS.md) is the engineering handbook: architecture, tooling,
 the rules code is held to, and the four invariants every host mechanism
-derives from. [`docs/userdocs/`](docs/userdocs/) is the documentation site.
+derives from. [Workload security and isolation](docs/userdocs/docs/explanation/workload-security.md)
+explains the current enforcement boundaries and limitations.
+[`docs/userdocs/`](docs/userdocs/) is the documentation site.
 
 ## Building and testing
 

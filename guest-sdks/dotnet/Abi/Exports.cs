@@ -181,10 +181,10 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// Runs the scheduler to quiescence. If the root task is still incomplete
-    /// once <see cref="WispSynchronizationContext.Drain"/> returns, it is
-    /// waiting on a host future with its state on the heap, and returning
-    /// <c>pending</c> leaves nothing of the dispatch on the wasm stack.
+    /// Drains runnable continuations, then returns <c>pending</c> through the
+    /// export if the root task is incomplete. Returning leaves no live guest
+    /// invocation on the native stack; an incomplete root does not prove
+    /// that a host future exists to advance it.
     /// </summary>
     private static long Settle()
     {

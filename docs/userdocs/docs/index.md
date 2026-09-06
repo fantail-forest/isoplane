@@ -10,7 +10,9 @@ slug: /
 WISP hosts customer-written .NET applications as WebAssembly guests. The
 isolation boundary is the WASM sandbox, not the CLR and not a hypervisor.
 Guests are pre-initialised at deploy time into a memory template, activate
-copy-on-write from it, and park with an empty stack while waiting on host I/O.
+copy-on-write from it, and park with an empty stack while waiting on host I/O. See
+[Workload security and isolation](explanation/workload-security.md) for the
+enforcement boundaries and current limitations.
 
 ## The target is .NET
 

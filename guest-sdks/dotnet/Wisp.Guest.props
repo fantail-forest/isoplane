@@ -49,8 +49,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The host reads the shadow stack pointer to check a parked instance
-         has an empty stack. -->
+    <!-- The hostcheck harness compares the sample's shadow stack pointer
+         before and after guest calls. -->
     <LinkerArg Include="-Wl,--export=__stack_pointer" />
 
     <!-- wasm-ld honours the last max-memory flag, and this follows the
