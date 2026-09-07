@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 import subprocess
+import socket
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -78,6 +80,56 @@ with socket.socket() as client:
         raise AssertionError('direct external traffic escaped the proxy')
 """)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(sys.platform == "darwin", "the Docker socket allowlist is macOS-specific")
+    def test_a_remote_docker_endpoint_is_rejected(self):
+        with unittest.mock.patch.dict(os.environ, {"DOCKER_HOST": "tcp://example.invalid:2375", "DOCKER_CONTEXT": ""}):
+            result = self.run_sandbox("raise AssertionError('a remote Docker context was accepted')")
+        self.assertNotEqual(result.returncode, 0, "the sandbox must not expose a remote Docker endpoint")
+        self.assertIn("requires a local Docker Unix socket", result.stderr, "remote Docker selection must explain how to recover")
+
+    def test_system_tools_can_create_temporary_files(self):
+        result = self.run_sandbox("""
+from pathlib import Path
+import subprocess
+result = subprocess.run(['mktemp'], capture_output=True, text=True)
+assert result.returncode == 0, result.stderr
+path = Path(result.stdout.strip())
+try:
+    path.write_text('temporary build output')
+    assert path.read_text() == 'temporary build output', 'temporary build output was lost'
+finally:
+    path.unlink()
+""")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(sys.platform == "darwin", "the Docker socket allowlist is macOS-specific")
+    def test_only_the_selected_docker_socket_is_accessible(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as private:
+            selected = Path(private) / "docker.sock"
+            other = Path(private) / "other.sock"
+            alias = Path(private) / "alias.sock"
+            alias.symlink_to(selected)
+            with socket.socket(socket.AF_UNIX) as allowed, socket.socket(socket.AF_UNIX) as denied:
+                allowed.bind(str(selected))
+                allowed.listen()
+                denied.bind(str(other))
+                denied.listen()
+                with unittest.mock.patch.dict(os.environ, {"DOCKER_HOST": "unix://" + str(alias), "DOCKER_CONTEXT": ""}):
+                    result = self.run_sandbox("""
+import errno, os, socket, sys
+assert os.environ['DOCKER_HOST'] == 'unix://' + sys.argv[1], 'the selected Docker endpoint was lost'
+with socket.socket(socket.AF_UNIX) as client:
+    client.connect(sys.argv[1])
+with socket.socket(socket.AF_UNIX) as client:
+    try:
+        client.connect(sys.argv[2])
+    except OSError as error:
+        assert error.errno in (errno.EPERM, errno.EACCES), error
+    else:
+        raise AssertionError('an unrelated private socket was exposed')
+""", str(selected.resolve()), str(other))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

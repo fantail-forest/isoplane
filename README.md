@@ -23,7 +23,7 @@ and your platform's C compiler first; Linux also needs `bubblewrap` and `socat`.
 ```sh
 scripts/setup                             # sandbox tool and Rust guest tools
 scripts/dev cargo build --workspace --all-targets
-cargo test --workspace
+scripts/dev cargo test --workspace
 scripts/dev                               # interactive sandboxed shell
 ```
 
@@ -33,12 +33,9 @@ provisions and uses a pinned Linux compiler image. The host and guest
 execution remain native:
 
 ```sh
-guests/build-dotnet.sh --if-stale
-cargo test --workspace
+scripts/dev guests/build-dotnet.sh --if-stale
+scripts/dev cargo test --workspace
 ```
-
-On macOS, run C# publication tests outside `scripts/dev`: its OS sandbox
-does not expose the local Docker daemon.
 
 The optional repository toolchain image remains available through
 `scripts/dev --container --build` for running Linux toolchain commands.

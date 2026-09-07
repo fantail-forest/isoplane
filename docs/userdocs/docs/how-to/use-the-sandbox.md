@@ -30,26 +30,23 @@ with the required tools.
 
 ## Build C# guests
 
-The pinned experimental NativeAOT-LLVM compiler has Linux ARM64 and x64 builds,
-but no macOS ARM64 build. Use the optional Linux toolchain on Docker Desktop
-for C# fixtures:
+Install the .NET 10 SDK. On macOS, start Docker Desktop or a compatible local
+Docker runtime. The SDK invokes a pinned Linux compiler through the selected
+local Docker socket; guest execution stays native:
 
 ```bash
-scripts/dev --container --build
-scripts/dev --container guests/build-dotnet.sh --if-stale
-scripts/dev --container --stop
+scripts/dev guests/build-dotnet.sh --if-stale
 scripts/dev cargo test --workspace
 ```
 
-The image follows the Docker host architecture and runs as your uid. It uses
-the standard container runtime, with no Sysbox, privileged mode, or Docker
-socket mounted inside it. Fixture outputs are shared through the checkout.
-Native tests reuse fresh fixtures; changing C# sources requires rebuilding
-them on Linux. A missing or stale fixture fails with a message naming the
-required tooling, rather than skipping its tests.
+Tests build missing or stale fixtures on demand through the shared fixture
+helper. No separate container prebuild is needed. Compiler containers are
+removed after each publish; `.wisp-dev/compiler` retains packages for later
+builds. The optional repository toolchain image remains available through
+`scripts/dev --container --build` for other Linux toolchain work.
 
-A Linux installation of .NET and wasi-sdk can also build the guests directly;
-set `WASI_SDK_PATH` to its installation directory.
+On Linux, install .NET, wasi-sdk and `wasm-tools`; set `WASI_SDK_PATH` to the
+wasi-sdk installation directory. C# publication uses the native toolchain.
 
 ## Run and test manually
 
@@ -76,14 +73,23 @@ The project is writable except for Git and editor configuration directories.
 Other home-directory contents are hidden except for the selected Rust, .NET,
 and Node tool installations. `.wisp-dev` holds the sandbox home, caches, guest
 tools and temporary files; it is ignored by Git. SRT also permits its standard
-system-device and scratch paths. The sandbox protects the surrounding host;
-commands can modify source files in the checkout.
+system-device and scratch paths. On macOS, CoreCLR can also use its fixed
+`/tmp/.dotnet` named-mutex directory, and native tools can use the OS per-user
+temporary directory. Commands can modify source files in the checkout.
 
 Package hosts used by Cargo, NuGet, and Rust tooling are allowed through SRT's
 proxy. Other external destinations require `--allow-domain HOST`. Local TCP is
 allowed for integration tests and manual work; local services remain reachable
-on macOS. Unix sockets, including the Docker socket and SSH agent, are not
-allowed. This is development isolation, separate from WISP's WASM guest boundary.
+on macOS. The selected local Docker Unix socket is allowed on macOS; other
+private Unix sockets, including the SSH agent, remain blocked. The launcher
+resolves `DOCKER_CONTEXT` or `DOCKER_HOST` before entering the sandbox and
+forwards only the resolved endpoint, without Docker credentials. Package TLS
+verification can use the macOS `trustd.agent` service.
+
+Docker access permits indirect host filesystem access through container mounts.
+The remaining restrictions provide protection against accidental direct file
+operations; they do not contain code deliberately using Docker to bypass them.
+This development sandbox is separate from WISP's WASM guest boundary.
 
 The launcher forwards `WISP_*`, `WASI_SDK_PATH`, `CARGO_BUILD_JOBS`, and terminal
 locale settings. Other variables can be set explicitly inside the sandbox:

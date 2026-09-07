@@ -82,7 +82,7 @@ cargo test -p wisp-host                            # One crate
 cargo test -p wisp-host --test cell                # One integration test binary
 
 scripts/dev guests/build.sh                        # Rust guests -> guests/out/*.wasm
-scripts/dev --container guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*.wasm
+scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*.wasm
 
 cargo run -p wispd -- --config wispd.toml          # Run a node
 cargo run -p wispd -- --config wispd.toml --check  # Validate a config without running

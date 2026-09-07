@@ -14,6 +14,25 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def local_docker():
+    """Resolve the selected macOS daemon without exposing Docker credentials."""
+    docker = shutil.which("docker")
+    if sys.platform != "darwin" or not docker:
+        return None
+    endpoint = os.environ.get("DOCKER_HOST")
+    if not endpoint or os.environ.get("DOCKER_CONTEXT"):
+        result = subprocess.run(
+            [docker, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode:
+            sys.exit(f"Cannot resolve the Docker context: {result.stderr.strip()}")
+        endpoint = result.stdout.strip()
+    if not endpoint.startswith("unix://"):
+        sys.exit("scripts/dev requires a local Docker Unix socket; select a local Docker context or set DOCKER_HOST.")
+    return Path(docker).resolve(), Path(endpoint.removeprefix("unix://")).resolve()
+
+
 def main():
     args = sys.argv[1:]
     if args and args[0] == "--container":
@@ -51,6 +70,9 @@ def main():
     if os.environ.get("WASI_SDK_PATH"):
         tool_dirs.append(Path(os.environ["WASI_SDK_PATH"]).resolve())
     tool_dirs = [p for p in tool_dirs if p.exists()]
+    docker = local_docker()
+    if docker:
+        tool_dirs.append(docker[0].parent)
     env = {
         "HOME": str(state / "home"),
         "TMPDIR": str(state / "tmp"),
@@ -58,6 +80,7 @@ def main():
         "CARGO_HOME": str(state / "cargo"),
         "RUSTUP_HOME": str(rustup),
         "NUGET_PACKAGES": str(state / "nuget"),
+        "WispCompilerCache": str(state / "compiler"),
         "PATH": ":".join([str(state / "tools/bin"), str(cargo_bin), str(home / ".dotnet"),
                            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]),
         "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
@@ -91,6 +114,18 @@ def main():
             "denyWrite": [str(ROOT / name) for name in (".git", ".vscode", ".idea")],
         },
     }
+    if docker:
+        executable, socket = docker
+        env["DOCKER_HOST"] = "unix://" + str(socket)
+        env["PATH"] = str(executable.parent) + ":" + env["PATH"]
+        settings["network"]["allowUnixSockets"] = [str(socket)]
+        settings["filesystem"]["allowRead"].append(str(socket))
+    if sys.platform == "darwin":
+        settings["network"]["allowMachLookup"] = ["com.apple.trustd.agent"]
+        # CoreCLR's named mutexes use this fixed path, independently of TMPDIR.
+        settings["filesystem"]["allowWrite"].append(str(Path("/tmp/.dotnet").resolve()))
+        # macOS system tools can choose the per-user OS scratch directory instead of TMPDIR.
+        settings["filesystem"]["allowWrite"].append(str(Path(tempfile.gettempdir()).resolve()))
     env["PATH"] = str(Path(node).parent) + ":" + env["PATH"]
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir=state) as config:
         json.dump(settings, config)
