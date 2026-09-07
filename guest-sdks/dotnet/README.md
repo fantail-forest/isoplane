@@ -50,6 +50,9 @@ references or build inputs live outside that tree. The SDK is mounted separately
 when needed. Container control operations have a 60-second default timeout,
 adjustable with `-p:WispContainerCommandTimeoutSeconds=N`.
 
+`dotnet clean -c Release` removes that configuration's recorded WASM outputs,
+including custom publish locations, while retaining shared packages and images.
+
 On Linux, publishing uses the native installed compiler, wasi-sdk 29 and
 wasm-tools. Set `WASI_SDK_PATH` to the wasi-sdk installation. The
 NativeAOT-LLVM package remains experimental; targeting `net10.0` does not make

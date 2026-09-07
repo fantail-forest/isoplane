@@ -5,6 +5,35 @@ mod common;
 
 use common::{guest, manifest, Dev};
 
+#[test]
+fn dotnet_clean_removes_the_published_guest() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = wisp_fixtures::dotnet_project(dir.path());
+    for command in ["publish", "clean"] {
+        let mut process = std::process::Command::new("dotnet");
+        process.args([command, "PublishGuest.csproj", "-c", "Release"]);
+        if command == "publish" {
+            process.args(["-o", "out", "--disable-build-servers"]);
+        }
+        let result = process
+            .current_dir(&app)
+            .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
+            .output()
+            .expect("dotnet SDK must be installed to test publication cleanup");
+        assert!(
+            result.status.success(),
+            "dotnet {command} must succeed: {}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            app.join("out/publish_guest.wasm").exists(),
+            command == "publish",
+            "publication must create the guest and clean must remove it"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_csharp_project_publishes_and_reloads_offline_after_provisioning() {
     let dir = tempfile::tempdir().unwrap();

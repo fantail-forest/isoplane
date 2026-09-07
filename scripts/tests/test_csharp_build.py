@@ -135,6 +135,39 @@ else:
         self.assertIn("exactly one WASM", result.stdout, result.stdout)
         self.assertTrue((self.root / "removed").exists(), "invalid compiler output must still release the container")
 
+    def test_clean_removes_published_modules_without_docker_or_shared_cache_deletion(self):
+        outputs = [self.root / "bin/Release/net10.0/publish", self.root / "custom output"]
+        for output in outputs:
+            result = self.publish(f"-p:PublishDir={output}")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((output / "guest.wasm").exists(), "publish must produce the module before clean")
+        unrelated = outputs[1] / "other-project.wasm"
+        unrelated.write_bytes(b"another project's output")
+        cache = self.root / "cache/keep-package"
+        cache.write_bytes(b"cached package")
+        (self.bin / "docker").unlink()
+        for _ in range(2):
+            result = subprocess.run([
+                DOTNET, "clean", str(self.project), "-c", "Release",
+                "-p:WispContainerBuild=true",
+            ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for output in outputs:
+                self.assertFalse((output / "guest.wasm").exists(), "clean must remove every recorded publish output")
+        self.assertEqual(unrelated.read_bytes(), b"another project's output", "clean must preserve files this project did not produce")
+        self.assertEqual(cache.read_bytes(), b"cached package", "clean must preserve shared compiler packages")
+
+    def test_clean_preserves_other_configurations(self):
+        for configuration in ("Debug", "Release"):
+            result = self.publish(f"-p:Configuration={configuration}", f"-p:PublishDir={self.root}/{configuration}")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = subprocess.run([
+            DOTNET, "clean", str(self.project), "-c", "Debug", "-p:WispContainerBuild=true",
+        ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.root / "Debug/guest.wasm").exists(), "clean must remove the selected configuration")
+        self.assertTrue((self.root / "Release/guest.wasm").exists(), "clean must preserve other configurations")
+
     def test_cleanup_failure_is_not_reported_as_a_successful_publish(self):
         self.env["FAKE_MODE"] = "cleanup-error"
         result = self.publish()

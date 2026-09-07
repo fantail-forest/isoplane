@@ -39,6 +39,27 @@
     <Delete Files="$(NativeBinary)" />
   </Target>
 
+  <!-- PublishDir may be outside OutDir, where MSBuild's FileWrites cleanup stops. -->
+  <Target Name="WispRecordPublishOutputs" AfterTargets="WispPublishInContainer;Publish"
+          Condition="'$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
+    <ItemGroup>
+      <_WispPublishOutput Include="$(NativeBinary)" />
+      <_WispPublishOutput Include="$(WispPalObject)" Condition="'$(WispPalObject)' != ''" />
+      <_WispPublishOutput Include="$(PublishDir)$([System.IO.Path]::GetFileName('$(NativeBinary)'))"
+                          Condition="'$(WispContainerBuild)' != 'true'" />
+    </ItemGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)$(MSBuildProjectFile).Wisp.FileListAbsolute.txt"
+                      Lines="@(_WispPublishOutput->'%(FullPath)')" />
+  </Target>
+
+  <Target Name="WispCleanPublishOutputs" BeforeTargets="CoreClean">
+    <ReadLinesFromFile File="$(IntermediateOutputPath)$(MSBuildProjectFile).Wisp.FileListAbsolute.txt">
+      <Output TaskParameter="Lines" ItemName="_WispFilesToClean" />
+    </ReadLinesFromFile>
+    <Delete Files="@(_WispFilesToClean);$(IntermediateOutputPath)$(MSBuildProjectFile).Wisp.FileListAbsolute.txt" />
+  </Target>
+
   <Target Name="WispValidateImports" AfterTargets="LinkNative"
           BeforeTargets="WispValidateModule"
           Condition="'$(WispContainerBuild)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
