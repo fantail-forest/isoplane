@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 # Build the C# test fixtures; samples have their own build scripts.
-# Usage: guests/build-dotnet.sh [--if-stale]
+# Usage: guests/build-dotnet.sh [--if-stale] [--fixture name]
 # Serial because the variants share one project's intermediate files.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IF_STALE=0
-[ "${1:-}" = "--if-stale" ] && IF_STALE=1
+SELECTED=""
+ARGS=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --if-stale) IF_STALE=1; shift ;;
+    --fixture)
+      [ $# -ge 2 ] || { echo "missing fixture name" >&2; exit 2; }
+      SELECTED="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 
 TOOLS="$ROOT/../scripts/fixture-tools.py"
 if [ "${WISP_FIXTURE_LOCK:-}" != "$ROOT/build-dotnet.sh" ]; then
-  exec python3 "$TOOLS" lock "$ROOT/.build-dotnet.lock" "$ROOT/build-dotnet.sh" "$@"
+  exec python3 "$TOOLS" lock "$ROOT/.build-dotnet.lock" "$ROOT/build-dotnet.sh" "${ARGS[@]}"
 fi
 
 # name | output path | guest dir | extra dotnet publish args
@@ -29,6 +39,16 @@ FIXTURES=(
   "wisp_guest_dotnet_stock|$ROOT/dotnet/out/wisp_guest_dotnet_stock.wasm|$ROOT/dotnet|-p:WispStock=true"
   "wisp_guest_dotnet_compat_stock|$ROOT/dotnet/out/wisp_guest_dotnet_compat_stock.wasm|$ROOT/dotnet|-p:WispCompatProbe=true -p:WispStock=true"
 )
+
+if [ -n "$SELECTED" ]; then
+  selected=()
+  for spec in "${FIXTURES[@]}"; do
+    IFS='|' read -r name out dir extra <<<"$spec"
+    if [ "$name" = "$SELECTED" ]; then selected+=("$spec"); fi
+  done
+  [ "${#selected[@]}" -eq 1 ] || { echo "unknown C# fixture: $SELECTED" >&2; exit 2; }
+  FIXTURES=("${selected[@]}")
+fi
 
 # Coarse on purpose: a per-fixture dependency graph would be a second copy of
 # what MSBuild knows, and a stale fixture costs more than a spare rebuild.
@@ -79,7 +99,7 @@ for spec in "${FIXTURES[@]}"; do
   ok=0
   rm -f "$out"
   # shellcheck disable=SC2086
-  if WISP_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
+  if WISP_OUT_DIR="$(dirname "$out")" WISP_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
   built=$((built + 1))
 
   if [ "$ok" = 1 ]; then

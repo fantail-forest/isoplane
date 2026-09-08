@@ -10,6 +10,14 @@ TOOLS = ROOT / "scripts/fixture-tools.py"
 
 
 class FixtureTests(unittest.TestCase):
+    def test_an_unknown_dotnet_fixture_is_rejected_before_building(self):
+        result = subprocess.run(["bash", str(ROOT / "guests/build-dotnet.sh"),
+                                 "--if-stale", "--fixture", "not-a-fixture"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, "an unknown fixture must fail before invoking the toolchain")
+        self.assertIn("unknown C# fixture: not-a-fixture", result.stderr,
+                      "the fixture error must identify the requested name")
+
     def test_the_compiler_image_recipe_invalidates_cached_fixtures(self):
         import os
         with tempfile.TemporaryDirectory() as scratch:

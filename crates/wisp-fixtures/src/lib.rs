@@ -25,14 +25,21 @@ fn repo_root() -> PathBuf {
 }
 
 fn build(script: &str) -> PathBuf {
+    build_selected(script, None)
+}
+
+fn build_selected(script: &str, fixture: Option<&str>) -> PathBuf {
     let root = repo_root();
     let path = root.join(script);
     let _one_at_a_time = BUILD
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let out = Command::new("bash")
-        .arg(&path)
-        .arg("--if-stale")
+    let mut command = Command::new("bash");
+    command.arg(&path).arg("--if-stale");
+    if let Some(name) = fixture {
+        command.arg("--fixture").arg(name);
+    }
+    let out = command
         .env("WISP_BUILD_QUIET", "1")
         .current_dir(&root)
         .output()
@@ -81,7 +88,7 @@ pub fn rust_manifest() -> Vec<String> {
 /// The bytes of a C# guest `guests/build-dotnet.sh` writes under
 /// `guests/dotnet/out`, built if missing or stale.
 pub fn dotnet(name: &str) -> Vec<u8> {
-    let path = build("guests/build-dotnet.sh")
+    let path = build_selected("guests/build-dotnet.sh", Some(name))
         .join("guests/dotnet/out")
         .join(format!("{name}.wasm"));
     read(&path)
