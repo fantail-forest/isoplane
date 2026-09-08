@@ -4,6 +4,7 @@
 
 mod http;
 mod instance;
+mod native_io;
 mod observability;
 mod runtime;
 
@@ -25,6 +26,7 @@ use crate::futures::INVALID_FUTURE;
 /// What each import's `scalars` entries mean; the contract crate's `BufSpec`
 /// is the authority on where the buffer pair sits.
 pub const SCALARS: &[(&str, &[&str])] = &[
+    ("poll_call", &["operation", "arguments", "count"]),
     ("log_emit", &["level"]),
     ("trace_span_end", &["span"]),
     ("clock_deadline_in", &["ms"]),
@@ -147,6 +149,24 @@ macro_rules! spawn {
 pub(super) use spawn;
 
 impl HostBindings for CellBindings {
+    fn native_io(
+        &mut self,
+        request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        let starts_work = match &request {
+            wisp_abi::native_io::Request::Timer(duration) => duration.0 != 0,
+            wisp_abi::native_io::Request::Ready(_)
+            | wisp_abi::native_io::Request::Poll(_)
+            | wisp_abi::native_io::Request::Drop(_) => false,
+        };
+        if self.ctx.is_cancelled() && starts_work {
+            return Err(wisp_abi::native_io::Error::Denied(
+                "dispatch is cancelled".into(),
+            ));
+        }
+        self.ctx.native_io.lock().call(request, self)
+    }
+
     fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
         let def = match imports::lookup(call.import) {
             Some(d) => d,

@@ -9,6 +9,7 @@ pub mod dispatch;
 pub mod exports;
 pub mod filesystem;
 pub mod imports;
+pub mod native_io;
 pub mod pal;
 pub mod result;
 pub mod status;

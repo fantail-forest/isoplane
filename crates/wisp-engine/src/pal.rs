@@ -10,6 +10,7 @@
 //! window does not turn a denied capability on.
 
 pub mod filesystem;
+pub mod native_io;
 
 use anyhow::bail;
 use wasmtime::bail as wt_bail;
@@ -31,6 +32,23 @@ pub(crate) fn is_foreign_module(name: &str) -> bool {
 /// `entropy_fill` binding through the same `call_fill` path every host-to-guest
 /// byte takes.
 impl PalSource for StoreState {
+    fn native_io(
+        &mut self,
+        request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        if self.is_init_sandbox() {
+            return Err(wisp_abi::native_io::Error::Denied(
+                "native I/O during initialization".into(),
+            ));
+        }
+        self.bindings
+            .as_mut()
+            .ok_or(wisp_abi::native_io::Error::Unsupported(
+                "native I/O without host bindings",
+            ))?
+            .native_io(request)
+    }
+
     fn slice_clock_ms(&mut self) -> u64 {
         self.clock_ms
     }
@@ -59,10 +77,18 @@ impl PalSource for StoreState {
     }
 }
 
-/// The two `wisp:platform` capabilities the adapter may draw on. An adapter
-/// body cannot reach a capability that is not on this trait, so widening it
-/// is the design conversation.
+/// Host capabilities available to composed native runtime imports.
+/// Sealed initialization provides clock and entropy but refuses readiness resources.
 pub trait PalSource: Send + 'static {
+    /// Perform nonblocking native I/O; sealed initialization has no resource authority.
+    fn native_io(
+        &mut self,
+        _request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        Err(wisp_abi::native_io::Error::Denied(
+            "native I/O unavailable in this execution context".into(),
+        ))
+    }
     /// The coarse clock, frozen for the slice.
     fn slice_clock_ms(&mut self) -> u64;
     /// Fill `out` from the host CSPRNG, once per guest draw.
@@ -118,6 +144,49 @@ fn define_delegate<T: PalSource>(
     linker: &mut wasmtime::Linker<T>,
     def: &'static PalDef,
 ) -> anyhow::Result<()> {
+    if let Some(native) = wisp_abi::native_io::canonical::DEFINITIONS
+        .iter()
+        .find(|native| native.pal.module == def.module && native.pal.func == def.func)
+    {
+        let signature = native
+            .pal
+            .sig
+            .ok_or_else(|| anyhow::anyhow!("native signature missing"))?;
+        let value_type = |ty: &wisp_abi::imports::Ty| match ty {
+            wisp_abi::imports::Ty::I32 => wasmtime::ValType::I32,
+            wisp_abi::imports::Ty::I64 => wasmtime::ValType::I64,
+        };
+        let ty = wasmtime::FuncType::new(
+            linker.engine(),
+            signature.params.iter().map(value_type),
+            signature.results.iter().map(value_type),
+        );
+        linker.func_new(
+            def.module,
+            def.func,
+            ty,
+            move |mut caller, args, results| {
+                let mut scalars = [0u64; wisp_abi::native_io::canonical::MAX_ARGUMENTS];
+                for (slot, value) in scalars.iter_mut().zip(args) {
+                    *slot = match value {
+                        wasmtime::Val::I32(value) => *value as u32 as u64,
+                        wasmtime::Val::I64(value) => *value as u64,
+                        _ => return Err(wasmtime::Error::msg("native argument is not an integer")),
+                    };
+                }
+                let value = native_io::call(&mut caller, native, &scalars[..args.len()])
+                    .map_err(wasmtime::Error::from_anyhow)?;
+                if let Some(result) = results.first_mut() {
+                    *result = match signature.results[0] {
+                        wisp_abi::imports::Ty::I32 => wasmtime::Val::I32(value as i32),
+                        wisp_abi::imports::Ty::I64 => wasmtime::Val::I64(value as i64),
+                    };
+                }
+                Ok(())
+            },
+        )?;
+        return Ok(());
+    }
     if let Some(fs) = wisp_abi::filesystem::IMPORTS
         .iter()
         .find(|fs| fs.pal.module == def.module && fs.pal.func == def.func)

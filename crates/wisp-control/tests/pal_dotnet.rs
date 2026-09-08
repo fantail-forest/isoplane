@@ -87,10 +87,10 @@ fn the_compat_stock_dotnet_module_passes_v1_too() {
     assert_eq!(
         r.pal
             .iter()
-            .filter(|p| p.disposition.is_delegated() && !p.module.starts_with("wasi:filesystem/"))
+            .filter(|p| p.disposition.is_delegated() && !p.module.starts_with("wasi:filesystem/") && p.disposition.capability() != Some(wisp_abi::native_io::canonical::POLL_IMPORT))
             .count(),
         3,
-        "the filesystem adapter must leave the three existing delegated WASI calls unchanged"
+        "filesystem and readiness adapters must preserve the existing clock, entropy and environment delegates"
     );
     assert!(r.capabilities.contains(&"entropy_fill"));
 
@@ -297,7 +297,7 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
         "all 32, the whole way through to the cell"
     );
 
-    // The same two capabilities the validator reported.
+    // The same capabilities the validator reported.
     let mut caps: Vec<&str> = t
         .pal_composed()
         .iter()
@@ -307,8 +307,8 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
     caps.dedup();
     assert_eq!(
         caps,
-        vec!["clock_now_coarse", "entropy_fill", "filesystem_call"],
-        "the template may draw only on the declared clock, entropy and empty-filesystem adapter"
+        vec!["clock_now_coarse", "entropy_fill", "filesystem_call", "poll_call"],
+        "the template may draw only on the declared clock, entropy, filesystem and readiness adapters"
     );
 }
 

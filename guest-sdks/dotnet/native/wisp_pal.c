@@ -102,13 +102,11 @@ void __wasm_import_random_get_random_bytes(int64_t len, int32_t retptr)
 
 /* (param i32) */
 void __wasm_import_io_error_error_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/error drop"); }
-void __wasm_import_poll_pollable_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/poll drop"); }
 void __wasm_import_streams_input_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams input drop"); }
 void __wasm_import_streams_output_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams output drop"); }
 void __wasm_import_terminal_input_terminal_input_drop(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-input drop"); }
 void __wasm_import_terminal_output_terminal_output_drop(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-output drop"); }
 void __wasm_import_exit_exit(int32_t a) { (void)a; WISP_PAL_DEAD("cli/exit"); }
-void __wasm_import_poll_method_pollable_block(int32_t a) { (void)a; WISP_PAL_DEAD("io/poll block"); }
 void __wasm_import_terminal_stdin_get_terminal_stdin(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stdin"); }
 void __wasm_import_terminal_stdout_get_terminal_stdout(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stdout"); }
 void __wasm_import_terminal_stderr_get_terminal_stderr(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stderr"); }
@@ -129,8 +127,6 @@ int32_t __wasm_import_stdout_get_stdout(void) { WISP_PAL_DEAD("cli/stdout"); }
 int32_t __wasm_import_stderr_get_stderr(void) { WISP_PAL_DEAD("cli/stderr"); }
 
 /* (param i64) (result i32) */
-int32_t __wasm_import_monotonic_clock_subscribe_instant(int64_t a) { (void)a; WISP_PAL_DEAD("monotonic subscribe-instant"); }
-int32_t __wasm_import_monotonic_clock_subscribe_duration(int64_t a) { (void)a; WISP_PAL_DEAD("monotonic subscribe-duration"); }
 
 /* (param i32 i64 i32) */
 void __wasm_import_streams_method_input_stream_blocking_read(int32_t a, int64_t b, int32_t c) { (void)a; (void)b; (void)c; WISP_PAL_DEAD("io/streams blocking-read"); }
@@ -170,3 +166,5 @@ intptr_t __wrap_SystemNative_MksTemps(char *path_template, int32_t suffix_length
     }
     return open(path_template, O_RDWR | O_CREAT | O_EXCL, 0600);
 }
+
+#include "wisp_native_io.h"

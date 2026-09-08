@@ -14,6 +14,16 @@ use crate::InstanceId;
 /// that ignores the failure gets no wake rather than someone else's.
 pub const INVALID_FUTURE: u64 = 0;
 
+/// Identity of host reactor work, converted from the raw guest ABI at allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FutureId(u64);
+
+impl From<u64> for FutureId {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingCapError {
     pub limit: u32,
@@ -119,6 +129,30 @@ impl Default for FutureTable {
 }
 
 impl FutureTable {
+    /// Release one resource's outstanding future without disturbing other work.
+    /// A completion already delivered to the guest has nothing left to cancel.
+    pub fn cancel_owned(&self, owner: InstanceId, id: FutureId) -> bool {
+        let Some(arc) = self.existing(owner) else {
+            return false;
+        };
+        let mut owned = arc.inner.lock();
+        let Some((_, mut entry)) = self
+            .entries
+            .remove_if_sync(&id.0, |entry| Arc::ptr_eq(&entry.owner, &arc))
+        else {
+            return false;
+        };
+        if entry.state == State::Pending {
+            if let Some(count) = owned.per_dispatch.get_mut(&entry.dispatch) {
+                *count = count.saturating_sub(1);
+            }
+        }
+        owned.pending.remove(&id.0);
+        owned.ready.retain(|candidate| *candidate != id.0);
+        entry.cancel_task();
+        true
+    }
+
     /// Lock order in this file: an `OwnedFutures` lock is never acquired
     /// while an `scc` bucket is held. `take_ready` and `end_dispatch` nest
     /// owned-then-entries; `complete` releases its bucket before locking
@@ -445,6 +479,73 @@ mod tests {
         let b = t.alloc(i, 1, "kv_get", 64).expect("alloc");
         assert_ne!(a, INVALID_FUTURE, "0 is reserved for a refused allocation");
         assert_ne!(a, b, "ids are never reused");
+    }
+
+    #[test]
+    fn an_instance_cannot_cancel_another_instances_reactor_future() {
+        let table = table();
+        let owner = InstanceId(1);
+        let intruder = InstanceId(2);
+        let id = table
+            .alloc(owner, 1, "poll_call", 1)
+            .expect("the owner must obtain its future");
+        table
+            .alloc(intruder, 1, "poll_call", 1)
+            .expect("the other instance must have its own ownership record");
+        assert!(
+            !table.cancel_owned(intruder, FutureId::from(id)),
+            "a different instance must not cancel the owner's timer"
+        );
+        assert_eq!(
+            table.pending_total(owner),
+            1,
+            "a refused cancellation must retain the owner's future"
+        );
+    }
+
+    #[test]
+    fn dropping_a_pending_resource_releases_its_future_budget() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "poll_call", 1)
+            .expect("the timer must allocate its future");
+        assert!(
+            table.cancel_owned(owner, FutureId::from(id)),
+            "the owner must cancel its pending timer"
+        );
+        assert_eq!(
+            table.pending_total(owner),
+            0,
+            "a dropped timer must leave no pending work"
+        );
+        assert!(
+            table.alloc(owner, 1, "poll_call", 1).is_ok(),
+            "a dropped timer must release its pending-future slot"
+        );
+        assert_eq!(
+            table.complete(id, ResultRecord::Ok(Vec::new())),
+            WakeTarget::Orphan,
+            "a completion racing disposal must not wake the guest"
+        );
+    }
+
+    #[test]
+    fn dropping_a_ready_resource_removes_its_queued_notification() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "poll_call", 1)
+            .expect("the timer must allocate its future");
+        table.complete(id, ResultRecord::Ok(Vec::new()));
+        assert!(
+            table.cancel_owned(owner, FutureId::from(id)),
+            "the owner must release its completed resource"
+        );
+        assert!(
+            table.take_ready(owner).is_none(),
+            "a dropped resource must not leave a stale wake notification"
+        );
     }
 
     #[test]

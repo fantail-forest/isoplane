@@ -319,6 +319,7 @@ impl Slot {
         if let Some(i) = g.resident.as_mut() {
             i.reset()?;
         }
+        self.ctx.release_native_resources();
         g.dirty = false;
         g.parked_since_ms = None;
         g.state = LifecycleTier::Parked;
@@ -329,6 +330,7 @@ impl Slot {
     pub fn discard(&self) {
         let mut g = self.inner.lock();
         g.resident = None;
+        self.ctx.release_native_resources();
         g.state = LifecycleTier::Discarded;
         g.delta_key = None;
         g.parked_since_ms = None;
@@ -361,6 +363,53 @@ mod tests {
             lifecycle,
             16,
         )
+    }
+
+    fn pollable(slot: &Slot) -> wisp_abi::native_io::ResourceHandle {
+        use wisp_engine::HostBindings;
+        let mut bindings = crate::bindings::CellBindings::new(slot.ctx.clone());
+        match bindings
+            .native_io(wisp_abi::native_io::Request::Timer(
+                wisp_abi::native_io::DurationNanos(0),
+            ))
+            .expect("the slot must allocate an instance-owned pollable")
+        {
+            wisp_abi::native_io::Response::Handle(handle) => handle,
+            response => panic!("pollable allocation returned an unexpected result: {response:?}"),
+        }
+    }
+
+    fn assert_pollable_released(slot: &Slot, handle: wisp_abi::native_io::ResourceHandle) {
+        use wisp_engine::HostBindings;
+        let mut bindings = crate::bindings::CellBindings::new(slot.ctx.clone());
+        assert!(
+            matches!(bindings.native_io(wisp_abi::native_io::Request::Ready(handle)),
+            Err(wisp_abi::native_io::Error::InvalidHandle(received)) if received == handle),
+            "a released slot must not retain a previous native pollable handle"
+        );
+    }
+
+    #[test]
+    fn resetting_to_pristine_memory_releases_native_resources() {
+        let pool = pool(HandlerLifecycle::Reuse);
+        let (slot, _) = pool
+            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
+            .expect("the slot must activate");
+        let handle = pollable(&slot);
+        slot.reset()
+            .expect("the idle slot must reset to its template");
+        assert_pollable_released(&slot, handle);
+    }
+
+    #[test]
+    fn discarding_a_slot_releases_native_resources_even_while_its_context_is_retained() {
+        let pool = pool(HandlerLifecycle::Reuse);
+        let (slot, _) = pool
+            .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
+            .expect("the slot must activate");
+        let handle = pollable(&slot);
+        slot.discard();
+        assert_pollable_released(&slot, handle);
     }
 
     #[test]

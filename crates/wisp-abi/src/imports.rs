@@ -105,6 +105,8 @@ const SYNC: ImportKind = ImportKind::Sync;
 const FUT: ImportKind = ImportKind::Future;
 
 pub const IMPORTS: &[ImportDef] = &[
+    ImportDef { buf: BufSpec::None, ..imp!("poll_call", Clock, Sig { params: &[I32, I32, I32], results: &[I64] }, SYNC,
+        "nonblocking resource readiness and coarse deadlines; pending work wakes through host-owned futures") },
     ImportDef { init_visible: true, buf: BufSpec::None,
         ..imp!("filesystem_call", Core, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "empty read-only filesystem operations; arguments are canonical scalars in a guest u64 array; all filesystem records remain in guest memory") },

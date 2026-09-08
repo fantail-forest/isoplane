@@ -19,6 +19,17 @@ pub struct ImportCall<'a> {
 /// Implemented by `wisp-host`. Every capability the platform offers arrives
 /// here or does not exist.
 pub trait HostBindings: Send + 'static {
+    /// Perform a nonblocking native resource operation for this instance.
+    /// Hosts without native readiness support refuse the operation explicitly.
+    fn native_io(
+        &mut self,
+        _request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        Err(wisp_abi::native_io::Error::Unsupported(
+            "native I/O host binding",
+        ))
+    }
+
     /// A future-returning import. Returns the future id immediately; no
     /// import waits.
     fn call_future(&mut self, call: ImportCall<'_>) -> u64;

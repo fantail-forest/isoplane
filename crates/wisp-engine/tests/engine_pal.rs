@@ -254,3 +254,115 @@ fn the_pal_environment_delegation_answers_empty() {
         "there is no ambient environment, so the list is empty"
     );
 }
+
+mod native_readiness {
+    use super::common::{guest, test_engine, DONE};
+    use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+    use wisp_abi::native_io::{Request, ResourceHandle, Response};
+    use wisp_engine::{Completion, CpuBudget, HostBindings, ImportCall, InstanceOps};
+
+    struct ReadyHost;
+    impl HostBindings for ReadyHost {
+        fn slice_clock_ms(&self) -> u64 {
+            1
+        }
+        fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
+            0
+        }
+        fn call_sync(&mut self, _: ImportCall<'_>) -> i64 {
+            0
+        }
+        fn native_io(&mut self, _: Request) -> Result<Response, wisp_abi::native_io::Error> {
+            Ok(Response::Handle(ResourceHandle(1)))
+        }
+    }
+
+    fn packet(operation: u32, pointer: u32, count: u32, setup: &str) -> Completion {
+        let engine = test_engine();
+        let wasm = guest(32,
+        r#"(import "wisp" "poll_call" (func $poll (param i32 i32 i32) (result i64)))"#,
+        "", &format!("{setup} (drop (call $poll (i32.const {operation}) (i32.const {pointer}) (i32.const {count}))) {DONE}"), DONE);
+        let template = engine
+            .load_template(&wasm)
+            .expect("the native readiness import must validate");
+        let mut instance = engine
+            .activate(&template, Box::new(ReadyHost))
+            .expect("the native readiness guest must activate");
+        instance
+            .dispatch(
+                &DispatchRecord {
+                    dispatch_id: 1,
+                    kind: DispatchKind::Http(HttpRequest {
+                        method: "GET".into(),
+                        url: "https://readiness.test/".into(),
+                        path: "/".into(),
+                        query: vec![],
+                        headers: vec![],
+                        body: vec![],
+                    }),
+                    trace: TraceContext::default(),
+                    cancel_future: 0,
+                    cpu_budget_ms: 30_000,
+                    now_ms: 1,
+                },
+                CpuBudget {
+                    cpu_ms: 30_000,
+                    wall_ms_cap: 60_000,
+                    spent_ns: 0,
+                },
+            )
+            .completion
+    }
+
+    #[test]
+    fn an_unknown_native_readiness_operation_is_rejected() {
+        assert_eq!(
+            packet(u32::MAX, 1000, 0, ""),
+            Completion::Trapped,
+            "unknown operation ids must never reach host resources"
+        );
+    }
+
+    #[test]
+    fn a_native_readiness_packet_must_match_its_canonical_argument_count() {
+        assert_eq!(
+            packet(0, 1000, 2, ""),
+            Completion::Trapped,
+            "a timer packet must reject surplus arguments"
+        );
+        assert_eq!(
+            packet(0, 1000, 1, ""),
+            Completion::Done,
+            "a timer packet with its canonical argument count must reach the host"
+        );
+    }
+
+    #[test]
+    fn native_readiness_packets_cannot_read_outside_guest_memory() {
+        assert_eq!(
+            packet(0, u32::MAX, 1, ""),
+            Completion::Trapped,
+            "an out-of-bounds timer packet must trap before reaching host resources"
+        );
+    }
+
+    #[test]
+    fn a_native_poll_list_cannot_exceed_the_host_buffer_budget() {
+        let count = wisp_abi::imports::MAX_OUT_BUFFER_BYTES / 4 + 1;
+        let setup = format!("(i64.store (i32.const 1000) (i64.const 2000)) (i64.store (i32.const 1008) (i64.const {count}))");
+        assert_eq!(
+            packet(2, 1000, 3, &setup),
+            Completion::Trapped,
+            "an oversized poll list must be rejected even when guest memory contains it"
+        );
+    }
+
+    #[test]
+    fn a_native_blocking_wait_is_refused_even_when_the_host_would_accept_it() {
+        assert_eq!(
+            packet(59, 1000, 1, ""),
+            Completion::Trapped,
+            "a canonical blocking wait must never enter the host resource implementation"
+        );
+    }
+}

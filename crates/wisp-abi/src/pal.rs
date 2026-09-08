@@ -231,24 +231,6 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
         "get-terminal-stderr",
         "there is no terminal to hand out",
     ),
-    // ---- trap-on-call: clocks --------------------------------------------
-    // The subscribe half could map onto a deadline future, but the only use
-    // of the returned pollable is a blocking wait, so both halves trap rather
-    // than hand out a handle whose only use is a trap.
-    trap(
-        MONOTONIC,
-        "subscribe-instant",
-        "returns a pollable whose only consumer is a blocking wait; \
-         the WISP equivalent is the `clock_deadline_in` FUTURE, which cannot be \
-         expressed as a pollable without reintroducing a wait",
-    ),
-    trap(
-        MONOTONIC,
-        "subscribe-duration",
-        "returns a pollable whose only consumer is a blocking wait; \
-         the WISP equivalent is the `clock_deadline_in` FUTURE, which cannot be \
-         expressed as a pollable without reintroducing a wait",
-    ),
     trap(
         WALL_CLOCK,
         "now",
@@ -260,26 +242,6 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
         IO_ERROR,
         "[resource-drop]error",
         "no stream exists to have produced an error",
-    ),
-    trap(
-        IO_POLL,
-        "[resource-drop]pollable",
-        "no pollable is ever handed out",
-    ),
-    trap(
-        IO_POLL,
-        "[method]pollable.block",
-        "there is no import that waits — this one IS the wait, and \
-         admitting it would break invariant 3 by construction",
-    ),
-    // Emitted by managed code through `WasmImportLinkage` when enough of
-    // `System.Threading` is rooted, so unlike the wasi-libc imports there is
-    // no C symbol the guest-side shim could define to make it go away.
-    trap(
-        IO_POLL,
-        "poll",
-        "there is no import that waits — this is `pollable.block` over a \
-         list, and admitting it would break invariant 3 by construction",
     ),
     trap(
         IO_STREAMS,
@@ -323,7 +285,23 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
     ),
 ];
 
-const PAL_COUNT: usize = COMMON_PAL_IMPORTS.len() + crate::filesystem::IMPORTS.len();
+const NATIVE_PAL_COUNT: usize = {
+    let mut count = 0;
+    let mut index = 0;
+    while index < crate::native_io::canonical::DEFINITIONS.len() {
+        if !matches!(
+            crate::native_io::canonical::DEFINITIONS[index].action,
+            crate::native_io::canonical::Action::ClockNow
+                | crate::native_io::canonical::Action::ClockResolution
+        ) {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+};
+const PAL_COUNT: usize =
+    COMMON_PAL_IMPORTS.len() + crate::filesystem::IMPORTS.len() + NATIVE_PAL_COUNT;
 const fn all_imports() -> [PalDef; PAL_COUNT] {
     let mut out = [COMMON_PAL_IMPORTS[0]; PAL_COUNT];
     let mut i = 0;
@@ -334,6 +312,20 @@ const fn all_imports() -> [PalDef; PAL_COUNT] {
     let mut j = 0;
     while j < crate::filesystem::IMPORTS.len() {
         out[i + j] = crate::filesystem::IMPORTS[j].pal;
+        j += 1;
+    }
+    i += j;
+    j = 0;
+    while j < crate::native_io::canonical::DEFINITIONS.len() {
+        let definition = &crate::native_io::canonical::DEFINITIONS[j];
+        if !matches!(
+            definition.action,
+            crate::native_io::canonical::Action::ClockNow
+                | crate::native_io::canonical::Action::ClockResolution
+        ) {
+            out[i] = definition.pal;
+            i += 1;
+        }
         j += 1;
     }
     out
@@ -418,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn no_delegation_reaches_an_io_capability() {
+    fn readiness_delegation_cannot_reach_an_io_capability() {
         use imports::Group::*;
         let forbidden = [
             Http, Kv, Blob, Queue, Sql, Durable, Socket, Service, Response, Ctx,
@@ -430,7 +422,7 @@ mod tests {
             let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
             assert!(
                 !forbidden.contains(&def.group),
-                "{} delegates to `{cap}` in group {:?}; a WASI import must not be a door to I/O",
+                "{} delegates to `{cap}` in group {:?}; native I/O must remain behind its dedicated capability",
                 p.full_name(),
                 def.group
             );
@@ -446,7 +438,12 @@ mod tests {
     fn the_adapter_draws_only_on_declared_platform_capabilities() {
         assert_eq!(
             delegation_targets(),
-            vec!["clock_now_coarse", "entropy_fill", "filesystem_call"],
+            vec![
+                "clock_now_coarse",
+                "entropy_fill",
+                "filesystem_call",
+                "poll_call",
+            ],
             "the adapter must not introduce an undeclared channel"
         );
     }
@@ -456,7 +453,6 @@ mod tests {
         for p in PAL_IMPORTS {
             let denied = p.module.starts_with("wasi:sockets/")
                 || p.module == IO_STREAMS
-                || p.module == IO_POLL
                 || p.module == CLI_STDIN
                 || p.module == CLI_STDOUT
                 || p.module == CLI_STDERR

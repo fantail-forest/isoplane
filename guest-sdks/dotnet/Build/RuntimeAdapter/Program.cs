@@ -17,7 +17,10 @@ if (thread.Methods.Any(method => method.Name == "WispRunReady"))
 var pump = new MethodDefinition("WispRunReady", MethodAttributes.Assembly | MethodAttributes.Static,
     module.TypeSystem.Void);
 thread.Methods.Add(pump);
+var schedule = Polling.Adapt(module);
+NativeImports.Adapt(module, thread);
 var il = pump.Body.GetILProcessor();
+il.Append(Instruction.Create(OpCodes.Call, schedule));
 il.Append(Instruction.Create(OpCodes.Call, dispatch));
 il.Append(Instruction.Create(OpCodes.Pop));
 il.Append(Instruction.Create(OpCodes.Ret));

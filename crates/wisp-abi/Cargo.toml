@@ -9,6 +9,7 @@ description = "The wisp:platform@1 contract: dispatch/result records, poll statu
 [dependencies]
 serde = { workspace = true }
 postcard = { workspace = true }
+thiserror = { workspace = true }
 
 # Off by default so a guest SDK can depend on this crate from wasm32.
 async-trait = { workspace = true, optional = true }

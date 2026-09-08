@@ -63,9 +63,14 @@ pub struct InstanceCtx {
     pub responses: Mutex<ResponseTable>,
     pub(super) spans: Mutex<HashMap<i32, (String, u64)>>,
     pub(super) next_span: AtomicU32,
+    pub(super) native_io: Mutex<super::native_io::Resources>,
 }
 
 impl InstanceCtx {
+    pub(crate) fn release_native_resources(&self) {
+        self.native_io.lock().clear();
+    }
+
     pub fn new(
         instance: InstanceId,
         tenancy: Tenancy,
@@ -93,6 +98,9 @@ impl InstanceCtx {
             responses: Mutex::new(ResponseTable::default()),
             spans: Mutex::new(HashMap::new()),
             next_span: AtomicU32::new(1),
+            native_io: Mutex::new(super::native_io::Resources::new(
+                super::native_io::ResourceLimits::default(),
+            )),
         }
     }
 

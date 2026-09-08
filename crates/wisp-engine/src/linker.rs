@@ -92,6 +92,16 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     }
 
     match def.name {
+        "poll_call" => {
+            return crate::pal::native_io::packet(
+                c,
+                def.name,
+                raw[0] as u32,
+                raw[1] as u32,
+                raw[2] as u32,
+            )
+            .map_err(wasmtime::Error::from_anyhow);
+        }
         "filesystem_call" => {
             crate::pal::filesystem::packet(
                 &mut crate::pal::filesystem::CallerMemory(c),
