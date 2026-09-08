@@ -180,6 +180,11 @@ impl Slot {
         self.execution.lock()
     }
 
+    /// Acquires idle lifecycle ownership without waiting for a running dispatch.
+    pub(crate) fn try_lock_execution(&self) -> Option<parking_lot::MutexGuard<'_, ()>> {
+        self.execution.try_lock()
+    }
+
     /// Take exclusive ownership of this slot's instance for a guest call.
     pub fn enter(&self) -> Result<CallGuard<'_>, EnterError> {
         let mut g = self.inner.lock();
