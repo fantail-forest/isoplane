@@ -37,6 +37,7 @@ impl Cell {
                 return;
             }
         };
+        let _execution = slot.lock_execution();
         self.note_acquired(src, t0.elapsed());
         let acquired = src.label();
 
@@ -133,7 +134,7 @@ impl Cell {
         // A completion that landed while the dispatch was Hot waited on the
         // reentrancy rule; hand the instance to the wake lane for it.
         if !self.settle(&slot, &entry, outcome) {
-            self.queue_wake(slot);
+            self.queue_wake(slot.clone());
         }
     }
 
@@ -167,7 +168,11 @@ impl Cell {
     /// One woken slice, and every further slice the instance can take without
     /// going back through a lane.
     pub(super) fn run_wake(self: &Arc<Self>, slot: Arc<Slot>) {
-        IN_FLIGHT.set(Some((slot.id, slot.ctx.dispatch_id())));
+        let _execution = slot.lock_execution();
+        let Some(dispatch_id) = self.active.with(&slot.id, |request| request.dispatch_id) else {
+            return;
+        };
+        IN_FLIGHT.set(Some((slot.id, dispatch_id)));
         let module = self
             .residents
             .lock()

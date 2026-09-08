@@ -134,6 +134,7 @@ pub struct Slot {
     pub id: InstanceId,
     pub ctx: Arc<InstanceCtx>,
     inner: Mutex<SlotInner>,
+    execution: Mutex<()>,
     /// Accumulated parked time, reported separately from active execution time.
     parked_ms_total: AtomicU64,
     /// Lock-free mirrors of `inner.state` and `inner.parked_since_ms`, written
@@ -159,6 +160,7 @@ impl Slot {
                 dirty: false,
                 tombstoned: false,
             }),
+            execution: Mutex::new(()),
             parked_ms_total: AtomicU64::new(0),
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
@@ -170,6 +172,12 @@ impl Slot {
             .store(tier_as_u8(g.state), Ordering::Relaxed);
         self.parked_since_hint
             .store(g.parked_since_ms.unwrap_or(0), Ordering::Relaxed);
+    }
+
+    /// Serializes a dispatch slice with its settlement and pool release, so
+    /// a queued wake cannot enter between a guest return and its reset.
+    pub(crate) fn lock_execution(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.execution.lock()
     }
 
     /// Take exclusive ownership of this slot's instance for a guest call.

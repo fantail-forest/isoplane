@@ -52,6 +52,15 @@ impl AcquireSource {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum PoolError {
+    #[error("module {module} pooled instance {instance} carried residue after reset")]
+    Residue {
+        module: ModuleId,
+        instance: InstanceId,
+    },
+}
+
 /// A per-module pool of Handler instances.
 pub struct InstancePool {
     pub module: ModuleId,
@@ -99,13 +108,29 @@ impl InstancePool {
             .flatten()
             .map(|s| (s, AcquireSource::WarmParked))
             .or_else(|| {
-                self.fresh.lock().pop().map(|s| {
-                    debug_assert!(s.is_pristine(), "a pooled-fresh instance carried residue");
-                    (s, AcquireSource::PooledFresh)
-                })
+                self.fresh
+                    .lock()
+                    .pop()
+                    .map(|s| (s, AcquireSource::PooledFresh))
             });
-        if let Some(hit) = pooled {
-            return Ok(hit);
+        if let Some((slot, source)) = pooled {
+            if source == AcquireSource::PooledFresh {
+                if !slot.is_pristine() {
+                    slot.tombstone();
+                    slot.discard();
+                    self.live.fetch_sub(1, Ordering::Relaxed);
+                    return Err(PoolError::Residue {
+                        module: self.module.clone(),
+                        instance: slot.id,
+                    }
+                    .into());
+                }
+                debug_assert!(
+                    slot.is_pristine(),
+                    "a pooled-fresh instance carried residue"
+                );
+            }
+            return Ok((slot, source));
         }
         let id = InstanceId::alloc();
         let ctx = make_ctx(id);
@@ -219,6 +244,50 @@ mod tests {
         );
         assert_eq!(b.id, id_a, "the same slot comes back");
         assert!(b.is_pristine(), "and it carries no residue");
+    }
+
+    #[test]
+    fn residue_in_the_fresh_pool_is_refused_and_discarded() {
+        let p = pool(HandlerLifecycle::Fresh);
+        let (slot, _) = p
+            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
+            .expect("activate");
+        p.release(slot.clone(), policy_reset());
+        drop(slot.enter().expect("inject residue after reset"));
+        let error = p
+            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
+            .err()
+            .expect("residue is refused");
+        assert!(
+            matches!(error.downcast_ref::<PoolError>(), Some(PoolError::Residue { instance, .. }) if *instance == slot.id),
+            "acquisition identifies the contaminated instance"
+        );
+        assert!(
+            slot.is_tombstoned(),
+            "contaminated pooled memory cannot be entered again"
+        );
+        assert_eq!(
+            p.live(),
+            0,
+            "the refused instance is removed from pool accounting"
+        );
+        assert_eq!(
+            p.idle_counts(),
+            (0, 0),
+            "the contaminated instance is not pooled"
+        );
+        let (replacement, source) = p
+            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
+            .expect("replacement activates");
+        assert_eq!(
+            source,
+            AcquireSource::Activated,
+            "a later dispatch can activate normally"
+        );
+        assert_ne!(
+            replacement.id, slot.id,
+            "contaminated memory is never reused"
+        );
     }
 
     #[test]

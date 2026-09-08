@@ -317,6 +317,59 @@ mod cell_tests {
         cell.shutdown();
     }
 
+    #[test]
+    fn a_queued_wake_after_reset_leaves_the_pooled_instance_pristine() {
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("stale-reset-wake")
+        });
+        let act = Arc::new(FakeActivator::new(
+            FakeBehaviour::done().with_lazy_init_probe(),
+        ));
+        let module = act.module().clone();
+        let mut manifest = manifest("stale-reset-wake");
+        manifest.handlers.lifecycle = HandlerLifecycle::Fresh;
+        cell.register_module("acme", act, manifest)
+            .expect("register");
+        let run = |id| {
+            let (responder, rx) = std::sync::mpsc::sync_channel(1);
+            cell.run_dispatch(DispatchJob {
+                module: module.clone(),
+                target: Target::Handler {
+                    route: "/go".into(),
+                },
+                rec: http(id),
+                responder,
+                enqueued_ns: None,
+            });
+            rx.recv_timeout(Duration::from_secs(10))
+                .expect("dispatch answered")
+        };
+        let first = run(1);
+        let slot = cell.slot(first.instance).expect("pooled instance");
+        assert!(slot.is_pristine(), "the completed fresh dispatch was reset");
+        cell.run_wake(slot.clone());
+        assert!(
+            slot.is_pristine(),
+            "a stale wake must not enter reset guest memory"
+        );
+        let next = run(2);
+        assert_eq!(
+            next.instance, first.instance,
+            "the reset instance remains reusable"
+        );
+        assert_eq!(
+            next.acquired, "pooled_fresh",
+            "the request uses the hygienic pool"
+        );
+        assert_eq!(
+            next.body,
+            vec![0],
+            "the next dispatch observes template state"
+        );
+        cell.shutdown();
+    }
+
     /// Constructs the state the race produces, a live request on an instance
     /// and a handler holding a stale dispatch id for it, rather than racing
     /// threads. Both directions are asserted, or a handler that never answers
