@@ -24,7 +24,7 @@ For conflicts with AGENTS.md, follow its [owner-resolution procedure](../../AGEN
 
 ## Sections
 
-- [architecture/](architecture/INDEX.md): crate interfaces, the contract crate, module depth
+- [architecture/](architecture/INDEX.md): crate interfaces, the contract crate, module depth, shared execution and service decomposition
 - [testing/](testing/INDEX.md): strategy, determinism, fixtures, negative controls
 - [frameworks/](frameworks/INDEX.md): wasmtime and wizer, tokio and hyper, SQLite, NativeAOT-LLVM, tracing, Docusaurus
 - [production/](production/INDEX.md): isolation, metering, observability
