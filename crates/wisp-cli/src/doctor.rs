@@ -267,9 +267,26 @@ mod tests {
         );
         assert_eq!(
             r.missing_optional_exports,
-            vec!["wisp_gc_hint", "wisp_initialize"],
+            imports::exports::OPTIONAL,
             "the optional exports are reported as absent"
         );
+    }
+
+    #[test]
+    fn a_present_optional_export_is_not_reported_missing() {
+        for export in imports::exports::OPTIONAL {
+            let m = module(&[("wisp", "http_body_read")], &[export]);
+            let report = analyse(&m).expect("the module must be inspectable");
+            let absent: Vec<_> = imports::exports::OPTIONAL
+                .iter()
+                .filter(|candidate| *candidate != export)
+                .copied()
+                .collect();
+            assert_eq!(
+                report.missing_optional_exports, absent,
+                "doctor must distinguish the present optional export {export} from absent ones"
+            );
+        }
     }
 
     #[test]
