@@ -131,11 +131,12 @@ macro_rules! spawn {
         let rt = $rt;
         let id = $id;
         let rt2 = rt.clone();
-        rt.reactor.spawn(async move {
+        let task = rt.reactor.spawn(async move {
             let $svc = rt2.services.clone();
             let res: wisp_abi::result::ResultRecord = $body;
             CellBindings::settle(&rt2, id, res);
         });
+        rt.futures.attach_task(id, task.abort_handle());
         return id;
     }};
 }
@@ -176,10 +177,11 @@ impl HostBindings for CellBindings {
             "clock_deadline_in" => {
                 let ms = call.scalars[0];
                 let rt2 = rt.clone();
-                rt.reactor.spawn(async move {
+                let task = rt.reactor.spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                     CellBindings::settle(&rt2, id, ResultRecord::Ok(Vec::new()));
                 });
+                rt.futures.attach_task(id, task.abort_handle());
                 id
             }
 

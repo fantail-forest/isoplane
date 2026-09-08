@@ -39,22 +39,21 @@ impl CellBindings {
         let allowlist = self.ctx.allowlist.clone();
         let tenant = self.ctx.tenant.clone();
         let rt2 = rt.clone();
-        rt.reactor.spawn(async move {
+        let task = rt.reactor.spawn(async move {
             let svc = rt2.services.clone();
             let checked = {
                 let egress = svc.egress.clone();
                 let url = req.url.clone();
-                tokio::task::spawn_blocking(move || egress.check_typed(&url, allowlist.as_deref()))
+                tokio::task::spawn_blocking(move || egress.check_owned(&url, allowlist.as_deref()))
                     .await
             };
             let res = match checked {
                 Ok(Ok(pinned)) => {
-                    let out = svc.fetcher.fetch(pinned, req).await;
+                    let out = svc.fetcher.fetch(pinned.target(), req).await;
                     if let Ok(r) = &out {
                         svc.egress
                             .record_bytes(r.body_inline.as_ref().map_or(0, |b| b.len()) as u64);
                     }
-                    svc.egress.release_connection();
                     from_typed(out)
                 }
                 Ok(Err(deny)) => {
@@ -66,6 +65,7 @@ impl CellBindings {
             };
             CellBindings::settle(&rt2, id, res);
         });
+        rt.futures.attach_task(id, task.abort_handle());
         id
     }
 

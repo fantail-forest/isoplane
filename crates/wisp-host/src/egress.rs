@@ -7,6 +7,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use wisp_abi::host::{EgressPolicy, PinnedTarget};
 
@@ -196,7 +197,39 @@ pub struct HostEgressPolicy {
     resolutions: AtomicU64,
 }
 
+/// A checked destination whose connection quota is released on cancellation too.
+pub(crate) struct CheckedConnection {
+    target: PinnedTarget,
+    policy: Arc<HostEgressPolicy>,
+}
+
+impl CheckedConnection {
+    /// The resolved destination the transport must use.
+    pub(crate) fn target(&self) -> PinnedTarget {
+        self.target.clone()
+    }
+}
+
+impl Drop for CheckedConnection {
+    fn drop(&mut self) {
+        self.policy.release_connection();
+    }
+}
+
 impl HostEgressPolicy {
+    /// Acquires a checked destination and releases its quota when ownership ends.
+    pub(crate) fn check_owned(
+        self: &Arc<Self>,
+        url: &str,
+        allowlist: Option<&[String]>,
+    ) -> Result<CheckedConnection, DenyReason> {
+        self.check_typed(url, allowlist)
+            .map(|target| CheckedConnection {
+                target,
+                policy: self.clone(),
+            })
+    }
+
     pub fn new(resolver: Box<dyn Resolver>, max_connections: u64, max_bytes: u64) -> Self {
         Self {
             resolver,
@@ -222,12 +255,11 @@ impl HostEgressPolicy {
         self.bytes.fetch_add(n, Ordering::Relaxed);
     }
     pub fn release_connection(&self) {
-        // Infallible: the closure always returns `Some`.
-        let _ = self
-            .connections
+        self.connections
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                 Some(v.saturating_sub(1))
-            });
+            })
+            .expect("the update closure in this function always returns Some");
     }
 
     fn allowlisted(host: &str, allowlist: Option<&[String]>) -> bool {
@@ -507,6 +539,43 @@ mod tests {
             "the target is private"
         );
         assert_eq!(p.connections(), 0, "a refused target holds no slot");
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_checked_connection_releases_its_quota() {
+        let policy = Arc::new(HostEgressPolicy::new(
+            Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])),
+            1,
+            1 << 30,
+        ));
+        let connection = policy
+            .check_owned("http://example.test/", None)
+            .expect("the public destination must acquire connection quota");
+        let (started, running) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _connection = connection;
+            started
+                .send(())
+                .expect("the test must observe connection ownership");
+            std::future::pending::<()>().await;
+        });
+        running.await.expect("the connection task must start");
+        assert_eq!(
+            policy.connections(),
+            1,
+            "the live connection must hold its quota"
+        );
+        task.abort();
+        let error = task.await.expect_err("aborted connection work must end");
+        assert!(
+            error.is_cancelled(),
+            "connection cancellation must not panic"
+        );
+        assert_eq!(
+            policy.connections(),
+            0,
+            "cancellation must release the connection quota"
+        );
     }
 
     #[test]

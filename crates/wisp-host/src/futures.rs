@@ -56,6 +56,15 @@ struct Entry {
     import: &'static str,
     state: State,
     result: Option<ResultRecord>,
+    task: Option<tokio::task::AbortHandle>,
+}
+
+impl Entry {
+    fn cancel_task(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -162,6 +171,7 @@ impl FutureTable {
                 import,
                 state: State::Pending,
                 result: None,
+                task: None,
             },
         );
         Ok(id)
@@ -190,6 +200,7 @@ impl FutureTable {
                 import: "ctx_cancel",
                 state: State::Pending,
                 result: None,
+                task: None,
             },
         );
         id
@@ -219,6 +230,20 @@ impl FutureTable {
         o.ready.push_back(id);
         drop(o);
         WakeTarget::Instance(arc.instance())
+    }
+
+    /// Attaches reactor work to its future. Work attached after its owner ended
+    /// is cancelled immediately, including a spawn racing dispatch teardown.
+    pub fn attach_task(&self, id: u64, task: tokio::task::AbortHandle) {
+        let mut task = Some(task);
+        self.entries.update_sync(&id, |_, entry| {
+            if entry.state == State::Pending && entry.task.is_none() {
+                entry.task = task.take();
+            }
+        });
+        if let Some(task) = task {
+            task.abort();
+        }
     }
 
     /// The next deliverable result for `owner`; called while the instance's
@@ -270,7 +295,9 @@ impl FutureTable {
             })
             .collect();
         for id in doomed {
-            self.entries.remove_sync(&id);
+            if let Some((_, mut entry)) = self.entries.remove_sync(&id) {
+                entry.cancel_task();
+            }
             o.pending.remove(&id);
             o.ready.retain(|r| *r != id);
         }
@@ -282,8 +309,14 @@ impl FutureTable {
         let Some(arc) = self.by_instance.remove_sync(&owner).map(|(_, a)| a) else {
             return;
         };
-        self.entries
-            .retain_sync(|_, e| !Arc::ptr_eq(&e.owner, &arc));
+        self.entries.retain_sync(|_, entry| {
+            if Arc::ptr_eq(&entry.owner, &arc) {
+                entry.cancel_task();
+                false
+            } else {
+                true
+            }
+        });
     }
 
 
@@ -328,6 +361,81 @@ mod tests {
     fn table() -> FutureTable {
         FutureTable::new()
     }
+
+    async fn held_task() -> (
+        tokio::task::JoinHandle<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (started, running) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            started
+                .send(())
+                .expect("the test must observe reactor work starting");
+            held.await
+                .expect("the test must release surviving reactor work");
+        });
+        running.await.expect("the reactor work must start");
+        (task, release)
+    }
+
+    async fn assert_cancelled(task: tokio::task::JoinHandle<()>) {
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), task)
+            .await
+            .expect("cancelled reactor work must not hang")
+            .expect_err("released ownership must cancel its reactor work");
+        assert!(
+            outcome.is_cancelled(),
+            "reactor work must be cancelled, not panic"
+        );
+    }
+
+    #[tokio::test]
+    async fn ending_a_dispatch_cancels_its_pending_reactor_work() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "http_fetch", 8)
+            .expect("future allocation");
+        let (task, _release) = held_task().await;
+        table.attach_task(id, task.abort_handle());
+        table.end_dispatch(owner, 1);
+        assert_cancelled(task).await;
+        assert_eq!(
+            table.live_futures(),
+            0,
+            "dispatch teardown must release the future record"
+        );
+    }
+
+    #[tokio::test]
+    async fn work_attached_after_dispatch_teardown_is_cancelled() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "http_fetch", 8)
+            .expect("future allocation");
+        table.end_dispatch(owner, 1);
+        let (task, _release) = held_task().await;
+        table.attach_task(id, task.abort_handle());
+        assert_cancelled(task).await;
+    }
+
+    #[tokio::test]
+    async fn instance_death_cancels_registered_reactor_work() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "http_fetch", 8)
+            .expect("future allocation");
+        let (task, _release) = held_task().await;
+        table.attach_task(id, task.abort_handle());
+        table.release_instance(owner);
+        assert_cancelled(task).await;
+    }
+
+
+
 
     #[test]
     fn ids_are_never_zero_and_never_reused() {
