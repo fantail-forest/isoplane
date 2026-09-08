@@ -19,6 +19,10 @@
     <DefineConstants>$(DefineConstants);WISP_REQUEST_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispConfigProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_CONFIG_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <!-- The BCL compatibility probe (App/Compat.cs). -->
   <PropertyGroup Condition="'$(WispCompatProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_COMPAT_PROBE</DefineConstants>

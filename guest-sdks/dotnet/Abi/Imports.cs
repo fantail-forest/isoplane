@@ -14,6 +14,10 @@ namespace Wisp.Abi;
 internal static unsafe partial class H
 {
     [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "init_config_get")]
+    internal static extern int InitConfigGet(byte* ptr, int len);
+
+    [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "log_emit")]
     internal static extern void LogEmit(int level, byte* ptr, int len);
 

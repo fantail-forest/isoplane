@@ -360,3 +360,40 @@ async fn response_framing_respects_methods_and_statuses_that_forbid_content() {
         rig.shutdown().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn csharp_deployment_variables_are_captured_before_requests_run() {
+    let wasm = wisp_fixtures::dotnet("wisp_guest_dotnet_config");
+    let directory = tempfile::tempdir().expect("a unique node directory");
+    let node = Node::build(common::config(directory.path())).expect("the real node must start");
+    let mut manifest = common::manifest("quotes");
+    manifest.init_visible_vars = vec![
+        ("REGION".into(), "Tāmaki Makaurau".into()),
+        ("PORT".into(), "17481".into()),
+        ("REGION".into(), String::new()),
+    ];
+    node.real
+        .as_ref()
+        .expect("the node must use real backends")
+        .deploy_version(
+            "quotes",
+            "v1",
+            "acme",
+            manifest,
+            &wasm,
+            InitSandbox::RuntimeBringUp,
+        )
+        .await
+        .expect("deployment configuration must be readable during pre-initialization");
+    let rig = common::serve(node, directory).await;
+    for path in ["/first", "/second"] {
+        let response = common::get(rig.proxy, "quotes.wisp.dev", path).await;
+        assert_eq!(
+            response.status,
+            hyper::StatusCode::OK,
+            "the activated C# handler must not call the init-only configuration import"
+        );
+        assert_eq!(response.body, "REGION=Tāmaki Makaurau\nPORT=17481\nREGION=\n", "captured deployment variables must preserve Unicode, order, duplicate keys and empty values");
+    }
+    rig.shutdown().await;
+}
