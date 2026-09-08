@@ -438,3 +438,5 @@ async fn managed_libraries_observe_the_empty_read_only_disk() {
         "managed filesystem contract failures: {mismatches:#?}"
     );
 }
+#[path = "real_node/aspnet.rs"]
+mod aspnet;

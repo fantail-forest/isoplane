@@ -1,6 +1,7 @@
 # `guest-sdks/dotnet` — the C# WISP guest SDK
 
-One SDK, referenced by every .NET guest.
+The shared library used by .NET guests. The separate
+[ASP.NET adapter](AspNetCore/README.md) supplies framework hosting and generated exports.
 
 | | |
 |---|---|

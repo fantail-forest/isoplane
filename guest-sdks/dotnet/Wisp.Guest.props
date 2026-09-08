@@ -41,6 +41,8 @@
     <TrimMode>full</TrimMode>
     <IlcOptimizationPreference>Size</IlcOptimizationPreference>
     <IlcFoldVTables>true</IlcFoldVTables>
+    <!-- Unresolvable methods must fail publication rather than become throwing stubs. -->
+    <IlcResilient>false</IlcResilient>
     <StackTraceSupport>false</StackTraceSupport>
 
     <!-- The declared memory maximum, which the validator holds to the plan's

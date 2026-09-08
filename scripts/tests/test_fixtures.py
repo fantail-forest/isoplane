@@ -10,6 +10,17 @@ TOOLS = ROOT / "scripts/fixture-tools.py"
 
 
 class FixtureTests(unittest.TestCase):
+    def test_the_aspnet_builder_does_not_reacquire_its_parents_fixture_lock(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            interpreter = Path(directory) / "python3"
+            interpreter.write_text('#!/bin/sh\ncase "$1" in */aspnet/build.py) exit 0;; *) exit 23;; esac\n')
+            interpreter.chmod(0o755)
+            environment = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"],
+                               WISP_FIXTURE_LOCK=str(ROOT / "guests/build-dotnet.sh"))
+            result = subprocess.run(["bash", str(ROOT / "guests/aspnet/build.sh")], env=environment)
+            self.assertEqual(result.returncode, 0, "a nested guest build must not wait on the lock held by its parent")
+
     def test_an_unknown_dotnet_fixture_is_rejected_before_building(self):
         result = subprocess.run(["bash", str(ROOT / "guests/build-dotnet.sh"),
                                  "--if-stale", "--fixture", "not-a-fixture"],

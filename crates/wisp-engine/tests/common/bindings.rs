@@ -9,6 +9,7 @@ use wisp_engine::{HostBindings, ImportCall};
 #[derive(Clone, Default)]
 pub struct Recorder {
     pub calls: Arc<parking_lot::Mutex<Vec<String>>>,
+    pub responses: Arc<parking_lot::Mutex<Vec<wisp_abi::dispatch::ResponseHead>>>,
     pub clock: Arc<AtomicU64>,
     pub clock_reads: Arc<AtomicU64>,
 }
@@ -55,6 +56,12 @@ impl HostBindings for TestBindings {
 
     fn call_sync(&mut self, call: ImportCall<'_>) -> i64 {
         self.note(&call);
+        if call.import == "resp_new" {
+            self.rec
+                .responses
+                .lock()
+                .push(wisp_abi::decode(call.payload).expect("the guest response must decode"));
+        }
         0
     }
 

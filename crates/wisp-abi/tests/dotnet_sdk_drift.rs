@@ -207,3 +207,70 @@ fn trap_code_in_poll_status_cs_mirrors_the_rust_enum() {
         "C# `TrapCode` in PollStatus.cs does not mirror the Rust enum's values"
     );
 }
+
+#[test]
+fn generated_aspnet_entrypoints_match_the_host_export_contract() {
+    let source = sdk_file("../AspNetCore/buildTransitive/Wisp.AspNetCore.targets");
+    let mut found = BTreeMap::new();
+    for line in source
+        .lines()
+        .filter(|line| line.contains("[UnmanagedCallersOnly("))
+    {
+        let name = line
+            .split("EntryPoint=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("an export name");
+        let declaration = line
+            .split("public static ")
+            .nth(1)
+            .expect("a static export");
+        let (result, method) = declaration.split_once(' ').expect("an export return type");
+        let parameters = method
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(')'))
+            .expect("export parameters")
+            .0;
+        let params: Vec<_> = parameters
+            .split(',')
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| {
+                ty(
+                    value.split_whitespace().next().expect("a parameter type"),
+                    name,
+                )
+            })
+            .collect();
+        let results = if result == "void" {
+            vec![]
+        } else {
+            vec![ty(result, name)]
+        };
+        found.insert(name, (params, results));
+    }
+    // The native PAL supplies its allocator exports, independently of the managed router.
+    let managed_signatures: Vec<_> = wisp_abi::exports::SIGNATURES
+        .iter()
+        .filter(|(name, _)| {
+            !matches!(
+                *name,
+                wisp_abi::exports::FS_ALLOC | wisp_abi::exports::FS_FREE
+            )
+        })
+        .collect();
+    assert_eq!(
+        found.len(),
+        managed_signatures.len(),
+        "the generated adapter must supply every declared host entrypoint"
+    );
+    for (name, signature) in managed_signatures {
+        let (params, results) = found
+            .get(name)
+            .unwrap_or_else(|| panic!("missing generated export {name}"));
+        assert_eq!(
+            (params.as_slice(), results.as_slice()),
+            (signature.params, signature.results),
+            "generated export {name} must match the ABI"
+        );
+    }
+}

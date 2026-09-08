@@ -86,6 +86,7 @@ public static unsafe class Exports<TRouter>
 
             _ctx = new Ctx((long)d.NowMs, d.CpuBudgetMs);
             FutureTable.Reset();
+            FutureTable.BeginCancellation(d.CancelFuture);
 
             _root = _router!.Route(d, _ctx);
 
@@ -210,15 +211,11 @@ public static unsafe class Exports<TRouter>
         // ResponseHead { status, headers, body, streaming }
         var w = new PostcardWriter(resp.Body.Length + 64);
         w.Varint(resp.Status);
-        if (resp.ContentType is null)
+        w.Varint((ulong)resp.Headers.Count);
+        foreach (var header in resp.Headers)
         {
-            w.Varint(0);
-        }
-        else
-        {
-            w.Varint(1);
-            w.Str("content-type");
-            w.Str(resp.ContentType);
+            w.Str(header.Key);
+            w.Str(header.Value);
         }
         w.Bytes(resp.Body);
         w.Bool(false);

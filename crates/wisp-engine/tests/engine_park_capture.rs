@@ -170,3 +170,138 @@ fn gc_hint_is_optional() {
     );
     assert!(i.is_parked(), "the no-op hint leaves the instance parked");
 }
+
+#[test]
+fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
+    let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        max_instances: 2,
+        max_memory_bytes: 128 << 20,
+        guard_size_bytes: 64 << 20,
+        ..Default::default()
+    })
+    .expect("the ASP.NET engine must construct");
+    let template = engine
+        .load_template(&wisp_fixtures::dotnet("wisp_guest_aspnet"))
+        .expect("the packaged ASP.NET guest must load");
+    let mut instance = activate(&engine, &template);
+    let mut request = http_dispatch(1);
+    if let wisp_abi::dispatch::DispatchKind::Http(http) = &mut request.kind {
+        http.path = "/scope".into();
+        http.url = "http://example.test/scope".into();
+    }
+    let budget = CpuBudget {
+        cpu_ms: 30_000,
+        wall_ms_cap: 30_000,
+        spent_ns: 0,
+    };
+    for _ in 0..2 {
+        let result = instance.dispatch(&request, budget);
+        assert!(
+            matches!(result.status, PollStatus::Done { .. }),
+            "a native ASP.NET request must dispose its scope before the next request: {result:?}"
+        );
+    }
+    let image = instance
+        .capture_mutable_state()
+        .expect("ASP.NET state must be capturable at the empty-stack response boundary");
+    let memory = instance.memory().to_vec();
+    drop(instance);
+    let mut restored = activate(&engine, &template);
+    restored
+        .restore_mutable_state(&image)
+        .expect("ASP.NET state must restore in a new Store");
+    restored.memory().copy_from_slice(&memory);
+    let result = restored.dispatch(&request, budget);
+    assert!(
+        matches!(result.status, PollStatus::Done { .. }),
+        "restored ASP.NET state must not retain a completed request scope: {result:?}"
+    );
+}
+
+#[test]
+fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
+    let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        max_instances: 2,
+        max_memory_bytes: 128 << 20,
+        guard_size_bytes: 64 << 20,
+        ..Default::default()
+    })
+    .expect("the ASP.NET engine must construct");
+    let template = engine
+        .load_template(&wisp_fixtures::dotnet("wisp_guest_aspnet"))
+        .expect("the packaged ASP.NET guest must load");
+    let recorder = Recorder::default();
+    let mut instance = engine
+        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .expect("the cancellation guest must activate");
+    let mut request = http_dispatch(1);
+    request.cancel_future = 42;
+    if let wisp_abi::dispatch::DispatchKind::Http(http) = &mut request.kind {
+        http.path = "/cancel".into();
+        http.url = "http://example.test/cancel".into();
+    }
+    let budget = CpuBudget {
+        cpu_ms: 30_000,
+        wall_ms_cap: 30_000,
+        spent_ns: 0,
+    };
+    assert_eq!(
+        instance.dispatch(&request, budget).completion,
+        Completion::Parked,
+        "ASP.NET must await the host cancellation signal with an empty stack"
+    );
+    let image = instance
+        .capture_mutable_state()
+        .expect("the suspended request state must capture");
+    let memory = instance.memory().to_vec();
+    drop(instance);
+    let mut restored = engine
+        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .expect("the cancellation guest must reactivate");
+    restored
+        .restore_mutable_state(&image)
+        .expect("the suspended request state must restore");
+    restored.memory().copy_from_slice(&memory);
+    let result = restored.wake(
+        42,
+        &ResultRecord::Err(wisp_abi::result::FutureError::Cancelled),
+        budget,
+    );
+    assert_eq!(
+        result.completion,
+        Completion::Done,
+        "ASP.NET middleware must handle host cancellation after restore: {result:?}"
+    );
+    assert_eq!(
+        recorder
+            .responses
+            .lock()
+            .last()
+            .expect("a cancellation response")
+            .status,
+        499,
+        "the restored request must observe cancellation through RequestAborted"
+    );
+    if let wisp_abi::dispatch::DispatchKind::Http(http) = &mut request.kind {
+        http.path = "/scope".into();
+        http.url = "http://example.test/scope".into();
+    }
+    request.dispatch_id += 1;
+    request.cancel_future += 1;
+    let result = restored.dispatch(&request, budget);
+    assert_eq!(
+        result.completion,
+        Completion::Done,
+        "a cancelled request must release its DI scope before reuse: {result:?}"
+    );
+    assert_eq!(
+        recorder
+            .responses
+            .lock()
+            .last()
+            .expect("the next response")
+            .body,
+        b"isolated",
+        "the next request must own a fresh scope"
+    );
+}

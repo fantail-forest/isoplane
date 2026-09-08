@@ -28,8 +28,19 @@ public sealed class Request
     /// <summary>The buffered request body, without text decoding; empty when absent.</summary>
     public ReadOnlyMemory<byte> Body { get; }
 
+    /// <summary>Creates an HTTP request from a decoded host dispatch.</summary>
+    public static Request FromDispatch(DispatchRecord record)
+    {
+        if (record.Kind != DispatchKind.Http) throw new PostcardException();
+        return new Request(record);
+    }
+
+    /// <summary>Cancelled when the host delivers this dispatch's cancellation wake.</summary>
+    public System.Threading.CancellationToken Aborted { get; }
+
     internal Request(DispatchRecord record)
     {
+        Aborted = Wisp.Runtime.FutureTable.Aborted;
         Method = record.Method;
         Url = record.Url;
         Path = record.Path;

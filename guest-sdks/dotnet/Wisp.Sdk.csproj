@@ -13,7 +13,9 @@
     <ImplicitUsings>false</ImplicitUsings>
     <DebugType>none</DebugType>
     <!-- The guest publishes; this project never does. -->
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
+    <Version>0.1.0</Version>
+    <Description>WISP guest ABI, request bindings and cooperative runtime.</Description>
 
     <!-- A public member without a doc comment fails the build (CS1591). -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -22,6 +24,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Wisp.AspNetCore.Tests" />
     <Compile Include="Abi/**/*.cs" />
     <Compile Include="Runtime/**/*.cs" />
     <Compile Include="Sdk/**/*.cs" />

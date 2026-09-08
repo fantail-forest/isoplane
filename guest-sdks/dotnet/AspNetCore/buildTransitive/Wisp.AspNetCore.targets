@@ -1,0 +1,39 @@
+<Project>
+  <!-- Only managed IL is consumed; native runtime assets never enter the WASI link. -->
+  <Target Name="WispAspNetCoreReferences" BeforeTargets="WriteIlcRspFileForCompilation">
+    <ItemGroup>
+      <_WispAspNetCoreAssembly Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(WispAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />
+      <IlcReference Include="@(_WispAspNetCoreAssembly)" />
+    </ItemGroup>
+    <Error Condition="'@(_WispAspNetCoreAssembly)' == ''" Code="WISP0078"
+           Text="Restore the pinned ASP.NET managed runtime pack before publishing this WISP application." />
+  </Target>
+  <Target Name="WispGenerateAspNetCoreEntrypoint" BeforeTargets="CoreCompile">
+    <Error Condition="'$(WispApplicationFactory)' == ''" Code="WISP0079"
+           Text="Set WispApplicationFactory to the fully qualified static method that builds and returns your WebApplication, for example MyApp.Application.Create." />
+    <PropertyGroup>
+      <_WispEntrypoint>$(IntermediateOutputPath)Wisp.AspNetCore.g.cs</_WispEntrypoint>
+      <_WispEntrypointSource><![CDATA[
+#nullable enable
+using System.Runtime.InteropServices;
+using Guest = Wisp.Abi.Exports<WispGeneratedRouter>;
+internal sealed class WispGeneratedRouter : Wisp.Durable.IWispRouter {
+  private Wisp.AspNetCore.WispApplication? application;
+  public void Boot() { application = new(global::$(WispApplicationFactory)()); }
+  public System.Threading.Tasks.Task<Wisp.Response> Route(Wisp.Abi.DispatchRecord record, Wisp.Ctx context) {
+    return application!.HandleAsync(Wisp.Request.FromDispatch(record));
+  }
+}
+internal static class WispGeneratedExports {
+  [UnmanagedCallersOnly(EntryPoint="wisp_alloc")] public static int Alloc(int size, int align) => Guest.Alloc(size, align);
+  [UnmanagedCallersOnly(EntryPoint="wisp_handle")] public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
+  [UnmanagedCallersOnly(EntryPoint="wisp_wake")] public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
+  [UnmanagedCallersOnly(EntryPoint="wisp_initialize")] public static void Initialize() => Guest.Initialize();
+  [UnmanagedCallersOnly(EntryPoint="wisp_gc_hint")] public static void GcHint(int pressure) => Guest.GcHint(pressure);
+}
+]]></_WispEntrypointSource>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_WispEntrypoint)" Lines="$([MSBuild]::Escape($(_WispEntrypointSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup><Compile Include="$(_WispEntrypoint)" /></ItemGroup>
+  </Target>
+</Project>

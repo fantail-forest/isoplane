@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Wisp.Abi;
 using Wisp.Runtime;
@@ -18,23 +19,31 @@ public sealed class BindingException : Exception
     public int WispError { get; }
 }
 
-/// <summary>A response: a status, an optional content type and a body.</summary>
+/// <summary>A buffered response with status, repeated headers and body bytes.</summary>
 public sealed class Response
 {
     internal ushort Status { get; }
     internal byte[] Body { get; }
-    /// <summary>
-    /// <c>null</c> encodes an empty header list, which is what a Durable
-    /// Instance reply carries.
-    /// </summary>
-    internal string? ContentType { get; }
+    internal IReadOnlyList<KeyValuePair<string, string>> Headers { get; }
 
     private Response(ushort status, byte[] body, string? contentType)
     {
         Status = status;
         Body = body;
-        ContentType = contentType;
+        Headers = contentType is null ? Array.Empty<KeyValuePair<string, string>>() :
+            new[] { new KeyValuePair<string, string>("content-type", contentType) };
     }
+
+    private Response(ushort status, byte[] body, IReadOnlyList<KeyValuePair<string, string>> headers)
+    {
+        Status = status;
+        Body = body;
+        Headers = headers;
+    }
+
+    /// <summary>Creates a buffered response preserving repeated header values.</summary>
+    public static Response Http(ushort status, byte[] body, IReadOnlyList<KeyValuePair<string, string>> headers) =>
+        new(status, body, headers);
 
     /// <summary>
     /// A UTF-8 text response, with <c>text/plain; charset=utf-8</c>.
@@ -54,7 +63,7 @@ public sealed class Response
     /// first.
     /// </summary>
     public static Response Raw(byte[] body, ushort status = 200) =>
-        new(status, body, null);
+        new(status, body, (string?)null);
 
     /// <summary>
     /// Bytes with an explicit content type, for a reply a client has to be

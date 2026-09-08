@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Threading;
 using Wisp.Abi;
 
 namespace Wisp.Runtime;
@@ -20,6 +21,17 @@ internal static class FutureTable
     /// growth.
     /// </summary>
     internal const int MaxPending = 128;
+
+    private static ulong cancellationId;
+    private static CancellationTokenSource? cancellation;
+
+    internal static CancellationToken Aborted => cancellation?.Token ?? CancellationToken.None;
+
+    internal static void BeginCancellation(ulong id)
+    {
+        cancellationId = id;
+        cancellation = id == 0 ? null : new CancellationTokenSource();
+    }
 
     internal static int Count => Pending.Count;
 
@@ -46,12 +58,23 @@ internal static class FutureTable
     internal static bool Complete(long futureId, ResultRecord result)
     {
         ulong id = (ulong)futureId;
+        if (id != 0 && id == cancellationId)
+        {
+            cancellation!.Cancel();
+            return true;
+        }
         if (!Pending.Remove(id, out var tcs)) return false;
         tcs.SetResult(result);
         return true;
     }
 
-    internal static void Reset() => Pending.Clear();
+    internal static void Reset()
+    {
+        Pending.Clear();
+        cancellation?.Dispose();
+        cancellation = null;
+        cancellationId = 0;
+    }
 }
 
 internal sealed class TooManyFuturesException : Exception { }
