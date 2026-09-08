@@ -78,7 +78,7 @@ const GUEST: &str = r#"(module
   (import "wasi:clocks/monotonic-clock@0.2.0" "resolution" (func $res (result i64)))
   (import "wasi:random/random@0.2.0" "get-random-bytes"    (func $rand (param i64 i32)))
   (import "wasi:cli/environment@0.2.0" "get-environment"   (func $env (param i32)))
-  (import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func $stat (param i32 i32)))
+  (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))
 
   (memory (export "memory") 4)
   (global $bump (mut i32) (i32.const 4096))
@@ -108,7 +108,7 @@ const GUEST: &str = r#"(module
   (func (export "resolution") (result i64) (call $res))
   (func (export "draw") (param i64 i32) (call $rand (local.get 0) (local.get 1)))
   (func (export "environ") (param i32) (call $env (local.get 0)))
-  (func (export "stat") (param i32 i32) (call $stat (local.get 0) (local.get 1)))
+  (func (export "flush") (param i32 i32) (call $flush (local.get 0) (local.get 1)))
 )"#;
 
 fn engine() -> Engine {
@@ -281,7 +281,10 @@ fn negative_control_a_nanosecond_clock_fails_the_no_new_channels_check() {
     for (module_name, func) in [
         ("wasi:random/random@0.2.0", "get-random-bytes"),
         ("wasi:cli/environment@0.2.0", "get-environment"),
-        ("wasi:filesystem/types@0.2.0", "[method]descriptor.stat"),
+        (
+            "wasi:io/streams@0.2.0",
+            "[method]output-stream.blocking-flush",
+        ),
     ] {
         let ty = m
             .imports()
@@ -469,30 +472,30 @@ fn negative_control_a_populated_environment_fails_the_no_new_channels_check() {
 /// The point of a trap-on-call stub: the import *links* (so V1 passes and the
 /// module deploys) and the capability is *absent* (so calling it fails the
 /// dispatch). If it returned zeros instead, a guest would proceed as
-/// though a filesystem existed, which is worse than either alternative.
+/// though a stream had been flushed, which is worse than either alternative.
 #[test]
 fn a_trap_on_call_stub_links_and_then_traps_naming_itself() {
     let (mut store, instance) = with_adapter(1_000);
     // It linked: instantiation above succeeded with the import present.
     let stat = instance
-        .get_typed_func::<(i32, i32), ()>(&mut store, "stat")
+        .get_typed_func::<(i32, i32), ()>(&mut store, "flush")
         .unwrap();
     let err = stat
         .call(&mut store, (0, 64))
         .expect_err("a denied capability must trap");
     let msg = format!("{err:?}");
     println!("trap: {msg}");
-    assert!(msg.contains("wasi:filesystem/types@0.2.0::[method]descriptor.stat"));
+    assert!(msg.contains("wasi:io/streams@0.2.0::[method]output-stream.blocking-flush"));
     assert!(msg.contains("trap-on-call"));
     assert!(
-        msg.contains("no filesystem"),
+        msg.contains("no stream"),
         "the trap must say why, not just that"
     );
 }
 
 /// **Negative control** for the trap rule: a stub that silently returns
 /// instead of trapping would leave the return area as whatever was there, and
-/// the guest would read a fabricated `descriptor-stat`. Assert the shape of
+/// the guest would read a fabricated success. Assert the shape of
 /// the check itself — a call that *succeeds* must be a test failure.
 #[test]
 fn negative_control_a_silent_stub_would_not_be_detected_as_a_trap() {
@@ -525,7 +528,7 @@ fn negative_control_a_silent_stub_would_not_be_detected_as_a_trap() {
     let mut store = Store::new(&e, Host::new(1_000));
     let instance = silent.instantiate(&mut store, &m).unwrap();
     let outcome = instance
-        .get_typed_func::<(i32, i32), ()>(&mut store, "stat")
+        .get_typed_func::<(i32, i32), ()>(&mut store, "flush")
         .unwrap()
         .call(&mut store, (0, 64));
     println!("silent stub outcome: {outcome:?}");

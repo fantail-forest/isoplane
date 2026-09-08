@@ -112,12 +112,23 @@ because the PAL answers the environment with an empty list.
 
 NativeAOT-LLVM's wasi-libc reaches `wasi:*` imports through undefined C
 symbols; some the runtime calls while coming up. `native/wisp_pal.c` defines
-them, answering the clock, entropy and environment from imports already in
-`wisp_abi::imports::IMPORTS` and aborting by name on everything else, so the
+them, answering the clock, entropy, environment and empty filesystem through
+`wisp_abi::imports::IMPORTS` and aborting by name on unsupported calls, so the
 module's import list is `wisp` and nothing else. The set covers the BCL
 surface the guests so far touch, and the SDK publish target fails the build if a
 new import appears; see
 [Debug a rejected module](debug-a-rejected-module.md#the-c-case-a-new-wasi-import-appeared).
+
+The disk contains only an empty `/` directory. Relative paths start there;
+no host directories or inherited file descriptors are available. Reads of
+missing files return not-found errors. Attempts to create, write, rename,
+delete or create links return read-only errors. Invalid descriptors are rejected
+before either operation. .NET preserves its usual no-op behavior when deleting
+a missing file. The root’s parent is the root itself; traversal cannot reach
+anything outside it. No writable directory exists, so a no-space result is
+not needed. `Path.GetTempPath()` supplies a conventional path, not a writable
+location. Embedded resources and compiled framework metadata remain available
+through the managed runtime.
 
 ## What `check.sh` asserts
 

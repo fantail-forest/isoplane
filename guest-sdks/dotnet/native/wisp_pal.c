@@ -10,6 +10,8 @@
  */
 
 #include <stdint.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -105,13 +107,11 @@ void __wasm_import_streams_input_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD
 void __wasm_import_streams_output_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams output drop"); }
 void __wasm_import_terminal_input_terminal_input_drop(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-input drop"); }
 void __wasm_import_terminal_output_terminal_output_drop(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-output drop"); }
-void __wasm_import_filesystem_descriptor_drop(int32_t a) { (void)a; WISP_PAL_DEAD("filesystem descriptor drop"); }
 void __wasm_import_exit_exit(int32_t a) { (void)a; WISP_PAL_DEAD("cli/exit"); }
 void __wasm_import_poll_method_pollable_block(int32_t a) { (void)a; WISP_PAL_DEAD("io/poll block"); }
 void __wasm_import_terminal_stdin_get_terminal_stdin(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stdin"); }
 void __wasm_import_terminal_stdout_get_terminal_stdout(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stdout"); }
 void __wasm_import_terminal_stderr_get_terminal_stderr(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stderr"); }
-void __wasm_import_filesystem_preopens_get_directories(int32_t a) { (void)a; WISP_PAL_DEAD("filesystem/preopens"); }
 
 /* (param i32) (result i32) */
 int32_t __wasm_import_streams_method_output_stream_subscribe(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams subscribe"); }
@@ -119,10 +119,6 @@ int32_t __wasm_import_streams_method_output_stream_subscribe(int32_t a) { (void)
 /* (param i32 i32) */
 void __wasm_import_streams_method_output_stream_check_write(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("io/streams check-write"); }
 void __wasm_import_streams_method_output_stream_blocking_flush(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("io/streams blocking-flush"); }
-void __wasm_import_filesystem_method_descriptor_append_via_stream(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("filesystem append-via-stream"); }
-void __wasm_import_filesystem_method_descriptor_get_flags(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("filesystem get-flags"); }
-void __wasm_import_filesystem_method_descriptor_stat(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("filesystem stat"); }
-void __wasm_import_filesystem_method_descriptor_metadata_hash(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("filesystem metadata-hash"); }
 
 /* (param i32 i32 i32 i32) */
 void __wasm_import_streams_method_output_stream_write(int32_t a, int32_t b, int32_t c, int32_t d) { (void)a; (void)b; (void)c; (void)d; WISP_PAL_DEAD("io/streams write"); }
@@ -137,35 +133,40 @@ int32_t __wasm_import_monotonic_clock_subscribe_instant(int64_t a) { (void)a; WI
 int32_t __wasm_import_monotonic_clock_subscribe_duration(int64_t a) { (void)a; WISP_PAL_DEAD("monotonic subscribe-duration"); }
 
 /* (param i32 i64 i32) */
-void __wasm_import_filesystem_method_descriptor_read_via_stream(int32_t a, int64_t b, int32_t c) { (void)a; (void)b; (void)c; WISP_PAL_DEAD("filesystem read-via-stream"); }
-void __wasm_import_filesystem_method_descriptor_write_via_stream(int32_t a, int64_t b, int32_t c) { (void)a; (void)b; (void)c; WISP_PAL_DEAD("filesystem write-via-stream"); }
 void __wasm_import_streams_method_input_stream_blocking_read(int32_t a, int64_t b, int32_t c) { (void)a; (void)b; (void)c; WISP_PAL_DEAD("io/streams blocking-read"); }
 
 /* ---- dead: pulled in by LINQ, Regex and System.Text.Json --------------- */
 
 /* (param i32) */
-void __wasm_import_filesystem_directory_entry_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("filesystem dir-entry-stream drop"); }
 
 /* (param i32) (result i32) */
 int32_t __wasm_import_streams_method_input_stream_subscribe(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams input subscribe"); }
 
 /* (param i32 i32) */
-void __wasm_import_filesystem_method_descriptor_read_directory(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("filesystem read-directory"); }
-void __wasm_import_filesystem_method_directory_entry_stream_read_directory_entry(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("filesystem read-directory-entry"); }
 
 /* (param i32 i32 i32 i32) */
-void __wasm_import_filesystem_method_descriptor_readlink_at(int32_t a, int32_t b, int32_t c, int32_t d) { (void)a; (void)b; (void)c; (void)d; WISP_PAL_DEAD("filesystem readlink-at"); }
-void __wasm_import_filesystem_method_descriptor_unlink_file_at(int32_t a, int32_t b, int32_t c, int32_t d) { (void)a; (void)b; (void)c; (void)d; WISP_PAL_DEAD("filesystem unlink-file-at"); }
 
 /* (param i32 i32 i32 i32 i32) */
-void __wasm_import_filesystem_method_descriptor_stat_at(int32_t a, int32_t b, int32_t c, int32_t d, int32_t e) { (void)a; (void)b; (void)c; (void)d; (void)e; WISP_PAL_DEAD("filesystem stat-at"); }
-void __wasm_import_filesystem_method_descriptor_metadata_hash_at(int32_t a, int32_t b, int32_t c, int32_t d, int32_t e) { (void)a; (void)b; (void)c; (void)d; (void)e; WISP_PAL_DEAD("filesystem metadata-hash-at"); }
 
 /* (param i32 i32 i32 i32 i32 i32 i32) */
-void __wasm_import_filesystem_method_descriptor_open_at(int32_t a, int32_t b, int32_t c, int32_t d, int32_t e, int32_t f, int32_t g) { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; WISP_PAL_DEAD("filesystem open-at"); }
 
 /* (param i32 i64 i64 i32 i32) */
-void __wasm_import_filesystem_method_descriptor_advise(int32_t a, int64_t b, int64_t c, int32_t d, int32_t e) { (void)a; (void)b; (void)c; (void)d; (void)e; WISP_PAL_DEAD("filesystem advise"); }
 
 /* (param i32 i64 i64 i32) */
-void __wasm_import_filesystem_method_descriptor_read(int32_t a, int64_t b, int64_t c, int32_t d) { (void)a; (void)b; (void)c; (void)d; WISP_PAL_DEAD("filesystem read"); }
+
+#include "wisp_filesystem.h"
+
+/* The managed WASI shim fails without setting errno. The empty disk denies
+ * creation before reserving a name; open routes that request through the host
+ * adapter and preserves its error for the managed IOException. */
+intptr_t __wrap_SystemNative_MksTemps(char *path_template, int32_t suffix_length)
+{
+    size_t length = strlen(path_template);
+    if (suffix_length < 0 || (size_t)suffix_length > length ||
+        length - (size_t)suffix_length < 6 ||
+        memcmp(path_template + length - (size_t)suffix_length - 6, "XXXXXX", 6) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return open(path_template, O_RDWR | O_CREAT | O_EXCL, 0600);
+}

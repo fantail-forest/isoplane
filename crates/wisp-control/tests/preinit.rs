@@ -543,6 +543,24 @@ impl Template {
                 )
                 .unwrap();
         }
+        for import in module
+            .imports()
+            .filter(|import| import.module() != wisp_abi::imports::HOST_MODULE)
+        {
+            let wasmtime::ExternType::Func(signature) = import.ty() else {
+                panic!("template has a non-function foreign import");
+            };
+            linker
+                .func_new(
+                    import.module(),
+                    import.name(),
+                    signature,
+                    |_caller, _arguments, _results| {
+                        wasmtime::bail!("a template inspection must not execute a foreign import")
+                    },
+                )
+                .expect("bind template inspection guard");
+        }
         let instance = linker
             .instantiate(&mut store, &module)
             .expect("template must instantiate");
@@ -583,4 +601,57 @@ fn func_type(engine: &wasmtime::Engine, def: &wisp_abi::imports::ImportDef) -> w
         def.sig.params.iter().map(cvt),
         def.sig.results.iter().map(cvt),
     )
+}
+
+#[test]
+fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
+    let wasm = wat::parse_str(format!(
+        r#"(module
+      (import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $directories (param i32)))
+      (import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func $stat (param i32 i32)))
+      (import "wisp" "filesystem_call" (func $filesystem (param i32 i32 i32)))
+      (memory (export "memory") 1 16)
+      (global $heap (mut i32) (i32.const 4096))
+      (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+        (local $p i32)
+        (local.set $p (global.get $heap))
+        (global.set $heap (i32.add (global.get $heap) (i32.const 128)))
+        (local.get $p))
+      (func (export "wisp_initialize")
+        (call $directories (i32.const 16))
+        (call $stat (i32.load (i32.load (i32.const 16))) (i32.const 128))
+        (i64.store (i32.const 512) (i64.extend_i32_u (i32.load (i32.load (i32.const 16)))))
+        (i64.store (i32.const 520) (i64.const 256))
+        (call $filesystem (i32.const {}) (i32.const 512) (i32.const 2)))
+      (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 2048))
+      (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
+      (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0))
+      (func (export "probe") (param $pointer i32) (result i64) (i64.load (local.get $pointer)))
+    )"#,
+        wisp_abi::filesystem::Operation::Stat as u32
+    ))
+    .expect("filesystem initialization fixture must compile");
+    let initialized = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .expect("deterministic filesystem probes must be admitted by sealed initialization");
+    let mut template = Template::load(&initialized.template_wasm);
+    for pointer in [128, 256] {
+        assert_eq!(
+            template.probe(pointer),
+            0,
+            "both adapter routes must return successful root metadata during sealed initialization"
+        );
+        assert_eq!(
+            template.probe(pointer + 8),
+            3,
+            "the initializer must preserve the synthetic directory type"
+        );
+    }
+    let repeated = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .expect("repeat filesystem initialization");
+    assert_eq!(
+        initialized.template_wasm, repeated.template_wasm,
+        "filesystem initialization must not depend on a host directory or resource identity"
+    );
 }

@@ -130,7 +130,7 @@ const fn delegate(
     }
 }
 
-pub const PAL_IMPORTS: &[PalDef] = &[
+const COMMON_PAL_IMPORTS: &[PalDef] = &[
     // ---- delegated ----------------------------------------------------------
     // Not wired to `init_config_get`: that would hand deploy-time
     // configuration to the guest through a door the manifest does not name.
@@ -321,101 +321,26 @@ pub const PAL_IMPORTS: &[PalDef] = &[
         "[method]output-stream.subscribe",
         "no stream is ever handed out",
     ),
-    // ---- trap-on-call: filesystem ----------------------------------------
-    // `get-directories` traps rather than returning an empty preopen list,
-    // because an empty list lets the runtime proceed as if a filesystem
-    // existed.
-    trap(
-        FS_PREOPENS,
-        "get-directories",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[resource-drop]descriptor",
-        "no descriptor is ever handed out",
-    ),
-    trap(
-        FS_TYPES,
-        "[resource-drop]directory-entry-stream",
-        "no directory is ever opened",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.read-via-stream",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.write-via-stream",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.append-via-stream",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.advise",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.get-flags",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.read",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.read-directory",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.stat",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.stat-at",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.open-at",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.readlink-at",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.unlink-file-at",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.metadata-hash",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]descriptor.metadata-hash-at",
-        "no filesystem, ambient or otherwise",
-    ),
-    trap(
-        FS_TYPES,
-        "[method]directory-entry-stream.read-directory-entry",
-        "no filesystem, ambient or otherwise",
-    ),
 ];
+
+const PAL_COUNT: usize = COMMON_PAL_IMPORTS.len() + crate::filesystem::IMPORTS.len();
+const fn all_imports() -> [PalDef; PAL_COUNT] {
+    let mut out = [COMMON_PAL_IMPORTS[0]; PAL_COUNT];
+    let mut i = 0;
+    while i < COMMON_PAL_IMPORTS.len() {
+        out[i] = COMMON_PAL_IMPORTS[i];
+        i += 1;
+    }
+    let mut j = 0;
+    while j < crate::filesystem::IMPORTS.len() {
+        out[i + j] = crate::filesystem::IMPORTS[j].pal;
+        j += 1;
+    }
+    out
+}
+
+/// Every admitted WASI import, including the empty read-only filesystem adapter.
+pub const PAL_IMPORTS: &[PalDef] = &all_imports();
 
 /// Whether `module` is a WASI interface at all, so a rejection can say "not in
 /// the PAL whitelist" rather than "not in the capability table".
@@ -518,19 +443,18 @@ mod tests {
     }
 
     #[test]
-    fn the_adapter_draws_on_exactly_two_platform_capabilities() {
+    fn the_adapter_draws_only_on_declared_platform_capabilities() {
         assert_eq!(
             delegation_targets(),
-            vec!["clock_now_coarse", "entropy_fill"],
-            "a third delegation target is a new channel into the sandbox"
+            vec!["clock_now_coarse", "entropy_fill", "filesystem_call"],
+            "the adapter must not introduce an undeclared channel"
         );
     }
 
     #[test]
     fn the_denied_interfaces_are_trap_on_call_without_exception() {
         for p in PAL_IMPORTS {
-            let denied = p.module.starts_with("wasi:filesystem/")
-                || p.module.starts_with("wasi:sockets/")
+            let denied = p.module.starts_with("wasi:sockets/")
                 || p.module == IO_STREAMS
                 || p.module == IO_POLL
                 || p.module == CLI_STDIN

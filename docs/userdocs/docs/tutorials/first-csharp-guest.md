@@ -137,14 +137,15 @@ A handler can return an embedded asset in its HTTP response.
 
 Out of the box NativeAOT-LLVM leaves `wasi:*` imports in the module: an
 ambient filesystem, stdio, a fine-grained clock, a second entropy source.
-Every one is an undeclared capability the validator rejects under rule V1,
-and a few are called while the runtime comes up, so trapping them is not an
-option either.
+The adapter gives each admitted call an explicit behavior under rule V1.
+Startup calls need working implementations; unsupported capabilities trap.
 
 `guest-sdks/dotnet/native/wisp_pal.c` defines the `__wasm_import_*` symbols
 wasi-libc leaves undefined, so `wasm-ld` resolves them locally and emits no
 wasi import. The live ones are answered from `wisp::clock_now_coarse`,
-`wisp::entropy_fill` and a locally computed empty environment.
+`wisp::entropy_fill`, the empty filesystem adapter and a locally computed empty
+environment. The filesystem presents an empty read-only root; it never exposes
+host paths.
 
 The PAL covers the BCL surface the guests so far touch, and a new library can
 reach past it. `build.sh` fails the build if anything outside `wisp`

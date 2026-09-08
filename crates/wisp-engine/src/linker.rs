@@ -92,6 +92,16 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     }
 
     match def.name {
+        "filesystem_call" => {
+            crate::pal::filesystem::packet(
+                &mut crate::pal::filesystem::CallerMemory(c),
+                raw[0] as u32,
+                raw[1] as u32,
+                raw[2] as u32,
+            )
+            .map_err(wasmtime::Error::from_anyhow)?;
+            return Ok(0);
+        }
         // Engine-owned: a host-sourced value here would hand the guest back
         // the timing primitive the freeze removes.
         "clock_now_coarse" => return Ok(c.data().clock_ms),

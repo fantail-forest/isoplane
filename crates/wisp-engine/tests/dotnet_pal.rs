@@ -49,8 +49,8 @@ fn the_stock_dotnet_module_loads_through_the_pal_adapter() {
     delegated.dedup();
     assert_eq!(
         delegated,
-        vec!["clock_now_coarse", "entropy_fill"],
-        "the adapter drew on a capability beyond the declared two, so a capability has \
+        vec!["clock_now_coarse", "entropy_fill", "filesystem_call"],
+        "the adapter drew on a capability beyond the declared set, so a capability has \
          entered through a WASI door the manifest does not describe"
     );
     assert!(

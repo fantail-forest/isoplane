@@ -35,6 +35,7 @@
     <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispPalObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_pal.c&quot;" />
     <ItemGroup>
       <LinkerArg Include="&quot;$(WispPalObject)&quot;" />
+      <LinkerArg Include="-Wl,--wrap=SystemNative_MksTemps" />
     </ItemGroup>
     <!-- NativeAOT's incremental link inputs do not include LinkerArg. -->
     <Delete Files="$(NativeBinary)" />

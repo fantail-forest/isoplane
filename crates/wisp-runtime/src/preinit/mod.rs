@@ -7,6 +7,7 @@
 //! Each retry starts with a fresh sandbox. Initialization configuration is
 //! retained while initialization randomness is renewed.
 
+mod filesystem;
 mod sandbox;
 mod section;
 mod thread_cpu;

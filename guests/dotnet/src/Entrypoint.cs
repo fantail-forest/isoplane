@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConfigProbe>>;
 #elif WISP_ASYNC_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.AsyncProbe>>;
+#elif WISP_FILESYSTEM_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FilesystemProbe>>;
 #elif WISP_REQUEST_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RequestProbe>>;
 #else

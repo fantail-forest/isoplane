@@ -93,6 +93,36 @@ pub(super) fn install_pal_adapter(
             })?;
             continue;
         };
+        if let Some(fs) = wisp_abi::filesystem::IMPORTS
+            .iter()
+            .find(|fs| fs.pal.module == def.module && fs.pal.func == def.func)
+        {
+            linker.func_new(
+                &imp.module,
+                &imp.name,
+                ty,
+                move |mut caller, args, _results| {
+                    let mut scalars = [0u64; wisp_abi::filesystem::MAX_ARGUMENTS];
+                    anyhow::ensure!(
+                        args.len() <= scalars.len(),
+                        "filesystem argument count exceeds adapter capacity"
+                    );
+                    for (index, arg) in args.iter().enumerate() {
+                        scalars[index] = match arg {
+                            wt::Val::I32(value) => *value as u32 as u64,
+                            wt::Val::I64(value) => *value as u64,
+                            _ => anyhow::bail!("filesystem argument is not an integer"),
+                        };
+                    }
+                    wisp_engine::pal::filesystem::call(
+                        &mut super::filesystem::CallerMemory(&mut caller),
+                        fs,
+                        &scalars[..args.len()],
+                    )
+                },
+            )?;
+            continue;
+        }
         match (def.disposition, def.module, def.func) {
             (Disposition::Delegate(_), m, "now") if m == pal::MONOTONIC_CLOCK => {
                 linker.func_new(&imp.module, &imp.name, ty, move |_c, _a, rets| {

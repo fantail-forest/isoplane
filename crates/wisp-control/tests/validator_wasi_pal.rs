@@ -9,7 +9,7 @@ use validate::{assert_violates, codes, parse, REQUIRED_EXPORTS};
 
 /// A module shaped like what NativeAOT-LLVM emits: a handful of `wisp`
 /// imports plus the `wasi:*` residue the toolchain leaves behind. The four
-/// `wasi` entries here are the ones the adapter delegates; `descriptor.stat`
+/// `wasi` entries here are the ones the adapter delegates; `output-stream.blocking-flush`
 /// stands in for the trap-on-call remainder.
 fn wasi_wat() -> String {
     format!(
@@ -19,7 +19,7 @@ fn wasi_wat() -> String {
   (import "wasi:clocks/monotonic-clock@0.2.0" "now"          (func $now  (result i64)))
   (import "wasi:clocks/monotonic-clock@0.2.0" "resolution"   (func $res  (result i64)))
   (import "wasi:random/random@0.2.0"      "get-random-bytes" (func $rand (param i64 i32)))
-  (import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func $stat (param i32 i32)))
+  (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))
   {REQUIRED_EXPORTS}
 )"#
     )
@@ -63,7 +63,7 @@ fn v1_accepts_a_module_whose_wasi_imports_are_all_whitelisted() {
         "the environment delegation must be visible"
     );
     assert!(manifest.contains("trap-on-call"));
-    assert!(manifest.contains("wasi:filesystem/types@0.2.0"));
+    assert!(manifest.contains("wasi:io/streams@0.2.0"));
 }
 
 /// **The negative control for that rule.** The whitelist is keyed by
@@ -98,7 +98,7 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
     assert_violates(
         "wasi-sockets",
         &wasi_wat().replace(
-            r#"(import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func $stat (param i32 i32)))"#,
+            r#"(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))"#,
             r#"(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect" (func $c (param i32 i32)))"#,
         ),
         Limits::default(),
@@ -159,8 +159,8 @@ fn v1_checks_the_signature_of_a_delegated_wasi_import() {
 #[test]
 fn v1_does_not_pin_the_signature_of_a_trap_on_call_stub() {
     let wat = wasi_wat().replace(
-        r#""[method]descriptor.stat" (func $stat (param i32 i32))"#,
-        r#""[method]descriptor.stat" (func $stat (param i32 i32 i32 i32) (result i32))"#,
+        r#""[method]output-stream.blocking-flush" (func $flush (param i32 i32))"#,
+        r#""[method]output-stream.blocking-flush" (func $flush (param i32 i32 i32 i32) (result i32))"#,
     );
     let report = validator::validate(&parse(&wat), Limits::default())
         .expect("a trap-on-call stub is shape-agnostic");

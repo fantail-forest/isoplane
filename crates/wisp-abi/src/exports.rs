@@ -5,10 +5,14 @@ pub const HANDLE: &str = "wisp_handle";
 pub const WAKE: &str = "wisp_wake";
 pub const GC_HINT: &str = "wisp_gc_hint";
 pub const INITIALIZE: &str = "wisp_initialize";
+/// Allocate a guest-owned filesystem record through the guest allocator.
+pub const FS_ALLOC: &str = "wisp_fs_alloc";
+/// Release a guest-owned filesystem record through the guest allocator.
+pub const FS_FREE: &str = "wisp_fs_free";
 pub const MEMORY: &str = "memory";
 
 pub const REQUIRED: &[&str] = &[ALLOC, HANDLE, WAKE, MEMORY];
-pub const OPTIONAL: &[&str] = &[GC_HINT, INITIALIZE];
+pub const OPTIONAL: &[&str] = &[GC_HINT, INITIALIZE, FS_ALLOC, FS_FREE];
 
 use crate::imports::{Sig, Ty::I32, Ty::I64};
 
@@ -42,6 +46,20 @@ pub const SIGNATURES: &[(&str, Sig)] = &[
     (WAKE, SIG_WAKE),
     (GC_HINT, SIG_GC_HINT),
     (INITIALIZE, SIG_INITIALIZE),
+    (
+        FS_ALLOC,
+        Sig {
+            params: &[I32],
+            results: &[I32],
+        },
+    ),
+    (
+        FS_FREE,
+        Sig {
+            params: &[I32],
+            results: &[],
+        },
+    ),
 ];
 
 pub fn signature(name: &str) -> Option<Sig> {

@@ -397,3 +397,42 @@ async fn csharp_deployment_variables_are_captured_before_requests_run() {
     }
     rig.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn managed_libraries_observe_the_empty_read_only_disk() {
+    let rig = start_with(
+        wisp_fixtures::dotnet("wisp_guest_dotnet_filesystem"),
+        InitSandbox::RuntimeBringUp,
+    )
+    .await;
+    let mut mismatches = Vec::new();
+    for (path, expected) in [
+        ("/root", "/|True|"),
+        ("/missing", "False|False|False"),
+        ("/read", "DirectoryNotFoundException:80070003"),
+        ("/read-root-file", "FileNotFoundException:80070002"),
+        ("/resolve", "/missing"),
+        ("/enumerate-missing", "DirectoryNotFoundException:80070003"),
+        ("/write", "IOException:00000045"),
+        ("/mkdir", "IOException:00000045"),
+        ("/delete", "delete succeeded"),
+        ("/tempfile", "IOException:00000045"),
+        ("/symlink", "IOException:00000045"),
+        ("/temp", "/tmp/|False"),
+        ("/resource", "trusted embedded resource"),
+        ("/assembly", "System.Private.CoreLib"),
+    ] {
+        let response = get(rig.proxy, "quotes.wisp.dev", path).await;
+        if response.status != hyper::StatusCode::OK || response.body != expected {
+            mismatches.push(format!(
+                "{path}: status {}; expected {expected:?}, got {:?}",
+                response.status, response.body
+            ));
+        }
+    }
+    rig.shutdown().await;
+    assert!(
+        mismatches.is_empty(),
+        "managed filesystem contract failures: {mismatches:#?}"
+    );
+}

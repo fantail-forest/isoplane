@@ -2,11 +2,14 @@
 //! the bodies live in the engine because the crate that instantiates a module
 //! must satisfy a `wasi:*` import exactly as the validator admitted it.
 //!
-//! Grace poisoning and the adapter both intercept imports. The two delegated
-//! capabilities, `clock_now_coarse` and `entropy_fill`, are synchronous, and
+//! Grace poisoning and the adapter both intercept imports. The delegated
+//! sources, `clock_now_coarse` and `entropy_fill`, and the empty filesystem
+//! adapter are synchronous, and
 //! poisoning applies only to future-returning imports, so a delegated entry
 //! keeps answering during grace; a trap stub keeps trapping, since a grace
 //! window does not turn a denied capability on.
+
+pub mod filesystem;
 
 use anyhow::bail;
 use wasmtime::bail as wt_bail;
@@ -115,6 +118,46 @@ fn define_delegate<T: PalSource>(
     linker: &mut wasmtime::Linker<T>,
     def: &'static PalDef,
 ) -> anyhow::Result<()> {
+    if let Some(fs) = wisp_abi::filesystem::IMPORTS
+        .iter()
+        .find(|fs| fs.pal.module == def.module && fs.pal.func == def.func)
+    {
+        let signature = fs
+            .pal
+            .sig
+            .ok_or_else(|| anyhow::anyhow!("filesystem signature missing"))?;
+        let types = signature.params.iter().map(|ty| match ty {
+            wisp_abi::imports::Ty::I32 => wasmtime::ValType::I32,
+            wisp_abi::imports::Ty::I64 => wasmtime::ValType::I64,
+        });
+        let ty = wasmtime::FuncType::new(linker.engine(), types, []);
+        linker.func_new(
+            def.module,
+            def.func,
+            ty,
+            move |mut caller, args, _results| {
+                let mut scalars = [0u64; wisp_abi::filesystem::MAX_ARGUMENTS];
+                for (index, arg) in args.iter().enumerate() {
+                    scalars[index] = match arg {
+                        wasmtime::Val::I32(value) => *value as u32 as u64,
+                        wasmtime::Val::I64(value) => *value as u64,
+                        _ => {
+                            return Err(wasmtime::Error::msg(
+                                "filesystem argument is not an integer",
+                            ))
+                        }
+                    };
+                }
+                filesystem::call(
+                    &mut filesystem::CallerMemory(&mut caller),
+                    fs,
+                    &scalars[..args.len()],
+                )
+                .map_err(wasmtime::Error::from_anyhow)
+            },
+        )?;
+        return Ok(());
+    }
     match (def.module, def.func) {
         // The coarse clock multiplied into nanoseconds: always a whole number
         // of milliseconds, so no sub-millisecond bit exists to leak.

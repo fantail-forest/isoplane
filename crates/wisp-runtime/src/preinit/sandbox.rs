@@ -112,6 +112,24 @@ fn install_init_visible(
             )?;
         }
 
+        "filesystem_call" => {
+            linker.func_new(
+                imports::HOST_MODULE,
+                name,
+                ty,
+                move |mut caller, args, _results| {
+                    let operation = arg_i32(args, 0)? as u32;
+                    let pointer = arg_i32(args, 1)? as u32;
+                    let count = arg_i32(args, 2)? as u32;
+                    wisp_engine::pal::filesystem::packet(
+                        &mut super::filesystem::CallerMemory(&mut caller),
+                        operation,
+                        pointer,
+                        count,
+                    )
+                },
+            )?;
+        }
         "init_hash_seed" => {
             linker.func_new(
                 imports::HOST_MODULE,

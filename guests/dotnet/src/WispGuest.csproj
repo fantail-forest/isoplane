@@ -15,6 +15,14 @@
     <ProjectReference Include="../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
   </ItemGroup>
 
+  <PropertyGroup Condition="'$(WispFilesystemProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_FILESYSTEM_PROBE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(WispFilesystemProbe)' == 'true'">
+    <EmbeddedResource Include="App/filesystem-resource.txt" LogicalName="filesystem-resource" />
+    <Compile Remove="App/Api.cs" />
+  </ItemGroup>
+
   <PropertyGroup Condition="'$(WispRequestProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_REQUEST_PROBE</DefineConstants>
   </PropertyGroup>

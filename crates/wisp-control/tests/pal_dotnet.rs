@@ -46,15 +46,18 @@ fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
         .filter(|p| p.disposition.is_delegated())
         .map(|p| p.full_name())
         .collect();
-    assert_eq!(
-        delegated,
-        vec![
-            "wasi:cli/environment@0.2.0::get-environment",
-            "wasi:clocks/monotonic-clock@0.2.0::now",
-            "wasi:random/random@0.2.0::get-random-bytes",
-        ]
+    for expected in ["clock_now_coarse", "entropy_fill", "filesystem_call"] {
+        assert!(
+            r.capabilities.contains(&expected),
+            "stock runtime must report its {expected} adapter"
+        );
+    }
+    assert!(
+        delegated
+            .iter()
+            .any(|name| name.starts_with("wasi:filesystem/")),
+        "filesystem declarations must use the read-only adapter"
     );
-    assert_eq!(r.pal.len() - delegated.len(), 29, "29 dead declarations");
 
     // Reached through WASI, so held as capabilities and named with the door.
     assert!(r.capabilities.contains(&"clock_now_coarse"));
@@ -84,9 +87,10 @@ fn the_compat_stock_dotnet_module_passes_v1_too() {
     assert_eq!(
         r.pal
             .iter()
-            .filter(|p| p.disposition.is_delegated())
+            .filter(|p| p.disposition.is_delegated() && !p.module.starts_with("wasi:filesystem/"))
             .count(),
-        3
+        3,
+        "the filesystem adapter must leave the three existing delegated WASI calls unchanged"
     );
     assert!(r.capabilities.contains(&"entropy_fill"));
 
@@ -184,14 +188,14 @@ fn a_real_module_with_one_off_whitelist_wasi_import_still_fails_v1() {
 fn negative_control_renaming_to_another_whitelisted_import_still_passes() {
     let wasm = artifact("wisp_guest_dotnet_stock");
 
-    // Both trap-on-call entries in `wasi:filesystem/types`, both 23 bytes;
-    // the stock module imports `stat` and not `read`.
-    let swapped = rename_import(&wasm, "[method]descriptor.stat", "[method]descriptor.read");
-    let r = validator::validate(&swapped, Limits::default())
-        .expect("renaming one whitelisted import to another must stay deployable");
-    assert_eq!(r.pal.len(), 32);
-    assert!(r.pal.iter().any(|p| p.func == "[method]descriptor.read"));
-    assert!(!r.pal.iter().any(|p| p.func == "[method]descriptor.stat"));
+    // The two metadata calls have the same canonical signature.
+    let swapped = rename_import(&wasm, "[method]descriptor.stat", "[method]descriptor.sync");
+    let vs = validator::validate(&swapped, Limits::default())
+        .expect("same-signature filesystem imports remain admitted");
+    assert!(
+        vs.pal.iter().any(|p| p.func == "[method]descriptor.sync"),
+        "the replacement import must be observed"
+    );
 
     let broken = rename_import(&wasm, "[method]descriptor.stat", "[method]descriptor.staZ");
     let vs = validator::validate(&broken, Limits::default()).expect_err("must be rejected");
@@ -301,7 +305,11 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
         .collect();
     caps.sort_unstable();
     caps.dedup();
-    assert_eq!(caps, vec!["clock_now_coarse", "entropy_fill"]);
+    assert_eq!(
+        caps,
+        vec!["clock_now_coarse", "entropy_fill", "filesystem_call"],
+        "the template may draw only on the declared clock, entropy and empty-filesystem adapter"
+    );
 }
 
 #[test]
