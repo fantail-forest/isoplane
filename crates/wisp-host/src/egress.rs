@@ -15,6 +15,25 @@ pub trait Resolver: Send + Sync + 'static {
     fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, String>;
 }
 
+/// Authorizes concrete peers after name resolution and before any application data.
+pub trait DestinationPolicy: Send + Sync + 'static {
+    /// Refuse addresses outside the node's supported outbound capability.
+    fn authorize(&self, address: SocketAddr) -> Result<(), DenyReason>;
+}
+
+/// The production policy: guests cannot reach private or internal destinations.
+pub struct PublicDestinations;
+
+impl DestinationPolicy for PublicDestinations {
+    fn authorize(&self, address: SocketAddr) -> Result<(), DenyReason> {
+        if is_forbidden(address.ip()) {
+            Err(DenyReason::PrivateAddress(address.ip()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Blocking `getaddrinfo`; called from the reactor's blocking pool so a
 /// resolver stall never holds an execution thread.
 pub struct SystemResolver;
@@ -189,6 +208,7 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, DenyReason> {
 
 pub struct HostEgressPolicy {
     resolver: Box<dyn Resolver>,
+    destinations: Arc<dyn DestinationPolicy>,
     max_connections: u64,
     /// Egress has a fair-use cap.
     max_bytes: u64,
@@ -217,6 +237,12 @@ impl Drop for CheckedConnection {
 }
 
 impl HostEgressPolicy {
+    /// Select the address policy used by every checked destination.
+    pub fn with_destinations(mut self, destinations: Arc<dyn DestinationPolicy>) -> Self {
+        self.destinations = destinations;
+        self
+    }
+
     /// Acquires a checked destination and releases its quota when ownership ends.
     pub(crate) fn check_owned(
         self: &Arc<Self>,
@@ -233,6 +259,7 @@ impl HostEgressPolicy {
     pub fn new(resolver: Box<dyn Resolver>, max_connections: u64, max_bytes: u64) -> Self {
         Self {
             resolver,
+            destinations: Arc::new(PublicDestinations),
             max_connections,
             max_bytes,
             connections: AtomicU64::new(0),
@@ -312,9 +339,11 @@ impl HostEgressPolicy {
         }
         // Every address, not the first: a client that falls back to a second
         // address would otherwise reach a private one.
-        if let Some(bad) = addrs.iter().find(|a| is_forbidden(a.ip())) {
-            self.release_connection();
-            return Err(DenyReason::PrivateAddress(bad.ip()));
+        for address in &addrs {
+            if let Err(reason) = self.destinations.authorize(*address) {
+                self.release_connection();
+                return Err(reason);
+            }
         }
         Ok(PinnedTarget {
             url: url.to_string(),

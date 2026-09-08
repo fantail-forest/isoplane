@@ -3,6 +3,8 @@
 #![cfg(feature = "real-backends")]
 
 mod common;
+#[path = "real_node/egress.rs"]
+mod egress;
 
 use common::{config, get, manifest, serve, start_with, Rig};
 use wisp_abi::config::InitSandbox;
