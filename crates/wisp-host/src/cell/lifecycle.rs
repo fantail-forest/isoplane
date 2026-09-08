@@ -75,7 +75,6 @@ impl Cell {
             .rt
             .futures
             .alloc_cancellation(slot.id, job.rec.dispatch_id);
-        slot.ctx.set_cancel_future(job.rec.cancel_future);
 
         self.active.insert(
             slot.id,
@@ -101,6 +100,7 @@ impl Cell {
 
         slot.ctx
             .begin_dispatch(crate::now_ms(), job.rec.dispatch_id);
+        slot.ctx.set_cancel_future(job.rec.cancel_future);
 
         let outcome = {
             let mut guard = match slot.enter() {

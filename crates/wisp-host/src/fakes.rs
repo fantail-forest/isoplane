@@ -34,6 +34,8 @@ pub enum Step {
     Park {
         imports: Vec<(&'static str, u64)>,
     },
+    /// Enter cancellation grace and return to receive its wake.
+    EnterGrace,
     Trap(TrapCode),
     /// Burn CPU past the budget, ignore the grace window, and be hard-killed
     /// at the deadline.
@@ -176,6 +178,10 @@ impl FakeInstance {
                         break;
                     }
                 }
+                PollStatus::Pending
+            }
+            Step::EnterGrace => {
+                self.bindings.enter_grace();
                 PollStatus::Pending
             }
             Step::Trap(code) => PollStatus::Trapped { code },

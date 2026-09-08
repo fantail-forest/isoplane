@@ -221,3 +221,39 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
     );
     r.cell.shutdown();
 }
+
+#[test]
+fn entering_grace_wakes_the_dispatch_cancellation_future() {
+    let rig = rig(CellConfig::for_test("cancellation"));
+    let activator = Arc::new(FakeActivator::named(
+        ModuleId::new("cancellation", "v1"),
+        FakeBehaviour::program([
+            Step::EnterGrace,
+            Step::Done {
+                status: 200,
+                body: b"cancelled".to_vec(),
+            },
+        ]),
+    ));
+    let module = activator.module().clone();
+    rig.cell
+        .register_module(
+            "tenant",
+            activator,
+            manifest("cancellation", HandlerLifecycle::Reuse, Limits::default()),
+        )
+        .expect("registering the cancellation guest");
+    let result = rig
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler { route: "/".into() },
+            http(&rig.cell, &module, "/"),
+            T,
+        )
+        .expect("the cancellation wake must resume the parked guest");
+    assert_eq!(
+        result.body, b"cancelled",
+        "entering grace must preserve and complete the dispatch cancellation future"
+    );
+}
