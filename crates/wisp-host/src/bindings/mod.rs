@@ -35,6 +35,10 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("init_unit_deferred", &["unit"]),
     // Answered by the engine and never reaching this vtable, but declared.
     ("unsafe_to_trap", &["on"]),
+    (
+        wisp_abi::filesystem::IMPORT,
+        &["operation", "arguments_ptr", "argument_count"],
+    ),
 ];
 
 /// One per instance, moved into the engine at activation.
