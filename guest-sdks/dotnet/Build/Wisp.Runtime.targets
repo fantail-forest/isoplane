@@ -1,0 +1,21 @@
+<Project>
+  <Target Name="WispAdaptRuntime" AfterTargets="ComputeIlcCompileInputs"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <PropertyGroup>
+      <_WispRuntimeDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)wisp-runtime/'))</_WispRuntimeDirectory>
+      <_WispAdaptedCoreLib>$(_WispRuntimeDirectory)System.Private.CoreLib.dll</_WispAdaptedCoreLib>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WispOriginalCoreLib Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Private.CoreLib'" />
+    </ItemGroup>
+    <Error Condition="'@(_WispOriginalCoreLib->Count())' != '1'"
+           Text="wisp: expected exactly one pinned NativeAOT CoreLib input." />
+    <MakeDir Directories="$(_WispRuntimeDirectory)" />
+    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot;" />
+    <ItemGroup>
+      <IlcReference Remove="@(_WispOriginalCoreLib)" />
+      <IlcReference Include="$(_WispAdaptedCoreLib)" />
+      <FileWrites Include="$(_WispAdaptedCoreLib)" />
+    </ItemGroup>
+  </Target>
+</Project>

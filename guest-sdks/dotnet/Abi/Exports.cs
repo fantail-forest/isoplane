@@ -188,7 +188,7 @@ public static unsafe class Exports<TRouter>
     /// </summary>
     private static long Settle()
     {
-        WispSynchronizationContext.Instance.Drain();
+        ManagedWork.Drain();
 
         Task<Response> root = _root!;
 

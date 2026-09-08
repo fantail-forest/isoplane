@@ -1,4 +1,5 @@
 <Project>
+  <Import Project="Wisp.Runtime.targets" />
   <UsingTask TaskName="WispContainerPublish" TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <Task>
