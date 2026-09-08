@@ -278,9 +278,19 @@ mod native_readiness {
     }
 
     fn packet(operation: u32, pointer: u32, count: u32, setup: &str) -> Completion {
+        capability_packet("poll_call", operation, pointer, count, setup)
+    }
+
+    fn capability_packet(
+        capability: &str,
+        operation: u32,
+        pointer: u32,
+        count: u32,
+        setup: &str,
+    ) -> Completion {
         let engine = test_engine();
         let wasm = guest(32,
-        r#"(import "wisp" "poll_call" (func $poll (param i32 i32 i32) (result i64)))"#,
+        &format!(r#"(import "wisp" "{capability}" (func $poll (param i32 i32 i32) (result i64)))"#),
         "", &format!("{setup} (drop (call $poll (i32.const {operation}) (i32.const {pointer}) (i32.const {count}))) {DONE}"), DONE);
         let template = engine
             .load_template(&wasm)
@@ -312,6 +322,71 @@ mod native_readiness {
                 },
             )
             .completion
+    }
+
+    #[test]
+    fn readiness_permission_cannot_create_a_network_resource() {
+        let operation = wisp_abi::native_io::canonical::DEFINITIONS
+            .iter()
+            .find(|definition| {
+                matches!(
+                    definition.action,
+                    wisp_abi::native_io::canonical::Action::Network
+                )
+            })
+            .expect("the native contract must define network creation");
+        assert_eq!(
+            packet(operation.id.0, 1000, 0, ""),
+            Completion::Trapped,
+            "a guest with only readiness permission must not obtain network authority"
+        );
+    }
+
+    #[test]
+    fn a_native_send_cannot_allocate_an_unbounded_pollable_list() {
+        let count = wisp_abi::imports::MAX_OUT_BUFFER_BYTES / 4 + 1;
+        let setup = format!("(i64.store (i32.const 1008) (i64.const {count}))");
+        assert_eq!(
+            capability_packet("socket_call", 69, 1000, 4, &setup),
+            Completion::Trapped,
+            "an oversized native send list must trap before host allocation"
+        );
+    }
+
+    #[test]
+    fn a_native_dns_name_cannot_exceed_the_host_buffer_budget() {
+        let count = wisp_abi::imports::MAX_OUT_BUFFER_BYTES + 1;
+        let setup = format!("(i64.store (i32.const 1016) (i64.const {count}))");
+        assert_eq!(
+            capability_packet("socket_call", 70, 1000, 4, &setup),
+            Completion::Trapped,
+            "an oversized DNS name must trap before host allocation"
+        );
+    }
+
+    #[test]
+    fn a_native_no_delay_packet_refuses_invalid_settings() {
+        assert_eq!(
+            capability_packet(
+                "socket_call",
+                74,
+                1000,
+                2,
+                "(i64.store (i32.const 1008) (i64.const 2))"
+            ),
+            Completion::Trapped,
+            "TCP_NODELAY accepts only a read, false, or true operation"
+        );
+    }
+
+    #[test]
+    fn a_native_dns_name_must_be_valid_utf8() {
+        let setup = "(i64.store (i32.const 1008) (i64.const 2000)) (i64.store (i32.const 1016) (i64.const 1)) (i32.store8 (i32.const 2000) (i32.const 255))";
+        assert_eq!(
+            capability_packet("socket_call", 70, 1000, 4, setup),
+            Completion::Trapped,
+            "invalid DNS name encoding must trap before resolver work starts"
+        );
     }
 
     #[test]

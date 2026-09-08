@@ -16,17 +16,6 @@ pub type Result<T> = anyhow::Result<T>;
 
 
 
-/// Egress policy, enforced host-side.
-pub trait EgressPolicy: Send + Sync + 'static {
-    /// Resolves the target and returns it pinned, so DNS rebinding cannot move
-    /// it between the check and the connect.
-    fn check(
-        &self,
-        url: &str,
-        allowlist: Option<&[String]>,
-    ) -> std::result::Result<PinnedTarget, String>;
-}
-
 #[derive(Debug, Clone)]
 pub struct PinnedTarget {
     pub url: String,

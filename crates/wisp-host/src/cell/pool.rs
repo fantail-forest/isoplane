@@ -196,8 +196,13 @@ mod cell_tests {
     }
 
     struct NoResolver;
+    #[async_trait::async_trait]
     impl crate::Resolver for NoResolver {
-        fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+        async fn resolve(
+            &self,
+            _h: &str,
+            _p: u16,
+        ) -> Result<Vec<std::net::SocketAddr>, crate::egress::DnsError> {
             Ok(vec![])
         }
     }

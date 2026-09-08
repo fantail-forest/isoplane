@@ -239,49 +239,14 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
     ),
     // ---- trap-on-call: io -------------------------------------------------
     trap(
-        IO_ERROR,
-        "[resource-drop]error",
-        "no stream exists to have produced an error",
-    ),
-    trap(
-        IO_STREAMS,
-        "[resource-drop]input-stream",
-        "no stream is ever handed out",
-    ),
-    trap(
-        IO_STREAMS,
-        "[resource-drop]output-stream",
-        "no stream is ever handed out",
-    ),
-    trap(
         IO_STREAMS,
         "[method]input-stream.blocking-read",
         "no import waits, no stream exists",
     ),
     trap(
         IO_STREAMS,
-        "[method]input-stream.subscribe",
-        "no stream is ever handed out",
-    ),
-    trap(
-        IO_STREAMS,
-        "[method]output-stream.check-write",
-        "no stream is ever handed out",
-    ),
-    trap(
-        IO_STREAMS,
-        "[method]output-stream.write",
-        "no ambient I/O; observability is `log_emit`",
-    ),
-    trap(
-        IO_STREAMS,
         "[method]output-stream.blocking-flush",
         "no import waits, no stream exists",
-    ),
-    trap(
-        IO_STREAMS,
-        "[method]output-stream.subscribe",
-        "no stream is ever handed out",
     ),
 ];
 
@@ -385,9 +350,13 @@ mod tests {
     }
 
     #[test]
-    fn every_pal_entry_is_a_wasi_name() {
+    fn every_pal_entry_belongs_to_wasi_or_the_native_socket_bridge() {
         for p in PAL_IMPORTS {
-            assert!(is_wasi(p.module), "{} is not a wasi: module", p.full_name());
+            assert!(
+                is_wasi(p.module) || p.module == crate::native_io::canonical::SOCKET_BRIDGE_MODULE,
+                "{} is outside the supported platform interfaces",
+                p.full_name()
+            );
             assert_ne!(
                 p.module,
                 imports::HOST_MODULE,
@@ -410,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn readiness_delegation_cannot_reach_an_io_capability() {
+    fn native_io_delegation_cannot_reach_unrelated_capabilities() {
         use imports::Group::*;
         let forbidden = [
             Http, Kv, Blob, Queue, Sql, Durable, Socket, Service, Response, Ctx,
@@ -421,7 +390,7 @@ mod tests {
             };
             let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
             assert!(
-                !forbidden.contains(&def.group),
+                !forbidden.contains(&def.group) || cap == crate::native_io::canonical::SOCKET_IMPORT,
                 "{} delegates to `{cap}` in group {:?}; native I/O must remain behind its dedicated capability",
                 p.full_name(),
                 def.group
@@ -443,6 +412,7 @@ mod tests {
                 "entropy_fill",
                 "filesystem_call",
                 "poll_call",
+                "socket_call"
             ],
             "the adapter must not introduce an undeclared channel"
         );
@@ -451,9 +421,7 @@ mod tests {
     #[test]
     fn the_denied_interfaces_are_trap_on_call_without_exception() {
         for p in PAL_IMPORTS {
-            let denied = p.module.starts_with("wasi:sockets/")
-                || p.module == IO_STREAMS
-                || p.module == CLI_STDIN
+            let denied = p.module == CLI_STDIN
                 || p.module == CLI_STDOUT
                 || p.module == CLI_STDERR
                 || p.module == WALL_CLOCK;

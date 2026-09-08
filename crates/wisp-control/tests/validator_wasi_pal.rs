@@ -93,17 +93,6 @@ fn v1_rejects_a_wasi_import_outside_the_whitelist() {
         Limits::default(),
         V::V1UndeclaredImport,
     );
-    // An interface that is not in the table at all — ambient network
-    // authority, which no delegation could ever make channel-equivalent.
-    assert_violates(
-        "wasi-sockets",
-        &wasi_wat().replace(
-            r#"(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))"#,
-            r#"(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect" (func $c (param i32 i32)))"#,
-        ),
-        Limits::default(),
-        V::V1UndeclaredImport,
-    );
     // A different WASI generation entirely. preview1 is not preview2, and the
     // whitelist is versioned because the ABI is.
     assert_violates(
@@ -178,4 +167,17 @@ fn v1_rejects_a_non_function_wasi_import() {
     );
     let got = codes(&parse(&wat), Limits::default());
     assert!(got.contains(&V::V1SignatureMismatch), "got {got:?}");
+}
+
+#[test]
+fn a_native_socket_delegation_requires_its_full_canonical_signature() {
+    assert_violates(
+        "native-socket-wrong-signature",
+        &wasi_wat().replace(
+            r#"(import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $flush (param i32 i32)))"#,
+            r#"(import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect" (func $c (param i32 i32)))"#,
+        ),
+        Limits::default(),
+        V::V1SignatureMismatch,
+    );
 }

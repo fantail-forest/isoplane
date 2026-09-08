@@ -215,14 +215,22 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
         "a trap-on-call entry is marked as one: {}",
         out.stdout
     );
-    // Of the whole whitelist only `get-random-bytes` reaches a capability with
-    // a bullet; a second bullet would mean a trap was counted as one.
     let bullets: Vec<_> = out
         .stdout
         .lines()
-        .filter(|l| l.trim_start().starts_with('•'))
+        .filter(|line| line.trim_start().starts_with('•'))
         .collect();
-    assert_eq!(bullets.len(), 1, "{bullets:?}");
+    assert_eq!(
+        bullets.len(),
+        2,
+        "only entropy and outbound sockets are reachable through the PAL: {bullets:?}"
+    );
+    assert!(
+        out.stdout
+            .contains("open outbound TCP connections and resolve DNS names"),
+        "the PAL socket capability must describe outbound TCP and DNS: {}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -230,7 +238,10 @@ fn a_wasi_import_outside_the_whitelist_is_still_refused() {
     let (_dir, p) = write_module(
         "offwhitelist.wasm",
         &module(
-            &[("wasi:sockets/tcp@0.2.0", "[method]tcp-socket.start-connect")],
+            &[(
+                "wasi:sockets/tcp@0.2.0",
+                "[method]tcp-socket.unknown-operation",
+            )],
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
     );

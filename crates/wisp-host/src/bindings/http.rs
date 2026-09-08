@@ -34,34 +34,38 @@ impl CellBindings {
             rt.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
             return self.settle_now(id, ResultRecord::Err(e));
         }
-        // The check blocks on `getaddrinfo`, so it runs on the reactor's
-        // blocking pool.
+        let owner =
+            match crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance) {
+                Ok(owner) => owner,
+                Err(error) => {
+                    return self
+                        .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
+                }
+            };
         let allowlist = self.ctx.allowlist.clone();
         let tenant = self.ctx.tenant.clone();
         let rt2 = rt.clone();
         let task = rt.reactor.spawn(async move {
             let svc = rt2.services.clone();
-            let checked = {
-                let egress = svc.egress.clone();
-                let url = req.url.clone();
-                tokio::task::spawn_blocking(move || egress.check_owned(&url, allowlist.as_deref()))
-                    .await
-            };
+            let checked = svc.egress.check_owned(&req.url, allowlist.as_deref()).await;
             let res = match checked {
-                Ok(Ok(pinned)) => {
-                    let out = svc.fetcher.fetch(pinned.target(), req).await;
+                Ok(pinned) => {
+                    let out = svc.fetcher.fetch(owner, pinned.target(), req).await;
                     if let Ok(r) = &out {
                         svc.egress
                             .record_bytes(r.body_inline.as_ref().map_or(0, |b| b.len()) as u64);
                     }
                     from_typed(out)
                 }
-                Ok(Err(deny)) => {
+                Err(crate::egress::EgressError::Denied(deny)) => {
                     tracing::warn!(tenant = %tenant, reason = %deny, "egress denied");
                     rt2.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
                     ResultRecord::Err(FutureError::Denied(deny.to_string()))
                 }
-                Err(e) => ResultRecord::Err(FutureError::Io(format!("egress check: {e}"))),
+                Err(crate::egress::EgressError::Dns(error)) => {
+                    tracing::warn!(tenant = %tenant, %error, "outbound HTTP DNS failed");
+                    ResultRecord::Err(FutureError::Io(error.to_string()))
+                }
             };
             CellBindings::settle(&rt2, id, res);
         });

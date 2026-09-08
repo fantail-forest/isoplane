@@ -26,6 +26,7 @@ use crate::futures::INVALID_FUTURE;
 /// What each import's `scalars` entries mean; the contract crate's `BufSpec`
 /// is the authority on where the buffer pair sits.
 pub const SCALARS: &[(&str, &[&str])] = &[
+    ("socket_call", &["operation", "arguments", "count"]),
     ("poll_call", &["operation", "arguments", "count"]),
     ("log_emit", &["level"]),
     ("trace_span_end", &["span"]),
@@ -156,8 +157,21 @@ impl HostBindings for CellBindings {
         let starts_work = match &request {
             wisp_abi::native_io::Request::Timer(duration) => duration.0 != 0,
             wisp_abi::native_io::Request::Ready(_)
+            | wisp_abi::native_io::Request::ErrorMessage(_)
+            | wisp_abi::native_io::Request::SocketAddress { .. }
+            | wisp_abi::native_io::Request::NoDelay { .. }
+            | wisp_abi::native_io::Request::Shutdown { .. }
             | wisp_abi::native_io::Request::Poll(_)
-            | wisp_abi::native_io::Request::Drop(_) => false,
+            | wisp_abi::native_io::Request::Drop { .. } => false,
+            wisp_abi::native_io::Request::Network
+            | wisp_abi::native_io::Request::Resolve { .. }
+            | wisp_abi::native_io::Request::NextAddress(_)
+            | wisp_abi::native_io::Request::CreateTcp(_)
+            | wisp_abi::native_io::Request::Connect { .. }
+            | wisp_abi::native_io::Request::FinishConnect(_)
+            | wisp_abi::native_io::Request::Read { .. }
+            | wisp_abi::native_io::Request::TrySend { .. }
+            | wisp_abi::native_io::Request::Subscribe(_) => true,
         };
         if self.ctx.is_cancelled() && starts_work {
             return Err(wisp_abi::native_io::Error::Denied(

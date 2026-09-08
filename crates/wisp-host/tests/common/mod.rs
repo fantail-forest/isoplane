@@ -8,8 +8,13 @@ use wisp_host::fakes::FakeFetcher;
 use wisp_host::Resolver;
 
 pub struct Fixed(pub Vec<std::net::SocketAddr>);
+#[async_trait::async_trait]
 impl Resolver for Fixed {
-    fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+    async fn resolve(
+        &self,
+        _h: &str,
+        _p: u16,
+    ) -> Result<Vec<std::net::SocketAddr>, wisp_host::egress::DnsError> {
         Ok(self.0.clone())
     }
 }

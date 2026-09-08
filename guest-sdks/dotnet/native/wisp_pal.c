@@ -101,9 +101,6 @@ void __wasm_import_random_get_random_bytes(int64_t len, int32_t retptr)
 /* ---- dead: linked by the .NET PAL, never reached ----------------------- */
 
 /* (param i32) */
-void __wasm_import_io_error_error_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/error drop"); }
-void __wasm_import_streams_input_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams input drop"); }
-void __wasm_import_streams_output_stream_drop(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams output drop"); }
 void __wasm_import_terminal_input_terminal_input_drop(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-input drop"); }
 void __wasm_import_terminal_output_terminal_output_drop(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-output drop"); }
 void __wasm_import_exit_exit(int32_t a) { (void)a; WISP_PAL_DEAD("cli/exit"); }
@@ -112,14 +109,11 @@ void __wasm_import_terminal_stdout_get_terminal_stdout(int32_t a) { (void)a; WIS
 void __wasm_import_terminal_stderr_get_terminal_stderr(int32_t a) { (void)a; WISP_PAL_DEAD("cli/terminal-stderr"); }
 
 /* (param i32) (result i32) */
-int32_t __wasm_import_streams_method_output_stream_subscribe(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams subscribe"); }
 
 /* (param i32 i32) */
-void __wasm_import_streams_method_output_stream_check_write(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("io/streams check-write"); }
 void __wasm_import_streams_method_output_stream_blocking_flush(int32_t a, int32_t b) { (void)a; (void)b; WISP_PAL_DEAD("io/streams blocking-flush"); }
 
 /* (param i32 i32 i32 i32) */
-void __wasm_import_streams_method_output_stream_write(int32_t a, int32_t b, int32_t c, int32_t d) { (void)a; (void)b; (void)c; (void)d; WISP_PAL_DEAD("io/streams write"); }
 
 /* (result i32) */
 int32_t __wasm_import_stdin_get_stdin(void) { WISP_PAL_DEAD("cli/stdin"); }
@@ -136,7 +130,6 @@ void __wasm_import_streams_method_input_stream_blocking_read(int32_t a, int64_t 
 /* (param i32) */
 
 /* (param i32) (result i32) */
-int32_t __wasm_import_streams_method_input_stream_subscribe(int32_t a) { (void)a; WISP_PAL_DEAD("io/streams input subscribe"); }
 
 /* (param i32 i32) */
 
@@ -167,4 +160,9 @@ intptr_t __wrap_SystemNative_MksTemps(char *path_template, int32_t suffix_length
     return open(path_template, O_RDWR | O_CREAT | O_EXCL, 0600);
 }
 
+#include "wisp_socket_poll.h"
+static void wisp_capture_socket(const uint8_t *result);
 #include "wisp_native_io.h"
+#include "wisp_socket_send.h"
+#include "wisp_socket_options.h"
+#include "wisp_dns.h"

@@ -1,19 +1,212 @@
-//! Instance-owned deadlines retained independently of the Wasmtime Store.
+//! Instance-owned native networking resources, independent of the Wasmtime Store.
 
-use super::CellBindings;
-use crate::futures::{FutureId, FutureTable};
-use crate::InstanceId;
-use std::collections::BTreeMap;
+mod addresses;
+mod streams;
+
+use addresses::Addresses;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use wisp_abi::native_io::{Error, Request, ResourceHandle, Response};
+use streams::{Input, Output};
+
+use parking_lot::Mutex;
+use tokio::net::TcpStream;
+use wisp_abi::native_io::{AddressFamily, Error, Request, ResourceHandle, ResourceKind, Response};
 use wisp_abi::result::ResultRecord;
+
+use super::CellBindings;
+use crate::egress::ConnectionPermit;
+use crate::futures::{FutureId, FutureTable};
+use crate::InstanceId;
+
+fn report_failure(bindings: &CellBindings, error: &Error) {
+    if matches!(error, Error::Denied(_)) {
+        if let Some(runtime) = bindings.rt() {
+            runtime
+                .metrics
+                .egress_denials
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    tracing::warn!(%error, "native I/O operation failed");
+}
 
 struct ReactorWork {
     future: FutureId,
     owner: InstanceId,
     table: Arc<FutureTable>,
     task: tokio::task::AbortHandle,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resources(handles: usize) -> (Resources, CellBindings) {
+        (
+            Resources::new(ResourceLimits {
+                handles: ResourceCount(handles),
+            }),
+            CellBindings::new(super::super::tests::ctx()),
+        )
+    }
+
+    fn created(resources: &mut Resources, bindings: &CellBindings) -> ResourceHandle {
+        match resources
+            .call(Request::CreateTcp(AddressFamily::V4), bindings)
+            .expect("an available native resource slot must accept a socket")
+        {
+            Response::Handle(handle) => handle,
+            result => panic!("socket creation returned an unexpected result: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn exhausting_native_handles_refuses_allocation_until_a_resource_is_dropped() {
+        let (mut resources, bindings) = resources(1);
+        let socket = created(&mut resources, &bindings);
+        assert!(
+            matches!(
+                resources.call(Request::CreateTcp(AddressFamily::V4), &bindings),
+                Err(Error::ResourceLimit)
+            ),
+            "a second socket must exceed the instance's one-handle budget"
+        );
+        resources
+            .call(
+                Request::Drop {
+                    handle: socket,
+                    kind: ResourceKind::Tcp,
+                },
+                &bindings,
+            )
+            .expect("dropping the owned socket must release its resource slot");
+        let replacement = created(&mut resources, &bindings);
+        assert_ne!(
+            socket, replacement,
+            "dropped handles must never alias replacement resources"
+        );
+    }
+
+    #[test]
+    fn a_pollable_destructor_cannot_drop_a_socket() {
+        let (mut resources, bindings) = resources(1);
+        let socket = created(&mut resources, &bindings);
+        assert!(
+            matches!(resources.call(Request::Drop { handle: socket, kind: ResourceKind::Pollable }, &bindings),
+            Err(Error::InvalidHandle(handle)) if handle == socket),
+            "readiness capability must not destroy a native socket"
+        );
+        assert!(
+            resources.socket(socket).is_ok(),
+            "a refused destructor must retain the socket"
+        );
+    }
+
+    #[test]
+    fn another_instances_socket_handle_has_no_authority() {
+        let (mut first, bindings) = resources(1);
+        let socket = created(&mut first, &bindings);
+        let (mut second, second_bindings) = resources(1);
+        assert!(
+            matches!(second.call(Request::FinishConnect(socket), &second_bindings), Err(Error::InvalidHandle(handle)) if handle == socket),
+            "a socket handle from another instance must not resolve in this instance"
+        );
+    }
+
+    #[test]
+    fn a_socket_cannot_finish_a_connection_that_has_not_started() {
+        let (mut resources, bindings) = resources(1);
+        let socket = created(&mut resources, &bindings);
+        assert!(
+            matches!(
+                resources.call(Request::FinishConnect(socket), &bindings),
+                Err(Error::InvalidState(_))
+            ),
+            "an unconnected socket must not manufacture stream handles"
+        );
+    }
+
+    #[test]
+    fn a_socket_handle_cannot_authorize_dns_resolution() {
+        let (mut resources, bindings) = resources(2);
+        let socket = created(&mut resources, &bindings);
+        assert!(
+            matches!(resources.call(Request::Resolve { network: socket, name: "example.test".into() }, &bindings), Err(Error::InvalidHandle(handle)) if handle == socket),
+            "DNS must require the instance's network authority"
+        );
+    }
+
+    #[test]
+    fn a_socket_pollable_cannot_authorize_a_stream_send() {
+        let (mut resources, bindings) = resources(2);
+        let socket = created(&mut resources, &bindings);
+        let Response::Handle(pollable) = resources
+            .call(Request::Subscribe(socket), &bindings)
+            .expect("an owned socket must permit a subscription")
+        else {
+            panic!("a subscription must return its handle")
+        };
+        assert!(
+            matches!(
+                resources.call(
+                    Request::TrySend {
+                        pollables: vec![pollable],
+                        bytes: vec![1]
+                    },
+                    &bindings
+                ),
+                Err(Error::InvalidState(_))
+            ),
+            "only a connected output stream's pollable may authorize sending bytes"
+        );
+    }
+
+    #[test]
+    fn a_socket_refuses_a_destination_from_another_address_family() {
+        let (mut resources, bindings) = resources(2);
+        let socket = created(&mut resources, &bindings);
+        let Response::Handle(network) = resources
+            .call(Request::Network, &bindings)
+            .expect("the instance must acquire network authority")
+        else {
+            panic!("network creation must return its handle")
+        };
+        assert!(
+            matches!(
+                resources.call(
+                    Request::Connect {
+                        socket,
+                        network,
+                        destination: "[::1]:443".parse().expect("the IPv6 endpoint must parse")
+                    },
+                    &bindings
+                ),
+                Err(Error::InvalidState(_))
+            ),
+            "an IPv4 socket must reject an IPv6 destination before reactor work starts"
+        );
+    }
+
+    #[test]
+    fn an_unready_poll_returns_an_explicit_refusal_instead_of_waiting() {
+        let (mut resources, bindings) = resources(2);
+        let socket = created(&mut resources, &bindings);
+        let Response::Handle(subscription) = resources
+            .call(Request::Subscribe(socket), &bindings)
+            .expect("an owned socket must support readiness subscription")
+        else {
+            panic!("subscription must return a handle")
+        };
+        assert!(
+            matches!(
+                resources.call(Request::Poll(vec![subscription]), &bindings),
+                Err(Error::Unsupported(_))
+            ),
+            "a poll with no ready resource must refuse synchronous waiting"
+        );
+    }
 }
 
 impl Drop for ReactorWork {
@@ -40,32 +233,74 @@ impl Default for ResourceLimits {
     }
 }
 
+struct Connection {
+    stream: Arc<TcpStream>,
+    permit: ConnectionPermit,
+}
+
+enum SocketState {
+    Created(AddressFamily),
+    Connecting,
+    Connected(Arc<Connection>),
+    Failed(Error),
+}
+
+struct Socket {
+    no_delay: Arc<AtomicBool>,
+    streams_taken: bool,
+    state: Arc<Mutex<SocketState>>,
+    task: Option<ReactorWork>,
+}
+
 struct Timer {
     ready: Arc<AtomicBool>,
     _task: Option<ReactorWork>,
 }
 
+enum Resource {
+    Network,
+    Addresses(Addresses),
+    Socket(Socket),
+    Input(Input),
+    Output(Output),
+    Error(String),
+    Subscription(ResourceHandle),
+    Timer(Timer),
+}
+
+/// Retained by InstanceCtx across Store destruction and released with its owner.
 pub(crate) struct Resources {
     next: u32,
     limits: ResourceLimits,
-    entries: BTreeMap<ResourceHandle, Timer>,
+    entries: BTreeMap<ResourceHandle, Resource>,
+    network: Option<ResourceHandle>,
+    resolved: BTreeSet<std::net::IpAddr>,
 }
 
 impl Resources {
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.network = None;
+        self.resolved.clear();
+    }
+
     pub(crate) fn new(limits: ResourceLimits) -> Self {
         Self {
             next: 1,
             limits,
             entries: BTreeMap::new(),
+            network: None,
+            resolved: BTreeSet::new(),
         }
     }
 
-    pub(crate) fn clear(&mut self) {
-        self.entries.clear();
-    }
-
     fn reserve(&self, count: ResourceCount) -> Result<(), Error> {
-        if self.entries.len().saturating_add(count.0) > self.limits.handles.0
+        if self
+            .entries
+            .len()
+            .saturating_add(self.resolved.len())
+            .saturating_add(count.0)
+            > self.limits.handles.0
             || self
                 .next
                 .checked_add(u32::try_from(count.0).map_err(|_| Error::ResourceLimit)?)
@@ -76,19 +311,32 @@ impl Resources {
         Ok(())
     }
 
-    fn insert(&mut self, timer: Timer) -> Result<ResourceHandle, Error> {
+    fn insert(&mut self, resource: Resource) -> Result<ResourceHandle, Error> {
         self.reserve(ResourceCount(1))?;
         let handle = ResourceHandle(self.next);
         self.next += 1;
-        self.entries.insert(handle, timer);
+        self.entries.insert(handle, resource);
         Ok(handle)
     }
 
-    fn ready(&self, handle: ResourceHandle) -> Result<bool, Error> {
-        self.entries
-            .get(&handle)
-            .map(|timer| timer.ready.load(Ordering::Acquire))
-            .ok_or(Error::InvalidHandle(handle))
+    fn socket(&self, handle: ResourceHandle) -> Result<Arc<Mutex<SocketState>>, Error> {
+        self.tcp(handle).map(|socket| socket.state.clone())
+    }
+
+    fn tcp(&self, handle: ResourceHandle) -> Result<&Socket, Error> {
+        match self.entries.get(&handle) {
+            Some(Resource::Socket(socket)) => Ok(socket),
+            Some(
+                Resource::Network
+                | Resource::Addresses(_)
+                | Resource::Error(_)
+                | Resource::Input(_)
+                | Resource::Output(_)
+                | Resource::Subscription(_)
+                | Resource::Timer(_),
+            )
+            | None => Err(Error::InvalidHandle(handle)),
+        }
     }
 
     pub(crate) fn call(
@@ -96,7 +344,187 @@ impl Resources {
         request: Request,
         bindings: &CellBindings,
     ) -> Result<Response, Error> {
+        let operation = match &request {
+            Request::Network => "network",
+            Request::Resolve { .. } => "resolve",
+            Request::NextAddress(_) => "next_address",
+            Request::CreateTcp(_) => "create_tcp",
+            Request::Connect { .. } => "connect",
+            Request::FinishConnect(_) => "finish_connect",
+            Request::Read { .. } => "read",
+            Request::TrySend { .. } => "send",
+            Request::ErrorMessage(_) => "error_message",
+            Request::SocketAddress { .. } => "socket_address",
+            Request::NoDelay { .. } => "no_delay",
+            Request::Shutdown { .. } => "shutdown",
+            Request::Subscribe(_) => "subscribe",
+            Request::Timer(_) => "timer",
+            Request::Ready(_) => "ready",
+            Request::Poll(_) => "poll",
+            Request::Drop { .. } => "drop",
+        };
+        let observes_completion = matches!(
+            &request,
+            Request::NextAddress(_) | Request::FinishConnect(_)
+        );
+        let span = tracing::info_span!("native_io", tenant = %bindings.ctx.tenant, instance = %bindings.ctx.instance, operation);
+        let _entered = span.enter();
+        let result = self.execute(request, bindings);
+        if let Err(error) = &result {
+            let already_reported = observes_completion
+                && matches!(
+                    error,
+                    Error::Dns { .. } | Error::Connection { .. } | Error::Denied(_)
+                );
+            if !already_reported && !matches!(error, Error::WouldBlock) {
+                report_failure(bindings, error);
+            }
+        }
+        result
+    }
+
+    fn execute(&mut self, request: Request, bindings: &CellBindings) -> Result<Response, Error> {
         match request {
+            Request::NoDelay { socket, enabled } => {
+                self.no_delay(socket, enabled).map(Response::NoDelay)
+            }
+            Request::Network => {
+                if let Some(handle) = self.network {
+                    return Ok(Response::Handle(handle));
+                }
+                let handle = self.insert(Resource::Network)?;
+                self.network = Some(handle);
+                Ok(Response::Handle(handle))
+            }
+            Request::Resolve { network, name } => {
+                if !matches!(self.entries.get(&network), Some(Resource::Network)) {
+                    return Err(Error::InvalidHandle(network));
+                }
+                self.reserve(ResourceCount(1))?;
+                self.insert(Resource::Addresses(Addresses::start(
+                    bindings,
+                    name,
+                    self.limits.handles,
+                )?))
+                .map(Response::Handle)
+            }
+            Request::NextAddress(handle) => {
+                let address = match self.entries.get_mut(&handle) {
+                    Some(Resource::Addresses(addresses)) => addresses.next()?,
+                    // New resource kinds cannot carry DNS answer authority.
+                    _ => return Err(Error::InvalidHandle(handle)),
+                };
+                if let Some(address) = address {
+                    if !self.resolved.contains(&address) {
+                        self.reserve(ResourceCount(1))?;
+                    }
+                    self.resolved.insert(address);
+                }
+                Ok(Response::Address(address))
+            }
+            Request::CreateTcp(family) => self
+                .insert(Resource::Socket(Socket {
+                    no_delay: Arc::new(AtomicBool::new(false)),
+                    streams_taken: false,
+                    state: Arc::new(Mutex::new(SocketState::Created(family))),
+                    task: None,
+                }))
+                .map(Response::Handle),
+            Request::Connect {
+                socket,
+                network,
+                destination,
+            } => self.connect(bindings, socket, network, destination),
+            Request::FinishConnect(handle) => {
+                let state = self.socket(handle)?;
+                match &*state.lock() {
+                    SocketState::Connected(_) => {}
+                    SocketState::Connecting => return Err(Error::WouldBlock),
+                    SocketState::Created(_) => {
+                        return Err(Error::InvalidState("connect has not started"))
+                    }
+                    SocketState::Failed(error) => return Err(error.clone()),
+                }
+                if let Some(Resource::Socket(socket)) = self.entries.get(&handle) {
+                    if socket.streams_taken {
+                        return Err(Error::InvalidState("connected streams already acquired"));
+                    }
+                }
+                self.reserve(ResourceCount(2))?;
+                let input = self.insert(Resource::Input(Input::new(state.clone())))?;
+                let output = self.insert(Resource::Output(Output::new(state)))?;
+                if let Some(Resource::Socket(socket)) = self.entries.get_mut(&handle) {
+                    socket.streams_taken = true;
+                }
+                Ok(Response::Streams { input, output })
+            }
+            Request::Read { stream, length } => {
+                let result = match self.entries.get_mut(&stream) {
+                    Some(Resource::Input(input)) => input.read(length, bindings),
+                    _ => return Err(Error::InvalidHandle(stream)),
+                };
+                if let Err(error) = &result {
+                    report_failure(bindings, error);
+                }
+                self.stream_result(result)
+            }
+            Request::TrySend { pollables, bytes } => {
+                let target = pollables
+                    .into_iter()
+                    .find_map(|handle| match self.entries.get(&handle) {
+                        Some(Resource::Subscription(target))
+                            if matches!(self.entries.get(target), Some(Resource::Output(_))) =>
+                        {
+                            Some(*target)
+                        }
+                        // Only output pollables authorize native sends; other resource kinds add no authority.
+                        _ => None,
+                    })
+                    .ok_or(Error::InvalidState("native send has no output pollable"))?;
+                self.output(target)?.send(&bytes, bindings)
+            }
+            Request::ErrorMessage(handle) => match self.entries.get(&handle) {
+                Some(Resource::Error(message)) => Ok(Response::Bytes(message.as_bytes().to_vec())),
+                _ => Err(Error::InvalidHandle(handle)),
+            },
+            Request::SocketAddress { socket, peer } => {
+                let state = self.socket(socket)?;
+                let connection = streams::connection(&state)?;
+                let address = if peer {
+                    connection.stream.peer_addr()
+                } else {
+                    connection.stream.local_addr()
+                }
+                .map_err(Error::from)?;
+                Ok(Response::SocketAddress(address))
+            }
+            Request::Shutdown { socket, how } => {
+                let state = self.socket(socket)?;
+                let connection = streams::connection(&state)?;
+                socket2::SockRef::from(connection.stream.as_ref())
+                    .shutdown(how)
+                    .map_err(Error::from)?;
+                Ok(Response::Done)
+            }
+            Request::Subscribe(handle) => {
+                match self.entries.get(&handle) {
+                    Some(
+                        Resource::Socket(_)
+                        | Resource::Input(_)
+                        | Resource::Output(_)
+                        | Resource::Addresses(_),
+                    ) => {}
+                    Some(
+                        Resource::Network
+                        | Resource::Error(_)
+                        | Resource::Subscription(_)
+                        | Resource::Timer(_),
+                    )
+                    | None => return Err(Error::InvalidHandle(handle)),
+                }
+                self.insert(Resource::Subscription(handle))
+                    .map(Response::Handle)
+            }
             Request::Timer(duration) => {
                 self.reserve(ResourceCount(1))?;
                 let ready = Arc::new(AtomicBool::new(duration.0 == 0));
@@ -129,10 +557,9 @@ impl Resources {
                         task: task.abort_handle(),
                     })
                 };
-                self.insert(Timer { ready, _task: task })
+                self.insert(Resource::Timer(Timer { ready, _task: task }))
                     .map(Response::Handle)
             }
-
             Request::Ready(handle) => self.ready(handle).map(Response::Ready),
             Request::Poll(handles) => {
                 let mut indexes = Vec::new();
@@ -142,22 +569,217 @@ impl Resources {
                     }
                 }
                 if indexes.is_empty() {
-                    return Err(Error::Unsupported("blocking poll on a guest stack"));
+                    return Err(Error::Unsupported(
+                        "blocking poll on an empty guest stack boundary",
+                    ));
                 }
                 Ok(Response::ReadyIndexes(indexes))
             }
-            Request::Drop(handle) => {
-                self.entries
-                    .remove(&handle)
+            Request::Drop { handle, kind } => {
+                let resource = self
+                    .entries
+                    .get(&handle)
                     .ok_or(Error::InvalidHandle(handle))?;
+                let valid = matches!(
+                    (kind, resource),
+                    (ResourceKind::Tcp, Resource::Socket(_))
+                        | (ResourceKind::Addresses, Resource::Addresses(_))
+                        | (ResourceKind::Error, Resource::Error(_))
+                        | (ResourceKind::Input, Resource::Input(_))
+                        | (ResourceKind::Output, Resource::Output(_))
+                        | (
+                            ResourceKind::Pollable,
+                            Resource::Timer(_) | Resource::Subscription(_)
+                        )
+                );
+                if !valid {
+                    return Err(Error::InvalidHandle(handle));
+                }
+                if let Some(Resource::Socket(socket)) = self.entries.remove(&handle) {
+                    *socket.state.lock() =
+                        SocketState::Failed(Error::InvalidState("socket disposed"));
+                }
                 Ok(Response::Done)
             }
         }
     }
+
+    fn ready(&self, handle: ResourceHandle) -> Result<bool, Error> {
+        match self.entries.get(&handle) {
+            Some(Resource::Timer(timer)) => Ok(timer.ready.load(Ordering::Acquire)),
+            Some(Resource::Subscription(target)) => match self.entries.get(target) {
+                Some(Resource::Addresses(addresses)) => Ok(addresses.ready()),
+                Some(Resource::Socket(socket)) => match &*socket.state.lock() {
+                    SocketState::Created(_) | SocketState::Connecting => Ok(false),
+                    SocketState::Connected(_) | SocketState::Failed(_) => Ok(true),
+                },
+                Some(Resource::Input(input)) => input.ready(),
+                Some(Resource::Output(output)) => output.ready(),
+                Some(
+                    Resource::Network
+                    | Resource::Error(_)
+                    | Resource::Subscription(_)
+                    | Resource::Timer(_),
+                )
+                | None => Err(Error::InvalidHandle(*target)),
+            },
+            Some(
+                Resource::Network
+                | Resource::Addresses(_)
+                | Resource::Error(_)
+                | Resource::Socket(_)
+                | Resource::Input(_)
+                | Resource::Output(_),
+            )
+            | None => Err(Error::InvalidHandle(handle)),
+        }
+    }
+
+    fn output(&mut self, handle: ResourceHandle) -> Result<&mut Output, Error> {
+        match self.entries.get_mut(&handle) {
+            Some(Resource::Output(output)) => Ok(output),
+            _ => Err(Error::InvalidHandle(handle)),
+        }
+    }
+
+    fn stream_result(&mut self, result: Result<Response, Error>) -> Result<Response, Error> {
+        match result {
+            Ok(response) => Ok(response),
+            Err(error) => self
+                .insert(Resource::Error(error.to_string()))
+                .map(Response::StreamError),
+        }
+    }
+
+    fn no_delay(&self, handle: ResourceHandle, enabled: Option<bool>) -> Result<bool, Error> {
+        let socket = self.tcp(handle)?;
+        let state = socket.state.lock();
+        match &*state {
+            SocketState::Connected(connection) => {
+                if let Some(enabled) = enabled {
+                    connection
+                        .stream
+                        .set_nodelay(enabled)
+                        .map_err(Error::from)?;
+                }
+                connection.stream.nodelay().map_err(Error::from)
+            }
+            SocketState::Created(_) | SocketState::Connecting => {
+                if let Some(enabled) = enabled {
+                    socket.no_delay.store(enabled, Ordering::Relaxed);
+                }
+                Ok(socket.no_delay.load(Ordering::Relaxed))
+            }
+            SocketState::Failed(error) => Err(error.clone()),
+        }
+    }
+
+    fn connect(
+        &mut self,
+        bindings: &CellBindings,
+        handle: ResourceHandle,
+        network: ResourceHandle,
+        destination: std::net::SocketAddr,
+    ) -> Result<Response, Error> {
+        if !matches!(self.entries.get(&network), Some(Resource::Network)) {
+            return Err(Error::InvalidHandle(network));
+        }
+        let socket = self.tcp(handle)?;
+        let state = socket.state.clone();
+        let no_delay = socket.no_delay.clone();
+        {
+            let current = state.lock();
+            match &*current {
+                SocketState::Created(family)
+                    if matches!(
+                        (family, destination),
+                        (AddressFamily::V4, std::net::SocketAddr::V4(_))
+                            | (AddressFamily::V6, std::net::SocketAddr::V6(_))
+                    ) => {}
+                SocketState::Created(_) => {
+                    return Err(Error::InvalidState(
+                        "address family differs from socket family",
+                    ))
+                }
+                SocketState::Connecting | SocketState::Connected(_) | SocketState::Failed(_) => {
+                    return Err(Error::InvalidState("connect already started"))
+                }
+            }
+        }
+        let runtime = bindings
+            .rt()
+            .ok_or(Error::Unsupported("outbound connect without reactor"))?
+            .clone();
+        let policy = runtime.services.egress.clone();
+        let owner =
+            crate::egress::ConnectionOwner::new(bindings.ctx.tenant.clone(), bindings.ctx.instance)
+                .map_err(Error::from)?;
+        let permit = policy
+            .check_socket(
+                destination,
+                if self.resolved.contains(&destination.ip()) {
+                    None
+                } else {
+                    bindings.ctx.allowlist.as_deref()
+                },
+            )
+            .map_err(|reason| Error::Denied(reason.to_string()))?;
+        let future = bindings
+            .alloc("socket_call")
+            .ok_or(Error::ResourceLimit)?;
+        *state.lock() = SocketState::Connecting;
+
+        let completion = runtime.clone();
+        let tenant = bindings.ctx.tenant.clone();
+        let instance = bindings.ctx.instance;
+        let task = runtime.reactor.spawn(async move {
+            let result = async {
+                let stream = policy.connect(&owner, destination).await.map_err(Error::from)?;
+                Ok(Connection {
+                    stream: Arc::new(stream),
+                    permit,
+                })
+            }
+            .await;
+            {
+                let mut current = state.lock();
+                if !matches!(*current, SocketState::Connecting) {
+                    return;
+                }
+                *current = match result {
+                    Ok(connection) => match connection
+                        .stream
+                        .set_nodelay(no_delay.load(Ordering::Relaxed))
+                    {
+                        Ok(()) => SocketState::Connected(Arc::new(connection)),
+                        Err(error) => SocketState::Failed(Error::from(error)),
+                    },
+                    Err(error) => SocketState::Failed(error),
+                };
+                if let SocketState::Failed(error) = &*current {
+                    if matches!(error, Error::Denied(_)) {
+                        completion.metrics.egress_denials.fetch_add(1, Ordering::Relaxed);
+                    }
+                    tracing::warn!(%tenant, %instance, %destination, %error, "outbound TCP connect failed");
+                }
+            }
+            completion.settle_future(future, ResultRecord::Ok(Vec::new()));
+        });
+        runtime.futures.attach_task(future, task.abort_handle());
+        if let Some(Resource::Socket(socket)) = self.entries.get_mut(&handle) {
+            socket.task = Some(ReactorWork {
+                future: FutureId::from(future),
+                owner: bindings.ctx.instance,
+                table: runtime.futures.clone(),
+                task: task.abort_handle(),
+            });
+        }
+        Ok(Response::Done)
+    }
 }
 
 #[cfg(test)]
-mod tests {
+mod timer_tests {
     use super::*;
     use wisp_abi::native_io::DurationNanos;
 
@@ -204,7 +826,10 @@ mod tests {
             "cancellation cleanup must be able to inspect its ready pollable"
         );
         bindings
-            .native_io(Request::Drop(timer))
+            .native_io(Request::Drop {
+                handle: timer,
+                kind: ResourceKind::Pollable,
+            })
             .expect("a cancelled dispatch must be allowed to dispose native resources");
     }
 
@@ -220,7 +845,13 @@ mod tests {
             "a second pollable must exceed the instance's one-handle budget"
         );
         resources
-            .call(Request::Drop(handle), &bindings)
+            .call(
+                Request::Drop {
+                    handle,
+                    kind: ResourceKind::Pollable,
+                },
+                &bindings,
+            )
             .expect("the owner must release its pollable");
         let replacement = created(&mut resources, &bindings);
         assert_ne!(
@@ -244,10 +875,10 @@ mod tests {
     fn an_unready_poll_refuses_synchronous_waiting() {
         let (mut resources, bindings) = resources(1);
         let handle = resources
-            .insert(Timer {
+            .insert(Resource::Timer(Timer {
                 ready: Arc::new(AtomicBool::new(false)),
                 _task: None,
-            })
+            }))
             .expect("the unready test timer must fit its resource budget");
         assert!(
             matches!(
@@ -262,10 +893,10 @@ mod tests {
     fn polling_returns_only_the_indexes_of_ready_resources() {
         let (mut resources, bindings) = resources(2);
         let pending = resources
-            .insert(Timer {
+            .insert(Resource::Timer(Timer {
                 ready: Arc::new(AtomicBool::new(false)),
                 _task: None,
-            })
+            }))
             .expect("the pending test pollable must fit");
         let ready = created(&mut resources, &bindings);
         let Response::ReadyIndexes(indexes) = resources

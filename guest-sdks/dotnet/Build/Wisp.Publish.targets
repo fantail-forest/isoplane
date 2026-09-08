@@ -36,6 +36,12 @@
     <ItemGroup>
       <LinkerArg Include="&quot;$(WispPalObject)&quot;" />
       <LinkerArg Include="-Wl,--wrap=SystemNative_MksTemps" />
+      <LinkerArg Include="-Wl,--wrap=socket" />
+      <LinkerArg Include="-Wl,--wrap=close" />
+      <LinkerArg Include="-Wl,--wrap=getsockopt" />
+      <LinkerArg Include="-Wl,--wrap=setsockopt" />
+      <LinkerArg Include="-Wl,--wrap=send" />
+      <LinkerArg Include="-Wl,--wrap=sendmsg" />
     </ItemGroup>
     <!-- NativeAOT's incremental link inputs do not include LinkerArg. -->
     <Delete Files="$(NativeBinary)" />

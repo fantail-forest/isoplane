@@ -4,6 +4,14 @@ using System.Runtime.InteropServices;
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConfigProbe>>;
 #elif WISP_FAILING_BOOT
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FailingBoot>>;
+#elif WISP_NETWORK_REFUSAL_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.NetworkRefusalProbe>>;
+#elif WISP_DNS_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.DnsProbe>>;
+#elif WISP_STREAM_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamProbe>>;
+#elif WISP_CONNECT_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConnectProbe>>;
 #elif WISP_TIMER_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.TimerProbe>>;
 #elif WISP_ASYNC_PROBE

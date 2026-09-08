@@ -552,12 +552,14 @@ fn the_adapter_refuses_an_import_outside_the_whitelist() {
     let m = module(
         &e,
         r#"(module
-             (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect"
+             (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.unknown-operation"
                      (func (param i32 i32)))
              (memory (export "memory") 1))"#,
     );
     let mut linker: Linker<Host> = Linker::new(&e);
     let err = pal::link(&mut linker, &m).expect_err("must refuse");
-    println!("{err}");
-    assert!(format!("{err}").contains("not in the WASI PAL whitelist"));
+    assert!(
+        format!("{err}").contains("not in the WASI PAL whitelist"),
+        "an unknown socket import must remain outside the adapter whitelist: {err}"
+    );
 }

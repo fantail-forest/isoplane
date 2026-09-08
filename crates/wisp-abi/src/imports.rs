@@ -51,6 +51,7 @@ pub enum Group {
     Entropy,
     Http,
     Response,
+    Socket,
     Ctx,
 }
 
@@ -105,6 +106,8 @@ const SYNC: ImportKind = ImportKind::Sync;
 const FUT: ImportKind = ImportKind::Future;
 
 pub const IMPORTS: &[ImportDef] = &[
+    ImportDef { buf: BufSpec::None, ..imp!("socket_call", Socket, Sig { params: &[I32, I32, I32], results: &[I64] }, SYNC,
+        "instance-owned outbound TCP operations; canonical scalar packet; connections are authorized by host egress policy") },
     ImportDef { buf: BufSpec::None, ..imp!("poll_call", Clock, Sig { params: &[I32, I32, I32], results: &[I64] }, SYNC,
         "nonblocking resource readiness and coarse deadlines; pending work wakes through host-owned futures") },
     ImportDef { init_visible: true, buf: BufSpec::None,
@@ -239,6 +242,7 @@ mod tests {
     fn init_sandbox_exposes_no_io() {
         let io = [
             Group::Http,
+            Group::Socket,
             Group::Clock,
             Group::Entropy,
         ];

@@ -178,6 +178,7 @@ fn group_label(d: &ImportDef) -> &'static str {
         Entropy => "entropy",
         Http => "egress:http",
         Response => "response",
+        Socket => "sockets",
         Ctx => "ctx",
     }
 }

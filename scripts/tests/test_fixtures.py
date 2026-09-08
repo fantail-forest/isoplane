@@ -29,6 +29,34 @@ class FixtureTests(unittest.TestCase):
         self.assertIn("unknown C# fixture: not-a-fixture", result.stderr,
                       "the fixture error must identify the requested name")
 
+    def test_selecting_one_dotnet_fixture_builds_only_that_fixture(self):
+        import os
+        import shutil
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            guests = root / "guests"
+            project = guests / "dotnet"
+            project.mkdir(parents=True)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            shutil.copy2(ROOT / "guests/build-dotnet.sh", guests / "build-dotnet.sh")
+            shutil.copy2(TOOLS, scripts / TOOLS.name)
+            builder = project / "build.sh"
+            builder.write_text('#!/bin/sh\nmkdir -p "$WISP_OUT_DIR"\nprintf fixture > "$WISP_OUT_DIR/$WISP_OUT.wasm"\n')
+            builder.chmod(0o755)
+            tools = root / "tools"
+            tools.mkdir()
+            dotnet = tools / "dotnet"
+            dotnet.write_text("#!/bin/sh\nexit 0\n")
+            dotnet.chmod(0o755)
+            selected = "wisp_guest_dotnet_connect"
+            result = subprocess.run(["bash", str(guests / "build-dotnet.sh"), "--fixture", selected],
+                                    env=dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"]),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([path.name for path in (project / "out").iterdir()], [selected + ".wasm"],
+                             "fixture selection must not build or reuse another variant")
+
     def test_the_compiler_image_recipe_invalidates_cached_fixtures(self):
         import os
         with tempfile.TemporaryDirectory() as scratch:

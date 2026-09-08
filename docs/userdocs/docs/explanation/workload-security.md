@@ -140,10 +140,13 @@ would not prove that it can advance the root task.
 CPU budgets bound executing work, not time spent parked. The engine's wall-clock
 backstop applies during execution, and `dispatch_blocking`'s caller timeout stops
 waiting for a result without itself terminating the dispatch. Neither establishes
-an end-to-end deadline across parked or hibernated intervals. Ending a dispatch
-also does not currently cancel all reactor work it spawned. These are lifecycle
-and resource-retention gaps; successful SDK use and safe stack capture do not
-close them.
+an end-to-end deadline across parked or hibernated intervals.
+
+Dispatch completion cancels reactor work attached to its host futures. Native
+socket and readiness resources are released when dropped or when their instance
+is reset or discarded, without requiring guest cleanup code to run. These
+cleanup guarantees do not establish an end-to-end deadline for a dispatch that
+remains parked.
 
 ## Implementation and evidence
 

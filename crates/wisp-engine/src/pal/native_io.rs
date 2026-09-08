@@ -1,8 +1,13 @@
 //! Canonical scalar and memory conversion for host-owned native resources.
 
+use wisp_abi::native_io::{network_error::NetworkErrorCode, DnsFailure};
+
 use anyhow::{bail, ensure, Context, Result};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use wisp_abi::native_io::canonical::{Action, Definition, DEFINITIONS, MAX_ARGUMENTS};
-use wisp_abi::native_io::{DurationNanos, Request, ResourceHandle, Response};
+use wisp_abi::native_io::{
+    AddressFamily, ByteCount, DurationNanos, Error, Request, ResourceHandle, Response,
+};
 
 use super::filesystem::{CallerMemory, Memory};
 use super::PalSource;
@@ -54,6 +59,81 @@ pub fn call<T: PalSource>(
     };
     let handle = |index| scalar(index).and_then(|value| Ok(ResourceHandle(u32::try_from(value)?)));
     let request = match definition.action {
+        Action::NoDelay => Request::NoDelay {
+            socket: handle(0)?,
+            enabled: match scalar(1)? {
+                0 => Some(false),
+                1 => Some(true),
+                value if value == u64::from(u32::MAX) => None,
+                _ => bail!("invalid TCP_NODELAY setting"),
+            },
+        },
+        Action::Network => Request::Network,
+        Action::Resolve => {
+            let length = usize::try_from(scalar(2)?)?;
+            ensure!(
+                length <= wisp_abi::imports::MAX_OUT_BUFFER_BYTES,
+                "native DNS name exceeds host buffer limit"
+            );
+            let mut bytes = vec![0; length];
+            CallerMemory(caller).read(u32::try_from(scalar(1)?)?, &mut bytes)?;
+            Request::Resolve {
+                network: handle(0)?,
+                name: String::from_utf8(bytes)?,
+            }
+        }
+        Action::NextAddress => Request::NextAddress(handle(0)?),
+        Action::SocketAddress { peer } => Request::SocketAddress {
+            socket: handle(0)?,
+            peer,
+        },
+        Action::Shutdown => Request::Shutdown {
+            socket: handle(0)?,
+            how: match scalar(1)? {
+                0 => std::net::Shutdown::Read,
+                1 => std::net::Shutdown::Write,
+                2 => std::net::Shutdown::Both,
+                _ => bail!("invalid canonical socket shutdown direction"),
+            },
+        },
+        Action::CreateTcp => Request::CreateTcp(match scalar(0)? {
+            0 => AddressFamily::V4,
+            1 => AddressFamily::V6,
+            _ => bail!("invalid socket address family"),
+        }),
+        Action::Connect => Request::Connect {
+            socket: handle(0)?,
+            network: handle(1)?,
+            destination: destination(arguments)?,
+        },
+        Action::FinishConnect => Request::FinishConnect(handle(0)?),
+        Action::Read => Request::Read {
+            stream: handle(0)?,
+            length: ByteCount(scalar(1)?),
+        },
+        Action::ErrorMessage => Request::ErrorMessage(handle(0)?),
+        Action::TrySend => {
+            let count = usize::try_from(scalar(1)?)?;
+            ensure!(
+                count <= wisp_abi::imports::MAX_OUT_BUFFER_BYTES / 4,
+                "native send pollables exceed host buffer limit"
+            );
+            let pointer = u32::try_from(scalar(0)?)?;
+            let mut pollables = Vec::with_capacity(count);
+            for index in 0..count {
+                let address = pointer
+                    .checked_add((index * 4) as u32)
+                    .context("native send pollable address overflow")?;
+                let mut bytes = [0; 4];
+                CallerMemory(caller).read(address, &mut bytes)?;
+                pollables.push(ResourceHandle(u32::from_le_bytes(bytes)));
+            }
+            let length = usize::try_from(scalar(3)?)?.min(wisp_abi::imports::MAX_OUT_BUFFER_BYTES);
+            let mut bytes = vec![0; length];
+            CallerMemory(caller).read(u32::try_from(scalar(2)?)?, &mut bytes)?;
+            Request::TrySend { pollables, bytes }
+        }
+        Action::Subscribe => Request::Subscribe(handle(0)?),
         Action::Timer { absolute } => {
             let nanos = scalar(0)?;
             let duration = if absolute {
@@ -68,7 +148,10 @@ pub fn call<T: PalSource>(
         }
         Action::ClockResolution => return Ok(wisp_abi::pal::CLOCK_QUANTUM_NS as u64),
         Action::Ready => Request::Ready(handle(0)?),
-        Action::Drop => Request::Drop(handle(0)?),
+        Action::Drop(kind) => Request::Drop {
+            handle: handle(0)?,
+            kind,
+        },
         Action::Poll => {
             let count = usize::try_from(scalar(1)?)?;
             ensure!(
@@ -87,17 +170,116 @@ pub fn call<T: PalSource>(
             }
             Request::Poll(handles)
         }
+        Action::Reject { error_offset, code } => {
+            write_error(&mut CallerMemory(caller), arguments, error_offset, code)?;
+            return Ok(0);
+        }
         Action::Trap => bail!(
             "unsupported native operation {}",
             definition.pal.full_name()
         ),
     };
-    let result = caller.data_mut().native_io(request)?;
+    let result = caller.data_mut().native_io(request);
     match result {
-        Response::Done => Ok(0),
-        Response::Handle(handle) => Ok(u64::from(handle.0)),
-        Response::Ready(ready) => Ok(u64::from(ready)),
-        Response::ReadyIndexes(indexes) => {
+        Ok(Response::NoDelay(enabled)) => Ok(u64::from(enabled)),
+        Ok(Response::Done) => {
+            if matches!(definition.action, Action::Connect | Action::Shutdown) {
+                CallerMemory(caller).write(return_pointer(arguments)?, &[0, 0])?;
+            }
+            Ok(0)
+        }
+        Ok(Response::Handle(handle)) => {
+            if matches!(definition.action, Action::CreateTcp | Action::Resolve) {
+                let mut bytes = [0; 8];
+                bytes[4..].copy_from_slice(&handle.0.to_le_bytes());
+                CallerMemory(caller).write(return_pointer(arguments)?, &bytes)?;
+                Ok(0)
+            } else {
+                Ok(u64::from(handle.0))
+            }
+        }
+        Ok(Response::Streams { input, output }) => {
+            let mut bytes = [0; 12];
+            bytes[4..8].copy_from_slice(&input.0.to_le_bytes());
+            bytes[8..12].copy_from_slice(&output.0.to_le_bytes());
+            CallerMemory(caller).write(return_pointer(arguments)?, &bytes)?;
+            Ok(0)
+        }
+        Ok(Response::Ready(ready)) => Ok(u64::from(ready)),
+        Ok(Response::SocketAddress(address)) => {
+            let mut record = [0; 36];
+            record[8..10].copy_from_slice(&address.port().to_le_bytes());
+            match address {
+                SocketAddr::V4(address) => record[10..14].copy_from_slice(&address.ip().octets()),
+                SocketAddr::V6(address) => {
+                    record[4] = 1;
+                    record[12..16].copy_from_slice(&address.flowinfo().to_le_bytes());
+                    for (index, segment) in address.ip().segments().into_iter().enumerate() {
+                        record[16 + index * 2..18 + index * 2]
+                            .copy_from_slice(&segment.to_le_bytes());
+                    }
+                    record[32..].copy_from_slice(&address.scope_id().to_le_bytes());
+                }
+            }
+            CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
+            Ok(0)
+        }
+        Ok(Response::Address(address)) => {
+            let mut record = [0; 22];
+            if let Some(address) = address {
+                record[2] = 1;
+                match address {
+                    IpAddr::V4(address) => record[6..10].copy_from_slice(&address.octets()),
+                    IpAddr::V6(address) => {
+                        record[4] = 1;
+                        for (index, segment) in address.segments().into_iter().enumerate() {
+                            record[6 + index * 2..8 + index * 2]
+                                .copy_from_slice(&segment.to_le_bytes());
+                        }
+                    }
+                }
+            }
+            CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
+            Ok(0)
+        }
+        Ok(Response::Bytes(bytes)) => {
+            let pointer = if bytes.is_empty() {
+                0
+            } else {
+                let pointer = CallerMemory(caller).allocate(u32::try_from(bytes.len())?)?;
+                ensure!(pointer != 0, "native stream result allocation failed");
+                CallerMemory(caller).write(pointer, &bytes)?;
+                pointer
+            };
+            let mut record = [0; 12];
+            let offset = if matches!(definition.action, Action::ErrorMessage) {
+                0
+            } else {
+                4
+            };
+            record[offset..offset + 4].copy_from_slice(&pointer.to_le_bytes());
+            record[offset + 4..offset + 8]
+                .copy_from_slice(&u32::try_from(bytes.len())?.to_le_bytes());
+            CallerMemory(caller).write(return_pointer(arguments)?, &record[..offset + 8])?;
+            Ok(0)
+        }
+        Ok(Response::Capacity(capacity)) => Ok(capacity.0),
+        Ok(Response::Closed) => {
+            let mut record = [0; 12];
+            record[0] = 1;
+            record[4] = 1;
+            CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
+            Ok(0)
+        }
+        Ok(Response::StreamError(handle)) => {
+            let offset = 4;
+            let mut record = [0; 16];
+            record[0] = 1;
+            record[offset + 4..offset + 8].copy_from_slice(&handle.0.to_le_bytes());
+            CallerMemory(caller).write(return_pointer(arguments)?, &record[..offset + 8])?;
+            Ok(0)
+        }
+        Ok(Response::ReadyIndexes(indexes)) => {
             let bytes: Vec<_> = indexes
                 .iter()
                 .flat_map(|index| index.to_le_bytes())
@@ -111,6 +293,69 @@ pub fn call<T: PalSource>(
             CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
             Ok(0)
         }
+        Err(error) => {
+            if matches!(definition.action, Action::NoDelay) {
+                return Ok(u64::MAX);
+            }
+            if matches!(definition.action, Action::TrySend) {
+                return Ok(if matches!(error, Error::WouldBlock) {
+                    wisp_abi::native_io::canonical::SEND_PENDING
+                } else {
+                    wisp_abi::native_io::canonical::SEND_FAILED
+                });
+            }
+            let offset = match definition.action {
+                Action::CreateTcp
+                | Action::FinishConnect
+                | Action::Resolve
+                | Action::SocketAddress { .. } => 4,
+                Action::NextAddress => 2,
+                Action::Connect | Action::Shutdown => 1,
+                Action::Network
+                | Action::NoDelay
+                | Action::Subscribe
+                | Action::Read
+                | Action::TrySend
+                | Action::ErrorMessage
+                | Action::Timer { .. }
+                | Action::ClockNow
+                | Action::ClockResolution
+                | Action::Poll
+                | Action::Ready
+                | Action::Drop(_)
+                | Action::Reject { .. }
+                | Action::Trap => return Err(error.into()),
+            };
+            let code = match error {
+                Error::Denied(_) => NetworkErrorCode::AccessDenied,
+                Error::Unsupported(_) => NetworkErrorCode::NotSupported,
+                Error::InvalidHandle(_) => NetworkErrorCode::InvalidArgument,
+                Error::InvalidState(_) => NetworkErrorCode::InvalidState,
+                Error::WouldBlock => NetworkErrorCode::WouldBlock,
+                Error::ResourceLimit => NetworkErrorCode::NewSocketLimit,
+                Error::Dns { kind, .. } => match kind {
+                    DnsFailure::NotFound => NetworkErrorCode::NameUnresolvable,
+                    DnsFailure::Temporary => NetworkErrorCode::TemporaryResolverFailure,
+                    DnsFailure::Permanent => NetworkErrorCode::PermanentResolverFailure,
+                    DnsFailure::Timeout => NetworkErrorCode::Timeout,
+                },
+                Error::Connection { kind, .. } => match kind {
+                    std::io::ErrorKind::PermissionDenied => NetworkErrorCode::AccessDenied,
+                    std::io::ErrorKind::TimedOut => NetworkErrorCode::Timeout,
+                    std::io::ErrorKind::AddrNotAvailable => NetworkErrorCode::AddressNotBindable,
+                    std::io::ErrorKind::AddrInUse => NetworkErrorCode::AddressInUse,
+                    std::io::ErrorKind::NetworkUnreachable
+                    | std::io::ErrorKind::HostUnreachable => NetworkErrorCode::RemoteUnreachable,
+                    std::io::ErrorKind::ConnectionRefused => NetworkErrorCode::ConnectionRefused,
+                    std::io::ErrorKind::ConnectionReset => NetworkErrorCode::ConnectionReset,
+                    std::io::ErrorKind::ConnectionAborted => NetworkErrorCode::ConnectionAborted,
+                    // Other OS failures have no more specific WASI network equivalent.
+                    _ => NetworkErrorCode::Unknown,
+                },
+            };
+            write_error(&mut CallerMemory(caller), arguments, offset, code as u8)?;
+            Ok(0)
+        }
     }
 }
 
@@ -118,4 +363,39 @@ fn return_pointer(arguments: &[u64]) -> Result<u32> {
     Ok(u32::try_from(
         *arguments.last().context("native result pointer missing")?,
     )?)
+}
+
+fn write_error(memory: &mut impl Memory, arguments: &[u64], offset: usize, code: u8) -> Result<()> {
+    let mut bytes = [0; 16];
+    bytes[0] = 1;
+    bytes[offset] = code;
+    memory.write(return_pointer(arguments)?, &bytes[..=offset])
+}
+
+fn destination(arguments: &[u64]) -> Result<SocketAddr> {
+    let port = u16::try_from(arguments[3])?;
+    match arguments[2] {
+        0 => Ok(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(
+                u8::try_from(arguments[4])?,
+                u8::try_from(arguments[5])?,
+                u8::try_from(arguments[6])?,
+                u8::try_from(arguments[7])?,
+            )),
+            port,
+        )),
+        1 => {
+            let mut segments = [0; 8];
+            for (segment, value) in segments.iter_mut().zip(&arguments[5..13]) {
+                *segment = u16::try_from(*value)?;
+            }
+            Ok(SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::from(segments),
+                port,
+                u32::try_from(arguments[4])?,
+                u32::try_from(arguments[13])?,
+            )))
+        }
+        _ => bail!("invalid canonical socket address family"),
+    }
 }

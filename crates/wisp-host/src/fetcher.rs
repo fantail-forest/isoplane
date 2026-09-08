@@ -4,9 +4,11 @@
 //! impossible after the check. There is no TLS crate in the workspace, so
 //! `https://` egress is refused rather than downgraded.
 
+use crate::egress::{ConnectionOwner, HostEgressPolicy};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -25,21 +27,19 @@ use crate::bindings::Fetcher;
 /// `http_fetch` future Bounded and therefore lossless across hibernation.
 pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
 
+/// Sends HTTP through the same connection provider as managed TCP.
 pub struct PinnedHttpFetcher {
+    egress: Arc<HostEgressPolicy>,
     bodies: Mutex<HashMap<u32, Incoming>>,
     next_handle: AtomicU32,
     inline_limit: usize,
 }
 
-impl Default for PinnedHttpFetcher {
-    fn default() -> Self {
-        Self::new(INLINE_BODY_LIMIT)
-    }
-}
-
 impl PinnedHttpFetcher {
-    pub fn new(inline_limit: usize) -> Self {
+    /// Use the node's egress provider and inline response threshold.
+    pub fn new(egress: Arc<HostEgressPolicy>, inline_limit: usize) -> Self {
         Self {
+            egress,
             bodies: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(1),
             inline_limit,
@@ -47,12 +47,24 @@ impl PinnedHttpFetcher {
     }
 
     async fn send(
+        &self,
+        owner: &ConnectionOwner,
         addr: SocketAddr,
         req: Request<Full<Bytes>>,
     ) -> Result<Response<Incoming>, FutureError> {
-        let stream = tokio::net::TcpStream::connect(addr)
+        let stream = self
+            .egress
+            .connect(owner, addr)
             .await
-            .map_err(|e| FutureError::Io(format!("connect {addr}: {e}")))?;
+            .map_err(|error| match error {
+                crate::egress::ConnectionError::Denied(reason) => {
+                    FutureError::Denied(reason.to_string())
+                }
+                failure @ (crate::egress::ConnectionError::Io(_)
+                | crate::egress::ConnectionError::PeerMismatch { .. }) => {
+                    FutureError::Io(format!("connect {addr}: {failure}"))
+                }
+            })?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|e| FutureError::Io(format!("handshake: {e}")))?;
@@ -72,6 +84,7 @@ impl PinnedHttpFetcher {
 impl Fetcher for PinnedHttpFetcher {
     async fn fetch(
         &self,
+        owner: ConnectionOwner,
         target: PinnedTarget,
         req: FetchRequest,
     ) -> Result<FetchResponse, FutureError> {
@@ -98,7 +111,7 @@ impl Fetcher for PinnedHttpFetcher {
             .body(Full::new(Bytes::from(req.body)))
             .map_err(|e| FutureError::Denied(format!("bad request: {e}")))?;
 
-        let resp = Self::send(target.addr, request).await?;
+        let resp = self.send(&owner, target.addr, request).await?;
         let status = resp.status().as_u16();
         let headers: Vec<(String, String)> = resp
             .headers()

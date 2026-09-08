@@ -1,18 +1,36 @@
 <Project>
+  <ItemGroup>
+    <DirectPInvoke Include="Wisp.Native" />
+  </ItemGroup>
   <Target Name="WispAdaptRuntime" AfterTargets="ComputeIlcCompileInputs"
           Condition="'$(WispContainerBuild)' != 'true'">
     <PropertyGroup>
       <_WispRuntimeDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)wisp-runtime/'))</_WispRuntimeDirectory>
+      <_WispAdaptedDns>$(_WispRuntimeDirectory)System.Net.NameResolution.dll</_WispAdaptedDns>
+      <_WispAdaptedSockets>$(_WispRuntimeDirectory)System.Net.Sockets.dll</_WispAdaptedSockets>
       <_WispAdaptedCoreLib>$(_WispRuntimeDirectory)System.Private.CoreLib.dll</_WispAdaptedCoreLib>
     </PropertyGroup>
     <ItemGroup>
+      <_WispOriginalDns Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.NameResolution' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
+      <_WispOriginalSockets Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.Sockets' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
       <_WispOriginalCoreLib Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Private.CoreLib'" />
+      <_WispGuestSdk Include="@(IlcReference)" Condition="'%(Filename)' == 'Wisp.Sdk'" />
     </ItemGroup>
     <Error Condition="'@(_WispOriginalCoreLib->Count())' != '1'"
            Text="wisp: expected exactly one pinned NativeAOT CoreLib input." />
+    <Error Condition="'@(_WispOriginalSockets->Count())' != '1'" Text="wisp: expected exactly one pinned sockets runtime input." />
+    <Error Condition="'@(_WispOriginalDns->Count())' != '1'" Text="wisp: expected exactly one pinned DNS runtime input." />
+    <Error Condition="'@(_WispGuestSdk->Count())' != '1'" Code="WISP0080"
+           Text="wisp: expected exactly one resolved Wisp.Sdk assembly for native DNS adaptation." />
     <MakeDir Directories="$(_WispRuntimeDirectory)" />
-    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot;" />
+    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot; &quot;@(_WispOriginalSockets)&quot; &quot;$(_WispAdaptedSockets)&quot; &quot;@(_WispOriginalDns)&quot; &quot;$(_WispAdaptedDns)&quot; &quot;@(_WispGuestSdk)&quot;" />
     <ItemGroup>
+      <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.Sockets'" />
+      <IlcReference Include="$(_WispAdaptedSockets)" />
+      <FileWrites Include="$(_WispAdaptedSockets)" />
+      <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.NameResolution'" />
+      <IlcReference Include="$(_WispAdaptedDns)" />
+      <FileWrites Include="$(_WispAdaptedDns)" />
       <IlcReference Remove="@(_WispOriginalCoreLib)" />
       <IlcReference Include="$(_WispAdaptedCoreLib)" />
       <FileWrites Include="$(_WispAdaptedCoreLib)" />

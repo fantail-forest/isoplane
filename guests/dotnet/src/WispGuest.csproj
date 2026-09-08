@@ -35,6 +35,22 @@
     <DefineConstants>$(DefineConstants);WISP_FAILING_BOOT</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispNetworkRefusalProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_NETWORK_REFUSAL_PROBE</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WispDnsProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_DNS_PROBE</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WispStreamProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_STREAM_PROBE</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WispConnectProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_CONNECT_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispTimerProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_TIMER_PROBE</DefineConstants>
   </PropertyGroup>

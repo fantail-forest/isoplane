@@ -173,3 +173,141 @@ async fn a_nodes_injected_policy_reaches_its_real_outbound_transport() {
         .expect("the owned connection must not hang")
         .expect("the upstream task must not panic");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the native stream test must own its upstream listener");
+    let address = listener
+        .local_addr()
+        .expect("the upstream must have an endpoint");
+    let directory = tempfile::tempdir().expect("the native stream node must own its directory");
+    let node =
+        Node::build_with_destinations(config(directory.path()), Arc::new(OwnedEndpoint(address)))
+            .expect("the real native stream node must assemble");
+    node.real
+        .as_ref()
+        .expect("the node must use real backends")
+        .deploy_version(
+            "quotes",
+            "v1",
+            "acme",
+            manifest("quotes"),
+            &wisp_fixtures::dotnet("wisp_guest_dotnet_stream"),
+            InitSandbox::RuntimeBringUp,
+        )
+        .await
+        .expect("the ordinary NetworkStream fixture must deploy");
+    let rig = serve(node, directory).await;
+    let cell = rig
+        .node
+        .real
+        .as_ref()
+        .expect("the native stream node must retain its cells")
+        .cells()[0]
+        .clone();
+    let proxy = rig.proxy;
+    let request = tokio::spawn(async move {
+        get(
+            proxy,
+            "quotes.wisp.dev",
+            &format!("/{}/{}", address.ip(), address.port()),
+        )
+        .await
+    });
+    let mut stage = "accept";
+    let exchange = async {
+        let (mut server, _) = listener
+            .accept()
+            .await
+            .expect("the managed connect must reach its checked peer");
+        stage = "first hibernation";
+        hibernate_pending_stream(&cell).await;
+        server
+            .write_all(b"wi")
+            .await
+            .expect("the first partial payload must reach the guest");
+        stage = "partial-read hibernation";
+        hibernate_pending_stream(&cell).await;
+        server
+            .write_all(b"sp")
+            .await
+            .expect("the second partial payload must reach the guest");
+        stage = "echo";
+        let mut echoed = [0; 4];
+        server
+            .read_exact(&mut echoed)
+            .await
+            .expect("the managed stream must echo every byte");
+        assert_eq!(
+            &echoed, b"wisp",
+            "the managed stream must preserve partial input without duplication or loss"
+        );
+        let mut extra = [0];
+        assert_eq!(
+            server
+                .read(&mut extra)
+                .await
+                .expect("the peer must observe disposal"),
+            0,
+            "managed disposal must close the host-owned connection"
+        );
+        let response = request.await.expect("the HTTP request task must complete");
+        assert_eq!(
+            response.status, 200,
+            "the real listener must return the managed result"
+        );
+        assert_eq!(
+            response.body, "transferred",
+            "the managed handler must complete its stream exchange"
+        );
+    };
+    let result = tokio::time::timeout(std::time::Duration::from_secs(60), exchange).await;
+    let owners: Vec<_> = cell
+        .resident_ids()
+        .into_iter()
+        .map(|owner| {
+            (
+                owner,
+                cell.instance_state(owner),
+                cell.futures().pending_total(owner),
+                cell.futures().has_ready(owner),
+            )
+        })
+        .collect();
+    assert!(result.is_ok(), "the real-node stream exchange must complete before the deadline: stage={stage}, owners={owners:?}");
+    rig.shutdown().await;
+}
+
+async fn hibernate_pending_stream(cell: &Arc<wisp_host::Cell>) {
+    use wisp_abi::config::LifecycleTier;
+    let owner = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let owners = cell.resident_ids();
+            if let [owner] = owners.as_slice() {
+                if cell.instance_state(*owner) == Some(LifecycleTier::Parked)
+                    && !cell.futures().has_ready(*owner)
+                    && cell.futures().pending_total(*owner) == 2
+                {
+                    match tokio::task::block_in_place(|| cell.force_hibernate(*owner)) {
+                        Ok(_) => break *owner,
+                        Err(wisp_host::hibernate_policy::CaptureRefused::NotParked) => {}
+                        Err(error) => {
+                            panic!("the node must capture its pending native stream: {error:?}")
+                        }
+                    }
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the managed stream must park with its I/O and cancellation waits");
+    assert_eq!(
+        cell.instance_state(owner),
+        Some(LifecycleTier::Hibernated),
+        "the native connection and partial managed read must survive actual hibernation"
+    );
+}

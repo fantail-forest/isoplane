@@ -24,23 +24,37 @@ def verify_missing_factory_fails(source, environment):
                              + result.stdout + result.stderr)
 
 
-def verify_missing_framework_fails(source, environment):
+def verify_publication_refusal(source, environment, target, diagnostic, reason):
     control = source / "Directory.Build.targets"
-    control.write_text('''<Project>
-  <Target Name="RemoveFrameworkRuntimeForNegativeControl" AfterTargets="WispAspNetCoreReferences">
-    <ItemGroup><IlcReference Remove="@(_WispAspNetCoreAssembly)" /></ItemGroup>
-  </Target>
-</Project>
-''')
+    control.write_text(target)
     try:
         result = subprocess.run(["dotnet", "publish", str(source / "AspNet.csproj"),
                                  "-c", "Release", "--disable-build-servers"],
                                 env=environment, capture_output=True, text=True)
-        if result.returncode == 0 or ": AOT analysis error IL1005:" not in result.stdout + result.stderr:
-            raise AssertionError("Unresolvable framework methods must fail publication with IL1005:\n"
-                                 + result.stdout + result.stderr)
+        if result.returncode == 0 or diagnostic not in result.stdout + result.stderr:
+            raise AssertionError(reason + "\n" + result.stdout + result.stderr)
     finally:
         control.unlink()
+
+
+def verify_missing_framework_fails(source, environment):
+    verify_publication_refusal(source, environment, '''<Project>
+  <Target Name="RemoveFrameworkRuntimeForNegativeControl" AfterTargets="WispAspNetCoreReferences">
+    <ItemGroup><IlcReference Remove="@(_WispAspNetCoreAssembly)" /></ItemGroup>
+  </Target>
+</Project>
+''', ": AOT analysis error IL1005:",
+        "Unresolvable framework methods must fail publication with IL1005.")
+
+
+def verify_missing_sdk_fails(source, environment):
+    verify_publication_refusal(source, environment, '''<Project>
+  <Target Name="RemoveSdkForNegativeControl" BeforeTargets="WispAdaptRuntime">
+    <ItemGroup><IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'Wisp.Sdk'" /></ItemGroup>
+  </Target>
+</Project>
+''', "error WISP0080:",
+        "A missing native SDK reference must fail with WISP0080 before runtime adaptation.")
 
 
 def main():
@@ -66,6 +80,7 @@ def main():
         environment = dict(os.environ, NUGET_PACKAGES=str(scratch / "nuget"),
                            WISP_OUT_DIR=os.environ.get("WISP_OUT_DIR", str(GUEST / "out")))
         verify_missing_factory_fails(source, environment)
+        verify_missing_sdk_fails(source, environment)
         verify_missing_framework_fails(source, environment)
         run(str(ROOT / "guest-sdks/dotnet/build-guest.sh"), str(source.parent),
             *sys.argv[1:], env=environment, cwd=scratch)

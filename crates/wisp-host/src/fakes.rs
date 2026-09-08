@@ -548,6 +548,7 @@ impl FakeFetcher {
 impl crate::bindings::Fetcher for FakeFetcher {
     async fn fetch(
         &self,
+        _owner: crate::egress::ConnectionOwner,
         target: PinnedTarget,
         _req: FetchRequest,
     ) -> Result<FetchResponse, FutureError> {

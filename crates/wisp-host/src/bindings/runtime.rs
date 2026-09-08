@@ -24,6 +24,7 @@ pub trait Fetcher: Send + Sync + 'static {
     /// control away.
     async fn fetch(
         &self,
+        owner: crate::egress::ConnectionOwner,
         target: wisp_abi::host::PinnedTarget,
         req: FetchRequest,
     ) -> Result<FetchResponse, FutureError>;

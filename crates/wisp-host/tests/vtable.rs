@@ -18,8 +18,13 @@ use wisp_host::metrics::Metrics;
 use wisp_host::{InstanceId, ModuleId, Resolver};
 
 struct Fixed(Vec<SocketAddr>);
+#[async_trait::async_trait]
 impl Resolver for Fixed {
-    fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<SocketAddr>, String> {
+    async fn resolve(
+        &self,
+        _h: &str,
+        _p: u16,
+    ) -> Result<Vec<SocketAddr>, wisp_host::egress::DnsError> {
         Ok(self.0.clone())
     }
 }
@@ -34,12 +39,22 @@ struct Vt {
 }
 
 fn vtable(limits: Limits, resolve_to: &str, allowlist: Option<Vec<String>>) -> Vt {
+    vtable_with_resolver(
+        limits,
+        Box::new(Fixed(vec![resolve_to
+            .parse()
+            .expect("the fixture address must parse")])),
+        allowlist,
+    )
+}
+
+fn vtable_with_resolver(
+    limits: Limits,
+    resolver: Box<dyn Resolver>,
+    allowlist: Option<Vec<String>>,
+) -> Vt {
     let fetcher = Arc::new(FakeFetcher::default());
-    let egress = Arc::new(HostEgressPolicy::new(
-        Box::new(Fixed(vec![resolve_to.parse().unwrap()])),
-        1024,
-        1 << 30,
-    ));
+    let egress = Arc::new(HostEgressPolicy::new(resolver, 1024, 1 << 30));
     let services = Arc::new(Services {
         egress,
         fetcher: fetcher.clone(),
@@ -373,6 +388,50 @@ async fn entropy_is_never_reused_across_calls_or_instances() {
     }
     assert_eq!(seen.len(), 200, "every draw is distinct");
     assert_eq!(a.ctx.entropy_calls(), 100, "every draw is counted");
+}
+
+struct FailedDns;
+#[async_trait::async_trait]
+impl Resolver for FailedDns {
+    async fn resolve(
+        &self,
+        _: &str,
+        _: u16,
+    ) -> Result<Vec<SocketAddr>, wisp_host::egress::DnsError> {
+        Err(wisp_host::egress::DnsError::NoAddress)
+    }
+}
+
+#[tokio::test]
+async fn an_http_dns_failure_is_io_and_does_not_count_as_a_policy_denial() {
+    let mut v = vtable_with_resolver(Limits::default(), Box::new(FailedDns), None);
+    let id = v.bindings.call_future(ImportCall {
+        import: "http_fetch",
+        payload: &fetch_payload("http://absent.test/"),
+        scalars: [0; 3],
+    });
+    assert!(
+        matches!(settle(&v, id).await, ResultRecord::Err(FutureError::Io(_))),
+        "a resolver failure must be reported as I/O rather than a destination refusal"
+    );
+    let runtime = v.ctx.rt.as_ref().expect("HTTP fetch requires a reactor");
+    assert_eq!(
+        runtime
+            .metrics
+            .egress_denials
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a missing DNS name must not inflate destination policy denials"
+    );
+    assert_eq!(
+        runtime.services.egress.connections(),
+        0,
+        "a failed DNS lookup must hold no connection permit"
+    );
+    assert!(
+        v.fetcher.connected_to.lock().is_empty(),
+        "HTTP must not dial after DNS failed"
+    );
 }
 
 #[derive(Clone, Default)]

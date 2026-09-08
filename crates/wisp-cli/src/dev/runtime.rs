@@ -75,6 +75,11 @@ pub struct LocalApp {
 
 impl LocalApp {
     pub async fn start(prepared: Prepared, data: &Path) -> anyhow::Result<Arc<Self>> {
+        let network = wisp_runtime::network::NetworkLimits::default();
+        let egress = Arc::new(wisp_host::HostEgressPolicy::system(
+            network.connections,
+            network.egress_bytes,
+        )?);
         std::fs::create_dir_all(data)?;
         let scratch = tempfile::tempdir_in(data)?;
         let metrics = Arc::new(wisp_proxy::ProxyMetrics::new());
@@ -110,17 +115,14 @@ impl LocalApp {
             None,
         );
         let durable = DurableBridge::new(registry, di_store, alarms);
-        let network = wisp_runtime::network::NetworkLimits::default();
         let services = Arc::new(wisp_host::cell::Services {
             store,
             durable: durable.clone(),
             leases: durable.clone(),
             sockets,
-            egress: Arc::new(wisp_host::HostEgressPolicy::system(
-                network.connections,
-                network.egress_bytes,
-            )),
+            egress: egress.clone(),
             fetcher: Arc::new(wisp_host::PinnedHttpFetcher::new(
+                egress.clone(),
                 network.inline_response_bytes,
             )),
         });

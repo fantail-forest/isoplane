@@ -19,8 +19,13 @@ const T: Duration = Duration::from_secs(10);
 const PARK_MS: u64 = 600_000;
 
 struct Fixed(Vec<std::net::SocketAddr>);
+#[async_trait::async_trait]
 impl Resolver for Fixed {
-    fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+    async fn resolve(
+        &self,
+        _h: &str,
+        _p: u16,
+    ) -> Result<Vec<std::net::SocketAddr>, wisp_host::egress::DnsError> {
         Ok(self.0.clone())
     }
 }

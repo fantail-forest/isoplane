@@ -83,21 +83,34 @@ fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
 fn the_compat_stock_dotnet_module_passes_v1_too() {
     let wasm = artifact("wisp_guest_dotnet_compat_stock");
     let r = report("wisp_guest_dotnet_compat_stock", &wasm);
-    assert_eq!(r.pal.len(), 44);
+    assert_eq!(
+        r.pal.len(),
+        44,
+        "the compatibility runtime must retain its declared platform imports"
+    );
     assert_eq!(
         r.pal
             .iter()
-            .filter(|p| p.disposition.is_delegated() && !p.module.starts_with("wasi:filesystem/") && p.disposition.capability() != Some(wisp_abi::native_io::canonical::POLL_IMPORT))
+            .filter(|p| p.disposition.is_delegated() && !p.module.starts_with("wasi:filesystem/") && !matches!(p.disposition.capability(), Some(wisp_abi::native_io::canonical::POLL_IMPORT | wisp_abi::native_io::canonical::SOCKET_IMPORT)))
             .count(),
         3,
-        "filesystem and readiness adapters must preserve the existing clock, entropy and environment delegates"
+        "filesystem, readiness and socket adapters must preserve the existing clock, entropy and environment delegates"
     );
-    assert!(r.capabilities.contains(&"entropy_fill"));
+    assert!(
+        r.capabilities.contains(&"entropy_fill"),
+        "the compatibility runtime must retain its entropy capability"
+    );
 
     let engine = Engine::default();
-    let module = Module::new(&engine, &wasm).unwrap();
+    let module = Module::new(&engine, &wasm).expect("the compatibility module must compile");
     let mut linker: Linker<Host> = Linker::new(&engine);
-    assert_eq!(pal::link(&mut linker, &module).unwrap().len(), 44);
+    assert_eq!(
+        pal::link(&mut linker, &module)
+            .expect("the compatibility imports must link")
+            .len(),
+        44,
+        "every admitted compatibility import must compose into the linker"
+    );
 }
 
 #[test]
@@ -307,8 +320,8 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
     caps.dedup();
     assert_eq!(
         caps,
-        vec!["clock_now_coarse", "entropy_fill", "filesystem_call", "poll_call"],
-        "the template may draw only on the declared clock, entropy, filesystem and readiness adapters"
+        vec!["clock_now_coarse", "entropy_fill", "filesystem_call", "poll_call", "socket_call"],
+        "the template may draw only on the declared clock, entropy, filesystem, readiness and socket adapters"
     );
 }
 

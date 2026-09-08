@@ -1,5 +1,6 @@
 <Project Sdk="Wisp.AspNetCore/0.1.0">
   <PropertyGroup>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AssemblyName>wisp_guest_aspnet</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <WispApplicationFactory>AdapterFixture.Application.Create</WispApplicationFactory>

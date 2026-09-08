@@ -24,8 +24,13 @@ const G_NS: u64 = 4_000_000;
 const HARD_NS: u64 = 44_000_000;
 
 struct NoDns;
+#[async_trait::async_trait]
 impl Resolver for NoDns {
-    fn resolve(&self, _h: &str, _p: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+    async fn resolve(
+        &self,
+        _h: &str,
+        _p: u16,
+    ) -> Result<Vec<std::net::SocketAddr>, wisp_host::egress::DnsError> {
         Ok(vec![])
     }
 }

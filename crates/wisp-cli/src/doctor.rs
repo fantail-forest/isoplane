@@ -65,13 +65,16 @@ impl Report {
         out
     }
 
-    /// What the module can do, one sentence per capability group.
+    /// What the module can do through its reachable capabilities.
     pub fn plain_english(&self) -> Vec<String> {
         let mut out = Vec::new();
         let reachable = self.effective_capabilities();
         let has = |g: Group| reachable.iter().any(|i| i.group == g);
         if has(Group::Http) {
             out.push("make outbound HTTP requests (host-side SSRF policy applies)".into());
+        }
+        if reachable.iter().any(|import| import.name == "socket_call") {
+            out.push("open outbound TCP connections and resolve DNS names (host-side egress policy applies)".into());
         }
         if has(Group::Entropy) {
             out.push("draw randomness from the host CSPRNG".into());
@@ -100,6 +103,7 @@ pub fn group_name(g: Group) -> &'static str {
         Group::Entropy => "entropy",
         Group::Http => "http",
         Group::Response => "response",
+        Group::Socket => "socket",
         Group::Ctx => "ctx",
     }
 }
