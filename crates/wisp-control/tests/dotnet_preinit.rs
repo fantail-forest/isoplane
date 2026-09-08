@@ -100,3 +100,25 @@ fn host_linker(engine: &wasmtime::Engine) -> wasmtime::Linker<()> {
     }
     linker
 }
+
+#[test]
+fn a_failed_managed_application_factory_refuses_pre_initialization() {
+    let wasm = wisp_fixtures::dotnet("wisp_guest_dotnet_failing_boot");
+    let result = PreInitializer::new()
+        .with_pal(InitSandbox::RuntimeBringUp)
+        .run(
+            &wasm,
+            &PreInitRequest {
+                module_hash: wisp_engine::ModuleHash::of(&wasm),
+                init_blob: Vec::new(),
+            },
+        );
+    let Err(wisp_control::preinit::PreInitError::Trapped(error)) = result else {
+        panic!(
+            "a failed managed factory must fail deployment rather than produce a broken template"
+        );
+    };
+    let diagnostic = format!("{error:#}");
+    assert!(diagnostic.contains("pre-initialization failed") && diagnostic.contains("FailingBoot"),
+        "the deployment failure must identify the initialization operation and application: {diagnostic}");
+}

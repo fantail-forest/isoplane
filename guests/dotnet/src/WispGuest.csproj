@@ -31,6 +31,10 @@
     <DefineConstants>$(DefineConstants);WISP_CONFIG_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispFailingBoot)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_FAILING_BOOT</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispAsyncProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_ASYNC_PROBE</DefineConstants>
   </PropertyGroup>

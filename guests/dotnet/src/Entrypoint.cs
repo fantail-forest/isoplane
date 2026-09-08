@@ -2,6 +2,8 @@ using System.Runtime.InteropServices;
 
 #if WISP_CONFIG_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConfigProbe>>;
+#elif WISP_FAILING_BOOT
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FailingBoot>>;
 #elif WISP_ASYNC_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.AsyncProbe>>;
 #elif WISP_FILESYSTEM_PROBE

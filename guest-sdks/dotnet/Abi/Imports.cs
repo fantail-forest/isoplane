@@ -18,6 +18,10 @@ internal static unsafe partial class H
     internal static extern int InitConfigGet(byte* ptr, int len);
 
     [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "abort")]
+    internal static extern void Abort(byte* ptr, int len);
+
+    [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "log_emit")]
     internal static extern void LogEmit(int level, byte* ptr, int len);
 

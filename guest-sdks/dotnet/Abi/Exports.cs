@@ -28,10 +28,10 @@ public static unsafe class Exports<TRouter>
     private static void Boot()
     {
         if (_booted) return;
-        _booted = true;
         SynchronizationContext.SetSynchronizationContext(WispSynchronizationContext.Instance);
         _router = new TRouter();
         _router.Boot();
+        _booted = true;
     }
 
     /// <summary>
@@ -137,9 +137,9 @@ public static unsafe class Exports<TRouter>
         {
             return PollStatus.Trapped(TrapCode.TooManyFutures);
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            return PollStatus.Trapped(TrapCode.Panic);
+            return Panic(error);
         }
     }
 
@@ -157,10 +157,9 @@ public static unsafe class Exports<TRouter>
             Wisp.App.EntropyProbe.WarmLikePreInit();
 #endif
         }
-        catch
+        catch (Exception error)
         {
-            // A failed warm-up is not a failed deploy: the work happens on
-            // the first dispatch instead.
+            Abort("pre-initialization", error);
         }
     }
 
@@ -174,9 +173,9 @@ public static unsafe class Exports<TRouter>
         {
             GC.Collect(2, pressure >= 2 ? GCCollectionMode.Aggressive : GCCollectionMode.Forced, blocking: true, compacting: true);
         }
-        catch
+        catch (Exception error)
         {
-            // A failed hint is never a correctness problem.
+            Abort("garbage collection", error);
         }
     }
 
@@ -233,6 +232,16 @@ public static unsafe class Exports<TRouter>
 
         Log(1, "done: status=" + resp.Status.ToString());
         return PollStatus.Done((uint)handle);
+    }
+
+    private static void Abort(string operation, Exception error)
+    {
+        byte[] message = Encoding.UTF8.GetBytes(operation + " failed for " + typeof(TRouter).FullName
+            + ": " + error.GetType().FullName);
+        fixed (byte* pointer = message)
+        {
+            H.Abort(pointer, message.Length);
+        }
     }
 
     /// <summary>
