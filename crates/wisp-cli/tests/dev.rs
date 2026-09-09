@@ -31,6 +31,28 @@ fn dotnet_clean_removes_the_published_guest() {
             command == "publish",
             "publication must create the guest and clean must remove it"
         );
+        let properties = std::process::Command::new("dotnet")
+            .args([
+                "msbuild",
+                "PublishGuest.csproj",
+                "-p:Configuration=Release",
+                "-getProperty:IntermediateOutputPath",
+            ])
+            .current_dir(&app)
+            .output()
+            .expect("query the publication fixture's intermediate directory");
+        assert!(
+            properties.status.success(),
+            "the publication fixture must expose its actual intermediate directory: {}",
+            String::from_utf8_lossy(&properties.stderr)
+        );
+        let intermediate = app.join(String::from_utf8(properties.stdout).unwrap().trim());
+        let clock = intermediate.join("wisp_clock.o");
+        assert_eq!(
+            clock.is_file(),
+            command == "publish",
+            "publication must compile the shared clock object and clean must remove it"
+        );
     }
 }
 
