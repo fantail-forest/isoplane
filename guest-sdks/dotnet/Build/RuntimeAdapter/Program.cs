@@ -63,5 +63,7 @@ if (args.Length == 9)
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.SHA256", "Wisp.Runtime.Sha256");
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.HMACSHA256", "Wisp.Runtime.HmacSha256");
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.RandomNumberGeneratorImplementation", "Wisp.Abi.InstanceRandomness");
+    ManagedMacProvider.Adapt(cryptography, sdk);
+    ManagedPbkdf2.Adapt(cryptography);
     cryptography.Write(args[8]);
 }
