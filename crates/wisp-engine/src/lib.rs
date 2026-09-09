@@ -30,7 +30,9 @@ mod wtconfig;
 
 pub use artifact::ArtifactPaths;
 pub use bindings::{HostBindings, ImportCall};
-pub use budget::{CpuBudget, DispatchOutcome, KillPhase, TrapInfo, TrapKind};
+pub use budget::{
+    CpuBudget, CpuMeasurement, DispatchOutcome, ExecutionLimit, KillPhase, TrapInfo, TrapKind,
+};
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use meter::clock_read_failures;

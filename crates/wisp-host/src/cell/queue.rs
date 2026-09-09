@@ -35,8 +35,7 @@ pub(super) struct DispatchJob {
     pub(super) responder: std::sync::mpsc::SyncSender<DispatchResult>,
     pub(super) stream: Option<Arc<crate::response_transport::ResponseTransport>>,
     pub(super) upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
-    /// `None` when the clock could not be read at admission.
-    pub(super) enqueued_ns: Option<u64>,
+    pub(super) completion: Arc<super::DispatchCompletion>,
 }
 
 /// Two lanes per worker. Wakes jump ahead of new dispatches, and only a
@@ -192,6 +191,23 @@ impl WorkQueue {
         }
     }
 
+    /// Called only after closure and worker joins; a cell without workers still owns its queue.
+    pub(super) fn drain_stopped(&self) -> Vec<DispatchJob> {
+        self.lanes
+            .iter()
+            .flat_map(|lane| {
+                let mut queue = lane.inner.lock();
+                queue.wakes.clear();
+                lane.load.store(0, Ordering::Relaxed);
+                queue
+                    .dispatches
+                    .drain(..)
+                    .map(|job| *job)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     pub(super) fn depth(&self) -> usize {
         self.lanes
             .iter()
@@ -221,21 +237,48 @@ mod queue_tests {
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
         dispatch_id: u64,
     ) -> Box<DispatchJob> {
+        let rec = wisp_abi::dispatch::DispatchRecord {
+            dispatch_id,
+            kind: crate::cell::pool::cell_tests::http(dispatch_id).kind,
+            trace: Default::default(),
+            cancel_future: 0,
+            cpu_budget_ms: 30_000,
+            now_ms: 0,
+        };
+        let activator = Arc::new(crate::fakes::FakeActivator::new(
+            crate::fakes::FakeBehaviour::done(),
+        ));
+        let entry = Arc::new(super::super::ModuleEntry {
+            tenant: "queue-test".into(),
+            limits: Limits::default(),
+            manifest: wisp_abi::config::AppManifest {
+                name: "queue-test".into(),
+                handlers: wisp_abi::config::HandlerConfig {
+                    lifecycle: HandlerLifecycle::Reuse,
+                },
+                bindings: Default::default(),
+                limits: Limits::default(),
+                init_visible_vars: vec![],
+            },
+            pool: InstancePool::new(activator.clone(), HandlerLifecycle::Reuse, 1),
+            activator,
+            meters: Arc::new(crate::meters::Meters::new()),
+        });
+        let completion = super::super::DispatchCompletion::new(
+            entry,
+            &rec,
+            wisp_engine::CpuBudget::http(),
+            Arc::new(crate::mono_ns),
+        )
+        .expect("queue fixture correlation token");
         Box::new(DispatchJob {
             stream: None,
             upload: None,
             module: ModuleId::new("t", "v1"),
             target: Target::Handler { route: "/".into() },
-            rec: wisp_abi::dispatch::DispatchRecord {
-                dispatch_id,
-                kind: crate::cell::pool::cell_tests::http(dispatch_id).kind,
-                trace: Default::default(),
-                cancel_future: 0,
-                cpu_budget_ms: 30_000,
-                now_ms: 0,
-            },
+            rec,
             responder,
-            enqueued_ns: crate::mono_ns(),
+            completion,
         })
     }
 

@@ -86,12 +86,15 @@ impl Cell {
         out
     }
 
-    /// Answers the caller of a panicked dispatch with a 500, if the request in
-    /// `active` is still the one this thread was running; a mismatch means it
-    /// was already cleaned up. The slot's lifecycle is left alone, because
-    /// nothing here knows what state the panic left.
-    pub(super) fn answer_after_panic(&self, holding: Option<(InstanceId, u64)>) {
-        let Some((id, dispatch_id)) = holding else {
+    /// Finalizes only the owner whose invocation unwound. Pointer identity
+    /// also protects a reused slot when callers repeat dispatch identifiers.
+    pub(super) fn answer_after_panic(&self, holding: Option<Arc<DispatchCompletion>>) {
+        let Some(owner) = holding else {
+            return;
+        };
+        let _response_settlement;
+        let _completion = owner.settlement();
+        let Some(id) = owner.instance() else {
             return;
         };
         // One acquisition for the check and the take: `(true, None)` is our
@@ -99,8 +102,8 @@ impl Cell {
         let (mine, tx) = self
             .active
             .with_mut(&id, |a| {
-                if a.dispatch_id == dispatch_id {
-                    (true, a.responder.take())
+                if Arc::ptr_eq(&a.completion, &owner) {
+                    (true, a.responder.take().map(|tx| (tx, a.dispatch_id)))
                 } else {
                     (false, None)
                 }
@@ -109,7 +112,7 @@ impl Cell {
         if !mine {
             return;
         }
-        let _settlement = self.slot(id).and_then(|slot| {
+        _response_settlement = self.slot(id).and_then(|slot| {
             slot.ctx.end_http_dispatch();
             let stream = slot.ctx.responses.lock().transport.take();
             stream.map(|stream| {
@@ -117,17 +120,17 @@ impl Cell {
                 stream.settlement()
             })
         });
-        if let Some(tx) = tx {
-            answer(
-                &tx,
-                DispatchResult {
-                    status: 500,
-                    body: b"host fault: a panic was caught inside this dispatch".to_vec(),
-                    trap: Some("host_panic".into()),
-                    instance: id,
-                    ..DispatchResult::shed(dispatch_id)
-                },
-            );
+        self.rt.futures.end_dispatch(id, owner.dispatch_id());
+        self.rt.futures.release_instance(id);
+        if let Some(slot) = self.slot(id) {
+            slot.ctx.poison_imports();
+            slot.tombstone();
+            slot.discard();
+            self.remember_tombstone(&slot);
+            self.forget(&slot);
+        }
+        if let Some((tx, _dispatch_id)) = tx {
+            owner.answer(&tx, owner.failure_result(500, "host_panic"));
         }
         self.active.remove(&id);
     }

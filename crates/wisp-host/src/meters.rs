@@ -43,6 +43,9 @@ impl Meters {
 
     pub fn record_cpu(&self, out: &DispatchOutcome) {
         self.cpu_ns.fetch_add(out.cpu_ns, Ordering::Relaxed);
+        if out.cpu_measurement == wisp_engine::CpuMeasurement::Incomplete {
+            self.incomplete_intervals.fetch_add(1, Ordering::Relaxed);
+        }
         self.wall_ns.fetch_add(out.wall_ns, Ordering::Relaxed);
     }
 
@@ -153,6 +156,8 @@ mod tests {
             status: PollStatus::Pending,
             completion: Completion::Parked,
             cpu_ns,
+            cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+            execution_limit: None,
             wall_ns,
             trap: None,
             kill: None,
@@ -168,6 +173,8 @@ mod tests {
             status: PollStatus::Done { response: 0 },
             completion: Completion::CleanKill,
             cpu_ns: 53_000_000,
+            cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+            execution_limit: None,
             wall_ns: 53_500_000,
             trap: None,
             kill: Some(wisp_engine::KillPhase::Clean),
@@ -193,6 +200,8 @@ mod tests {
                 status: PollStatus::Done { response: 0 },
                 completion: Completion::CleanKill,
                 cpu_ns: budget_ns + over,
+                cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+                execution_limit: None,
                 wall_ns: 0,
                 trap: None,
                 kill: Some(wisp_engine::KillPhase::Clean),

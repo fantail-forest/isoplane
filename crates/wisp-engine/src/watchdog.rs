@@ -25,6 +25,11 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
+    #[cfg(test)]
+    pub(crate) fn hot_count(&self) -> u64 {
+        *self.hot.lock()
+    }
+
     fn stop(&self) {
         // Synchronize with the idle check so its wait cannot miss this wake.
         let _hot = self.hot.lock();

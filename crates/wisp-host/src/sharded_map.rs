@@ -65,6 +65,13 @@ impl<K: ShardKey + Hash + Eq, V> ShardedMap<K, V> {
         self.shard(k).lock().remove(k)
     }
 
+    pub(crate) fn drain(&self) -> Vec<(K, V)> {
+        self.shards
+            .iter()
+            .flat_map(|shard| shard.map.lock().drain().collect::<Vec<_>>())
+            .collect()
+    }
+
     /// `f` runs with the shard locked, so a reference never leaves the lock.
     pub(crate) fn with<R>(&self, k: &K, f: impl FnOnce(&V) -> R) -> Option<R> {
         self.shard(k).lock().get(k).map(f)

@@ -17,6 +17,7 @@ pub fn clock_read_failures() -> u64 {
 thread_local! {
     /// Thread-local so one test's injected fault is not another test's flake.
     static READS_BEFORE_FAILURE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static FAIL_INTERVAL_END: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -54,6 +55,17 @@ pub(crate) fn try_thread_cpu_nanos() -> Option<u64> {
     measured
 }
 
+/// End-point reading for a returned invocation; an unavailable or regressing clock is incomplete.
+#[inline]
+pub(crate) fn interval_cpu_ns(start: u64) -> Option<u64> {
+    #[cfg(test)]
+    if FAIL_INTERVAL_END.get() {
+        CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return None;
+    }
+    try_thread_cpu_nanos().and_then(|end| end.checked_sub(start))
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("thread CPU clock unavailable; guest execution cannot enforce its CPU budget")]
 pub(crate) struct CpuClockUnavailable;
@@ -81,6 +93,7 @@ mod tests {
     impl Drop for ClockFault {
         fn drop(&mut self) {
             READS_BEFORE_FAILURE.with(|remaining| remaining.set(None));
+            FAIL_INTERVAL_END.set(false);
         }
     }
 
@@ -171,6 +184,11 @@ mod tests {
             0,
             "the refused invocation must not execute guest code"
         );
+        assert_eq!(
+            outcome.cpu_measurement,
+            crate::CpuMeasurement::NotExecuted,
+            "start-clock refusal must distinguish no guest entry from an unmeasured invocation"
+        );
     }
 
     #[test]
@@ -212,12 +230,47 @@ mod tests {
         );
         assert_eq!(
             trap.kind,
-            crate::TrapKind::Other,
-            "a missing clock is not measured budget exhaustion"
+            crate::TrapKind::CpuClockUnavailable,
+            "a missing clock must preserve its typed host-fault reason"
         );
         assert!(
             guest.reset().is_err(),
             "execution interrupted by a clock failure must be tombstoned"
         );
+    }
+
+    #[test]
+    fn an_unreadable_end_clock_marks_the_returned_cpu_floor_incomplete() {
+        let mut guest = instance("", "i32.const 0 i32.const 1 i32.store");
+        let _fault = ClockFault;
+        FAIL_INTERVAL_END.set(true);
+        let outcome = guest.run_initialize(CpuBudget::http());
+        assert_eq!(
+            guest.memory()[0],
+            1,
+            "the end-clock fixture must actually execute guest code"
+        );
+        assert_eq!(
+            outcome.cpu_measurement,
+            crate::CpuMeasurement::Incomplete,
+            "an unavailable end reading must not certify a complete zero CPU measurement"
+        );
+    }
+
+    #[test]
+    fn a_host_panic_releases_the_engine_watchdog_hot_count() {
+        let mut guest = instance(
+            r#"(import "wisp" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,
+            "i64.const 0 call $timer drop",
+        );
+        let watchdog = guest.engine.watchdog.shared().clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            guest.run_initialize(CpuBudget::http())
+        }));
+        assert!(
+            result.is_err(),
+            "the real imported host call must exercise unwinding"
+        );
+        assert_eq!(watchdog.hot_count(), 0, "a caught host panic must not leave the engine watchdog believing guest execution is still hot");
     }
 }

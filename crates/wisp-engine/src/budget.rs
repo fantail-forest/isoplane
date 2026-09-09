@@ -106,6 +106,26 @@ impl KillPhase {
     }
 }
 
+/// Whether a returned CPU value accounts for the entire invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuMeasurement {
+    /// Both clock readings succeeded.
+    Complete,
+    /// No guest invocation was attempted.
+    NotExecuted,
+    /// The CPU value is only a known floor; the end reading was unavailable.
+    Incomplete,
+}
+
+/// The existing execution bound that ended this invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionLimit {
+    /// Thread CPU exhausted its budget, including any grace.
+    Cpu,
+    /// The invocation's wall-clock backstop fired.
+    Wall,
+}
+
 /// The result of one synchronous call into the guest.
 #[derive(Debug, Clone)]
 pub struct DispatchOutcome {
@@ -113,6 +133,10 @@ pub struct DispatchOutcome {
     pub completion: Completion,
     /// Thread CPU over this hot interval, overage included. The compute meter.
     pub cpu_ns: u64,
+    /// Completeness of the CPU floor above.
+    pub cpu_measurement: CpuMeasurement,
+    /// Typed discriminator for a budget or wall backstop outcome.
+    pub execution_limit: Option<ExecutionLimit>,
     /// For observability only.
     pub wall_ns: u64,
     pub trap: Option<TrapInfo>,
@@ -146,6 +170,8 @@ pub enum TrapKind {
     CapabilityViolation,
     /// A call into an instance that a previous kill or trap tombstoned.
     Tombstoned,
+    /// A host CPU clock read failed, so execution could not enforce its budget.
+    CpuClockUnavailable,
     Other,
 }
 
@@ -158,6 +184,7 @@ impl TrapKind {
             TrapKind::OutOfMemory => "out_of_memory",
             TrapKind::CapabilityViolation => "capability_violation",
             TrapKind::Tombstoned => "tombstoned",
+            TrapKind::CpuClockUnavailable => "cpu_clock_unavailable",
             TrapKind::Other => "trap",
         }
     }

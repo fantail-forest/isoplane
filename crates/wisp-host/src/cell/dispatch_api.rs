@@ -136,7 +136,7 @@ impl Cell {
             Some(http) => (Some(http.response), http.upload),
             None => (None, None),
         };
-        let enqueued_ns = crate::mono_ns();
+        let completion = self.completion_owner(module, &rec)?;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let route = target.route();
         let now = crate::now_ms();
@@ -146,6 +146,7 @@ impl Cell {
         };
         let dispatch_id = rec.dispatch_id;
         if self.breaker.check(&key, now).is_err() {
+            completion.reject(super::completion::AdmissionRejection::BreakerOpen);
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
@@ -158,9 +159,11 @@ impl Cell {
             responder: tx,
             stream,
             upload,
-            enqueued_ns,
+            completion,
         });
-        if self.queue.push_dispatch(job).is_err() {
+        if let Err(job) = self.queue.push_dispatch(job) {
+            job.completion
+                .reject(super::completion::AdmissionRejection::QueueUnavailable);
             self.metrics.shed.fetch_add(1, Ordering::Relaxed);
             if let Some(m) = self.meters(module) {
                 m.record_shed();
@@ -196,7 +199,13 @@ impl Cell {
         rec: DispatchRecord,
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
     ) -> bool {
-        let enqueued_ns = crate::mono_ns();
+        let completion = match self.completion_owner(module, &rec) {
+            Ok(completion) => completion,
+            Err(error) => {
+                tracing::warn!(module = %module, %error, "dispatch admission refused");
+                return false;
+            }
+        };
         let now = crate::now_ms();
         let dispatch_id = rec.dispatch_id;
         let key = BreakerKey {
@@ -204,6 +213,7 @@ impl Cell {
             route: target.route(),
         };
         if self.breaker.check(&key, now).is_err() {
+            completion.reject(super::completion::AdmissionRejection::BreakerOpen);
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
@@ -217,11 +227,13 @@ impl Cell {
             responder,
             stream: None,
             upload: None,
-            enqueued_ns,
+            completion,
         });
         match self.queue.push_dispatch(job) {
             Ok(()) => true,
-            Err(_) => {
+            Err(job) => {
+                job.completion
+                    .reject(super::completion::AdmissionRejection::QueueUnavailable);
                 self.metrics.shed.fetch_add(1, Ordering::Relaxed);
                 if let Some(m) = self.meters(module) {
                     m.record_shed();

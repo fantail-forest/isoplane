@@ -3,13 +3,8 @@
 use super::*;
 
 thread_local! {
-    /// The request this execution thread is running, for the panic handler
-    /// in `Cell::exec_loop`, which has to answer a caller whose job unwound.
-    /// The dispatch id is needed because `finish_and_release` hands the
-    /// instance back before the job returns, so a panic after that point
-    /// names a slot another worker may already hold for a new request.
-    pub(super) static IN_FLIGHT: std::cell::Cell<Option<(InstanceId, u64)>> =
-        const { std::cell::Cell::new(None) };
+    pub(super) static IN_FLIGHT: std::cell::RefCell<Option<Weak<DispatchCompletion>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 impl Cell {
@@ -52,31 +47,50 @@ impl Cell {
     }
 
     /// One execution thread. The job body is caught: a host panic inside a
-    /// dispatch costs that request, a counter and a log line rather than the
-    /// thread. What it leaks is the instance, which stays in `residents` and
-    /// in the gauges, and that dispatch's futures; `answer_after_panic`
-    /// removes the `active` entry and answers the caller.
-    fn exec_loop(me: Weak<Self>, queue: Arc<WorkQueue>, worker: usize) {
+    /// dispatch ends that owner and its resources without taking the thread.
+    /// The completion owner outlives unwinding, including acquisition faults
+    /// before an instance exists.
+    pub(super) fn exec_loop(me: Weak<Self>, queue: Arc<WorkQueue>, worker: usize) {
         while let Some(job) = queue.pop(worker) {
             let cell = me.upgrade();
             if let Some(cell) = &cell {
+                let unanswered = match &job {
+                    Job::Dispatch(job) => Some((job.responder.clone(), job.completion.clone())),
+                    Job::Wake(_) => None,
+                };
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                     Job::Dispatch(j) => cell.run_dispatch(*j),
                     Job::Wake(w) => cell.run_wake(w.slot),
                 }));
-                let holding = IN_FLIGHT.replace(None);
+                let holding = IN_FLIGHT.replace(None).and_then(|owner| owner.upgrade());
                 if ran.is_err() {
                     cell.note_caught_panic("dispatch");
-                    cell.answer_after_panic(holding);
+                    if let Some(owner) = &holding {
+                        owner.select(TerminalReason::HostPanic, 500);
+                    }
+                    cell.answer_after_panic(holding.clone());
+                    if let Some((responder, owner)) = unanswered {
+                        owner.select(TerminalReason::HostPanic, 500);
+                        owner.finish();
+                        owner.answer(&responder, owner.failure_result(500, "host_panic"));
+                    }
                 }
+            } else if let Job::Dispatch(job) = job {
+                Self::cancel_queued_dispatch(*job);
             }
             // Released whether the job ran, panicked, or was dropped with the
             // cell, or the lane reads busy to every later placement.
             queue.job_done(worker);
-            if cell.is_none() {
-                return;
-            }
         }
+    }
+
+    fn cancel_queued_dispatch(job: DispatchJob) {
+        job.completion.select(TerminalReason::CellStopped, 503);
+        job.completion.finish();
+        job.completion.answer(
+            &job.responder,
+            job.completion.failure_result(503, "cell_stopped"),
+        );
     }
 
     pub(super) fn note_caught_panic(&self, stage: &'static str) {
@@ -114,86 +128,42 @@ impl Cell {
                 tracing::error!(cell = %self.cfg.name, "a cell thread panicked on its way out");
             }
         }
+        for job in self.queue.drain_stopped() {
+            Self::cancel_queued_dispatch(job);
+        }
+        for (id, request) in self.active.drain() {
+            let owner = request.completion;
+            owner.select(TerminalReason::CellStopped, 503);
+            let stream = self
+                .slot(id)
+                .and_then(|slot| slot.ctx.responses.lock().transport.take());
+            let _response = stream.as_ref().map(|stream| stream.clone().settlement());
+            let _completion = owner.settlement();
+            if let Some(stream) = stream {
+                stream.fail("cell_stopped".into());
+            }
+            if let Some(slot) = self.slot(id) {
+                slot.ctx.end_http_dispatch();
+                slot.ctx.poison_imports();
+                slot.discard();
+                self.forget(&slot);
+            }
+            self.rt.futures.end_dispatch(id, request.dispatch_id);
+            self.rt.futures.release_instance(id);
+            if let Some(sender) = request.responder {
+                owner.answer(&sender, owner.failure_result(503, "cell_stopped"));
+            }
+        }
     }
 }
 
 /// Cell-level tests: what survives a host panic.
 #[cfg(test)]
-mod cell_tests {
+pub(super) mod cell_tests {
+    use super::super::completion::test_events::Events;
     use super::*;
     use crate::fakes::*;
     use wisp_abi::config::{AppManifest, Bindings, HandlerConfig};
-
-    /// Stands in for a host assertion firing under a guest call.
-    struct PanicsOnDispatch;
-
-    impl wisp_engine::InstanceOps for PanicsOnDispatch {
-        fn dispatch(
-            &mut self,
-            _rec: &DispatchRecord,
-            _b: CpuBudget,
-        ) -> wisp_engine::DispatchOutcome {
-            panic!("a host assertion fired underneath a dispatch");
-        }
-        fn wake(
-            &mut self,
-            _f: u64,
-            _r: &wisp_abi::result::ResultRecord,
-            _b: CpuBudget,
-        ) -> wisp_engine::DispatchOutcome {
-            panic!("a host assertion fired underneath a wake");
-        }
-        fn gc_hint(&mut self, _p: u8) -> wisp_engine::DispatchOutcome {
-            unreachable!("this fixture never reaches the hibernation path")
-        }
-        fn reset(&mut self) -> anyhow::Result<()> {
-            Ok(())
-        }
-        fn is_parked(&self) -> bool {
-            false
-        }
-        fn is_capture_eligible(&self) -> bool {
-            false
-        }
-        fn memory(&mut self) -> &mut [u8] {
-            &mut []
-        }
-        fn memory_len(&self) -> usize {
-            0
-        }
-        fn capture_mutable_state(&mut self) -> anyhow::Result<wisp_engine::InstanceImage> {
-            Ok(Default::default())
-        }
-        fn restore_mutable_state(&mut self, _i: &wisp_engine::InstanceImage) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
-    struct PanicActivator {
-        module: ModuleId,
-        template: Arc<Vec<u8>>,
-    }
-
-    impl Activator for PanicActivator {
-        fn module(&self) -> &ModuleId {
-            &self.module
-        }
-        fn module_hash(&self) -> wisp_engine::ModuleHash {
-            wisp_engine::ModuleHash::of(&self.template)
-        }
-        fn abi_rev(&self) -> u32 {
-            wisp_abi::ABI_REV
-        }
-        fn template_image(&self) -> Arc<wisp_engine::MemoryImage> {
-            Arc::new(wisp_engine::MemoryImage::from_dense(&self.template))
-        }
-        fn activate(
-            &self,
-            _b: Box<dyn wisp_engine::HostBindings>,
-        ) -> anyhow::Result<Box<dyn wisp_engine::InstanceOps + Send>> {
-            Ok(Box::new(PanicsOnDispatch))
-        }
-    }
 
     struct NoResolver;
     #[async_trait::async_trait]
@@ -218,7 +188,7 @@ mod cell_tests {
         })
     }
 
-    fn manifest(name: &str) -> AppManifest {
+    pub(in crate::cell) fn manifest(name: &str) -> AppManifest {
         AppManifest {
             name: name.into(),
             handlers: HandlerConfig {
@@ -230,7 +200,7 @@ mod cell_tests {
         }
     }
 
-    fn http(id: u64) -> DispatchRecord {
+    pub(in crate::cell) fn http(id: u64) -> DispatchRecord {
         DispatchRecord {
             dispatch_id: id,
             kind: DispatchKind::Http(wisp_abi::HttpRequest {
@@ -248,7 +218,7 @@ mod cell_tests {
         }
     }
 
-    fn app(cell: &Arc<Cell>, name: &str, behaviour: FakeBehaviour) -> ModuleId {
+    pub(in crate::cell) fn app(cell: &Arc<Cell>, name: &str, behaviour: FakeBehaviour) -> ModuleId {
         let act = Arc::new(FakeActivator::named(ModuleId::new(name, "v1"), behaviour));
         let module = act.module().clone();
         cell.register_module("acme", act, manifest(name))
@@ -256,11 +226,11 @@ mod cell_tests {
         module
     }
 
-    fn cell(cfg: CellConfig) -> Arc<Cell> {
+    pub(in crate::cell) fn cell(cfg: CellConfig) -> Arc<Cell> {
         Cell::new(cfg, services()).expect("a cell starts")
     }
 
-    fn wait_for(mut p: impl FnMut() -> bool, within: Duration) -> bool {
+    pub(in crate::cell) fn wait_for(mut p: impl FnMut() -> bool, within: Duration) -> bool {
         let deadline = Instant::now() + within;
         while Instant::now() < deadline {
             if p() {
@@ -284,10 +254,7 @@ mod cell_tests {
         let bad = ModuleId::new("bad", "v1");
         cell.register_module(
             "acme",
-            Arc::new(PanicActivator {
-                module: bad.clone(),
-                template: Arc::new(vec![0u8; wisp_abi::PAGE_SIZE]),
-            }),
+            super::super::completion::tests::panic_activator(bad.clone()),
             manifest("bad"),
         )
         .expect("register");
@@ -295,8 +262,9 @@ mod cell_tests {
         let good = app(&cell, "good", FakeBehaviour::done());
 
         let route = |p: &str| Target::Handler { route: p.into() };
-        let failed = cell
-            .dispatch_blocking(&bad, route("/go"), http(1), Duration::from_secs(10))
+        let events = Events::default();
+        let failed = events
+            .scope(|| cell.dispatch_blocking(&bad, route("/go"), http(1), Duration::from_secs(10)))
             .expect("the caller must be answered, not left waiting");
         assert_eq!(failed.status, 500, "a host fault is a 500: {failed:?}");
         assert_eq!(
@@ -343,10 +311,30 @@ mod cell_tests {
              cell"
         );
         cell.shutdown();
+        let records = events.records();
+        assert_eq!(
+            records.len(),
+            1,
+            "a caught dispatch panic must emit exactly one completion"
+        );
+        assert_eq!(
+            records[0]["outcome"], "host_panic",
+            "the canonical outcome must name the caught host fault"
+        );
+        assert_eq!(
+            records[0]["tenant"], "acme",
+            "panic attribution must retain the registered tenant"
+        );
+        assert_eq!(
+            records[0]["cpu_complete"], false,
+            "an interrupted invocation cannot claim a complete zero CPU measurement"
+        );
     }
 
     #[test]
     fn a_refused_slot_entry_closes_its_attached_upload_scope() {
+        let events = Events::default();
+        let _trace = events.install();
         use crate::bindings::request_body::RequestBodyScope;
         let cell = cell(CellConfig {
             exec_threads: 0,
@@ -367,7 +355,9 @@ mod cell_tests {
                 target: Target::Handler { route: "/".into() },
                 rec: http(id),
                 responder,
-                enqueued_ns: None,
+                completion: cell
+                    .completion_owner(&module, &http(id))
+                    .expect("registered dispatch owner"),
             });
             response
                 .recv_timeout(Duration::from_secs(10))
@@ -396,6 +386,18 @@ mod cell_tests {
         );
         drop(entered);
         cell.shutdown();
+        let records = events.records();
+        assert_eq!(
+            records.len(),
+            2,
+            "each admitted dispatch must have exactly one final record"
+        );
+        assert!(
+            records
+                .iter()
+                .any(|event| event["outcome"] == "entry_refused"),
+            "the handled terminal refusal must be present in the canonical events"
+        );
     }
 
     #[test]
@@ -423,7 +425,9 @@ mod cell_tests {
                 },
                 rec: http(id),
                 responder,
-                enqueued_ns: None,
+                completion: cell
+                    .completion_owner(&module, &http(id))
+                    .expect("registered dispatch owner"),
             });
             rx.recv_timeout(Duration::from_secs(10))
                 .expect("dispatch answered")
@@ -545,7 +549,11 @@ mod cell_tests {
             "dispatch {LIVE} never reached `active`"
         );
 
-        cell.answer_after_panic(Some((id, LIVE - 1)));
+        let stale = cell
+            .completion_owner(&m, &http(LIVE))
+            .expect("same caller ID with distinct ownership");
+        stale.acquired(id, "warm_parked");
+        cell.answer_after_panic(Some(stale));
         assert!(
             matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
             "a handler holding a stale dispatch id answered the live request's caller"
@@ -556,7 +564,12 @@ mod cell_tests {
             "and it deleted the live request's entry on the way past"
         );
 
-        cell.answer_after_panic(Some((id, LIVE)));
+        let current = cell
+            .active
+            .with(&id, |request| request.completion.clone())
+            .expect("live owner");
+        current.select(TerminalReason::HostPanic, 500);
+        cell.answer_after_panic(Some(current));
         let out = rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the owning handler must answer");

@@ -90,6 +90,11 @@ impl Drop for CallGuard<'_> {
         let mut g = self.slot.inner.lock();
         g.in_call = false;
         match inst {
+            Some(_) if std::thread::panicking() => {
+                g.tombstoned = true;
+                g.state = LifecycleTier::Discarded;
+                g.resident = None;
+            }
             Some(i) => {
                 g.resident = Some(i);
                 // Back to the tier it came from, so a host-initiated call such

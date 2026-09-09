@@ -160,9 +160,7 @@ impl ResponseTransport {
         self.writable.notify_waiters();
     }
 
-    pub(crate) fn fail(&self, error: String) {
-        let mut state = self.state.lock();
-        let notify_owner = !state.settled;
+    fn fail_locked(state: &mut State, error: String) -> bool {
         if state.failure.is_none() {
             state.failure = Some(error);
         }
@@ -170,7 +168,10 @@ impl ResponseTransport {
         if let Some(task) = state.initial_write.take() {
             task.abort();
         }
-        drop(state);
+        !state.settled
+    }
+
+    fn notify_change(&self, notify_owner: bool) {
         self.readable.notify_waiters();
         self.writable.notify_waiters();
         if notify_owner {
@@ -178,6 +179,11 @@ impl ResponseTransport {
                 callback();
             }
         }
+    }
+
+    pub(crate) fn fail(&self, error: String) {
+        let notify_owner = Self::fail_locked(&mut self.state.lock(), error);
+        self.notify_change(notify_owner);
     }
 
     fn cancel(&self) {
@@ -332,19 +338,22 @@ impl PendingWrite {
 }
 impl Drop for PendingWrite {
     fn drop(&mut self) {
-        {
+        let notify_owner = {
             let mut state = self.transport.state.lock();
             state.pending_bytes -= self.bytes.len();
             if state.closing && state.pending_bytes == 0 {
                 state.finished = true;
             }
-        }
-        if !self.completed && self.transport.state.lock().disposition.is_none() {
-            self.transport
-                .fail("a response write was cancelled before acknowledgement".into());
-        }
-        self.transport.readable.notify_waiters();
-        self.transport.writable.notify_waiters();
+            if !self.completed && !state.cancelled && state.disposition.is_none() {
+                ResponseTransport::fail_locked(
+                    &mut state,
+                    "a response write was cancelled before acknowledgement".into(),
+                )
+            } else {
+                false
+            }
+        };
+        self.transport.notify_change(notify_owner);
     }
 }
 
@@ -627,6 +636,47 @@ mod tests {
             stream.state.lock().pending_bytes,
             0,
             "cancelled write payloads must release their ownership"
+        );
+    }
+
+    #[tokio::test]
+    async fn requester_cancellation_before_writer_disposal_stays_cancellation() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let pending = stream.prepare(b"pending".to_vec());
+        drop(response);
+        drop(pending);
+        assert!(
+            stream.is_cancelled(),
+            "requester loss must cancel its transport"
+        );
+        assert!(
+            stream.failure().is_none(),
+            "disposing cancelled work must not replace requester loss with writer failure"
+        );
+        assert_eq!(
+            stream.state.lock().pending_bytes,
+            0,
+            "cancelled payload ownership must be released"
+        );
+    }
+
+    #[tokio::test]
+    async fn writer_abandonment_before_requester_loss_retains_the_failure() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let pending = stream.prepare(b"pending".to_vec());
+        drop(pending);
+        let failure = stream.failure();
+        assert!(
+            failure.is_some(),
+            "abandoning an active write must fail its response"
+        );
+        drop(response);
+        assert_eq!(
+            stream.failure(),
+            failure,
+            "later requester loss must preserve the existing writer failure"
         );
     }
 

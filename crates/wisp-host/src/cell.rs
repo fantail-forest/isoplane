@@ -28,6 +28,7 @@ use crate::pool::{AcquireSource, Activator, InstancePool};
 use crate::sharded_map::ShardedMap;
 use crate::slot::{EnterError, LifecycleTier, Slot};
 
+mod completion;
 mod dispatch_api;
 mod hibernate;
 mod lifecycle;
@@ -43,6 +44,7 @@ pub use dispatch_api::{DispatchResult, Target};
 use dispatch_api::{answer, ends_in_tombstone};
 
 use crate::{InstanceId, ModuleId};
+use completion::{DispatchCompletion, TerminalReason};
 use pool::IN_FLIGHT;
 use queue::{DispatchJob, Job, WakeItem, WorkQueue};
 use registry::{ActiveRequest, ModuleEntry, Resident};
@@ -121,6 +123,7 @@ pub struct Cell {
     modules: RwLock<HashMap<ModuleId, Arc<ModuleEntry>>>,
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, ActiveRequest>,
+    completion_clock: RwLock<completion::CompletionClock>,
     breaker: HangBreaker,
     metrics: Arc<Metrics>,
     hot: AtomicUsize,
@@ -165,6 +168,7 @@ impl Cell {
 
         let cell = Arc::new(Cell {
             me: std::sync::OnceLock::new(),
+            completion_clock: RwLock::new(Arc::new(crate::mono_ns)),
             breaker: HangBreaker::new(cfg.breaker),
             rt,
             runtime: Some(runtime),

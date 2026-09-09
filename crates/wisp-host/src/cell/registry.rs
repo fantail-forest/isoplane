@@ -25,13 +25,7 @@ pub(super) struct ActiveRequest {
     pub(super) module: ModuleId,
     pub(super) route: String,
     pub(super) responder: Option<std::sync::mpsc::SyncSender<DispatchResult>>,
-    /// `None` when the clock could not be read at admission.
-    pub(super) started_ns: Option<u64>,
-    pub(super) cpu_ns: u64,
-    pub(super) wall_ns: u64,
-    pub(super) slices: u32,
-    pub(super) acquired: &'static str,
-    pub(super) budget: CpuBudget,
+    pub(super) completion: Arc<DispatchCompletion>,
 }
 
 impl Cell {
@@ -54,6 +48,10 @@ impl Cell {
         activator: Arc<dyn Activator>,
         manifest: AppManifest,
     ) -> crate::Result<()> {
+        anyhow::ensure!(
+            !tenant.trim().is_empty(),
+            "module registration requires tenant identity"
+        );
         let limits = manifest.limits;
         if !self.admits(tenant) {
             anyhow::bail!(

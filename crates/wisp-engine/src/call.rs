@@ -90,6 +90,15 @@ pub(crate) fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
         return TrapInfo { kind, message };
     }
 
+    if err
+        .downcast_ref::<crate::meter::CpuClockUnavailable>()
+        .is_some()
+    {
+        return TrapInfo {
+            kind: TrapKind::CpuClockUnavailable,
+            message: "host CPU clock unavailable".into(),
+        };
+    }
     if let Some(v) = err.downcast_ref::<crate::state::CapabilityViolation>() {
         return TrapInfo {
             kind: TrapKind::CapabilityViolation,
@@ -170,8 +179,10 @@ pub(crate) fn trap_code_of_kind(k: TrapKind) -> TrapCode {
         TrapKind::GuestPanic => TrapCode::Panic,
         TrapKind::OutOfMemory => TrapCode::OutOfMemory,
         TrapKind::CapabilityViolation => TrapCode::CapabilityViolation,
-        TrapKind::BudgetExceeded | TrapKind::Tombstoned | TrapKind::Sandbox | TrapKind::Other => {
-            TrapCode::Unknown
-        }
+        TrapKind::BudgetExceeded
+        | TrapKind::Tombstoned
+        | TrapKind::Sandbox
+        | TrapKind::CpuClockUnavailable
+        | TrapKind::Other => TrapCode::Unknown,
     }
 }

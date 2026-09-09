@@ -302,6 +302,8 @@ impl FakeInstance {
                         status: PollStatus::Done { response: 0 },
                         completion: Completion::CleanKill,
                         cpu_ns,
+                        cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+                        execution_limit: None,
                         wall_ns: wall.elapsed().as_nanos() as u64,
                         trap: None,
                         kill: Some(wisp_engine::KillPhase::Clean),
@@ -316,6 +318,8 @@ impl FakeInstance {
                     },
                     completion: Completion::BudgetKill,
                     cpu_ns,
+                    cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+                    execution_limit: None,
                     wall_ns: wall.elapsed().as_nanos() as u64,
                     trap: Some(TrapInfo {
                         kind: TrapKind::BudgetExceeded,
@@ -337,6 +341,8 @@ impl FakeInstance {
         DispatchOutcome {
             status,
             completion,
+            cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+            execution_limit: None,
             cpu_ns: self
                 .behaviour
                 .slice_cpu
@@ -408,6 +414,8 @@ impl InstanceOps for FakeInstance {
             status: PollStatus::Done { response: 0 },
             completion: Completion::Done,
             cpu_ns: 0,
+            cpu_measurement: wisp_engine::CpuMeasurement::Complete,
+            execution_limit: None,
             wall_ns: 0,
             trap: None,
             kill: None,

@@ -4,29 +4,25 @@ use super::*;
 
 impl Cell {
     pub(super) fn run_dispatch(self: &Arc<Self>, job: DispatchJob) {
+        let owner = job.completion.clone();
+        owner.in_scope(|| self.run_owned_dispatch(job));
+    }
+
+    fn run_owned_dispatch(self: &Arc<Self>, job: DispatchJob) {
+        IN_FLIGHT.replace(Some(Arc::downgrade(&job.completion)));
         let did = job.rec.dispatch_id;
-        let entry = self.modules.read().get(&job.module).cloned();
-        let Some(entry) = entry else {
-            answer(
-                &job.responder,
-                DispatchResult {
-                    status: 404,
-                    body: b"no such module".to_vec(),
-                    ..DispatchResult::shed(did)
-                },
-            );
-            return;
-        };
+        let entry = job.completion.entry.clone();
 
         let t0 = Instant::now();
-        let acquired = match &job.target {
+        let acquired = tracing::info_span!("acquire").in_scope(|| match &job.target {
             Target::Handler { .. } => self.acquire_handler(&entry),
-        };
+        });
         let (slot, src) = match acquired {
             Ok(v) => v,
             Err(e) => {
-                tracing::error!(error = %e, module = %job.module, "acquisition failed");
-                answer(
+                job.completion.acquisition_failed(&e);
+                job.completion.finish();
+                job.completion.answer(
                     &job.responder,
                     DispatchResult {
                         status: 500,
@@ -40,6 +36,7 @@ impl Cell {
         let _execution = slot.lock_execution();
         self.note_acquired(src, t0.elapsed());
         let acquired = src.label();
+        job.completion.acquired(slot.id, acquired);
 
         let budget = CpuBudget {
             cpu_ms: job.rec.cpu_budget_ms,
@@ -53,10 +50,12 @@ impl Cell {
         // at a time; serialising its messages is the durability layer's job.
         // Counted before `dispatches`, so a 409 is not a dispatch.
         if self.active.contains_key(&slot.id) {
+            job.completion.select(TerminalReason::EntryRefused, 409);
+            job.completion.finish();
             self.metrics
                 .single_writer_refusals
                 .fetch_add(1, Ordering::Relaxed);
-            answer(
+            job.completion.answer(
                 &job.responder,
                 DispatchResult {
                     status: 409,
@@ -85,16 +84,9 @@ impl Cell {
                 module: job.module.clone(),
                 route: job.target.route(),
                 responder: Some(job.responder),
-                started_ns: job.enqueued_ns,
-                cpu_ns: 0,
-                wall_ns: 0,
-                slices: 0,
-                acquired,
-                budget,
+                completion: job.completion.clone(),
             },
         );
-
-        IN_FLIGHT.set(Some((slot.id, job.rec.dispatch_id)));
 
         entry.meters.record_dispatch();
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
@@ -135,6 +127,8 @@ impl Cell {
                 Ok(g) => g,
                 Err(e) => {
                     self.count_enter_refusal(e);
+                    job.completion.select(TerminalReason::EntryRefused, 409);
+                    let _completion = job.completion.settlement();
                     self.respond(
                         &slot,
                         DispatchResult {
@@ -156,9 +150,13 @@ impl Cell {
                     return;
                 }
             };
-            self.hot.fetch_add(1, Ordering::Relaxed);
-            let out = guard.instance().dispatch(&job.rec, budget);
-            self.hot.fetch_sub(1, Ordering::Relaxed);
+            let hot = super::completion::HotInterval::new(&self.hot);
+            job.completion.begin_slice();
+            let out = tracing::info_span!("guest_slice")
+                .in_scope(|| guard.instance().dispatch(&job.rec, budget));
+            drop(hot);
+            job.completion.add_slice(&out);
+            entry.meters.record_cpu(&out);
             if ends_in_tombstone(&out, &slot) {
                 guard.destroy();
             } else {
@@ -169,7 +167,7 @@ impl Cell {
 
         // A completion that landed while the dispatch was Hot waited on the
         // reentrancy rule; hand the instance to the wake lane for it.
-        if !self.settle(&slot, &entry, outcome) {
+        if !self.settle(&slot, &entry, outcome, &job.completion) {
             self.queue_wake(slot.clone());
         }
     }
@@ -205,21 +203,20 @@ impl Cell {
     /// going back through a lane.
     pub(super) fn run_wake(self: &Arc<Self>, slot: Arc<Slot>) {
         let _execution = slot.lock_execution();
-        let Some(dispatch_id) = self.active.with(&slot.id, |request| request.dispatch_id) else {
+        let Some(owner) = self
+            .active
+            .with(&slot.id, |request| request.completion.clone())
+        else {
             return;
         };
-        IN_FLIGHT.set(Some((slot.id, dispatch_id)));
-        let module = self
-            .residents
-            .lock()
-            .get(&slot.id)
-            .map(|r| r.module.clone());
-        let Some(module) = module else { return };
-        let Some(entry) = self.modules.read().get(&module).cloned() else {
-            return;
-        };
+        IN_FLIGHT.replace(Some(Arc::downgrade(&owner)));
+        owner.in_scope(|| self.run_owned_wake(&slot, &owner));
+    }
 
-        if self.end_stream_at_boundary(&slot, &entry, None) {
+    fn run_owned_wake(self: &Arc<Self>, slot: &Arc<Slot>, owner: &Arc<DispatchCompletion>) {
+        let entry = owner.entry.clone();
+
+        if self.end_stream_at_boundary(slot, &entry, None) {
             return;
         }
 
@@ -229,11 +226,17 @@ impl Cell {
             // instance drains the result itself when its call returns.
             let mut guard = match slot.enter() {
                 Ok(g) => g,
-                Err(e @ (EnterError::Busy | EnterError::Tombstoned)) => {
-                    self.count_enter_refusal(e);
+                Err(EnterError::Busy) => {
+                    self.count_enter_refusal(EnterError::Busy);
                     return;
                 }
-                Err(EnterError::NotResident(_)) => return,
+                Err(error @ (EnterError::Tombstoned | EnterError::NotResident(_))) => {
+                    self.count_enter_refusal(error);
+                    owner.select(TerminalReason::EntryRefused, 409);
+                    self.respond(slot, owner.failure_result(409, "instance_unavailable"));
+                    self.finish_and_release(slot, &entry, evict());
+                    return;
+                }
             };
             let Some((fid, res)) = self.rt.futures.take_ready(slot.id) else {
                 // The first wake's loop drained every completion.
@@ -242,26 +245,27 @@ impl Cell {
             // The budget binds the dispatch, so a wake resumes with what
             // earlier slices burned; otherwise a guest could park and wake
             // indefinitely on a fresh budget each time.
-            let budget = self
-                .active
-                .with_mut(&slot.id, |a| a.budget.after(a.cpu_ns))
-                .unwrap_or_else(CpuBudget::http);
+            let budget = owner.next_budget();
 
             slot.ctx
                 .begin_slice(crate::now_ms(), slot.ctx.dispatch_id());
 
             let t0 = Instant::now();
-            self.hot.fetch_add(1, Ordering::Relaxed);
-            let outcome = guard.instance().wake(fid, &res, budget);
-            self.hot.fetch_sub(1, Ordering::Relaxed);
-            if ends_in_tombstone(&outcome, &slot) {
+            let hot = super::completion::HotInterval::new(&self.hot);
+            owner.begin_slice();
+            let outcome = tracing::info_span!("guest_slice")
+                .in_scope(|| guard.instance().wake(fid, &res, budget));
+            drop(hot);
+            owner.add_slice(&outcome);
+            entry.meters.record_cpu(&outcome);
+            if ends_in_tombstone(&outcome, slot) {
                 guard.destroy();
             } else {
                 drop(guard);
             }
             self.metrics.wake_us.record(t0.elapsed().as_micros() as u64);
 
-            if self.settle(&slot, &entry, outcome) {
+            if self.settle(slot, &entry, outcome, owner) {
                 return;
             }
         }
@@ -273,10 +277,8 @@ impl Cell {
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
         out: DispatchOutcome,
+        owner: &Arc<DispatchCompletion>,
     ) -> bool {
-        // The Hot interval, overage included: the meter reads the thread
-        // clock and does not know what a budget is.
-        entry.meters.record_cpu(&out);
         if out.grace_deferrals > 0 {
             self.metrics
                 .grace_deferrals
@@ -301,6 +303,7 @@ impl Cell {
                         .pending_cap_rejections
                         .fetch_add(1, Ordering::Relaxed);
                 }
+                owner.host_trap(code);
                 latched_msg = Some(format!("{code:?}"));
                 Completion::Trapped
             }
@@ -317,9 +320,6 @@ impl Cell {
         let (lifecycle, module, route) = self
             .active
             .with_mut(&slot.id, |req| {
-                req.cpu_ns += out.cpu_ns;
-                req.wall_ns += out.wall_ns;
-                req.slices += 1;
                 (req.lifecycle, req.module.clone(), req.route.clone())
             })
             .unwrap_or_else(|| {
@@ -362,7 +362,7 @@ impl Cell {
                     Some(r) => (r.head.status, r.head.headers.clone(), r.body()),
                     None => (204, vec![], Vec::new()),
                 };
-                let result = self.build_result(slot, status, headers, body, completion, None);
+                let result = owner.result(slot.id, status, headers, body, completion, None);
                 if !streaming_open || slot.ctx.responses.lock().transport.is_none() {
                     self.respond(slot, result);
                 }
@@ -403,8 +403,8 @@ impl Cell {
                      grace window with {:.3} ms of recorded overage",
                     overage as f64 / 1e6
                 );
-                let result = self.build_result(
-                    slot,
+                let result = owner.result(
+                    slot.id,
                     503,
                     vec![],
                     msg.clone().into_bytes(),
@@ -453,8 +453,8 @@ impl Cell {
                     .or_else(|| latched_msg.map(|c| format!("capability_violation: {c}")))
                     .unwrap_or_else(|| "trap".into());
                 let status = if killed { 503 } else { 500 };
-                let result = self.build_result(
-                    slot,
+                let result = owner.result(
+                    slot.id,
                     status,
                     vec![],
                     msg.clone().into_bytes(),
@@ -475,37 +475,10 @@ impl Cell {
         !self.rt.futures.has_ready(slot.id)
     }
 
-    fn build_result(
-        &self,
-        slot: &Arc<Slot>,
-        status: u16,
-        headers: Vec<(String, String)>,
-        body: Vec<u8>,
-        completion: Completion,
-        trap: Option<String>,
-    ) -> DispatchResult {
-        let (dispatch_id, cpu_ns, wall_ns, slices, acquired) = self
-            .active
-            .with(&slot.id, |r| {
-                (r.dispatch_id, r.cpu_ns, r.wall_ns, r.slices, r.acquired)
-            })
-            .unwrap_or((0, 0, 0, 0, "unknown"));
-        DispatchResult {
-            dispatch_id,
-            status,
-            headers,
-            body,
-            completion,
-            cpu_ns,
-            wall_ns,
-            trap,
-            instance: slot.id,
-            acquired,
-            slices,
-        }
-    }
-
     fn respond(&self, slot: &Arc<Slot>, result: DispatchResult) {
+        self.active.with(&slot.id, |request| {
+            request.completion.select_result(&result)
+        });
         if let Some(stream) = slot.ctx.responses.lock().transport.clone() {
             if stream.has_started() {
                 if let Some(error) = &result.trap {
@@ -515,12 +488,17 @@ impl Cell {
                 }
             }
         }
-        let tx = self
+        let response = self
             .active
-            .with_mut(&slot.id, |a| a.responder.take())
+            .with_mut(&slot.id, |request| {
+                request
+                    .responder
+                    .take()
+                    .map(|sender| (request.completion.clone(), sender))
+            })
             .flatten();
-        if let Some(tx) = tx {
-            answer(&tx, result);
+        if let Some((owner, sender)) = response {
+            owner.answer(&sender, result);
         }
     }
 
@@ -530,6 +508,12 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         completion: Option<Completion>,
     ) -> bool {
+        let Some(owner) = self
+            .active
+            .with(&slot.id, |request| request.completion.clone())
+        else {
+            return false;
+        };
         let stream = slot.ctx.responses.lock().transport.clone();
         let Some(stream) = stream else {
             return false;
@@ -545,28 +529,53 @@ impl Cell {
                 return false;
             }
             slot.ctx.poison_imports();
-            let result = self.build_result(slot, status, headers, vec![], Completion::Done, None);
+            let result = owner.result(slot.id, status, headers, vec![], Completion::Done, None);
             self.respond(slot, result);
             self.finish_and_release(slot, entry, evict());
             return true;
         }
         slot.ctx.poison_imports();
         let status = if failure.is_some() { 502 } else { 499 };
+        let terminal = if failure.is_some() {
+            TerminalReason::TransportFailure
+        } else {
+            TerminalReason::RequestCancelled
+        };
+        self.active.with(&slot.id, |request| {
+            request.completion.select(terminal, status)
+        });
         let reason = failure.unwrap_or_else(|| "request_cancelled".into());
-        let result = self.build_result(
-            slot,
+        let result = owner.result(
+            slot.id,
             status,
             vec![],
             vec![],
             Completion::Trapped,
             Some(reason),
         );
-        tracing::info!(tenant = %entry.tenant, instance = %slot.id, dispatch_id = result.dispatch_id,
-            app = %slot.ctx.module.app, version = %slot.ctx.module.version,
-            cpu_ns = result.cpu_ns, wall_ns = result.wall_ns, status, error = ?result.trap, "HTTP response transport ended its dispatch");
         self.respond(slot, result);
         self.finish_and_release(slot, entry, evict());
         true
+    }
+
+    pub(super) fn end_failed_capture(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+        owner: &Arc<DispatchCompletion>,
+        reason: TerminalReason,
+    ) {
+        owner.select(reason, 500);
+        let result = owner.result(
+            slot.id,
+            500,
+            vec![],
+            b"dispatch could not survive capture".to_vec(),
+            Completion::Trapped,
+            Some("capture_failed".into()),
+        );
+        self.respond(slot, result);
+        self.finish_and_release(slot, entry, evict());
     }
 
     fn finish_and_release(
@@ -582,15 +591,17 @@ impl Cell {
             .transport
             .take()
             .map(|stream| stream.settlement());
+        let completion = self
+            .active
+            .with(&slot.id, |request| request.completion.clone());
+        let _completion = completion.as_ref().map(|owner| owner.settlement());
         slot.ctx.end_http_dispatch();
 
         let req = self.active.remove(&slot.id);
         if let Some(r) = &req {
             self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
-            if let (Some(now), Some(started)) = (crate::mono_ns(), r.started_ns) {
-                self.metrics
-                    .request_us
-                    .record(now.saturating_sub(started) / 1_000);
+            if let Some(total_wall_ns) = r.completion.total_wall_ns() {
+                self.metrics.request_us.record(total_wall_ns / 1_000);
             }
             self.metrics.park_ms.record(slot.parked_ms_total());
             entry.meters.record_park(slot.parked_ms_total());

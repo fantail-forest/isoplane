@@ -11,9 +11,9 @@ use wisp_abi::dispatch::DispatchRecord;
 use wisp_abi::result::ResultRecord;
 use wisp_abi::status::PollStatus;
 
-use crate::budget::{CpuBudget, KillPhase, TrapKind};
+use crate::budget::{CpuBudget, CpuMeasurement, ExecutionLimit, KillPhase, TrapKind};
 use crate::call::{call_entry, classify, trap_code_of_kind, trap_kind_of_code};
-use crate::meter::try_thread_cpu_nanos;
+use crate::meter::interval_cpu_ns;
 use crate::state::{Meter, Reentrancy, StoreState};
 use crate::template::TemplateInner;
 use crate::{DispatchOutcome, EngineInner, InstanceImage, Result, TrapInfo};
@@ -74,6 +74,21 @@ impl Entry<'_> {
     }
 }
 
+struct HotInvocation<'a>(&'a crate::watchdog::Shared);
+
+impl<'a> HotInvocation<'a> {
+    fn new(watchdog: &'a crate::watchdog::Shared) -> Self {
+        watchdog.enter_hot();
+        Self(watchdog)
+    }
+}
+
+impl Drop for HotInvocation<'_> {
+    fn drop(&mut self) {
+        self.0.exit_hot();
+    }
+}
+
 impl Instance {
     /// The import that tripped capability policy on the last call, if any.
     /// Pre-initialisation identifies an impure static initialiser by which
@@ -96,6 +111,8 @@ impl Instance {
             },
             completion: Completion::Trapped,
             cpu_ns: 0,
+            cpu_measurement: CpuMeasurement::NotExecuted,
+            execution_limit: None,
             wall_ns: 0,
             trap: Some(TrapInfo { kind, message: why }),
             kill: None,
@@ -154,12 +171,12 @@ impl Instance {
 
         let cpu0 = match crate::meter::thread_cpu_nanos() {
             Ok(cpu0) => cpu0,
-            Err(error) => return self.refuse(TrapKind::Other, error.to_string()),
+            Err(error) => return self.refuse(TrapKind::CpuClockUnavailable, error.to_string()),
         };
 
         // The watchdog only ticks while something is hot, so this precedes
         // arming the deadline.
-        engine.watchdog.shared().enter_hot();
+        let hot = HotInvocation::new(engine.watchdog.shared());
 
         let wall0 = Instant::now();
         live.store.data_mut().begin_slice(
@@ -174,17 +191,16 @@ impl Instance {
 
         let raw = call_entry(live, entry);
 
-        // Metered before classification and teardown, so those are not included.
-        // An unreadable end yields 0, a floor, with the failure counted in
-        // `meter::clock_read_failures`.
-        let cpu_ns = match try_thread_cpu_nanos() {
-            Some(end) => end.saturating_sub(cpu0),
-            None => 0,
+        // Classification and teardown are outside the invocation's CPU meter.
+        let cpu_end = interval_cpu_ns(cpu0);
+        let (cpu_ns, cpu_measurement) = match cpu_end {
+            Some(cpu_ns) => (cpu_ns, CpuMeasurement::Complete),
+            None => (0, CpuMeasurement::Incomplete),
         };
         let wall_ns = wall0.elapsed().as_nanos() as u64;
 
         live.store.set_epoch_deadline(u64::MAX / 2);
-        engine.watchdog.shared().exit_hot();
+        drop(hot);
 
         let (status, trap) = match raw {
             Ok(v) => {
@@ -262,6 +278,13 @@ impl Instance {
             status,
             completion,
             cpu_ns,
+            cpu_measurement,
+            execution_limit: match live.store.data().kill {
+                Some(crate::state::Kill::CpuHard) => Some(ExecutionLimit::Cpu),
+                Some(crate::state::Kill::Wall) => Some(ExecutionLimit::Wall),
+                None if completion == Completion::CleanKill => Some(ExecutionLimit::Cpu),
+                None => None,
+            },
             wall_ns,
             trap,
             kill,
