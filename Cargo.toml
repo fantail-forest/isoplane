@@ -46,6 +46,8 @@ tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 parking_lot = "0.12"
 libc        = "0.2"
+cpu-time    = "1.0"
+windows-sys = { version = "0.61", features = ["Win32_System_Performance"] }
 zstd        = "0.13"
 blake3      = "1"
 hex         = "0.4"

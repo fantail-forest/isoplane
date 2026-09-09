@@ -21,7 +21,7 @@ impl ThreadCpu {
         match (self.start, thread_cpu_ns()) {
             (Some(started), Some(now)) => now.saturating_sub(started) / 1_000_000,
             _ => {
-                tracing::warn!("CLOCK_THREAD_CPUTIME_ID unreadable; reporting init_cpu_ms = 0");
+                tracing::warn!("thread CPU clock unreadable; reporting init_cpu_ms = 0");
                 0
             }
         }
@@ -29,14 +29,9 @@ impl ThreadCpu {
 }
 
 fn thread_cpu_ns() -> Option<u64> {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `ts` is a live, aligned `timespec` owned for the duration of the
-    // call; `clock_gettime` writes it and returns 0 or -1.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
-    (rc == 0).then(|| (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
+    cpu_time::ThreadTime::try_now()
+        .ok()
+        .and_then(|time| u64::try_from(time.as_duration().as_nanos()).ok())
 }
 
 #[cfg(test)]

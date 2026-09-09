@@ -28,7 +28,7 @@ wasmtime = { workspace = true, features = [
     "gc", "gc-null",        # funcref/externref plumbing; the wasm-gc proposal is off
 ] }
 wasmparser = { workspace = true }
-libc = { workspace = true }
+cpu-time = { workspace = true }
 parking_lot = { workspace = true }
 postcard = { workspace = true }
 blake3 = { workspace = true }

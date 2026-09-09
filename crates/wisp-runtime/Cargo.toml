@@ -18,7 +18,7 @@ wasmparser = { workspace = true }
 blake3 = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 wizer = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
+cpu-time = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 
 async-trait = { workspace = true }
@@ -30,7 +30,7 @@ wisp-proxy = { workspace = true, optional = true }
 [features]
 default = []
 local = ["dep:tokio", "dep:wisp-host", "dep:wisp-proxy"]
-preinit = ["dep:wisp-engine", "dep:blake3", "dep:wizer", "dep:libc", "dep:rayon"]
+preinit = ["dep:wisp-engine", "dep:blake3", "dep:wizer", "dep:cpu-time", "dep:rayon"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

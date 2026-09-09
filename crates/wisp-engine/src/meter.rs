@@ -1,8 +1,10 @@
-//! Calling-thread CPU time used to measure active guest execution.
+//! The compute meter: the calling thread's CPU clock, accumulated over a
+//! dispatch's hot intervals. A parked instance holds no thread, so park time
+//! is unreachable by the meter rather than excluded by policy.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Failed clock reads across this process.
+/// Failed clock reads, process-wide, kept distinct from a measured zero.
 static CLOCK_READ_FAILURES: AtomicU64 = AtomicU64::new(0);
 
 /// How many thread-CPU clock reads have failed in this process. Non-zero means
@@ -36,18 +38,13 @@ pub(crate) fn try_thread_cpu_nanos() -> Option<u64> {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
     }
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `ts` is a live, writable, correctly typed timespec and
-    // CLOCK_THREAD_CPUTIME_ID is a valid clock id on Linux.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
-    if rc != 0 {
+    let measured = cpu_time::ThreadTime::try_now()
+        .ok()
+        .and_then(|time| u64::try_from(time.as_duration().as_nanos()).ok());
+    if measured.is_none() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
-        return None;
     }
-    Some((ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
+    measured
 }
 
 /// [`try_thread_cpu_nanos`] with the unreadable case flattened to `0`, for

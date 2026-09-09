@@ -22,6 +22,7 @@ futures = { workspace = true }
 socket2 = { workspace = true }
 hickory-resolver = { workspace = true }
 libc = { workspace = true }
+cpu-time = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
@@ -33,3 +34,6 @@ serde_json = { workspace = true }
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 wisp-fixtures = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }

@@ -1,4 +1,4 @@
-//! The OS clock reads that back the per-dispatch CPU meter: `CLOCK_THREAD_CPUTIME_ID` and `CLOCK_MONOTONIC`.
+//! Native thread CPU and monotonic clocks used by dispatch accounting.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -29,36 +29,68 @@ fn clock_failure_forced() -> bool {
     false
 }
 
-fn read_clock_ns(clock: libc::clockid_t) -> Option<u64> {
-    if clock_failure_forced() {
+fn read_clock_ns(read: impl FnOnce() -> Option<u64>) -> Option<u64> {
+    let measured = if clock_failure_forced() { None } else { read() };
+    if measured.is_none() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
-        return None;
     }
+    measured
+}
+
+/// CPU consumed by the calling thread, or `None` if its clock cannot be read.
+/// Preemption by a neighbour does not consume this thread's CPU budget.
+pub fn try_read_thread_cpu_ns() -> Option<u64> {
+    read_clock_ns(|| {
+        cpu_time::ThreadTime::try_now()
+            .ok()
+            .and_then(|time| u64::try_from(time.as_duration().as_nanos()).ok())
+    })
+}
+
+/// Native monotonic nanoseconds without a per-process origin subtraction.
+/// Returns `None` if the clock cannot be read or its value cannot be represented.
+pub fn try_read_mono_ns() -> Option<u64> {
+    read_clock_ns(monotonic_ns)
+}
+
+#[cfg(unix)]
+fn monotonic_ns() -> Option<u64> {
     let mut ts = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: `ts` is a valid, aligned `timespec` owned for the duration of
-    // the call; `clock_gettime` writes it and returns 0 or -1.
-    let rc = unsafe { libc::clock_gettime(clock, &mut ts) };
-    if rc != 0 {
-        CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
+    // SAFETY: ts is writable and correctly aligned, and CLOCK_MONOTONIC selects
+    // the supported system monotonic clock rather than a process-owned handle.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
         return None;
     }
-    Some((ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64))
+    u64::try_from(ts.tv_sec)
+        .ok()?
+        .checked_mul(1_000_000_000)?
+        .checked_add(u64::try_from(ts.tv_nsec).ok()?)
 }
 
-/// `CLOCK_THREAD_CPUTIME_ID` for the calling thread, or `None` if the clock
-/// could not be read. Per thread, so preemption by a neighbour costs the
-/// tenant nothing.
-pub fn try_read_thread_cpu_ns() -> Option<u64> {
-    read_clock_ns(libc::CLOCK_THREAD_CPUTIME_ID)
+#[cfg(windows)]
+fn monotonic_ns() -> Option<u64> {
+    use windows_sys::Win32::System::Performance::{
+        QueryPerformanceCounter, QueryPerformanceFrequency,
+    };
+    let mut ticks = 0;
+    let mut frequency = 0;
+    // SAFETY: both outputs are live, aligned i64 values; neither operation
+    // retains its pointer or requires a caller-owned resource handle.
+    let read = unsafe {
+        QueryPerformanceCounter(&mut ticks) != 0 && QueryPerformanceFrequency(&mut frequency) != 0
+    };
+    read.then_some(())?;
+    ticks_to_ns(ticks, frequency)
 }
 
-/// Raw `CLOCK_MONOTONIC`, with no per-process origin subtracted, or `None` if
-/// the clock could not be read.
-pub fn try_read_mono_ns() -> Option<u64> {
-    read_clock_ns(libc::CLOCK_MONOTONIC)
+#[cfg(any(windows, test))]
+fn ticks_to_ns(ticks: i64, frequency: i64) -> Option<u64> {
+    let ticks = u128::try_from(ticks).ok()?;
+    let frequency = u128::try_from(frequency).ok()?;
+    u64::try_from(ticks.checked_mul(1_000_000_000)?.checked_div(frequency)?).ok()
 }
 
 /// [`try_read_thread_cpu_ns`] with the unreadable case flattened to `0`, a
@@ -163,6 +195,46 @@ mod tests {
             "the injected fault leaked into another thread"
         );
         FORCE_CLOCK_FAILURE.with(|f| f.set(false));
+    }
+
+    #[test]
+    fn a_monotonic_clock_failure_remains_missing_and_counted() {
+        let before = clock_read_failures();
+        FORCE_CLOCK_FAILURE.with(|failure| failure.set(true));
+        let measured = try_read_mono_ns();
+        FORCE_CLOCK_FAILURE.with(|failure| failure.set(false));
+        assert_eq!(
+            measured, None,
+            "a failed monotonic read must not become a timestamp"
+        );
+        assert!(
+            clock_read_failures() > before,
+            "the monotonic clock failure must be recorded"
+        );
+        assert!(
+            try_read_mono_ns().is_some(),
+            "the native monotonic clock must recover after injection"
+        );
+    }
+
+    #[test]
+    fn native_counter_ticks_preserve_subsecond_precision() {
+        assert_eq!(
+            ticks_to_ns(12_345_678, 10_000_000),
+            Some(1_234_567_800),
+            "counter conversion must retain fractional seconds"
+        );
+    }
+
+    #[test]
+    fn an_unrepresentable_native_counter_is_not_a_timestamp() {
+        for (ticks, frequency) in [(-1, 1), (1, -1), (1, 0), (i64::MAX, 1)] {
+            assert_eq!(
+                ticks_to_ns(ticks, frequency),
+                None,
+                "invalid or overflowing native clock values must remain unreadable"
+            );
+        }
     }
 
     #[test]

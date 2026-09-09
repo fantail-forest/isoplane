@@ -1,6 +1,6 @@
 //! Guest admission, template preparation and host bindings shared by local development and the daemon.
 
-#![cfg_attr(not(feature = "preinit"), forbid(unsafe_code))]
+#![forbid(unsafe_code)]
 
 #[cfg(feature = "preinit")]
 pub mod preinit;

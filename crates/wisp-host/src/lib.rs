@@ -109,7 +109,7 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Raw `CLOCK_MONOTONIC` nanoseconds, with no per-process origin subtracted.
+/// Native monotonic nanoseconds, with no per-process origin subtracted.
 /// `None` is a failed read, counted in [`meters::clock_read_failures`]; every
 /// consumer subtracts on unsigned times, so a read flattened to zero would
 /// produce a duration near 2^64 rather than a missing one.
@@ -117,5 +117,5 @@ pub fn mono_ns() -> Option<u64> {
     meters::try_read_mono_ns()
 }
 
-/// `CLOCK_THREAD_CPUTIME_ID` for the calling thread: the sole compute meter.
+/// Native CPU time for the calling thread: the sole compute meter.
 pub use meters::read_thread_cpu_ns as thread_cpu_ns;
