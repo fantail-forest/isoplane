@@ -27,6 +27,7 @@ pub fn project_module(directory: &Path) -> anyhow::Result<PathBuf> {
 }
 
 pub struct DevOpts {
+    pub json: bool,
     pub port: u16,
     pub watch: PathBuf,
     pub no_watch: bool,
@@ -94,7 +95,7 @@ async fn prepare(
     cancellation: &CancellationToken,
 ) -> anyhow::Result<Option<Prepared>> {
     if let Some(command) = &project.build {
-        println!("  building {}", project.manifest.name);
+        eprintln!("  building {}", project.manifest.name);
         if !build::run(&project.root, command, cancellation).await? {
             return Ok(None);
         }
@@ -136,11 +137,7 @@ async fn serve(
     let mut rebuild: Option<Rebuild> = None;
     let cancellation = CancellationToken::new();
     let mut interval = tokio::time::interval(Duration::from_millis(opts.poll_ms));
-    println!(
-        "  {} {} at http://{address} (local guest execution)",
-        st.green("ready"),
-        project.manifest.name
-    );
+    report(st, opts.json, "ready", &project.manifest.name, address)?;
     let stop = tokio::signal::ctrl_c();
     tokio::pin!(stop);
     loop {
@@ -187,7 +184,7 @@ async fn serve(
                         *current_proxy.write() = app.proxy.clone();
                         project = next_project;
                         observed.module = project.fingerprint(opts.watch_module_only)?.module;
-                        println!("  {} {} at http://{address}", st.green("reloaded"), project.manifest.name);
+                        report(st, opts.json, "reloaded", &project.manifest.name, address)?;
                     }
                     Ok(None) => break,
                     Err(e) => {
@@ -228,4 +225,29 @@ async fn stop_connections(connections: &mut JoinSet<()>) {
             }
         }
     }
+}
+
+fn report(
+    st: &Style,
+    json: bool,
+    event: &str,
+    app: &str,
+    address: std::net::SocketAddr,
+) -> anyhow::Result<()> {
+    if json {
+        use std::io::Write;
+        let mut output = std::io::stdout().lock();
+        serde_json::to_writer(
+            &mut output,
+            &serde_json::json!({ "event": event, "app": app, "url": format!("http://{address}") }),
+        )?;
+        output.write_all(b"\n")?;
+        output.flush()?;
+    } else {
+        println!(
+            "  {} {app} at http://{address} (local guest execution)",
+            st.green(event)
+        );
+    }
+    Ok(())
 }

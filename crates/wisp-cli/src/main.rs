@@ -128,6 +128,7 @@ async fn run() -> anyhow::Result<()> {
             dev(
                 &st,
                 DevOpts {
+                    json: cli.json,
                     port,
                     watch,
                     no_watch,

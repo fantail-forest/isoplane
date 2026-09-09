@@ -7,12 +7,45 @@ internal static class Development
 {
     internal static async Task<int> RunAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
     {
+        if (!options.ShutdownOnInputClose)
+            return await RunOwnedAsync(options, runtime, cancellation);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var inputCancellation = lifetime.Token;
+        using var standardInput = Console.OpenStandardInput();
+        var input = Task.Run(() => WaitForInputCloseAsync(standardInput, inputCancellation));
+        var session = RunOwnedAsync(options, runtime, lifetime.Token);
+        try
+        {
+            if (await Task.WhenAny(session, input) == input)
+            {
+                await input;
+                lifetime.Cancel();
+            }
+            return await session;
+        }
+        finally
+        {
+            // A console read can remain blocked until process exit; it owns no child work.
+            lifetime.Cancel();
+        }
+    }
+
+    private static async Task WaitForInputCloseAsync(Stream standardInput, CancellationToken cancellation)
+    {
+        var input = new byte[1];
+        while (await standardInput.ReadAsync(input.AsMemory(), cancellation) != 0) { }
+    }
+
+    private static async Task<int> RunOwnedAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
-        var result = await BuildAsync(options.Directory, runtime, changes, lifetime.Token);
+        var result = await BuildAsync(options.Directory, runtime, changes, options.Json, lifetime.Token);
         if (result != 0)
             return result;
         List<string> hostArguments = ["dev", "--watch", options.Directory, "--no-build", "--watch-module-only"];
+        if (options.Json)
+            hostArguments.Add("--json");
         if (options.Port is { } port)
             hostArguments.AddRange(["--port", port.ToString()]);
         if (!options.Watch)
@@ -36,7 +69,7 @@ internal static class Development
                 }
                 await changed;
                 using var buildLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                var build = BuildAsync(options.Directory, runtime, changes, buildLifetime.Token);
+                var build = BuildAsync(options.Directory, runtime, changes, options.Json, buildLifetime.Token);
                 if (await Task.WhenAny(build, exited) == exited)
                 {
                     buildLifetime.Cancel();
@@ -59,7 +92,7 @@ internal static class Development
         }
     }
 
-    private static async Task<int> BuildAsync(string directory, string runtime, SourceChanges changes, CancellationToken cancellation)
+    private static async Task<int> BuildAsync(string directory, string runtime, SourceChanges changes, bool json, CancellationToken cancellation)
     {
         var staging = Path.Combine(directory, ".wisp", "publish", Guid.NewGuid().ToString("N"));
         try
@@ -68,7 +101,7 @@ internal static class Development
             changes.SetOutput(module);
             Directory.CreateDirectory(staging);
             var project = Directory.GetFiles(directory, "*.csproj").Single();
-            var result = await Processes.RunAsync("dotnet", ["publish", project, "-c", "Release", "-o", staging, "--disable-build-servers"], directory, runtime, cancellation);
+            var result = await Processes.RunAsync("dotnet", ["publish", project, "-c", "Release", "-o", staging, "--disable-build-servers"], directory, runtime, cancellation, redirectOutput: json);
             if (result != 0)
                 return result;
             var modules = Directory.GetFiles(staging, "*.wasm");

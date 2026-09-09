@@ -13,9 +13,10 @@ internal static class Processes
         return Process.Start(start) ?? throw new InvalidOperationException($"Could not start {executable}.");
     }
 
-    internal static async Task<int> RunAsync(string executable, IEnumerable<string> arguments, string directory, string runtime, CancellationToken cancellation)
+    internal static async Task<int> RunAsync(string executable, IEnumerable<string> arguments, string directory, string runtime, CancellationToken cancellation, bool redirectOutput = false)
     {
-        using var process = Start(executable, arguments, directory, runtime);
+        using var process = Start(executable, arguments, directory, runtime, captureOutput: redirectOutput);
+        var output = redirectOutput ? process.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardError()) : Task.CompletedTask;
         try
         {
             await process.WaitForExitAsync(cancellation);
@@ -24,6 +25,7 @@ internal static class Processes
         finally
         {
             await StopAsync(process);
+            await output;
         }
     }
 

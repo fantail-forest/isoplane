@@ -80,7 +80,7 @@ async fn a_missing_publication_preserves_the_running_app_and_allows_repair() {
     std::fs::write(&replacement, guest("repaired publication")).unwrap();
     std::fs::rename(replacement, app.join("fixture.wasm")).unwrap();
     std::fs::remove_file(app.join("omit-publication")).unwrap();
-    dev.wait_for("reloaded ");
+    dev.wait_event("reloaded");
     assert_eq!(
         body(&dev).await,
         "repaired publication",

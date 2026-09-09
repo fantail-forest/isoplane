@@ -32,3 +32,5 @@ runtime identifier, prefix **tool installation only** with
 `DOTNET_RUNTIME_ID=linux-x64`. The SDK otherwise reports a misleading missing
 `DotnetToolSettings.xml` error. This process-local workaround does not change
 the SDK or the packaged tool.
+
+For process-owning test tools, `dev --json` writes JSON ready/reloaded records with the actual bound `url`; build and runtime diagnostics go to stderr. `--port 0` requests an available port. Opt-in `--shutdown-on-stdin-close` ends the session when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior.

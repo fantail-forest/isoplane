@@ -81,7 +81,7 @@ async fn a_csharp_project_publishes_and_reloads_offline_after_provisioning() {
     let source = app.join("Handler.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(&source, original.replace("first build", "offline rebuild")).unwrap();
-    dev.wait_for("reloaded ");
+    dev.wait_event("reloaded");
     assert_eq!(
         client
             .get(&dev.url)
@@ -109,7 +109,7 @@ async fn a_csharp_project_publishes_and_reloads_offline_after_provisioning() {
         "compiler failure must preserve the last working application"
     );
     std::fs::write(&source, original.replace("first build", "repaired build")).unwrap();
-    dev.wait_for("reloaded ");
+    dev.wait_event("reloaded");
     assert_eq!(
         client
             .get(&dev.url)
@@ -162,7 +162,10 @@ async fn a_csharp_project_publishes_and_reloads_offline_after_provisioning() {
 #[tokio::test]
 async fn local_dev_builds_and_reloads_real_guest_code_and_keeps_a_good_build_on_failure() {
     let dir = tempfile::tempdir().unwrap();
-    manifest(dir.path(), "[dev]\nbuild='cp source.wasm app.wasm'");
+    manifest(
+        dir.path(),
+        "[dev]\nbuild='echo build-output; cp source.wasm app.wasm'",
+    );
     let source = dir.path().join("source.wasm");
     std::fs::write(&source, guest("first build")).unwrap();
     let mut dev = Dev::start(dir.path(), &[]);
@@ -180,7 +183,7 @@ async fn local_dev_builds_and_reloads_real_guest_code_and_keeps_a_good_build_on_
     );
 
     std::fs::write(&source, guest("second build")).unwrap();
-    dev.wait_for("reloaded ");
+    dev.wait_event("reloaded");
     assert_eq!(
         client
             .get(&dev.url)
@@ -210,7 +213,7 @@ async fn local_dev_builds_and_reloads_real_guest_code_and_keeps_a_good_build_on_
     );
 
     std::fs::write(&source, guest("repaired build")).unwrap();
-    dev.wait_for("reloaded ");
+    dev.wait_event("reloaded");
     assert_eq!(
         client
             .get(&dev.url)
@@ -352,7 +355,7 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
         original.replace("Hello from Isoplane!", "Rebuilt by the .NET CLI"),
     )
     .unwrap();
-    dev.wait_for("reloaded ");
+    dev.wait_event("reloaded");
     assert_eq!(
         client
             .get(&dev.url)

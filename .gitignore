@@ -47,3 +47,7 @@ guest-sdks/dotnet/obj/
 
 /guest-sdks/dotnet/RuntimeAdapter.Tests/bin/
 /guest-sdks/dotnet/RuntimeAdapter.Tests/obj/
+/tools/Isoplane.Testing/bin/
+/tools/Isoplane.Testing/obj/
+/tools/Isoplane.Testing.Tests/bin/
+/tools/Isoplane.Testing.Tests/obj/

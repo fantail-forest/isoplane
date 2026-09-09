@@ -91,7 +91,17 @@ pub fn managed_cli(destination: &Path, runtime: &Path, app: &Path) -> PathBuf {
         .arg(&packages)
         .arg("--disable-build-servers"));
     let tools = destination.join("tools");
-    run(Command::new("dotnet")
+    let mut install = Command::new("dotnet");
+    if cfg!(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "gnu"
+    )) && std::env::var_os("DOTNET_RUNTIME_ID").is_none()
+    {
+        // Ubuntu's SDK needs its portable RID to locate packaged tool settings.
+        install.env("DOTNET_RUNTIME_ID", "linux-x64");
+    }
+    run(install
         .args([
             "tool",
             "install",

@@ -26,7 +26,7 @@ impl Dev {
     ) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_wisp"));
         command
-            .args(["--no-color", "dev", "--port", "0", "--watch"])
+            .args(["--no-color", "--json", "dev", "--port", "0", "--watch"])
             .arg(project)
             .args(args);
         Self::spawn(&mut command, output_timeout)
@@ -35,7 +35,7 @@ impl Dev {
     pub fn start_managed(project: &std::path::Path, executable: &std::path::Path) -> Self {
         let mut command = Command::new(executable);
         command
-            .args(["dev", "--port", "0", "--project"])
+            .args(["dev", "--json", "--port", "0", "--project"])
             .arg(project);
         Self::spawn(&mut command, Duration::from_secs(600))
     }
@@ -52,14 +52,20 @@ impl Dev {
         let (tx, lines) = channel();
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
-        for stream in [
-            Box::new(stdout) as Box<dyn std::io::Read + Send>,
-            Box::new(stderr),
+        for (stream, machine) in [
+            (Box::new(stdout) as Box<dyn std::io::Read + Send>, true),
+            (Box::new(stderr) as Box<dyn std::io::Read + Send>, false),
         ] {
             let tx = tx.clone();
             std::thread::spawn(move || {
                 for line in BufReader::new(stream).lines() {
                     let line = line.expect("development output remains readable");
+                    let line =
+                        if machine && serde_json::from_str::<serde_json::Value>(&line).is_err() {
+                            format!("invalid machine output: {line}")
+                        } else {
+                            line
+                        };
                     if tx.send(line).is_err() {
                         break;
                     }
@@ -73,19 +79,24 @@ impl Dev {
             url: String::new(),
             output_timeout,
         };
-        let ready = dev.wait_for("ready ");
-        dev.url = ready
-            .split(" at ")
-            .nth(1)
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .into();
+        let ready = dev.wait_event("ready");
+        dev.url = ready["url"].as_str().unwrap().into();
         dev
     }
 
+    pub fn wait_event(&mut self, event: &str) -> serde_json::Value {
+        let line = self.wait_matching(event, |line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .is_ok_and(|record| record["event"] == event)
+        });
+        serde_json::from_str(&line).unwrap()
+    }
+
     pub fn wait_for(&mut self, marker: &str) -> String {
+        self.wait_matching(marker, |line| line.contains(marker))
+    }
+
+    fn wait_matching(&mut self, marker: &str, matches: impl Fn(&str) -> bool) -> String {
         let deadline = std::time::Instant::now() + self.output_timeout;
         let mut output = String::new();
         loop {
@@ -93,9 +104,13 @@ impl Dev {
                 .lines
                 .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
                 .unwrap_or_else(|e| panic!("local dev never reported {marker:?}: {e}\n{output}"));
+            assert!(
+                !line.starts_with("invalid machine output:"),
+                "dev --json must reserve stdout for structured records: {line}"
+            );
             output.push_str(&line);
             output.push('\n');
-            if line.contains(marker) {
+            if matches(&line) {
                 return line;
             }
         }
@@ -197,7 +212,7 @@ fn dropping_the_harness_closes_descendant_output_pipes() {
     let mut command = Command::new("sh");
     command.args([
         "-c",
-        "sleep 60 & printf 'ready cleanup at http://127.0.0.1:1\\n'; wait",
+        r#"sleep 60 & printf '{"event":"ready","url":"http://127.0.0.1:1"}\n'; wait"#,
     ]);
     let mut dev = Dev::spawn(&mut command, Duration::from_secs(10));
     let (_, unused) = channel();
