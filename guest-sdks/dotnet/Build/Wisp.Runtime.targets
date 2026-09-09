@@ -6,12 +6,14 @@
           Condition="'$(WispContainerBuild)' != 'true'">
     <PropertyGroup>
       <_WispRuntimeDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)wisp-runtime/'))</_WispRuntimeDirectory>
+      <_WispAdaptedBouncyCastle>$(_WispRuntimeDirectory)BouncyCastle.Cryptography.dll</_WispAdaptedBouncyCastle>
       <_WispAdaptedCryptography>$(_WispRuntimeDirectory)System.Security.Cryptography.dll</_WispAdaptedCryptography>
       <_WispAdaptedDns>$(_WispRuntimeDirectory)System.Net.NameResolution.dll</_WispAdaptedDns>
       <_WispAdaptedSockets>$(_WispRuntimeDirectory)System.Net.Sockets.dll</_WispAdaptedSockets>
       <_WispAdaptedCoreLib>$(_WispRuntimeDirectory)System.Private.CoreLib.dll</_WispAdaptedCoreLib>
     </PropertyGroup>
     <ItemGroup>
+      <_WispOriginalBouncyCastle Include="@(IlcReference)" Condition="'%(Filename)' == 'BouncyCastle.Cryptography'" />
       <_WispOriginalCryptography Include="$(NuGetPackageRoot)/microsoft.netcore.app.runtime.linux-x64/$(WispManagedRuntimeVersion)/runtimes/linux-x64/lib/net10.0/System.Security.Cryptography.dll" />
       <_WispOriginalDns Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.NameResolution' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
       <_WispOriginalSockets Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.Sockets' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
@@ -25,8 +27,9 @@
     <Error Condition="'@(_WispOriginalCryptography->Count())' != '1'" Text="wisp: expected exactly one pinned cryptography runtime input." />
     <Error Condition="'@(_WispGuestSdk->Count())' != '1'" Code="WISP0080"
            Text="wisp: expected exactly one resolved Wisp.Sdk assembly for runtime adaptation." />
+    <Error Condition="'@(_WispOriginalBouncyCastle->Count())' != '1'" Text="wisp: expected exactly one pinned BouncyCastle input." />
     <MakeDir Directories="$(_WispRuntimeDirectory)" />
-    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot; &quot;@(_WispOriginalSockets)&quot; &quot;$(_WispAdaptedSockets)&quot; &quot;@(_WispOriginalDns)&quot; &quot;$(_WispAdaptedDns)&quot; &quot;@(_WispGuestSdk)&quot; &quot;@(_WispOriginalCryptography)&quot; &quot;$(_WispAdaptedCryptography)&quot;" />
+    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot; &quot;@(_WispOriginalSockets)&quot; &quot;$(_WispAdaptedSockets)&quot; &quot;@(_WispOriginalDns)&quot; &quot;$(_WispAdaptedDns)&quot; &quot;@(_WispGuestSdk)&quot; &quot;@(_WispOriginalCryptography)&quot; &quot;$(_WispAdaptedCryptography)&quot; &quot;@(_WispOriginalBouncyCastle)&quot; &quot;$(_WispAdaptedBouncyCastle)&quot;" />
     <ItemGroup>
       <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.Sockets'" />
       <IlcReference Include="$(_WispAdaptedSockets)" />
@@ -37,6 +40,9 @@
       <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Security.Cryptography'" />
       <IlcReference Include="$(_WispAdaptedCryptography)" />
       <FileWrites Include="$(_WispAdaptedCryptography)" />
+      <IlcReference Remove="@(_WispOriginalBouncyCastle)" />
+      <IlcReference Include="$(_WispAdaptedBouncyCastle)" />
+      <FileWrites Include="$(_WispAdaptedBouncyCastle)" />
       <IlcReference Remove="@(_WispOriginalCoreLib)" />
       <IlcReference Include="$(_WispAdaptedCoreLib)" />
       <FileWrites Include="$(_WispAdaptedCoreLib)" />

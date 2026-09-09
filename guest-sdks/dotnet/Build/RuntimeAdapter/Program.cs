@@ -1,7 +1,7 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-if (args.Length != 2 && args.Length != 4 && args.Length != 9)
+if (args.Length != 2 && args.Length != 4 && args.Length != 9 && args.Length != 11)
     throw new ArgumentException("Expected pinned runtime input/output pairs.");
 if (Path.GetFullPath(args[0]) == Path.GetFullPath(args[1]))
     throw new ArgumentException("The runtime package is immutable; output must be a separate file.");
@@ -48,7 +48,7 @@ if (args.Length >= 4)
     sockets.Write(args[3]);
 }
 
-if (args.Length == 9)
+if (args.Length >= 9)
 {
     if (Path.GetFullPath(args[4]) == Path.GetFullPath(args[5]))
         throw new ArgumentException("The DNS runtime package is immutable; output must be separate.");
@@ -67,4 +67,14 @@ if (args.Length == 9)
     ManagedPbkdf2.Adapt(cryptography);
     CertificateValues.Adapt(cryptography, sdk);
     cryptography.Write(args[8]);
+}
+
+if (args.Length == 11)
+{
+    if (Path.GetFullPath(args[9]) == Path.GetFullPath(args[10]))
+        throw new ArgumentException("The BouncyCastle package is immutable; output must be separate.");
+    using var bouncyCastle = BouncyCastleRandomness.Read(args[9]);
+
+    BouncyCastleRandomness.Adapt(bouncyCastle);
+    bouncyCastle.Write(args[10]);
 }

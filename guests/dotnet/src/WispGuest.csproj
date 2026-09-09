@@ -31,6 +31,10 @@
     <DefineConstants>$(DefineConstants);WISP_STREAMING_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispBcRandomnessProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_BC_RANDOMNESS_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispCertificateProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_CERTIFICATE_PROBE</DefineConstants>
   </PropertyGroup>
