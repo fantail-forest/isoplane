@@ -1,7 +1,7 @@
 //! Response building. A guest may return `done` with a streaming response
-//! handle and keep appending chunks through write futures under `WaitUntil`,
-//! so a response outlives the call that returned `done` and the `fresh` reset
-//! is owed after the response and any `WaitUntil` work, not after `done`.
+//! handle and keep appending chunks while that response remains unfinished.
+//! The `fresh` reset is owed after the response finishes, not after the call
+//! that initially returned its handle.
 
 use std::collections::HashMap;
 

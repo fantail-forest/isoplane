@@ -304,8 +304,6 @@ impl Cell {
                 let streaming_open = response
                     .as_ref()
                     .is_some_and(|r| r.head.streaming && !r.finished);
-                let outstanding = self.rt.futures.wait_until_outstanding(slot.id);
-                let wait_until = outstanding || streaming_open;
 
                 let (status, headers, body) = match &response {
                     Some(r) => (r.head.status, r.head.headers.clone(), r.body()),
@@ -314,8 +312,8 @@ impl Cell {
                 let result = self.build_result(slot, status, headers, body, completion, None);
                 self.respond(slot, result);
 
-                match decide(lifecycle, completion, wait_until) {
-                    RequestEnd::RetainedForWaitUntil => {
+                match decide(lifecycle, completion, streaming_open) {
+                    RequestEnd::RetainedForStreaming => {
                         slot.park(crate::now_ms());
                         !self.rt.futures.has_ready(slot.id)
                     }
@@ -364,7 +362,7 @@ impl Cell {
                         self.finish_and_release(slot, entry, d);
                         true
                     }
-                    RequestEnd::Parked | RequestEnd::RetainedForWaitUntil => {
+                    RequestEnd::Parked | RequestEnd::RetainedForStreaming => {
                         self.park_after_slice(slot)
                     }
                 }

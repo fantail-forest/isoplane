@@ -63,8 +63,10 @@ not mean every byte of a guest's stack storage has been zeroed.
 The engine tracks WASM invocation depth using Wasmtime call hooks. Parked state
 requires a returned `Pending`, zero invocation depth, and no tombstone. Capture
 eligibility also allows surviving completed instances; it requires zero depth
-and is checked again after the pre-capture GC hint. A guest's claim that it is
-waiting cannot authorize capture while its invocation is still executing.
+and is checked again after any pre-capture GC hint. Only an unfinished dispatch
+can receive that callback; completed-instance capture does not execute guest
+code. A guest's claim that it is waiting cannot authorize capture while its
+invocation is still executing.
 
 A module can spin, return misleading results, or return `Pending` without
 arranging useful work. It cannot turn that into permission for the host to

@@ -241,7 +241,7 @@ impl Cell {
         self.breaker.clear_module(module);
     }
 
-    /// `(warm, pooled-fresh)`. An instance is Parked from the moment the guest
+    /// `(warm, awaiting reset)`. An instance is Parked from the moment the guest
     /// returns but acquirable only once `finish_and_release` pools it, and the
     /// response leaves before that.
     pub fn idle_instances(&self, module: &ModuleId) -> Option<(usize, usize)> {

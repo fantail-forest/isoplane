@@ -55,7 +55,7 @@ pub enum TaskOutcome {
     /// The dispatch is complete. Carries the response handle, or 0 for
     /// trigger types that have no response (an alarm does not).
     Response(u32),
-    /// A `wait_until` / background task finished. Does not complete a dispatch.
+    /// A concurrent task finished. Does not complete a dispatch.
     Done,
     /// Unrecoverable at the ABI layer.
     Trap(TrapCode),
@@ -172,7 +172,7 @@ impl Runtime {
             self.parks += 1;
             PollStatus::Pending
         } else {
-            // Everything, including `wait_until` work, is finished.
+            // All scheduled tasks have finished.
             PollStatus::Done { response: 0 }
         }
     }
@@ -266,9 +266,9 @@ pub(crate) fn run() -> PollStatus {
     with(|rt| rt.status())
 }
 
-/// Spawn background work that outlives the response (`ctx.WaitUntil`).
-/// The host keeps the instance alive because the task still holds registered
-/// host futures, not because of anything the guest does after returning.
+/// Schedule concurrent work within the active dispatch.
+/// Completing the response cancels host futures; callers must await any
+/// required task results before completing.
 pub fn spawn(fut: impl Future<Output = ()> + 'static) {
     let boxed: BoxTask = Box::pin(async move {
         fut.await;
@@ -510,28 +510,6 @@ mod tests {
             deliver(b, ResultRecord::Ok(Vec::new()));
             assert_eq!(run(), PollStatus::Done { response: 1 });
             assert_eq!(with(|rt| rt.polls), 3, "one poll per wake, no spinning");
-        });
-    }
-
-    /// `ctx.WaitUntil`: the response is `done` immediately, and the
-    /// background task keeps being driven by later wakes.
-    #[test]
-    fn wait_until_work_outlives_the_response() {
-        testing::with_stub_host(|host| {
-            reset();
-            let bg = host.next_future_id();
-            spawn(async move {
-                let f: HostFuture<()> = crate::future::new_unit(bg);
-                let _ = f.await;
-            });
-            spawn_main(Box::pin(async { TaskOutcome::Response(5) }));
-            assert_eq!(run(), PollStatus::Done { response: 5 });
-            deliver(bg, ResultRecord::Ok(Vec::new()));
-            assert_eq!(
-                run(),
-                PollStatus::Done { response: 0 },
-                "background work drained"
-            );
         });
     }
 

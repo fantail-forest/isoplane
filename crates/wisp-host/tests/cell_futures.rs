@@ -173,8 +173,8 @@ fn the_pending_futures_cap_traps_the_guest() {
     paid.cell.shutdown();
 }
 
-#[test]
-fn wait_until_keeps_the_instance_alive_past_the_response() {
+#[tokio::test]
+async fn wait_until_fails_the_dispatch_and_releases_its_work() {
     let r = rig(CellConfig::for_test("waituntil"));
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("bg", "v1"),
@@ -204,20 +204,26 @@ fn wait_until_keeps_the_instance_alive_past_the_response() {
             T,
         )
         .unwrap();
+    tokio::time::timeout(T, async {
+        while r.cell.metrics_raw().request_us.count() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the failed dispatch never settled");
     assert_eq!(
-        out.status, 202,
-        "the response must not wait for the background work"
-    );
-    assert_eq!(out.body, b"accepted");
-
-    let instance = out.instance;
-    assert!(
-        r.cell.futures().wait_until_outstanding(instance),
-        "the WaitUntil work was dropped"
+        out.status, 500,
+        "unsupported background retention must fail the request"
     );
     assert_eq!(
-        r.cell.instance_state(instance),
-        Some(wisp_host::LifecycleTier::Parked)
+        out.completion,
+        wisp_engine::Completion::Trapped,
+        "wait_until must trap even if the guest returns done"
+    );
+    assert_eq!(
+        r.cell.futures().live_futures(),
+        0,
+        "the failed dispatch must release all host futures"
     );
     r.cell.shutdown();
 }

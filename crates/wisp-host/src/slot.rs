@@ -310,7 +310,7 @@ impl Slot {
     }
 
     /// Reset to template contents. Refused for a tombstone, because an `Ok`
-    /// here is what `InstancePool::release` takes as "reusable".
+    /// here is what pool acquisition takes as "reusable".
     pub fn reset(&self) -> anyhow::Result<()> {
         let mut g = self.inner.lock();
         if g.tombstoned {

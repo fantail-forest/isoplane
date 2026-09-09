@@ -95,7 +95,9 @@ impl Cell {
         self: &Arc<Self>,
         entry: &Arc<ModuleEntry>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
-        let (slot, src) = entry.pool.acquire(|id| self.make_ctx(entry, id))?;
+        let (slot, src) = entry
+            .pool
+            .acquire_with_cleanup(|id| self.make_ctx(entry, id), |slot| self.forget(slot))?;
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
         let mut residents = self.residents.lock();
         residents.entry(slot.id).or_insert_with(|| Resident {

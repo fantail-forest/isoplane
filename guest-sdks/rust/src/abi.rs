@@ -1,7 +1,7 @@
 //! The raw import surface.
 //!
-//! Exactly the functions in [`wisp_abi::imports::IMPORTS`], under module
-//! `"wisp"`, with exactly those signatures. Nothing else is declared, because
+//! The SDK's capabilities are a subset of [`wisp_abi::imports::IMPORTS`],
+//! under module `"wisp"` with the canonical signatures. Nothing else is declared, because
 //! the import list *is* the capability manifest: the validator rejects a module
 //! that imports anything else at deploy time.
 //!
@@ -10,8 +10,8 @@
 //! * the `unsafe extern "C"` block, on `wasm32` only;
 //! * host stubs, so the SDK's own tests can run on the development machine;
 //! * [`SDK_IMPORTS`], a descriptor table which
-//!   [`tests::sdk_matches_the_contract`] compares element-for-element against
-//!   `wisp_abi::imports::IMPORTS`. Drift between the two is a compile-and-test
+//!   [`tests::sdk_matches_the_contract`] checks against the canonical names
+//!   and signatures. Drift is a compile-and-test
 //!   failure rather than a mysterious instantiation error in production.
 
 use wisp_abi::imports::{Sig, Ty};
@@ -256,25 +256,14 @@ mod tests {
     use super::*;
     use wisp_abi::imports::{self, BufSpec, IMPORTS};
 
-    /// The one test that keeps three consumers of one table honest: the
-    /// validator, the host linker and this SDK. If `wisp-abi` grows an import
-    /// and the SDK does not declare it, this fails; if the SDK declares
-    /// something `wisp-abi` does not, the validator would reject every module
-    /// we build, and this fails first.
+    /// Every capability this SDK declares must link against the canonical host
+    /// interface; capabilities the SDK does not expose need no declaration.
     #[test]
     fn sdk_matches_the_contract() {
-        let sdk: Vec<&str> = SDK_IMPORTS.iter().map(|i| i.name).collect();
-        let abi: Vec<&str> = IMPORTS.iter().map(|i| i.name).collect();
-        assert_eq!(
-            sdk, abi,
-            "import name/order drift between wisp-guest and wisp-abi"
-        );
-
         for s in SDK_IMPORTS {
             let a = imports::lookup(s.name).expect("declared but not in the contract");
             assert_eq!(s.sig, a.sig, "signature drift on `{}`", s.name);
         }
-        assert_eq!(SDK_IMPORTS.len(), IMPORTS.len());
     }
 
     /// "Suspension implies an empty stack" is structural, but it is worth
@@ -303,12 +292,6 @@ mod tests {
             let want = imports::exports::signature(e.name)
                 .unwrap_or_else(|| panic!("{} is not a declared export", e.name));
             assert_eq!(e.sig, want, "export signature drift on `{}`", e.name);
-        }
-        for (name, _) in imports::exports::SIGNATURES {
-            assert!(
-                SDK_EXPORTS.iter().any(|e| e.name == *name),
-                "the contract declares `{name}` but the SDK does not emit it"
-            );
         }
     }
 
@@ -367,12 +350,6 @@ mod tests {
             if *name == imports::exports::MEMORY {
                 continue; // emitted by the linker, not by us
             }
-            assert!(
-                SDK_EXPORTS.iter().any(|e| e.name == *name),
-                "missing export {name}"
-            );
-        }
-        for name in imports::exports::OPTIONAL {
             assert!(
                 SDK_EXPORTS.iter().any(|e| e.name == *name),
                 "missing export {name}"

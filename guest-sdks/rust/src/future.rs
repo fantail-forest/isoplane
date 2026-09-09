@@ -40,7 +40,7 @@ impl<T> HostFuture<T> {
         }
     }
 
-    /// The identifier of the host-owned future.
+    /// The host-side id identifying this dispatch-scoped future.
     pub fn id(&self) -> u64 {
         self.id
     }

@@ -6,8 +6,6 @@
 //! **returns** `pending` with an empty stack, and the response only appears
 //! after a wake.
 
-use std::future::Future;
-
 use wisp_guest::testing::{with_stub_host, RESP_HANDLE};
 use wisp_guest::wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use wisp_guest::wisp_abi::result::ResultRecord;
@@ -20,12 +18,10 @@ impl Handler for Api {
     fn new() -> Self {
         Api
     }
-    fn handle(&'static self, req: Request, _ctx: Ctx) -> impl Future<Output = Response> + 'static {
-        async move {
-            match Clock::delay(1).await {
-                Ok(()) => Response::new(200, req.path.into_bytes()),
-                Err(e) => Response::text(502, format!("{e}")),
-            }
+    async fn handle(&'static self, req: Request, _ctx: Ctx) -> Response {
+        match Clock::delay(1).await {
+            Ok(()) => Response::new(200, req.path.into_bytes()),
+            Err(e) => Response::text(502, format!("{e}")),
         }
     }
 }

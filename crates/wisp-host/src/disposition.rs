@@ -39,9 +39,8 @@ impl Disposition {
 pub enum RequestEnd {
     /// The guest returned `pending`; a wake will resume the request.
     Parked,
-    /// The response is delivered but `WaitUntil` work is outstanding; under
-    /// `fresh` the reset is still owed.
-    RetainedForWaitUntil,
+    /// The streaming response is unfinished; under `fresh` the reset is still owed.
+    RetainedForStreaming,
     Disposed(Disposition),
 }
 
@@ -50,7 +49,7 @@ pub enum RequestEnd {
 pub fn decide(
     lifecycle: HandlerLifecycle,
     completion: Completion,
-    wait_until_outstanding: bool,
+    streaming_open: bool,
 ) -> RequestEnd {
     match completion {
         Completion::Parked => RequestEnd::Parked,
@@ -60,8 +59,8 @@ pub fn decide(
         // Cooperative termination resets dispatch state under either reuse policy.
         Completion::CleanKill => RequestEnd::Disposed(Disposition(DispositionKind::Reset)),
         Completion::Done => {
-            if wait_until_outstanding {
-                return RequestEnd::RetainedForWaitUntil;
+            if streaming_open {
+                return RequestEnd::RetainedForStreaming;
             }
             match lifecycle {
                 HandlerLifecycle::Fresh => {
@@ -104,8 +103,8 @@ mod tests {
         );
         assert_eq!(
             decide(HandlerLifecycle::Fresh, Done, true),
-            RequestEnd::RetainedForWaitUntil,
-            "the reset is owed only after WaitUntil work completes"
+            RequestEnd::RetainedForStreaming,
+            "the reset is owed only after the streaming response finishes"
         );
         assert_eq!(
             decide(HandlerLifecycle::Reuse, Done, false),

@@ -304,40 +304,28 @@ async fn logging_costs_the_tenant_cpu() {
 }
 
 #[tokio::test]
-async fn wait_until_keeps_work_alive_past_the_response() {
+async fn wait_until_is_a_capability_violation_and_does_not_retain_work() {
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
     let id = v.bindings.call_future(ImportCall {
         import: "clock_deadline_in",
         payload: &[],
         scalars: [60_000, 0, 0],
     });
+    v.bindings.call_sync(ImportCall {
+        import: "wait_until",
+        payload: &[],
+        scalars: [id, 0, 0],
+    });
     assert_eq!(
-        v.bindings.call_sync(ImportCall {
-            import: "wait_until",
-            payload: &[],
-            scalars: [id, 0, 0]
-        }),
-        0
+        v.ctx.take_trap(),
+        Some(wisp_abi::status::TrapCode::CapabilityViolation),
+        "void wait_until must reject through the trap channel, not an ignored return value"
     );
-    assert!(
-        v.futures.wait_until_outstanding(v.ctx.instance),
-        "the marked future is outstanding"
-    );
-
     v.futures.end_dispatch(v.ctx.instance, 1);
-    assert!(
-        v.futures.wait_until_outstanding(v.ctx.instance),
-        "WaitUntil work must survive the end of the dispatch"
-    );
-
     assert_eq!(
-        v.bindings.call_sync(ImportCall {
-            import: "wait_until",
-            payload: &[],
-            scalars: [99_999, 0, 0]
-        }),
-        -1,
-        "marking an unknown future is refused"
+        v.futures.live_futures(),
+        0,
+        "a rejected retention request must not keep its timer alive"
     );
 }
 

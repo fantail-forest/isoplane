@@ -37,10 +37,9 @@ impl Ctx {
     }
 
 
-    /// Background work with more than one step. The host keeps the instance
-    /// alive because the task holds registered host futures -- so a `spawn`ed
-    /// task that awaits nothing is simply run to completion before the next
-    /// return to the host.
+    /// Schedule concurrent work during the active dispatch.
+    /// The response does not wait for this task; arrange to await its result
+    /// before completing. Host futures are cancelled when the dispatch ends.
     pub fn spawn(&self, fut: impl Future<Output = ()> + 'static) {
         rt::spawn(fut);
     }

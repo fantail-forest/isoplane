@@ -21,7 +21,9 @@ costs do not disappear when the guest returns.
 The `reuse` lifecycle may retain guest memory between dispatches. Treat that
 memory as temporary: the host can reset or discard it.
 
-The `fresh` lifecycle starts each dispatch from template state.
+The `fresh` lifecycle starts each dispatch from template state. A completed
+instance may wait for the next acquisition before its reset runs; release need
+not execute initialization.
 
 Discarded guest state does not resume. A later activation starts from its
 template.

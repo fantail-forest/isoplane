@@ -10,7 +10,6 @@
 //! * a skipped unit runs lazily, per instance, on first touch -- ordinary
 //!   .NET lazy-cctor semantics.
 
-use std::future::Future;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use wisp_guest::testing::with_stub_host;
@@ -46,8 +45,8 @@ impl Handler for App {
     fn new() -> Self {
         App
     }
-    fn handle(&'static self, _r: Request, _c: Ctx) -> impl Future<Output = Response> + 'static {
-        async { Response::status(204) }
+    async fn handle(&'static self, _r: Request, _c: Ctx) -> Response {
+        Response::status(204)
     }
 }
 
@@ -135,6 +134,7 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
 /// an init unit is safe to pre-run and the *parsed* result is what lands in the
 /// template. This drives the real probe-then-fill idiom against a host stub
 /// that mirrors `wisp_control::preinit`.
+#[cfg(feature = "json")]
 #[test]
 fn config_is_readable_at_init_and_only_at_init() {
     with_stub_host(|host| {

@@ -33,6 +33,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+wat = { workspace = true }
 wisp-fixtures = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

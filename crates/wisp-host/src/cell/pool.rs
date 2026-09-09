@@ -352,12 +352,19 @@ mod cell_tests {
         };
         let first = run(1);
         let slot = cell.slot(first.instance).expect("pooled instance");
-        assert!(slot.is_pristine(), "the completed fresh dispatch was reset");
+        assert!(
+            !slot.is_pristine(),
+            "a completed dispatch must wait for acquisition before resetting"
+        );
+        let entry = cell.modules.read().get(&module).cloned().unwrap();
+        let (slot, _) = cell.acquire_handler(&entry).expect("reset candidate");
+        assert!(slot.is_pristine(), "acquisition must reset the candidate");
         cell.run_wake(slot.clone());
         assert!(
             slot.is_pristine(),
             "a stale wake must not enter reset guest memory"
         );
+        entry.pool.release(slot, crate::disposition::policy_reset());
         let next = run(2);
         assert_eq!(
             next.instance, first.instance,
@@ -372,6 +379,47 @@ mod cell_tests {
             vec![0],
             "the next dispatch observes template state"
         );
+        cell.shutdown();
+    }
+
+    #[test]
+    fn a_failed_deferred_reset_removes_the_discarded_resident() {
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("reset-failure-cleanup")
+        });
+        let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
+        let module = act.module().clone();
+        let mut manifest = manifest("reset-failure-cleanup");
+        manifest.handlers.lifecycle = HandlerLifecycle::Fresh;
+        cell.register_module("acme", act, manifest)
+            .expect("register");
+        let entry = cell.modules.read().get(&module).cloned().unwrap();
+        let (candidate, _) = cell.acquire_handler(&entry).expect("initial activation");
+        entry
+            .pool
+            .release(candidate.clone(), crate::disposition::policy_reset());
+        candidate.tombstone();
+        let (replacement, source) = cell.acquire_handler(&entry).expect("fallback activation");
+        assert_eq!(
+            source,
+            AcquireSource::Activated,
+            "a refused reset requires activation"
+        );
+        assert!(
+            !cell.index.lock().contains_key(&candidate.id),
+            "discarded reset candidates must leave the instance index"
+        );
+        let residents = cell.residents.lock();
+        assert!(
+            !residents.contains_key(&candidate.id),
+            "discarded reset candidates must not retain resident metadata"
+        );
+        assert!(
+            residents.contains_key(&replacement.id),
+            "fallback activation must register its replacement"
+        );
+        drop(residents);
         cell.shutdown();
     }
 

@@ -305,14 +305,15 @@ impl FutureTable {
             .is_some_and(|a| !a.inner.lock().ready.is_empty())
     }
 
-
-
     pub fn pending_total(&self, owner: InstanceId) -> usize {
         self.existing(owner)
             .map_or(0, |a| a.inner.lock().pending.len())
     }
 
-    /// Reclaim pending futures owned by the completed dispatch.
+    /// Releases all dispatch-owned futures, whether
+    /// still pending or completed and undelivered; a result left in `ready`
+    /// would be served to the next request on this instance as a wake for a
+    /// future it never issued.
     pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) {
         let Some(arc) = self.existing(owner) else {
             return;
@@ -456,7 +457,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn instance_death_cancels_registered_reactor_work() {
+    async fn instance_death_cancels_its_reactor_work() {
         let table = table();
         let owner = InstanceId(1);
         let id = table
@@ -470,6 +471,23 @@ mod tests {
 
 
 
+    #[tokio::test]
+    async fn ending_a_dispatch_cancels_registered_reactor_work() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "http_fetch", 8)
+            .expect("future allocation");
+        let (task, _release) = held_task().await;
+        table.attach_task(id, task.abort_handle());
+        table.end_dispatch(owner, 1);
+        assert_cancelled(task).await;
+        assert_eq!(
+            table.live_futures(),
+            0,
+            "a result remains live only for its owning dispatch"
+        );
+    }
 
     #[test]
     fn ids_are_never_zero_and_never_reused() {
@@ -634,57 +652,46 @@ mod tests {
 
 
     #[test]
-    fn ending_a_dispatch_reclaims_its_handles_and_preserves_other_dispatches() {
+    fn ending_a_dispatch_reclaims_only_its_own_handles() {
         let t = table();
-        let i = InstanceId(1);
-        let doomed = t.alloc(i, 1, "kv_get", 64).expect("alloc");
-        let kept = t.alloc(i, 2, "queue_send", 64).expect("alloc");
-        t.end_dispatch(i, 1);
-        assert_eq!(t.pending_total(i), 1, "a result remains live only for its owning dispatch");
+        let owner = InstanceId(1);
+        let doomed = t.alloc(owner, 1, "kv_get", 64).expect("alloc");
+        let other = t.alloc(owner, 2, "queue_send", 64).expect("alloc");
+        t.end_dispatch(owner, 1);
+        assert_eq!(
+            t.pending_total(owner),
+            1,
+            "another active dispatch must retain its future"
+        );
         assert_eq!(
             t.complete(doomed, ResultRecord::Ok(vec![])),
             WakeTarget::Orphan,
-            "the reclaimed future's completion has no owner"
+            "completed dispatch work must not wake its instance"
         );
         assert_eq!(
-            t.complete(kept, ResultRecord::Ok(vec![])),
-            WakeTarget::Instance(i),
-            "the spared future's completion still wakes the instance"
+            t.complete(other, ResultRecord::Ok(vec![])),
+            WakeTarget::Instance(owner),
+            "active dispatch work must still wake its owner"
         );
-        t.take_ready(i);
     }
 
     #[test]
     fn a_completed_but_undelivered_result_does_not_outlive_its_dispatch() {
         let t = table();
-        let i = InstanceId(1);
-        let doomed = t.alloc(i, 1, "kv_get", 64).expect("alloc");
-        let kept = t.alloc(i, 2, "queue_send", 64).expect("alloc");
-
+        let owner = InstanceId(1);
+        let id = t.alloc(owner, 1, "kv_get", 64).expect("alloc");
         assert_eq!(
-            t.complete(doomed, ResultRecord::Ok(vec![1])),
-            WakeTarget::Instance(i),
-            "the plain future completes mid-dispatch"
+            t.complete(id, ResultRecord::Ok(vec![1])),
+            WakeTarget::Instance(owner),
+            "the future completes during dispatch"
         );
+        t.end_dispatch(owner, 1);
         assert_eq!(
-            t.complete(kept, ResultRecord::Ok(vec![2])),
-            WakeTarget::Instance(i),
+            t.take_ready(owner),
+            None,
             "a result remains live only for its owning dispatch"
         );
-        assert!(t.has_ready(i), "both results are queued and undelivered");
-
-        t.end_dispatch(i, 1);
-
-        let served = t.take_ready(i);
-        assert_eq!(
-            served,
-            Some((kept, ResultRecord::Ok(vec![2]))),
-            "a result remains live only for its owning dispatch"
-        );
-        assert!(
-            !t.has_ready(i),
-            "a result outlived the dispatch that awaited it"
-        );
+        assert!(!t.has_ready(owner), "no result may outlive its dispatch");
     }
 
     #[test]

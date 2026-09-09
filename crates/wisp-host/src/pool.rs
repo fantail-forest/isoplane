@@ -52,22 +52,13 @@ impl AcquireSource {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-enum PoolError {
-    #[error("module {module} pooled instance {instance} carried residue after reset")]
-    Residue {
-        module: ModuleId,
-        instance: InstanceId,
-    },
-}
-
 /// A per-module pool of Handler instances.
 pub struct InstancePool {
     pub module: ModuleId,
     pub lifecycle: HandlerLifecycle,
     activator: Arc<dyn Activator>,
     warm: Mutex<Vec<Arc<Slot>>>,
-    fresh: Mutex<Vec<Arc<Slot>>>,
+    reset_candidates: Mutex<Vec<Arc<Slot>>>,
     max_idle: usize,
     live: AtomicU64,
 }
@@ -83,7 +74,7 @@ impl InstancePool {
             lifecycle,
             activator,
             warm: Mutex::new(Vec::new()),
-            fresh: Mutex::new(Vec::new()),
+            reset_candidates: Mutex::new(Vec::new()),
             max_idle,
             live: AtomicU64::new(0),
         }
@@ -93,44 +84,51 @@ impl InstancePool {
         self.live.load(Ordering::Relaxed)
     }
 
+    /// Idle instance counts as `(warm, awaiting reset)`.
     pub fn idle_counts(&self) -> (usize, usize) {
-        (self.warm.lock().len(), self.fresh.lock().len())
+        (self.warm.lock().len(), self.reset_candidates.lock().len())
     }
 
-    /// Warm-parked, then pooled-fresh, then activate; under `fresh` the warm
-    /// list is not consulted.
+    /// Reuse a warm instance, reset a candidate for this acquisition, or activate.
+    /// Fresh handlers never consult the warm list.
     pub fn acquire<F>(&self, make_ctx: F) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
     where
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
     {
-        let pooled = (self.lifecycle == HandlerLifecycle::Reuse)
-            .then(|| self.warm.lock().pop())
-            .flatten()
-            .map(|s| (s, AcquireSource::WarmParked))
-            .or_else(|| {
-                self.fresh
-                    .lock()
-                    .pop()
-                    .map(|s| (s, AcquireSource::PooledFresh))
-            });
-        if let Some((slot, source)) = pooled {
-            if source == AcquireSource::PooledFresh {
-                if !slot.is_pristine() {
-                    slot.tombstone();
+        self.acquire_with_cleanup(make_ctx, |_| {})
+    }
+
+    /// Calls `discard` synchronously for failed candidates so their owner can
+    /// remove registry entries before replacement activation, including when it fails.
+    pub(crate) fn acquire_with_cleanup<F, D>(
+        &self,
+        make_ctx: F,
+        mut discard: D,
+    ) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
+    where
+        F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
+        D: FnMut(&Arc<Slot>),
+    {
+        if self.lifecycle == HandlerLifecycle::Reuse {
+            if let Some(slot) = self.warm.lock().pop() {
+                return Ok((slot, AcquireSource::WarmParked));
+            }
+        }
+        loop {
+            let candidate = self.reset_candidates.lock().pop();
+            let Some(slot) = candidate else { break };
+            {
+                let _execution = slot.lock_execution();
+                if let Err(error) = slot.reset() {
+                    tracing::warn!(module = %self.module, instance = %slot.id, %error,
+                        "pooled instance reset failed; discarding candidate");
                     slot.discard();
                     self.live.fetch_sub(1, Ordering::Relaxed);
-                    return Err(PoolError::Residue {
-                        module: self.module.clone(),
-                        instance: slot.id,
-                    }
-                    .into());
+                    discard(&slot);
+                    continue;
                 }
-                debug_assert!(
-                    slot.is_pristine(),
-                    "a pooled-fresh instance carried residue"
-                );
             }
-            return Ok((slot, source));
+            return Ok((slot, AcquireSource::PooledFresh));
         }
         let id = InstanceId::alloc();
         let ctx = make_ctx(id);
@@ -160,16 +158,13 @@ impl InstancePool {
                 }
             }
             DispositionKind::Reset => {
-                if slot.reset().is_err() {
-                    slot.discard();
-                    self.live.fetch_sub(1, Ordering::Relaxed);
-                    return;
-                }
-                let mut f = self.fresh.lock();
-                if f.len() < self.max_idle {
-                    f.push(slot);
+                slot.ctx.release_native_resources();
+                slot.park(crate::now_ms());
+                let mut candidates = self.reset_candidates.lock();
+                if candidates.len() < self.max_idle {
+                    candidates.push(slot);
                 } else {
-                    drop(f);
+                    drop(candidates);
                     slot.discard();
                     self.live.fetch_sub(1, Ordering::Relaxed);
                 }
@@ -187,7 +182,7 @@ impl InstancePool {
             .warm
             .lock()
             .drain(..)
-            .chain(self.fresh.lock().drain(..))
+            .chain(self.reset_candidates.lock().drain(..))
         {
             s.discard();
             self.live.fetch_sub(1, Ordering::Relaxed);
@@ -196,6 +191,9 @@ impl InstancePool {
         n
     }
 }
+
+#[cfg(test)]
+mod reset_tests;
 
 #[cfg(test)]
 mod tests {
@@ -232,7 +230,7 @@ mod tests {
         p.release(a, d);
         let (warm, fresh) = p.idle_counts();
         assert_eq!(warm, 0, "a fresh app must never populate the warm pool");
-        assert_eq!(fresh, 1, "the reset instance is pooled");
+        assert_eq!(fresh, 1, "the pending reset candidate is pooled");
 
         let (b, src) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
@@ -240,53 +238,55 @@ mod tests {
         assert_eq!(
             src,
             AcquireSource::PooledFresh,
-            "the next acquisition draws the reset instance"
+            "the next acquisition resets the pooled candidate"
         );
         assert_eq!(b.id, id_a, "the same slot comes back");
         assert!(b.is_pristine(), "and it carries no residue");
     }
 
     #[test]
-    fn residue_in_the_fresh_pool_is_refused_and_discarded() {
+    fn residue_in_a_reset_candidate_is_cleared_before_acquisition() {
         let p = pool(HandlerLifecycle::Fresh);
         let (slot, _) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
             .expect("activate");
+        slot.enter()
+            .expect("write request residue")
+            .instance()
+            .memory()[0] = 99;
         p.release(slot.clone(), policy_reset());
-        drop(slot.enter().expect("inject residue after reset"));
-        let error = p
-            .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .err()
-            .expect("residue is refused");
-        assert!(
-            matches!(error.downcast_ref::<PoolError>(), Some(PoolError::Residue { instance, .. }) if *instance == slot.id),
-            "acquisition identifies the contaminated instance"
-        );
-        assert!(
-            slot.is_tombstoned(),
-            "contaminated pooled memory cannot be entered again"
-        );
         assert_eq!(
-            p.live(),
-            0,
-            "the refused instance is removed from pool accounting"
+            slot.enter()
+                .expect("inspect pending reset")
+                .instance()
+                .memory()[0],
+            99,
+            "release must not reset guest memory without a new request"
         );
-        assert_eq!(
-            p.idle_counts(),
-            (0, 0),
-            "the contaminated instance is not pooled"
-        );
-        let (replacement, source) = p
+        let (reused, source) = p
             .acquire(|id| ctx_for(id, HandlerLifecycle::Fresh))
-            .expect("replacement activates");
+            .expect("reset candidate");
         assert_eq!(
             source,
-            AcquireSource::Activated,
-            "a later dispatch can activate normally"
+            AcquireSource::PooledFresh,
+            "acquisition resets the candidate"
         );
-        assert_ne!(
-            replacement.id, slot.id,
-            "contaminated memory is never reused"
+        assert_eq!(
+            reused.id, slot.id,
+            "reset can preserve the existing slot identity"
+        );
+        assert!(
+            reused.is_pristine(),
+            "fresh acquisition must not carry request residue"
+        );
+        assert_eq!(
+            reused
+                .enter()
+                .expect("inspect reset memory")
+                .instance()
+                .memory()[0],
+            0,
+            "reset must restore template memory before handing the slot to a request"
         );
     }
 

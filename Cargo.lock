@@ -4627,6 +4627,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wat",
  "windows-sys 0.61.2",
  "wisp-abi",
  "wisp-engine",
