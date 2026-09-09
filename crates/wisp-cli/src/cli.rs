@@ -34,6 +34,13 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
+    /// Resolve local project inputs as JSON without building or starting a runtime.
+    Project {
+        /// Project directory containing wisp.toml.
+        #[arg(long, default_value = ".", value_name = "DIR")]
+        directory: PathBuf,
+    },
+
     /// Build and run the current project locally; rebuild on source changes.
     Dev {
         /// Local HTTP port; zero selects an available port.
@@ -45,6 +52,9 @@ pub enum Cmd {
         /// Serve the initial build without watching for changes.
         #[arg(long)]
         no_watch: bool,
+        /// Reload only changed module bytes or manifest, for external build tools.
+        #[arg(long, requires = "no_build")]
+        watch_module_only: bool,
         /// Project build command; overrides [dev].build and build.sh discovery.
         #[arg(long, conflicts_with = "no_build")]
         build: Option<String>,

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>isoplane</ToolCommandName>
+    <PackageId>Isoplane.Cli</PackageId>
+    <Version>0.1.0</Version>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Isoplane local application development using the shared WASM runtime.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(WispRuntimePath)' != ''">
+    <None Include="$(WispRuntimePath)" Link="runtime/wisp" CopyToOutputDirectory="PreserveNewest"
+          Pack="false" />
+  </ItemGroup>
+  <Target Name="RequireLocalRuntimeForPackage" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(WispRuntimePath)' == '' Or !Exists('$(WispRuntimePath)')"
+           Text="Set WispRuntimePath to the built shared Rust runtime executable before packing the local CLI." />
+  </Target>
+</Project>

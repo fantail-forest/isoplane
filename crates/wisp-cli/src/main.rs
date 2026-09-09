@@ -26,6 +26,10 @@ async fn run() -> anyhow::Result<()> {
     let st = Style::new(color);
 
     match cli.cmd {
+        Cmd::Project { directory } => {
+            let module = serde_json::to_value(dev::project_module(&directory)?)?;
+            println!("{}", serde_json::json!({ "module": module }));
+        }
         Cmd::Doctor {
             module,
             guest_memory_bytes,
@@ -106,6 +110,7 @@ async fn run() -> anyhow::Result<()> {
             port,
             watch,
             no_watch,
+            watch_module_only,
             build,
             no_build,
             init_sandbox,
@@ -126,6 +131,7 @@ async fn run() -> anyhow::Result<()> {
                     port,
                     watch,
                     no_watch,
+                    watch_module_only,
                     build,
                     no_build,
                     init_sandbox,

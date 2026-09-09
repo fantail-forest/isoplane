@@ -1,6 +1,8 @@
 //! A local development process, observed through its output and HTTP listener.
 
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
@@ -22,10 +24,26 @@ impl Dev {
         args: &[&str],
         output_timeout: Duration,
     ) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_wisp"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wisp"));
+        command
             .args(["--no-color", "dev", "--port", "0", "--watch"])
             .arg(project)
-            .args(args)
+            .args(args);
+        Self::spawn(&mut command, output_timeout)
+    }
+
+    pub fn start_managed(project: &std::path::Path, executable: &std::path::Path) -> Self {
+        let mut command = Command::new(executable);
+        command
+            .args(["dev", "--port", "0", "--project"])
+            .arg(project);
+        Self::spawn(&mut command, Duration::from_secs(600))
+    }
+
+    fn spawn(command: &mut Command, output_timeout: Duration) -> Self {
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command
             .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -112,11 +130,34 @@ impl Dev {
 
 impl Drop for Dev {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            let group = format!("-{}", self.child.id());
+            match Command::new("kill").args(["-KILL", "--", &group]).output() {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => {
+                    // A gracefully stopped CLI may already have removed its whole group.
+                    if !matches!(self.child.try_wait(), Ok(Some(_))) {
+                        eprintln!(
+                            "could not stop development process group {group}: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                }
+                Err(error) => {
+                    eprintln!("could not signal development process group {group}: {error}")
+                }
+            }
+        }
         match self.child.try_wait() {
             Ok(Some(_)) => {}
             Ok(None) => {
-                self.child.kill().expect("stop the development process");
-                self.child.wait().expect("reap the development process");
+                if let Err(error) = self.child.kill() {
+                    eprintln!("could not stop the development process: {error}");
+                }
+                if let Err(error) = self.child.wait() {
+                    eprintln!("could not reap the development process: {error}");
+                }
             }
             Err(e) => eprintln!("could not inspect development process: {e}"),
         }
@@ -148,4 +189,25 @@ pub fn guest(body: &str) -> Vec<u8> {
         (func (export "wisp_handle") (param i32 i32) (result i64)
             (i64.shl (i64.extend_i32_u (call $response (i32.const 4096) (i32.const {}))) (i64.const 32)))
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, bytes.len())).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn dropping_the_harness_closes_descendant_output_pipes() {
+    let mut command = Command::new("sh");
+    command.args([
+        "-c",
+        "sleep 60 & printf 'ready cleanup at http://127.0.0.1:1\\n'; wait",
+    ]);
+    let mut dev = Dev::spawn(&mut command, Duration::from_secs(10));
+    let (_, unused) = channel();
+    let lines = std::mem::replace(&mut dev.lines, unused);
+    drop(dev);
+    assert!(
+        matches!(
+            lines.recv_timeout(Duration::from_secs(10)),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        ),
+        "dropping the CLI harness must terminate descendants that keep its output pipes open"
+    );
 }

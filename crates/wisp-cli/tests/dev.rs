@@ -316,19 +316,25 @@ fn the_cli_does_not_depend_on_node_administration_or_the_deployment_control_plan
 }
 
 #[tokio::test]
-async fn an_installed_aspnet_template_serves_its_generated_application() {
+async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     let dir = tempfile::tempdir().unwrap();
     let app = wisp_fixtures::aspnet_project(dir.path());
-    let mut dev =
-        Dev::start_with_timeout(&app, &["--no-watch"], std::time::Duration::from_secs(600));
-    let response = reqwest::Client::builder()
+    let manifest_path = app.join("wisp.toml");
+    let manifest_text = std::fs::read_to_string(&manifest_path).unwrap();
+    let mut manifest: toml::Value = toml::from_str(&manifest_text).unwrap();
+    manifest["module"] = toml::Value::String("dist/nested/customer.wasm".into());
+    std::fs::write(&manifest_path, toml::to_string(&manifest).unwrap()).unwrap();
+    let cli = wisp_fixtures::managed_cli(
+        dir.path(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
+        &app,
+    );
+    let mut dev = Dev::start_managed(&app, &cli);
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
-        .unwrap()
-        .get(&dev.url)
-        .send()
-        .await
         .unwrap();
+    let response = client.get(&dev.url).send().await.unwrap();
     assert_eq!(
         response.status(),
         200,
@@ -338,6 +344,40 @@ async fn an_installed_aspnet_template_serves_its_generated_application() {
         response.text().await.unwrap(),
         "Hello from Isoplane!",
         "the generated ASP.NET route must execute without copied interop boilerplate"
+    );
+    let source = app.join("Application.cs");
+    let original = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(
+        &source,
+        original.replace("Hello from Isoplane!", "Rebuilt by the .NET CLI"),
+    )
+    .unwrap();
+    dev.wait_for("reloaded ");
+    assert_eq!(
+        client
+            .get(&dev.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "Rebuilt by the .NET CLI",
+        "editing source must publish and reload through the installed .NET tool"
+    );
+    std::fs::write(&source, "invalid C#").unwrap();
+    dev.wait_for("rebuild failed; keeping the last working application");
+    assert_eq!(
+        client
+            .get(&dev.url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "Rebuilt by the .NET CLI",
+        "failed managed builds must retain the last working guest"
     );
     dev.stop();
 }

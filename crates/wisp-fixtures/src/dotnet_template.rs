@@ -55,7 +55,7 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         &format!(
             "<config><add key=\"globalPackagesFolder\" value=\"{}\" /></config>\n\
              <packageSourceMapping>\n\
-             <packageSource key=\"template-packages\"><package pattern=\"Wisp.*\" /></packageSource>\n\
+             <packageSource key=\"template-packages\"><package pattern=\"Wisp.*\" /><package pattern=\"Isoplane.*\" /></packageSource>\n\
              <packageSource key=\"nuget\"><package pattern=\"*\" /></packageSource>\n\
              <packageSource key=\"dotnet-experimental\"><package pattern=\"*\" /></packageSource>\n\
              </packageSourceMapping></configuration>",
@@ -76,4 +76,33 @@ fn run(command: &mut Command) {
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
+}
+
+/// Packs and installs the managed CLI with a supplied native runtime into a local tool directory.
+pub fn managed_cli(destination: &Path, runtime: &Path, app: &Path) -> PathBuf {
+    let packages = destination.join("packages");
+    run(Command::new("dotnet")
+        .arg("pack")
+        .arg(super::repo_root().join("tools/Isoplane.Cli/Isoplane.Cli.csproj"))
+        .arg(format!("-p:WispRuntimePath={}", runtime.display()))
+        .arg("--artifacts-path")
+        .arg(destination.join("cli-artifacts"))
+        .arg("-o")
+        .arg(&packages)
+        .arg("--disable-build-servers"));
+    let tools = destination.join("tools");
+    run(Command::new("dotnet")
+        .args([
+            "tool",
+            "install",
+            "Isoplane.Cli",
+            "--version",
+            "0.1.0",
+            "--tool-path",
+        ])
+        .arg(&tools)
+        .arg("--configfile")
+        .arg(app.join("nuget.config"))
+        .current_dir(destination));
+    tools.join("isoplane")
 }

@@ -99,9 +99,13 @@ impl Project {
             .join(hash.finalize().to_hex().as_str())
     }
 
-    pub fn fingerprint(&self) -> anyhow::Result<Fingerprint> {
+    pub fn fingerprint(&self, module_only: bool) -> anyhow::Result<Fingerprint> {
         let mut hash = blake3::Hasher::new();
-        scan(&self.root, &self.module, &mut hash)?;
+        if module_only {
+            hash_file(&self.root.join("wisp.toml"), &mut hash)?;
+        } else {
+            scan(&self.root, &self.module, &mut hash)?;
+        }
         let sources = hash.finalize();
         let mut module = blake3::Hasher::new();
         hash_file(&self.module, &mut module)?;
@@ -235,30 +239,54 @@ mod tests {
         .unwrap();
         std::fs::create_dir(dir.path().join("out")).unwrap();
         let project = Project::load(dir.path(), None, None, true).unwrap();
-        let initial = project.fingerprint().unwrap();
+        let initial = project.fingerprint(false).unwrap();
         let source = dir.path().join("handler.cs");
         std::fs::write(&source, "first").unwrap();
-        let added = project.fingerprint().unwrap();
+        let added = project.fingerprint(false).unwrap();
         assert_ne!(initial, added, "a new source must trigger a build");
         std::fs::write(&source, "other").unwrap();
         assert_ne!(
             added,
-            project.fingerprint().unwrap(),
+            project.fingerprint(false).unwrap(),
             "a same-size edit must trigger a build"
         );
         std::fs::remove_file(source).unwrap();
         assert_eq!(
             initial,
-            project.fingerprint().unwrap(),
+            project.fingerprint(false).unwrap(),
             "deletion must restore the original inputs"
         );
         std::fs::write(&project.module, "module").unwrap();
         assert_ne!(
             initial,
-            project.fingerprint().unwrap(),
+            project.fingerprint(false).unwrap(),
             "the configured module must be watched even under out/"
         );
     }
+    #[test]
+    fn external_build_mode_ignores_source_edits_until_module_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("wisp.toml"),
+            "name='app'\ntenant='owner'\nmodule='app.wasm'",
+        )
+        .unwrap();
+        let project = Project::load(dir.path(), None, None, true).unwrap();
+        let before = project.fingerprint(true).unwrap();
+        std::fs::write(dir.path().join("Application.cs"), "edited source").unwrap();
+        assert_eq!(
+            before,
+            project.fingerprint(true).unwrap(),
+            "external build mode must not reload stale code on source edits"
+        );
+        std::fs::write(dir.path().join("app.wasm"), "published module").unwrap();
+        assert_ne!(
+            before,
+            project.fingerprint(true).unwrap(),
+            "publishing new module bytes must trigger a runtime reload"
+        );
+    }
+
     #[test]
     fn build_outputs_do_not_create_reload_loops() {
         let dir = tempfile::tempdir().unwrap();
@@ -268,14 +296,14 @@ mod tests {
         )
         .unwrap();
         let project = Project::load(dir.path(), None, None, true).unwrap();
-        let before = project.fingerprint().unwrap();
+        let before = project.fingerprint(false).unwrap();
         for name in ["obj", "bin", "target", ".wisp", "out"] {
             std::fs::create_dir(dir.path().join(name)).unwrap();
             std::fs::write(dir.path().join(name).join("output"), "new").unwrap();
         }
         assert_eq!(
             before,
-            project.fingerprint().unwrap(),
+            project.fingerprint(false).unwrap(),
             "intermediates must not trigger another build"
         );
     }

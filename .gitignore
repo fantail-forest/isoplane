@@ -37,3 +37,6 @@ guest-sdks/dotnet/obj/
 # Template package build outputs.
 /guest-sdks/dotnet/Templates/bin/
 /guest-sdks/dotnet/Templates/obj/
+
+/tools/Isoplane.Cli/bin/
+/tools/Isoplane.Cli/obj/

@@ -12,7 +12,7 @@
 
 mod dotnet_template;
 
-pub use dotnet_template::aspnet_project;
+pub use dotnet_template::{aspnet_project, managed_cli};
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

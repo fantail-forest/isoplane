@@ -76,12 +76,13 @@ dotnet new install /path/to/feed/Wisp.Templates.0.1.0.nupkg
 dotnet new isoplane-web --name MyApp --tenant my-local-tenant
 cd MyApp
 dotnet nuget add source /path/to/feed --name wisp-local --configfile nuget.config
-wisp dev
+isoplane dev
 ```
 
 The generated project includes an ASP.NET route and the local build/run
-configuration. `wisp dev` publishes and validates the module, then serves it
-on localhost; source edits trigger a rebuild. This path currently uses the
-NativeAOT compiler and the existing Rust CLI, with the Linux toolchain
-prerequisites above. The tenant argument explicitly scopes local state; it is
-not a hosted credential or an authorization claim.
+configuration. Install the [.NET CLI](../../../tools/Isoplane.Cli/README.md)
+and put its tool directory on your PATH. `isoplane dev` publishes and validates
+the module, then serves it on localhost; source edits trigger a rebuild. This
+path currently uses the NativeAOT compiler and a bundled Rust runtime, with
+the Linux toolchain prerequisites above. The tenant argument explicitly scopes
+local state; it is not a hosted credential or an authorization claim.

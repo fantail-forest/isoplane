@@ -4,7 +4,7 @@ mod build;
 mod project;
 mod runtime;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,10 +20,18 @@ use wisp_cli::render::Style;
 use project::Project;
 use runtime::{LocalApp, Prepared};
 
+/// Resolves the configured module without building it or requiring it to exist.
+/// Fails when the project directory or local manifest is invalid.
+pub fn project_module(directory: &Path) -> anyhow::Result<PathBuf> {
+    Ok(Project::load(directory, None, None, true)?.module)
+}
+
 pub struct DevOpts {
     pub port: u16,
     pub watch: PathBuf,
     pub no_watch: bool,
+    /// Observe published modules and manifest changes while an external tool owns builds.
+    pub watch_module_only: bool,
     pub build: Option<String>,
     pub no_build: bool,
     pub init_sandbox: Option<InitSandbox>,
@@ -45,7 +53,7 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     let _owner = lock.try_write().context(
         "opening local development state; another wisp dev may already own this project",
     )?;
-    let mut observed = project.fingerprint()?;
+    let mut observed = project.fingerprint(opts.watch_module_only)?;
     let prepared = {
         let cancellation = CancellationToken::new();
         let preparation = prepare(&project, &cancellation);
@@ -63,7 +71,7 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     let Some(prepared) = prepared else {
         return Ok(());
     };
-    observed.module = project.fingerprint()?.module;
+    observed.module = project.fingerprint(opts.watch_module_only)?.module;
     let data = project.state_dir();
     let mut app = LocalApp::start(prepared, &data, ).await?;
     let result = serve(st, &opts, project, observed, &mut app).await;
@@ -154,7 +162,7 @@ async fn serve(
                 if let Some(Err(e)) = joined { tracing::warn!(error = %e, "local connection task failed"); }
             }
             _ = interval.tick(), if !opts.no_watch && rebuild.is_none() => {
-                let next = project.fingerprint()?;
+                let next = project.fingerprint(opts.watch_module_only)?;
                 if next == observed { continue; }
                 observed = next;
                 match load(opts) {
@@ -178,13 +186,13 @@ async fn serve(
                         *app = LocalApp::start(prepared, &next_project.state_dir()).await?;
                         *current_proxy.write() = app.proxy.clone();
                         project = next_project;
-                        observed.module = project.fingerprint()?.module;
+                        observed.module = project.fingerprint(opts.watch_module_only)?.module;
                         println!("  {} {} at http://{address}", st.green("reloaded"), project.manifest.name);
                     }
                     Ok(None) => break,
                     Err(e) => {
                         eprintln!("wisp: reload failed; keeping the last working app: {e:#}");
-                        observed.module = project.fingerprint()?.module;
+                        observed.module = project.fingerprint(opts.watch_module_only)?.module;
                     }
                 }
             }
