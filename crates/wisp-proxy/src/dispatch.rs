@@ -12,7 +12,7 @@ use wisp_abi::host::{HttpBody, HttpUpload, RouteTarget};
 
 use crate::headers::strip_connection_headers;
 use crate::request::parse_query;
-use crate::response::{guest_stream_response, streaming, text};
+use crate::response::{guest_stream_response, text};
 use crate::server::{Body, Proxy};
 
 impl Proxy {
@@ -54,16 +54,17 @@ impl Proxy {
             )
             .await
         {
-            Ok(reply) => guest_stream_response(
-                &parts.method,
-                reply.status,
-                &reply.headers,
-                &[
-                    ("x-wisp-tier", tier_str(target.tier).to_string()),
-                    ("x-wisp-version", target.version.clone()),
-                ],
-                streaming(reply.body),
-            ),
+            Ok(reply) => {
+                guest_stream_response(
+                    &parts.method,
+                    reply,
+                    &[
+                        ("x-wisp-tier", tier_str(target.tier).to_string()),
+                        ("x-wisp-version", target.version.clone()),
+                    ],
+                )
+                .await
+            }
             Err(e) if e.downcast_ref::<UploadReadError>().is_some() => {
                 text(StatusCode::BAD_REQUEST, "bad body", &[])
             }

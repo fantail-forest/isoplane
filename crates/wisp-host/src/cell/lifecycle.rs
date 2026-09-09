@@ -113,15 +113,20 @@ impl Cell {
             let cell = Arc::downgrade(self);
             let owner = Arc::downgrade(&slot);
             let generation = slot.ctx.dispatch_generation();
-            stream.on_cancel(Box::new(move || {
-                if let (Some(cell), Some(slot)) = (cell.upgrade(), owner.upgrade()) {
-                    slot.ctx.cancel_generation(generation);
+            let response = Arc::downgrade(stream);
+            stream.on_end_requested(Box::new(move || {
+                if let (Some(cell), Some(slot), Some(response)) =
+                    (cell.upgrade(), owner.upgrade(), response.upgrade())
+                {
+                    if response.is_cancelled() || response.failure().is_some() {
+                        slot.ctx.cancel_generation(generation);
+                    }
                     cell.queue_wake(slot);
                 }
             }));
         }
 
-        if self.cancel_stream_at_boundary(&slot, &entry) {
+        if self.end_stream_at_boundary(&slot, &entry, None) {
             return;
         }
 
@@ -138,9 +143,15 @@ impl Cell {
                             ..DispatchResult::shed(did)
                         },
                     );
+                    let _settlement = slot
+                        .ctx
+                        .responses
+                        .lock()
+                        .transport
+                        .take()
+                        .map(|stream| stream.settlement());
                     slot.ctx.end_http_dispatch();
                     self.rt.futures.end_dispatch(slot.id, did);
-                    slot.ctx.responses.lock().transport = None;
                     self.active.remove(&slot.id);
                     return;
                 }
@@ -208,7 +219,7 @@ impl Cell {
             return;
         };
 
-        if self.cancel_stream_at_boundary(&slot, &entry) {
+        if self.end_stream_at_boundary(&slot, &entry, None) {
             return;
         }
 
@@ -319,7 +330,7 @@ impl Cell {
                 )
             });
         let breaker_key = BreakerKey { module, route };
-        if self.cancel_stream_at_boundary(slot, entry) {
+        if self.end_stream_at_boundary(slot, entry, Some(completion)) {
             return true;
         }
 
@@ -513,10 +524,11 @@ impl Cell {
         }
     }
 
-    fn cancel_stream_at_boundary(
+    fn end_stream_at_boundary(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
+        completion: Option<Completion>,
     ) -> bool {
         let stream = slot.ctx.responses.lock().transport.clone();
         let Some(stream) = stream else {
@@ -524,7 +536,19 @@ impl Cell {
         };
         let failure = stream.failure();
         if !stream.is_cancelled() && failure.is_none() {
-            return false;
+            let Some((status, headers)) = stream.no_body_head() else {
+                return false;
+            };
+            if completion.is_some_and(|completion| {
+                !matches!(completion, Completion::Done | Completion::Parked)
+            }) {
+                return false;
+            }
+            slot.ctx.poison_imports();
+            let result = self.build_result(slot, status, headers, vec![], Completion::Done, None);
+            self.respond(slot, result);
+            self.finish_and_release(slot, entry, evict());
+            return true;
         }
         slot.ctx.poison_imports();
         let status = if failure.is_some() { 502 } else { 499 };
@@ -551,8 +575,14 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         d: crate::disposition::Disposition,
     ) {
+        let _settlement = slot
+            .ctx
+            .responses
+            .lock()
+            .transport
+            .take()
+            .map(|stream| stream.settlement());
         slot.ctx.end_http_dispatch();
-        slot.ctx.responses.lock().transport = None;
 
         let req = self.active.remove(&slot.id);
         if let Some(r) = &req {

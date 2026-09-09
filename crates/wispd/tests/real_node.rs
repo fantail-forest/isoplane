@@ -462,3 +462,6 @@ mod streaming;
 
 #[path = "common/owned_endpoint.rs"]
 mod owned_endpoint;
+
+#[path = "real_node/bodyless.rs"]
+mod bodyless;

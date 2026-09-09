@@ -79,6 +79,9 @@ impl Cell {
                 Ok(Err(error)) => output.fail(format!("dispatch failed: {error}")),
                 Err(error) => output.fail(format!("dispatch task failed: {error}")),
             }
+            if !output.has_owner() {
+                output.acknowledge_settlement();
+            }
             output.record_buffers(dispatch_id);
         });
         transport.exchange().await

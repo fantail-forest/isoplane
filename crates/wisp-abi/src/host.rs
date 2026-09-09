@@ -6,7 +6,10 @@ use crate::calls::*;
 use crate::result::*;
 
 mod http;
-pub use http::{HttpBody, HttpExchange, HttpUpload, DEFAULT_RESPONSE_QUEUE_BYTES};
+pub use http::{
+    HttpBody, HttpExchange, HttpResponseBody, HttpUpload, ResponseDisposition,
+    DEFAULT_RESPONSE_QUEUE_BYTES,
+};
 
 pub type Result<T> = anyhow::Result<T>;
 

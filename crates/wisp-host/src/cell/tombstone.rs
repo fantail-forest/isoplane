@@ -109,9 +109,14 @@ impl Cell {
         if !mine {
             return;
         }
-        if let Some(slot) = self.slot(id) {
+        let _settlement = self.slot(id).and_then(|slot| {
             slot.ctx.end_http_dispatch();
-        }
+            let stream = slot.ctx.responses.lock().transport.take();
+            stream.map(|stream| {
+                stream.fail("host_panic".into());
+                stream.settlement()
+            })
+        });
         if let Some(tx) = tx {
             answer(
                 &tx,

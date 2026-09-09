@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 use wisp_abi::dispatch::ResponseHead;
-use wisp_abi::host::{HttpBody, HttpExchange};
+use wisp_abi::host::{HttpBody, HttpExchange, HttpResponseBody, ResponseDisposition};
 use wisp_abi::result::FutureError;
 
 #[derive(Default)]
@@ -24,6 +24,8 @@ struct State {
     closing: bool,
     write_turn: u64,
     cancelled: bool,
+    disposition: Option<ResponseDisposition>,
+    settled: bool,
     failure: Option<String>,
     initial_write: Option<tokio::task::AbortHandle>,
 }
@@ -49,14 +51,75 @@ impl ResponseTransport {
         })
     }
 
-    pub(crate) fn on_cancel(&self, callback: Box<dyn Fn() + Send + Sync>) {
+    pub(crate) fn on_end_requested(&self, callback: Box<dyn Fn() + Send + Sync>) {
         if self.cancellation.set(callback).is_err() {
             tracing::error!("response cancellation owner was assigned twice");
         }
-        if self.is_cancelled() {
+        if self.end_requested() {
             if let Some(callback) = self.cancellation.get() {
                 callback();
             }
+        }
+    }
+
+    fn end_requested(&self) -> bool {
+        let state = self.state.lock();
+        !state.settled
+            && (state.cancelled || state.failure.is_some() || state.disposition.is_some())
+    }
+
+    pub(crate) fn no_body_head(&self) -> Option<(u16, Vec<(String, String)>)> {
+        let state = self.state.lock();
+        state.disposition.and_then(|_| state.head.clone())
+    }
+
+    pub(crate) fn has_owner(&self) -> bool {
+        self.cancellation.get().is_some()
+    }
+
+    pub(crate) fn settlement(self: Arc<Self>) -> ResponseSettlement {
+        ResponseSettlement(self)
+    }
+
+    pub(crate) fn acknowledge_settlement(&self) {
+        self.state.lock().settled = true;
+        self.readable.notify_waiters();
+    }
+
+    fn request_disposition(&self, disposition: ResponseDisposition) {
+        let mut state = self.state.lock();
+        let notify_owner = !state.settled;
+        state.disposition = Some(disposition);
+        state.chunks.clear();
+        state.queued_bytes = 0;
+        if let Some(task) = state.initial_write.take() {
+            task.abort();
+        }
+        drop(state);
+        self.writable.notify_waiters();
+        if notify_owner {
+            if let Some(callback) = self.cancellation.get() {
+                callback();
+            }
+        }
+    }
+
+    async fn await_settlement(&self) -> anyhow::Result<()> {
+        loop {
+            let changed = self.readable.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let state = self.state.lock();
+                if state.settled {
+                    if let Some(error) = &state.failure {
+                        anyhow::bail!("{error}");
+                    }
+                    anyhow::ensure!(!state.cancelled, "response requester cancelled");
+                    return Ok(());
+                }
+            }
+            changed.await;
         }
     }
 
@@ -81,7 +144,7 @@ impl ResponseTransport {
 
     pub(crate) fn own_initial_write(&self, task: tokio::task::AbortHandle) {
         let mut state = self.state.lock();
-        if state.cancelled || state.failure.is_some() {
+        if state.cancelled || state.failure.is_some() || state.disposition.is_some() {
             task.abort();
         } else {
             state.initial_write = Some(task);
@@ -91,7 +154,7 @@ impl ResponseTransport {
     pub(crate) fn finish(&self) {
         let mut state = self.state.lock();
         state.closing = true;
-        state.finished = state.pending_bytes == 0;
+        state.finished = state.disposition.is_some() || state.pending_bytes == 0;
         drop(state);
         self.readable.notify_waiters();
         self.writable.notify_waiters();
@@ -99,6 +162,7 @@ impl ResponseTransport {
 
     pub(crate) fn fail(&self, error: String) {
         let mut state = self.state.lock();
+        let notify_owner = !state.settled;
         if state.failure.is_none() {
             state.failure = Some(error);
         }
@@ -109,8 +173,10 @@ impl ResponseTransport {
         drop(state);
         self.readable.notify_waiters();
         self.writable.notify_waiters();
-        if let Some(callback) = self.cancellation.get() {
-            callback();
+        if notify_owner {
+            if let Some(callback) = self.cancellation.get() {
+                callback();
+            }
         }
     }
 
@@ -119,7 +185,7 @@ impl ResponseTransport {
         if state.cancelled {
             return;
         }
-        let notify_owner = !state.finished;
+        let notify_owner = !state.settled && (!state.finished || state.disposition.is_some());
         state.cancelled = true;
         if let Some(task) = state.initial_write.take() {
             task.abort();
@@ -200,6 +266,9 @@ impl ResponseTransport {
                 if state.cancelled {
                     return Err(FutureError::Cancelled);
                 }
+                if state.disposition.is_some() {
+                    break;
+                }
                 if state.finished {
                     return Err(FutureError::Io("response already finished".into()));
                 }
@@ -270,12 +339,23 @@ impl Drop for PendingWrite {
                 state.finished = true;
             }
         }
-        if !self.completed {
+        if !self.completed && self.transport.state.lock().disposition.is_none() {
             self.transport
                 .fail("a response write was cancelled before acknowledgement".into());
         }
         self.transport.readable.notify_waiters();
         self.transport.writable.notify_waiters();
+    }
+}
+
+pub(crate) struct ResponseSettlement(Arc<ResponseTransport>);
+
+impl Drop for ResponseSettlement {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.fail("host panic during response cleanup".into());
+        }
+        self.0.acknowledge_settlement();
     }
 }
 
@@ -315,6 +395,14 @@ impl HttpBody for StreamingBody {
         }
     }
 }
+#[async_trait]
+impl HttpResponseBody for StreamingBody {
+    async fn finish(self: Box<Self>, disposition: ResponseDisposition) -> anyhow::Result<()> {
+        self.transport.request_disposition(disposition);
+        self.transport.await_settlement().await
+    }
+}
+
 impl Drop for StreamingBody {
     fn drop(&mut self) {
         self.transport.cancel();
@@ -336,6 +424,144 @@ mod tests {
             })
             .expect("the fixture response must start");
         stream
+    }
+
+    #[tokio::test]
+    async fn no_body_completion_waits_for_terminal_cleanup_without_consuming_bytes() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let mut write = Box::pin(stream.prepare(b"suppressed".to_vec()).send());
+        assert!(
+            futures::poll!(&mut write).is_pending(),
+            "the original body must be blocked by queue capacity"
+        );
+        let mut finish = Box::pin(response.body.finish(ResponseDisposition::NoBody));
+        assert!(
+            futures::poll!(&mut finish).is_pending(),
+            "framing must wait for the host's terminal boundary"
+        );
+        assert_eq!(
+            write.await.expect("suppressed write acknowledgement"),
+            10,
+            "body suppression accepts the original write without transmitting it"
+        );
+        assert_eq!(
+            stream.state.lock().queued_bytes,
+            0,
+            "no-body framing must release queued wire data"
+        );
+        stream.finish();
+        assert!(
+            futures::poll!(&mut finish).is_pending(),
+            "guest completion alone must not precede dispatch cleanup"
+        );
+        drop(stream.clone().settlement());
+        finish.await.expect("bodyless dispatch completed normally");
+        assert!(
+            stream.failure().is_none(),
+            "discarding protocol-forbidden bytes must not become a response write failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_a_no_body_waiter_still_cancels_the_requester() {
+        let stream = stream(1);
+        let signals = Arc::new(AtomicU64::new(0));
+        let observed = signals.clone();
+        stream.on_end_requested(Box::new(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }));
+        let response = stream.exchange().await.expect("response headers");
+        let mut finish = Box::pin(response.body.finish(ResponseDisposition::NoBody));
+        assert!(
+            futures::poll!(&mut finish).is_pending(),
+            "the terminal acknowledgement must still be outstanding"
+        );
+        stream.finish();
+        drop(finish);
+        assert!(
+            stream.is_cancelled(),
+            "dropping the framing waiter must preserve generic requester cancellation"
+        );
+        assert_eq!(
+            signals.load(Ordering::Relaxed),
+            2,
+            "a waiter dropped during cleanup must notify its owner even after response finish"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_trap_before_no_body_acknowledgement_remains_a_failure() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let mut finish = Box::pin(response.body.finish(ResponseDisposition::NoBody));
+        assert!(
+            futures::poll!(&mut finish).is_pending(),
+            "the guest slice must still be pending"
+        );
+        stream.fail("same-slice trap".into());
+        assert!(
+            futures::poll!(&mut finish).is_pending(),
+            "a failed slice must also await its cleanup boundary"
+        );
+        drop(stream.clone().settlement());
+        assert!(
+            finish.await.is_err(),
+            "a trap must not be relabelled successful no-body completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn finishing_a_retained_settled_body_does_not_notify_its_old_owner() {
+        let stream = stream(1);
+        let signals = Arc::new(AtomicU64::new(0));
+        let observed = signals.clone();
+        stream.on_end_requested(Box::new(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }));
+        let response = stream.exchange().await.expect("response headers");
+        let mut write = Box::pin(stream.prepare(b"old-body".to_vec()).send());
+        assert!(
+            futures::poll!(&mut write).is_pending(),
+            "the completed guest may still have a buffered body awaiting its reader"
+        );
+        stream.finish();
+        drop(stream.clone().settlement());
+        response
+            .body
+            .finish(ResponseDisposition::NoBody)
+            .await
+            .expect("already settled response");
+        drop(write);
+        stream.fail("late writer failure".into());
+        assert_eq!(
+            signals.load(Ordering::Relaxed),
+            0,
+            "late body disposition, drop and writer failure must not wake a reused instance"
+        );
+        assert_eq!(
+            stream.state.lock().queued_bytes,
+            0,
+            "the old body's queued bytes must still be released"
+        );
+        assert_eq!(
+            stream.state.lock().pending_bytes,
+            0,
+            "the old body's pending write must still be released"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_already_settled_failure_does_not_strand_a_no_body_waiter() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        stream.fail("earlier trap".into());
+        drop(stream.clone().settlement());
+        let mut finish = Box::pin(response.body.finish(ResponseDisposition::NoBody));
+        assert!(
+            matches!(futures::poll!(&mut finish), std::task::Poll::Ready(Err(_))),
+            "framing after a terminal failure must receive that outcome immediately"
+        );
     }
 
     #[tokio::test]

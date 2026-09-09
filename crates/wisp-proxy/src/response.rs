@@ -8,7 +8,7 @@ use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Body as HttpBodyTrait, Frame, SizeHint};
 use hyper::header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE};
 use hyper::{Method, Response, StatusCode};
-use wisp_abi::host::HttpBody;
+use wisp_abi::host::{HttpExchange, HttpResponseBody, ResponseDisposition};
 
 use crate::headers::strip_connection_headers;
 use crate::server::Body;
@@ -41,7 +41,17 @@ pub(crate) fn guest_response(
     platform_headers: &[(&'static str, String)],
     body: Vec<u8>,
 ) -> Response<Body> {
-    guest_stream_response(method, status, guest_headers, platform_headers, full(body))
+    match guest_head(status, guest_headers, platform_headers) {
+        Ok(response) => {
+            let body = if permits_body(method, response.status()) {
+                body
+            } else {
+                vec![]
+            };
+            response.map(|()| full(body))
+        }
+        Err(rejection) => rejection.into_response(),
+    }
 }
 
 pub(crate) fn full(body: Vec<u8>) -> Body {
@@ -50,7 +60,7 @@ pub(crate) fn full(body: Vec<u8>) -> Body {
         .boxed_unsync()
 }
 
-pub(crate) fn streaming(body: Box<dyn HttpBody>) -> Body {
+pub(crate) fn streaming(body: Box<dyn HttpResponseBody>) -> Body {
     let remaining_bytes = body.remaining_bytes();
     let stream = futures::stream::unfold(Some(body), |body| async move {
         let mut body = body?;
@@ -119,13 +129,60 @@ impl<G: Unpin> HttpBodyTrait for GuardedBody<G> {
     }
 }
 
-pub(crate) fn guest_stream_response(
+pub(crate) async fn guest_stream_response(
     method: &Method,
+    reply: HttpExchange,
+    platform_headers: &[(&'static str, String)],
+) -> Response<Body> {
+    let response = match guest_head(reply.status, &reply.headers, platform_headers) {
+        Ok(response) => response,
+        Err(rejection) => return rejection.into_response(),
+    };
+    if permits_body(method, response.status()) {
+        return response.map(|()| streaming(reply.body));
+    }
+    match reply.body.finish(ResponseDisposition::NoBody).await {
+        Ok(()) => response.map(|()| full(vec![])),
+        Err(error) => {
+            tracing::warn!(%error, "bodyless guest response did not complete successfully");
+            text(
+                StatusCode::BAD_GATEWAY,
+                "guest response failed before completion",
+                &[],
+            )
+        }
+    }
+}
+
+fn permits_body(method: &Method, status: StatusCode) -> bool {
+    method != Method::HEAD
+        && !(method == Method::CONNECT && status.is_success())
+        && !matches!(
+            status,
+            StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
+        )
+}
+
+enum GuestHeadRejection {
+    InterimResponse,
+    InvalidHttp,
+}
+
+impl GuestHeadRejection {
+    fn into_response(self) -> Response<Body> {
+        let message = match self {
+            Self::InterimResponse => "guest reply was not a final HTTP response",
+            Self::InvalidHttp => "guest reply was not valid HTTP",
+        };
+        text(StatusCode::BAD_GATEWAY, message, &[])
+    }
+}
+
+fn guest_head(
     status: u16,
     guest_headers: &[(String, String)],
     platform_headers: &[(&'static str, String)],
-    body: Body,
-) -> Response<Body> {
+) -> Result<Response<()>, GuestHeadRejection> {
     let mut b = Response::builder().status(status);
     for (k, v) in guest_headers {
         if k.to_ascii_lowercase().starts_with("x-wisp-") {
@@ -139,40 +196,23 @@ pub(crate) fn guest_stream_response(
     for (k, v) in platform_headers {
         b = b.header(*k, v);
     }
-    match b.body(body) {
+    match b.body(()) {
         Ok(mut resp) => {
             if resp.status().is_informational() {
                 tracing::warn!(
                     status,
                     "guest reply cannot be an interim response or protocol upgrade"
                 );
-                return text(
-                    StatusCode::BAD_GATEWAY,
-                    "guest reply was not a final HTTP response",
-                    &[],
-                );
+                return Err(GuestHeadRejection::InterimResponse);
             }
             // The guest has no authority over wire framing. HEAD and 304 may omit
             // length metadata, since we cannot verify a corresponding GET response.
             resp.headers_mut().remove(CONTENT_LENGTH);
-            if method == Method::HEAD
-                || method == Method::CONNECT && resp.status().is_success()
-                || matches!(
-                    resp.status(),
-                    StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
-                )
-            {
-                *resp.body_mut() = full(Vec::new());
-            }
-            resp
+            Ok(resp)
         }
         Err(e) => {
             tracing::warn!(error = %e, "guest reply carried a status or header HTTP cannot express");
-            text(
-                StatusCode::BAD_GATEWAY,
-                "guest reply was not valid HTTP",
-                &[],
-            )
+            Err(GuestHeadRejection::InvalidHttp)
         }
     }
 }
@@ -180,6 +220,70 @@ pub(crate) fn guest_stream_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn successful_connect_framing_waits_for_its_body_owner_without_reading() {
+        struct AwaitEnd {
+            requested: tokio::sync::oneshot::Sender<ResponseDisposition>,
+            acknowledged: tokio::sync::oneshot::Receiver<()>,
+        }
+        #[async_trait::async_trait]
+        impl wisp_abi::host::HttpBody for AwaitEnd {
+            async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+                panic!("CONNECT framing must not consume a forbidden response body");
+            }
+        }
+        #[async_trait::async_trait]
+        impl HttpResponseBody for AwaitEnd {
+            async fn finish(
+                self: Box<Self>,
+                disposition: ResponseDisposition,
+            ) -> anyhow::Result<()> {
+                self.requested
+                    .send(disposition)
+                    .expect("observe the proxy's typed framing disposition");
+                self.acknowledged.await?;
+                Ok(())
+            }
+        }
+        let (requested, mut request) = tokio::sync::oneshot::channel();
+        let (acknowledge, acknowledged) = tokio::sync::oneshot::channel();
+        let reply = HttpExchange {
+            status: 200,
+            headers: vec![],
+            body: Box::new(AwaitEnd {
+                requested,
+                acknowledged,
+            }),
+        };
+        let mut response = Box::pin(guest_stream_response(&Method::CONNECT, reply, &[]));
+        assert!(
+            futures::poll!(&mut response).is_pending(),
+            "the proxy cannot finish CONNECT before the host acknowledges terminal cleanup"
+        );
+        assert_eq!(
+            request.try_recv().expect("framing request"),
+            ResponseDisposition::NoBody,
+            "successful CONNECT must select deliberate no-body disposition"
+        );
+        acknowledge.send(()).expect("release terminal cleanup");
+        let response = response.await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "successful terminal acknowledgement must retain the guest status"
+        );
+        assert!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .expect("valid empty body")
+                .to_bytes()
+                .is_empty(),
+            "CONNECT must not transmit guest body bytes"
+        );
+    }
 
     #[test]
     fn a_guest_header_http_cannot_carry_is_a_502() {

@@ -21,6 +21,21 @@ pub trait HttpBody: Send + 'static {
     async fn read(&mut self) -> Result<Option<Vec<u8>>>;
 }
 
+/// Why HTTP framing ends a response without consuming its guest body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseDisposition {
+    /// The request method or response status forbids a wire response body.
+    NoBody,
+}
+
+/// A response body whose dispatch can be ended deliberately by HTTP framing.
+#[async_trait]
+pub trait HttpResponseBody: HttpBody {
+    /// End without consuming body bytes and await the dispatch's terminal boundary.
+    /// Dropping this operation before acknowledgement still cancels the requester.
+    async fn finish(self: Box<Self>, disposition: ResponseDisposition) -> Result<()>;
+}
+
 /// Response metadata available before its body finishes.
 pub struct HttpExchange {
     /// Final HTTP response status.
@@ -28,7 +43,7 @@ pub struct HttpExchange {
     /// Repeated application headers, validated by the proxy before transmission.
     pub headers: Vec<(String, String)>,
     /// Owned response body and its cancellation lifetime.
-    pub body: Box<dyn HttpBody>,
+    pub body: Box<dyn HttpResponseBody>,
 }
 
 impl HttpExchange {
@@ -52,6 +67,16 @@ impl HttpBody for BufferedBody {
 
     async fn read(&mut self) -> Result<Option<Vec<u8>>> {
         Ok(self.0.take().filter(|body| !body.is_empty()))
+    }
+}
+
+#[async_trait]
+impl HttpResponseBody for BufferedBody {
+    async fn finish(self: Box<Self>, disposition: ResponseDisposition) -> Result<()> {
+        match disposition {
+            ResponseDisposition::NoBody => drop(self),
+        }
+        Ok(())
     }
 }
 
