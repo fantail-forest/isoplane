@@ -43,9 +43,9 @@ cargo metadata --no-deps --format-version 1 \
 
 | Tool                     | Configured in                                               | Notes                                                                                                                                            |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile currently selects `stable`. Nightly is never required for build, test, lint, or docs.                                                                                |
+| **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile pins the build toolchain. Nightly is never required for build, test, lint, or docs.                                                                                |
 | **wasmtime**             | `Cargo.toml`                                            | Policy: one version across the workspace. See the known toolchain debt below.                                                |
-| **.NET SDK**             | `Dockerfile` (`DOTNET_CHANNEL`)                         | Policy: pin one SDK version. The Dockerfile currently selects a channel.                                                                                                           |
+| **.NET SDK**             | `global.json`, consumed by `Dockerfile`                         | Policy: pin one SDK version. The image installs the version declared in `global.json`.                                                                                                           |
 | **ILCompiler.LLVM**      | `guest-sdks/dotnet/Wisp.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
 | **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` | The gate, green before every commit.                                                                                                             |
@@ -58,11 +58,10 @@ cargo metadata --no-deps --format-version 1 \
 | **Docs site**            | Docusaurus 3 (`docs/userdocs`)                          |                                                                                                                                                  |
 | **Container**            | `scripts/dev --container`, `Dockerfile`                             | A convenience that carries the whole toolchain. Never make crates, tests, scripts, or docs require, detect, or gate on it.                    |
 
-The current Dockerfile uses floating Rust and .NET selections, and
-`wisp-control` links Wizer with its own Wasmtime. These are known departures
-from reproducible toolchain and single-Wasmtime policy, not patterns to copy.
-Resolve them in focused toolchain changes with guest fixtures and integration
-tests validated; do not fold those migrations into unrelated work.
+`wisp-control` links Wizer with its own Wasmtime, a known departure from
+single-Wasmtime policy, not a pattern to copy. Resolve it in a focused toolchain
+change with guest fixtures and integration tests validated; do not fold that
+migration into unrelated work.
 
 ## Common Operations
 

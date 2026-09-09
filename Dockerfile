@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Rust (host runtime + Rust guests) -------------------------------------
-ARG RUST_VERSION=stable
+ARG RUST_VERSION=1.98.0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal \
     && rustup target add wasm32-unknown-unknown wasm32-wasip1 \
@@ -24,11 +24,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 # --- .NET (the C# guest, which is the point of the exercise) ----------------
 # Installed inside the image only; never on the host.
-ARG DOTNET_CHANNEL=10.0
+COPY global.json /tmp/wisp-global.json
 RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
     && chmod +x /tmp/dotnet-install.sh \
-    && /tmp/dotnet-install.sh --channel ${DOTNET_CHANNEL} --install-dir /usr/share/dotnet \
-    && rm /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --version "$(jq -er .sdk.version /tmp/wisp-global.json)" --install-dir /usr/share/dotnet \
+    && rm /tmp/dotnet-install.sh /tmp/wisp-global.json \
     && ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
     && dotnet --info | head -5
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
