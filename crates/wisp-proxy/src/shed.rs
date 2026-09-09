@@ -41,6 +41,14 @@ pub struct AdmissionControl {
     metrics: Arc<ProxyMetrics>,
 }
 
+struct QueueReservation<'a>(&'a AtomicUsize);
+
+impl Drop for QueueReservation<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 impl AdmissionControl {
     pub fn new(cfg: ShedConfig, metrics: Arc<ProxyMetrics>) -> Self {
         AdmissionControl {
@@ -66,14 +74,14 @@ impl AdmissionControl {
         // Reserve the queue slot before awaiting, so the depth check counts
         // waiters rather than lagging behind them.
         let depth = self.queued.fetch_add(1, Ordering::AcqRel) + 1;
+        let reservation = QueueReservation(&self.queued);
         if depth > self.cfg.max_queued {
-            self.queued.fetch_sub(1, Ordering::AcqRel);
             self.metrics.requests_shed.fetch_add(1, Ordering::Relaxed);
             return Admit::Shed;
         }
         let t0 = Instant::now();
         let acquired = self.sem.clone().acquire_owned().await;
-        self.queued.fetch_sub(1, Ordering::AcqRel);
+        drop(reservation);
         match acquired {
             Ok(permit) => {
                 self.metrics.admission_wait.record(t0.elapsed());
@@ -156,6 +164,67 @@ mod tests {
                 "a queued caller is granted once the slot frees"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_waiter_releases_admission_for_its_replacement() {
+        let metrics = Arc::new(ProxyMetrics::new());
+        let ac = AdmissionControl::new(
+            ShedConfig {
+                max_in_flight: 1,
+                max_queued: 1,
+            },
+            metrics.clone(),
+        );
+        let held = ac.admit().await;
+        assert!(
+            matches!(&held, Admit::Granted { .. }),
+            "the first caller must hold the only in-flight slot"
+        );
+        let mut abandoned = Box::pin(ac.admit());
+        assert!(
+            futures::poll!(&mut abandoned).is_pending(),
+            "the held permit must block the queued caller"
+        );
+        assert_eq!(
+            ac.queued(),
+            1,
+            "the blocked caller must own one queue reservation"
+        );
+        drop(abandoned);
+        assert_eq!(
+            ac.queued(),
+            0,
+            "canceling a blocked caller must release its queue reservation"
+        );
+        assert_eq!(
+            ac.in_flight(),
+            1,
+            "canceling a waiter must not release another caller's permit"
+        );
+        let mut replacement = Box::pin(ac.admit());
+        assert!(
+            futures::poll!(&mut replacement).is_pending(),
+            "a replacement must queue rather than be shed by abandoned ownership"
+        );
+        drop(held);
+        assert!(
+            matches!(
+                futures::poll!(&mut replacement),
+                std::task::Poll::Ready(Admit::Granted { .. })
+            ),
+            "the replacement must acquire the released permit"
+        );
+        assert_eq!(
+            ac.queued(),
+            0,
+            "a granted caller must release its queue reservation once"
+        );
+        assert_eq!(
+            metrics.requests_shed.load(Ordering::Relaxed),
+            0,
+            "canceled waiters must not cause false overload shedding"
+        );
     }
 
     #[tokio::test]
