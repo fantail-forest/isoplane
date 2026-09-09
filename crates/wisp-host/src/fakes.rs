@@ -77,6 +77,10 @@ pub struct FakeBehaviour {
     /// test can see whether the instance carried residue.
     pub lazy_init_probe: bool,
     pub memory_bytes: usize,
+    /// Prescribed CPU for each non-spinning slice in accounting tests.
+    pub slice_cpu: Option<std::time::Duration>,
+    /// Emit the scripted final response through the streaming transport.
+    pub response_streaming: bool,
 }
 
 impl FakeBehaviour {
@@ -85,6 +89,8 @@ impl FakeBehaviour {
             program: vec![],
             lazy_init_probe: false,
             memory_bytes: 4 * PAGE_SIZE,
+            slice_cpu: None,
+            response_streaming: false,
         }
     }
     pub fn program(steps: impl IntoIterator<Item = Step>) -> Self {
@@ -92,6 +98,8 @@ impl FakeBehaviour {
             program: steps.into_iter().collect(),
             lazy_init_probe: false,
             memory_bytes: 4 * PAGE_SIZE,
+            slice_cpu: None,
+            response_streaming: false,
         }
     }
     pub fn with_lazy_init_probe(mut self) -> Self {
@@ -161,7 +169,7 @@ impl FakeInstance {
                     } else {
                         body
                     },
-                    streaming: false,
+                    streaming: self.behaviour.response_streaming,
                 };
                 let h = self.respond(head);
                 PollStatus::Done { response: h }
@@ -329,7 +337,10 @@ impl FakeInstance {
         DispatchOutcome {
             status,
             completion,
-            cpu_ns: cpu.elapsed_ns(),
+            cpu_ns: self
+                .behaviour
+                .slice_cpu
+                .map_or_else(|| cpu.elapsed_ns(), |value| value.as_nanos() as u64),
             wall_ns: wall.elapsed().as_nanos() as u64,
             trap: match status {
                 PollStatus::Trapped { .. } => Some(TrapInfo {

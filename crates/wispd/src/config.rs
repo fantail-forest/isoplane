@@ -26,6 +26,13 @@ pub struct NodeConfig {
     pub data_dir: std::path::PathBuf,
     #[serde(default)]
     pub engine: EngineLimits,
+    /// High-water mark for each real cell's queued HTTP response bytes.
+    #[serde(default = "default_response_queue_bytes")]
+    pub response_queue_bytes: usize,
+}
+
+fn default_response_queue_bytes() -> usize {
+    wisp_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES
 }
 
 /// The engine sizing a real node's cells share. The pooling allocator
@@ -177,6 +184,8 @@ pub enum ConfigError {
     DuplicateApp(String),
     #[error("proxy.max_in_flight must be at least 1 (got {0}): a node that admits nothing is not a node")]
     ZeroInFlight(usize),
+    #[error("response_queue_bytes must be positive")]
+    ZeroResponseQueue,
 }
 
 impl NodeConfig {
@@ -189,6 +198,7 @@ impl NodeConfig {
         NodeConfig {
             node: "wisp-dev".into(),
             proxy: ProxyListen::default(),
+            response_queue_bytes: default_response_queue_bytes(),
             admin: AdminListen::default(),
             cells: vec![
                 CellConfig {
@@ -226,6 +236,9 @@ impl NodeConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.cells.is_empty() {
             return Err(ConfigError::NoCells);
+        }
+        if self.response_queue_bytes == 0 {
+            return Err(ConfigError::ZeroResponseQueue);
         }
         if self.proxy.max_in_flight == 0 {
             return Err(ConfigError::ZeroInFlight(self.proxy.max_in_flight));
@@ -283,6 +296,19 @@ name = "cell-0"
 [[cells]]
 name = "cell-1"
 "#;
+
+    #[test]
+    fn a_zero_response_queue_is_rejected_before_startup() {
+        let mut configuration = NodeConfig::dev_default();
+        configuration.response_queue_bytes = 0;
+        assert!(
+            matches!(
+                configuration.validate(),
+                Err(ConfigError::ZeroResponseQueue)
+            ),
+            "a zero response queue must fail before any writer can wait forever"
+        );
+    }
 
     #[test]
     fn the_dev_default_is_valid() {

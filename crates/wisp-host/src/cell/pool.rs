@@ -339,6 +339,7 @@ mod cell_tests {
         let run = |id| {
             let (responder, rx) = std::sync::mpsc::sync_channel(1);
             cell.run_dispatch(DispatchJob {
+                stream: None,
                 module: module.clone(),
                 target: Target::Handler {
                     route: "/go".into(),
@@ -489,6 +490,88 @@ mod cell_tests {
             "and names the panic"
         );
         assert_eq!(out.dispatch_id, LIVE, "for the live dispatch");
+        cell.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_streaming_dispatch_bills_every_hot_slice_once_at_final_completion() {
+        let cell = cell(CellConfig::for_test("stream-cpu"));
+        let mut behaviour = FakeBehaviour::program([
+            Step::Park {
+                imports: vec![("clock_deadline_in", 0)],
+            },
+            Step::Park {
+                imports: vec![("clock_deadline_in", 0)],
+            },
+            Step::Done {
+                status: 200,
+                body: b"AB".to_vec(),
+            },
+        ]);
+        behaviour.slice_cpu = Some(Duration::from_nanos(11));
+        behaviour.response_streaming = true;
+        let module = app(&cell, "stream-cpu", behaviour);
+        let stream = crate::response_transport::ResponseTransport::new(1);
+        let dispatch = {
+            let cell = cell.clone();
+            let module = module.clone();
+            let stream = stream.clone();
+            tokio::task::spawn_blocking(move || {
+                cell.dispatch_with_stream(
+                    &module,
+                    Target::Handler {
+                        route: "/go".into(),
+                    },
+                    http(1),
+                    Duration::from_secs(10),
+                    Some(stream),
+                )
+            })
+        };
+        let mut exchange = stream.exchange().await.expect("stream headers");
+        let mut body = vec![];
+        while let Some(chunk) = exchange.body.read().await.expect("stream body") {
+            body.extend(chunk);
+        }
+        let result = dispatch
+            .await
+            .expect("dispatch task")
+            .expect("completed dispatch");
+        assert_eq!(
+            body, b"AB",
+            "the initial streamed body must drain before EOF"
+        );
+        assert_eq!(
+            result.slices, 3,
+            "both awaited timers and final response must be accounted"
+        );
+        assert_eq!(
+            result.cpu_ns, 33,
+            "final usage must sum every prescribed hot slice"
+        );
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while cell.metrics_raw().request_us.count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dispatch cleanup must settle");
+        let meters = cell.meters(&module).expect("module meters");
+        assert_eq!(
+            meters.cpu_ns(),
+            result.cpu_ns,
+            "streaming must record each hot slice exactly once"
+        );
+        assert_eq!(
+            meters.dispatches(),
+            1,
+            "parks and EOF must not record extra dispatches"
+        );
+        assert_eq!(
+            cell.futures().live_futures(),
+            0,
+            "stream EOF must leave no request futures after settlement"
+        );
         cell.shutdown();
     }
 }

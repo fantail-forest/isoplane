@@ -1,9 +1,14 @@
 //! Guest response validation and host-owned HTTP framing.
 
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full, StreamBody};
+use hyper::body::{Body as HttpBodyTrait, Frame, SizeHint};
 use hyper::header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE};
 use hyper::{Method, Response, StatusCode};
+use wisp_abi::host::HttpBody;
 
 use crate::headers::strip_connection_headers;
 use crate::server::Body;
@@ -13,7 +18,7 @@ pub(crate) fn text(
     body: &str,
     headers: &[(HeaderName, HeaderValue)],
 ) -> Response<Body> {
-    let mut resp = Response::new(Full::new(Bytes::from(body.to_string())));
+    let mut resp = Response::new(full(body.as_bytes().to_vec()));
     *resp.status_mut() = status;
     resp.headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
@@ -28,12 +33,98 @@ pub(crate) fn text(
 /// could lie to its operator about which build served the request; the
 /// platform's own values are appended. A status or header the guest wrote
 /// that HTTP cannot carry is a 502, not a panic.
+#[cfg(test)]
 pub(crate) fn guest_response(
     method: &Method,
     status: u16,
     guest_headers: &[(String, String)],
     platform_headers: &[(&'static str, String)],
     body: Vec<u8>,
+) -> Response<Body> {
+    guest_stream_response(method, status, guest_headers, platform_headers, full(body))
+}
+
+pub(crate) fn full(body: Vec<u8>) -> Body {
+    Full::new(Bytes::from(body))
+        .map_err(|never| match never {})
+        .boxed_unsync()
+}
+
+pub(crate) fn streaming(body: Box<dyn HttpBody>) -> Body {
+    let remaining_bytes = body.remaining_bytes();
+    let stream = futures::stream::unfold(Some(body), |body| async move {
+        let mut body = body?;
+        match body.read().await {
+            Ok(Some(bytes)) => Some((Ok(Frame::data(Bytes::from(bytes))), Some(body))),
+            Ok(None) => None,
+            Err(error) => Some((Err(error), None)),
+        }
+    });
+    GuardedBody {
+        body: StreamBody::new(stream).boxed_unsync(),
+        guard: None::<()>,
+        remaining_bytes,
+    }
+    .boxed_unsync()
+}
+
+pub(crate) fn hold_until_body_end<G: Send + Unpin + 'static>(body: Body, guard: G) -> Body {
+    let remaining_bytes = body.size_hint().exact();
+    GuardedBody {
+        body,
+        guard: Some(guard),
+        remaining_bytes,
+    }
+    .boxed_unsync()
+}
+
+struct GuardedBody<G> {
+    body: Body,
+    guard: Option<G>,
+    remaining_bytes: Option<u64>,
+}
+
+impl<G: Unpin> HttpBodyTrait for GuardedBody<G> {
+    type Data = Bytes;
+    type Error = anyhow::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, anyhow::Error>>> {
+        let this = self.get_mut();
+        let result = Pin::new(&mut this.body).poll_frame(cx);
+        match &result {
+            Poll::Ready(Some(Ok(frame))) => {
+                if let (Some(remaining), Some(data)) = (&mut this.remaining_bytes, frame.data_ref())
+                {
+                    *remaining = remaining.saturating_sub(data.len() as u64);
+                }
+            }
+            Poll::Ready(None | Some(Err(_))) => {
+                this.guard.take();
+            }
+            Poll::Pending => {}
+        }
+        result
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.remaining_bytes
+            .map_or_else(|| self.body.size_hint(), SizeHint::with_exact)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+}
+
+pub(crate) fn guest_stream_response(
+    method: &Method,
+    status: u16,
+    guest_headers: &[(String, String)],
+    platform_headers: &[(&'static str, String)],
+    body: Body,
 ) -> Response<Body> {
     let mut b = Response::builder().status(status);
     for (k, v) in guest_headers {
@@ -48,7 +139,7 @@ pub(crate) fn guest_response(
     for (k, v) in platform_headers {
         b = b.header(*k, v);
     }
-    match b.body(Full::new(Bytes::from(body))) {
+    match b.body(body) {
         Ok(mut resp) => {
             if resp.status().is_informational() {
                 tracing::warn!(
@@ -71,7 +162,7 @@ pub(crate) fn guest_response(
                     StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
                 )
             {
-                *resp.body_mut() = Full::new(Bytes::new());
+                *resp.body_mut() = full(Vec::new());
             }
             resp
         }
@@ -142,5 +233,43 @@ mod tests {
                 "guest status {status} cannot replace the host's interim-response or upgrade path"
             );
         }
+    }
+    #[tokio::test]
+    async fn a_body_lifetime_guard_preserves_known_length_and_releases_at_eof() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        struct Guard(Arc<AtomicBool>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let released = Arc::new(AtomicBool::new(false));
+        let mut body = hold_until_body_end(full(b"AB".to_vec()), Guard(released.clone()));
+        assert_eq!(
+            body.size_hint().exact(),
+            Some(2),
+            "lifetime ownership must preserve buffered wire framing"
+        );
+        assert!(
+            !released.load(Ordering::Acquire),
+            "admission must remain held before consumption"
+        );
+        body.frame().await.expect("body frame").expect("body data");
+        assert_eq!(
+            body.size_hint().exact(),
+            Some(0),
+            "the known remaining length must follow consumed bytes"
+        );
+        assert!(
+            body.frame().await.is_none(),
+            "the completed buffer must reach EOF"
+        );
+        assert!(
+            released.load(Ordering::Acquire),
+            "EOF must release admission even while the body object remains allocated"
+        );
     }
 }

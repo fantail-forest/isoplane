@@ -32,6 +32,7 @@ public static class WispHosting
     public static IWebHostBuilder UseWisp(this IWebHostBuilder builder) =>
         builder.ConfigureServices(services =>
         {
+            services.TryAddSingleton<Func<ResponseTransport>>(_ => () => new HostResponseTransport());
             services.RemoveAll<IServer>();
             services.AddSingleton<IServer, WispServer>();
         });

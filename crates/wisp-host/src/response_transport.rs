@@ -1,0 +1,496 @@
+//! Response ownership between one dispatch and its requester.
+
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use tokio::sync::Notify;
+use wisp_abi::dispatch::ResponseHead;
+use wisp_abi::host::{HttpBody, HttpExchange};
+use wisp_abi::result::FutureError;
+
+#[derive(Default)]
+struct State {
+    head: Option<(u16, Vec<(String, String)>)>,
+    chunks: VecDeque<Vec<u8>>,
+    queued_bytes: usize,
+    remaining_bytes: Option<u64>,
+    pending_bytes: usize,
+    queued_peak_bytes: usize,
+    pending_peak_bytes: usize,
+    finished: bool,
+    closing: bool,
+    write_turn: u64,
+    cancelled: bool,
+    failure: Option<String>,
+    initial_write: Option<tokio::task::AbortHandle>,
+}
+
+pub(crate) struct ResponseTransport {
+    state: Mutex<State>,
+    queue_bytes: usize,
+    next_write: AtomicU64,
+    readable: Notify,
+    writable: Notify,
+    cancellation: OnceLock<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl ResponseTransport {
+    pub(crate) fn new(queue_bytes: usize) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(State::default()),
+            queue_bytes,
+            next_write: AtomicU64::new(0),
+            readable: Notify::new(),
+            writable: Notify::new(),
+            cancellation: OnceLock::new(),
+        })
+    }
+
+    pub(crate) fn on_cancel(&self, callback: Box<dyn Fn() + Send + Sync>) {
+        if self.cancellation.set(callback).is_err() {
+            tracing::error!("response cancellation owner was assigned twice");
+        }
+        if self.is_cancelled() {
+            if let Some(callback) = self.cancellation.get() {
+                callback();
+            }
+        }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.state.lock().cancelled
+    }
+
+    pub(crate) fn start(&self, head: &ResponseHead) -> Result<(), FutureError> {
+        let mut state = self.state.lock();
+        if state.cancelled {
+            return Err(FutureError::Cancelled);
+        }
+        if state.head.is_some() || state.finished {
+            return Err(FutureError::Denied("a response has already started".into()));
+        }
+        state.head = Some((head.status, head.headers.clone()));
+        state.remaining_bytes = (!head.streaming).then_some(head.body.len() as u64);
+        drop(state);
+        self.readable.notify_waiters();
+        Ok(())
+    }
+
+    pub(crate) fn own_initial_write(&self, task: tokio::task::AbortHandle) {
+        let mut state = self.state.lock();
+        if state.cancelled || state.failure.is_some() {
+            task.abort();
+        } else {
+            state.initial_write = Some(task);
+        }
+    }
+
+    pub(crate) fn finish(&self) {
+        let mut state = self.state.lock();
+        state.closing = true;
+        state.finished = state.pending_bytes == 0;
+        drop(state);
+        self.readable.notify_waiters();
+        self.writable.notify_waiters();
+    }
+
+    pub(crate) fn fail(&self, error: String) {
+        let mut state = self.state.lock();
+        if state.failure.is_none() {
+            state.failure = Some(error);
+        }
+        state.finished = true;
+        if let Some(task) = state.initial_write.take() {
+            task.abort();
+        }
+        drop(state);
+        self.readable.notify_waiters();
+        self.writable.notify_waiters();
+        if let Some(callback) = self.cancellation.get() {
+            callback();
+        }
+    }
+
+    fn cancel(&self) {
+        let mut state = self.state.lock();
+        if state.cancelled {
+            return;
+        }
+        let notify_owner = !state.finished;
+        state.cancelled = true;
+        if let Some(task) = state.initial_write.take() {
+            task.abort();
+        }
+        state.chunks.clear();
+        state.queued_bytes = 0;
+        drop(state);
+        self.readable.notify_waiters();
+        self.writable.notify_waiters();
+        if notify_owner {
+            if let Some(callback) = self.cancellation.get() {
+                callback();
+            }
+        }
+    }
+
+    pub(crate) async fn exchange(self: &Arc<Self>) -> anyhow::Result<HttpExchange> {
+        let reader = StreamingBody {
+            transport: self.clone(),
+        };
+        loop {
+            let changed = self.readable.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let state = self.state.lock();
+                if let Some((status, headers)) = &state.head {
+                    return Ok(HttpExchange {
+                        status: *status,
+                        headers: headers.clone(),
+                        body: Box::new(reader),
+                    });
+                }
+                if let Some(error) = &state.failure {
+                    anyhow::bail!("{error}");
+                }
+                anyhow::ensure!(
+                    !state.cancelled,
+                    "request cancelled before response headers"
+                );
+            }
+            changed.await;
+        }
+    }
+
+    pub(crate) fn prepare(self: &Arc<Self>, bytes: Vec<u8>) -> PendingWrite {
+        PendingWrite::new(self.clone(), bytes)
+    }
+
+    pub(crate) fn record_buffers(&self, dispatch_id: u64) {
+        let state = self.state.lock();
+        tracing::debug!(
+            dispatch_id,
+            response_queued_peak_bytes = state.queued_peak_bytes,
+            response_pending_write_peak_bytes = state.pending_peak_bytes,
+            response_queued_bytes = state.queued_bytes,
+            response_pending_write_bytes = state.pending_bytes,
+            "HTTP response buffer ownership"
+        );
+    }
+
+    pub(crate) fn has_started(&self) -> bool {
+        self.state.lock().head.is_some()
+    }
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.state.lock().failure.clone()
+    }
+
+    async fn write(self: &Arc<Self>, mut pending: PendingWrite) -> Result<usize, FutureError> {
+        let count = pending.bytes.len();
+        let mut offset = 0;
+        loop {
+            let changed = self.writable.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let mut state = self.state.lock();
+                if state.cancelled {
+                    return Err(FutureError::Cancelled);
+                }
+                if state.finished {
+                    return Err(FutureError::Io("response already finished".into()));
+                }
+                if state.write_turn == pending.ticket && offset == count {
+                    break;
+                }
+                let available = if state.write_turn == pending.ticket {
+                    self.queue_bytes.saturating_sub(state.queued_bytes)
+                } else {
+                    0
+                };
+                let length = available.min(count - offset);
+                if length != 0 {
+                    state
+                        .chunks
+                        .push_back(pending.bytes[offset..offset + length].to_vec());
+                    state.queued_bytes += length;
+                    state.queued_peak_bytes = state.queued_peak_bytes.max(state.queued_bytes);
+                    offset += length;
+                    self.readable.notify_waiters();
+                }
+            }
+            if offset == count && self.state.lock().write_turn == pending.ticket {
+                break;
+            }
+            changed.await;
+        }
+        pending.completed = true;
+        self.state.lock().write_turn += 1;
+        self.writable.notify_waiters();
+        Ok(count)
+    }
+}
+
+pub(crate) struct PendingWrite {
+    transport: Arc<ResponseTransport>,
+    bytes: Vec<u8>,
+    ticket: u64,
+    completed: bool,
+}
+impl PendingWrite {
+    fn new(transport: Arc<ResponseTransport>, bytes: Vec<u8>) -> Self {
+        {
+            let mut state = transport.state.lock();
+            state.pending_bytes += bytes.len();
+            state.pending_peak_bytes = state.pending_peak_bytes.max(state.pending_bytes);
+        }
+        let ticket = transport.next_write.fetch_add(1, Ordering::Relaxed);
+        Self {
+            transport,
+            bytes,
+            ticket,
+            completed: false,
+        }
+    }
+
+    pub(crate) async fn send(self) -> Result<usize, FutureError> {
+        let transport = self.transport.clone();
+        transport.write(self).await
+    }
+}
+impl Drop for PendingWrite {
+    fn drop(&mut self) {
+        {
+            let mut state = self.transport.state.lock();
+            state.pending_bytes -= self.bytes.len();
+            if state.closing && state.pending_bytes == 0 {
+                state.finished = true;
+            }
+        }
+        if !self.completed {
+            self.transport
+                .fail("a response write was cancelled before acknowledgement".into());
+        }
+        self.transport.readable.notify_waiters();
+        self.transport.writable.notify_waiters();
+    }
+}
+
+struct StreamingBody {
+    transport: Arc<ResponseTransport>,
+}
+#[async_trait]
+impl HttpBody for StreamingBody {
+    fn remaining_bytes(&self) -> Option<u64> {
+        self.transport.state.lock().remaining_bytes
+    }
+
+    async fn read(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
+        loop {
+            let changed = self.transport.readable.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let mut state = self.transport.state.lock();
+                if let Some(bytes) = state.chunks.pop_front() {
+                    state.queued_bytes -= bytes.len();
+                    if let Some(remaining) = &mut state.remaining_bytes {
+                        *remaining -= bytes.len() as u64;
+                    }
+                    self.transport.writable.notify_waiters();
+                    return Ok(Some(bytes));
+                }
+                if let Some(error) = &state.failure {
+                    anyhow::bail!("{error}");
+                }
+                anyhow::ensure!(!state.cancelled, "response cancelled");
+                if state.finished {
+                    return Ok(None);
+                }
+            }
+            changed.await;
+        }
+    }
+}
+impl Drop for StreamingBody {
+    fn drop(&mut self) {
+        self.transport.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stream(queue_bytes: usize) -> Arc<ResponseTransport> {
+        let stream = ResponseTransport::new(queue_bytes);
+        stream
+            .start(&ResponseHead {
+                status: 200,
+                headers: vec![],
+                body: vec![],
+                streaming: true,
+            })
+            .expect("the fixture response must start");
+        stream
+    }
+
+    #[tokio::test]
+    async fn a_write_waits_for_queue_capacity_and_acknowledges_its_entire_payload() {
+        let stream = stream(4);
+        let mut response = stream
+            .exchange()
+            .await
+            .expect("response headers must be published");
+        let write = stream.prepare(b"abcdefgh".to_vec()).send();
+        tokio::pin!(write);
+        assert!(
+            futures::poll!(&mut write).is_pending(),
+            "a full transport queue must park the writer"
+        );
+        assert_eq!(
+            stream.state.lock().queued_bytes,
+            4,
+            "queued bytes must obey the configured high-water mark"
+        );
+        assert_eq!(
+            response.body.read().await.expect("first read"),
+            Some(b"abcd".to_vec()),
+            "the requester must receive the first segment before write acknowledgement"
+        );
+        assert_eq!(
+            write.await.expect("full write"),
+            8,
+            "the acknowledgement must cover the whole submitted write"
+        );
+        stream.finish();
+        assert_eq!(
+            response.body.read().await.expect("second read"),
+            Some(b"efgh".to_vec()),
+            "finish must retain queued response bytes"
+        );
+        assert_eq!(
+            response.body.read().await.expect("EOF"),
+            None,
+            "finished responses must end after their last byte"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_an_earlier_write_fails_later_tickets_instead_of_stranding_them() {
+        let stream = stream(1);
+        let mut first = Box::pin(stream.prepare(b"first".to_vec()).send());
+        let mut second = Box::pin(stream.prepare(b"second".to_vec()).send());
+        assert!(
+            futures::poll!(&mut first).is_pending(),
+            "the first write must fill the queue"
+        );
+        assert!(
+            futures::poll!(&mut second).is_pending(),
+            "the next write must await its predecessor"
+        );
+        drop(first);
+        assert!(
+            matches!(futures::poll!(&mut second), std::task::Poll::Ready(Err(_))),
+            "a cancelled predecessor must fail the response rather than strand the next ticket"
+        );
+        assert_eq!(
+            stream.state.lock().pending_bytes,
+            0,
+            "cancelled write payloads must release their ownership"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_the_response_releases_a_blocked_write_payload() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let mut write = Box::pin(stream.prepare(b"blocked".to_vec()).send());
+        assert!(
+            futures::poll!(&mut write).is_pending(),
+            "the write must be blocked by the unread queue"
+        );
+        drop(response);
+        assert!(
+            matches!(
+                futures::poll!(&mut write),
+                std::task::Poll::Ready(Err(FutureError::Cancelled))
+            ),
+            "dropping a response must cancel its blocked writer"
+        );
+        assert_eq!(
+            stream.state.lock().pending_bytes,
+            0,
+            "body drop must release pending payload ownership"
+        );
+        assert_eq!(
+            stream.state.lock().queued_bytes,
+            0,
+            "body drop must release queued payload ownership"
+        );
+    }
+
+    #[tokio::test]
+    async fn finishing_preserves_an_initial_body_that_is_still_waiting_for_capacity() {
+        let stream = stream(1);
+        let mut response = stream.exchange().await.expect("response headers");
+        let mut initial = Box::pin(stream.prepare(b"AB".to_vec()).send());
+        assert!(
+            futures::poll!(&mut initial).is_pending(),
+            "the initial body must exceed the queue"
+        );
+        stream.finish();
+        assert_eq!(
+            response.body.read().await.expect("initial chunk"),
+            Some(b"A".to_vec()),
+            "finish must not discard an initial body"
+        );
+        assert_eq!(
+            initial.await.expect("initial body drain"),
+            2,
+            "the whole initial body must be queued"
+        );
+        assert_eq!(
+            response.body.read().await.expect("final chunk"),
+            Some(b"B".to_vec()),
+            "the remaining initial body must arrive"
+        );
+        assert_eq!(
+            response.body.read().await.expect("EOF"),
+            None,
+            "initial body completion must release EOF"
+        );
+    }
+    #[tokio::test]
+    async fn dropping_a_failed_body_clears_queued_bytes_and_aborts_its_initial_writer() {
+        let stream = stream(1);
+        let response = stream.exchange().await.expect("response headers");
+        let mut initial = Box::pin(stream.prepare(b"AB".to_vec()).send());
+        assert!(
+            futures::poll!(&mut initial).is_pending(),
+            "the initial payload must await queue space"
+        );
+        let task = tokio::spawn(initial);
+        stream.own_initial_write(task.abort_handle());
+        stream.fail("guest trapped after headers".into());
+        drop(response);
+        assert!(
+            task.await
+                .expect_err("the failed transport must abort its owned task")
+                .is_cancelled(),
+            "initial writer cancellation must be explicit"
+        );
+        let state = stream.state.lock();
+        assert_eq!(
+            state.pending_bytes, 0,
+            "failure must release pending payload ownership"
+        );
+        assert_eq!(
+            state.queued_bytes, 0,
+            "dropping a failed body must release queued ownership"
+        );
+    }
+}

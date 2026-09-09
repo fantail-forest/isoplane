@@ -440,3 +440,9 @@ async fn managed_libraries_observe_the_empty_read_only_disk() {
 }
 #[path = "real_node/aspnet.rs"]
 mod aspnet;
+
+#[path = "real_node/streaming.rs"]
+mod streaming;
+
+#[path = "common/owned_endpoint.rs"]
+mod owned_endpoint;

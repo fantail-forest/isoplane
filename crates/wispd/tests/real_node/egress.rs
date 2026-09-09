@@ -1,27 +1,16 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::owned_endpoint::OwnedEndpoint;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use wisp_abi::calls::FetchRequest;
 use wisp_abi::dispatch::ResponseHead;
 use wisp_abi::result::ResultRecord;
-use wisp_host::egress::{DenyReason, DestinationPolicy};
+use wisp_host::egress::DestinationPolicy;
 
 use super::{common, config, get, manifest, serve, InitSandbox, Node, Rig};
-
-struct OwnedEndpoint(SocketAddr);
-
-impl DestinationPolicy for OwnedEndpoint {
-    fn authorize(&self, address: SocketAddr) -> Result<(), DenyReason> {
-        if address == self.0 {
-            Ok(())
-        } else {
-            Err(DenyReason::NotAllowlisted(address.to_string()))
-        }
-    }
-}
 
 fn escaped(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("\\{byte:02x}")).collect()

@@ -102,6 +102,22 @@ impl Cell {
         slot.ctx
             .begin_dispatch(crate::now_ms(), job.rec.dispatch_id);
         slot.ctx.set_cancel_future(job.rec.cancel_future);
+        slot.ctx.responses.lock().transport = job.stream.clone();
+        if let Some(stream) = &job.stream {
+            let cell = Arc::downgrade(self);
+            let owner = Arc::downgrade(&slot);
+            let generation = slot.ctx.dispatch_generation();
+            stream.on_cancel(Box::new(move || {
+                if let (Some(cell), Some(slot)) = (cell.upgrade(), owner.upgrade()) {
+                    slot.ctx.cancel_generation(generation);
+                    cell.queue_wake(slot);
+                }
+            }));
+        }
+
+        if self.cancel_stream_at_boundary(&slot, &entry) {
+            return;
+        }
 
         let outcome = {
             let mut guard = match slot.enter() {
@@ -182,6 +198,10 @@ impl Cell {
         let Some(entry) = self.modules.read().get(&module).cloned() else {
             return;
         };
+
+        if self.cancel_stream_at_boundary(&slot, &entry) {
+            return;
+        }
 
         loop {
             // The instance is entered before the result is taken out, so a
@@ -267,6 +287,13 @@ impl Cell {
             _ => out.completion,
         };
 
+        let closed_response = slot.ctx.responses.lock().completed_transport_response();
+        let completion = if completion == Completion::Parked && closed_response.is_some() {
+            Completion::Done
+        } else {
+            completion
+        };
+
         let (lifecycle, module, route) = self
             .active
             .with_mut(&slot.id, |req| {
@@ -283,16 +310,22 @@ impl Cell {
                 )
             });
         let breaker_key = BreakerKey { module, route };
+        if self.cancel_stream_at_boundary(slot, entry) {
+            return true;
+        }
 
         match completion {
             Completion::Parked => self.park_after_slice(slot),
             Completion::Done => {
-                // An unfinished streaming response stays in the table for the
-                // `resp_write`s that follow `done`. The caller receives the
-                // bytes accumulated so far; later chunks are readable through
-                // `Cell::response_snapshot` and are not piped to it.
-                let response = match out.status {
-                    PollStatus::Done { response } if response != 0 => {
+                // Open response handles retain the active dispatch. A streaming
+                // caller consumes the transport; buffered callers keep their
+                // existing snapshot reply semantics.
+                let response_handle = match out.status {
+                    PollStatus::Done { response } if response != 0 => Some(response),
+                    _ => closed_response,
+                };
+                let response = match response_handle {
+                    Some(response) => {
                         let mut t = slot.ctx.responses.lock();
                         match t.get(response) {
                             Some(r) if r.head.streaming && !r.finished => Some(r.clone()),
@@ -310,7 +343,9 @@ impl Cell {
                     None => (204, vec![], Vec::new()),
                 };
                 let result = self.build_result(slot, status, headers, body, completion, None);
-                self.respond(slot, result);
+                if !streaming_open || slot.ctx.responses.lock().transport.is_none() {
+                    self.respond(slot, result);
+                }
 
                 match decide(lifecycle, completion, streaming_open) {
                     RequestEnd::RetainedForStreaming => {
@@ -451,6 +486,15 @@ impl Cell {
     }
 
     fn respond(&self, slot: &Arc<Slot>, result: DispatchResult) {
+        if let Some(stream) = slot.ctx.responses.lock().transport.clone() {
+            if stream.has_started() {
+                if let Some(error) = &result.trap {
+                    stream.fail(error.clone());
+                } else {
+                    stream.finish();
+                }
+            }
+        }
         let tx = self
             .active
             .with_mut(&slot.id, |a| a.responder.take())
@@ -460,12 +504,46 @@ impl Cell {
         }
     }
 
+    fn cancel_stream_at_boundary(
+        self: &Arc<Self>,
+        slot: &Arc<Slot>,
+        entry: &Arc<ModuleEntry>,
+    ) -> bool {
+        let stream = slot.ctx.responses.lock().transport.clone();
+        let Some(stream) = stream else {
+            return false;
+        };
+        let failure = stream.failure();
+        if !stream.is_cancelled() && failure.is_none() {
+            return false;
+        }
+        slot.ctx.poison_imports();
+        let status = if failure.is_some() { 502 } else { 499 };
+        let reason = failure.unwrap_or_else(|| "request_cancelled".into());
+        let result = self.build_result(
+            slot,
+            status,
+            vec![],
+            vec![],
+            Completion::Trapped,
+            Some(reason),
+        );
+        tracing::info!(tenant = %entry.tenant, instance = %slot.id, dispatch_id = result.dispatch_id,
+            app = %slot.ctx.module.app, version = %slot.ctx.module.version,
+            cpu_ns = result.cpu_ns, wall_ns = result.wall_ns, status, error = ?result.trap, "HTTP response transport ended its dispatch");
+        self.respond(slot, result);
+        self.finish_and_release(slot, entry, evict());
+        true
+    }
+
     fn finish_and_release(
         self: &Arc<Self>,
         slot: &Arc<Slot>,
         entry: &Arc<ModuleEntry>,
         d: crate::disposition::Disposition,
     ) {
+        slot.ctx.responses.lock().transport = None;
+
         let req = self.active.remove(&slot.id);
         if let Some(r) = &req {
             self.rt.futures.end_dispatch(slot.id, r.dispatch_id);

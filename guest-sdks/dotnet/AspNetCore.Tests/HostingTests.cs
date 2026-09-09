@@ -11,7 +11,12 @@ namespace Wisp.AspNetCore.Tests;
 
 public sealed class HostingTests
 {
-    private static WebApplicationBuilder Builder() => WispHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!);
+    private static WebApplicationBuilder Builder()
+    {
+        var builder = WispHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!);
+        builder.Services.AddSingleton<Func<ResponseTransport>>(() => new RecordingResponseTransport());
+        return builder;
+    }
     private static Request Request(string path = "/") => Wisp.Request.FromDispatch(new DispatchRecord
     {
         Kind = DispatchKind.Http, Method = "GET", Path = path, Url = path
@@ -202,7 +207,6 @@ public sealed class HostingTests
     }
 
     [Theory]
-    [InlineData("streaming")]
     [InlineData("file")]
     [InlineData("synchronous write")]
     public async Task unsupported_response_operations_fail_explicitly(string operation)
@@ -214,7 +218,6 @@ public sealed class HostingTests
             var body = context.Features.Get<IHttpResponseBodyFeature>()!;
             switch (operation)
             {
-                case "streaming": body.DisableBuffering(); break;
                 case "file": await body.SendFileAsync("/file", 0, null); break;
                 case "synchronous write": body.Stream.Write([1], 0, 1); break;
                 default: throw new ArgumentOutOfRangeException(nameof(operation));

@@ -19,9 +19,21 @@ public sealed class BindingException : Exception
     public int WispError { get; }
 }
 
-/// <summary>A buffered response with status, repeated headers and body bytes.</summary>
+/// <summary>A buffered or completed streaming response.</summary>
 public sealed class Response
 {
+    private readonly ResponseStream? stream;
+
+    internal Response(ushort status, IReadOnlyList<KeyValuePair<string, string>> headers, ResponseStream stream)
+        : this(status, Array.Empty<byte>(), headers) => this.stream = stream;
+
+    internal int Finish() => stream is null
+        ? new ResponseHandle(Status, Headers, Body, streaming: false).Finish()
+        : stream.Finish();
+
+    /// <summary>Publishes response headers and creates a writer. Return its completed response from the handler.</summary>
+    public static ResponseStream Stream(ushort status, IReadOnlyList<KeyValuePair<string, string>> headers) => new(status, headers);
+
     internal ushort Status { get; }
     internal byte[] Body { get; }
     internal IReadOnlyList<KeyValuePair<string, string>> Headers { get; }

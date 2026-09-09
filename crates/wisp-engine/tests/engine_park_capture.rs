@@ -5,7 +5,7 @@ mod common;
 use common::*;
 use wisp_abi::result::ResultRecord;
 use wisp_abi::status::PollStatus;
-use wisp_engine::{Completion, CpuBudget, InstanceOps};
+use wisp_engine::{Completion, CpuBudget, DispatchOutcome, Instance, InstanceOps};
 
 fn read_u32(m: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(m[off..off + 4].try_into().expect("4 bytes"))
@@ -183,7 +183,10 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
     let template = engine
         .load_template(&wisp_fixtures::dotnet("wisp_guest_aspnet"))
         .expect("the packaged ASP.NET guest must load");
-    let mut instance = activate(&engine, &template);
+    let recorder = Recorder::default();
+    let mut instance = engine
+        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .expect("ASP.NET instance");
     let mut request = http_dispatch(1);
     if let wisp_abi::dispatch::DispatchKind::Http(http) = &mut request.kind {
         http.path = "/scope".into();
@@ -196,6 +199,7 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
     };
     for _ in 0..2 {
         let result = instance.dispatch(&request, budget);
+        let result = acknowledge_response_writes(&mut instance, &recorder, result, budget);
         assert!(
             matches!(result.status, PollStatus::Done { .. }),
             "a native ASP.NET request must dispose its scope before the next request: {result:?}"
@@ -206,12 +210,15 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
         .expect("ASP.NET state must be capturable at the empty-stack response boundary");
     let memory = instance.memory().to_vec();
     drop(instance);
-    let mut restored = activate(&engine, &template);
+    let mut restored = engine
+        .activate(&template, Box::new(TestBindings::new(recorder.clone())))
+        .expect("restored ASP.NET instance");
     restored
         .restore_mutable_state(&image)
         .expect("ASP.NET state must restore in a new Store");
     restored.memory().copy_from_slice(&memory);
     let result = restored.dispatch(&request, budget);
+    let result = acknowledge_response_writes(&mut restored, &recorder, result, budget);
     assert!(
         matches!(result.status, PollStatus::Done { .. }),
         "restored ASP.NET state must not retain a completed request scope: {result:?}"
@@ -267,6 +274,7 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
         &ResultRecord::Err(wisp_abi::result::FutureError::Cancelled),
         budget,
     );
+    let result = acknowledge_response_writes(&mut restored, &recorder, result, budget);
     assert_eq!(
         result.completion,
         Completion::Done,
@@ -289,6 +297,7 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
     request.dispatch_id += 1;
     request.cancel_future += 1;
     let result = restored.dispatch(&request, budget);
+    let result = acknowledge_response_writes(&mut restored, &recorder, result, budget);
     assert_eq!(
         result.completion,
         Completion::Done,
@@ -304,4 +313,24 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
         b"isolated",
         "the next request must own a fresh scope"
     );
+}
+
+fn acknowledge_response_writes(
+    instance: &mut Instance,
+    recorder: &Recorder,
+    mut outcome: DispatchOutcome,
+    budget: CpuBudget,
+) -> DispatchOutcome {
+    for _ in 0..8 {
+        if outcome.completion != Completion::Parked {
+            return outcome;
+        }
+        let (future, bytes) = recorder.response_writes.lock().pop_front().expect("the parked ASP.NET fixture must be awaiting an explicit response write acknowledgement");
+        outcome = instance.wake(
+            future,
+            &ResultRecord::Ok(postcard::to_allocvec(&bytes).expect("write byte count")),
+            budget,
+        );
+    }
+    panic!("the small ASP.NET response failed to finish within its expected write count");
 }

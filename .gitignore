@@ -40,3 +40,7 @@ guest-sdks/dotnet/obj/
 
 /tools/Isoplane.Cli/bin/
 /tools/Isoplane.Cli/obj/
+/guest-sdks/dotnet/AspNetCore/bin/
+/guest-sdks/dotnet/AspNetCore/obj/
+/guest-sdks/dotnet/AspNetCore.Tests/bin/
+/guest-sdks/dotnet/AspNetCore.Tests/obj/

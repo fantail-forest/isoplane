@@ -4,6 +4,9 @@
 //! that initially returned its handle.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::response_transport::ResponseTransport;
 
 use parking_lot::Mutex;
 use wisp_abi::dispatch::ResponseHead;
@@ -30,6 +33,7 @@ impl Response {
 #[derive(Default)]
 pub struct ResponseTable {
     next: u32,
+    pub(crate) transport: Option<Arc<ResponseTransport>>,
     open: HashMap<u32, Response>,
 }
 
@@ -77,6 +81,19 @@ impl ResponseTable {
 
     pub fn take(&mut self, handle: u32) -> Option<Response> {
         self.open.remove(&handle)
+    }
+
+    pub(crate) fn completed_transport_response(&self) -> Option<u32> {
+        self.transport.as_ref()?;
+        self.open.iter().find_map(|(handle, response)| {
+            (response.head.streaming && response.finished).then_some(*handle)
+        })
+    }
+
+    pub(crate) fn has_open_transport(&self) -> bool {
+        self.transport
+            .as_ref()
+            .is_some_and(|stream| stream.has_started())
     }
 
     pub fn is_streaming(&self, handle: u32) -> bool {

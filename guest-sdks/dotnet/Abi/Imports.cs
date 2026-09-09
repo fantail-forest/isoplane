@@ -34,6 +34,10 @@ internal static unsafe partial class H
     internal static extern int RespNew(byte* ptr, int len);
 
     [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "resp_write")]
+    internal static extern long RespWrite(int handle, byte* ptr, int len);
+
+    [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "resp_finish")]
     internal static extern void RespFinish(int handle);
 }

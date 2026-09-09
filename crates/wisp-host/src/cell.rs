@@ -59,6 +59,9 @@ pub struct CellConfig {
     /// `exec_threads` times this.
     pub queue_depth_per_worker: usize,
     pub max_idle_per_module: usize,
+    /// High-water mark for queued HTTP response bytes; writes wait for readers.
+    /// This does not limit the total size of a response.
+    pub response_queue_bytes: usize,
     /// Wall-clock backstop for a dispatch; reported separately from active execution time.
     pub wall_ms_cap: u32,
     pub breaker: BreakerConfig,
@@ -74,6 +77,7 @@ impl Default for CellConfig {
             reactor_threads: cores.max(2),
             queue_depth_per_worker: 64,
             max_idle_per_module: 64,
+            response_queue_bytes: wisp_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
             wall_ms_cap: 30_000,
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
@@ -130,6 +134,10 @@ pub struct Cell {
 impl Cell {
     /// Fails if the reactor or a pool thread cannot be started.
     pub fn new(cfg: CellConfig, services: Arc<Services>) -> crate::Result<Arc<Self>> {
+        anyhow::ensure!(
+            cfg.response_queue_bytes > 0,
+            "response_queue_bytes must be positive"
+        );
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(cfg.reactor_threads)
             .thread_name(format!("{}-reactor", cfg.name))

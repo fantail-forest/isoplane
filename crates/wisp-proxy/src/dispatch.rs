@@ -12,7 +12,7 @@ use wisp_abi::host::{RouteTarget};
 
 use crate::headers::strip_connection_headers;
 use crate::request::parse_query;
-use crate::response::{guest_response, text};
+use crate::response::{guest_stream_response, streaming, text};
 use crate::server::{Body, Proxy};
 
 impl Proxy {
@@ -45,8 +45,8 @@ impl Proxy {
                 .collect(),
             body: body.to_vec(),
         };
-        match self.dispatcher.dispatch_http(&target, hreq).await {
-            Ok(reply) => guest_response(
+        match self.dispatcher.dispatch_http_stream(&target, hreq).await {
+            Ok(reply) => guest_stream_response(
                 &parts.method,
                 reply.status,
                 &reply.headers,
@@ -54,7 +54,7 @@ impl Proxy {
                     ("x-wisp-tier", tier_str(target.tier).to_string()),
                     ("x-wisp-version", target.version.clone()),
                 ],
-                reply.body,
+                streaming(reply.body),
             ),
             Err(e) => {
                 self.metrics.requests_failed.fetch_add(1, Relaxed);

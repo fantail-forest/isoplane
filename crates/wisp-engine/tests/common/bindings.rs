@@ -10,6 +10,8 @@ use wisp_engine::{HostBindings, ImportCall};
 pub struct Recorder {
     pub calls: Arc<parking_lot::Mutex<Vec<String>>>,
     pub responses: Arc<parking_lot::Mutex<Vec<wisp_abi::dispatch::ResponseHead>>>,
+    pub response_writes: Arc<parking_lot::Mutex<std::collections::VecDeque<(u64, u32)>>>,
+    pub reject_next_response: Arc<AtomicBool>,
     pub deny_entropy: Arc<AtomicBool>,
     pub entropy_draws: Arc<parking_lot::Mutex<Vec<Vec<u8>>>>,
     pub clock: Arc<AtomicU64>,
@@ -20,6 +22,7 @@ pub struct TestBindings {
     pub rec: Recorder,
     pub init_sandbox: bool,
     pub next_future: u64,
+    pub(crate) next_response: i64,
     pub fill_byte: u8,
     /// When false, `call_fill` denies, which is the default `HostBindings`
     /// behaviour.
@@ -35,6 +38,7 @@ impl TestBindings {
             rec,
             init_sandbox: false,
             next_future: 1,
+            next_response: 1,
             fill_byte: 0xAB,
             allow_fill: true,
             full_length: None,
@@ -53,16 +57,35 @@ impl HostBindings for TestBindings {
         self.note(&call);
         let id = self.next_future;
         self.next_future += 1;
+        if call.import == "resp_write" {
+            self.rec
+                .responses
+                .lock()
+                .last_mut()
+                .expect("a response write must follow response creation")
+                .body
+                .extend_from_slice(call.payload);
+            self.rec
+                .response_writes
+                .lock()
+                .push_back((id, call.payload.len() as u32));
+        }
         id
     }
 
     fn call_sync(&mut self, call: ImportCall<'_>) -> i64 {
         self.note(&call);
         if call.import == "resp_new" {
+            if self.rec.reject_next_response.swap(false, Ordering::Relaxed) {
+                return 0;
+            }
             self.rec
                 .responses
                 .lock()
                 .push(wisp_abi::decode(call.payload).expect("the guest response must decode"));
+            let handle = self.next_response;
+            self.next_response += 1;
+            return handle;
         }
         0
     }

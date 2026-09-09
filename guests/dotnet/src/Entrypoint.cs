@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 
-#if WISP_HASHING_PROBE
+#if WISP_STREAMING_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamingProbe>>;
+#elif WISP_HASHING_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.HashingProbe>>;
 #elif WISP_RANDOMNESS_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RandomnessProbe>>;

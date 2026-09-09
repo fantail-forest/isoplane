@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, RETRY_AFTER};
 use hyper::service::service_fn;
@@ -20,7 +20,7 @@ use crate::response::text;
 use crate::routes::RouteResolver;
 use crate::shed::{AdmissionControl, Admit, ShedConfig};
 
-pub type Body = Full<Bytes>;
+pub type Body = UnsyncBoxBody<Bytes, anyhow::Error>;
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
@@ -42,6 +42,17 @@ pub struct Proxy {
     pub dispatcher: Arc<dyn Dispatcher>,
     pub metrics: Arc<ProxyMetrics>,
     admission: Arc<AdmissionControl>,
+}
+
+struct ResponseMeasurement {
+    metrics: Arc<ProxyMetrics>,
+    started: Instant,
+}
+
+impl Drop for ResponseMeasurement {
+    fn drop(&mut self) {
+        self.metrics.request_latency.record(self.started.elapsed());
+    }
 }
 
 impl Proxy {
@@ -95,15 +106,17 @@ impl Proxy {
         req: Request<Incoming>,
         peer: SocketAddr,
     ) -> Result<Response<Body>, hyper::Error> {
-        let started = Instant::now();
+        let measurement = ResponseMeasurement {
+            metrics: self.metrics.clone(),
+            started: Instant::now(),
+        };
         self.metrics.requests_total.fetch_add(1, Relaxed);
         self.metrics
             .route_generation
             .store(self.routes.generation(), Relaxed);
 
         let resp = self.route_and_dispatch(req, peer).await;
-        self.metrics.request_latency.record(started.elapsed());
-        Ok(resp)
+        Ok(resp.map(|body| crate::response::hold_until_body_end(body, measurement)))
     }
 
     async fn route_and_dispatch(
@@ -122,7 +135,7 @@ impl Proxy {
 
         // Before route resolution: an overloaded node should spend as little
         // as possible on a request it is about to refuse.
-        let _permit = match self.admission.admit().await {
+        let permit = match self.admission.admit().await {
             Admit::Granted { _permit } => _permit,
             Admit::Shed => {
                 return text(
@@ -143,6 +156,7 @@ impl Proxy {
 
 
 
-        self.dispatch_http(req, target, peer).await
+        let response = self.dispatch_http(req, target, peer).await;
+        response.map(|body| crate::response::hold_until_body_end(body, permit))
     }
 }

@@ -10,6 +10,7 @@ use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 use wisp_abi::config::{AppManifest, InitSandbox};
+use wisp_host::egress::DestinationPolicy;
 use wispd::config::{AppConfig, CellConfig, NodeConfig, VersionConfig};
 use wispd::node::Node;
 
@@ -55,6 +56,15 @@ pub struct Rig {
     pub admin: SocketAddr,
     pub node: Arc<Node>,
     dir: tempfile::TempDir,
+    listeners: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>,
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        for listener in &self.listeners {
+            listener.abort();
+        }
+    }
 }
 
 impl Rig {
@@ -63,7 +73,17 @@ impl Rig {
     }
 
     /// Join cell workers without blocking the test's async executor.
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
+        for listener in self.listeners.drain(..) {
+            listener.abort();
+            match listener.await {
+                Ok(result) => result.expect("the test listener must not fail"),
+                Err(error) => assert!(
+                    error.is_cancelled(),
+                    "the test listener must stop without panicking: {error}"
+                ),
+            }
+        }
         tokio::task::spawn_blocking(move || drop(self))
             .await
             .unwrap();
@@ -73,8 +93,23 @@ impl Rig {
 /// A node serving `wasm` as `quotes@v1`, deployed through the real pipeline
 /// under `sandbox`.
 pub async fn start_with(wasm: Vec<u8>, sandbox: InitSandbox) -> Rig {
+    start_with_policy(wasm, sandbox, None, |_| {}).await
+}
+
+pub async fn start_with_policy(
+    wasm: Vec<u8>,
+    sandbox: InitSandbox,
+    destinations: Option<Arc<dyn DestinationPolicy>>,
+    configure: impl FnOnce(&mut NodeConfig),
+) -> Rig {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let node = Node::build(config(dir.path())).expect("a real node must assemble");
+    let mut cfg = config(dir.path());
+    configure(&mut cfg);
+    let node = match destinations {
+        Some(policy) => Node::build_with_destinations(cfg, policy),
+        None => Node::build(cfg),
+    }
+    .expect("a real node must assemble");
     let real = node
         .real
         .clone()
@@ -90,13 +125,16 @@ pub async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
     let p = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
-    tokio::spawn(node.proxy.clone().serve(p));
-    tokio::spawn(wispd::http::serve(node.clone(), a));
+    let listeners = vec![
+        tokio::spawn(node.proxy.clone().serve(p)),
+        tokio::spawn(wispd::http::serve(node.clone(), a)),
+    ];
     Rig {
         proxy,
         admin,
         node,
         dir,
+        listeners,
     }
 }
 
@@ -116,16 +154,8 @@ pub async fn get(addr: SocketAddr, host: &str, path: &str) -> Resp {
 }
 
 pub async fn request(addr: SocketAddr, req: Request<Full<Bytes>>) -> Resp {
-    let stream = TcpStream::connect(addr).await.unwrap();
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .unwrap();
-    tokio::spawn(async move {
-        if let Err(error) = conn.await {
-            eprintln!("test HTTP connection failed: {error}");
-        }
-    });
-    let r = sender.send_request(req).await.unwrap();
+    let mut connection = HttpConnection::connect(addr).await;
+    let r = connection.request(req).await;
     let status = r.status();
     let headers = r.headers().clone();
     let body = r.into_body().collect().await.unwrap().to_bytes();
@@ -133,5 +163,39 @@ pub async fn request(addr: SocketAddr, req: Request<Full<Bytes>>) -> Resp {
         status,
         headers,
         body: String::from_utf8_lossy(&body).into_owned(),
+    }
+}
+
+/// A test client whose connection task is cancelled when its owner is dropped.
+pub struct HttpConnection {
+    sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
+    driver: tokio::task::JoinHandle<Result<(), hyper::Error>>,
+}
+impl HttpConnection {
+    pub async fn connect(address: SocketAddr) -> Self {
+        let stream = TcpStream::connect(address)
+            .await
+            .expect("test HTTP connection");
+        let (sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .expect("test HTTP handshake");
+        Self {
+            sender,
+            driver: tokio::spawn(driver),
+        }
+    }
+    pub async fn request(
+        &mut self,
+        request: Request<Full<Bytes>>,
+    ) -> hyper::Response<hyper::body::Incoming> {
+        self.sender
+            .send_request(request)
+            .await
+            .expect("the test response must arrive")
+    }
+}
+impl Drop for HttpConnection {
+    fn drop(&mut self) {
+        self.driver.abort();
     }
 }

@@ -52,6 +52,17 @@ public static class Application
             context.RequestServices.GetRequiredService<RequestScope>();
             await Task.Delay(Timeout.Infinite, context.RequestAborted);
         });
+        app.MapGet("/stream", async context =>
+        {
+            await context.Response.Body.WriteAsync("A"u8.ToArray());
+            await context.Response.Body.FlushAsync();
+            using var gate = new System.Net.Sockets.TcpClient();
+            await gate.ConnectAsync(System.Net.IPAddress.Loopback, int.Parse(context.Request.Query["port"].ToString()), context.RequestAborted);
+            byte[] release = new byte[1];
+            await gate.GetStream().ReadExactlyAsync(release, context.RequestAborted);
+            if (release[0] == 0) throw new InvalidOperationException("The streaming fixture failed after publishing its first chunk.");
+            await context.Response.Body.WriteAsync("B"u8.ToArray());
+        });
         return app;
     }
 }

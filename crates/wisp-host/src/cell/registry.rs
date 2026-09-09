@@ -127,7 +127,8 @@ impl Cell {
     pub fn resident_ids(&self) -> Vec<InstanceId> {
         self.residents.lock().keys().copied().collect()
     }
-    /// The bytes a streaming response has accumulated so far.
+    /// Bytes buffered in a response handle. Chunks delivered through an HTTP
+    /// transport are consumed by its requester and are not retained here.
     pub fn response_snapshot(&self, id: InstanceId, handle: u32) -> Option<Vec<u8>> {
         let g = self.residents.lock();
         let r = g.get(&id)?;

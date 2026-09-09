@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace Wisp.AspNetCore;
 
-internal sealed class WispServer : IServer
+internal sealed class WispServer(Func<ResponseTransport> createTransport) : IServer
 {
     private Func<IFeatureCollection, Task>? dispatch;
     public IFeatureCollection Features { get; } = new FeatureCollection();
@@ -18,7 +18,7 @@ internal sealed class WispServer : IServer
         {
             var context = application.CreateContext(features);
             Exception? failure = null;
-            var response = (BufferedResponse)features.Get<IHttpResponseFeature>()!;
+            var response = (StreamingResponse)features.Get<IHttpResponseFeature>()!;
             try
             {
                 try
@@ -44,7 +44,7 @@ internal sealed class WispServer : IServer
     {
         var handler = dispatch ?? throw new InvalidOperationException("The WISP server has not started.");
         using var input = new MemoryStream(request.Body.ToArray(), writable: false);
-        using var response = new BufferedResponse();
+        using var response = new StreamingResponse(createTransport());
         using var lifetime = new RequestLifetime(request.Aborted);
         var headers = new HeaderDictionary();
         foreach (var header in request.Headers) headers.Append(header.Key, header.Value);

@@ -11,6 +11,7 @@
     <Description>ASP.NET hosting over WISP request dispatch, without a guest listener.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Wisp.AspNetCore.Tests" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Wisp.Sdk.csproj" />
     <None Update="README.md" Pack="true" PackagePath="/" />

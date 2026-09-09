@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use wisp_abi::dispatch::{DispatchRecord, HttpRequest};
-use wisp_abi::host::{Dispatcher, HttpReply, RouteTarget};
+use wisp_abi::host::{Dispatcher, HttpExchange, HttpReply, RouteTarget};
 
 use crate::cell::{Cell, DispatchResult, Target};
 use crate::ModuleId;
@@ -82,6 +82,70 @@ impl Dispatcher for Cell {
             // Chunks written after `done` are not piped to the requester.
             streaming: false,
         })
+    }
+
+    async fn dispatch_http_stream(
+        &self,
+        target: &RouteTarget,
+        req: HttpRequest,
+    ) -> anyhow::Result<HttpExchange> {
+        let module = self.module_for(target)?;
+        let route = req.path.clone();
+        let record = self.http_record(&module, req);
+        let dispatch_id = record.dispatch_id;
+        let cell = self
+            .me()
+            .ok_or_else(|| anyhow::anyhow!("cell is shutting down"))?;
+        let transport =
+            crate::response_transport::ResponseTransport::new(self.cfg.response_queue_bytes);
+        let output = transport.clone();
+        let timeout = deadline(self);
+        self.reactor().spawn(async move {
+            let stream = output.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                cell.dispatch_with_stream(
+                    &module,
+                    Target::Handler { route },
+                    record,
+                    timeout,
+                    Some(stream),
+                )
+            })
+            .await;
+            match result {
+                Ok(Ok(result)) => {
+                    if output.has_started() {
+                        if let Some(error) = result.trap {
+                            output.fail(error);
+                        } else {
+                            output.finish();
+                        }
+                    } else {
+                        let mut head = wisp_abi::ResponseHead {
+                            status: result.status,
+                            headers: result.headers,
+                            body: result.body,
+                            streaming: false,
+                        };
+                        match output.start(&head) {
+                            Ok(()) => {
+                                match output.prepare(std::mem::take(&mut head.body)).send().await {
+                                    Ok(_) => output.finish(),
+                                    Err(error) => {
+                                        output.fail(format!("buffered response: {error:?}"))
+                                    }
+                                }
+                            }
+                            Err(error) => output.fail(format!("response start: {error:?}")),
+                        }
+                    }
+                }
+                Ok(Err(error)) => output.fail(format!("dispatch failed: {error}")),
+                Err(error) => output.fail(format!("dispatch task failed: {error}")),
+            }
+            output.record_buffers(dispatch_id);
+        });
+        transport.exchange().await
     }
 
 

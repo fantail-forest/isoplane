@@ -101,6 +101,17 @@ impl Cell {
         rec: DispatchRecord,
         timeout: Duration,
     ) -> crate::Result<DispatchResult> {
+        self.dispatch_with_stream(module, target, rec, timeout, None)
+    }
+
+    pub(crate) fn dispatch_with_stream(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        timeout: Duration,
+        stream: Option<Arc<crate::response_transport::ResponseTransport>>,
+    ) -> crate::Result<DispatchResult> {
         let enqueued_ns = crate::mono_ns();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let route = target.route();
@@ -121,6 +132,7 @@ impl Cell {
             target,
             rec,
             responder: tx,
+            stream,
             enqueued_ns,
         });
         if self.queue.push_dispatch(job).is_err() {
@@ -178,6 +190,7 @@ impl Cell {
             target,
             rec,
             responder,
+            stream: None,
             enqueued_ns,
         });
         match self.queue.push_dispatch(job) {

@@ -225,7 +225,7 @@ impl HostBindings for CellBindings {
 
             "http_fetch" => self.http_fetch(rt, id, call.payload),
             "http_body_read" => self.http_body_read(rt, id, call.scalars),
-            "resp_write" => self.resp_write(id, call.payload, call.scalars),
+            "resp_write" => self.resp_write(rt, id, call.payload, call.scalars),
 
             other => {
                 tracing::error!(import = other, "future-class import with no route");

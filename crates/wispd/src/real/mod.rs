@@ -66,4 +66,14 @@ impl Dispatcher for RealCells {
     ) -> anyhow::Result<HttpReply> {
         self.cell_for(&target.app)?.dispatch_http(target, req).await
     }
+
+    async fn dispatch_http_stream(
+        &self,
+        target: &wisp_abi::host::RouteTarget,
+        req: HttpRequest,
+    ) -> anyhow::Result<wisp_abi::host::HttpExchange> {
+        self.cell_for(&target.app)?
+            .dispatch_http_stream(target, req)
+            .await
+    }
 }

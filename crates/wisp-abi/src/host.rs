@@ -5,6 +5,9 @@ use async_trait::async_trait;
 use crate::calls::*;
 use crate::result::*;
 
+mod http;
+pub use http::{HttpBody, HttpExchange, DEFAULT_RESPONSE_QUEUE_BYTES};
+
 pub type Result<T> = anyhow::Result<T>;
 
 
@@ -30,6 +33,18 @@ pub trait Dispatcher: Send + Sync + 'static {
         target: &RouteTarget,
         req: crate::dispatch::HttpRequest,
     ) -> Result<HttpReply>;
+
+    /// Starts an HTTP response whose body may arrive incrementally. Implementations
+    /// without streaming retain their buffered dispatch behavior through this adapter.
+    async fn dispatch_http_stream(
+        &self,
+        target: &RouteTarget,
+        req: crate::dispatch::HttpRequest,
+    ) -> Result<HttpExchange> {
+        self.dispatch_http(target, req)
+            .await
+            .map(HttpExchange::buffered)
+    }
 
 
 

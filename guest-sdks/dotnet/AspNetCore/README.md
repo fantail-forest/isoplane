@@ -49,10 +49,19 @@ its lifetime cannot extend beyond a completed dispatch. Asynchronous bounded
 `IHostedService.StartAsync` work is supported.
 
 Responses preserve status, binary bodies and repeated headers. `OnStarting`
-runs before headers become immutable; `OnCompleted` runs before the request
-context is disposed, including error and cancellation paths. `RequestAborted`
+runs before headers become immutable. For requests that finish through the
+adapter, `OnCompleted` runs before the request context is disposed. Disconnect
+or eviction can end guest execution before callbacks run. `RequestAborted`
 receives WISP's dispatch cancellation wake and application-triggered aborts.
-Streaming, upgrades and direct file responses are unsupported.
+Response writes and flushes can reach the client while the handler awaits I/O.
+`CompleteAsync` closes application writes; the host sends EOF after the handler
+and completion callbacks finish. A failure after headers terminates the body
+with a transport error. Request bodies remain buffered. Upgrades and direct
+file responses are unsupported.
+
+A cancellation token cannot interrupt an individual response write while its
+host acknowledgement is pending. Streaming also does not yet impose a byte
+cap on pending write payloads; that resource limit remains unresolved.
 
 On Linux, use the repository's pinned .NET SDK, wasi-sdk and wasm-tools, then
 run `dotnet publish -c Release`. The build restores a pinned managed ASP.NET

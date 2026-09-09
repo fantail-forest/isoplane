@@ -89,8 +89,31 @@ impl CellBindings {
         ))
     }
 
-    pub(super) fn resp_write(&self, id: u64, payload: &[u8], scalars: [u64; 3]) -> u64 {
+    pub(super) fn resp_write(
+        &self,
+        rt: Arc<CellRuntime>,
+        id: u64,
+        payload: &[u8],
+        scalars: [u64; 3],
+    ) -> u64 {
         let handle = scalars[0] as u32;
+        let stream = {
+            let responses = self.ctx.responses.lock();
+            responses
+                .get(handle)
+                .filter(|response| response.head.streaming && !response.finished)
+                .and(responses.transport.clone())
+        };
+        if let Some(stream) = stream {
+            let write = stream.prepare(payload.to_vec());
+            let rt2 = rt.clone();
+            let task = rt.reactor.spawn(async move {
+                let result = write.send().await.map(|count| count as u32);
+                CellBindings::settle(&rt2, id, from_typed(result));
+            });
+            rt.futures.attach_task(id, task.abort_handle());
+            return id;
+        }
         let res = match self.ctx.responses.lock().write(handle, payload.to_vec()) {
             Ok(n) => ResultRecord::Ok(postcard::to_allocvec(&(n as u32)).unwrap_or_default()),
             Err(e) => ResultRecord::Err(FutureError::Io(format!("resp_write: {e:?}"))),
@@ -99,9 +122,31 @@ impl CellBindings {
     }
 
     pub(super) fn resp_new(&self, payload: &[u8]) -> i64 {
-        let Some(head) = self.decode::<ResponseHead>(payload) else {
+        let Some(mut head) = self.decode::<ResponseHead>(payload) else {
             return 0;
         };
+        let transport = self.ctx.responses.lock().transport.clone();
+        if head.streaming {
+            if let Some(stream) = transport {
+                if let Err(error) = stream.start(&head) {
+                    tracing::warn!(instance = %self.ctx.instance, ?error, "response start refused");
+                    self.ctx.latch_trap(wisp_abi::status::TrapCode::Protocol);
+                    return 0;
+                }
+                if !head.body.is_empty() {
+                    let write = stream.prepare(std::mem::take(&mut head.body));
+                    if let Some(rt) = self.rt() {
+                        let owner = stream.clone();
+                        let task = rt.reactor.spawn(async move {
+                            if let Err(error) = write.send().await {
+                                stream.fail(format!("initial response body: {error:?}"));
+                            }
+                        });
+                        owner.own_initial_write(task.abort_handle());
+                    }
+                }
+            }
+        }
         self.ctx.responses.lock().create(head) as i64
     }
 

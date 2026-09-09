@@ -208,24 +208,7 @@ public static unsafe class Exports<TRouter>
         Response resp = root.Result;
         _root = null;
 
-        // ResponseHead { status, headers, body, streaming }
-        var w = new PostcardWriter(resp.Body.Length + 64);
-        w.Varint(resp.Status);
-        w.Varint((ulong)resp.Headers.Count);
-        foreach (var header in resp.Headers)
-        {
-            w.Str(header.Key);
-            w.Str(header.Value);
-        }
-        w.Bytes(resp.Body);
-        w.Bool(false);
-
-        int handle;
-        fixed (byte* p = w.Span)
-        {
-            handle = H.RespNew(p, w.Span.Length);
-        }
-        H.RespFinish(handle);
+        int handle = resp.Finish();
 
         Log(1, "done: status=" + resp.Status.ToString());
         return PollStatus.Done((uint)handle);

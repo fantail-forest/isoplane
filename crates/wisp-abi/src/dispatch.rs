@@ -47,8 +47,8 @@ pub struct ResponseHead {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
-    /// The guest will keep writing chunks through `resp_write` after
-    /// returning `done`.
+    /// The guest produces chunks through `resp_write` until `resp_finish`.
+    /// Returning `done` with an unfinished stream keeps that dispatch active.
     pub streaming: bool,
 }
 

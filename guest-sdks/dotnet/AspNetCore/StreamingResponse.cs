@@ -4,9 +4,9 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace Wisp.AspNetCore;
 
-internal sealed class BufferedResponse : IHttpResponseFeature, IHttpResponseBodyFeature, IDisposable
+internal sealed class StreamingResponse : IHttpResponseFeature, IHttpResponseBodyFeature, IDisposable
 {
-    private readonly MemoryStream output = new();
+    private readonly ResponseTransport transport;
     private readonly Stack<(Func<object, Task> Callback, object State)> starting = new();
     private readonly Stack<(Func<object, Task> Callback, object State)> completed = new();
     private readonly ResponseStream stream;
@@ -17,7 +17,11 @@ internal sealed class BufferedResponse : IHttpResponseFeature, IHttpResponseBody
     private Task? start;
     private bool complete;
 
-    internal BufferedResponse() => stream = new ResponseStream(this);
+    internal StreamingResponse(ResponseTransport transport)
+    {
+        this.transport = transport;
+        stream = new ResponseStream(this);
+    }
     public int StatusCode { get => status; set { CheckMutable(); status = value; } }
     public string? ReasonPhrase { get => reason; set { CheckMutable(); reason = value; } }
     public IHeaderDictionary Headers { get => headers; set { CheckMutable(); headers = value; } }
@@ -45,6 +49,11 @@ internal sealed class BufferedResponse : IHttpResponseFeature, IHttpResponseBody
     {
         while (starting.TryPop(out var registration)) await registration.Callback(registration.State);
         headers = new HeaderDictionary(headers.ToDictionary(pair => pair.Key, pair => pair.Value)) { IsReadOnly = true };
+        var pairs = new List<KeyValuePair<string, string>>();
+        foreach (var header in headers)
+            foreach (var value in header.Value)
+                pairs.Add(new(header.Key, value ?? ""));
+        transport.Start(checked((ushort)status), pairs);
         HasStarted = true;
     }
     public async Task CompleteAsync()
@@ -64,24 +73,23 @@ internal sealed class BufferedResponse : IHttpResponseFeature, IHttpResponseBody
         }
         if (errors is not null) throw new AggregateException("HTTP completion callbacks failed.", errors);
     }
-    public void DisableBuffering() => throw new NotSupportedException("WISP HTTP responses are buffered; streaming is not supported.");
+    public void DisableBuffering()
+    {
+        // Every write already awaits the host transport without a response buffer.
+    }
     public Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("WISP does not support sending a response directly from a guest file.");
     internal Response ToResponse()
     {
-        var pairs = new List<KeyValuePair<string, string>>();
-        foreach (var header in headers)
-            foreach (var value in header.Value)
-                pairs.Add(new(header.Key, value ?? ""));
-        return Response.Http(checked((ushort)status), output.ToArray(), pairs);
+        if (!complete) throw new InvalidOperationException("The HTTP response has not completed.");
+        return transport.Complete();
     }
     public void Dispose()
     {
         writer?.Complete();
         stream.Dispose();
-        output.Dispose();
     }
-    private sealed class ResponseStream(BufferedResponse response) : Stream
+    private sealed class ResponseStream(StreamingResponse response) : Stream
     {
         public override bool CanRead => false;
         public override bool CanSeek => false;
@@ -103,7 +111,7 @@ internal sealed class BufferedResponse : IHttpResponseFeature, IHttpResponseBody
         {
             if (response.complete) throw new InvalidOperationException("The HTTP response is complete.");
             await response.StartAsync(cancellationToken);
-            await response.output.WriteAsync(buffer, cancellationToken);
+            await response.transport.WriteAsync(buffer, cancellationToken);
         }
     }
 }

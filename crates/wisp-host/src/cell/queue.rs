@@ -28,6 +28,7 @@ pub(super) struct DispatchJob {
     pub(super) target: Target,
     pub(super) rec: DispatchRecord,
     pub(super) responder: std::sync::mpsc::SyncSender<DispatchResult>,
+    pub(super) stream: Option<Arc<crate::response_transport::ResponseTransport>>,
     /// `None` when the clock could not be read at admission.
     pub(super) enqueued_ns: Option<u64>,
 }
@@ -215,6 +216,7 @@ mod queue_tests {
         dispatch_id: u64,
     ) -> Box<DispatchJob> {
         Box::new(DispatchJob {
+            stream: None,
             module: ModuleId::new("t", "v1"),
             target: Target::Handler { route: "/".into() },
             rec: wisp_abi::dispatch::DispatchRecord {

@@ -14,6 +14,10 @@ use crate::meters::Meters;
 use crate::response::ResponseTable;
 use crate::{InstanceId, ModuleId};
 
+/// A slot-local request generation, independent of caller-supplied dispatch IDs.
+#[derive(Clone, Copy)]
+pub(crate) struct DispatchGeneration(u64);
+
 /// Established ownership and numeric budgets for an instance.
 #[derive(Debug, Clone)]
 pub struct Tenancy {
@@ -54,6 +58,8 @@ pub struct InstanceCtx {
     /// then returns `Cancelled` at once, so the unwind has something to unwind
     /// for and no new work starts on budget the dispatch does not have.
     pub(super) cancelled: AtomicBool,
+    dispatch_generation: AtomicU64,
+    cancelled_generation: AtomicU64,
     /// The dispatch's implicit cancellation future; the host cancels by
     /// completing it, never by entering the instance.
     pub(super) cancel_future: AtomicU64,
@@ -93,6 +99,8 @@ impl InstanceCtx {
             entropy_calls: AtomicU64::new(0),
             trap_latch: Mutex::new(None),
             cancelled: AtomicBool::new(false),
+            dispatch_generation: AtomicU64::new(0),
+            cancelled_generation: AtomicU64::new(0),
             cancel_future: AtomicU64::new(0),
             out_buffer: Mutex::new(Vec::new()),
             responses: Mutex::new(ResponseTable::default()),
@@ -133,6 +141,7 @@ impl InstanceCtx {
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
         self.subrequests.store(0, Ordering::Relaxed);
         self.log_bytes.store(0, Ordering::Relaxed);
+        self.dispatch_generation.fetch_add(1, Ordering::AcqRel);
         self.cancelled.store(false, Ordering::Relaxed);
         self.cancel_future.store(0, Ordering::Relaxed);
         self.begin_slice(now_ms, dispatch);
@@ -147,7 +156,18 @@ impl InstanceCtx {
     }
 
     pub fn is_cancelled(&self) -> bool {
+        let generation = self.dispatch_generation.load(Ordering::Acquire);
         self.cancelled.load(Ordering::Relaxed)
+            || generation != 0 && self.cancelled_generation.load(Ordering::Acquire) >= generation
+    }
+
+    pub(crate) fn dispatch_generation(&self) -> DispatchGeneration {
+        DispatchGeneration(self.dispatch_generation.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn cancel_generation(&self, generation: DispatchGeneration) {
+        self.cancelled_generation
+            .fetch_max(generation.0, Ordering::AcqRel);
     }
 
     /// Returns false if already poisoned, so the cancellation future is
@@ -184,5 +204,45 @@ impl InstanceCtx {
     }
     pub fn take_out_buffer(&self) -> Vec<u8> {
         std::mem::take(&mut self.out_buffer.lock())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_delayed_transport_cancellation_cannot_poison_a_reused_instance() {
+        let ctx = InstanceCtx::for_test(
+            InstanceId(1),
+            HandlerLifecycle::Reuse,
+            Limits {
+                module_bytes_compressed: 5242880,
+                instance_memory_max: 67108864,
+                cpu_ms_per_http_dispatch: 10,
+                subrequests_per_dispatch: 20,
+                pending_futures_per_dispatch: 6,
+            },
+        );
+        ctx.begin_dispatch(0, 10);
+        let first = ctx.dispatch_generation();
+        ctx.cancel_generation(first);
+        assert!(
+            ctx.is_cancelled(),
+            "disconnect must poison the active request immediately"
+        );
+        ctx.begin_dispatch(0, 2);
+        let second = ctx.dispatch_generation();
+        ctx.cancel_generation(first);
+        assert!(
+            !ctx.is_cancelled(),
+            "an old body's drop must not cancel a later request"
+        );
+        ctx.cancel_generation(second);
+        ctx.cancel_generation(first);
+        assert!(
+            ctx.is_cancelled(),
+            "a delayed older cancellation must not undo current cancellation"
+        );
     }
 }
