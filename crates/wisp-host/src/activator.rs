@@ -74,6 +74,9 @@ impl Activator for EngineActivator {
     fn module_hash(&self) -> ModuleHash {
         self.template.hash
     }
+    fn imports(&self, module: &str, name: &str) -> bool {
+        self.template.imports(module, name)
+    }
     fn abi_rev(&self) -> u32 {
         self.template.abi_rev
     }

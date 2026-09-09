@@ -19,6 +19,11 @@ pub trait Activator: Send + Sync + 'static {
     fn module(&self) -> &ModuleId;
     fn module_hash(&self) -> ModuleHash;
     fn abi_rev(&self) -> u32;
+    /// Whether the compiled guest declares a capability; scripted activators default to legacy delivery.
+    fn imports(&self, _module: &str, _name: &str) -> bool {
+        false
+    }
+
     /// The baseline hibernation diffs against.
     fn template_image(&self) -> Arc<wisp_engine::MemoryImage>;
     fn activate(

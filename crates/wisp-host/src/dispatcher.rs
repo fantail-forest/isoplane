@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use wisp_abi::dispatch::{DispatchRecord, HttpRequest};
-use wisp_abi::host::{Dispatcher, HttpExchange, HttpReply, RouteTarget};
+use wisp_abi::host::{Dispatcher, HttpExchange, HttpReply, HttpUpload, RouteTarget};
 
 use crate::cell::{Cell, DispatchResult, Target};
 use crate::ModuleId;
@@ -16,6 +16,74 @@ fn deadline(cell: &Cell) -> Duration {
 }
 
 impl Cell {
+    async fn run_http_exchange(
+        &self,
+        target: &RouteTarget,
+        req: HttpRequest,
+        upload: Option<std::sync::Arc<crate::bindings::request_body::RequestBodyScope>>,
+    ) -> anyhow::Result<HttpExchange> {
+        let module = self.module_for(target)?;
+        let route = req.path.clone();
+        let record = self.http_record(&module, req);
+        let dispatch_id = record.dispatch_id;
+        let cell = self
+            .me()
+            .ok_or_else(|| anyhow::anyhow!("cell is shutting down"))?;
+        let transport =
+            crate::response_transport::ResponseTransport::new(self.cfg.response_queue_bytes);
+        let output = transport.clone();
+        let timeout = deadline(self);
+        self.reactor().spawn(async move {
+            let stream = output.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                cell.dispatch_with_http(
+                    &module,
+                    Target::Handler { route },
+                    record,
+                    timeout,
+                    Some(crate::cell::HttpDispatch {
+                        response: stream,
+                        upload,
+                    }),
+                )
+            })
+            .await;
+            match result {
+                Ok(Ok(result)) => {
+                    if output.has_started() {
+                        if let Some(error) = result.trap {
+                            output.fail(error);
+                        } else {
+                            output.finish();
+                        }
+                    } else {
+                        let mut head = wisp_abi::ResponseHead {
+                            status: result.status,
+                            headers: result.headers,
+                            body: result.body,
+                            streaming: false,
+                        };
+                        match output.start(&head) {
+                            Ok(()) => {
+                                match output.prepare(std::mem::take(&mut head.body)).send().await {
+                                    Ok(_) => output.finish(),
+                                    Err(error) => {
+                                        output.fail(format!("buffered response: {error:?}"))
+                                    }
+                                }
+                            }
+                            Err(error) => output.fail(format!("response start: {error:?}")),
+                        }
+                    }
+                }
+                Ok(Err(error)) => output.fail(format!("dispatch failed: {error}")),
+                Err(error) => output.fail(format!("dispatch task failed: {error}")),
+            }
+            output.record_buffers(dispatch_id);
+        });
+        transport.exchange().await
+    }
+
     fn module_for(&self, target: &RouteTarget) -> anyhow::Result<ModuleId> {
         let module = ModuleId::new(&target.app, &target.version);
         let tenant = self.module_tenant(&module).ok_or_else(|| {
@@ -89,63 +157,32 @@ impl Dispatcher for Cell {
         target: &RouteTarget,
         req: HttpRequest,
     ) -> anyhow::Result<HttpExchange> {
+        self.run_http_exchange(target, req, None).await
+    }
+
+    async fn dispatch_http_upload(
+        &self,
+        target: &RouteTarget,
+        upload: HttpUpload,
+    ) -> anyhow::Result<HttpExchange> {
         let module = self.module_for(target)?;
-        let route = req.path.clone();
-        let record = self.http_record(&module, req);
-        let dispatch_id = record.dispatch_id;
-        let cell = self
-            .me()
-            .ok_or_else(|| anyhow::anyhow!("cell is shutting down"))?;
-        let transport =
-            crate::response_transport::ResponseTransport::new(self.cfg.response_queue_bytes);
-        let output = transport.clone();
-        let timeout = deadline(self);
-        self.reactor().spawn(async move {
-            let stream = output.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                cell.dispatch_with_stream(
-                    &module,
-                    Target::Handler { route },
-                    record,
-                    timeout,
-                    Some(stream),
-                )
-            })
-            .await;
-            match result {
-                Ok(Ok(result)) => {
-                    if output.has_started() {
-                        if let Some(error) = result.trap {
-                            output.fail(error);
-                        } else {
-                            output.finish();
-                        }
-                    } else {
-                        let mut head = wisp_abi::ResponseHead {
-                            status: result.status,
-                            headers: result.headers,
-                            body: result.body,
-                            streaming: false,
-                        };
-                        match output.start(&head) {
-                            Ok(()) => {
-                                match output.prepare(std::mem::take(&mut head.body)).send().await {
-                                    Ok(_) => output.finish(),
-                                    Err(error) => {
-                                        output.fail(format!("buffered response: {error:?}"))
-                                    }
-                                }
-                            }
-                            Err(error) => output.fail(format!("response start: {error:?}")),
-                        }
-                    }
-                }
-                Ok(Err(error)) => output.fail(format!("dispatch failed: {error}")),
-                Err(error) => output.fail(format!("dispatch task failed: {error}")),
-            }
-            output.record_buffers(dispatch_id);
-        });
-        transport.exchange().await
+        if !self.module_imports(&module, "req_body_read") {
+            let can_have_body = upload.can_have_body || !upload.request.body.is_empty();
+            let request = upload.collect().await?;
+            let source = crate::bindings::request_body::RequestBodyScope::new(None, can_have_body);
+            return self.run_http_exchange(target, request, Some(source)).await;
+        }
+        let body = if !upload.can_have_body || upload.body.remaining_bytes() == Some(0) {
+            None
+        } else {
+            Some(upload.body)
+        };
+        let source = crate::bindings::request_body::RequestBodyScope::new(
+            body,
+            upload.can_have_body || !upload.request.body.is_empty(),
+        );
+        self.run_http_exchange(target, upload.request, Some(source))
+            .await
     }
 
 

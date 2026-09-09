@@ -62,6 +62,13 @@ public sealed class WispApplication
         return await server.SendAsync(request);
     }
 
+    /// <summary>Starts the .NET host once, then processes an upload without first collecting its body.</summary>
+    public async Task<Response> HandleStreamingAsync(StreamingRequest request)
+    {
+        await (started ??= StartAsync());
+        return await server.SendAsync(request, request.Body, request.CanHaveBody);
+    }
+
     private Task StartAsync()
     {
         if (application.Services.GetServices<IHostedService>().Any(service => service is BackgroundService))

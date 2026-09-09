@@ -23,12 +23,18 @@ pub(super) struct WakeItem {
     pub(super) slot: Arc<Slot>,
 }
 
+pub(crate) struct HttpDispatch {
+    pub(crate) response: Arc<crate::response_transport::ResponseTransport>,
+    pub(crate) upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
+}
+
 pub(super) struct DispatchJob {
     pub(super) module: ModuleId,
     pub(super) target: Target,
     pub(super) rec: DispatchRecord,
     pub(super) responder: std::sync::mpsc::SyncSender<DispatchResult>,
     pub(super) stream: Option<Arc<crate::response_transport::ResponseTransport>>,
+    pub(super) upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
     /// `None` when the clock could not be read at admission.
     pub(super) enqueued_ns: Option<u64>,
 }
@@ -217,6 +223,7 @@ mod queue_tests {
     ) -> Box<DispatchJob> {
         Box::new(DispatchJob {
             stream: None,
+            upload: None,
             module: ModuleId::new("t", "v1"),
             target: Target::Handler { route: "/".into() },
             rec: wisp_abi::dispatch::DispatchRecord {

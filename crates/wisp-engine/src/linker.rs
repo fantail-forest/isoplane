@@ -36,12 +36,16 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
     }
 
     match (def.sig.params, def.sig.results) {
+        ([], [I32]) => wrap!(|c| -> i32 { Ok(invoke(&mut c, def, &[])? as u32 as i32) }),
         ([], [I64]) => wrap!(|c| -> i64 { Ok(invoke(&mut c, def, &[])? as i64) }),
         ([I32], []) => {
             wrap!(|c, a: i32| -> () { invoke(&mut c, def, &[a as u32 as u64]).map(|_| ()) })
         }
         ([I32], [I32]) => {
             wrap!(|c, a: i32| -> i32 { Ok(invoke(&mut c, def, &[a as u32 as u64])? as u32 as i32) })
+        }
+        ([I32], [I64]) => {
+            wrap!(|c, a: i32| -> i64 { Ok(invoke(&mut c, def, &[a as u32 as u64])? as i64) })
         }
         ([I64], []) => wrap!(|c, a: i64| -> () { invoke(&mut c, def, &[a as u64]).map(|_| ()) }),
         ([I64], [I64]) => {

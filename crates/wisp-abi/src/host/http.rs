@@ -3,12 +3,13 @@
 use async_trait::async_trait;
 
 use super::{HttpReply, Result};
+use crate::dispatch::HttpRequest;
 
 /// Default queued-response high-water mark in bytes, independent of total response size.
 pub const DEFAULT_RESPONSE_QUEUE_BYTES: usize = 256 * 1024;
 
-/// A response body owned by its requester. Dropping an unfinished streaming body
-/// cancels its dispatch. A read error ends the body; `None` is successful EOF.
+/// An owned HTTP body. Dropping it releases its transport; dropping an unfinished
+/// response also cancels its dispatch. A read error ends the body; `None` is EOF.
 #[async_trait]
 pub trait HttpBody: Send + 'static {
     /// Exact remaining bytes when the body is already complete; otherwise unknown.
@@ -51,5 +52,25 @@ impl HttpBody for BufferedBody {
 
     async fn read(&mut self) -> Result<Option<Vec<u8>>> {
         Ok(self.0.take().filter(|body| !body.is_empty()))
+    }
+}
+
+/// Request metadata and an owned upload, kept outside the serialized guest record.
+pub struct HttpUpload {
+    /// Existing request fields; body bytes here precede the owned upload.
+    pub request: HttpRequest,
+    /// The remaining upload. Dropping it releases the client transport.
+    pub body: Box<dyn HttpBody>,
+    /// Whether HTTP framing permits request content, including unknown-length uploads.
+    pub can_have_body: bool,
+}
+
+impl HttpUpload {
+    /// Collect an upload for a dispatcher or compiled guest that requires inline bytes.
+    pub async fn collect(mut self) -> Result<HttpRequest> {
+        while let Some(chunk) = self.body.read().await? {
+            self.request.body.extend(chunk);
+        }
+        Ok(self.request)
     }
 }

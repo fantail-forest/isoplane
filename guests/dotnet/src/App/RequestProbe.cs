@@ -29,3 +29,22 @@ public sealed class RequestProbe : IWispHandler
         return Response.Text(actual, actual == expected ? (ushort)200 : (ushort)422);
     }
 }
+
+/// <summary>Exercises explicit streaming selection alongside an ordinary buffered handler.</summary>
+public sealed class RequestProbeRouter : IStreamingHttpRouter
+{
+    private readonly HandlerRouter<RequestProbe> buffered = new();
+    /// <summary>Initializes the buffered route.</summary>
+    public void Boot() => buffered.Boot();
+    /// <summary>Preserves ordinary router dispatch for unselected requests.</summary>
+    public Task<Response> Route(Wisp.Abi.DispatchRecord record, Ctx ctx) => buffered.Route(record, ctx);
+    /// <summary>Selects only the fixture's streaming route.</summary>
+    public bool StreamsRequest(RequestHead request) => request.Path == "/streaming";
+    /// <summary>Reports the streamed bytes through a distinguishable route response.</summary>
+    public async Task<Response> RouteStreamingAsync(StreamingRequest request, Ctx ctx)
+    {
+        using var bytes = new System.IO.MemoryStream();
+        await request.Body.CopyToAsync(bytes);
+        return Response.Text("stream:" + Convert.ToBase64String(bytes.ToArray()));
+    }
+}

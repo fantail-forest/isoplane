@@ -112,6 +112,30 @@ impl Cell {
         timeout: Duration,
         stream: Option<Arc<crate::response_transport::ResponseTransport>>,
     ) -> crate::Result<DispatchResult> {
+        self.dispatch_with_http(
+            module,
+            target,
+            rec,
+            timeout,
+            stream.map(|response| super::HttpDispatch {
+                response,
+                upload: None,
+            }),
+        )
+    }
+
+    pub(crate) fn dispatch_with_http(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        timeout: Duration,
+        http: Option<super::HttpDispatch>,
+    ) -> crate::Result<DispatchResult> {
+        let (stream, upload) = match http {
+            Some(http) => (Some(http.response), http.upload),
+            None => (None, None),
+        };
         let enqueued_ns = crate::mono_ns();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let route = target.route();
@@ -133,6 +157,7 @@ impl Cell {
             rec,
             responder: tx,
             stream,
+            upload,
             enqueued_ns,
         });
         if self.queue.push_dispatch(job).is_err() {
@@ -191,6 +216,7 @@ impl Cell {
             rec,
             responder,
             stream: None,
+            upload: None,
             enqueued_ns,
         });
         match self.queue.push_dispatch(job) {

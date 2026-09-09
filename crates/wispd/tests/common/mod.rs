@@ -167,11 +167,16 @@ pub async fn request(addr: SocketAddr, req: Request<Full<Bytes>>) -> Resp {
 }
 
 /// A test client whose connection task is cancelled when its owner is dropped.
-pub struct HttpConnection {
-    sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
+pub struct HttpConnection<B = Full<Bytes>> {
+    sender: hyper::client::conn::http1::SendRequest<B>,
     driver: tokio::task::JoinHandle<Result<(), hyper::Error>>,
 }
-impl HttpConnection {
+impl<B> HttpConnection<B>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     pub async fn connect(address: SocketAddr) -> Self {
         let stream = TcpStream::connect(address)
             .await
@@ -184,17 +189,14 @@ impl HttpConnection {
             driver: tokio::spawn(driver),
         }
     }
-    pub async fn request(
-        &mut self,
-        request: Request<Full<Bytes>>,
-    ) -> hyper::Response<hyper::body::Incoming> {
+    pub async fn request(&mut self, request: Request<B>) -> hyper::Response<hyper::body::Incoming> {
         self.sender
             .send_request(request)
             .await
             .expect("the test response must arrive")
     }
 }
-impl Drop for HttpConnection {
+impl<B> Drop for HttpConnection<B> {
     fn drop(&mut self) {
         self.driver.abort();
     }

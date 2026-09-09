@@ -11,6 +11,61 @@ use super::runtime::CellRuntime;
 use super::{from_typed, CellBindings};
 
 impl CellBindings {
+    pub(super) fn req_body_read(&self, rt: Arc<CellRuntime>, id: u64, scalars: [u64; 3]) -> u64 {
+        let Some(max_bytes) = (scalars[0] as i32)
+            .try_into()
+            .ok()
+            .and_then(std::num::NonZeroU32::new)
+        else {
+            return self.settle_now(
+                id,
+                ResultRecord::Err(FutureError::Denied(
+                    "request body read size must be positive".into(),
+                )),
+            );
+        };
+        let Some(scope) = self.ctx.request_body.lock().clone() else {
+            return self.settle_now(
+                id,
+                ResultRecord::Err(FutureError::Denied(
+                    "request body reads require an HTTP dispatch".into(),
+                )),
+            );
+        };
+        let read = match scope.begin_read() {
+            Ok(read) => read,
+            Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
+        };
+        let rt2 = rt.clone();
+        let task = rt.reactor.spawn(async move {
+            let result = match read.read(max_bytes).await {
+                Ok(bytes) => ResultRecord::Ok(bytes),
+                Err(error) => ResultRecord::Err(error),
+            };
+            CellBindings::settle(&rt2, id, result);
+        });
+        scope.attach_task(task.abort_handle());
+        rt.futures.attach_task(id, task.abort_handle());
+        id
+    }
+
+    pub(super) fn req_body_can_have_body(&self) -> i64 {
+        let result = self
+            .ctx
+            .request_body
+            .lock()
+            .as_ref()
+            .map(|scope| scope.can_have_body());
+        match result {
+            Some(Ok(present)) => i64::from(present),
+            Some(Err(_)) | None => {
+                self.ctx
+                    .latch_trap(wisp_abi::status::TrapCode::CapabilityViolation);
+                0
+            }
+        }
+    }
+
     /// Denies past the per-dispatch subrequest cap.
     fn check_subrequest(&self) -> Result<(), FutureError> {
         let n = self.ctx.subrequests.fetch_add(1, Ordering::Relaxed) + 1;

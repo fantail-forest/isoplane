@@ -76,4 +76,13 @@ impl Dispatcher for RealCells {
             .dispatch_http_stream(target, req)
             .await
     }
+    async fn dispatch_http_upload(
+        &self,
+        target: &wisp_abi::host::RouteTarget,
+        upload: wisp_abi::host::HttpUpload,
+    ) -> anyhow::Result<wisp_abi::host::HttpExchange> {
+        self.cell_for(&target.app)?
+            .dispatch_http_upload(target, upload)
+            .await
+    }
 }

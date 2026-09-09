@@ -70,6 +70,7 @@ pub struct InstanceCtx {
     pub(super) spans: Mutex<HashMap<i32, (String, u64)>>,
     pub(super) next_span: AtomicU32,
     pub(super) http: Mutex<Arc<super::http_scope::HttpScope>>,
+    pub(crate) request_body: Mutex<Option<Arc<super::request_body::RequestBodyScope>>>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
 }
 
@@ -81,6 +82,9 @@ impl InstanceCtx {
 
     pub(crate) fn end_http_dispatch(&self) {
         self.http.lock().close();
+        if let Some(body) = self.request_body.lock().take() {
+            body.close();
+        }
     }
 
     pub(crate) fn has_outbound_http(&self) -> bool {
@@ -117,6 +121,7 @@ impl InstanceCtx {
             spans: Mutex::new(HashMap::new()),
             next_span: AtomicU32::new(1),
             http: Mutex::new(super::http_scope::HttpScope::new()),
+            request_body: Mutex::new(None),
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
@@ -150,6 +155,9 @@ impl InstanceCtx {
     /// Resets the per-dispatch counters, including the poison, which under
     /// `reuse` may be left from a clean kill a moment ago.
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
+        if let Some(body) = self.request_body.lock().take() {
+            body.close();
+        }
         let mut http = self.http.lock();
         http.close();
         *http = super::http_scope::HttpScope::new();
@@ -225,6 +233,9 @@ impl InstanceCtx {
 impl Drop for InstanceCtx {
     fn drop(&mut self) {
         self.http.get_mut().close();
+        if let Some(body) = self.request_body.get_mut().take() {
+            body.close();
+        }
     }
 }
 

@@ -25,7 +25,7 @@ using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.AsyncProbe>>;
 #elif WISP_FILESYSTEM_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FilesystemProbe>>;
 #elif WISP_REQUEST_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RequestProbe>>;
+using Guest = Wisp.Abi.Exports<Wisp.App.RequestProbeRouter>;
 #else
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.Api>>;
 #endif

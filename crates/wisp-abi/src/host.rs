@@ -6,7 +6,7 @@ use crate::calls::*;
 use crate::result::*;
 
 mod http;
-pub use http::{HttpBody, HttpExchange, DEFAULT_RESPONSE_QUEUE_BYTES};
+pub use http::{HttpBody, HttpExchange, HttpUpload, DEFAULT_RESPONSE_QUEUE_BYTES};
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -44,6 +44,16 @@ pub trait Dispatcher: Send + Sync + 'static {
         self.dispatch_http(target, req)
             .await
             .map(HttpExchange::buffered)
+    }
+
+    /// Deliver an owned upload; existing dispatchers receive its complete inline body.
+    async fn dispatch_http_upload(
+        &self,
+        target: &RouteTarget,
+        upload: HttpUpload,
+    ) -> Result<HttpExchange> {
+        self.dispatch_http_stream(target, upload.collect().await?)
+            .await
     }
 
 

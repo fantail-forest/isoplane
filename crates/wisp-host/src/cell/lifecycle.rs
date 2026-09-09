@@ -102,6 +102,12 @@ impl Cell {
         slot.ctx
             .begin_dispatch(crate::now_ms(), job.rec.dispatch_id);
         slot.ctx.set_cancel_future(job.rec.cancel_future);
+        if let wisp_abi::dispatch::DispatchKind::Http(request) = &job.rec.kind {
+            *slot.ctx.request_body.lock() = Some(job.upload.clone().unwrap_or_else(|| {
+                crate::bindings::request_body::RequestBodyScope::new(None, !request.body.is_empty())
+            }));
+        }
+
         slot.ctx.responses.lock().transport = job.stream.clone();
         if let Some(stream) = &job.stream {
             let cell = Arc::downgrade(self);
@@ -132,6 +138,9 @@ impl Cell {
                             ..DispatchResult::shed(did)
                         },
                     );
+                    slot.ctx.end_http_dispatch();
+                    self.rt.futures.end_dispatch(slot.id, did);
+                    slot.ctx.responses.lock().transport = None;
                     self.active.remove(&slot.id);
                     return;
                 }

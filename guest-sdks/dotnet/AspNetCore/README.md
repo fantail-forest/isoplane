@@ -1,7 +1,7 @@
 # WISP ASP.NET adapter
 
 `Wisp.AspNetCore` runs ASP.NET routing, middleware and request-scoped dependency
-injection over buffered WISP requests. It replaces the server transport and
+injection over WISP requests. It replaces the server transport and
 generates the platform exports. The guest does not bind a listener.
 
 Use the package's .NET SDK entry point so its compiler and target settings are
@@ -56,11 +56,15 @@ receives WISP's dispatch cancellation wake and application-triggered aborts.
 Response writes and flushes can reach the client while the handler awaits I/O.
 `CompleteAsync` closes application writes; the host sends EOF after the handler
 and completion callbacks finish. A failure after headers terminates the body
-with a transport error. Request bodies remain buffered. Upgrades and direct
-file responses are unsupported.
+with a transport error. Request bodies are asynchronous, non-seekable streams:
+handlers can read and respond before the client finishes its upload. Upgrades
+and direct file responses are unsupported.
 
-A cancellation token cannot interrupt an individual response write while its
-host acknowledgement is pending. Streaming also does not yet impose a byte
+Cancellation is checked before each upload read; it cannot interrupt a pending
+host read or an individual response write awaiting acknowledgement. Disposing
+an upload prevents new reads, while its host transport remains owned until the
+dispatch settles. An early response releases unread content without background
+draining. Streaming also does not yet impose a byte
 cap on pending write payloads; that resource limit remains unresolved.
 
 On Linux, use the repository's pinned .NET SDK, wasi-sdk and wasm-tools, then

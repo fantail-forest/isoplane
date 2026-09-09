@@ -346,6 +346,59 @@ mod cell_tests {
     }
 
     #[test]
+    fn a_refused_slot_entry_closes_its_attached_upload_scope() {
+        use crate::bindings::request_body::RequestBodyScope;
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("busy-upload")
+        });
+        let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
+        let module = act.module().clone();
+        let mut app = manifest("busy-upload");
+        app.handlers.lifecycle = HandlerLifecycle::Reuse;
+        cell.register_module("acme", act, app)
+            .expect("register reusable guest");
+        let run = |id, upload| {
+            let (responder, response) = std::sync::mpsc::sync_channel(1);
+            cell.run_dispatch(DispatchJob {
+                stream: None,
+                upload,
+                module: module.clone(),
+                target: Target::Handler { route: "/".into() },
+                rec: http(id),
+                responder,
+                enqueued_ns: None,
+            });
+            response
+                .recv_timeout(Duration::from_secs(10))
+                .expect("dispatch must answer")
+        };
+        let first = run(1, None);
+        let slot = cell.slot(first.instance).expect("reusable resident");
+        let entered = slot.enter().expect("hold the reusable slot busy");
+        let upload = RequestBodyScope::new(None, true);
+        let refused = run(2, Some(upload.clone()));
+        assert_eq!(
+            refused.status, 409,
+            "the held invocation must exercise slot entry refusal"
+        );
+        assert!(
+            matches!(
+                upload.can_have_body(),
+                Err(wisp_abi::result::FutureError::Cancelled)
+            ),
+            "entry refusal must close the attached upload even while its context is retained"
+        );
+        assert_eq!(
+            cell.futures().live_futures(),
+            0,
+            "entry refusal must end dispatch-owned futures"
+        );
+        drop(entered);
+        cell.shutdown();
+    }
+
+    #[test]
     fn a_queued_wake_after_reset_leaves_the_pooled_instance_pristine() {
         let cell = cell(CellConfig {
             exec_threads: 0,
@@ -363,6 +416,7 @@ mod cell_tests {
             let (responder, rx) = std::sync::mpsc::sync_channel(1);
             cell.run_dispatch(DispatchJob {
                 stream: None,
+                upload: None,
                 module: module.clone(),
                 target: Target::Handler {
                     route: "/go".into(),

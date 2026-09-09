@@ -88,7 +88,7 @@ public static unsafe class Exports<TRouter>
             FutureTable.Reset();
             FutureTable.BeginCancellation(d.CancelFuture);
 
-            _root = _router!.Route(d, _ctx);
+            _root = RequestDispatch.RouteAsync(_router!, d, _ctx);
 
             return Settle();
         }

@@ -30,6 +30,14 @@ internal static unsafe partial class H
     internal static extern void LogEmit(int level, byte* ptr, int len);
 
     [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "req_body_read")]
+    internal static extern long ReqBodyRead(int maxBytes);
+
+    [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "req_body_can_have_body")]
+    internal static extern int ReqBodyCanHaveBody();
+
+    [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "resp_new")]
     internal static extern int RespNew(byte* ptr, int len);
 

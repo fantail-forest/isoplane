@@ -35,6 +35,14 @@ pub(super) struct ActiveRequest {
 }
 
 impl Cell {
+    pub(crate) fn module_imports(&self, module: &ModuleId, name: &str) -> bool {
+        self.modules.read().get(module).is_some_and(|entry| {
+            entry
+                .activator
+                .imports(wisp_abi::imports::HOST_MODULE, name)
+        })
+    }
+
     /// Whether this owner is permitted by the cell's quarantine state.
     pub fn admits(&self, tenant: &str) -> bool {
         !self.quarantined.lock().iter().any(|t| t == tenant)

@@ -17,9 +17,11 @@
 #nullable enable
 using System.Runtime.InteropServices;
 using Guest = Wisp.Abi.Exports<WispGeneratedRouter>;
-internal sealed class WispGeneratedRouter : Wisp.Durable.IWispRouter {
+internal sealed class WispGeneratedRouter : Wisp.Durable.IStreamingHttpRouter {
   private Wisp.AspNetCore.WispApplication? application;
   public void Boot() { application = new(global::$(WispApplicationFactory)()); }
+  public bool StreamsRequest(Wisp.RequestHead request) => true;
+  public System.Threading.Tasks.Task<Wisp.Response> RouteStreamingAsync(Wisp.StreamingRequest request, Wisp.Ctx context) => application!.HandleStreamingAsync(request);
   public System.Threading.Tasks.Task<Wisp.Response> Route(Wisp.Abi.DispatchRecord record, Wisp.Ctx context) {
     return application!.HandleAsync(Wisp.Request.FromDispatch(record));
   }

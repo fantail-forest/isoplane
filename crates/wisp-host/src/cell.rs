@@ -33,6 +33,7 @@ mod hibernate;
 mod lifecycle;
 mod pool;
 mod queue;
+pub(crate) use queue::HttpDispatch;
 mod registry;
 mod tombstone;
 mod wake;

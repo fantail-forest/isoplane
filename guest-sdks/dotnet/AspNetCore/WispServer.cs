@@ -42,8 +42,13 @@ internal sealed class WispServer(Func<ResponseTransport> createTransport) : ISer
 
     internal async Task<Response> SendAsync(Request request)
     {
-        var handler = dispatch ?? throw new InvalidOperationException("The WISP server has not started.");
         using var input = new MemoryStream(request.Body.ToArray(), writable: false);
+        return await SendAsync(request, input, input.Length > 0);
+    }
+
+    internal async Task<Response> SendAsync(RequestHead request, Stream input, bool canHaveBody)
+    {
+        var handler = dispatch ?? throw new InvalidOperationException("The WISP server has not started.");
         using var response = new StreamingResponse(createTransport());
         using var lifetime = new RequestLifetime(request.Aborted);
         var headers = new HeaderDictionary();
@@ -65,7 +70,7 @@ internal sealed class WispServer(Func<ResponseTransport> createTransport) : ISer
             Body = input,
             Headers = headers
         });
-        features.Set<IHttpRequestBodyDetectionFeature>(new RequestBody(input.Length > 0));
+        features.Set<IHttpRequestBodyDetectionFeature>(new RequestBody(canHaveBody));
         features.Set<IHttpRequestLifetimeFeature>(lifetime);
         features.Set<IHttpResponseFeature>(response);
         features.Set<IHttpResponseBodyFeature>(response);

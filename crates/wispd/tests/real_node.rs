@@ -208,6 +208,22 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
             }
         }
     }
+    let streamed = Request::builder()
+        .method("POST")
+        .uri("/streaming")
+        .header("host", "quotes.wisp.dev")
+        .body(Full::new(Bytes::from_static(b"selected route")))
+        .expect("mixed streaming route request");
+    let streamed = common::request(rig.proxy, streamed).await;
+    assert_eq!(
+        streamed.status, 200,
+        "the same router must explicitly select its streaming handler"
+    );
+    assert_eq!(
+        streamed.body,
+        format!("stream:{}", base64.encode(b"selected route")),
+        "streaming selection must preserve upload bytes without changing buffered routes"
+    );
     let invalid = Request::builder()
         .uri("/probe")
         .header("host", "quotes.wisp.dev")

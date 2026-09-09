@@ -69,6 +69,14 @@ pub(crate) struct TemplateInner {
 }
 
 impl Template {
+    /// Whether the compiled module declares this import, including mapped artifacts.
+    pub fn imports(&self, module: &str, name: &str) -> bool {
+        self.inner
+            .module
+            .imports()
+            .any(|import| import.module() == module && import.name() == name)
+    }
+
     /// The pre-initialised linear memory, shared rather than copied.
     pub fn memory_image_arc(&self) -> Arc<crate::image::MemoryImage> {
         Arc::clone(&self.inner.image)

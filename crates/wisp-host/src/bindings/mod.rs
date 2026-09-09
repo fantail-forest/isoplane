@@ -7,6 +7,7 @@ mod http_scope;
 mod instance;
 mod native_io;
 mod observability;
+pub(crate) mod request_body;
 mod runtime;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
@@ -36,6 +37,7 @@ pub const SCALARS: &[(&str, &[&str])] = &[
     ("resp_write", &["response_handle"]),
     ("resp_finish", &["response_handle"]),
     ("http_body_read", &["body_handle", "max_len"]),
+    ("req_body_read", &["max_bytes"]),
     ("init_unit_begin", &["unit"]),
     ("init_unit_deferred", &["unit"]),
     // Answered by the engine and never reaching this vtable, but declared.
@@ -227,6 +229,7 @@ impl HostBindings for CellBindings {
 
             "http_fetch" => self.http_fetch(rt, id, call.payload),
             "http_body_read" => self.http_body_read(rt, id, call.scalars),
+            "req_body_read" => self.req_body_read(rt, id, call.scalars),
             "resp_write" => self.resp_write(rt, id, call.payload, call.scalars),
 
             other => {
@@ -275,6 +278,7 @@ impl HostBindings for CellBindings {
                 -1
             }
 
+            "req_body_can_have_body" => self.req_body_can_have_body(),
             "resp_new" => self.resp_new(call.payload),
             "resp_finish" => self.resp_finish(call.scalars),
 

@@ -20,6 +20,16 @@ public interface IWispRouter
     Task<Response> Route(DispatchRecord d, Ctx ctx);
 }
 
+/// <summary>Explicitly selects HTTP routes that consume uploads without SDK buffering.</summary>
+public interface IStreamingHttpRouter : IWispRouter
+{
+    /// <summary>Returns true only for requests handled by RouteStreamingAsync; other routes receive full buffered bodies.</summary>
+    bool StreamsRequest(RequestHead request);
+
+    /// <summary>Handles a selected HTTP request while its body can still arrive.</summary>
+    Task<Response> RouteStreamingAsync(StreamingRequest request, Ctx ctx);
+}
+
 /// <summary>
 /// A Handler: an HTTP request in, a response out.
 /// </summary>
