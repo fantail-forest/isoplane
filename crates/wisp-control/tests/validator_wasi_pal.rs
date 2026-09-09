@@ -181,3 +181,36 @@ fn a_native_socket_delegation_requires_its_full_canonical_signature() {
         V::V1SignatureMismatch,
     );
 }
+
+#[test]
+fn launch_arguments_validate_only_with_the_canonical_return_area_signature() {
+    let source = wasi_wat().replace("get-environment", "get-arguments");
+    validator::validate(&parse(&source), Limits::default())
+        .expect("empty launch arguments must be declared");
+    assert_violates(
+        "arguments-wrong-return-area",
+        &source.replace("(func $env  (param i32))", "(func $env  (param i64))"),
+        Limits::default(),
+        V::V1SignatureMismatch,
+    );
+}
+
+#[test]
+fn wall_clock_resolution_is_reported_as_denied() {
+    let source = format!(
+        r#"(module
+      (import "wasi:clocks/wall-clock@0.2.0" "resolution" (func (param i32)))
+      {REQUIRED_EXPORTS})"#
+    );
+    let report = validator::validate(&parse(&source), Limits::default())
+        .expect("a declared denial must validate");
+    assert_eq!(
+        report.pal.len(),
+        1,
+        "the wall-clock import must be reported"
+    );
+    assert!(
+        !report.pal[0].disposition.is_delegated(),
+        "resolution must not acquire wall-clock authority"
+    );
+}

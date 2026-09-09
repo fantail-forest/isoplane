@@ -655,3 +655,62 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
         "filesystem initialization must not depend on a host directory or resource identity"
     );
 }
+
+fn pal_init_guest(module: &str, function: &str, body: &str) -> Vec<u8> {
+    let source = guest_wat(false)
+        .replacen(
+            "(module",
+            &format!(r#"(module (import "{module}" "{function}" (func $pal_probe (param i32)))"#),
+            1,
+        )
+        .replace("(local $i i32)", &format!("(local $i i32) {body}"));
+    wat::parse_str(source).expect("the PAL initialization fixture must assemble")
+}
+
+#[test]
+fn sealed_initialization_receives_an_empty_launch_argument_list() {
+    let wasm = pal_init_guest(
+        wisp_abi::pal::CLI_ENV,
+        "get-arguments",
+        r#"
+      (i64.store (i32.const 64) (i64.const -1))
+      (call $pal_probe (i32.const 64))
+      (if (i64.ne (i64.load (i32.const 64)) (i64.const 0)) (then unreachable))"#,
+    );
+    let output = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .expect("argument absence must also be supported during sealed initialization");
+    assert_eq!(
+        output.passes, 1,
+        "empty launch arguments must not defer initialization"
+    );
+}
+
+#[test]
+fn initialization_rejects_an_invalid_argument_return_pointer() {
+    let wasm = pal_init_guest(
+        wisp_abi::pal::CLI_ENV,
+        "get-arguments",
+        "(call $pal_probe (i32.const -1))",
+    );
+    assert!(
+        PreInitializer::new().run(&wasm, &req(&wasm)).is_err(),
+        "the init adapter must reject a return record outside guest memory"
+    );
+}
+
+#[test]
+fn initialization_cannot_query_a_denied_wall_clock_resolution() {
+    let wasm = pal_init_guest(
+        wisp_abi::pal::WALL_CLOCK,
+        "resolution",
+        "(call $pal_probe (i32.const 64))",
+    );
+    let error = PreInitializer::new()
+        .run(&wasm, &req(&wasm))
+        .expect_err("wall-clock resolution must remain denied during initialization");
+    assert!(
+        matches!(error, PreInitError::Trapped(_)),
+        "initialization must fail with a trapped denied operation: {error:#}"
+    );
+}

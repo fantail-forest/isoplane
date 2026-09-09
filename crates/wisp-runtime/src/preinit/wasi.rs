@@ -143,13 +143,15 @@ pub(super) fn install_pal_adapter(
                     Ok(())
                 })?;
             }
-            (Disposition::Delegate(_), m, "get-environment") if m == pal::CLI_ENVIRONMENT => {
+            (Disposition::Delegate(_), m, "get-environment" | "get-arguments")
+                if m == pal::CLI_ENVIRONMENT =>
+            {
                 linker.func_new(&imp.module, &imp.name, ty, move |mut c, args, _r| {
                     st.lock().count_pal_call(pal::CLI_ENVIRONMENT);
                     let retptr = args
                         .last()
                         .and_then(wt::Val::i32)
-                        .ok_or_else(|| anyhow::anyhow!("get-environment has no return area"))?;
+                        .ok_or_else(|| anyhow::anyhow!("{} has no return area", def.func))?;
                     write_guest(&mut c, retptr, &[0u8; 8])
                 })?;
             }

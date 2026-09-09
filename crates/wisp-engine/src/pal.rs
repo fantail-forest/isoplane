@@ -249,9 +249,9 @@ fn define_delegate<T: PalSource>(
                 CLOCK_QUANTUM_NS
             })?;
         }
-        // `list<tuple<string, string>>` lowers to a (ptr, len) pair in a
+        // Both canonical list results lower to a (ptr, len) pair in a
         // caller-supplied return area; (0, 0) is the empty list.
-        (CLI_ENV, "get-environment") => {
+        (CLI_ENV, "get-environment" | "get-arguments") => {
             linker.func_wrap(
                 def.module,
                 def.func,

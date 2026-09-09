@@ -145,6 +145,16 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
         "there is no ambient environment, so the empty list is the \
          same-fidelity answer for a capability the platform does not have",
     ),
+    delegate(
+        CLI_ENV,
+        "get-arguments",
+        Delegation::Nothing,
+        Sig {
+            params: &[I32],
+            results: &[],
+        },
+        "the host invokes dispatch exports without process arguments, so the launch argument list is empty",
+    ),
     // Inherits the coarse clock's millisecond quantum and intra-slice freeze:
     // the value is the coarse clock multiplied into nanoseconds. A finer
     // timer is the measurement primitive Spectre-class attacks need.
@@ -236,6 +246,11 @@ const COMMON_PAL_IMPORTS: &[PalDef] = &[
         "now",
         "the platform has ONE clock; a second time source whose difference from \
          the first is observable is a new channel",
+    ),
+    trap(
+        WALL_CLOCK,
+        "resolution",
+        "there is no delegated wall clock whose resolution can be queried",
     ),
     // ---- trap-on-call: io -------------------------------------------------
     trap(

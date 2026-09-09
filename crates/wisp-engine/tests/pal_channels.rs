@@ -563,3 +563,85 @@ fn the_adapter_refuses_an_import_outside_the_whitelist() {
         "an unknown socket import must remain outside the adapter whitelist: {err}"
     );
 }
+
+fn return_area_adapter(module_name: &str, function: &str) -> (Store<Host>, Instance) {
+    let e = engine();
+    let m = module(
+        &e,
+        &format!(
+            r#"(module
+      (import "{module_name}" "{function}" (func $call (param i32)))
+      (memory (export "memory") 1)
+      (func (export "invoke") (param i32) (call $call (local.get 0))))"#
+        ),
+    );
+    let mut linker = Linker::new(&e);
+    pal::link(&mut linker, &m).expect("the declared PAL import must link");
+    let mut store = Store::new(&e, Host::new(1000));
+    let instance = linker
+        .instantiate(&mut store, &m)
+        .expect("the PAL guest must instantiate");
+    (store, instance)
+}
+
+#[test]
+fn launch_arguments_are_empty_and_only_the_return_record_is_written() {
+    let (mut store, instance) = return_area_adapter(wisp_abi::pal::CLI_ENV, "get-arguments");
+    let memory = instance
+        .get_memory(&mut store, "memory")
+        .expect("guest memory");
+    memory
+        .write(&mut store, 60, &[0xa5; 16])
+        .expect("poison return area");
+    instance
+        .get_typed_func::<i32, ()>(&mut store, "invoke")
+        .expect("typed argument call")
+        .call(&mut store, 64)
+        .expect("an empty launch argument list must be available");
+    assert_eq!(
+        read(&mut store, &instance, 60, 16),
+        [vec![0xa5; 4], vec![0; 8], vec![0xa5; 4]].concat(),
+        "argument lowering must initialize exactly the pointer/length record"
+    );
+}
+
+#[test]
+fn launch_arguments_reject_an_out_of_bounds_return_record() {
+    for pointer in [-1, 65532] {
+        let (mut store, instance) = return_area_adapter(wisp_abi::pal::CLI_ENV, "get-arguments");
+        let call = instance
+            .get_typed_func::<i32, ()>(&mut store, "invoke")
+            .expect("typed argument call");
+        assert!(
+            call.call(&mut store, pointer).is_err(),
+            "an argument return record outside guest memory must trap"
+        );
+    }
+}
+
+#[test]
+fn wall_clock_resolution_links_but_traps_without_writing_a_fake_resolution() {
+    let (mut store, instance) = return_area_adapter(wisp_abi::pal::WALL_CLOCK, "resolution");
+    let memory = instance
+        .get_memory(&mut store, "memory")
+        .expect("guest memory");
+    memory
+        .write(&mut store, 64, &[0xa5; 16])
+        .expect("poison datetime area");
+    let error = instance
+        .get_typed_func::<i32, ()>(&mut store, "invoke")
+        .expect("typed resolution call")
+        .call(&mut store, 64)
+        .expect_err("the unavailable wall clock must remain denied");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("wasi:clocks/wall-clock@0.2.0::resolution")
+            && message.contains("trap-on-call"),
+        "the denial must identify the wall-clock resolution operation: {message}"
+    );
+    assert_eq!(
+        read(&mut store, &instance, 64, 16),
+        [0xa5; 16],
+        "a denied clock must not fabricate a datetime"
+    );
+}
