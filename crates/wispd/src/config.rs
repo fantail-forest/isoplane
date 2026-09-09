@@ -29,6 +29,9 @@ pub struct NodeConfig {
     /// High-water mark for each real cell's queued HTTP response bytes.
     #[serde(default = "default_response_queue_bytes")]
     pub response_queue_bytes: usize,
+    /// Full OTLP HTTP/protobuf endpoint for structured dispatch events. Unset disables export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otlp_logs_endpoint: Option<crate::logs::OtlpEndpoint>,
 }
 
 fn default_response_queue_bytes() -> usize {
@@ -199,6 +202,7 @@ impl NodeConfig {
             node: "wisp-dev".into(),
             proxy: ProxyListen::default(),
             response_queue_bytes: default_response_queue_bytes(),
+            otlp_logs_endpoint: None,
             admin: AdminListen::default(),
             cells: vec![
                 CellConfig {

@@ -42,6 +42,8 @@ pub struct Proxy {
     pub dispatcher: Arc<dyn Dispatcher>,
     pub metrics: Arc<ProxyMetrics>,
     admission: Arc<AdmissionControl>,
+    shutdown: tokio_util::sync::CancellationToken,
+    pub(crate) transports: tokio_util::task::TaskTracker,
 }
 
 struct ResponseMeasurement {
@@ -67,37 +69,67 @@ impl Proxy {
             routes,
             dispatcher,
             metrics,
+            shutdown: tokio_util::sync::CancellationToken::new(),
+            transports: tokio_util::task::TaskTracker::new(),
         })
     }
 
 
 
 
+    /// Stops HTTP admission and cancels accepted HTTP transports.
+    /// This does not wait for guest activation or other host work to settle.
+    pub fn shutdown(&self) {
+        self.shutdown.cancel();
+    }
+
+    /// Joins tracked transport cleanup after the listener's serve future has ended.
+    pub async fn wait_for_shutdown(&self) {
+        self.transports.close();
+        self.transports.wait().await;
+    }
+
+    /// Serves until explicitly shut down; cancellation also stops accepted transports.
     pub async fn serve(self: Arc<Self>, listener: TcpListener) -> anyhow::Result<()> {
+        let _http_stop = self.shutdown.clone().drop_guard();
         let local = listener.local_addr()?;
         tracing::info!(addr = %local, "proxy listening (plaintext)");
         loop {
-            let (stream, peer) = match listener.accept().await {
+            let accepted = tokio::select! {
+                biased;
+                () = self.shutdown.cancelled() => break,
+                accepted = listener.accept() => accepted,
+            };
+            let (stream, peer) = match accepted {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(error = %e, "accept failed");
                     continue;
                 }
             };
-            let me = self.clone();
-            tokio::spawn(async move {
-                let io = TokioIo::new(stream);
-                let svc = service_fn(move |req| {
-                    let me = me.clone();
-                    async move { me.handle(req, peer).await }
-                });
-                if let Err(e) = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(io, svc)
-                    .await
-                {
-                    tracing::debug!(error = %e, "connection closed");
-                }
-            });
+            self.transports
+                .spawn(self.clone().serve_connection(stream, peer));
+        }
+        drop(listener);
+        self.wait_for_shutdown().await;
+        Ok(())
+    }
+
+    async fn serve_connection<S>(self: Arc<Self>, stream: S, peer: SocketAddr)
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let shutdown = self.shutdown.clone();
+        let io = TokioIo::new(stream);
+        let svc = service_fn(move |request| self.clone().handle(request, peer));
+        let connection = hyper::server::conn::http1::Builder::new()
+            .serve_connection(io, svc);
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => {},
+            result = connection => if let Err(error) = result {
+                tracing::debug!(error = %error, "connection closed");
+            },
         }
     }
 
@@ -106,6 +138,13 @@ impl Proxy {
         req: Request<Incoming>,
         peer: SocketAddr,
     ) -> Result<Response<Body>, hyper::Error> {
+        if self.shutdown.is_cancelled() {
+            return Ok(text(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "proxy is stopping",
+                &[],
+            ));
+        }
         let measurement = ResponseMeasurement {
             metrics: self.metrics.clone(),
             started: Instant::now(),

@@ -4,13 +4,14 @@ pub mod fake;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{HeaderMap, Request, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
-use wisp_abi::host::CodeTier;
+use wisp_abi::host::{CodeTier, Dispatcher};
 use self::fake::FakeCell;
 use wisp_proxy::{LocalRouteTable, Proxy, ProxyConfig, ProxyMetrics};
 
@@ -19,21 +20,56 @@ pub struct Rig {
     pub proxy: Arc<Proxy>,
     pub cell: Arc<FakeCell>,
     pub routes: Arc<LocalRouteTable>,
+    server: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
 }
 
 pub async fn start(cell: Arc<FakeCell>, routes: Arc<LocalRouteTable>, cfg: ProxyConfig) -> Rig {
+    start_with_dispatcher(cell.clone(), routes, cfg, cell).await
+}
+
+pub async fn start_with_dispatcher(
+    cell: Arc<FakeCell>,
+    routes: Arc<LocalRouteTable>,
+    cfg: ProxyConfig,
+    dispatcher: Arc<dyn Dispatcher>,
+) -> Rig {
     let metrics = Arc::new(ProxyMetrics::new());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("route setup");
     let addr = listener.local_addr().expect("route setup");
-    let proxy = Proxy::new(routes.clone(), cell.clone(), metrics.clone(), cfg);
-    tokio::spawn(proxy.clone().serve(listener));
+    let proxy = Proxy::new(routes.clone(), dispatcher, metrics.clone(), cfg);
+    let server = tokio::spawn(proxy.clone().serve(listener));
     Rig {
         addr,
         proxy,
         cell,
         routes,
+        server: Some(server),
+    }
+}
+
+impl Rig {
+    pub async fn shutdown(&mut self) {
+        self.proxy.shutdown();
+        if let Some(server) = self.server.take() {
+            tokio::time::timeout(Duration::from_secs(10), server)
+                .await
+                .expect("proxy shutdown must not leave a hung transport")
+                .expect("proxy listener task must not panic")
+                .expect("proxy listener must stop successfully");
+        }
+        self.proxy.wait_for_shutdown().await;
+    }
+
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        self.proxy.shutdown();
+        if let Some(server) = self.server.take() {
+            server.abort();
+        }
     }
 }
 
@@ -82,6 +118,19 @@ pub async fn get(
     request(addr, "GET", host, path, headers, Vec::new()).await
 }
 
+pub async fn http_connection(
+    addr: SocketAddr,
+) -> (
+    hyper::client::conn::http1::SendRequest<Full<Bytes>>,
+    tokio::task::JoinHandle<Result<(), hyper::Error>>,
+) {
+    let stream = TcpStream::connect(addr).await.expect("route setup");
+    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .expect("HTTP client handshake must succeed");
+    (sender, tokio::spawn(connection))
+}
+
 pub async fn request(
     addr: SocketAddr,
     method: &str,
@@ -90,15 +139,7 @@ pub async fn request(
     headers: &[(&str, &str)],
     body: Vec<u8>,
 ) -> HttpResponse {
-    let stream = TcpStream::connect(addr).await.expect("route setup");
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .expect("route setup");
-    tokio::spawn(async move {
-        // The connection ends when the response has been read; an error here
-        // surfaces as a failed send_request below.
-        let _ = conn.await;
-    });
+    let (mut sender, driver) = http_connection(addr).await;
     let mut b = Request::builder()
         .method(method)
         .uri(path)
@@ -111,6 +152,11 @@ pub async fn request(
     let status = resp.status();
     let headers = resp.headers().clone();
     let body = resp.into_body().collect().await.unwrap().to_bytes();
+    drop(sender);
+    driver
+        .await
+        .expect("HTTP client driver must settle")
+        .expect("HTTP client connection must finish cleanly");
     HttpResponse {
         status,
         headers,

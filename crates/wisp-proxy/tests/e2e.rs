@@ -291,3 +291,150 @@ async fn connection_headers_stop_at_the_proxy_while_application_headers_reach_th
         "chunk framing must be decoded before delivering the body"
     );
 }
+
+#[tokio::test]
+async fn proxy_shutdown_closes_keepalives_and_prevents_new_http_admission() {
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Full};
+    use hyper::Request;
+    use tokio::net::TcpStream;
+
+    let mut rig = start(
+        Arc::new(FakeCell::new()),
+        standard_routes(),
+        ProxyConfig::default(),
+    )
+    .await;
+    let (mut sender, client) = http_connection(rig.addr).await;
+    let request = || {
+        Request::builder()
+            .uri("/")
+            .header("host", "quotes.wisp.dev")
+            .body(Full::new(Bytes::new()))
+            .unwrap()
+    };
+    sender
+        .send_request(request())
+        .await
+        .unwrap()
+        .into_body()
+        .collect()
+        .await
+        .unwrap();
+    let before = rig.cell.http_dispatches();
+    rig.shutdown().await;
+    assert!(
+        sender.send_request(request()).await.is_err(),
+        "a stopped proxy cannot accept a second keepalive request"
+    );
+    assert_eq!(
+        rig.cell.http_dispatches(),
+        before,
+        "shutdown must prevent further guest admission"
+    );
+    assert!(
+        TcpStream::connect(rig.addr).await.is_err(),
+        "the joined listener must no longer accept TCP connections"
+    );
+    client
+        .await
+        .expect("the client transport task must not panic")
+        .expect("the idle keepalive must close cleanly");
+}
+
+#[tokio::test]
+async fn proxy_shutdown_cancels_an_incomplete_upload_without_waiting_for_more_bytes() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let mut rig = start(
+        Arc::new(FakeCell::new()),
+        standard_routes(),
+        ProxyConfig::default(),
+    )
+    .await;
+    let mut client = TcpStream::connect(rig.addr).await.unwrap();
+    client.write_all(b"POST / HTTP/1.1\r\nHost: quotes.wisp.dev\r\nContent-Length: 10\r\nExpect: 100-continue\r\n\r\n").await.unwrap();
+    let mut accepted = [0; b"HTTP/1.1 100 Continue\r\n\r\n".len()];
+    client.read_exact(&mut accepted).await.unwrap();
+    assert_eq!(
+        &accepted, b"HTTP/1.1 100 Continue\r\n\r\n",
+        "the proxy must actually be waiting on the upload before shutdown"
+    );
+    rig.shutdown().await;
+    assert_eq!(
+        client.read(&mut [0]).await.unwrap(),
+        0,
+        "shutdown must drop the pending upload transport"
+    );
+    assert_eq!(
+        rig.cell.http_dispatches(),
+        0,
+        "an incomplete legacy upload must not dispatch after cancellation"
+    );
+}
+
+
+#[path = "common/shutdown.rs"]
+mod shutdown;
+
+#[tokio::test]
+async fn proxy_shutdown_drops_a_blocked_response_body_before_returning() {
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::Request;
+    use tokio_util::sync::CancellationToken;
+
+    let cell = Arc::new(FakeCell::new());
+    let dispatcher = Arc::new(shutdown::BlockedResponse {
+        cell: cell.clone(),
+        polled: CancellationToken::new(),
+        dropped: CancellationToken::new(),
+    });
+    let mut rig = start_with_dispatcher(
+        cell,
+        standard_routes(),
+        ProxyConfig::default(),
+        dispatcher.clone(),
+    )
+    .await;
+    let (mut sender, client) = http_connection(rig.addr).await;
+    let request = tokio::spawn(async move {
+        sender
+            .send_request(
+                Request::builder()
+                    .uri("/")
+                    .header("host", "quotes.wisp.dev")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), dispatcher.polled.cancelled())
+        .await
+        .expect("the response body must actually be pending before shutdown");
+    rig.shutdown().await;
+    assert!(
+        dispatcher.dropped.is_cancelled(),
+        "shutdown must release the owned response body before returning"
+    );
+    match request.await.expect("client request task must settle") {
+        Ok(response) => {
+            use http_body_util::BodyExt;
+            assert!(
+                response.into_body().collect().await.is_err(),
+                "a cancelled pending response must not produce successful EOF"
+            );
+        }
+        Err(error) => assert!(
+            error.is_incomplete_message() || error.is_closed() || error.is_canceled(),
+            "shutdown must terminate the client transport: {error}"
+        ),
+    }
+    if let Err(error) = client.await.expect("client connection task must settle") {
+        assert!(
+            error.is_incomplete_message() || error.is_closed() || error.is_canceled(),
+            "the client driver must report transport cancellation: {error}"
+        );
+    }
+}

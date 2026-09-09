@@ -44,6 +44,13 @@ socket2 = "0.6.5"
 hickory-resolver = { version = "0.26.2", default-features = false, features = ["system-config", "tokio"] }
 tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["logs"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs", "internal-logs"] }
+opentelemetry-appender-tracing = { version = "0.32", default-features = false }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["logs", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "internal-logs"] }
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "logs"] }
+prost = "0.14"
+url = { version = "2", features = ["serde"] }
 parking_lot = "0.12"
 libc        = "0.2"
 cpu-time    = "1.0"
