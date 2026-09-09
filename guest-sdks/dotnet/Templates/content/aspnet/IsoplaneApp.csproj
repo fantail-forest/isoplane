@@ -1,0 +1,7 @@
+<Project Sdk="Wisp.AspNetCore/0.1.0">
+  <PropertyGroup>
+    <AssemblyName>IsoplaneApp</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <WispApplicationFactory>IsoplaneApp.Application.Create</WispApplicationFactory>
+  </PropertyGroup>
+</Project>

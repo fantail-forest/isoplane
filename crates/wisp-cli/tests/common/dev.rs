@@ -9,10 +9,19 @@ pub struct Dev {
     child: Child,
     lines: Receiver<String>,
     pub url: String,
+    output_timeout: Duration,
 }
 
 impl Dev {
     pub fn start(project: &std::path::Path, args: &[&str]) -> Self {
+        Self::start_with_timeout(project, args, Duration::from_secs(120))
+    }
+
+    pub fn start_with_timeout(
+        project: &std::path::Path,
+        args: &[&str],
+        output_timeout: Duration,
+    ) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_wisp"))
             .args(["--no-color", "dev", "--port", "0", "--watch"])
             .arg(project)
@@ -44,6 +53,7 @@ impl Dev {
             child,
             lines,
             url: String::new(),
+            output_timeout,
         };
         let ready = dev.wait_for("ready ");
         dev.url = ready
@@ -58,7 +68,7 @@ impl Dev {
     }
 
     pub fn wait_for(&mut self, marker: &str) -> String {
-        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let deadline = std::time::Instant::now() + self.output_timeout;
         let mut output = String::new();
         loop {
             let line = self

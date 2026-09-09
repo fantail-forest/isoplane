@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Isoplane",
+  "classifications": ["Web", "Isoplane"],
+  "identity": "Wisp.Templates.AspNetCore",
+  "name": "Isoplane ASP.NET application",
+  "shortName": "isoplane-web",
+  "sourceName": "IsoplaneApp",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "symbols": {
+    "tenant": {
+      "type": "parameter",
+      "datatype": "string",
+      "isRequired": true,
+      "description": "Explicit tenant identity for local development.",
+      "replaces": "IsoplaneLocalTenant"
+    }
+  }
+}

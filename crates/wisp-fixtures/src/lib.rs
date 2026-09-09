@@ -10,6 +10,10 @@
 //! because its callers are tests.
 #![forbid(unsafe_code)]
 
+mod dotnet_template;
+
+pub use dotnet_template::aspnet_project;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;

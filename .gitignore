@@ -33,3 +33,7 @@ guest-sdks/dotnet/obj/
 
 # Local guest development state and build logs.
 .wisp/
+
+# Template package build outputs.
+/guest-sdks/dotnet/Templates/bin/
+/guest-sdks/dotnet/Templates/obj/

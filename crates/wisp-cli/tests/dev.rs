@@ -314,3 +314,30 @@ fn the_cli_does_not_depend_on_node_administration_or_the_deployment_control_plan
         "shipping local development must not pull the hosted control plane into the CLI:\n{tree}"
     );
 }
+
+#[tokio::test]
+async fn an_installed_aspnet_template_serves_its_generated_application() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = wisp_fixtures::aspnet_project(dir.path());
+    let mut dev =
+        Dev::start_with_timeout(&app, &["--no-watch"], std::time::Duration::from_secs(600));
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap()
+        .get(&dev.url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the installed ASP.NET template must serve successfully through the local sandbox"
+    );
+    assert_eq!(
+        response.text().await.unwrap(),
+        "Hello from Isoplane!",
+        "the generated ASP.NET route must execute without copied interop boilerplate"
+    );
+    dev.stop();
+}
