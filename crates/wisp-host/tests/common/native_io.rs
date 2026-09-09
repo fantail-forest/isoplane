@@ -40,9 +40,15 @@ impl ReturnedGuest {
             .engine
             .activate(&self.template, CellBindings::boxed(self.context.clone()))
             .expect("the native I/O fixture must activate");
+        if let Some((image, memory)) = self.snapshot.take() {
+            instance
+                .restore_mutable_state(&image)
+                .expect("the returning guest must restore its saved state");
+            instance.memory().copy_from_slice(&memory);
+        }
         let outcome = instance.dispatch(
             &DispatchRecord {
-                dispatch_id: 1,
+                dispatch_id: self.context.dispatch_id(),
                 kind: DispatchKind::Http(HttpRequest {
                     method: "GET".into(),
                     url: format!("https://native.test{path}"),
@@ -54,7 +60,7 @@ impl ReturnedGuest {
                 trace: TraceContext::default(),
                 cancel_future: 0,
                 cpu_budget_ms: 30_000,
-                now_ms: 1,
+                now_ms: self.context.slice_clock_ms(),
             },
             budget(),
         );
@@ -106,11 +112,11 @@ impl ReturnedGuest {
 }
 
 fn capture(instance: &mut Instance, outcome: &DispatchOutcome) -> Option<(InstanceImage, Vec<u8>)> {
-    (outcome.completion == Completion::Parked).then(|| {
+    matches!(outcome.completion, Completion::Parked | Completion::Done).then(|| {
         (
             instance
                 .capture_mutable_state()
-                .expect("an empty-stack I/O park must be capturable"),
+                .expect("an empty-stack I/O return must be capturable"),
             instance.memory().to_vec(),
         )
     })

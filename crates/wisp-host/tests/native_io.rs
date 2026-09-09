@@ -68,6 +68,59 @@ async fn a_managed_timer_wakes_on_another_worker_after_its_store_is_destroyed() 
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn an_abandoned_managed_timer_cannot_run_during_a_later_request() {
+    LogCapture::global();
+    let owner = InstanceId::alloc();
+    let (context, futures, _) = context(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+    context.begin_dispatch(1, 1);
+    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_timer", context.clone());
+    let outcome = guest.start("/abandon");
+    assert_eq!(
+        outcome.completion,
+        Completion::Done,
+        "the request must finish without awaiting its timer: {outcome:?}"
+    );
+    assert_eq!(
+        futures.pending_total(owner),
+        1,
+        "the abandoned managed delay must register a real host timer"
+    );
+    futures.end_dispatch(owner, 1);
+    assert_eq!(
+        futures.live_futures(),
+        0,
+        "dispatch completion must cancel the timer's host future"
+    );
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(100)).await;
+    tokio::task::yield_now().await;
+
+    // Observe twice: a callback pumped after response creation must not escape detection.
+    for dispatch in 2..=3 {
+        context.begin_dispatch(101, dispatch);
+        let outcome = guest.start("/observe");
+        let wisp_abi::status::PollStatus::Done { response } = outcome.status else {
+            panic!(
+                "the later request must complete: {outcome:?}; logs: {:?}",
+                context.emitted_logs()
+            );
+        };
+        let body = context
+            .responses
+            .lock()
+            .take(response)
+            .expect("the timer probe must produce a response")
+            .body();
+        assert_eq!(
+            body,
+            format!("{dispatch}:0").as_bytes(),
+            "the reused guest lost state or ran an abandoned timer callback"
+        );
+        futures.end_dispatch(owner, dispatch);
+    }
+}
+
 struct ExactPeer(std::net::SocketAddr);
 impl wisp_host::egress::DestinationPolicy for ExactPeer {
     fn authorize(&self, peer: std::net::SocketAddr) -> Result<(), wisp_host::egress::DenyReason> {
