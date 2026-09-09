@@ -38,7 +38,7 @@ internal static class NativeImports
     private static MethodDefinition CreateImport(ModuleDefinition module, TypeDefinition owner, CustomAttribute marker, string capability)
     {
         var target = new MethodDefinition("Wisp_" + capability,
-            MethodAttributes.Private | MethodAttributes.Static | MethodAttributes.PInvokeImpl, module.TypeSystem.Int64)
+            MethodAttributes.Assembly | MethodAttributes.Static | MethodAttributes.PInvokeImpl, module.TypeSystem.Int64)
         {
             ImplAttributes = MethodImplAttributes.PreserveSig
         };

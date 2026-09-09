@@ -16,5 +16,7 @@
     <Compile Include="../Build/RuntimeAdapter/CryptoRuntime.cs" Link="CryptoRuntime.cs" />
     <Compile Include="../Build/RuntimeAdapter/RuntimeMethods.cs" Link="RuntimeMethods.cs" />
     <Compile Include="../Build/RuntimeAdapter/ManagedPbkdf2.cs" Link="ManagedPbkdf2.cs" />
+    <Compile Include="../Build/RuntimeAdapter/NativeImports.cs" Link="NativeImports.cs" />
+    <EmbeddedResource Include="../Build/RuntimeAdapter/NativeImports.tsv" LogicalName="RuntimeAdapter.NativeImports.tsv" />
   </ItemGroup>
 </Project>
