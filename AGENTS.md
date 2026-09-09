@@ -243,6 +243,8 @@ Derive every host mechanism from these. A change that breaks one is a product ch
 3. **Suspend only on an empty stack.** A guest parks only by returning control to the host with no live guest invocation left on a native stack. Capture supported sandbox state at that boundary, with the resource semantics above. Provide no way for a guest to block inside a call. How that is achieved (today, no blocking import and synchronous execution on pool threads) may change; the property may not.
 4. **Route every capability through the host interface.** Offer everything a guest can do to the world, including every form of I/O and anything a syscall would provide, through an interface the guest cannot bypass, so that what a module can reach is a static question, answerable at deploy time.
 
+Local-development debugging may suspend a worker thread while a debugger holds a live guest invocation. This exception does not apply to production execution or permit capturing or migrating the paused invocation as a checkpoint.
+
 ### The host interface
 
 Keep the host interface to one definition. Generate every other representation of it, in another crate or another language, from that definition, or drift-test it against that definition. Ship any change to it with those representations updated and the hostile-module corpus passing. A breaking change, one that an existing guest or template would no longer satisfy, needs the owner's agreement first. Don't change it as a side effect of another task.
