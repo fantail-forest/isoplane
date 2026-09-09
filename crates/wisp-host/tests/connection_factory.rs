@@ -231,7 +231,7 @@ async fn small_http_body_reads_preserve_every_byte_of_a_larger_network_frame() {
         let mut actual = Vec::new();
         loop {
             let chunk = fetcher
-                .read_body(handle, 3)
+                .read_body(&owner(), handle, 3)
                 .await
                 .expect("the stream must remain readable");
             assert!(
@@ -249,7 +249,7 @@ async fn small_http_body_reads_preserve_every_byte_of_a_larger_network_frame() {
         );
         assert!(
             matches!(
-                fetcher.read_body(handle, 3).await,
+                fetcher.read_body(&owner(), handle, 3).await,
                 Err(wisp_abi::result::FutureError::NotFound)
             ),
             "EOF must release the completed response handle"
@@ -271,7 +271,7 @@ async fn http_trailers_do_not_appear_as_an_empty_unfinished_body_chunk() {
         ])
         .await;
         let first = fetcher
-            .read_body(handle, 8)
+            .read_body(&owner(), handle, 8)
             .await
             .expect("the payload must arrive");
         assert_eq!(
@@ -279,7 +279,7 @@ async fn http_trailers_do_not_appear_as_an_empty_unfinished_body_chunk() {
             "the body reader must deliver the response data"
         );
         let last = fetcher
-            .read_body(handle, 8)
+            .read_body(&owner(), handle, 8)
             .await
             .expect("trailers must terminate cleanly");
         assert!(
@@ -290,4 +290,28 @@ async fn http_trailers_do_not_appear_as_an_empty_unfinished_body_chunk() {
     })
     .await
     .expect("trailers must settle before the hung-test deadline");
+}
+
+#[tokio::test]
+async fn a_retained_http_body_cannot_be_read_by_another_tenant_or_instance() {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let (fetcher, handle, server) = streamed_response(vec![hyper::body::Frame::data(
+            bytes::Bytes::from_static(b"private response"))]).await;
+        for intruder in [
+            ConnectionOwner::new("another-tenant".into(), owner().instance()).expect("explicit other tenant"),
+            ConnectionOwner::new(owner().tenant().into(), InstanceId(92)).expect("explicit other instance"),
+        ] {
+            assert!(matches!(fetcher.read_body(&intruder, handle, 8).await,
+                Err(wisp_abi::result::FutureError::NotFound)),
+                "a guessed HTTP body handle must reveal neither existence nor bytes to another owner");
+        }
+        let mut authorized = Vec::new();
+        loop {
+            let chunk = fetcher.read_body(&owner(), handle, 0).await.expect("the owner must retain its body");
+            authorized.extend_from_slice(&chunk.data);
+            if chunk.eof { break; }
+        }
+        assert_eq!(authorized, b"private response", "refused reads must not consume the owner's payload");
+        server.await.expect("the response server must stop cleanly");
+    }).await.expect("body authorization must settle before the hung-test deadline");
 }

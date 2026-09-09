@@ -29,7 +29,14 @@ pub trait Fetcher: Send + Sync + 'static {
         req: FetchRequest,
     ) -> Result<FetchResponse, FutureError>;
 
-    async fn read_body(&self, handle: u32, max_len: usize) -> Result<BodyChunk, FutureError>;
+    /// Read a retained response owned by this host-established tenant and instance.
+    /// Unknown handles and handles owned by another caller both return `NotFound`.
+    async fn read_body(
+        &self,
+        owner: &crate::egress::ConnectionOwner,
+        handle: u32,
+        max_len: usize,
+    ) -> Result<BodyChunk, FutureError>;
 }
 
 /// Everything the vtable routes to.

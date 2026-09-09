@@ -76,8 +76,16 @@ impl CellBindings {
     pub(super) fn http_body_read(&self, rt: Arc<CellRuntime>, id: u64, scalars: [u64; 3]) -> u64 {
         let handle = scalars[0] as u32;
         let max = scalars[1] as usize;
+        let owner =
+            match crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance) {
+                Ok(owner) => owner,
+                Err(error) => {
+                    return self
+                        .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
+                }
+            };
         spawn!(rt, id, |svc| from_typed(
-            svc.fetcher.read_body(handle, max).await
+            svc.fetcher.read_body(&owner, handle, max).await
         ))
     }
 

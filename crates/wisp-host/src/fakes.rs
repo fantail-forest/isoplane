@@ -560,7 +560,12 @@ impl crate::bindings::Fetcher for FakeFetcher {
             body_inline: Some(b"ok".to_vec()),
         })
     }
-    async fn read_body(&self, handle: u32, _max: usize) -> Result<BodyChunk, FutureError> {
+    async fn read_body(
+        &self,
+        _owner: &crate::egress::ConnectionOwner,
+        handle: u32,
+        _max: usize,
+    ) -> Result<BodyChunk, FutureError> {
         if self.stall.load(Ordering::Relaxed) {
             std::future::pending::<()>().await;
         }

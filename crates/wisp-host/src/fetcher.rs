@@ -151,6 +151,7 @@ impl Fetcher for PinnedHttpFetcher {
         self.bodies.lock().insert(
             handle,
             ResponseBody {
+                owner,
                 incoming: body,
                 unread: Bytes::new(),
             },
@@ -163,10 +164,18 @@ impl Fetcher for PinnedHttpFetcher {
         })
     }
 
-    async fn read_body(&self, handle: u32, max_len: usize) -> Result<BodyChunk, FutureError> {
-        // Taken out and put back rather than held across the await.
-        let Some(mut body) = self.bodies.lock().remove(&handle) else {
-            return Err(FutureError::NotFound);
+    async fn read_body(
+        &self,
+        owner: &ConnectionOwner,
+        handle: u32,
+        max_len: usize,
+    ) -> Result<BodyChunk, FutureError> {
+        let mut body = {
+            let mut bodies = self.bodies.lock();
+            if !bodies.get(&handle).is_some_and(|body| &body.owner == owner) {
+                return Err(FutureError::NotFound);
+            }
+            bodies.remove(&handle).ok_or(FutureError::NotFound)?
         };
         let chunk = body.read(max_len).await?;
         if !chunk.eof {
@@ -177,6 +186,7 @@ impl Fetcher for PinnedHttpFetcher {
 }
 
 struct ResponseBody {
+    owner: ConnectionOwner,
     incoming: Incoming,
     unread: Bytes,
 }
