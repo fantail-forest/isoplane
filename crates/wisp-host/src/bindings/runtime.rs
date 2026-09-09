@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use wisp_abi::calls::FetchRequest;
-use wisp_abi::result::{BodyChunk, FetchResponse, FutureError};
+use wisp_abi::result::FutureError;
 
 use crate::egress::HostEgressPolicy;
 use crate::futures::{FutureTable, WakeTarget};
@@ -17,6 +17,7 @@ pub trait WakeSink: Send + Sync + 'static {
     fn signal(&self, owner: InstanceId);
 }
 
+/// Sends an outbound request and transfers ownership of its response body.
 #[async_trait::async_trait]
 pub trait Fetcher: Send + Sync + 'static {
     /// `target.addr` is the pinned address from the egress check; an
@@ -27,16 +28,7 @@ pub trait Fetcher: Send + Sync + 'static {
         owner: crate::egress::ConnectionOwner,
         target: wisp_abi::host::PinnedTarget,
         req: FetchRequest,
-    ) -> Result<FetchResponse, FutureError>;
-
-    /// Read a retained response owned by this host-established tenant and instance.
-    /// Unknown handles and handles owned by another caller both return `NotFound`.
-    async fn read_body(
-        &self,
-        owner: &crate::egress::ConnectionOwner,
-        handle: u32,
-        max_len: usize,
-    ) -> Result<BodyChunk, FutureError>;
+    ) -> Result<super::http_scope::OutboundResponse, FutureError>;
 }
 
 /// Everything the vtable routes to.

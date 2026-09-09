@@ -5,7 +5,7 @@ mod connection_factory;
 use connection_factory::RecordingConnections;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use wisp_host::bindings::Fetcher;
+use wisp_host::bindings::{Fetcher, OutboundBody, ResponseBody};
 use wisp_host::egress::{
     ConnectionOwner, DenyReason, DestinationPolicy, DnsError, HostEgressPolicy, Resolver,
 };
@@ -86,9 +86,11 @@ async fn http_uses_the_injected_connection_provider_with_dispatch_identity() {
     .await
     .expect("the owned HTTP request must finish before its test deadline")
     .expect("HTTP must use the working provider");
+    let OutboundBody::Inline(body) = response.body else {
+        panic!("a small response must be inline")
+    };
     assert_eq!(
-        response.body_inline.as_deref(),
-        Some(b"provider".as_slice()),
+        body, b"provider",
         "the injected connection must carry the real HTTP response"
     );
     assert_eq!(
@@ -166,7 +168,7 @@ async fn http_denies_a_private_destination_before_invoking_the_connection_provid
 
 async fn streamed_response(
     frames: Vec<hyper::body::Frame<bytes::Bytes>>,
-) -> (PinnedHttpFetcher, u32, tokio::task::JoinHandle<()>) {
+) -> (Box<dyn ResponseBody>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("the response server must bind");
@@ -213,27 +215,23 @@ async fn streamed_response(
         .fetch(owner(), target(address), req)
         .await
         .expect("the response must start");
-    assert!(
-        response.body_inline.is_none(),
-        "an unknown-length response must be streamed"
-    );
-    (fetcher, response.body_handle, server)
+    let OutboundBody::Stream(body) = response.body else {
+        panic!("an unknown-length response must be streamed")
+    };
+    (body, server)
 }
 
 #[tokio::test]
 async fn small_http_body_reads_preserve_every_byte_of_a_larger_network_frame() {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let expected: Vec<u8> = (0..8192).map(|index| (index % 251) as u8).collect();
-        let (fetcher, handle, server) = streamed_response(vec![hyper::body::Frame::data(
+        let (mut body, server) = streamed_response(vec![hyper::body::Frame::data(
             bytes::Bytes::from(expected.clone()),
         )])
         .await;
         let mut actual = Vec::new();
         loop {
-            let chunk = fetcher
-                .read_body(&owner(), handle, 3)
-                .await
-                .expect("the stream must remain readable");
+            let chunk = body.read(3).await.expect("the stream must remain readable");
             assert!(
                 chunk.data.len() <= 3,
                 "each read must respect the requested buffer size"
@@ -247,13 +245,6 @@ async fn small_http_body_reads_preserve_every_byte_of_a_larger_network_frame() {
             actual, expected,
             "a small guest read must retain the unread remainder for later reads"
         );
-        assert!(
-            matches!(
-                fetcher.read_body(&owner(), handle, 3).await,
-                Err(wisp_abi::result::FutureError::NotFound)
-            ),
-            "EOF must release the completed response handle"
-        );
         server.await.expect("the response server must stop cleanly");
     })
     .await
@@ -265,23 +256,17 @@ async fn http_trailers_do_not_appear_as_an_empty_unfinished_body_chunk() {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let mut trailers = hyper::HeaderMap::new();
         trailers.insert("x-check", hyper::header::HeaderValue::from_static("done"));
-        let (fetcher, handle, server) = streamed_response(vec![
+        let (mut body, server) = streamed_response(vec![
             hyper::body::Frame::data(bytes::Bytes::from_static(b"A")),
             hyper::body::Frame::trailers(trailers),
         ])
         .await;
-        let first = fetcher
-            .read_body(&owner(), handle, 8)
-            .await
-            .expect("the payload must arrive");
+        let first = body.read(8).await.expect("the payload must arrive");
         assert_eq!(
             first.data, b"A",
             "the body reader must deliver the response data"
         );
-        let last = fetcher
-            .read_body(&owner(), handle, 8)
-            .await
-            .expect("trailers must terminate cleanly");
+        let last = body.read(8).await.expect("trailers must terminate cleanly");
         assert!(
             last.eof && last.data.is_empty(),
             "trailing HTTP metadata must not masquerade as more body data"
@@ -290,28 +275,4 @@ async fn http_trailers_do_not_appear_as_an_empty_unfinished_body_chunk() {
     })
     .await
     .expect("trailers must settle before the hung-test deadline");
-}
-
-#[tokio::test]
-async fn a_retained_http_body_cannot_be_read_by_another_tenant_or_instance() {
-    tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        let (fetcher, handle, server) = streamed_response(vec![hyper::body::Frame::data(
-            bytes::Bytes::from_static(b"private response"))]).await;
-        for intruder in [
-            ConnectionOwner::new("another-tenant".into(), owner().instance()).expect("explicit other tenant"),
-            ConnectionOwner::new(owner().tenant().into(), InstanceId(92)).expect("explicit other instance"),
-        ] {
-            assert!(matches!(fetcher.read_body(&intruder, handle, 8).await,
-                Err(wisp_abi::result::FutureError::NotFound)),
-                "a guessed HTTP body handle must reveal neither existence nor bytes to another owner");
-        }
-        let mut authorized = Vec::new();
-        loop {
-            let chunk = fetcher.read_body(&owner(), handle, 0).await.expect("the owner must retain its body");
-            authorized.extend_from_slice(&chunk.data);
-            if chunk.eof { break; }
-        }
-        assert_eq!(authorized, b"private response", "refused reads must not consume the owner's payload");
-        server.await.expect("the response server must stop cleanly");
-    }).await.expect("body authorization must settle before the hung-test deadline");
 }

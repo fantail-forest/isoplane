@@ -109,6 +109,9 @@ impl Cell {
         if !mine {
             return;
         }
+        if let Some(slot) = self.slot(id) {
+            slot.ctx.end_http_dispatch();
+        }
         if let Some(tx) = tx {
             answer(
                 &tx,

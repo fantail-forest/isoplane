@@ -69,12 +69,22 @@ pub struct InstanceCtx {
     pub responses: Mutex<ResponseTable>,
     pub(super) spans: Mutex<HashMap<i32, (String, u64)>>,
     pub(super) next_span: AtomicU32,
+    pub(super) http: Mutex<Arc<super::http_scope::HttpScope>>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
 }
 
 impl InstanceCtx {
     pub(crate) fn release_native_resources(&self) {
         self.native_io.lock().clear();
+        self.end_http_dispatch();
+    }
+
+    pub(crate) fn end_http_dispatch(&self) {
+        self.http.lock().close();
+    }
+
+    pub(crate) fn has_outbound_http(&self) -> bool {
+        self.http.lock().is_active()
     }
 
     pub fn new(
@@ -106,6 +116,7 @@ impl InstanceCtx {
             responses: Mutex::new(ResponseTable::default()),
             spans: Mutex::new(HashMap::new()),
             next_span: AtomicU32::new(1),
+            http: Mutex::new(super::http_scope::HttpScope::new()),
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
@@ -139,6 +150,10 @@ impl InstanceCtx {
     /// Resets the per-dispatch counters, including the poison, which under
     /// `reuse` may be left from a clean kill a moment ago.
     pub fn begin_dispatch(&self, now_ms: u64, dispatch: u64) {
+        let mut http = self.http.lock();
+        http.close();
+        *http = super::http_scope::HttpScope::new();
+        drop(http);
         self.subrequests.store(0, Ordering::Relaxed);
         self.log_bytes.store(0, Ordering::Relaxed);
         self.dispatch_generation.fetch_add(1, Ordering::AcqRel);
@@ -204,6 +219,12 @@ impl InstanceCtx {
     }
     pub fn take_out_buffer(&self) -> Vec<u8> {
         std::mem::take(&mut self.out_buffer.lock())
+    }
+}
+
+impl Drop for InstanceCtx {
+    fn drop(&mut self) {
+        self.http.get_mut().close();
     }
 }
 

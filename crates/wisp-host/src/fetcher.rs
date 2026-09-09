@@ -5,9 +5,7 @@
 //! `https://` egress is refused rather than downgraded.
 
 use crate::egress::{ConnectionOwner, HostEgressPolicy};
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -15,23 +13,20 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use parking_lot::Mutex;
 
 use wisp_abi::calls::FetchRequest;
 use wisp_abi::host::PinnedTarget;
-use wisp_abi::result::{BodyChunk, FetchResponse, FutureError};
+use wisp_abi::result::{BodyChunk, FutureError};
 
-use crate::bindings::Fetcher;
+use crate::bindings::{Fetcher, OutboundBody, OutboundResponse, ResponseBody};
 
-/// Bodies at or below this size come back inline, which makes the whole
-/// `http_fetch` future Bounded and therefore lossless across hibernation.
+/// Bodies at or below this size return inline and release their transport
+/// before the fetch completes.
 pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
 
 /// Sends HTTP through the same connection provider as managed TCP.
 pub struct PinnedHttpFetcher {
     egress: Arc<HostEgressPolicy>,
-    bodies: Mutex<HashMap<u32, ResponseBody>>,
-    next_handle: AtomicU32,
     inline_limit: usize,
 }
 
@@ -40,8 +35,6 @@ impl PinnedHttpFetcher {
     pub fn new(egress: Arc<HostEgressPolicy>, inline_limit: usize) -> Self {
         Self {
             egress,
-            bodies: Mutex::new(HashMap::new()),
-            next_handle: AtomicU32::new(1),
             inline_limit,
         }
     }
@@ -51,7 +44,7 @@ impl PinnedHttpFetcher {
         owner: &ConnectionOwner,
         addr: SocketAddr,
         req: Request<Full<Bytes>>,
-    ) -> Result<Response<Incoming>, FutureError> {
+    ) -> Result<(Response<Incoming>, ConnectionTask), FutureError> {
         let stream = self
             .egress
             .connect(owner, addr)
@@ -68,15 +61,17 @@ impl PinnedHttpFetcher {
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|e| FutureError::Io(format!("handshake: {e}")))?;
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             if let Err(e) = conn.await {
                 tracing::debug!(error = %e, "egress connection closed");
             }
         });
-        sender
+        let connection = ConnectionTask(task.abort_handle());
+        let response = sender
             .send_request(req)
             .await
-            .map_err(|e| FutureError::Io(format!("request: {e}")))
+            .map_err(|e| FutureError::Io(format!("request: {e}")))?;
+        Ok((response, connection))
     }
 }
 
@@ -87,7 +82,7 @@ impl Fetcher for PinnedHttpFetcher {
         owner: ConnectionOwner,
         target: PinnedTarget,
         req: FetchRequest,
-    ) -> Result<FetchResponse, FutureError> {
+    ) -> Result<OutboundResponse, FutureError> {
         let parsed = crate::egress::parse_url(&target.url)
             .map_err(|e| FutureError::Denied(e.to_string()))?;
         if parsed.scheme == "https" {
@@ -111,7 +106,7 @@ impl Fetcher for PinnedHttpFetcher {
             .body(Full::new(Bytes::from(req.body)))
             .map_err(|e| FutureError::Denied(format!("bad request: {e}")))?;
 
-        let resp = self.send(&owner, target.addr, request).await?;
+        let (resp, connection) = self.send(&owner, target.addr, request).await?;
         let status = resp.status().as_u16();
         let headers: Vec<(String, String)> = resp
             .headers()
@@ -137,61 +132,41 @@ impl Fetcher for PinnedHttpFetcher {
                 .await
                 .map_err(|e| FutureError::Io(format!("body: {e}")))?
                 .to_bytes();
-            return Ok(FetchResponse {
+            return Ok(OutboundResponse {
                 status,
                 headers,
-                body_handle: 0,
-                body_inline: Some(collected.to_vec()),
+                body: OutboundBody::Inline(collected.to_vec()),
             });
         }
 
-        // Unknown or large: a streaming handle, whose future is Unbounded and
-        // will not survive a hibernation.
-        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.bodies.lock().insert(
-            handle,
-            ResponseBody {
-                owner,
-                incoming: body,
-                unread: Bytes::new(),
-            },
-        );
-        Ok(FetchResponse {
+        Ok(OutboundResponse {
             status,
             headers,
-            body_handle: handle,
-            body_inline: None,
+            body: OutboundBody::Stream(Box::new(IncomingBody {
+                incoming: body,
+                unread: Bytes::new(),
+                _connection: connection,
+            })),
         })
-    }
-
-    async fn read_body(
-        &self,
-        owner: &ConnectionOwner,
-        handle: u32,
-        max_len: usize,
-    ) -> Result<BodyChunk, FutureError> {
-        let mut body = {
-            let mut bodies = self.bodies.lock();
-            if !bodies.get(&handle).is_some_and(|body| &body.owner == owner) {
-                return Err(FutureError::NotFound);
-            }
-            bodies.remove(&handle).ok_or(FutureError::NotFound)?
-        };
-        let chunk = body.read(max_len).await?;
-        if !chunk.eof {
-            self.bodies.lock().insert(handle, body);
-        }
-        Ok(chunk)
     }
 }
 
-struct ResponseBody {
-    owner: ConnectionOwner,
+struct ConnectionTask(tokio::task::AbortHandle);
+
+impl Drop for ConnectionTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+struct IncomingBody {
+    _connection: ConnectionTask,
     incoming: Incoming,
     unread: Bytes,
 }
 
-impl ResponseBody {
+#[async_trait::async_trait]
+impl ResponseBody for IncomingBody {
     async fn read(&mut self, max_len: usize) -> Result<BodyChunk, FutureError> {
         while self.unread.is_empty() {
             let Some(frame) = self.incoming.frame().await else {

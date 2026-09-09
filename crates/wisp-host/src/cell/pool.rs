@@ -305,6 +305,29 @@ mod cell_tests {
             "and it says what happened"
         );
 
+        let slot = cell
+            .slot(failed.instance)
+            .expect("the caught panic retains its slot for inspection");
+        let mut bindings = crate::bindings::CellBindings::new(slot.ctx.clone());
+        let payload = postcard::to_allocvec(&wisp_abi::calls::FetchRequest {
+            method: "GET".into(),
+            url: "http://example.test/".into(),
+            headers: vec![],
+            body: vec![],
+        })
+        .expect("the probe request must encode");
+        use wisp_engine::HostBindings;
+        let future = bindings.call_future(wisp_engine::ImportCall {
+            import: "http_fetch",
+            payload: &payload,
+            scalars: [0; 3],
+        });
+        assert!(
+            matches!(cell.futures().take_ready(failed.instance),
+            Some((id, wisp_abi::result::ResultRecord::Err(wisp_abi::result::FutureError::Cancelled))) if id == future),
+            "the caught panic must close its HTTP scope even while retaining the context"
+        );
+
         let ok = cell
             .dispatch_blocking(&good, route("/go"), http(2), Duration::from_secs(10))
             .expect("the pool's only thread must still be running");

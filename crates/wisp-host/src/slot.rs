@@ -228,6 +228,7 @@ impl Slot {
     pub fn tombstone(&self) {
         let mut g = self.inner.lock();
         g.tombstoned = true;
+        self.ctx.end_http_dispatch();
     }
 
     pub fn is_tombstoned(&self) -> bool {

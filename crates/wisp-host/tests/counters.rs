@@ -32,7 +32,6 @@ impl Resolver for Fixed {
 
 struct Rig {
     cell: Arc<Cell>,
-    fetcher: Arc<FakeFetcher>,
 }
 
 fn rig(cfg: CellConfig) -> Rig {
@@ -47,7 +46,6 @@ fn rig(cfg: CellConfig) -> Rig {
     });
     Rig {
         cell: Cell::new(cfg, svc).expect("a cell starts"),
-        fetcher,
     }
 }
 

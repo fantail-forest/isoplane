@@ -542,6 +542,7 @@ impl Cell {
         entry: &Arc<ModuleEntry>,
         d: crate::disposition::Disposition,
     ) {
+        slot.ctx.end_http_dispatch();
         slot.ctx.responses.lock().transport = None;
 
         let req = self.active.remove(&slot.id);

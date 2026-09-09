@@ -3,11 +3,13 @@
 //! Scalar arguments follow declaration order after the buffer pair.
 
 mod http;
+mod http_scope;
 mod instance;
 mod native_io;
 mod observability;
 mod runtime;
 
+pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{InstanceCtx, Tenancy};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 

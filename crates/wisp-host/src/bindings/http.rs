@@ -8,7 +8,7 @@ use wisp_abi::dispatch::ResponseHead;
 use wisp_abi::result::{FutureError, ResultRecord};
 
 use super::runtime::CellRuntime;
-use super::{from_typed, spawn, CellBindings};
+use super::{from_typed, CellBindings};
 
 impl CellBindings {
     /// Denies past the per-dispatch subrequest cap.
@@ -42,6 +42,12 @@ impl CellBindings {
                         .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
                 }
             };
+        let scope = self.ctx.http.lock().clone();
+        let mut operation = match scope.begin_fetch() {
+            Ok(operation) => operation,
+            Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
+        };
+        let handle = operation.handle();
         let allowlist = self.ctx.allowlist.clone();
         let tenant = self.ctx.tenant.clone();
         let rt2 = rt.clone();
@@ -50,7 +56,15 @@ impl CellBindings {
             let checked = svc.egress.check_owned(&req.url, allowlist.as_deref()).await;
             let res = match checked {
                 Ok(pinned) => {
-                    let out = svc.fetcher.fetch(owner, pinned.target(), req).await;
+                    let target = pinned.target();
+                    let out = match operation.retain_permit(pinned) {
+                        Ok(()) => svc
+                            .fetcher
+                            .fetch(owner, target, req)
+                            .await
+                            .and_then(|response| operation.response(response)),
+                        Err(error) => Err(error),
+                    };
                     if let Ok(r) = &out {
                         svc.egress
                             .record_bytes(r.body_inline.as_ref().map_or(0, |b| b.len()) as u64);
@@ -69,6 +83,7 @@ impl CellBindings {
             };
             CellBindings::settle(&rt2, id, res);
         });
+        scope.attach_task(handle, task.abort_handle());
         rt.futures.attach_task(id, task.abort_handle());
         id
     }
@@ -76,17 +91,23 @@ impl CellBindings {
     pub(super) fn http_body_read(&self, rt: Arc<CellRuntime>, id: u64, scalars: [u64; 3]) -> u64 {
         let handle = scalars[0] as u32;
         let max = scalars[1] as usize;
-        let owner =
-            match crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance) {
-                Ok(owner) => owner,
-                Err(error) => {
-                    return self
-                        .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
-                }
-            };
-        spawn!(rt, id, |svc| from_typed(
-            svc.fetcher.read_body(&owner, handle, max).await
-        ))
+        let scope = self.ctx.http.lock().clone();
+        let (operation, body) = match scope.begin_read(handle) {
+            Ok(read) => read,
+            Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
+        };
+        let resource = operation.handle();
+        let rt2 = rt.clone();
+        let task = rt.reactor.spawn(async move {
+            let result = operation.read(body, max).await;
+            if let Ok(chunk) = &result {
+                rt2.services.egress.record_bytes(chunk.data.len() as u64);
+            }
+            CellBindings::settle(&rt2, id, from_typed(result));
+        });
+        scope.attach_task(resource, task.abort_handle());
+        rt.futures.attach_task(id, task.abort_handle());
+        id
     }
 
     pub(super) fn resp_write(

@@ -1,6 +1,6 @@
 //! Scripted guests and outbound HTTP doubles for host tests.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -544,15 +544,6 @@ impl Activator for FakeActivator {
 #[derive(Default)]
 pub struct FakeFetcher {
     pub connected_to: Mutex<Vec<std::net::SocketAddr>>,
-    pub bodies: Mutex<HashMap<u32, VecDeque<Vec<u8>>>>,
-    /// When set, `read_body` never resolves: a streaming transfer in flight.
-    stall: std::sync::atomic::AtomicBool,
-}
-
-impl FakeFetcher {
-    pub fn stall_bodies(&self, on: bool) {
-        self.stall.store(on, Ordering::Relaxed);
-    }
 }
 
 #[async_trait]
@@ -562,36 +553,13 @@ impl crate::bindings::Fetcher for FakeFetcher {
         _owner: crate::egress::ConnectionOwner,
         target: PinnedTarget,
         _req: FetchRequest,
-    ) -> Result<FetchResponse, FutureError> {
+    ) -> Result<crate::bindings::OutboundResponse, FutureError> {
         self.connected_to.lock().push(target.addr);
-        Ok(FetchResponse {
+        Ok(crate::bindings::OutboundResponse {
             status: 200,
             headers: vec![],
-            body_handle: 1,
-            body_inline: Some(b"ok".to_vec()),
+            body: crate::bindings::OutboundBody::Inline(b"ok".to_vec()),
         })
-    }
-    async fn read_body(
-        &self,
-        _owner: &crate::egress::ConnectionOwner,
-        handle: u32,
-        _max: usize,
-    ) -> Result<BodyChunk, FutureError> {
-        if self.stall.load(Ordering::Relaxed) {
-            std::future::pending::<()>().await;
-        }
-        let mut g = self.bodies.lock();
-        let q = g.entry(handle).or_default();
-        match q.pop_front() {
-            Some(data) => Ok(BodyChunk {
-                data,
-                eof: q.is_empty(),
-            }),
-            None => Ok(BodyChunk {
-                data: vec![],
-                eof: true,
-            }),
-        }
     }
 }
 
