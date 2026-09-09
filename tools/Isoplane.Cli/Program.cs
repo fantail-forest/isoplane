@@ -1,10 +1,18 @@
+using System.Reflection;
 using Wisp.Cli;
 
 try
 {
+    if (args is ["--version"])
+    {
+        var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? throw new InvalidOperationException("The CLI package is missing its version metadata; reinstall a complete package.");
+        Console.WriteLine($"isoplane {version}");
+        return 0;
+    }
     if (args.Length == 0 || args is ["--help"] or ["-h"])
     {
-        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch]\nisoplane doctor MODULE [OPTIONS]");
+        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch]\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
         return 0;
     }
     using var cancellation = new CancellationTokenSource();

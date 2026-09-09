@@ -10,9 +10,13 @@ From the repository root, build and pack into a local feed:
 cargo build -p wisp-cli
 dotnet pack tools/Isoplane.Cli -p:WispRuntimePath="$PWD/target/debug/wisp" -o /tmp/wisp-preview-feed
 dotnet tool install Isoplane.Cli --version 0.1.0 --tool-path /tmp/isoplane-tools --add-source /tmp/wisp-preview-feed
+/tmp/isoplane-tools/isoplane --version
 ```
 
-The tool requires the repository's pinned .NET SDK. Publishing guests also
+Use the version of the package you built when installing. `isoplane --version`
+reports the installed CLI version and its source revision when available.
+
+The tool requires the .NET 10 SDK. Publishing guests also
 requires the SDK packages, wasi-sdk and wasm-tools described in the
 [ASP.NET guide](../../guest-sdks/dotnet/AspNetCore/README.md).
 
