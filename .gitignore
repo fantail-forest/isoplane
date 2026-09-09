@@ -44,3 +44,6 @@ guest-sdks/dotnet/obj/
 /guest-sdks/dotnet/AspNetCore/obj/
 /guest-sdks/dotnet/AspNetCore.Tests/bin/
 /guest-sdks/dotnet/AspNetCore.Tests/obj/
+
+/guest-sdks/dotnet/RuntimeAdapter.Tests/bin/
+/guest-sdks/dotnet/RuntimeAdapter.Tests/obj/
