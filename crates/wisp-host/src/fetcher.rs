@@ -30,7 +30,7 @@ pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
 /// Sends HTTP through the same connection provider as managed TCP.
 pub struct PinnedHttpFetcher {
     egress: Arc<HostEgressPolicy>,
-    bodies: Mutex<HashMap<u32, Incoming>>,
+    bodies: Mutex<HashMap<u32, ResponseBody>>,
     next_handle: AtomicU32,
     inline_limit: usize,
 }
@@ -148,7 +148,13 @@ impl Fetcher for PinnedHttpFetcher {
         // Unknown or large: a streaming handle, whose future is Unbounded and
         // will not survive a hibernation.
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.bodies.lock().insert(handle, body);
+        self.bodies.lock().insert(
+            handle,
+            ResponseBody {
+                incoming: body,
+                unread: Bytes::new(),
+            },
+        );
         Ok(FetchResponse {
             status,
             headers,
@@ -162,30 +168,41 @@ impl Fetcher for PinnedHttpFetcher {
         let Some(mut body) = self.bodies.lock().remove(&handle) else {
             return Err(FutureError::NotFound);
         };
-        let frame = body.frame().await;
-        match frame {
-            None => Ok(BodyChunk {
-                data: Vec::new(),
-                eof: true,
-            }),
-            Some(Err(e)) => Err(FutureError::Io(format!("body: {e}"))),
-            Some(Ok(f)) => {
-                let data = f.into_data().map(|b| b.to_vec()).unwrap_or_default();
-                let data = if max_len > 0 && data.len() > max_len {
-                    // Truncated and said so, rather than kept in a shadow
-                    // buffer the guest cannot see.
-                    tracing::warn!(
-                        handle,
-                        dropped = data.len() - max_len,
-                        "body chunk truncated"
-                    );
-                    data[..max_len].to_vec()
-                } else {
-                    data
-                };
-                self.bodies.lock().insert(handle, body);
-                Ok(BodyChunk { data, eof: false })
+        let chunk = body.read(max_len).await?;
+        if !chunk.eof {
+            self.bodies.lock().insert(handle, body);
+        }
+        Ok(chunk)
+    }
+}
+
+struct ResponseBody {
+    incoming: Incoming,
+    unread: Bytes,
+}
+
+impl ResponseBody {
+    async fn read(&mut self, max_len: usize) -> Result<BodyChunk, FutureError> {
+        while self.unread.is_empty() {
+            let Some(frame) = self.incoming.frame().await else {
+                return Ok(BodyChunk {
+                    data: Vec::new(),
+                    eof: true,
+                });
+            };
+            let frame = frame.map_err(|error| FutureError::Io(format!("body: {error}")))?;
+            if let Ok(data) = frame.into_data() {
+                self.unread = data;
             }
         }
+        let length = if max_len == 0 {
+            self.unread.len()
+        } else {
+            max_len.min(self.unread.len())
+        };
+        Ok(BodyChunk {
+            data: self.unread.split_to(length).to_vec(),
+            eof: false,
+        })
     }
 }

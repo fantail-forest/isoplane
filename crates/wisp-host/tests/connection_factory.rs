@@ -163,3 +163,131 @@ async fn http_denies_a_private_destination_before_invoking_the_connection_provid
         "a destination policy denial must never reach socket creation"
     );
 }
+
+async fn streamed_response(
+    frames: Vec<hyper::body::Frame<bytes::Bytes>>,
+) -> (PinnedHttpFetcher, u32, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("the response server must bind");
+    let address = listener
+        .local_addr()
+        .expect("the response server must have an address");
+    let frames = parking_lot::Mutex::new(Some(frames));
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("the fetch must connect");
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(socket),
+                hyper::service::service_fn(move |_| {
+                    let body = http_body_util::StreamBody::new(futures::stream::iter(
+                        frames
+                            .lock()
+                            .take()
+                            .expect("the fixture serves one request")
+                            .into_iter()
+                            .map(Ok::<_, std::convert::Infallible>),
+                    ));
+                    async move {
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .header("connection", "close")
+                                .header("trailer", "x-check")
+                                .body(body)
+                                .expect("the test response must be valid"),
+                        )
+                    }
+                }),
+            )
+            .await
+            .expect("the response server must complete");
+    });
+    let policy = Arc::new(
+        HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20)
+            .with_destinations(Arc::new(ExactPeer(address))),
+    );
+    let fetcher = PinnedHttpFetcher::new(policy, 0);
+    let mut req = request();
+    req.headers.push(("te".into(), "trailers".into()));
+    let response = fetcher
+        .fetch(owner(), target(address), req)
+        .await
+        .expect("the response must start");
+    assert!(
+        response.body_inline.is_none(),
+        "an unknown-length response must be streamed"
+    );
+    (fetcher, response.body_handle, server)
+}
+
+#[tokio::test]
+async fn small_http_body_reads_preserve_every_byte_of_a_larger_network_frame() {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let expected: Vec<u8> = (0..8192).map(|index| (index % 251) as u8).collect();
+        let (fetcher, handle, server) = streamed_response(vec![hyper::body::Frame::data(
+            bytes::Bytes::from(expected.clone()),
+        )])
+        .await;
+        let mut actual = Vec::new();
+        loop {
+            let chunk = fetcher
+                .read_body(handle, 3)
+                .await
+                .expect("the stream must remain readable");
+            assert!(
+                chunk.data.len() <= 3,
+                "each read must respect the requested buffer size"
+            );
+            actual.extend_from_slice(&chunk.data);
+            if chunk.eof {
+                break;
+            }
+        }
+        assert_eq!(
+            actual, expected,
+            "a small guest read must retain the unread remainder for later reads"
+        );
+        assert!(
+            matches!(
+                fetcher.read_body(handle, 3).await,
+                Err(wisp_abi::result::FutureError::NotFound)
+            ),
+            "EOF must release the completed response handle"
+        );
+        server.await.expect("the response server must stop cleanly");
+    })
+    .await
+    .expect("body reads must reach EOF before the hung-test deadline");
+}
+
+#[tokio::test]
+async fn http_trailers_do_not_appear_as_an_empty_unfinished_body_chunk() {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut trailers = hyper::HeaderMap::new();
+        trailers.insert("x-check", hyper::header::HeaderValue::from_static("done"));
+        let (fetcher, handle, server) = streamed_response(vec![
+            hyper::body::Frame::data(bytes::Bytes::from_static(b"A")),
+            hyper::body::Frame::trailers(trailers),
+        ])
+        .await;
+        let first = fetcher
+            .read_body(handle, 8)
+            .await
+            .expect("the payload must arrive");
+        assert_eq!(
+            first.data, b"A",
+            "the body reader must deliver the response data"
+        );
+        let last = fetcher
+            .read_body(handle, 8)
+            .await
+            .expect("trailers must terminate cleanly");
+        assert!(
+            last.eof && last.data.is_empty(),
+            "trailing HTTP metadata must not masquerade as more body data"
+        );
+        server.await.expect("the response server must stop cleanly");
+    })
+    .await
+    .expect("trailers must settle before the hung-test deadline");
+}
