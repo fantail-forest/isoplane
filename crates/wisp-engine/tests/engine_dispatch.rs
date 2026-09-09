@@ -218,23 +218,53 @@ fn an_out_of_bounds_import_buffer_traps_rather_than_reading_host_memory() {
 }
 
 #[test]
-fn the_default_host_bindings_deny_out_buffer_fills() {
+fn denied_entropy_traps_before_returning_bytes_to_the_guest() {
+    assert_entropy_failure(None);
+}
+
+#[test]
+fn an_inexact_entropy_fill_traps_before_returning_bytes_to_the_guest() {
+    for reported_bytes in [0, 31, 33] {
+        assert_entropy_failure(Some(reported_bytes));
+    }
+}
+
+fn assert_entropy_failure(reported_bytes: Option<i64>) {
     let e = test_engine();
     let wasm = guest(
         4,
         &import("entropy_fill", "(param i32 i32)", ""),
         "",
-        "(call $entropy_fill (i32.const 3072) (i32.const 32)) (i64.const 0)",
+        r#"
+        (memory.fill (i32.const 3072) (i32.const 165) (i32.const 32))
+        (call $entropy_fill (i32.const 3072) (i32.const 32))
+        (i32.store (i32.const 3104) (i32.const 1))
+        (i64.const 0)"#,
         DONE,
     );
-    let t = e.load_template(&wasm).expect("template");
+    let t = e
+        .load_template(&wasm)
+        .expect("the entropy fixture must load");
     let mut b = TestBindings::new(Recorder::default());
-    b.allow_fill = false;
-    let mut i = e.activate(&t, Box::new(b)).expect("activation");
-    i.dispatch(&http_dispatch(1), CpuBudget::http());
+    b.allow_fill = reported_bytes.is_some();
+    b.full_length = reported_bytes;
+    let mut i = e
+        .activate(&t, Box::new(b))
+        .expect("the entropy fixture must activate");
+    let outcome = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    assert_eq!(
+        outcome.completion,
+        Completion::Trapped,
+        "an unsuccessful entropy draw must trap, never return predictable bytes"
+    );
     assert_eq!(
         &i.memory()[3072..3104],
-        &[0u8; 32],
-        "a denied fill must write nothing, so a missing CSPRNG cannot pass as a constant one"
+        &[165u8; 32],
+        "an unsuccessful entropy draw must not overwrite the guest destination"
+    );
+    assert_eq!(
+        &i.memory()[3104..3108],
+        &[0u8; 4],
+        "guest execution must not continue after an unsuccessful entropy draw"
     );
 }

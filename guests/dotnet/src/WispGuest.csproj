@@ -27,6 +27,10 @@
     <DefineConstants>$(DefineConstants);WISP_REQUEST_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispRandomnessProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_RANDOMNESS_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispConfigProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_CONFIG_PROBE</DefineConstants>
   </PropertyGroup>

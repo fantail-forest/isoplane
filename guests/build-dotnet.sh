@@ -29,6 +29,7 @@ fi
 # `wasi:*` imports NativeAOT-LLVM emits; `wisp-engine`'s `dotnet_pal` test
 # reads it to check what the adapter composes them down to.
 FIXTURES=(
+  "wisp_guest_dotnet_randomness|$ROOT/dotnet/out/wisp_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:WispRandomnessProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_config|$ROOT/dotnet/out/wisp_guest_dotnet_config.wasm|$ROOT/dotnet|-p:WispConfigProbe=true"
   "wisp_guest_dotnet_failing_boot|$ROOT/dotnet/out/wisp_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:WispFailingBoot=true"
   "wisp_guest_dotnet_network_refusal|$ROOT/dotnet/out/wisp_guest_dotnet_network_refusal.wasm|$ROOT/dotnet|-p:WispNetworkRefusalProbe=true -p:IlcResilient=false"

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use wisp_engine::{HostBindings, ImportCall};
@@ -10,6 +10,8 @@ use wisp_engine::{HostBindings, ImportCall};
 pub struct Recorder {
     pub calls: Arc<parking_lot::Mutex<Vec<String>>>,
     pub responses: Arc<parking_lot::Mutex<Vec<wisp_abi::dispatch::ResponseHead>>>,
+    pub deny_entropy: Arc<AtomicBool>,
+    pub entropy_draws: Arc<parking_lot::Mutex<Vec<Vec<u8>>>>,
     pub clock: Arc<AtomicU64>,
     pub clock_reads: Arc<AtomicU64>,
 }
@@ -67,13 +69,18 @@ impl HostBindings for TestBindings {
 
     fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> i64 {
         self.note(&call);
-        if !self.allow_fill {
+        if !self.allow_fill
+            || (call.import == "entropy_fill" && self.rec.deny_entropy.load(Ordering::Relaxed))
+        {
             return -1;
         }
         // A fake CSPRNG that answered the same bytes every time could not tell
         // a per-call draw from a cached one.
         out.fill(self.fill_byte);
         self.fill_byte = self.fill_byte.wrapping_add(1);
+        if call.import == "entropy_fill" {
+            self.rec.entropy_draws.lock().push(out.to_vec());
+        }
         self.full_length.unwrap_or(out.len() as i64)
     }
 

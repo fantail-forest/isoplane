@@ -14,6 +14,10 @@ namespace Wisp.Abi;
 internal static unsafe partial class H
 {
     [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "entropy_fill")]
+    internal static extern void EntropyFill(byte* ptr, int len);
+
+    [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "init_config_get")]
     internal static extern int InitConfigGet(byte* ptr, int len);
 

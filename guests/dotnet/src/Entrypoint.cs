@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 
-#if WISP_CONFIG_PROBE
+#if WISP_RANDOMNESS_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RandomnessProbe>>;
+#elif WISP_CONFIG_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConfigProbe>>;
 #elif WISP_FAILING_BOOT
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FailingBoot>>;

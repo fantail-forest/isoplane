@@ -221,6 +221,14 @@ fn call_binding(
 
     c.data_mut().bindings = Some(bindings);
 
+    if def.name == "entropy_fill" && ret != scratch.len() as u64 {
+        bail!(
+            "the host failed to fill an entropy draw (reported {} of {} bytes)",
+            ret as i64,
+            scratch.len()
+        );
+    }
+
     if let BufSpec::Out(i) = def.buf {
         let ptr = raw[i as usize] as usize;
         write_guest(c, ptr, scratch.as_slice())?;

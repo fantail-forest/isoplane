@@ -274,3 +274,20 @@ fn generated_aspnet_entrypoints_match_the_host_export_contract() {
         );
     }
 }
+
+#[test]
+fn managed_entropy_chunks_match_the_host_out_buffer_limit() {
+    let source = sdk_file("Randomness.cs");
+    let value = source
+        .split("MaximumDrawBytes = ")
+        .nth(1)
+        .and_then(|value| value.split(';').next())
+        .expect("the managed entropy wrapper must declare its maximum draw size")
+        .parse::<usize>()
+        .expect("the managed entropy draw cap must be an integer");
+    assert_eq!(
+        value,
+        imports::MAX_OUT_BUFFER_BYTES,
+        "managed entropy must chunk at the canonical host buffer limit"
+    );
+}

@@ -1,7 +1,7 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-if (args.Length != 2 && args.Length != 4 && args.Length != 7)
+if (args.Length != 2 && args.Length != 4 && args.Length != 9)
     throw new ArgumentException("Expected pinned runtime input/output pairs.");
 if (Path.GetFullPath(args[0]) == Path.GetFullPath(args[1]))
     throw new ArgumentException("The runtime package is immutable; output must be a separate file.");
@@ -48,7 +48,7 @@ if (args.Length >= 4)
     sockets.Write(args[3]);
 }
 
-if (args.Length == 7)
+if (args.Length == 9)
 {
     if (Path.GetFullPath(args[4]) == Path.GetFullPath(args[5]))
         throw new ArgumentException("The DNS runtime package is immutable; output must be separate.");
@@ -56,4 +56,9 @@ if (args.Length == 7)
     using var sdk = ModuleDefinition.ReadModule(args[6]);
     NameResolution.Adapt(dns, sdk);
     dns.Write(args[5]);
+    if (Path.GetFullPath(args[7]) == Path.GetFullPath(args[8]))
+        throw new ArgumentException("The cryptography runtime package is immutable; output must be separate.");
+    using var cryptography = ModuleDefinition.ReadModule(args[7]);
+    Randomness.Adapt(cryptography, sdk);
+    cryptography.Write(args[8]);
 }

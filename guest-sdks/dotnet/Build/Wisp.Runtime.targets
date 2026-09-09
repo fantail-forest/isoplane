@@ -6,11 +6,13 @@
           Condition="'$(WispContainerBuild)' != 'true'">
     <PropertyGroup>
       <_WispRuntimeDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)wisp-runtime/'))</_WispRuntimeDirectory>
+      <_WispAdaptedCryptography>$(_WispRuntimeDirectory)System.Security.Cryptography.dll</_WispAdaptedCryptography>
       <_WispAdaptedDns>$(_WispRuntimeDirectory)System.Net.NameResolution.dll</_WispAdaptedDns>
       <_WispAdaptedSockets>$(_WispRuntimeDirectory)System.Net.Sockets.dll</_WispAdaptedSockets>
       <_WispAdaptedCoreLib>$(_WispRuntimeDirectory)System.Private.CoreLib.dll</_WispAdaptedCoreLib>
     </PropertyGroup>
     <ItemGroup>
+      <_WispOriginalCryptography Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Security.Cryptography' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
       <_WispOriginalDns Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.NameResolution' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
       <_WispOriginalSockets Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.Sockets' and $([System.String]::Copy('%(Identity)').Replace('\', '/').Contains('/native-hidden/'))" />
       <_WispOriginalCoreLib Include="@(IlcReference)" Condition="'%(Filename)' == 'System.Private.CoreLib'" />
@@ -20,10 +22,11 @@
            Text="wisp: expected exactly one pinned NativeAOT CoreLib input." />
     <Error Condition="'@(_WispOriginalSockets->Count())' != '1'" Text="wisp: expected exactly one pinned sockets runtime input." />
     <Error Condition="'@(_WispOriginalDns->Count())' != '1'" Text="wisp: expected exactly one pinned DNS runtime input." />
+    <Error Condition="'@(_WispOriginalCryptography->Count())' != '1'" Text="wisp: expected exactly one pinned cryptography runtime input." />
     <Error Condition="'@(_WispGuestSdk->Count())' != '1'" Code="WISP0080"
-           Text="wisp: expected exactly one resolved Wisp.Sdk assembly for native DNS adaptation." />
+           Text="wisp: expected exactly one resolved Wisp.Sdk assembly for runtime adaptation." />
     <MakeDir Directories="$(_WispRuntimeDirectory)" />
-    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot; &quot;@(_WispOriginalSockets)&quot; &quot;$(_WispAdaptedSockets)&quot; &quot;@(_WispOriginalDns)&quot; &quot;$(_WispAdaptedDns)&quot; &quot;@(_WispGuestSdk)&quot;" />
+    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --property:BaseIntermediateOutputPath=&quot;$(_WispRuntimeDirectory)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispRuntimeDirectory)adapter-bin/&quot; -- &quot;@(_WispOriginalCoreLib)&quot; &quot;$(_WispAdaptedCoreLib)&quot; &quot;@(_WispOriginalSockets)&quot; &quot;$(_WispAdaptedSockets)&quot; &quot;@(_WispOriginalDns)&quot; &quot;$(_WispAdaptedDns)&quot; &quot;@(_WispGuestSdk)&quot; &quot;@(_WispOriginalCryptography)&quot; &quot;$(_WispAdaptedCryptography)&quot;" />
     <ItemGroup>
       <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.Sockets'" />
       <IlcReference Include="$(_WispAdaptedSockets)" />
@@ -31,6 +34,9 @@
       <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Net.NameResolution'" />
       <IlcReference Include="$(_WispAdaptedDns)" />
       <FileWrites Include="$(_WispAdaptedDns)" />
+      <IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'System.Security.Cryptography'" />
+      <IlcReference Include="$(_WispAdaptedCryptography)" />
+      <FileWrites Include="$(_WispAdaptedCryptography)" />
       <IlcReference Remove="@(_WispOriginalCoreLib)" />
       <IlcReference Include="$(_WispAdaptedCoreLib)" />
       <FileWrites Include="$(_WispAdaptedCoreLib)" />
