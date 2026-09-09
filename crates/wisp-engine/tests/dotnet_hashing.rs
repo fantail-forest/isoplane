@@ -96,7 +96,13 @@ fn ordinary_sha256_array_and_span_calls_match_known_digests_across_requests() {
             "248D6A61D20638B8E5C026930C3E6039A33CE45964FF2167F6ECEDD419DB06C1",
         ),
     ];
-    for path in ["/sha-array", "/sha-span"] {
+    for path in [
+        "/sha-array",
+        "/sha-span",
+        "/sha-instance",
+        "/sha-reset",
+        "/sha-short-output",
+    ] {
         for (source, expected) in cases {
             assert_eq!(
                 hash(&mut instance, &recorder, path, "", source),
@@ -142,7 +148,13 @@ fn ordinary_hmac_sha256_matches_rfc4231_short_and_long_key_vectors() {
 fn managed_sha256_hashes_binary_inputs_larger_than_a_host_transfer() {
     let (mut instance, recorder) = activate();
     let source = vec![0xa5; 1024 * 1024 + 1];
-    for path in ["/sha-array", "/sha-span"] {
+    for path in [
+        "/sha-array",
+        "/sha-span",
+        "/sha-instance",
+        "/sha-reset",
+        "/sha-short-output",
+    ] {
         assert_eq!(
             hash(&mut instance, &recorder, path, "", &source),
             b"9311676D75BE2345E88872475314A1E57EB737858A3D58D76B8E1191166DCC1C",
@@ -312,5 +324,49 @@ fn live_managed_hmac_state_survives_capture_and_restore() {
         hash(&mut restored, &recorder, "/hmac-finish", "", b"bc"),
         b"9C196E32DC0175F86F4B1CB89289D6619DE6BEE699E4C378E68309ED97A1A6AB",
         "restored incremental HMAC must retain the key and pre-capture prefix"
+    );
+}
+
+#[test]
+fn ordinary_sha256_preserves_argument_disposal_and_algorithm_guards() {
+    let (mut instance, recorder) = activate();
+    for (path, expected) in [
+        ("/sha-instance-null", "ArgumentNullException:buffer"),
+        ("/sha-instance-offset", "ArgumentOutOfRangeException:offset"),
+        ("/sha-instance-disposed", "ObjectDisposedException"),
+        ("/sha-unsupported", "PlatformNotSupportedException"),
+        ("/sha-clone", "PlatformNotSupportedException"),
+        ("/sha-current", "PlatformNotSupportedException"),
+        ("/sha-provider-disposed", "ObjectDisposedException"),
+    ] {
+        assert_eq!(
+            hash(&mut instance, &recorder, path, "", b"abc"),
+            expected.as_bytes(),
+            "ordinary hash instances must preserve argument and lifetime guards"
+        );
+    }
+}
+
+#[test]
+fn unfinished_ordinary_sha256_state_survives_capture_and_restore() {
+    let (mut original, recorder) = activate();
+    assert!(
+        hash(&mut original, &recorder, "/sha-start", "", b"a").is_empty(),
+        "starting SHA256 must leave the digest unfinished"
+    );
+    let image = original
+        .capture_mutable_state()
+        .expect("managed digest state must capture");
+    let memory = original.memory().to_vec();
+    drop(original);
+    let (mut restored, recorder) = activate();
+    restored
+        .restore_mutable_state(&image)
+        .expect("digest globals must restore");
+    restored.memory().copy_from_slice(&memory);
+    assert_eq!(
+        hash(&mut restored, &recorder, "/sha-finish", "", b"bc"),
+        b"BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
+        "restored SHA256 must retain the unfinished pre-capture prefix"
     );
 }

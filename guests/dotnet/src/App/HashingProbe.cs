@@ -10,6 +10,7 @@ namespace Wisp.App;
 public sealed class HashingProbe : IWispHandler
 {
     private static IncrementalHash? saved;
+    private static SHA256? savedSha;
 
     public Task<Response> HandleAsync(Request request, Ctx context)
     {
@@ -39,6 +40,18 @@ public sealed class HashingProbe : IWispHandler
                 "/hmac-sha1" => UnsupportedAlgorithm(key),
                 "/hmac-disposed" => DisposedHash(key),
                 "/hmac-provider-disposed" => DisposedProvider(key),
+                "/sha-instance" => InstanceSha(data),
+                "/sha-short-output" => ShortOutputSha(data),
+                "/sha-clone" => UnsupportedShaOperation(true),
+                "/sha-current" => UnsupportedShaOperation(false),
+                "/sha-provider-disposed" => DisposedShaProvider(),
+                "/sha-reset" => ResetSha(data),
+                "/sha-start" => StartSha(data),
+                "/sha-finish" => FinishSha(data),
+                "/sha-instance-null" => InvalidSha(data, true),
+                "/sha-instance-offset" => InvalidSha(data, false),
+                "/sha-instance-disposed" => DisposedSha(),
+                "/sha-unsupported" => UnsupportedSha(),
                 "/sha-array" => SHA256.HashData(data),
                 "/sha-span" => SHA256.HashData(data.AsSpan()),
                 "/hmac-array" => HMACSHA256.HashData(key, data),
@@ -63,6 +76,94 @@ public sealed class HashingProbe : IWispHandler
         }
         return Task.FromResult(Response.Text(Convert.ToHexString(result)));
     }
+    private static byte[] InstanceSha(byte[] data)
+    {
+        using var hash = SHA256.Create();
+        byte[] first = hash.ComputeHash(data);
+        if (!first.AsSpan().SequenceEqual(hash.ComputeHash(data)))
+            throw new InvalidOperationException("Instance SHA256 retained previous input.");
+        return first;
+    }
+
+    private static byte[] ShortOutputSha(byte[] data)
+    {
+        using var hash = SHA256.Create();
+        byte[] shortOutput = new byte[31];
+        if (hash.TryComputeHash(data, shortOutput, out int written) || written != 0)
+            throw new InvalidOperationException("SHA256 accepted a short output buffer.");
+        byte[] output = new byte[34];
+        output[0] = 0x41;
+        output[^1] = 0x42;
+        if (!hash.TryComputeHash(data, output.AsSpan(1, 32), out written) || written != 32 ||
+            output[0] != 0x41 || output[^1] != 0x42)
+            throw new InvalidOperationException("SHA256 did not respect the destination span.");
+        return output.AsSpan(1, 32).ToArray();
+    }
+
+    private static byte[] UnsupportedShaOperation(bool clone)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        if (!clone) return hash.GetCurrentHash();
+        using var copy = hash.Clone();
+        return copy.GetHashAndReset();
+    }
+
+    private static byte[] DisposedShaProvider()
+    {
+        var hash = new Wisp.Runtime.ManagedSha256();
+        hash.Dispose(true);
+        hash.Dispose(true);
+        hash.Reset();
+        return Array.Empty<byte>();
+    }
+
+    private static byte[] ResetSha(byte[] data)
+    {
+        using var hash = SHA256.Create();
+        hash.TransformBlock(new byte[] { 0xff }, 0, 1, null, 0);
+        hash.Initialize();
+        int split = data.Length / 2;
+        hash.TransformBlock(data, 0, split, null, 0);
+        hash.TransformFinalBlock(data, split, data.Length - split);
+        return hash.Hash ?? throw new InvalidOperationException("SHA256 did not finalize.");
+    }
+
+    private static byte[] StartSha(byte[] data)
+    {
+        savedSha?.Dispose();
+        savedSha = SHA256.Create();
+        savedSha.TransformBlock(data, 0, data.Length, null, 0);
+        return Array.Empty<byte>();
+    }
+
+    private static byte[] FinishSha(byte[] data)
+    {
+        using var hash = savedSha ?? throw new InvalidOperationException("No captured SHA256 state.");
+        savedSha = null;
+        hash.TransformFinalBlock(data, 0, data.Length);
+        return hash.Hash ?? throw new InvalidOperationException("Restored SHA256 did not finalize.");
+    }
+
+    private static byte[] InvalidSha(byte[] data, bool nullInput)
+    {
+        using var hash = SHA256.Create();
+        return nullInput ? hash.ComputeHash((byte[])null!) : hash.ComputeHash(data, -1, data.Length);
+    }
+
+    private static byte[] DisposedSha()
+    {
+        var hash = SHA256.Create();
+        hash.Dispose();
+        hash.Dispose();
+        return hash.ComputeHash(Array.Empty<byte>());
+    }
+
+    private static byte[] UnsupportedSha()
+    {
+        using var hash = SHA384.Create();
+        return hash.ComputeHash(Array.Empty<byte>());
+    }
+
     private static byte[] Derive(string kind, byte[] password, byte[] salt, int iterations, int count)
     {
         if (kind == "bytes") return Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, count);
