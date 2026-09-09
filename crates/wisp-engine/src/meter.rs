@@ -16,12 +16,19 @@ pub fn clock_read_failures() -> u64 {
 #[cfg(test)]
 thread_local! {
     /// Thread-local so one test's injected fault is not another test's flake.
-    static FORCE_CLOCK_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static READS_BEFORE_FAILURE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
 fn clock_failure_forced() -> bool {
-    FORCE_CLOCK_FAILURE.with(|f| f.get())
+    READS_BEFORE_FAILURE.with(|reads| match reads.get() {
+        None => false,
+        Some(0) => true,
+        Some(remaining) => {
+            reads.set(Some(remaining - 1));
+            false
+        }
+    })
 }
 
 #[cfg(not(test))]
@@ -47,68 +54,170 @@ pub(crate) fn try_thread_cpu_nanos() -> Option<u64> {
     measured
 }
 
-/// [`try_thread_cpu_nanos`] with the unreadable case flattened to `0`, for
-/// the epoch callback, which has no error channel. On failure the dispatch
-/// reads high and is killed at its deadline rather than escaping its budget.
+#[derive(Debug, thiserror::Error)]
+#[error("thread CPU clock unavailable; guest execution cannot enforce its CPU budget")]
+pub(crate) struct CpuClockUnavailable;
+
+/// Refuse execution when a budget check has no trustworthy clock reading.
 #[inline]
-pub(crate) fn thread_cpu_nanos() -> u64 {
-    try_thread_cpu_nanos().unwrap_or(0)
+pub(crate) fn thread_cpu_nanos() -> Result<u64, CpuClockUnavailable> {
+    try_thread_cpu_nanos().ok_or(CpuClockUnavailable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CpuBudget, EngineConfig, HostBindings, ImportCall, InstanceOps, WispEngine};
 
-    /// One test rather than two because the failure counter is process-wide
-    /// and test threads run concurrently.
+    struct ClockFault;
+
+    impl ClockFault {
+        fn after(reads: usize) -> Self {
+            READS_BEFORE_FAILURE.with(|remaining| remaining.set(Some(reads)));
+            Self
+        }
+    }
+
+    impl Drop for ClockFault {
+        fn drop(&mut self) {
+            READS_BEFORE_FAILURE.with(|remaining| remaining.set(None));
+        }
+    }
+
+    struct DenyImports;
+
+    impl HostBindings for DenyImports {
+        fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
+            panic!("clock fixture unexpectedly called {}", call.import);
+        }
+
+        fn call_sync(&mut self, call: ImportCall<'_>) -> i64 {
+            panic!("clock fixture unexpectedly called {}", call.import);
+        }
+
+        fn slice_clock_ms(&self) -> u64 {
+            0
+        }
+    }
+
+    fn instance(imports: &str, initialize: &str) -> crate::Instance {
+        let engine = WispEngine::new(EngineConfig {
+            max_instances: 2,
+            max_memory_bytes: 65536,
+            guard_size_bytes: 65536,
+            ..EngineConfig::default()
+        })
+        .expect("the clock fixture engine must start");
+        let wasm = wat::parse_str(format!(
+            r#"(module
+              {imports}
+              (memory (export "memory") 1 1)
+              (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 1024)
+              (func (export "wisp_handle") (param i32 i32) (result i64) i64.const 0)
+              (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0)
+              (func (export "wisp_initialize") {initialize}))"#
+        ))
+        .expect("the clock fixture must assemble");
+        let template = engine.load_template(&wasm).expect("the fixture must load");
+        engine
+            .activate(&template, Box::new(DenyImports))
+            .expect("the fixture must activate")
+    }
+
     #[test]
     fn an_unreadable_clock_is_counted_rather_than_read_as_zero() {
         let before = clock_read_failures();
-        FORCE_CLOCK_FAILURE.with(|f| f.set(true));
-
+        let fault = ClockFault::after(0);
         assert_eq!(
             try_thread_cpu_nanos(),
             None,
-            "an unreadable clock must say so rather than answer zero"
+            "an unreadable clock must report failure"
         );
-        assert_eq!(
-            clock_read_failures(),
-            before + 1,
+        assert!(
+            clock_read_failures() > before,
             "the failed read must be counted"
         );
-        assert_eq!(
-            thread_cpu_nanos(),
-            0,
-            "the flattened form answers the floor"
-        );
-        assert_eq!(
-            clock_read_failures(),
-            before + 2,
-            "the flattened form must still count the failure"
-        );
-
         let elsewhere = std::thread::spawn(try_thread_cpu_nanos)
             .join()
-            .expect("the probe thread does not panic");
+            .expect("the probe thread must not panic");
         assert!(
             elsewhere.is_some(),
-            "the injected fault leaked into another thread"
+            "the injected fault must not affect another thread"
         );
-
-        FORCE_CLOCK_FAILURE.with(|f| f.set(false));
+        drop(fault);
         assert!(
             try_thread_cpu_nanos().is_some(),
-            "a working clock must be readable again"
-        );
-        assert_eq!(
-            clock_read_failures(),
-            before + 2,
-            "a working read must not be counted as a failure"
+            "clock reads must recover after the fault"
         );
     }
 
     #[test]
     fn the_native_thread_clock_measures_cpu_work() {
         wisp_fixtures::assert_cpu_clock_advances(try_thread_cpu_nanos);
+    }
+
+    #[test]
+    fn an_unreadable_start_clock_refuses_guest_entry() {
+        let mut guest = instance("", "i32.const 0 i32.const 1 i32.store");
+        let _fault = ClockFault::after(0);
+        let outcome = guest.run_initialize(CpuBudget::http());
+        assert_eq!(
+            outcome.completion,
+            crate::Completion::Trapped,
+            "guest entry needs a readable CPU clock"
+        );
+        assert_eq!(
+            guest.memory()[0],
+            0,
+            "the refused invocation must not execute guest code"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_budget_clock_traps_instead_of_granting_more_cpu() {
+        let mut guest = instance(
+            r#"(import "wisp" "budget_remaining_ns" (func $budget (result i64)))"#,
+            "call $budget drop i32.const 0 i32.const 1 i32.store",
+        );
+        let _fault = ClockFault::after(0);
+        let error = crate::call::call_entry(
+            guest.live.as_mut().expect("the fixture has a live store"),
+            crate::instance::Entry::Initialize,
+        )
+        .expect_err("an unreadable budget import must trap without relying on the watchdog");
+        assert!(
+            error.downcast_ref::<CpuClockUnavailable>().is_some(),
+            "the import must preserve its typed clock error"
+        );
+        assert_eq!(
+            guest.memory()[0],
+            0,
+            "the guest must not continue after an unreadable budget"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_epoch_clock_stops_a_guest_without_claiming_budget_exhaustion() {
+        let mut guest = instance("", "(loop $spin br $spin)");
+        let _fault = ClockFault::after(1);
+        let outcome = guest.run_initialize(CpuBudget {
+            wall_ms_cap: 10,
+            ..CpuBudget::http()
+        });
+        let trap = outcome.trap.expect("the unreadable epoch clock must trap");
+        assert_eq!(
+            outcome.completion,
+            crate::Completion::Trapped,
+            "clock failure must end execution as a host fault"
+        );
+        assert_eq!(
+            trap.kind,
+            crate::TrapKind::Other,
+            "a missing clock is not measured budget exhaustion"
+        );
+        assert!(
+            guest.reset().is_err(),
+            "execution interrupted by a clock failure must be tombstoned"
+        );
     }
 }

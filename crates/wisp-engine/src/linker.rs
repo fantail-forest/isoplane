@@ -124,7 +124,7 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
         // CPU.
         "budget_remaining_ns" => {
             let m = c.data().meter;
-            let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos());
+            let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos()?);
             let remaining = (m.cpu_budget_ns as i128) - (cpu as i128);
             return Ok(remaining.clamp(i64::MIN as i128, i64::MAX as i128) as i64 as u64);
         }

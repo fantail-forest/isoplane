@@ -152,18 +152,20 @@ impl Instance {
         // must not clear the park state.
         let is_gc_hint = matches!(entry, Entry::GcHint(_));
 
+        let cpu0 = match crate::meter::thread_cpu_nanos() {
+            Ok(cpu0) => cpu0,
+            Err(error) => return self.refuse(TrapKind::Other, error.to_string()),
+        };
+
         // The watchdog only ticks while something is hot, so this precedes
         // arming the deadline.
         engine.watchdog.shared().enter_hot();
 
         let wall0 = Instant::now();
-        // `None` rather than `0` on a failed read: `end - 0` would attribute this
-        // dispatch the thread's whole lifetime.
-        let cpu0 = try_thread_cpu_nanos();
         live.store.data_mut().begin_slice(
             clock_ms,
             Meter {
-                cpu0_ns: cpu0.unwrap_or(0),
+                cpu0_ns: cpu0,
                 wall0: Some(wall0),
                 ..meter
             },
@@ -173,11 +175,11 @@ impl Instance {
         let raw = call_entry(live, entry);
 
         // Metered before classification and teardown, so those are not included.
-        // Either end unreadable yields 0, a floor, with the failure counted in
+        // An unreadable end yields 0, a floor, with the failure counted in
         // `meter::clock_read_failures`.
-        let cpu_ns = match (cpu0, try_thread_cpu_nanos()) {
-            (Some(start), Some(end)) => end.saturating_sub(start),
-            _ => 0,
+        let cpu_ns = match try_thread_cpu_nanos() {
+            Some(end) => end.saturating_sub(cpu0),
+            None => 0,
         };
         let wall_ns = wall0.elapsed().as_nanos() as u64;
 

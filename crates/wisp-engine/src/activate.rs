@@ -64,7 +64,7 @@ pub(crate) fn instantiate(
     // tombstones exist to contain.
     store.epoch_deadline_callback(|mut ctx| {
         let m = ctx.data().meter;
-        let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos());
+        let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos()?);
 
         if cpu >= m.hard_ns() {
             ctx.data_mut().kill = Some(Kill::CpuHard);
