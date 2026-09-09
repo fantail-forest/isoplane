@@ -65,5 +65,6 @@ if (args.Length == 9)
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.RandomNumberGeneratorImplementation", "Wisp.Abi.InstanceRandomness");
     ManagedHashProviders.Adapt(cryptography, sdk);
     ManagedPbkdf2.Adapt(cryptography);
+    CertificateValues.Adapt(cryptography, sdk);
     cryptography.Write(args[8]);
 }
