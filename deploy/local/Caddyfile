@@ -1,0 +1,13 @@
+{
+	admin off
+	auto_https off
+	servers {
+		enable_full_duplex
+	}
+}
+
+{$WISP_EDGE_ADDRESS} {
+	bind 127.0.0.1
+	tls {$WISP_EDGE_CERT} {$WISP_EDGE_KEY}
+	reverse_proxy {$WISP_UPSTREAM}
+}
