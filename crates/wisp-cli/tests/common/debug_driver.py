@@ -97,8 +97,8 @@ try:
     response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [{"line": before}], "lines": [before]}))
     address, port = endpoint.rsplit(":", 1)
     attached = send("attach", {"address": address, "port": int(port)})
-    http = concurrent.futures.Future()
-    threading.Thread(target=request_http, args=(http,), daemon=True).start()
+    http_result = concurrent.futures.Future()
+    threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
     response(attached)
     for expected in [before, after]:
         stopped = until(lambda item: item.get("event") == "stopped")
@@ -122,7 +122,7 @@ try:
             with socket.socket() as check:
                 assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "CLI stop must close its HTTP listener"
             try:
-                http.result(timeout=30)
+                http_result.result(timeout=30)
             except (concurrent.futures.TimeoutError, socket.timeout) as error:
                 raise AssertionError("paused HTTP requester did not observe connection termination") from error
             except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.IncompleteRead):
@@ -136,7 +136,7 @@ try:
             assert any(value["name"] == "delay" and "RanToCompletion" in value["value"] for value in values), "DAP next must cross the incomplete await and preserve completed task state"
         response(send("next" if expected == before else "continue", {"threadId": thread}))
     if mode != "stop":
-        assert http.result(timeout=180) == (200, b"42"), "continued customer code must complete the actual HTTP response"
+        assert http_result.result(timeout=180) == (200, b"42"), "continued customer code must complete the actual HTTP response"
     print("debug acceptance passed: " + mode, flush=True)
 finally:
     if adapter.poll() is None:

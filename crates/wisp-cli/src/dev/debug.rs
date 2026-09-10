@@ -67,7 +67,11 @@ pub async fn run(
     let build_project = project.clone();
     let prepared =
         tokio::task::spawn_blocking(move || Prepared::build_debug(&build_project, &wasm)).await??;
-    let app = LocalApp::start_debug(prepared, &project.state_dir(), peer).await?;
+    let session = project
+        .module
+        .parent()
+        .context("the debug module must belong to a session directory")?;
+    let app = LocalApp::start_debug(prepared, &session.join("runtime"), peer).await?;
     let result = serve(style, &project, app.clone(), port, json).await;
     app.proxy.shutdown_sockets();
     tokio::task::spawn_blocking(move || app.cell.shutdown()).await?;

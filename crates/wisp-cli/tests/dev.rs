@@ -521,6 +521,17 @@ fn installed_debug_acceptance(mode: &str) {
         dev.diagnostics()
     );
     dev.wait_exit();
+    assert!(
+        !app.join(".wisp/state").exists(),
+        "a disposable debugger session must not leave runtime state in the application's persistent directory"
+    );
+    assert!(
+        std::fs::read_dir(app.join(".wisp/debug"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "debugger exit must remove the entire owned session, including runtime scratch"
+    );
 }
 
 #[test]
