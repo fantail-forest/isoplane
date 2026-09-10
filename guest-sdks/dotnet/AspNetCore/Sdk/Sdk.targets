@@ -3,5 +3,5 @@
   <ItemGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
     <FrameworkReference Remove="Microsoft.AspNetCore.App" />
   </ItemGroup>
-  <Import Project="../tools/Build/Wisp.Mono.targets" Condition="'$(WispGuestRuntime)' == 'Mono'" />
+  <Import Project="../tools/Wisp.Guest.targets" />
 </Project>

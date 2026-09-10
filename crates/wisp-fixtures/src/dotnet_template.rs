@@ -49,6 +49,21 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         .arg(&packages)
         .args(["--name", "template-packages", "--configfile"])
         .arg(&config));
+    // A project with source mapping must map the source-built runtime pack's
+    // ids to the feed that offers them, as a customer's would; the feed is
+    // this checkout's, offered to the Mono profile through the environment
+    // the dev harness sets.
+    let feed = crate::repo_root().join("guest-runtime/out/feed");
+    let runtime_mapping = if feed.is_dir() {
+        run(Command::new("dotnet")
+            .args(["nuget", "add", "source"])
+            .arg(&feed)
+            .args(["--name", "wisp-guest-runtime", "--configfile"])
+            .arg(&config));
+        "<packageSource key=\"wisp-guest-runtime\"><package pattern=\"Microsoft.NETCore.App.Runtime.Mono.wasi-wasm\" /><package pattern=\"Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk\" /></packageSource>\n"
+    } else {
+        ""
+    };
     let xml = std::fs::read_to_string(&config).expect("read generated package sources");
     let xml = xml.replace(
         "</configuration>",
@@ -56,6 +71,7 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
             "<config><add key=\"globalPackagesFolder\" value=\"{}\" /></config>\n\
              <packageSourceMapping>\n\
              <packageSource key=\"template-packages\"><package pattern=\"Wisp.*\" /><package pattern=\"Isoplane.*\" /></packageSource>\n\
+             {runtime_mapping}\
              <packageSource key=\"nuget\"><package pattern=\"*\" /></packageSource>\n\
              <packageSource key=\"dotnet-experimental\"><package pattern=\"*\" /></packageSource>\n\
              </packageSourceMapping></configuration>",

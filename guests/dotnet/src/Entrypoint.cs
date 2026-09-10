@@ -2,8 +2,8 @@ using System.Runtime.InteropServices;
 
 #if WISP_STREAMING_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamingProbe>>;
-#elif WISP_BC_RANDOMNESS_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.BcRandomnessProbe>>;
+#elif WISP_ACTIVATION_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ActivationProbe>>;
 #elif WISP_CERTIFICATE_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.CertificateProbe>>;
 #elif WISP_HASHING_PROBE
@@ -34,29 +34,47 @@ using Guest = Wisp.Abi.Exports<Wisp.App.RequestProbeRouter>;
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.Api>>;
 #endif
 
-namespace Wisp;
-
 /// <summary>
 /// This module's five core-wasm exports, each delegating to the SDK's
 /// generic implementation; the <c>using Guest = …</c> alias above is the
-/// whole declaration. The methods exist because
-/// <c>[UnmanagedCallersOnly]</c> cannot be applied to a method of a generic
-/// class while NativeAOT-LLVM needs the attribute to emit a wasm export.
+/// whole declaration. Under NativeAOT the methods carry
+/// <c>[UnmanagedCallersOnly]</c>, which cannot sit on a generic class, and
+/// become the wasm exports. Under Mono the SDK's C entry looks this class up
+/// by name from the global namespace and invokes the same methods through the
+/// runtime, so the class keeps the name the entry expects and a <c>Main</c>
+/// that roots the methods through trimming.
 /// </summary>
-internal static class Entrypoint
+internal static class WispGeneratedExports
 {
+#if WISP_MONO
+    [System.Diagnostics.CodeAnalysis.DynamicDependency(
+        System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods,
+        typeof(WispGeneratedExports))]
+    public static void Main() { }
+#endif
+
+#if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_alloc")]
+#endif
     public static int Alloc(int size, int align) => Guest.Alloc(size, align);
 
+#if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_handle")]
+#endif
     public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
 
+#if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_wake")]
+#endif
     public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
 
+#if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_initialize")]
+#endif
     public static void Initialize() => Guest.Initialize();
 
+#if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_gc_hint")]
+#endif
     public static void GcHint(int pressure) => Guest.GcHint(pressure);
 }

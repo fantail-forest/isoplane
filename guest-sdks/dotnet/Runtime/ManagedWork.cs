@@ -16,6 +16,6 @@ internal static class ManagedWork
         while (ThreadPool.PendingWorkItemCount > 0 || WispSynchronizationContext.Instance.HasWork);
     }
 
-    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "WispRunReady")]
+    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "RunWasiEventLoopOnce")]
     private static extern void RunReady(Thread thread);
 }

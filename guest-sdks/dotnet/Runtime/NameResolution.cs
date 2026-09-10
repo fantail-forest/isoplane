@@ -45,6 +45,6 @@ public static class NameResolution
         finally { NativeDns.Drop(lookup.Stream); }
     }
 
-    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "WispWaitPollable")]
+    [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "RegisterWasiPollableHandle")]
     private static extern Task Wait(Thread thread, int handle, bool ownsPollable, CancellationToken cancellationToken);
 }

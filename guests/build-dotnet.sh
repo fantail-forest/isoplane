@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Build the C# test fixtures; samples have their own build scripts.
-# Usage: guests/build-dotnet.sh [--if-stale] [--fixture name]
+# Usage: guests/build-dotnet.sh [--if-stale] [--fixture name] [--runtime nativeaot|mono]
 # Serial because the variants share one project's intermediate files.
+#
+# `--runtime mono` publishes the interpreted flavour of the fixtures listed in
+# MONO_FIXTURES to dotnet/out/mono, with its own intermediate directory so the
+# two runtimes never share a restore or a link.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IF_STALE=0
 SELECTED=""
+RUNTIME=nativeaot
 ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -14,6 +19,13 @@ while [ $# -gt 0 ]; do
     --fixture)
       [ $# -ge 2 ] || { echo "missing fixture name" >&2; exit 2; }
       SELECTED="$2"; shift 2 ;;
+    --runtime)
+      [ $# -ge 2 ] || { echo "missing runtime name" >&2; exit 2; }
+      case "$2" in
+        nativeaot|mono) RUNTIME="$2" ;;
+        *) echo "unknown runtime: $2 (expected nativeaot or mono)" >&2; exit 2 ;;
+      esac
+      shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -29,7 +41,7 @@ fi
 # `wasi:*` imports NativeAOT-LLVM emits; `wisp-engine`'s `dotnet_pal` test
 # reads it to check what the adapter composes them down to.
 FIXTURES=(
-  "wisp_guest_dotnet_bc_randomness|$ROOT/dotnet/out/wisp_guest_dotnet_bc_randomness.wasm|$ROOT/dotnet|-p:WispBcRandomnessProbe=true -p:IlcResilient=false"
+  "wisp_guest_dotnet_activation|$ROOT/dotnet/out/wisp_guest_dotnet_activation.wasm|$ROOT/dotnet|-p:WispActivationProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_certificates|$ROOT/dotnet/out/wisp_guest_dotnet_certificates.wasm|$ROOT/dotnet|-p:WispCertificateProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_streaming|$ROOT/dotnet/out/wisp_guest_dotnet_streaming.wasm|$ROOT/dotnet|-p:WispStreamingProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_hashing|$ROOT/dotnet/out/wisp_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:WispHashingProbe=true -p:IlcResilient=false"
@@ -52,25 +64,75 @@ FIXTURES=(
   "wisp_guest_dotnet_compat_stock|$ROOT/dotnet/out/wisp_guest_dotnet_compat_stock.wasm|$ROOT/dotnet|-p:WispCompatProbe=true -p:WispStock=true"
 )
 
+# The fixtures that also publish under the Mono interpreter: the behaviour
+# probes the engine and host tests drive in both runtimes. The stock, Durable
+# Instance and ASP.NET flavours are NativeAOT-only for now.
+MONO_FIXTURES=(
+  wisp_guest_dotnet_activation
+  wisp_guest_dotnet_certificates
+  wisp_guest_dotnet_streaming
+  wisp_guest_dotnet_hashing
+  wisp_guest_dotnet_randomness
+  wisp_guest_dotnet_network_refusal
+  wisp_guest_dotnet_dns
+  wisp_guest_dotnet_stream
+  wisp_guest_dotnet_connect
+  wisp_guest_dotnet_timer
+  wisp_guest_dotnet_async
+  wisp_guest_dotnet_filesystem
+  wisp_guest_dotnet_compat
+  wisp_guest_dotnet_entropy
+)
+
+if [ "$RUNTIME" = mono ]; then
+  mono=()
+  for spec in "${FIXTURES[@]}"; do
+    IFS='|' read -r name out dir extra <<<"$spec"
+    for candidate in "${MONO_FIXTURES[@]}"; do
+      if [ "$name" = "$candidate" ]; then
+        mono+=("$name|$ROOT/dotnet/out/mono/$name.wasm|$dir|$extra -p:WispGuestRuntime=Mono --artifacts-path $ROOT/dotnet/obj-mono")
+      fi
+    done
+  done
+  FIXTURES=("${mono[@]}")
+fi
+
 if [ -n "$SELECTED" ]; then
   selected=()
   for spec in "${FIXTURES[@]}"; do
     IFS='|' read -r name out dir extra <<<"$spec"
     if [ "$name" = "$SELECTED" ]; then selected+=("$spec"); fi
   done
-  [ "${#selected[@]}" -eq 1 ] || { echo "unknown C# fixture: $SELECTED" >&2; exit 2; }
+  [ "${#selected[@]}" -eq 1 ] || { echo "unknown C# fixture for runtime $RUNTIME: $SELECTED" >&2; exit 2; }
   FIXTURES=("${selected[@]}")
 fi
 
 # Coarse on purpose: a per-fixture dependency graph would be a second copy of
 # what MSBuild knows, and a stale fixture costs more than a spare rebuild.
+# The Mono flavour also depends on the source-built runtime pack, so its feed
+# and the patch series that produced it count as sources.
 newest_source() {
-  python3 "$TOOLS" newest "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config"
+  local inputs=("$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config")
+  if [ "$RUNTIME" = mono ]; then
+    inputs+=("$ROOT/../guest-runtime/manifest.env" "$ROOT/../guest-runtime/patches" "$ROOT/../guest-runtime/out/feed")
+  fi
+  python3 "$TOOLS" newest "${inputs[@]}"
 }
+
+# A Mono fixture is also stale when the runtime pack it links (recorded
+# beside it by the publish) is not the pack the feed offers now.
+FEED_IDENTITY=""
+if [ "$RUNTIME" = mono ] && [ -f "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props" ]; then
+  FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props")
+fi
 
 is_stale() {
   local out="$1" src="$2"
   [ -f "$out" ] || return 0
+  if [ "$RUNTIME" = mono ]; then
+    [ -f "$out.runtime" ] || return 0
+    [ "$(cat "$out.runtime")" = "$FEED_IDENTITY" ] || return 0
+  fi
   local t; t=$(python3 "$TOOLS" mtime "$out")
   awk -v a="$t" -v b="$src" 'BEGIN { exit !(a < b) }'
 }

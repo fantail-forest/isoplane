@@ -1,4 +1,5 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
   <!--
     The reference C# guest: its name, and its build flavours. How a C# guest
@@ -31,8 +32,8 @@
     <DefineConstants>$(DefineConstants);WISP_STREAMING_PROBE</DefineConstants>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(WispBcRandomnessProbe)' == 'true'">
-    <DefineConstants>$(DefineConstants);WISP_BC_RANDOMNESS_PROBE</DefineConstants>
+  <PropertyGroup Condition="'$(WispActivationProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_ACTIVATION_PROBE</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(WispCertificateProbe)' == 'true'">
@@ -88,5 +89,9 @@
   <PropertyGroup Condition="'$(WispEntropyProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_ENTROPY_PROBE</DefineConstants>
   </PropertyGroup>
+
+  <!-- The Mono targets replace a workload target, so they follow the SDK targets. -->
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../../guest-sdks/dotnet/Wisp.Guest.targets" />
 
 </Project>
