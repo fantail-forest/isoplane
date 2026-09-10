@@ -1,0 +1,71 @@
+diff --git a/src/mono/Directory.Build.props b/src/mono/Directory.Build.props
+index 6b6a4f6aa..122705a86 100644
+--- a/src/mono/Directory.Build.props
++++ b/src/mono/Directory.Build.props
+@@ -34,9 +34,9 @@
+ 
+   <!-- Directory to provision and use WASI sdk if WASI_SDK_PATH env variable is not set -->
+   <PropertyGroup Condition="'$(TargetsWasi)' == 'true'">
+-    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-25.0')">$([MSBuild]::NormalizeDirectory($(MSBuildThisFileDirectory), 'wasi', 'wasi-sdk'))</WASI_SDK_PATH>
++    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-29.0')">$([MSBuild]::NormalizeDirectory($(MSBuildThisFileDirectory), 'wasi', 'wasi-sdk'))</WASI_SDK_PATH>
+     <WASI_SDK_PATH>$([MSBuild]::EnsureTrailingSlash('$(WASI_SDK_PATH)').Replace('\', '/'))</WASI_SDK_PATH>
+-    <ShouldProvisionWasiSdk Condition="!Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-25.0')">true</ShouldProvisionWasiSdk>
++    <ShouldProvisionWasiSdk Condition="!Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-29.0')">true</ShouldProvisionWasiSdk>
+   </PropertyGroup>
+ 
+   <PropertyGroup>
+diff --git a/src/mono/wasi/build/WasiApp.targets b/src/mono/wasi/build/WasiApp.targets
+index 491e41208..d4e0cbb32 100644
+--- a/src/mono/wasi/build/WasiApp.targets
++++ b/src/mono/wasi/build/WasiApp.targets
+@@ -149,7 +149,7 @@
+       <Output TaskParameter="Lines" ItemName="_WasiSdkVersionLines" />
+     </ReadLinesFromFile>
+     <PropertyGroup>
+-      <_ExpectedWasiSdkVersion>25.0</_ExpectedWasiSdkVersion>
++      <_ExpectedWasiSdkVersion>29.0</_ExpectedWasiSdkVersion>
+       <_FoundExpectedWasiSdkVersion Condition="'%(_WasiSdkVersionLines.Identity)' == '$(_ExpectedWasiSdkVersion)'">true</_FoundExpectedWasiSdkVersion>
+       <_ToolchainMissingErrorMessage Condition="'$(_FoundExpectedWasiSdkVersion)' == ''">Please use wasi-sdk version $(_ExpectedWasiSdkVersion) and set %24(WASI_SDK_PATH) . It can be obtained from https://github.com/WebAssembly/wasi-sdk/releases</_ToolchainMissingErrorMessage>
+       <_ToolchainMissingErrorMessage Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/VERSION')">Could not find wasi-sdk. Install wasi-sdk and set %24(WASI_SDK_PATH) . It can be obtained from https://github.com/WebAssembly/wasi-sdk/releases</_ToolchainMissingErrorMessage>
+diff --git a/src/mono/wasi/wasi-sdk-version.txt b/src/mono/wasi/wasi-sdk-version.txt
+index be8e64f5a..231f5c779 100644
+--- a/src/mono/wasi/wasi-sdk-version.txt
++++ b/src/mono/wasi/wasi-sdk-version.txt
+@@ -1 +1 @@
+-25.0
++29.0
+diff --git a/src/mono/wasi/wasi.proj b/src/mono/wasi/wasi.proj
+index 219737950..0220e1b69 100644
+--- a/src/mono/wasi/wasi.proj
++++ b/src/mono/wasi/wasi.proj
+@@ -18,7 +18,7 @@
+     <_WasiCompileRspPath>$(NativeBinDir)src\wasi-compile.rsp</_WasiCompileRspPath>
+     <_WasiLinkRspPath>$(NativeBinDir)src\wasi-link.rsp</_WasiLinkRspPath>
+     <WasmNativeStrip Condition="'$(ContinuousIntegrationBuild)' == 'true'">false</WasmNativeStrip>
+-    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-25.0')">$([MSBuild]::NormalizeDirectory($(MSBuildThisFileDirectory), 'wasi-sdk'))</WASI_SDK_PATH>
++    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-29.0')">$([MSBuild]::NormalizeDirectory($(MSBuildThisFileDirectory), 'wasi-sdk'))</WASI_SDK_PATH>
+     <WASI_SDK_PATH>$([MSBuild]::EnsureTrailingSlash('$(WASI_SDK_PATH)').Replace('\', '/'))</WASI_SDK_PATH>
+     <WasiClang>$(WASI_SDK_PATH)bin/clang</WasiClang>
+     <WasiClang Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(WasiClang).exe</WasiClang>
+@@ -29,7 +29,7 @@
+   <Target Name="CheckEnv">
+     <Error Condition="'$(TargetArchitecture)' != 'wasm'" Text="Expected TargetArchitecture==wasm, got '$(TargetArchitecture)'"/>
+     <Error Condition="'$(TargetOS)' != 'wasi'" Text="Expected TargetOS==wasi, got '$(TargetOS)'"/>
+-    <Error Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-25.0')" Text="The WASI_SDK_PATH environment variable should be set pointing to the WASI SDK root dir and match expected version."/>
++    <Error Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-29.0')" Text="The WASI_SDK_PATH environment variable should be set pointing to the WASI SDK root dir and match expected version."/>
+   </Target>
+ 
+   <ItemGroup>
+diff --git a/src/native/libs/build-native.proj b/src/native/libs/build-native.proj
+index 32965c2e5..3d69ee63e 100644
+--- a/src/native/libs/build-native.proj
++++ b/src/native/libs/build-native.proj
+@@ -27,7 +27,7 @@
+   </ItemGroup>
+ 
+   <PropertyGroup Condition="'$(TargetOS)' == 'wasi'">
+-    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-25.0')">$([MSBuild]::NormalizeDirectory($(RepoRoot), 'src', 'mono', 'wasi', 'wasi-sdk'))</WASI_SDK_PATH>
++    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/WASI-SDK-VERSION-29.0')">$([MSBuild]::NormalizeDirectory($(RepoRoot), 'src', 'mono', 'wasi', 'wasi-sdk'))</WASI_SDK_PATH>
+     <WASI_SDK_PATH>$([MSBuild]::EnsureTrailingSlash('$(WASI_SDK_PATH)').Replace('\', '/'))</WASI_SDK_PATH>
+     <_BuildNativeEnvironmentVariables>$(_BuildNativeEnvironmentVariables);WASI_SDK_PATH=$(WASI_SDK_PATH)</_BuildNativeEnvironmentVariables>
+   </PropertyGroup>

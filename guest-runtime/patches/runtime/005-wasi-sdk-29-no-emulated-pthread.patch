@@ -1,0 +1,39 @@
+diff --git a/src/mono/wasi/build/WasiApp.targets b/src/mono/wasi/build/WasiApp.targets
+index d4e0cbb32..39e489acb 100644
+--- a/src/mono/wasi/build/WasiApp.targets
++++ b/src/mono/wasi/build/WasiApp.targets
+@@ -408,7 +408,7 @@
+       <_WasiLinkStepArgs Include="-Wl,--export=malloc,--export=free,--export=__heap_base,--export=__data_end" />
+       <!-- keep in sync with src\mono\wasi\wasi.proj -->
+       <!-- keep in sync with src\native\libs\CMakeLists.txt -->
+-      <_WasiLinkStepArgs Include="-Wl,-z,stack-size=8388608,-lwasi-emulated-process-clocks,-lwasi-emulated-signal,-lwasi-emulated-mman,-lwasi-emulated-pthread"/>
++      <_WasiLinkStepArgs Include="-Wl,-z,stack-size=8388608,-lwasi-emulated-process-clocks,-lwasi-emulated-signal,-lwasi-emulated-mman"/>
+       <!--
+       this together with some DLLImports makes dependency on wasi:http@0.2.0
+       it will get trimmed when HTTP is not used and using publish + native rebuild
+diff --git a/src/mono/wasi/wasi.proj b/src/mono/wasi/wasi.proj
+index 0220e1b69..99a8702d1 100644
+--- a/src/mono/wasi/wasi.proj
++++ b/src/mono/wasi/wasi.proj
+@@ -149,7 +149,7 @@
+       <_WasiCompileFlags Include="-D_WASI_EMULATED_PTHREAD"/>
+       <!-- keep in sync with src\mono\wasi\build\WasiApp.targets -->
+       <!-- keep in sync with src\native\libs\CMakeLists.txt -->
+-      <_WasiLinkFlags Include="-Wl,-z,stack-size=8388608,--initial-memory=52428800,-lwasi-emulated-process-clocks,-lwasi-emulated-signal,-lwasi-emulated-mman,-lwasi-emulated-pthread"/>
++      <_WasiLinkFlags Include="-Wl,-z,stack-size=8388608,--initial-memory=52428800,-lwasi-emulated-process-clocks,-lwasi-emulated-signal,-lwasi-emulated-mman"/>
+     </ItemGroup>
+ 
+     <PropertyGroup>
+diff --git a/src/native/libs/CMakeLists.txt b/src/native/libs/CMakeLists.txt
+index cf8b2b47f..750b03144 100644
+--- a/src/native/libs/CMakeLists.txt
++++ b/src/native/libs/CMakeLists.txt
+@@ -61,7 +61,7 @@ if (CLR_CMAKE_TARGET_UNIX OR CLR_CMAKE_TARGET_BROWSER OR CLR_CMAKE_TARGET_WASI)
+         add_compile_options(-D_WASI_EMULATED_PTHREAD)
+         # keep in sync with src\mono\wasi\build\WasiApp.targets
+         # keep in sync with src\mono\wasi\wasi.proj
+-        add_link_options(-Wl,-z,stack-size=1048576,--initial-memory=5242880,--max-memory=52428800,-lwasi-emulated-process-clocks,-lwasi-emulated-signal,-lwasi-emulated-mman,-lwasi-emulated-pthread)
++        add_link_options(-Wl,-z,stack-size=1048576,--initial-memory=5242880,--max-memory=52428800,-lwasi-emulated-process-clocks,-lwasi-emulated-signal,-lwasi-emulated-mman)
+     endif ()
+ 
+     if (CLR_CMAKE_TARGET_ANDROID)
