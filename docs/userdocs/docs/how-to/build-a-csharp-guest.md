@@ -108,15 +108,31 @@ harness can read the shadow stack pointer, and
 with named exports rather than a command, and the GC settings are baked in
 because the PAL answers the environment with an empty list.
 
+## The runtime the module is built on
+
+Both profiles compile against a .NET runtime built from source by
+`guest-runtime/build.sh`: the Mono runtime pack for the interpreter and the
+NativeAOT framework pack the pinned ILCompiler.LLVM compiles against, from
+the same `dotnet/runtimelab` commit as the compiler. The same patch series
+integrates each with the host: the host-driven event loop, socket readiness
+through libc's `poll`, asynchronous name resolution, OpenSSL as the
+cryptography backend, and the network error codes libc drops. The build
+publishes both packs to a local feed whose `Wisp.GuestRuntime.props` names
+each pack's version and digest; the SDK refuses a pack whose digest differs
+from the feed's and records the identity it linked beside every module
+(`<module>.wasm.runtime`). A project outside this checkout names its feed with
+`WispGuestRuntimeFeed` or `WISP_GUEST_RUNTIME_FEED`.
+
 ## The PAL shim
 
-NativeAOT-LLVM's wasi-libc reaches `wasi:*` imports through undefined C
-symbols; some the runtime calls while coming up. `native/wisp_pal.c` defines
-them, answering the clock, entropy, environment and empty filesystem through
-`wisp_abi::imports::IMPORTS` and aborting by name on unsupported calls, so the
-module's import list is `wisp` and nothing else. The set covers the BCL
-surface the guests so far touch, and the SDK publish target fails the build if a
-new import appears; see
+wasi-libc reaches `wasi:*` imports through undefined C symbols; some the
+runtime calls while coming up. `native/wisp_pal.c` defines the ones the host
+interface answers differently, the clock, entropy, environment and empty
+filesystem, through `wisp_abi::imports::IMPORTS`, and wraps the socket calls
+onto the host's sockets. What remains in the module's import list is `wisp`
+plus the `wasi:*` functions the engine's PAL adapter delegates by its
+canonical table; anything outside that set fails the publish through
+`wisp doctor`, see
 [Debug a rejected module](debug-a-rejected-module.md#the-c-case-a-new-wasi-import-appeared).
 
 The disk contains only an empty `/` directory. Relative paths start there;

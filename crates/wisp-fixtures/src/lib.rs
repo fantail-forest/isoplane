@@ -138,72 +138,77 @@ pub fn dotnet(name: &str) -> Vec<u8> {
 /// stale. Only the fixtures `guests/build-dotnet.sh` lists for Mono exist in
 /// that runtime; asking for another fails with the script's message.
 pub fn dotnet_for(name: &str, runtime: GuestRuntime) -> Vec<u8> {
-    let path = build_selected(
+    let path = dotnet_path(name, runtime);
+    assert_attributed_to_feed(&path, runtime);
+    read(&path)
+}
+
+fn dotnet_path(name: &str, runtime: GuestRuntime) -> PathBuf {
+    build_selected(
         "guests/build-dotnet.sh",
         Some(name),
         Some(runtime.script_name()),
     )
     .join(runtime.output_directory())
-    .join(format!("{name}.wasm"));
-    if runtime == GuestRuntime::Mono {
-        assert_attributed_to_feed(&path);
-    }
-    read(&path)
+    .join(format!("{name}.wasm"))
 }
 
-/// A Mono module is only usable as evidence when the pack it links is the
-/// pack the feed offers now; the publish records that identity beside it.
-fn assert_attributed_to_feed(module: &Path) {
+/// A module is only usable as evidence when the pack it links is the pack
+/// the feed offers its runtime now; the publish records that identity
+/// beside it.
+fn assert_attributed_to_feed(module: &Path, runtime: GuestRuntime) {
     let linked = identity_beside(module);
-    let offered = feed_runtime_identity();
+    let offered = feed_runtime_identity(runtime);
     assert_eq!(
         linked,
         offered,
-        "{} links a runtime pack other than the one guest-runtime/out/feed offers; the fixture build must republish it",
+        "{} links a pack other than the one guest-runtime/out/feed offers {runtime}; the fixture build must republish it",
         module.display()
     );
 }
 
 /// The bytes of the runtime acceptance guest, `guest-runtime/tests/guest`,
-/// published with the source-built runtime pack, built if missing or stale.
-/// A missing pack fails with the message naming `guest-runtime/build.sh`.
-pub fn runtime_acceptance() -> Vec<u8> {
-    let path = runtime_acceptance_path();
-    assert_attributed_to_feed(&path);
+/// published for `runtime` with the source-built pack, built if missing or
+/// stale. A missing pack fails with the message naming
+/// `guest-runtime/build.sh`.
+pub fn runtime_acceptance_for(runtime: GuestRuntime) -> Vec<u8> {
+    let path = runtime_acceptance_path(runtime);
+    assert_attributed_to_feed(&path, runtime);
     read(&path)
 }
 
-fn runtime_acceptance_path() -> PathBuf {
-    build("guest-runtime/tests/guest/build.sh")
-        .join("guest-runtime/tests/guest/out/guest_runtime_acceptance.wasm")
+fn runtime_acceptance_path(runtime: GuestRuntime) -> PathBuf {
+    build_selected(
+        "guest-runtime/tests/guest/build.sh",
+        None,
+        Some(runtime.script_name()),
+    )
+    .join("guest-runtime/tests/guest/out")
+    .join(runtime.script_name())
+    .join("guest_runtime_acceptance.wasm")
 }
 
-/// The identity of the runtime pack a Mono fixture was published with; a
-/// NativeAOT fixture has none, its runtime being the pinned compiler package.
-pub fn dotnet_runtime_identity(name: &str, runtime: GuestRuntime) -> Option<String> {
-    match runtime {
-        GuestRuntime::NativeAot => None,
-        GuestRuntime::Mono => Some(identity_beside(
-            &build_selected(
-                "guests/build-dotnet.sh",
-                Some(name),
-                Some(runtime.script_name()),
-            )
-            .join(runtime.output_directory())
-            .join(format!("{name}.wasm")),
-        )),
-    }
+/// The identity of the pack a fixture was published with for `runtime`.
+pub fn dotnet_runtime_identity(name: &str, runtime: GuestRuntime) -> String {
+    identity_beside(&dotnet_path(name, runtime))
 }
 
-/// The identity of the runtime pack the local feed currently offers, from
+/// The local feed `guest-runtime/build.sh feed` publishes both packs to. An
+/// installed package has no checkout to find it in, so a test points one at
+/// this path through `WISP_GUEST_RUNTIME_FEED`, as a customer names theirs.
+pub fn guest_runtime_feed() -> PathBuf {
+    repo_root().join("guest-runtime/out/feed")
+}
+
+/// The identity of the pack the local feed currently offers `runtime`, from
 /// the props file `guest-runtime/build.sh feed` writes: the pack version and
 /// the digest NuGet records for the package, `version@sha512:digest`, the
-/// same form a Mono publish records beside its module.
-pub fn feed_runtime_identity() -> String {
-    let props = repo_root().join("guest-runtime/out/feed/Wisp.GuestRuntime.props");
+/// same form a publish records beside its module.
+pub fn feed_runtime_identity(runtime: GuestRuntime) -> String {
+    let props = guest_runtime_feed().join("Wisp.GuestRuntime.props");
     let text = std::fs::read_to_string(&props).unwrap_or_else(|e| {
         panic!(
-            "{} is missing ({e}); build the runtime pack with guest-runtime/build.sh",
+            "{} is missing ({e}); build the runtime packs with guest-runtime/build.sh",
             props.display()
         )
     });
@@ -216,11 +221,39 @@ pub fn feed_runtime_identity() -> String {
             .unwrap_or_else(|| panic!("{} names no {name}", props.display()))
             .to_string()
     };
+    let prefix = match runtime {
+        GuestRuntime::NativeAot => "WispGuestNativeAotPack",
+        GuestRuntime::Mono => "WispGuestRuntimePack",
+    };
     format!(
         "{}@sha512:{}",
-        field("WispGuestRuntimePackVersion"),
-        field("WispGuestRuntimePackSha512")
+        field(&format!("{prefix}Version")),
+        field(&format!("{prefix}Sha512"))
     )
+}
+
+/// The ids of the packages the local feed offers, from the package file
+/// names (`<id>.<version>.nupkg`, the version being the first dotted
+/// segment that starts with a digit), for a consumer that maps package ids
+/// to sources.
+pub fn feed_package_ids() -> Vec<String> {
+    let feed = guest_runtime_feed();
+    let mut ids: Vec<String> = std::fs::read_dir(&feed)
+        .unwrap_or_else(|e| panic!("{} is unreadable ({e})", feed.display()))
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let stem = name.strip_suffix(".nupkg")?.to_string();
+            let version_at = stem
+                .match_indices('.')
+                .find(|(at, _)| stem[at + 1..].starts_with(|c: char| c.is_ascii_digit()))
+                .map(|(at, _)| at)?;
+            Some(stem[..version_at].to_string())
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 fn identity_beside(module: &Path) -> String {
@@ -229,7 +262,7 @@ fn identity_beside(module: &Path) -> String {
     let identity = String::from_utf8_lossy(&text).trim().to_string();
     assert!(
         !identity.is_empty(),
-        "{} records no runtime identity; a Mono publish writes the pack it linked beside its module",
+        "{} records no runtime identity; a publish writes the pack it linked beside its module",
         sidecar.display()
     );
     identity

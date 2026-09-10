@@ -1,6 +1,7 @@
 """Build the ASP.NET fixture as a fresh NuGet SDK consumer."""
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -47,16 +48,6 @@ def verify_missing_framework_fails(source, environment):
         "Unresolvable framework methods must fail publication with IL1005.")
 
 
-def verify_missing_sdk_fails(source, environment):
-    verify_publication_refusal(source, environment, '''<Project>
-  <Target Name="RemoveSdkForNegativeControl" BeforeTargets="WispAdaptRuntime">
-    <ItemGroup><IlcReference Remove="@(IlcReference)" Condition="'%(Filename)' == 'Wisp.Sdk'" /></ItemGroup>
-  </Target>
-</Project>
-''', "error WISP0080:",
-        "A missing native SDK reference must fail with WISP0080 before runtime adaptation.")
-
-
 def main():
     with tempfile.TemporaryDirectory(prefix="wisp-aspnet-") as temporary:
         scratch = Path(temporary)
@@ -64,13 +55,26 @@ def main():
         for project in ["Wisp.Sdk.csproj", "AspNetCore/Wisp.AspNetCore.csproj"]:
             run("dotnet", "pack", str(ROOT / "guest-sdks/dotnet" / project),
                 "--artifacts-path", str(scratch / "artifacts"), "-o", str(packages))
+        # An installed package names the guest runtime feed the way a customer
+        # does; here it is this checkout's, mapped by the ids it offers
+        # (`<id>.<version>.nupkg`, the version being the first dotted segment
+        # that starts with a digit).
+        feed = Path(os.environ.get("WISP_GUEST_RUNTIME_FEED", str(ROOT / "guest-runtime/out/feed")))
+        feed_ids = sorted({re.match(r"^(.*?)\.\d[^/]*\.nupkg$", name.name).group(1)
+                           for name in feed.glob("*.nupkg")})
         config = ET.parse(ROOT / "nuget.config")
         ET.SubElement(config.getroot().find("packageSources"), "add",
                       key="fixture-packages", value=str(packages))
+        ET.SubElement(config.getroot().find("packageSources"), "add",
+                      key="wisp-guest-runtime", value=str(feed))
         mapping = ET.SubElement(config.getroot(), "packageSourceMapping")
         for entry in config.getroot().find("packageSources").findall("add"):
             package_source = ET.SubElement(mapping, "packageSource", key=entry.attrib["key"])
-            ET.SubElement(package_source, "package", pattern="Wisp.*" if entry.attrib["key"] == "fixture-packages" else "*")
+            if entry.attrib["key"] == "wisp-guest-runtime":
+                for feed_id in feed_ids:
+                    ET.SubElement(package_source, "package", pattern=feed_id)
+            else:
+                ET.SubElement(package_source, "package", pattern="Wisp.*" if entry.attrib["key"] == "fixture-packages" else "*")
         config.write(scratch / "nuget.config")
         shutil.copy(ROOT / "global.json", scratch / "global.json")
         source = scratch / "app/src"
@@ -78,9 +82,9 @@ def main():
         shutil.copy(GUEST / "src/Application.cs", source / "Application.cs")
         shutil.copy(GUEST / "src/AspNet.csproj", source / "AspNet.csproj")
         environment = dict(os.environ, NUGET_PACKAGES=str(scratch / "nuget"),
-                           WISP_OUT_DIR=os.environ.get("WISP_OUT_DIR", str(GUEST / "out")))
+                           WISP_OUT_DIR=os.environ.get("WISP_OUT_DIR", str(GUEST / "out")),
+                           WISP_GUEST_RUNTIME_FEED=str(feed))
         verify_missing_factory_fails(source, environment)
-        verify_missing_sdk_fails(source, environment)
         verify_missing_framework_fails(source, environment)
         run(str(ROOT / "guest-sdks/dotnet/build-guest.sh"), str(source.parent),
             *sys.argv[1:], env=environment, cwd=scratch)

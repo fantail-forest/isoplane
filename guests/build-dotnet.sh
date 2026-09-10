@@ -109,30 +109,25 @@ fi
 
 # Coarse on purpose: a per-fixture dependency graph would be a second copy of
 # what MSBuild knows, and a stale fixture costs more than a spare rebuild.
-# The Mono flavour also depends on the source-built runtime pack, so its feed
-# and the patch series that produced it count as sources.
+# Both flavours link a source-built pack, so the feed and the patch series
+# that produced it count as sources.
 newest_source() {
-  local inputs=("$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config")
-  if [ "$RUNTIME" = mono ]; then
-    inputs+=("$ROOT/../guest-runtime/manifest.env" "$ROOT/../guest-runtime/patches" "$ROOT/../guest-runtime/out/feed")
-  fi
-  python3 "$TOOLS" newest "${inputs[@]}"
+  python3 "$TOOLS" newest "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config" \
+    "$ROOT/../guest-runtime/manifest.env" "$ROOT/../guest-runtime/patches" "$ROOT/../guest-runtime/out/feed"
 }
 
-# A Mono fixture is also stale when the runtime pack it links (recorded
-# beside it by the publish) is not the pack the feed offers now.
+# A fixture is also stale when the pack it links (recorded beside it by the
+# publish) is not the pack the feed offers its runtime now.
 FEED_IDENTITY=""
-if [ "$RUNTIME" = mono ] && [ -f "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props" ]; then
-  FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props")
+if [ -f "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props" ]; then
+  FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props" "$RUNTIME")
 fi
 
 is_stale() {
   local out="$1" src="$2"
   [ -f "$out" ] || return 0
-  if [ "$RUNTIME" = mono ]; then
-    [ -f "$out.runtime" ] || return 0
-    [ "$(cat "$out.runtime")" = "$FEED_IDENTITY" ] || return 0
-  fi
+  [ -f "$out.runtime" ] || return 0
+  [ "$(cat "$out.runtime")" = "$FEED_IDENTITY" ] || return 0
   local t; t=$(python3 "$TOOLS" mtime "$out")
   awk -v a="$t" -v b="$src" 'BEGIN { exit !(a < b) }'
 }

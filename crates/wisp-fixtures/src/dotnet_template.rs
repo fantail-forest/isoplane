@@ -53,16 +53,20 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
     // ids to the feed that offers them, as a customer's would; the feed is
     // this checkout's, offered to the Mono profile through the environment
     // the dev harness sets.
-    let feed = crate::repo_root().join("guest-runtime/out/feed");
+    let feed = crate::guest_runtime_feed();
     let runtime_mapping = if feed.is_dir() {
         run(Command::new("dotnet")
             .args(["nuget", "add", "source"])
             .arg(&feed)
             .args(["--name", "wisp-guest-runtime", "--configfile"])
             .arg(&config));
-        "<packageSource key=\"wisp-guest-runtime\"><package pattern=\"Microsoft.NETCore.App.Runtime.Mono.wasi-wasm\" /><package pattern=\"Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk\" /></packageSource>\n"
+        let patterns: String = crate::feed_package_ids()
+            .iter()
+            .map(|id| format!("<package pattern=\"{id}\" />"))
+            .collect();
+        format!("<packageSource key=\"wisp-guest-runtime\">{patterns}</packageSource>\n")
     } else {
-        ""
+        String::new()
     };
     let xml = std::fs::read_to_string(&config).expect("read generated package sources");
     let xml = xml.replace(

@@ -47,8 +47,8 @@ guest-sdks/dotnet/obj/
 /guest-sdks/dotnet/AspNetCore.Tests/bin/
 /guest-sdks/dotnet/AspNetCore.Tests/obj/
 
-/guest-sdks/dotnet/RuntimeAdapter.Tests/bin/
-/guest-sdks/dotnet/RuntimeAdapter.Tests/obj/
+/guest-sdks/dotnet/Build.Tests/bin/
+/guest-sdks/dotnet/Build.Tests/obj/
 /tools/Isoplane.Testing/bin/
 /tools/Isoplane.Testing/obj/
 /tools/Isoplane.Testing.Tests/bin/
@@ -64,6 +64,4 @@ guest-sdks/dotnet/obj/
 /guest-runtime/tests/guest/obj/
 /guest-runtime/tests/guest/src/bin/
 /guest-runtime/tests/guest/src/obj/
-/guests/dotnet/out/mono/*.runtime
-/guest-sdks/dotnet/Build/RuntimeAdapter/bin/
-/guest-sdks/dotnet/Build/RuntimeAdapter/obj/
+/guests/dotnet/out/**/*.runtime

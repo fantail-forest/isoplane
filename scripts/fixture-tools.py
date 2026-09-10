@@ -53,17 +53,18 @@ def main():
             sys.exit(f"no executable wisp CLI at {cli}")
         print(cli)
     elif action == "runtime-identity":
-        # The identity of the runtime pack a feed offers: its version and the
-        # digest NuGet records for the package, from the props the feed stage
-        # writes.
+        # The identity of the pack a feed offers a runtime (mono or
+        # nativeaot): its version and the digest NuGet records for the
+        # package, from the props the feed stage writes.
         props = Path(args[0]).read_text()
+        prefix = {"mono": "WispGuestRuntimePack", "nativeaot": "WispGuestNativeAotPack"}[args[1]]
         def field(name):
             start = props.find(f"<{name}>")
             end = props.find(f"</{name}>")
             if start < 0 or end < 0:
                 sys.exit(f"{args[0]} names no {name}")
             return props[start + len(name) + 2:end].strip()
-        print(f"{field('WispGuestRuntimePackVersion')}@sha512:{field('WispGuestRuntimePackSha512')}")
+        print(f"{field(prefix + 'Version')}@sha512:{field(prefix + 'Sha512')}")
     elif action == "size":
         print(Path(args[0]).stat().st_size)
     else:

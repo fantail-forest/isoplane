@@ -5,12 +5,14 @@
 -->
 <Project>
   <PropertyGroup>
-    <_WispSdkDirectory>$(MSBuildThisFileDirectory)</_WispSdkDirectory>
     <WispContainerBuild Condition="'$(WispContainerBuild)' == ''">$([MSBuild]::IsOSPlatform('OSX'))</WispContainerBuild>
     <WispOffline Condition="'$(WispOffline)' == ''">false</WispOffline>
     <NuGetAudit Condition="'$(WispOffline)' == 'true'">false</NuGetAudit>
     <RestoreSources Condition="'$(WispOffline)' == 'true'">$(MSBuildThisFileDirectory)Build</RestoreSources>
-    <!-- A preview package off an experimental feed, so pinned. -->
+    <!-- The compiler: a preview package off an experimental feed, so pinned.
+         The framework it compiles against is the pack guest-runtime/build.sh
+         builds from the same runtimelab commit (guest-runtime/manifest.env)
+         under the WISP patch series, named by the feed. -->
     <ILCompilerVersion Condition="'$(ILCompilerVersion)' == ''">10.0.0-rc.1.26357.1</ILCompilerVersion>
     <TargetFramework>net10.0</TargetFramework>
     <!-- A reactor with named exports, not a command. -->
@@ -51,9 +53,11 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(WispContainerBuild)' != 'true'">
-    <PackageDownload Include="Microsoft.NETCore.App.Runtime.linux-x64" Version="[$(WispManagedRuntimeVersion)]" />
     <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
     <PackageReference Include="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
+    <!-- The target pack: a direct reference outranks the compiler package's
+         own, so the compiler's targets resolve the feed's framework. -->
+    <PackageReference Include="runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" Version="$(WispGuestNativeAotPackVersion)" Condition="'$(WispGuestNativeAotPackVersion)' != ''" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,43 @@
+<Project>
+  <ItemGroup>
+    <!-- The framework pack's cryptography shim is linked statically like
+         System.Native, so ilc binds its P/Invokes directly. -->
+    <DirectPInvoke Include="libSystem.Security.Cryptography.Native.OpenSsl" />
+  </ItemGroup>
+  <!-- The pack the compile draws on must be the pack the feed offers: NuGet
+       keeps one extraction per version, so a stale copy could shadow a
+       republished pack. The compiler's targets name the directory they
+       resolved. -->
+  <Target Name="WispNativeAotVerifyFrameworkPack" DependsOnTargets="SetupProperties" BeforeTargets="IlcCompile"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <Error Condition="'$(RuntimePackagePath)' == ''"
+           Text="wisp: the compiler resolved no framework pack; expected the feed's runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM $(WispGuestNativeAotPackVersion)." />
+    <PropertyGroup>
+      <_WispNativeAotPackDirectory>$([MSBuild]::NormalizeDirectory('$(RuntimePackagePath)'))</_WispNativeAotPackDirectory>
+      <_WispNativeAotPackDigestFile>$(_WispNativeAotPackDirectory)runtime.wasi-wasm.microsoft.dotnet.ilcompiler.llvm.$(WispGuestNativeAotPackVersion.ToLowerInvariant()).nupkg.sha512</_WispNativeAotPackDigestFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_WispNativeAotPackDigestFile)')"
+           Text="wisp: the framework pack at $(_WispNativeAotPackDirectory) records no package digest ($(_WispNativeAotPackDigestFile)); it is not a NuGet extraction of the feed's pack $(WispGuestNativeAotPackVersion)." />
+    <ReadLinesFromFile File="$(_WispNativeAotPackDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_WispNativeAotPackDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_WispNativeAotPackDigest)' != '$(WispGuestNativeAotPackSha512)'"
+           Text="wisp: the framework pack at $(_WispNativeAotPackDirectory) is not the pack the feed offers (digest $(_WispNativeAotPackDigest) vs $(WispGuestNativeAotPackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
+  </Target>
+  <!-- The OpenSSL backend from the pack, after the shim that calls it. -->
+  <Target Name="WispNativeAotLinkCryptography" DependsOnTargets="SetupProperties" BeforeTargets="LinkNativeLlvm"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <ItemGroup>
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.Security.Cryptography.Native.OpenSsl.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libssl.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libcrypto.a" />
+    </ItemGroup>
+  </Target>
+  <!-- The identity of the framework the module was compiled against, beside
+       it, so a test result is attributable to those bytes. -->
+  <Target Name="WispNativeAotRecordFramework" AfterTargets="CopyNativeBinary" DependsOnTargets="WispNativeAotVerifyFrameworkPack"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <WriteLinesToFile File="$(PublishDir)$([System.IO.Path]::GetFileName('$(NativeBinary)')).runtime"
+                      Lines="$(WispGuestNativeAotPackVersion)@sha512:$(WispGuestNativeAotPackSha512)" Overwrite="true" />
+  </Target>
+</Project>

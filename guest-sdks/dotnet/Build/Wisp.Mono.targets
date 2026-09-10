@@ -3,11 +3,7 @@
   <ItemGroup>
     <LinkerArg Include="-nostartfiles" />
     <LinkerArg Include="-Wl,--skip-wit-component,--no-entry,--export=wisp_alloc,--export=wisp_handle,--export=wisp_wake,--export=wisp_initialize,--export=wisp_gc_hint,--export=__stack_pointer,--max-memory=$(WispMemoryMaxBytes)" />
-    <!-- poll_poll and the stream read and write bindings are wrapped by the
-         runtime pack's System.Native: it observes a socket's pollables
-         through libc's poll, and recovers the network error code libc drops
-         from a failed stream operation. -->
-    <LinkerArg Include="-Wl,--wrap=SystemNative_MksTemps,--wrap=socket,--wrap=close,--wrap=getsockopt,--wrap=setsockopt,--wrap=send,--wrap=sendmsg,--wrap=poll_poll,--wrap=streams_method_input_stream_read,--wrap=streams_method_output_stream_check_write,--wrap=streams_method_output_stream_write" />
+    <LinkerArg Include="@(WispWrappedSymbol->'-Wl,--wrap=%(Identity)')" />
   </ItemGroup>
   <Target Name="WispMonoPaths">
     <PropertyGroup>
@@ -22,14 +18,6 @@
     <ItemGroup>
       <_WispMonoPrebuilt Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'dotnet' AND '%(Extension)' == '.wasm'" />
       <ResolvedFileToPublish Remove="@(_WispMonoPrebuilt)" />
-    </ItemGroup>
-  </Target>
-  <!-- The interpreter resolves a P/Invoke through its generated table; a
-       module missing from it aborts at the first call. The SDK's socket poll
-       and DNS bridges are `Wisp.Native` P/Invokes onto the PAL objects. -->
-  <Target Name="WispMonoRegisterNativeBindings" BeforeTargets="_GenerateManagedToNative">
-    <ItemGroup>
-      <_WasmPInvokeModules Include="Wisp.Native" />
     </ItemGroup>
   </Target>
   <Target Name="WispMonoNativeEntry" BeforeTargets="_PrepareForWasiBuildNative" DependsOnTargets="WispMonoPaths">

@@ -133,4 +133,3 @@ static void wisp_capture_socket(const uint8_t *result);
 #include "wisp_native_io.h"
 #include "wisp_socket_send.h"
 #include "wisp_socket_options.h"
-#include "wisp_dns.h"

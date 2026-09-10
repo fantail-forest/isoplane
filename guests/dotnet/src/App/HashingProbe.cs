@@ -39,12 +39,10 @@ public sealed class HashingProbe : IWispHandler
                 "/hmac-current" => UnsupportedHash(key, false),
                 "/hmac-sha1" => UnsupportedAlgorithm(key),
                 "/hmac-disposed" => DisposedHash(key),
-                "/hmac-provider-disposed" => DisposedProvider(key),
                 "/sha-instance" => InstanceSha(data),
                 "/sha-short-output" => ShortOutputSha(data),
                 "/sha-clone" => UnsupportedShaOperation(true),
                 "/sha-current" => UnsupportedShaOperation(false),
-                "/sha-provider-disposed" => DisposedShaProvider(),
                 "/sha-reset" => ResetSha(data),
                 "/sha-start" => StartSha(data),
                 "/sha-finish" => FinishSha(data),
@@ -106,15 +104,6 @@ public sealed class HashingProbe : IWispHandler
         if (!clone) return hash.GetCurrentHash();
         using var copy = hash.Clone();
         return copy.GetHashAndReset();
-    }
-
-    private static byte[] DisposedShaProvider()
-    {
-        var hash = new Wisp.Runtime.ManagedSha256();
-        hash.Dispose(true);
-        hash.Dispose(true);
-        hash.Reset();
-        return Array.Empty<byte>();
     }
 
     private static byte[] ResetSha(byte[] data)
@@ -235,15 +224,6 @@ public sealed class HashingProbe : IWispHandler
         hash.Dispose();
         hash.Dispose();
         hash.AppendData(key);
-        return Array.Empty<byte>();
-    }
-
-    private static byte[] DisposedProvider(byte[] key)
-    {
-        var hash = new Wisp.Runtime.ManagedHmac(key);
-        hash.Dispose(true);
-        hash.Dispose(true);
-        hash.Reset();
         return Array.Empty<byte>();
     }
 

@@ -10,7 +10,7 @@
        would import them. -->
   <ImportGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
     <Import Project="Sdk.props" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" />
-    <!-- A missing feed is reported by Wisp.Mono.props' WispRequireGuestRuntimeFeed. -->
+    <!-- A missing feed is reported by Wisp.Guest.props' WispRequireGuestRuntimeFeed. -->
     <Import Project="$(WispGuestWasiSdkPackDirectory)Sdk/Sdk.props" Condition="Exists('$(WispGuestWasiSdkPackDirectory)Sdk/Sdk.props')" />
     <Import Project="$(WispGuestWasiSdkPackDirectory)Sdk/Sdk.targets" Condition="Exists('$(WispGuestWasiSdkPackDirectory)Sdk/Sdk.targets')" />
     <!-- The workload's Mono AOT cross compiler prints the interpreter's icall

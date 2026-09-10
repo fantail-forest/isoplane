@@ -1,5 +1,5 @@
 <Project>
-  <Import Project="Wisp.Runtime.targets" />
+  <Import Project="Wisp.NativeAot.targets" />
   <UsingTask TaskName="WispContainerPublish" TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <Task>
@@ -38,13 +38,7 @@
     <ItemGroup>
       <LinkerArg Include="&quot;$(WispPalObject)&quot;" />
       <LinkerArg Include="&quot;$(WispClockObject)&quot;" />
-      <LinkerArg Include="-Wl,--wrap=SystemNative_MksTemps" />
-      <LinkerArg Include="-Wl,--wrap=socket" />
-      <LinkerArg Include="-Wl,--wrap=close" />
-      <LinkerArg Include="-Wl,--wrap=getsockopt" />
-      <LinkerArg Include="-Wl,--wrap=setsockopt" />
-      <LinkerArg Include="-Wl,--wrap=send" />
-      <LinkerArg Include="-Wl,--wrap=sendmsg" />
+      <LinkerArg Include="@(WispWrappedSymbol->'-Wl,--wrap=%(Identity)')" />
     </ItemGroup>
     <!-- NativeAOT's incremental link inputs do not include LinkerArg. -->
     <Delete Files="$(NativeBinary)" />
@@ -58,6 +52,8 @@
       <_WispPublishOutput Include="$(WispPalObject)" Condition="'$(WispPalObject)' != ''" />
       <_WispPublishOutput Include="$(WispClockObject)" Condition="'$(WispClockObject)' != ''" />
       <_WispPublishOutput Include="$(PublishDir)$([System.IO.Path]::GetFileName('$(NativeBinary)'))"
+                          Condition="'$(WispContainerBuild)' != 'true'" />
+      <_WispPublishOutput Include="$(PublishDir)$([System.IO.Path]::GetFileName('$(NativeBinary)')).runtime"
                           Condition="'$(WispContainerBuild)' != 'true'" />
     </ItemGroup>
     <MakeDir Directories="$(IntermediateOutputPath)" />

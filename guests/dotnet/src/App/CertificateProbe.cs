@@ -33,15 +33,10 @@ public sealed class CertificateProbe : IWispHandler
                 "/subject" => Subject(der),
                 "/flags" => Flags(der),
                 "/disposed" => Disposed(der),
-                "/provider-disposed" => ProviderDisposed(der, false),
-                "/provider-disposed-raw" => ProviderDisposed(der, true),
-                "/provider-null" => ProviderNull(),
                 _ => throw new InvalidOperationException("Unknown certificate fixture operation.")
             };
         }
         catch (CryptographicException) { result = "CryptographicException"; }
-        catch (ObjectDisposedException) { result = "ObjectDisposedException"; }
-        catch (ArgumentNullException error) { result = "ArgumentNullException:" + error.ParamName; }
         catch (PlatformNotSupportedException error) { result = error.Message; }
         return Task.FromResult(Response.Text(result));
     }
@@ -129,20 +124,6 @@ public sealed class CertificateProbe : IWispHandler
         certificate.Dispose();
         certificate.Dispose();
         return Convert.ToHexString(certificate.RawData);
-    }
-
-    private static string ProviderDisposed(byte[] der, bool raw)
-    {
-        var certificate = Wisp.Runtime.CertificateValue.Parse(der);
-        certificate.Dispose();
-        certificate.Dispose();
-        return raw ? Convert.ToHexString(certificate.RawData) : certificate.SignatureAlgorithm;
-    }
-
-    private static string ProviderNull()
-    {
-        using var certificate = Wisp.Runtime.CertificateValue.ParseArray(null!);
-        return certificate.SignatureAlgorithm;
     }
 }
 #endif

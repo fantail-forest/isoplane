@@ -24,7 +24,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <InternalsVisibleTo Include="Wisp.AspNetCore.Tests" />
     <Compile Include="Abi/**/*.cs" />
     <Compile Include="Runtime/**/*.cs" />

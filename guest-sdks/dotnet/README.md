@@ -28,8 +28,12 @@ dotnet publish guests/dotnet/src/WispGuest.csproj -c Release
 ```
 
 `dotnet build` compiles IL for IDE diagnostics. Publishing compiles the PAL,
-links WASM, and rejects imports outside `wisp`. A guest's `build.sh` uses this
-same MSBuild integration and copies the module into `out/`.
+links WASM against the source-built runtime pack the local feed offers the
+profile (`guest-runtime/build.sh` builds and publishes both packs; see
+[the how-to](../../docs/userdocs/docs/how-to/build-a-csharp-guest.md#the-runtime-the-module-is-built-on)),
+records that pack's identity beside the module, and judges the module with
+`wisp doctor`. A guest's `build.sh` uses this same MSBuild integration and
+copies the module and its identity into `out/`.
 
 On macOS, install the .NET 10 SDK and start Docker Desktop or a compatible
 local Docker runtime. Publishing provisions the Linux compiler image and

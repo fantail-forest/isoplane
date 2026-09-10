@@ -1,6 +1,5 @@
 <Project>
   <PropertyGroup>
-    <_WispSdkDirectory>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</_WispSdkDirectory>
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
     <OutputType>Exe</OutputType>
@@ -14,22 +13,12 @@
     <Nullable>enable</Nullable>
     <DefineConstants>$(DefineConstants);WISP_MONO</DefineConstants>
     <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
-    <!-- The interpreter runs the WISP guest runtime pack built from source by
-         guest-runtime/build.sh, published to a local feed with a props file
-         naming its version and digest; a project outside this checkout
-         names its feed with WispGuestRuntimeFeed or WISP_GUEST_RUNTIME_FEED.
-         A published feed replaces this path later. The build pipeline (WasiApp.targets) comes from the Wasi SDK
-         pack built beside it, imported by Wisp.Guest.targets, not from the
-         installed workload's copy, whose link flags belong to its own
-         runtime pack. -->
-    <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == '' AND '$(WISP_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(WISP_GUEST_RUNTIME_FEED)'))</WispGuestRuntimeFeed>
-    <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == ''">$([MSBuild]::NormalizeDirectory('$(_WispSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</WispGuestRuntimeFeed>
+    <!-- The interpreter runs the feed's Mono runtime pack. The build
+         pipeline (WasiApp.targets) comes from the Wasi SDK pack built beside
+         it, imported by Wisp.Guest.targets, not from the installed
+         workload's copy, whose link flags belong to its own runtime pack. -->
     <UsingWasiRuntimeWorkload>false</UsingWasiRuntimeWorkload>
-  </PropertyGroup>
-  <Import Project="$(WispGuestRuntimeFeed)Wisp.GuestRuntime.props" Condition="Exists('$(WispGuestRuntimeFeed)Wisp.GuestRuntime.props')" />
-  <PropertyGroup>
     <RuntimeFrameworkVersion>$(WispGuestRuntimePackVersion)</RuntimeFrameworkVersion>
-    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(WispGuestRuntimeFeed)</RestoreAdditionalProjectSources>
   </PropertyGroup>
   <PropertyGroup Condition="'$(WispLocalDebug)' == 'true'">
     <WasmDebugLevel>1</WasmDebugLevel>
@@ -38,8 +27,4 @@
     <DebugSymbols>true</DebugSymbols>
     <Optimize>false</Optimize>
   </PropertyGroup>
-  <Target Name="WispRequireGuestRuntimeFeed" BeforeTargets="CollectPackageReferences;PrepareForBuild">
-    <Error Condition="'$(WispGuestRuntimePackVersion)' == ''"
-           Text="wisp: the guest runtime feed at $(WispGuestRuntimeFeed) has no Wisp.GuestRuntime.props; build the runtime pack with guest-runtime/build.sh or set WispGuestRuntimeFeed." />
-  </Target>
 </Project>

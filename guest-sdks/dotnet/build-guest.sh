@@ -42,8 +42,8 @@ if [ "$(printf '%s' "$PUBLISHED" | grep -c .)" != 1 ]; then
   exit 1
 fi
 : "${NAME:=$(basename "$PUBLISHED" .wasm)}"
-# A Mono publish records the runtime pack it linked beside the module; the
-# sidecar travels with the module so a test can attribute its result.
+# A publish records the pack it linked beside the module; the sidecar
+# travels with the module so a test can attribute its result.
 if [ -f "$PUBLISHED.runtime" ]; then
   cp "$PUBLISHED.runtime" "$OUT/$NAME.wasm.runtime"
 else

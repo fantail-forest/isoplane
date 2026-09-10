@@ -1304,18 +1304,6 @@ fn c_type(ty: Ty) -> &'static str {
     }
 }
 
-/// Generate the managed P/Invoke adaptation map as tab-separated records.
-pub fn managed_imports() -> String {
-    let mut output = String::new();
-    for definition in DEFINITIONS {
-        output.push_str(&format!(
-            "{}\t{}\t{}\t{}\n",
-            definition.pal.module, definition.pal.func, definition.capability, definition.id.0
-        ));
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1324,14 +1312,6 @@ mod tests {
             super::native_wrappers(),
             include_str!("../../../../guest-sdks/dotnet/native/wisp_native_io.h"),
             "regenerate the native I/O header from its ABI example"
-        );
-    }
-    #[test]
-    fn managed_imports_match_the_canonical_definition() {
-        assert_eq!(
-            super::managed_imports(),
-            include_str!("../../../../guest-sdks/dotnet/Build/RuntimeAdapter/NativeImports.tsv"),
-            "regenerate the managed native I/O map from its ABI example"
         );
     }
 }

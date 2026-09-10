@@ -1,14 +1,39 @@
 <Project>
   <PropertyGroup>
     <WispGuestRuntime Condition="'$(WispGuestRuntime)' == ''">NativeAOT</WispGuestRuntime>
-    <WispManagedRuntimeVersion>10.0.11</WispManagedRuntimeVersion>
     <WispMemoryMaxBytes Condition="'$(WispMemoryMaxBytes)' == ''">134217728</WispMemoryMaxBytes>
+    <_WispSdkDirectory>$(MSBuildThisFileDirectory)</_WispSdkDirectory>
+    <!-- Both profiles run the WISP guest runtime built from source by
+         guest-runtime/build.sh: the Mono runtime pack and the NativeAOT
+         framework pack, published to a local feed with a props file naming
+         each pack's version and digest. A project outside this checkout
+         names its feed with WispGuestRuntimeFeed or WISP_GUEST_RUNTIME_FEED;
+         a published feed replaces this path later. -->
+    <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == '' AND '$(WISP_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(WISP_GUEST_RUNTIME_FEED)'))</WispGuestRuntimeFeed>
+    <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == ''">$([MSBuild]::NormalizeDirectory('$(_WispSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</WispGuestRuntimeFeed>
   </PropertyGroup>
+  <Import Project="$(WispGuestRuntimeFeed)Wisp.GuestRuntime.props" Condition="Exists('$(WispGuestRuntimeFeed)Wisp.GuestRuntime.props')" />
+  <PropertyGroup>
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(WispGuestRuntimeFeed)</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The libc and System.Native symbols the link wraps: the PAL objects
+         answer the socket and file calls through the host interface, and the
+         runtime pack's System.Native observes a socket's pollables through
+         libc's poll and recovers the network error code libc drops from a
+         failed stream operation. -->
+    <WispWrappedSymbol Include="SystemNative_MksTemps;socket;close;getsockopt;setsockopt;send;sendmsg" />
+    <WispWrappedSymbol Include="poll_poll;streams_method_input_stream_read;streams_method_output_stream_check_write;streams_method_output_stream_write" />
+  </ItemGroup>
   <Import Project="Wisp.NativeAot.props" Condition="'$(WispGuestRuntime)' == 'NativeAOT'" />
   <Import Project="Build/Wisp.Mono.props" Condition="'$(WispGuestRuntime)' == 'Mono'" />
   <Target Name="WispValidateRuntimeProfile" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(WispLocalDebug)' == 'true' AND '$(WispGuestRuntime)' != 'Mono'" Text="Local debugging requires WispGuestRuntime=Mono." />
     <Error Condition="'$(WispGuestRuntime)' != 'NativeAOT' AND '$(WispGuestRuntime)' != 'Mono'"
            Text="WispGuestRuntime must be NativeAOT or Mono." />
+  </Target>
+  <Target Name="WispRequireGuestRuntimeFeed" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(WispGuestRuntimePackVersion)' == '' OR '$(WispGuestNativeAotPackVersion)' == ''"
+           Text="wisp: the guest runtime feed at $(WispGuestRuntimeFeed) has no Wisp.GuestRuntime.props naming both packs; build them with guest-runtime/build.sh or set WispGuestRuntimeFeed." />
   </Target>
 </Project>
