@@ -30,6 +30,7 @@ pub mod bindings;
 pub mod breaker;
 pub mod cell;
 pub mod cpu_clock;
+pub mod debug;
 pub mod dispatcher;
 pub mod disposition;
 pub mod egress;

@@ -7,6 +7,7 @@
   <Import Project="Wisp.NativeAot.props" Condition="'$(WispGuestRuntime)' == 'NativeAOT'" />
   <Import Project="Build/Wisp.Mono.props" Condition="'$(WispGuestRuntime)' == 'Mono'" />
   <Target Name="WispValidateRuntimeProfile" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(WispLocalDebug)' == 'true' AND '$(WispGuestRuntime)' != 'Mono'" Text="Local debugging requires WispGuestRuntime=Mono." />
     <Error Condition="'$(WispGuestRuntime)' != 'NativeAOT' AND '$(WispGuestRuntime)' != 'Mono'"
            Text="WispGuestRuntime must be NativeAOT or Mono." />
   </Target>

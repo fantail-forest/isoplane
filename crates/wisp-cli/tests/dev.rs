@@ -453,3 +453,120 @@ async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_time
     );
     dev.stop();
 }
+
+fn installed_debug_acceptance(mode: &str) {
+    let launcher = std::env::var_os("WISP_DEBUG_ADAPTER_LAUNCHER")
+        .expect("set WISP_DEBUG_ADAPTER_LAUNCHER to the external Mono DAP adapter launcher");
+    let python = std::env::var_os("WISP_DAP_PYTHON").expect(
+        "set WISP_DAP_PYTHON to a Python interpreter with debugpy installed for DAP framing",
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let app = wisp_fixtures::aspnet_project(directory.path());
+    let source = app.join("Application.cs");
+    let original = std::fs::read_to_string(&source).unwrap();
+    let modified = original.replace(
+        "app.MapGet(\"/\", () => \"Hello from Isoplane!\");",
+        "app.MapGet(\"/\", Handle);",
+    );
+    let position = modified.rfind('}').unwrap();
+    let handler = r#"
+    private static async Task<string> Handle()
+    {
+        int answer = 42;
+        Task delay = Task.Delay(100);
+        if (delay.IsCompleted) throw new InvalidOperationException("host timer must be incomplete before awaiting");
+        await delay;
+        bool resumed = true;
+        return resumed ? answer.ToString() : throw new InvalidOperationException("continuation did not run");
+    }
+"#;
+    std::fs::write(
+        &source,
+        format!(
+            "{}{}{}",
+            &modified[..position],
+            handler,
+            &modified[position..]
+        ),
+    )
+    .unwrap();
+    let cli = wisp_fixtures::managed_cli(
+        directory.path(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
+        &app,
+    );
+    let mut dev = Dev::start_managed_with_args(&app, &cli, &["--debug", "--no-watch"]);
+    let metadata = dev
+        .debugger
+        .as_ref()
+        .expect("debug CLI must report its exact relay and module/symbol pair");
+    let driver =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
+    let result = std::process::Command::new(python)
+        .arg(driver)
+        .arg(launcher)
+        .arg(metadata["endpoint"].as_str().unwrap())
+        .arg(&dev.url)
+        .arg(source)
+        .arg(dev.pid().to_string())
+        .arg(mode)
+        .arg(metadata["module"].as_str().unwrap())
+        .output()
+        .expect("run the real external Mono DAP adapter acceptance driver");
+    assert!(
+        result.status.success(),
+        "installed debug {mode} acceptance failed: {}{}\nRuntime output:\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr),
+        dev.diagnostics()
+    );
+    dev.wait_exit();
+}
+
+#[test]
+fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
+    installed_debug_acceptance("continue");
+}
+
+#[test]
+fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
+    installed_debug_acceptance("stop");
+}
+
+#[test]
+fn installed_debug_options_reject_watch_and_nativeaot_before_publication() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = wisp_fixtures::aspnet_project(directory.path());
+    let cli = wisp_fixtures::managed_cli(
+        directory.path(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
+        &app,
+    );
+    for (arguments, diagnostic) in [
+        (vec!["--debug"], "--debug requires --no-watch"),
+        (
+            vec!["--debug", "--no-watch", "--guest-runtime", "nativeaot"],
+            "--debug requires the Mono guest runtime",
+        ),
+    ] {
+        let result = std::process::Command::new(&cli)
+            .args(["dev", "--project"])
+            .arg(&app)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            !result.status.success(),
+            "unsupported debug modes must fail before publication"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+            "debug mode rejection must explain the supported workflow: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            !app.join(".wisp/debug").exists(),
+            "invalid debug options must not create a session"
+        );
+    }
+}

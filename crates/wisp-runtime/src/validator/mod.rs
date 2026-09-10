@@ -78,6 +78,22 @@ pub fn validate(
     wasm: &[u8],
     budgets: Limits,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
+    validate_for_execution(wasm, budgets, false)
+}
+
+/// Validates an explicitly marked local debugger artifact with all sandbox checks retained.
+pub fn validate_local_debug(
+    wasm: &[u8],
+    budgets: Limits,
+) -> std::result::Result<ValidationReport, Vec<Violation>> {
+    validate_for_execution(wasm, budgets, true)
+}
+
+fn validate_for_execution(
+    wasm: &[u8],
+    budgets: Limits,
+    local_debug: bool,
+) -> std::result::Result<ValidationReport, Vec<Violation>> {
     let mut v = Vec::new();
     let mut report = ValidationReport {
         module_bytes: wasm.len() as u64,
@@ -95,6 +111,16 @@ pub fn validate(
 
     match scan(wasm) {
         Ok(scan) => {
+            if scan.local_debug != local_debug {
+                v.push(Violation::about(ViolationCode::LocalDebugArtifact,
+                    wisp_abi::LOCAL_DEBUG_SECTION,
+                    if scan.local_debug {
+                        "local debugger artifacts cannot be deployed or prepared; publish without local debugging"
+                    } else {
+                        "local debugging requires an explicitly marked raw debug artifact"
+                    }));
+            }
+
             check_imports(&scan, &mut report, &mut v);
             check_exports(&scan, &mut report, &mut v);
             check_memory(&scan, budgets, &mut report, &mut v);

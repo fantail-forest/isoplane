@@ -74,8 +74,44 @@ checks the workload target and native SDK before linking; a different
 workload is rejected rather than silently adapting it.
 
 The installed-template HTTP and ordinary `Task.Delay` workflow is tested on
-Linux. This does not establish Mono debugging support, macOS or Windows
-publication, or full cryptography compatibility.
+Linux. This does not establish macOS or Windows publication, or full cryptography
+compatibility.
+
+## Debug one local request
+
+On Linux, the installed .NET CLI can start a fresh Mono debug session:
+
+```bash
+isoplane dev --debug --no-watch
+```
+
+This requires the Mono publication prerequisites above and an external
+Mono-compatible DAP adapter. The tested adapter is Microsoft `mono-debug`
+0.16.3 running under Ubuntu Mono 6.8.0.105+dfsg-3.6ubuntu2, with its framework
+assemblies and configuration. The adapter also requires `netstandard.dll`
+from the pinned .NET SDK's
+`Microsoft/Microsoft.NET.Build.Extensions/net461/lib/` directory beside
+`mono-debug.exe`; the unmodified VSIX alone is insufficient. The CLI does not
+redistribute this adapter, facade, or host runtime. Attach the adapter to the printed loopback debugger endpoint, then request the printed
+HTTP URL. Guest initialization starts with that request, so an adapter attach
+can wait until the request arrives.
+
+The session serves one request and exits after its response. Breakpoints,
+local inspection, and stepping across an ordinary incomplete `Task.Delay`
+are tested against the actual HTTP listener. Debug output and matching symbols
+live in a separate private session directory and are removed when the CLI
+exits; ordinary publication output is preserved. NativeAOT and source watching
+are rejected with `--debug`.
+
+Use Ctrl-C in the CLI to stop a paused guest and its owned child processes.
+Reliable adapter detach while stopped is not supported. The loopback debugger
+relay assumes a trusted local developer machine; it does not authenticate
+other local processes.
+
+The installed debugger acceptance tests require `WISP_DEBUG_ADAPTER_LAUNCHER`
+to name an executable external adapter launcher and `WISP_DAP_PYTHON` to name
+a Python interpreter with `debugpy` for DAP framing. They do not download or
+redistribute the adapter.
 
 ## Scope of local testing
 

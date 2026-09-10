@@ -14,29 +14,24 @@ use wisp_runtime::sockets::{GatedSocketSink, ProxySocketOps};
 
 use super::project::Project;
 
+enum PreparedActivator {
+    Ordinary(Arc<EngineActivator>),
+    Debug(Arc<wisp_host::debug::DebugActivator>),
+}
+
+/// Validated guest code ready to register with local services.
 pub struct Prepared {
-    activator: Arc<EngineActivator>,
+    activator: PreparedActivator,
     manifest: AppManifest,
     tenant: String,
     version: String,
 }
 
 impl Prepared {
+    /// Validates and pre-initializes an ordinary local application.
     pub fn build(project: &Project, wasm: &[u8]) -> anyhow::Result<Self> {
         let manifest = project.manifest.clone();
-        let report = wisp_runtime::validate(wasm, manifest.limits).map_err(|violations| {
-            anyhow::anyhow!(
-                "module rejected:\n{}",
-                violations
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        })?;
-        let compressed_bytes = zstd::encode_all(wasm, 19)?.len() as u64;
-        let limit = manifest.limits.module_bytes_compressed;
-        anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
+        let report = validate(project, wasm, false)?;
         let version = blake3::hash(wasm).to_hex().to_string();
         let template = if report.has_initialize() {
             wisp_runtime::PreInitializer::new()
@@ -58,7 +53,28 @@ impl Prepared {
         let module = ModuleId::new(&manifest.name, &version);
         let activator = Arc::new(EngineActivator::load(engine, module, &template)?);
         Ok(Self {
-            activator,
+            activator: PreparedActivator::Ordinary(activator),
+            manifest,
+            tenant: project.tenant.clone(),
+            version,
+        })
+    }
+    /// Validates and compiles a marked debug module without pre-initialization.
+    pub fn build_debug(project: &Project, wasm: &[u8]) -> anyhow::Result<Self> {
+        validate(project, wasm, true)?;
+        let manifest = project.manifest.clone();
+        let version = blake3::hash(wasm).to_hex().to_string();
+        let engine = Arc::new(wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+            pooling: false,
+            max_memory_bytes: manifest.limits.instance_memory_max,
+            ..Default::default()
+        })?);
+        let module = ModuleId::new(&manifest.name, &version);
+        let activator = Arc::new(wisp_host::debug::DebugActivator::load(
+            engine, module, wasm,
+        )?);
+        Ok(Self {
+            activator: PreparedActivator::Debug(activator),
             manifest,
             tenant: project.tenant.clone(),
             version,
@@ -66,20 +82,70 @@ impl Prepared {
     }
 }
 
+fn validate(
+    project: &Project,
+    wasm: &[u8],
+    local_debug: bool,
+) -> anyhow::Result<wisp_runtime::ValidationReport> {
+    let manifest = &project.manifest;
+    let admission = if local_debug {
+        wisp_runtime::validate_local_debug(wasm, manifest.limits)
+    } else {
+        wisp_runtime::validate(wasm, manifest.limits)
+    };
+    let report = admission.map_err(|violations| {
+        anyhow::anyhow!(
+            "module rejected:\n{}",
+            violations
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+    let compressed_bytes = zstd::encode_all(wasm, 19)?.len() as u64;
+    let limit = manifest.limits.module_bytes_compressed;
+    anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
+    Ok(report)
+}
+
+/// A local application using the shared cell, proxy and persistent host services.
 pub struct LocalApp {
+    /// Owns guest dispatch and resource cleanup.
     pub cell: Arc<Cell>,
+    /// Routes local HTTP through the shared request pipeline.
     pub proxy: Arc<wisp_proxy::Proxy>,
     target: RouteTarget,
     _scratch: tempfile::TempDir,
 }
 
 impl LocalApp {
+    /// Registers ordinary prepared code with local state.
     pub async fn start(prepared: Prepared, data: &Path) -> anyhow::Result<Arc<Self>> {
+        Self::start_with_peer(prepared, data, None).await
+    }
+
+    /// Registers raw debug code with the exact session peer allowed through egress.
+    pub async fn start_debug(
+        prepared: Prepared,
+        data: &Path,
+        peer: super::debug::DebugPeer,
+    ) -> anyhow::Result<Arc<Self>> {
+        Self::start_with_peer(prepared, data, Some(peer)).await
+    }
+
+    async fn start_with_peer(
+        prepared: Prepared,
+        data: &Path,
+        peer: Option<super::debug::DebugPeer>,
+    ) -> anyhow::Result<Arc<Self>> {
         let network = wisp_runtime::network::NetworkLimits::default();
-        let egress = Arc::new(wisp_host::HostEgressPolicy::system(
-            network.connections,
-            network.egress_bytes,
-        )?);
+        let mut egress =
+            wisp_host::HostEgressPolicy::system(network.connections, network.egress_bytes)?;
+        if let Some(peer) = peer {
+            egress = egress.with_destinations(Arc::new(peer));
+        }
+        let egress = Arc::new(egress);
         std::fs::create_dir_all(data)?;
         let scratch = tempfile::tempdir_in(data)?;
         let metrics = Arc::new(wisp_proxy::ProxyMetrics::new());
@@ -126,19 +192,23 @@ impl LocalApp {
                 network.inline_response_bytes,
             )),
         });
-        let cell = Cell::new(
-            CellConfig {
-                name: prepared.manifest.name.clone(),
+        let mut config = CellConfig {
+            name: prepared.manifest.name.clone(),
 
-                ..Default::default()
-            },
-            services,
-        )?;
-        cell.register_module(
-            &prepared.tenant,
-            prepared.activator,
-            prepared.manifest.clone(),
-        )?;
+            ..Default::default()
+        };
+        if matches!(prepared.activator, PreparedActivator::Debug(_)) {
+            config.wall_ms_cap = wisp_host::debug::DEBUG_BUDGET_MS;
+        }
+        let cell = Cell::new(config, services)?;
+        match prepared.activator {
+            PreparedActivator::Ordinary(activator) => {
+                cell.register_module(&prepared.tenant, activator, prepared.manifest.clone())?
+            }
+            PreparedActivator::Debug(activator) => {
+                cell.register_debug_module(&prepared.tenant, activator, prepared.manifest.clone())?
+            }
+        }
         let target = RouteTarget {
             app: prepared.manifest.name,
             tenant: prepared.tenant,

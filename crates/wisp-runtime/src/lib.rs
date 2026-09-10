@@ -8,7 +8,7 @@ pub mod validator;
 
 #[cfg(feature = "preinit")]
 pub use preinit::{PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};
-pub use validator::{validate, ValidationReport, Violation, ViolationCode};
+pub use validator::{validate, validate_local_debug, ValidationReport, Violation, ViolationCode};
 
 pub mod network;
 #[cfg(feature = "local")]

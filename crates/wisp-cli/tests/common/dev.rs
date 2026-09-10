@@ -11,6 +11,7 @@ pub struct Dev {
     child: Child,
     lines: Receiver<String>,
     pub url: String,
+    pub debugger: Option<serde_json::Value>,
     output_timeout: Duration,
 }
 
@@ -86,6 +87,7 @@ impl Dev {
             child,
             lines,
             url: String::new(),
+            debugger: None,
             output_timeout,
         };
         let ready = dev.wait_event("ready");
@@ -117,6 +119,11 @@ impl Dev {
                 !line.starts_with("invalid machine output:"),
                 "dev --json must reserve stdout for structured records: {line}"
             );
+            if let Ok(record) = serde_json::from_str::<serde_json::Value>(&line) {
+                if record["event"] == "debugger_ready" {
+                    self.debugger = Some(record);
+                }
+            }
             output.push_str(&line);
             output.push('\n');
             if matches(&line) {
@@ -134,6 +141,18 @@ impl Dev {
             status.success(),
             "the local process must receive its shutdown signal"
         );
+        self.wait_exit();
+    }
+
+    pub fn diagnostics(&self) -> String {
+        self.lines.try_iter().collect::<Vec<_>>().join("\n")
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn wait_exit(&mut self) {
         let deadline = std::time::Instant::now() + Duration::from_secs(120);
         let status = loop {
             if let Some(status) = self.child.try_wait().unwrap() {

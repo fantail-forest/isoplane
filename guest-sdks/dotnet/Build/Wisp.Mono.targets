@@ -46,7 +46,8 @@
     <WriteLinesToFile File="$(_WispMonoDir)mono_assembly.h" Lines="#define WISP_MONO_ASSEMBLY &quot;$(AssemblyName)&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <Copy SourceFiles="$(_WispSdkDirectory)native/mono_entry.c" DestinationFiles="$(_WispMonoDir)mono_entry.c" />
     <ItemGroup>
-      <NativeFileReference Include="$(_WispMonoDir)mono_entry.c;$(_WispSdkDirectory)native/wisp_pal.c;$(_WispSdkDirectory)native/wisp_clock.c" />
+      <NativeFileReference Include="$(_WispMonoDir)mono_entry.c;$(_WispSdkDirectory)native/wisp_clock.c" />
+      <NativeFileReference Include="$(_WispSdkDirectory)native/wisp_pal.c" Condition="'$(WispLocalDebug)' != 'true'" />
       <FileWrites Include="$(_WispMonoDir)mono_entry.c;$(_WispMonoDir)mono_assembly.h" />
     </ItemGroup>
   </Target>
@@ -85,4 +86,5 @@
       <_WasmLLVMPathForAOT>$(WasiSdkBinPath)</_WasmLLVMPathForAOT>
     </PropertyGroup>
   </Target>
+  <Import Project="Wisp.Mono.Debug.targets" Condition="'$(WispLocalDebug)' == 'true'" />
 </Project>

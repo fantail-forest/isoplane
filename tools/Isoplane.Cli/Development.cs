@@ -38,6 +38,8 @@ internal static class Development
 
     private static async Task<int> RunOwnedAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
     {
+        if (options.Debug)
+            return await DebugDevelopment.RunAsync(options, runtime, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
         var result = await BuildAsync(options.Directory, runtime, changes, options.Json, options.GuestRuntime, lifetime.Token);
@@ -138,7 +140,7 @@ internal static class Development
         }
     }
 
-    private static async Task<string> ModuleAsync(string directory, string runtime, CancellationToken cancellation)
+    internal static async Task<string> ModuleAsync(string directory, string runtime, CancellationToken cancellation)
     {
         using var process = Processes.Start(runtime, ["project", "--directory", directory], directory, runtime, captureOutput: true);
         try

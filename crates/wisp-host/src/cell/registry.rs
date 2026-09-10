@@ -5,6 +5,7 @@ use super::*;
 pub(super) struct ModuleEntry {
     pub(super) tenant: String,
     pub(super) limits: Limits,
+    pub(super) debug_cpu_ms: Option<u32>,
     pub(super) manifest: AppManifest,
     pub(super) activator: Arc<dyn Activator>,
     pub(super) pool: InstancePool,
@@ -48,6 +49,37 @@ impl Cell {
         activator: Arc<dyn Activator>,
         manifest: AppManifest,
     ) -> crate::Result<()> {
+        self.register_execution(tenant, activator, manifest, None)
+    }
+
+    /// Registers a fresh local debug guest with no idle pooling or capture.
+    /// The caller must use the local debug wall backstop for its cell.
+    pub fn register_debug_module(
+        self: &Arc<Self>,
+        tenant: &str,
+        activator: Arc<crate::debug::DebugActivator>,
+        mut manifest: AppManifest,
+    ) -> crate::Result<()> {
+        anyhow::ensure!(
+            self.cfg.wall_ms_cap == crate::debug::DEBUG_BUDGET_MS,
+            "local debugging requires its explicit cell wall backstop"
+        );
+        manifest.handlers.lifecycle = HandlerLifecycle::Fresh;
+        self.register_execution(
+            tenant,
+            activator,
+            manifest,
+            Some(crate::debug::DEBUG_BUDGET_MS),
+        )
+    }
+
+    fn register_execution(
+        self: &Arc<Self>,
+        tenant: &str,
+        activator: Arc<dyn Activator>,
+        manifest: AppManifest,
+        debug_cpu_ms: Option<u32>,
+    ) -> crate::Result<()> {
         anyhow::ensure!(
             !tenant.trim().is_empty(),
             "module registration requires tenant identity"
@@ -64,8 +96,17 @@ impl Cell {
         let entry = ModuleEntry {
             tenant: tenant.to_string(),
             limits,
+            debug_cpu_ms,
             manifest,
-            pool: InstancePool::new(activator.clone(), lifecycle, self.cfg.max_idle_per_module),
+            pool: InstancePool::new(
+                activator.clone(),
+                lifecycle,
+                if debug_cpu_ms.is_some() {
+                    0
+                } else {
+                    self.cfg.max_idle_per_module
+                },
+            ),
             activator,
             meters: Arc::new(Meters::new()),
         };

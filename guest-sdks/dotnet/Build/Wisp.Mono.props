@@ -16,6 +16,13 @@
     <DefineConstants>$(DefineConstants);WISP_MONO</DefineConstants>
     <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(WispLocalDebug)' == 'true'">
+    <WasmDebugLevel>1</WasmDebugLevel>
+    <DebuggerSupport>true</DebuggerSupport>
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
   <ItemGroup>
     <PackageDownload Include="Microsoft.NETCore.App.Runtime.linux-x64" Version="[$(WispManagedRuntimeVersion)]" />
   </ItemGroup>

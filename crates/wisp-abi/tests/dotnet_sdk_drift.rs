@@ -291,3 +291,19 @@ fn managed_entropy_chunks_match_the_host_out_buffer_limit() {
         "managed entropy must chunk at the canonical host buffer limit"
     );
 }
+
+#[test]
+fn local_debug_artifact_marker_matches_the_sdk_emitter() {
+    let source = sdk_file("../Build/MonoDebugManifest.cs");
+    let prefix = "private const string LocalDebugSection = \"";
+    let marker = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix))
+        .and_then(|value| value.strip_suffix("\";"))
+        .expect("the SDK emitter must declare its local debug section name");
+    assert_eq!(
+        marker,
+        wisp_abi::LOCAL_DEBUG_SECTION,
+        "the SDK debug artifact marker must match the host contract"
+    );
+}

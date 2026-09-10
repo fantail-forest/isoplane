@@ -25,6 +25,7 @@ pub(super) struct Scan {
     pub(super) element_segments: u32,
     pub(super) data_segments: u32,
     pub(super) nested: bool,
+    pub(super) local_debug: bool,
 }
 
 pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
@@ -104,6 +105,7 @@ pub(super) fn scan(wasm: &[u8]) -> anyhow::Result<Scan> {
                 s.code_entries += 1;
             }
             Payload::CustomSection(c) => {
+                s.local_debug |= c.name() == wisp_abi::LOCAL_DEBUG_SECTION;
                 s.custom_section_bytes += c.data().len() as u64;
                 if c.data().len() as u64 > s.largest_custom.1 {
                     s.largest_custom = (c.name().to_string(), c.data().len() as u64);

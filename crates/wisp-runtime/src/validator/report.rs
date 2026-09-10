@@ -5,6 +5,8 @@ use wisp_abi::pal::PalDef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViolationCode {
+    /// The artifact belongs to a different local-debug execution mode.
+    LocalDebugArtifact,
     /// **V1** — component types fail to match the declared world, or any
     /// import lies outside the world's allowlist.
     V1UndeclaredImport,

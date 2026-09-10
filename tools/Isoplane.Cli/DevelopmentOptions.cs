@@ -2,7 +2,7 @@ namespace Wisp.Cli;
 
 internal enum GuestRuntimeProfile { NativeAot, Mono }
 
-internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, GuestRuntimeProfile? GuestRuntime)
+internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, GuestRuntimeProfile? GuestRuntime, bool Debug)
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
@@ -10,6 +10,7 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         ushort? port = null;
         var watch = true;
         var json = false;
+        var debug = false;
         var shutdownOnInputClose = false;
         GuestRuntimeProfile? guestRuntime = null;
         for (var index = 0; index < arguments.Length; index++)
@@ -32,6 +33,9 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                         _ => throw new ArgumentException("--guest-runtime must be mono or nativeaot.")
                     };
                     break;
+                case "--debug":
+                    debug = true;
+                    break;
                 case "--json":
                     json = true;
                     break;
@@ -45,12 +49,16 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                     throw new ArgumentException($"Invalid or incomplete option '{arguments[index]}'. Run isoplane --help.");
             }
         }
+        if (debug && watch)
+            throw new ArgumentException("--debug requires --no-watch; each debug session handles one request.");
+        if (debug && guestRuntime == GuestRuntimeProfile.NativeAot)
+            throw new ArgumentException("--debug requires the Mono guest runtime.");
         if (!System.IO.Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}");
         if (!File.Exists(Path.Combine(directory, "wisp.toml")))
             throw new ArgumentException($"No wisp.toml in {directory}; create a project with dotnet new isoplane-web.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
-        return new(directory, port, watch, json, shutdownOnInputClose, guestRuntime);
+        return new(directory, port, watch, json, shutdownOnInputClose, guestRuntime, debug);
     }
 }

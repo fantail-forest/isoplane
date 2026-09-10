@@ -1,0 +1,24 @@
+<Project>
+  <UsingTask TaskName="WispMonoDebugSymbols" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoDebugSymbols.cs" /></Task>
+  </UsingTask>
+  <UsingTask TaskName="WispMonoDebugManifest" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoDebugManifest.cs" /></Task>
+  </UsingTask>
+  <ItemGroup>
+    <LinkerArg Include="-Wl,--wrap=printf,--wrap=fprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=puts,--wrap=fputs" />
+  </ItemGroup>
+  <Target Name="WispMonoDebugNative" AfterTargets="WispMonoNativeEntry">
+    <WispMonoDebugSymbols Symbols="$(IntermediateOutputPath)linked/$(AssemblyName).pdb" Endpoint="$(WispDebugEndpoint)" Output="$(_WispMonoDir)mono_debug.h" />
+    <WriteLinesToFile File="$(_WispMonoDir)mono_assembly.h" Lines="#define WISP_LOCAL_DEBUG 1" Overwrite="false" />
+    <ItemGroup>
+      <NativeFileReference Include="$(_WispSdkDirectory)native/wisp_debug_pal.c;$(_WispSdkDirectory)native/mono_debug_log.c" />
+      <FileWrites Include="$(_WispMonoDir)mono_debug.h" />
+    </ItemGroup>
+  </Target>
+  <Target Name="WispMonoDebugPublish" AfterTargets="WispMonoPublishCore">
+    <Copy SourceFiles="$(IntermediateOutputPath)linked/$(AssemblyName).pdb" DestinationFiles="$(PublishDir)$(AssemblyName).pdb" />
+    <WispMonoDebugManifest Module="$(NativeBinary)" Symbols="$(PublishDir)$(AssemblyName).pdb" Endpoint="$(WispDebugEndpoint)" Output="$(PublishDir)$(AssemblyName).debug.xml" />
+    <ItemGroup><FileWrites Include="$(PublishDir)$(AssemblyName).pdb;$(PublishDir)$(AssemblyName).debug.xml" /></ItemGroup>
+  </Target>
+</Project>

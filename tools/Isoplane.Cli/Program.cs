@@ -12,7 +12,7 @@ try
     }
     if (args.Length == 0 || args is ["--help"] or ["-h"])
     {
-        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--json] [--shutdown-on-stdin-close]\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
+        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request with an external Mono debugger.\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
         return 0;
     }
     using var cancellation = new CancellationTokenSource();

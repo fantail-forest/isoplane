@@ -491,3 +491,52 @@ fn engine_profile_has_the_dangerous_proposals_off() {
     assert!(f.multi_value());
     assert!(f.sign_extension());
 }
+
+fn debug_wasm(wat: &str) -> Vec<u8> {
+    let marked = wat.replacen(
+        "(module",
+        &format!("(module (@custom \"{}\")", wisp_abi::LOCAL_DEBUG_SECTION),
+        1,
+    );
+    parse(&marked)
+}
+
+#[test]
+fn a_local_debug_artifact_is_rejected_by_normal_admission() {
+    let wasm = debug_wasm(&clean_wat());
+    assert!(
+        codes(&wasm, Limits::default()).contains(&V::LocalDebugArtifact),
+        "normal deployment must refuse a local debugger artifact"
+    );
+    assert!(
+        validator::validate_local_debug(&wasm, Limits::default()).is_ok(),
+        "explicit local debug admission must accept an otherwise valid marked module"
+    );
+}
+
+#[test]
+fn explicit_debug_validation_still_rejects_forbidden_imports() {
+    let wasm = debug_wasm(&format!(
+        "(module (import \"evil\" \"escape\" (func)) {REQUIRED_EXPORTS})"
+    ));
+    let errors = validator::validate_local_debug(&wasm, Limits::default())
+        .expect_err("debug mode cannot bypass sandbox admission");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.code == V::V1UndeclaredImport),
+        "the undeclared capability must remain forbidden in local debugging"
+    );
+}
+
+#[test]
+fn explicit_debug_validation_requires_a_marked_artifact() {
+    let errors = validator::validate_local_debug(&parse(&clean_wat()), Limits::default())
+        .expect_err("normal publication cannot accidentally select debug execution");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.code == V::LocalDebugArtifact),
+        "an unmarked artifact must fail the explicit debug gate"
+    );
+}

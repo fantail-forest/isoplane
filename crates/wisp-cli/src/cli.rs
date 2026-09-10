@@ -69,6 +69,22 @@ pub enum Cmd {
         poll_ms: u64,
     },
 
+    /// Serve one local debug request from a session-owned raw Mono module.
+    Debug {
+        /// Project directory establishing application and tenant identity.
+        #[arg(long)]
+        project: PathBuf,
+        /// Raw debug module paired with this session's symbols.
+        #[arg(long)]
+        module: PathBuf,
+        /// Exact session-owned IPv4 loopback debugger relay.
+        #[arg(long)]
+        debug_endpoint: std::net::SocketAddr,
+        /// Local HTTP port; zero selects an available port.
+        #[arg(long, default_value_t = wisp_abi::config::DEFAULT_PROXY_PORT)]
+        port: u16,
+    },
+
     /// Print a module's capability manifest and the validator's verdict on
     /// it, judged against the app's limits. Needs no node. Exits 2 if the
     /// module would be rejected.

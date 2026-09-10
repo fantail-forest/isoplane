@@ -250,6 +250,7 @@ mod queue_tests {
         ));
         let entry = Arc::new(super::super::ModuleEntry {
             tenant: "queue-test".into(),
+            debug_cpu_ms: None,
             limits: Limits::default(),
             manifest: wisp_abi::config::AppManifest {
                 name: "queue-test".into(),

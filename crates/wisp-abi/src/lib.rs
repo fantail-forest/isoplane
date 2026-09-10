@@ -21,6 +21,9 @@ pub use dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead, };
 pub use result::{FutureError, ResultRecord};
 pub use status::{PollStatus, TrapCode};
 
+/// Custom section identifying artifacts restricted to a local debugger session.
+pub const LOCAL_DEBUG_SECTION: &str = "wisp.local-debug";
+
 /// The version of the guest host-interface contract.
 pub const ABI_REV: u32 = 1;
 

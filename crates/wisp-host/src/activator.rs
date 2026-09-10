@@ -62,6 +62,10 @@ impl EngineActivator {
         Ok((Self::new(engine, template, module), compiled))
     }
 
+    pub(crate) fn activate_raw(&self, bindings: Box<dyn HostBindings>) -> crate::Result<Instance> {
+        self.engine.activate(&self.template, bindings)
+    }
+
     pub fn template(&self) -> &Template {
         &self.template
     }

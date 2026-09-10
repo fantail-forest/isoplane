@@ -1,6 +1,7 @@
 //! Build, serve and reload a local project using the shared guest runtime.
 
 mod build;
+pub mod debug;
 mod project;
 mod runtime;
 
@@ -42,15 +43,7 @@ pub struct DevOpts {
 pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     anyhow::ensure!(opts.poll_ms > 0, "--poll-ms must be greater than zero");
     let project = load(&opts)?;
-    let work = project.root.join(".wisp");
-    std::fs::create_dir_all(&work)?;
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(work.join("dev.lock"))?;
-    let mut lock = fd_lock::RwLock::new(file);
+    let mut lock = project_lock(&project.root)?;
     let _owner = lock.try_write().context(
         "opening local development state; another wisp dev may already own this project",
     )?;
@@ -79,6 +72,18 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     app.proxy.shutdown_sockets();
     tokio::task::spawn_blocking(move || app.cell.shutdown()).await?;
     result
+}
+
+fn project_lock(root: &Path) -> anyhow::Result<fd_lock::RwLock<std::fs::File>> {
+    let work = root.join(".wisp");
+    std::fs::create_dir_all(&work)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(work.join("dev.lock"))?;
+    Ok(fd_lock::RwLock::new(file))
 }
 
 fn load(opts: &DevOpts) -> anyhow::Result<Project> {
@@ -216,7 +221,7 @@ async fn serve_connection<S>(
     }
 }
 
-async fn stop_connections(connections: &mut JoinSet<()>) {
+async fn stop_connections<T: 'static>(connections: &mut JoinSet<T>) {
     connections.abort_all();
     while let Some(joined) = connections.join_next().await {
         if let Err(e) = joined {
