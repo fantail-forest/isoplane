@@ -71,10 +71,4 @@
     </ReadLinesFromFile>
     <Delete Files="@(_WispFilesToClean);$(IntermediateOutputPath)$(MSBuildProjectFile).Wisp.FileListAbsolute.txt" />
   </Target>
-
-  <Target Name="WispValidateImports" AfterTargets="LinkNative"
-          BeforeTargets="WispValidateModule"
-          Condition="'$(WispContainerBuild)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
-    <Exec Command="bash &quot;$(_WispSdkDirectory)Build/validate-module.sh&quot; &quot;$(NativeBinary)&quot;" />
-  </Target>
 </Project>

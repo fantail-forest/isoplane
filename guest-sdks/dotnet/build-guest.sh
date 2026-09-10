@@ -22,12 +22,17 @@ fi
 OUT="${WISP_OUT_DIR:-$HERE/out}"
 NAME="${WISP_OUT:-}"
 
-echo "==> dotnet publish (NativeAOT-LLVM -> wasm32 core module)"
+# The SDK judges every linked module with `wisp doctor`; the guests in this
+# repository are judged by this checkout's CLI, built on demand.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+WISP_CLI="$(python3 "$ROOT/scripts/fixture-tools.py" wisp-cli "$ROOT")"
+
+echo "==> dotnet publish (C# -> wasm32 core module)"
 mkdir -p "$HERE/obj"
 PUBLISH=$(mktemp -d "$HERE/obj/publish.XXXXXX")
 PENDING=""
 trap 'rm -rf "$PUBLISH"; if [ -n "$PENDING" ]; then rm -f "$PENDING"; fi' EXIT
-dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "$@"
+dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "-p:WispCli=$WISP_CLI" "$@"
 
 mkdir -p "$OUT"
 PUBLISHED=$(find "$PUBLISH" -maxdepth 1 -name '*.wasm' | sort)
@@ -37,6 +42,13 @@ if [ "$(printf '%s' "$PUBLISHED" | grep -c .)" != 1 ]; then
   exit 1
 fi
 : "${NAME:=$(basename "$PUBLISHED" .wasm)}"
+# A Mono publish records the runtime pack it linked beside the module; the
+# sidecar travels with the module so a test can attribute its result.
+if [ -f "$PUBLISHED.runtime" ]; then
+  cp "$PUBLISHED.runtime" "$OUT/$NAME.wasm.runtime"
+else
+  rm -f "$OUT/$NAME.wasm.runtime"
+fi
 PENDING=$(mktemp "$OUT/.publish.XXXXXX")
 cp "$PUBLISHED" "$PENDING"
 mv -f "$PENDING" "$OUT/$NAME.wasm"

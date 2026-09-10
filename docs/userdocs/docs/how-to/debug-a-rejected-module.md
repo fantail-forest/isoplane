@@ -32,7 +32,9 @@ the derived manifest is all `doctor` reports.
 :::tip C# guests are checked by their own build
 `guest-sdks/dotnet/Wisp.Guest.props` runs `wisp doctor` on the module as soon
 as `wasm-ld` produces it, so a violation fails `dotnet publish` instead of
-waiting for a deploy. `-p:WispValidate=false` turns it off.
+waiting for a deploy. The check is mandatory: a publish without a `wisp` CLI
+to judge the module fails too, with the error naming where to install it or
+which property points at it.
 :::
 
 ## The four rules
