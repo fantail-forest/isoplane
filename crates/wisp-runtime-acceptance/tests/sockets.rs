@@ -6,11 +6,17 @@
 
 #[macro_use]
 mod common;
+#[path = "common/no_egress.rs"]
+mod no_egress;
 #[path = "common/peers.rs"]
 mod peers;
+#[path = "common/refusing.rs"]
+mod refusing;
 
-use common::{guest, reactor_without_egress, GuestRuntime};
-use peers::{peer, reactor_for_peers, refusing_endpoint, Peer};
+use common::{guest, GuestRuntime};
+use no_egress::reactor_without_egress;
+use peers::{peer, reactor_for_peers, Peer};
+use refusing::refusing_endpoint;
 use wisp_engine::Completion;
 use wisp_harness::EmittedGuestLogs as _;
 use wisp_harness::WAKE_DEADLINE;

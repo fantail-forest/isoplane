@@ -7,12 +7,15 @@
 mod common;
 #[path = "common/crypto_vectors.rs"]
 mod crypto_vectors;
+#[path = "common/no_egress.rs"]
+mod no_egress;
 
-use common::{guest, reactor_without_egress, GuestRuntime};
+use common::{guest, GuestRuntime};
 use crypto_vectors::{
     AES_GCM_CIPHERTEXT, AES_GCM_TAG, HKDF_RFC5869_1, HMAC_JEFE, LEAF_SERIAL,
     LEAF_SIGNATURE_OF_WISP, LEAF_THUMBPRINT, PBKDF2_ONE, SHA256_ABC,
 };
+use no_egress::reactor_without_egress;
 
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
     answer_at(runtime, owner, path, 1).await

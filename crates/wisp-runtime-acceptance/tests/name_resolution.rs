@@ -5,12 +5,15 @@
 
 #[macro_use]
 mod common;
+#[path = "common/no_egress.rs"]
+mod no_egress;
 #[path = "common/resolvers.rs"]
 mod resolvers;
 
 use std::sync::Arc;
 
-use common::{guest, reactor_without_egress, GuestRuntime};
+use common::{guest, GuestRuntime};
+use no_egress::reactor_without_egress;
 use resolvers::{reactor_for_dns, FailingDns, FixedDns, PendingDns};
 use wisp_abi::native_io::DnsFailure;
 use wisp_engine::Completion;

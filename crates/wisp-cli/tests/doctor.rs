@@ -222,13 +222,18 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
         .collect();
     assert_eq!(
         bullets.len(),
-        2,
-        "only entropy and outbound sockets are reachable through the PAL: {bullets:?}"
+        3,
+        "only entropy, outbound sockets and outbound HTTP are reachable through the PAL: {bullets:?}"
     );
     assert!(
         out.stdout
             .contains("open outbound TCP connections and resolve DNS names"),
         "the PAL socket capability must describe outbound TCP and DNS: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("make outbound HTTP requests"),
+        "the PAL wasi:http capability must describe outbound HTTP: {}",
         out.stdout
     );
 }

@@ -4,14 +4,22 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution and cryptography integrations driven through the real host reactor"
+description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution, cryptography and HTTP integrations driven through the real host reactor"
 
 [dependencies]
 
 [dev-dependencies]
 async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
 socket2 = { workspace = true }
 tokio = { workspace = true }
+tokio-rustls = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-engine = { workspace = true }
 wisp-fixtures = { workspace = true }

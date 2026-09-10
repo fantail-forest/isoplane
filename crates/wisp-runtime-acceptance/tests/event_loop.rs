@@ -5,8 +5,11 @@
 
 #[macro_use]
 mod common;
+#[path = "common/no_egress.rs"]
+mod no_egress;
 
-use common::{guest, reactor_without_egress, GuestRuntime};
+use common::{guest, GuestRuntime};
+use no_egress::reactor_without_egress;
 use wisp_engine::Completion;
 use wisp_harness::EmittedGuestLogs as _;
 

@@ -19,7 +19,7 @@ use wisp_engine::{
 
 use wisp_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services, Tenancy, WakeSink};
 use wisp_host::egress::HostEgressPolicy;
-use wisp_host::fakes::FakeFetcher;
+use wisp_host::fetcher::PinnedHttpFetcher;
 use wisp_host::futures::FutureTable;
 use wisp_host::meters::Meters;
 use wisp_host::metrics::Metrics;
@@ -48,15 +48,32 @@ pub struct Reactor {
 
 impl Reactor {
     /// A reactor on the current tokio runtime for `owner`, whose outbound
-    /// connections and lookups go through `policy`.
+    /// connections, lookups and HTTP exchanges go through `policy` and the
+    /// real transport, trusting the host's certificate store.
     pub fn new(owner: InstanceId, policy: HostEgressPolicy) -> Self {
+        let egress = Arc::new(policy);
+        let fetcher = PinnedHttpFetcher::new(egress.clone(), 256 * 1024);
+        Self::build(owner, egress, fetcher)
+    }
+
+    /// As [`Self::new`], also trusting the certificates in `root_pem` for
+    /// TLS peers a test owns.
+    pub fn with_trusted_root(owner: InstanceId, policy: HostEgressPolicy, root_pem: &str) -> Self {
+        let egress = Arc::new(policy);
+        let fetcher = PinnedHttpFetcher::new(egress.clone(), 256 * 1024)
+            .with_trust_anchor(root_pem)
+            .expect("the test's trust anchor is a CA certificate");
+        Self::build(owner, egress, fetcher)
+    }
+
+    fn build(owner: InstanceId, egress: Arc<HostEgressPolicy>, fetcher: PinnedHttpFetcher) -> Self {
         LogCapture::global();
         let futures = Arc::new(FutureTable::new());
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let runtime = Arc::new(CellRuntime {
             services: Arc::new(Services {
-                egress: Arc::new(policy),
-                fetcher: Arc::new(FakeFetcher::default()),
+                egress,
+                fetcher: Arc::new(fetcher),
             }),
             futures: futures.clone(),
             metrics: Arc::new(Metrics::new()),
@@ -202,9 +219,40 @@ impl ReturnedGuest {
     /// failing on any outcome but a completed dispatch.
     pub async fn answer(&mut self, reactor: &Reactor, path: &str, max_wakes: usize) -> String {
         let outcome = self.run(reactor, path, max_wakes).await;
+        self.text_of(path, outcome)
+    }
+
+    /// Wakes a started, parked dispatch until it finishes and returns the
+    /// text it answered with, failing after `max_wakes` wakes.
+    pub async fn finish(&mut self, reactor: &Reactor, max_wakes: usize) -> String {
+        self.finish_counting(reactor, max_wakes).await.0
+    }
+
+    /// As [`Self::finish`], also returning how many wakes it took.
+    pub async fn finish_counting(
+        &mut self,
+        reactor: &Reactor,
+        max_wakes: usize,
+    ) -> (String, usize) {
+        let mut wakes = 0;
+        let mut outcome = self.wake(reactor).await;
+        wakes += 1;
+        while outcome.completion == Completion::Parked {
+            assert!(
+                wakes < max_wakes,
+                "the dispatch must finish within {max_wakes} wakes; logs: {:?}",
+                self.context.emitted_logs()
+            );
+            outcome = self.wake(reactor).await;
+            wakes += 1;
+        }
+        (self.text_of("the dispatch", outcome), wakes)
+    }
+
+    fn text_of(&self, what: &str, outcome: DispatchOutcome) -> String {
         let wisp_abi::status::PollStatus::Done { response } = outcome.status else {
             panic!(
-                "{path} must complete: {outcome:?}; logs: {:?}",
+                "{what} must complete: {outcome:?}; logs: {:?}",
                 self.context.emitted_logs()
             );
         };
@@ -214,7 +262,7 @@ impl ReturnedGuest {
                 .responses
                 .lock()
                 .take(response)
-                .unwrap_or_else(|| panic!("{path} must produce a response"))
+                .unwrap_or_else(|| panic!("{what} must produce a response"))
                 .body(),
         )
         .into_owned()

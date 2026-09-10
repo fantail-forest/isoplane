@@ -17,6 +17,7 @@ public sealed class AcceptanceHandler : IWispHandler
     private readonly Sockets _sockets = new();
     private readonly NameResolution _names = new();
     private readonly Cryptography _cryptography = new();
+    private readonly Http _http = new();
 
     /// <summary>Dispatches on the family segment of the path.</summary>
     public async Task<Response> HandleAsync(Request request, Ctx context)
@@ -32,6 +33,7 @@ public sealed class AcceptanceHandler : IWispHandler
                 "sockets" => await _sockets.RunAsync(rest).ConfigureAwait(false),
                 "dns" => await _names.RunAsync(rest).ConfigureAwait(false),
                 "crypto" => await _cryptography.RunAsync(rest).ConfigureAwait(false),
+                "http" => await _http.RunAsync(rest).ConfigureAwait(false),
                 _ => throw new ArgumentException("unknown family " + parts[0]),
             };
             return Response.Text(answer);
