@@ -51,3 +51,6 @@ guest-sdks/dotnet/obj/
 /tools/Isoplane.Testing/obj/
 /tools/Isoplane.Testing.Tests/bin/
 /tools/Isoplane.Testing.Tests/obj/
+
+/tools/Isoplane.Cli.Tests/bin/
+/tools/Isoplane.Cli.Tests/obj/

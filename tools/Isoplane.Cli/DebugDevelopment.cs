@@ -52,7 +52,7 @@ internal static class DebugDevelopment
         }
     }
 
-    private static async Task<int> RunHostAsync(string runtime, List<string> arguments, string directory, DebugRelay relay, CancellationToken cancellation)
+    internal static async Task<int> RunHostAsync(string runtime, List<string> arguments, string directory, DebugRelay relay, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var host = Processes.RunAsync(runtime, arguments, directory, runtime, lifetime.Token);

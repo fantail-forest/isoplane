@@ -46,7 +46,7 @@ internal sealed class DebugRelay : IAsyncDisposable
         }
         catch (IOException error)
         {
-            Console.Error.WriteLine($"isoplane: debugger transport ended: {error.Message}.");
+            throw new IOException($"Debugger transport failed: {error.Message}", error);
         }
         finally
         {
