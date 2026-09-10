@@ -97,25 +97,33 @@ impl Input {
                 Ok(Response::Bytes(bytes))
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if self
-                    .task
-                    .as_ref()
-                    .is_none_or(|work| work.task.is_finished())
-                {
-                    self.task = Some(watch(
-                        bindings,
-                        wisp_abi::native_io::canonical::SOCKET_IMPORT,
-                        async move {
-                            if let Err(error) = stream.stream.readable().await {
-                                tracing::warn!(%error, "native input readiness failed");
-                            }
-                        },
-                    )?);
-                }
+                self.arm(bindings)?;
                 Ok(Response::Bytes(Vec::new()))
             }
             Err(error) => Err(Error::from(error)),
         }
+    }
+
+    /// Arms the wake for the stream becoming readable, unless one is armed.
+    pub(super) fn arm(&mut self, bindings: &CellBindings) -> Result<(), Error> {
+        if self
+            .task
+            .as_ref()
+            .is_some_and(|work| !work.task.is_finished())
+        {
+            return Ok(());
+        }
+        let stream = connection(&self.state)?;
+        self.task = Some(watch(
+            bindings,
+            wisp_abi::native_io::canonical::SOCKET_IMPORT,
+            async move {
+                if let Err(error) = stream.stream.readable().await {
+                    tracing::warn!(%error, "native input readiness failed");
+                }
+            },
+        )?);
+        Ok(())
     }
 }
 
@@ -155,25 +163,33 @@ impl Output {
                 Ok(Response::Capacity(ByteCount(count as u64)))
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if self
-                    .task
-                    .as_ref()
-                    .is_none_or(|work| work.task.is_finished())
-                {
-                    self.task = Some(watch(
-                        bindings,
-                        wisp_abi::native_io::canonical::SOCKET_IMPORT,
-                        async move {
-                            if let Err(error) = stream.stream.writable().await {
-                                tracing::warn!(%error, "native output readiness failed");
-                            }
-                        },
-                    )?);
-                }
+                self.arm(bindings)?;
                 Err(Error::WouldBlock)
             }
             Err(error) => Err(Error::from(error)),
         }
+    }
+
+    /// Arms the wake for the stream becoming writable, unless one is armed.
+    pub(super) fn arm(&mut self, bindings: &CellBindings) -> Result<(), Error> {
+        if self
+            .task
+            .as_ref()
+            .is_some_and(|work| !work.task.is_finished())
+        {
+            return Ok(());
+        }
+        let stream = connection(&self.state)?;
+        self.task = Some(watch(
+            bindings,
+            wisp_abi::native_io::canonical::SOCKET_IMPORT,
+            async move {
+                if let Err(error) = stream.stream.writable().await {
+                    tracing::warn!(%error, "native output readiness failed");
+                }
+            },
+        )?);
+        Ok(())
     }
 }
 
@@ -183,7 +199,7 @@ mod tests {
     use crate::bindings::{CellRuntime, InstanceCtx, Services, WakeSink};
     use crate::egress::{DestinationPolicy, HostEgressPolicy, Resolver};
     use crate::fakes::FakeFetcher;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use wisp_abi::config::{HandlerLifecycle, Limits};
 
     struct NoDns;
@@ -266,6 +282,60 @@ mod tests {
             CellBindings::new(Arc::new(context)),
             wake,
         )
+    }
+
+    #[tokio::test]
+    async fn polling_an_unreadable_input_arms_the_wake_a_blocked_read_would() {
+        use super::super::{Request, ResourceCount, ResourceLimits, Resources};
+        let (state, mut peer, bindings, wake) = connected(ByteCount(1 << 20)).await;
+        let mut resources = Resources::new(ResourceLimits {
+            handles: ResourceCount(4),
+        });
+        let input = resources
+            .insert(Resource::Input(Input::new(state)))
+            .expect("the test input must fit its resource budget");
+        let Ok(Response::Handle(subscription)) =
+            resources.call(Request::Subscribe(input), &bindings)
+        else {
+            panic!("subscribing to an input must return its pollable")
+        };
+        assert!(
+            matches!(
+                resources.call(Request::Poll(vec![subscription]), &bindings),
+                Err(Error::Unsupported(_))
+            ),
+            "a poll finding nothing ready still refuses to wait synchronously"
+        );
+        let runtime = bindings.rt().expect("the stream test must have a reactor");
+        assert_eq!(
+            runtime.futures.pending_total(bindings.ctx.instance),
+            1,
+            "a zero-byte read implemented as a poll must leave the guest one readiness wake to park on"
+        );
+        assert!(
+            matches!(
+                resources.call(Request::Poll(vec![subscription]), &bindings),
+                Err(Error::Unsupported(_))
+            ) && runtime.futures.pending_total(bindings.ctx.instance) == 1,
+            "polling again while the wake is armed must not arm a second one"
+        );
+        peer.write_all(b"wisp")
+            .await
+            .expect("the peer must deliver bytes");
+        tokio::time::timeout(std::time::Duration::from_secs(60), wake.0.notified())
+            .await
+            .expect("the peer's bytes must wake the polling instance");
+        assert!(
+            runtime.futures.take_ready(bindings.ctx.instance).is_some(),
+            "the readable wake must belong to the polling instance"
+        );
+        assert!(
+            matches!(
+                resources.call(Request::Poll(vec![subscription]), &bindings),
+                Ok(Response::ReadyIndexes(indexes)) if indexes == vec![0]
+            ),
+            "the input reads as ready once the bytes arrived"
+        );
     }
 
     #[tokio::test]

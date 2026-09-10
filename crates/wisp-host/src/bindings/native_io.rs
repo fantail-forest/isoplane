@@ -646,6 +646,8 @@ impl Resources {
                 for (index, handle) in handles.into_iter().enumerate() {
                     if self.ready(handle)? {
                         indexes.push(u32::try_from(index).map_err(|_| Error::ResourceLimit)?);
+                    } else {
+                        self.arm(handle, bindings)?;
                     }
                 }
                 if indexes.is_empty() {
@@ -697,6 +699,39 @@ impl Resources {
                 }
                 Ok(Response::Done)
             }
+        }
+    }
+
+    /// A stream the guest polled and found not ready is one it waits on:
+    /// arms the readiness wake a blocked read or send would, so a guest that
+    /// checks readiness instead of attempting the operation (a zero-byte
+    /// read, `Socket.Poll`) has a wake to park on. Every other pollable's
+    /// wake exists from the operation that created it.
+    fn arm(&mut self, handle: ResourceHandle, bindings: &CellBindings) -> Result<(), Error> {
+        let Some(Resource::Subscription(target)) = self.entries.get(&handle) else {
+            return Ok(());
+        };
+        match self.entries.get_mut(&target.clone()) {
+            Some(Resource::Input(input)) => input.arm(bindings),
+            Some(Resource::Output(output)) => output.arm(bindings),
+            Some(
+                Resource::Socket(_)
+                | Resource::Addresses(_)
+                | Resource::HttpInput(_)
+                | Resource::HttpOutput(_)
+                | Resource::FutureResponse(_)
+                | Resource::Network
+                | Resource::Error(_)
+                | Resource::Subscription(_)
+                | Resource::Timer(_)
+                | Resource::Fields(_)
+                | Resource::OutgoingRequest(_)
+                | Resource::OutgoingBody(_)
+                | Resource::IncomingResponse(_)
+                | Resource::IncomingBody(_)
+                | Resource::FutureTrailers,
+            )
+            | None => Ok(()),
         }
     }
 

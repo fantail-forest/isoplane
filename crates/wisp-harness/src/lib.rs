@@ -179,12 +179,22 @@ impl ReturnedGuest {
         outcome
     }
 
+    async fn await_readiness(&self, reactor: &Reactor) {
+        if tokio::time::timeout(WAKE_DEADLINE, reactor.wake.0.notified())
+            .await
+            .is_err()
+        {
+            panic!(
+                "the reactor must signal readiness before the test deadline; logs: {:?}",
+                self.context.emitted_logs()
+            );
+        }
+    }
+
     /// Waits for the reactor to signal readiness, then delivers the ready
     /// completion to the guest restored on another thread.
     pub async fn wake(&mut self, reactor: &Reactor) -> DispatchOutcome {
-        tokio::time::timeout(WAKE_DEADLINE, reactor.wake.0.notified())
-            .await
-            .expect("the reactor must signal readiness before the test deadline");
+        self.await_readiness(reactor).await;
         let (future, result) = reactor
             .futures
             .take_ready(self.context.instance)

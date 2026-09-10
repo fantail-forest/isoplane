@@ -118,14 +118,32 @@ Both profiles compile against a .NET runtime built from source by
 NativeAOT framework pack the pinned ILCompiler.LLVM compiles against, from
 the same `dotnet/runtimelab` commit as the compiler. The same patch series
 integrates each with the host: the host-driven event loop, socket readiness
-through libc's `poll`, asynchronous name resolution, OpenSSL as the
-cryptography backend, and the network error codes libc drops; the runtime's
-own `wasi:http` client is delegated as it is. The build
+through libc's `poll` (a zero-byte read is a readiness check, as
+`SslStream` and Kestrel issue), asynchronous name resolution, OpenSSL as the
+cryptography and TLS backend, the network error codes libc drops, and the
+P/Invoke declarations whose wasm signature differs from their C prototype
+(`guest-runtime/audit-pinvokes.py` refuses to build a pack with one); the
+runtime's own `wasi:http` client is delegated as it is. The build
 publishes both packs to a local feed whose `Wisp.GuestRuntime.props` names
 each pack's version and digest; the SDK refuses a pack whose digest differs
 from the feed's and records the identity it linked beside every module
 (`<module>.wasm.runtime`). A project outside this checkout names its feed with
 `WispGuestRuntimeFeed` or `WISP_GUEST_RUNTIME_FEED`.
+
+## TLS in the guest
+
+`SslStream` works over sockets with the runtime's own OpenSSL, as any
+library that speaks TLS over a socket (database drivers, SMTP, brokers)
+expects: TLS 1.2 and 1.3, client certificates, ALPN, cancellation, and asynchronous reads return control while waiting for host-owned I/O. The guest has no
+system trust store: nothing is trusted until the application supplies its
+roots, through `SslClientAuthenticationOptions.CertificateChainPolicy` with
+`X509ChainTrustMode.CustomRootTrust`, or a
+`RemoteCertificateValidationCallback` that decides. Such a policy defaults to
+online revocation checking, which the guest cannot perform (no CRL or OCSP
+fetch leaves the sandbox), so set `RevocationMode = NoCheck` unless the
+application supplies revocation lists; revocation policy beyond that is not
+decided. Certificate validity is checked against the guest's clock, which is
+the host's.
 
 ## The PAL shim
 
