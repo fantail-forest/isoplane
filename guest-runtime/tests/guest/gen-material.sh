@@ -36,6 +36,20 @@ extendedKeyUsage=serverAuth
 subjectAltName=DNS:chained.acceptance.test
 EOF
 openssl x509 -req -in chained.csr -CA intermediate.pem -CAkey intermediate.key -CAcreateserial -days 36500 -sha256 -extfile chained.ext -out chained.pem 2>/dev/null
+# A leaf under the intermediate whose issuer, CRL and OCSP responder live at
+# URLs nothing answers: what a chain build does when the network is not
+# there to complete or revoke it.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out remote.key 2>/dev/null
+openssl req -new -key remote.key -subj "/CN=remote.acceptance.test" -out remote.csr 2>/dev/null
+cat > remote.ext <<EOF
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:remote.acceptance.test
+authorityInfoAccess=caIssuers;URI:http://127.0.0.1:9/intermediate.der,OCSP;URI:http://127.0.0.1:9/ocsp
+crlDistributionPoints=URI:http://127.0.0.1:9/intermediate.crl
+EOF
+openssl x509 -req -in remote.csr -CA intermediate.pem -CAkey intermediate.key -CAcreateserial -days 36500 -sha256 -extfile remote.ext -out remote.pem 2>/dev/null
 # A client certificate under the root, for peers that require one.
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out client.key 2>/dev/null
 openssl req -new -key client.key -subj "/CN=client.acceptance.test" -out client.csr 2>/dev/null
@@ -100,12 +114,13 @@ tls="$ROOT/crates/wisp-runtime-acceptance/tests/common/tls_material.rs"
   echo "//! chained leaf to the root through the intermediate, the stranger to"
   echo "//! nothing the host trusts; the client certificate is the root's too."
   echo
-  for pair in "ROOT_CERTIFICATE root.pem" "INTERMEDIATE_CERTIFICATE intermediate.pem" "LEAF_CERTIFICATE leaf.pem" "CHAINED_CERTIFICATE chained.pem" "STRANGER_CERTIFICATE stranger.pem"; do
+  for pair in "ROOT_CERTIFICATE root.pem" "INTERMEDIATE_CERTIFICATE intermediate.pem" "LEAF_CERTIFICATE leaf.pem" "CHAINED_CERTIFICATE chained.pem" "REMOTE_CERTIFICATE remote.pem" "STRANGER_CERTIFICATE stranger.pem"; do
     set -- $pair
     printf 'pub const %s: &str = "' "$1"; sed 's/$/\\n/' "$2" | tr -d '\n'; printf '";\n'
   done
   printf 'pub const LEAF_KEY: &str = "'; pkcs8 leaf.key | sed 's/$/\\n/' | tr -d '\n'; printf '";\n'
   printf 'pub const CHAINED_KEY: &str = "'; pkcs8 chained.key | sed 's/$/\\n/' | tr -d '\n'; printf '";\n'
+  printf 'pub const REMOTE_KEY: &str = "'; pkcs8 remote.key | sed 's/$/\\n/' | tr -d '\n'; printf '";\n'
   printf 'pub const STRANGER_KEY: &str = "'; pkcs8 stranger.key | sed 's/$/\\n/' | tr -d '\n'; printf '";\n'
 } > "$tls"
 wc -l "$cs" "$rs" "$tls"

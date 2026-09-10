@@ -179,6 +179,128 @@ in_both_runtimes! {
         );
     }
 
+    /// The chain's issuer is only at its AIA URL and the guest fetches no
+    /// certificate resource (patch 009): the build ends as a partial chain,
+    /// the outcome upstream gives when the network is unreachable, never a
+    /// success. A chain completed through AIA is the open design question
+    /// of task #13, not a behaviour this test can claim.
+    #[tokio::test]
+    async fn a_missing_intermediate_is_a_partial_chain_when_nothing_can_be_fetched(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
+        let reactor = reactor_for_peers(vec![peer]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/remote.acceptance.test",
+                    peer.ip(),
+                    peer.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
+            "an issuer only reachable by AIA must leave the chain partial, not trusted: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_intermediate_is_a_partial_chain_with_downloads_disabled(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
+        let reactor = reactor_for_peers(vec![peer]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/remote.acceptance.test/downloadsoff",
+                    peer.ip(),
+                    peer.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("PartialChain"),
+            "with downloads explicitly disabled the chain stays partial: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn online_revocation_with_an_unavailable_responder_is_not_a_pass(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::RemoteChained, Behaviour::Echo).await;
+        let reactor = reactor_for_peers(vec![peer]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/remote.acceptance.test/online",
+                    peer.ip(),
+                    peer.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ")
+                && text.contains("RevocationStatusUnknown")
+                && text.contains("OfflineRevocation"),
+            "revocation information that cannot be fetched must fail validation, never pass it: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn offline_revocation_without_a_cached_list_is_not_a_pass(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::RemoteChained, Behaviour::Echo).await;
+        let reactor = reactor_for_peers(vec![peer]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/remote.acceptance.test/offline",
+                    peer.ip(),
+                    peer.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("RevocationStatusUnknown"),
+            "an offline check with no cached list must report the status unknown: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_complete_chain_with_no_revocation_check_validates(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::RemoteChained, Behaviour::Echo).await;
+        let reactor = reactor_for_peers(vec![peer]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/remote.acceptance.test",
+                    peer.ip(),
+                    peer.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
+            "the complete chain validates with NoCheck regardless of the URLs it carries: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
     #[tokio::test]
     async fn a_certificate_the_guest_does_not_trust_fails_authentication(runtime: GuestRuntime) {
         let peer = tls_peer(Certificate::Stranger, Behaviour::Echo).await;

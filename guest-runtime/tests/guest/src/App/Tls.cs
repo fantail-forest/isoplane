@@ -26,12 +26,14 @@ internal sealed class Tls
         {
             case "handshake":
             {
-                // The peer's expected name is the leaf's unless the route names one.
+                // The peer's expected name is the leaf's unless the route names
+                // one; a fifth segment names the chain policy variant.
                 string host = path.Length > 3 ? path[3] : LeafHost;
+                ChainVariant variant = path.Length > 4 ? Enum.Parse<ChainVariant>(path[4], ignoreCase: true) : ChainVariant.Default;
                 using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
                 try
                 {
-                    using var tls = await AuthenticateAsync(client, Trust.Root, host).ConfigureAwait(false);
+                    using var tls = await AuthenticateAsync(client, Trust.Root, host, variant).ConfigureAwait(false);
                     return Describe(tls);
                 }
                 catch (AuthenticationException error)
@@ -194,6 +196,19 @@ internal sealed class Tls
         System,
     }
 
+    /// <summary>How the chain policy treats what is not in hand.</summary>
+    private enum ChainVariant
+    {
+        /// <summary>No revocation check; downloads left at their default.</summary>
+        Default,
+        /// <summary>No revocation check; certificate downloads explicitly off.</summary>
+        DownloadsOff,
+        /// <summary>Online revocation check, entire chain.</summary>
+        Online,
+        /// <summary>Offline revocation check (cached lists only).</summary>
+        Offline,
+    }
+
     private static async Task<Socket> ConnectAsync(string host, string port)
     {
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -201,19 +216,35 @@ internal sealed class Tls
         return socket;
     }
 
-    private static SslClientAuthenticationOptions RootTrustOptions(string host)
+    private static SslClientAuthenticationOptions RootTrustOptions(string host, ChainVariant variant = ChainVariant.Default)
     {
         // A private root publishes no revocation lists; a policy of its own
         // would otherwise default to an online check.
         var policy = new X509ChainPolicy { TrustMode = X509ChainTrustMode.CustomRootTrust, RevocationMode = X509RevocationMode.NoCheck };
+        switch (variant)
+        {
+            case ChainVariant.DownloadsOff:
+                policy.DisableCertificateDownloads = true;
+                break;
+            case ChainVariant.Online:
+                policy.RevocationMode = X509RevocationMode.Online;
+                policy.RevocationFlag = X509RevocationFlag.EntireChain;
+                break;
+            case ChainVariant.Offline:
+                policy.RevocationMode = X509RevocationMode.Offline;
+                policy.RevocationFlag = X509RevocationFlag.EntireChain;
+                break;
+            case ChainVariant.Default:
+                break;
+        }
         policy.CustomTrustStore.Add(X509CertificateLoader.LoadCertificate(PemBytes(CryptoMaterial.RootCertificate)));
         return new SslClientAuthenticationOptions { TargetHost = host, CertificateChainPolicy = policy };
     }
 
-    private static async Task<SslStream> AuthenticateAsync(Socket socket, Trust trust, string host)
+    private static async Task<SslStream> AuthenticateAsync(Socket socket, Trust trust, string host, ChainVariant variant = ChainVariant.Default)
     {
         var tls = new SslStream(new NetworkStream(socket, ownsSocket: false), leaveInnerStreamOpen: false);
-        var options = trust == Trust.Root ? RootTrustOptions(host) : new SslClientAuthenticationOptions { TargetHost = host };
+        var options = trust == Trust.Root ? RootTrustOptions(host, variant) : new SslClientAuthenticationOptions { TargetHost = host };
         try
         {
             await tls.AuthenticateAsClientAsync(options).ConfigureAwait(false);

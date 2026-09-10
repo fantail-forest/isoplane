@@ -290,6 +290,31 @@ in_both_runtimes! {
         );
     }
 
+    /// The host's TLS performs no revocation check and fetches nothing: a
+    /// complete chain validates by its anchor whatever URLs it carries, and
+    /// a missing intermediate is a certificate error (superseded with the
+    /// rest of host-terminated TLS by iteration 6).
+    #[tokio::test]
+    async fn https_at_the_host_neither_fetches_intermediates_nor_checks_revocation(runtime: GuestRuntime) {
+        let complete = https_peer(Certificate::RemoteChained).await;
+        let alone = https_peer(Certificate::RemoteAlone).await;
+        let reactor = reactor(15, vec![complete.address, alone.address]);
+        reactor.context.begin_slice(1, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/https/remote.acceptance.test/{}", complete.address.port()), 8).await;
+        assert_eq!(
+            text, "status=200 content-type=text/plain body=hello from peer",
+            "a complete chain validates by its anchor without a revocation check; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        let text = guest.answer(&reactor, &format!("/http/https/remote.acceptance.test/{}", alone.address.port()), 8).await;
+        assert_eq!(
+            text, "HttpRequestException: TLS_CERTIFICATE_ERROR",
+            "an intermediate only reachable by AIA is not fetched by the host; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
     #[tokio::test]
     async fn a_certificate_the_host_does_not_trust_is_a_tls_certificate_error(runtime: GuestRuntime) {
         let peer = https_peer(Certificate::Stranger).await;

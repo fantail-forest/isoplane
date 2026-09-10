@@ -5,7 +5,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::tls_material::{
     CHAINED_CERTIFICATE, CHAINED_KEY, INTERMEDIATE_CERTIFICATE, LEAF_CERTIFICATE, LEAF_KEY,
-    ROOT_CERTIFICATE, STRANGER_CERTIFICATE, STRANGER_KEY,
+    REMOTE_CERTIFICATE, REMOTE_KEY, ROOT_CERTIFICATE, STRANGER_CERTIFICATE, STRANGER_KEY,
 };
 
 /// The certificate a TLS peer presents.
@@ -16,6 +16,13 @@ pub enum Certificate {
     /// The leaf for `chained.acceptance.test`, presented with the
     /// intermediate that issued it; only the root is trusted.
     Chained,
+    /// The leaf for `remote.acceptance.test`, whose issuer, CRL and OCSP
+    /// responder are at URLs nothing answers, presented alone: the chain
+    /// completes only through an AIA fetch.
+    RemoteAlone,
+    /// The same leaf presented with its intermediate: the chain is
+    /// complete, revocation information is still only at the URLs.
+    RemoteChained,
     /// A self-signed certificate nothing trusts.
     Stranger,
 }
@@ -28,6 +35,11 @@ impl Certificate {
             Certificate::Chained => (
                 format!("{CHAINED_CERTIFICATE}\n{INTERMEDIATE_CERTIFICATE}"),
                 CHAINED_KEY,
+            ),
+            Certificate::RemoteAlone => (REMOTE_CERTIFICATE.to_owned(), REMOTE_KEY),
+            Certificate::RemoteChained => (
+                format!("{REMOTE_CERTIFICATE}\n{INTERMEDIATE_CERTIFICATE}"),
+                REMOTE_KEY,
             ),
             Certificate::Stranger => (STRANGER_CERTIFICATE.to_owned(), STRANGER_KEY),
         };
