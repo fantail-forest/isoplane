@@ -1,3 +1,7 @@
 <Project>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
+  <ItemGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
+    <FrameworkReference Remove="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <Import Project="../tools/Build/Wisp.Mono.targets" Condition="'$(WispGuestRuntime)' == 'Mono'" />
 </Project>

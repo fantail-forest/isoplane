@@ -353,6 +353,16 @@ mod tests {
     use crate::imports;
 
     #[test]
+    fn the_native_clock_reports_the_host_clock_quantum() {
+        let native = include_str!("../../../guest-sdks/dotnet/native/wisp_clock.c");
+        let definition = format!("#define WISP_CLOCK_QUANTUM_NS {CLOCK_QUANTUM_NS}LL");
+        assert!(
+            native.lines().any(|line| line == definition),
+            "the native clock resolution must match the host PAL clock quantum"
+        );
+    }
+
+    #[test]
     fn every_pal_entry_has_a_distinct_name() {
         let mut seen = std::collections::BTreeSet::new();
         for p in PAL_IMPORTS {

@@ -53,6 +53,30 @@ module even inside an ignored directory. Dependencies outside the project
 require a rebuild that updates that module. `--no-watch` serves just the initial
 build. `wisp dev --help` lists the available options.
 
+## Optional Mono publication on Linux
+
+ASP.NET projects using `Wisp.AspNetCore` can explicitly publish managed IL
+with Mono instead of the default NativeAOT profile:
+
+```bash
+dotnet publish -c Release -p:WispGuestRuntime=Mono
+```
+
+The installed .NET CLI selects the same profile with
+`isoplane dev --guest-runtime mono`. Omitting the option honors the project
+property; without that property, publication uses NativeAOT.
+
+This profile requires the pinned .NET SDK from `global.json`, the
+`wasi-experimental` workload containing Mono WASI runtime 10.0.11, wasi-sdk
+29.0 through `WASI_SDK_PATH`, and `wasm-tools` on `PATH`. The current setup
+script and compiler image do not install this optional workload. The build
+checks the workload target and native SDK before linking; a different
+workload is rejected rather than silently adapting it.
+
+The installed-template HTTP and ordinary `Task.Delay` workflow is tested on
+Linux. This does not establish Mono debugging support, macOS or Windows
+publication, or full cryptography compatibility.
+
 ## Scope of local testing
 
 Local development runs the guest engine, host bindings, validator and

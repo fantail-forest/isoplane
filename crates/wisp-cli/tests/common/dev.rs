@@ -33,10 +33,19 @@ impl Dev {
     }
 
     pub fn start_managed(project: &std::path::Path, executable: &std::path::Path) -> Self {
+        Self::start_managed_with_args(project, executable, &[])
+    }
+
+    pub fn start_managed_with_args(
+        project: &std::path::Path,
+        executable: &std::path::Path,
+        args: &[&str],
+    ) -> Self {
         let mut command = Command::new(executable);
         command
             .args(["dev", "--json", "--port", "0", "--project"])
-            .arg(project);
+            .arg(project)
+            .args(args);
         Self::spawn(&mut command, Duration::from_secs(600))
     }
 

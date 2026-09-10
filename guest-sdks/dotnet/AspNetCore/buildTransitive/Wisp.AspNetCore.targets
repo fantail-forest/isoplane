@@ -1,6 +1,6 @@
 <Project>
   <!-- Only managed IL is consumed; native runtime assets never enter the WASI link. -->
-  <Target Name="WispAspNetCoreReferences" BeforeTargets="WriteIlcRspFileForCompilation">
+  <Target Name="WispAspNetCoreReferences" BeforeTargets="WriteIlcRspFileForCompilation" Condition="'$(WispGuestRuntime)' != 'Mono'">
     <ItemGroup>
       <_WispAspNetCoreAssembly Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(WispAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />
       <IlcReference Include="@(_WispAspNetCoreAssembly)" />
@@ -27,15 +27,50 @@ internal sealed class WispGeneratedRouter : Wisp.Durable.IStreamingHttpRouter {
   }
 }
 internal static class WispGeneratedExports {
-  [UnmanagedCallersOnly(EntryPoint="wisp_alloc")] public static int Alloc(int size, int align) => Guest.Alloc(size, align);
-  [UnmanagedCallersOnly(EntryPoint="wisp_handle")] public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
-  [UnmanagedCallersOnly(EntryPoint="wisp_wake")] public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
-  [UnmanagedCallersOnly(EntryPoint="wisp_initialize")] public static void Initialize() => Guest.Initialize();
-  [UnmanagedCallersOnly(EntryPoint="wisp_gc_hint")] public static void GcHint(int pressure) => Guest.GcHint(pressure);
+#if WISP_MONO
+  [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods, typeof(WispGeneratedExports))]
+  public static void Main() { }
+#endif
+#if !WISP_MONO
+  [UnmanagedCallersOnly(EntryPoint="wisp_alloc")]
+#endif
+  public static int Alloc(int size, int align) => Guest.Alloc(size, align);
+#if !WISP_MONO
+  [UnmanagedCallersOnly(EntryPoint="wisp_handle")]
+#endif
+  public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
+#if !WISP_MONO
+  [UnmanagedCallersOnly(EntryPoint="wisp_wake")]
+#endif
+  public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
+#if !WISP_MONO
+  [UnmanagedCallersOnly(EntryPoint="wisp_initialize")]
+#endif
+  public static void Initialize() => Guest.Initialize();
+#if !WISP_MONO
+  [UnmanagedCallersOnly(EntryPoint="wisp_gc_hint")]
+#endif
+  public static void GcHint(int pressure) => Guest.GcHint(pressure);
 }
 ]]></_WispEntrypointSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_WispEntrypoint)" Lines="$([MSBuild]::Escape($(_WispEntrypointSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ItemGroup><Compile Include="$(_WispEntrypoint)" /></ItemGroup>
+  </Target>
+  <Target Name="WispMonoManagedFrameworkReferences" BeforeTargets="ProcessFrameworkReferences" Condition="'$(WispGuestRuntime)' == 'Mono'">
+    <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
+  </Target>
+  <Target Name="WispMonoManagedFrameworkAssemblies" BeforeTargets="ResolveAssemblyReferences" Condition="'$(WispGuestRuntime)' == 'Mono'">
+    <ItemGroup>
+      <_WispMonoAspNet Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(WispAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />
+    </ItemGroup>
+    <Error Condition="'@(_WispMonoAspNet)' == ''" Text="wisp: pinned managed ASP.NET implementation pack missing; restore the project before publishing." />
+    <ItemGroup>
+      <Reference Include="@(_WispMonoAspNet)" Private="true" />
+      <Analyzer Include="$(NetCoreTargetingPackRoot)/Microsoft.AspNetCore.App.Ref/$(WispAspNetCoreRuntimeVersion)/analyzers/dotnet/cs/Microsoft.AspNetCore.Http.RequestDelegateGenerator.dll" />
+    </ItemGroup>
+  </Target>
+  <Target Name="WispMonoManagedTransitiveFramework" AfterTargets="AddTransitiveFrameworkReferences" Condition="'$(WispGuestRuntime)' == 'Mono'">
+    <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
   </Target>
 </Project>

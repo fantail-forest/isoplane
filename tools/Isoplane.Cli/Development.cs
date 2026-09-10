@@ -40,7 +40,7 @@ internal static class Development
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
-        var result = await BuildAsync(options.Directory, runtime, changes, options.Json, lifetime.Token);
+        var result = await BuildAsync(options.Directory, runtime, changes, options.Json, options.GuestRuntime, lifetime.Token);
         if (result != 0)
             return result;
         List<string> hostArguments = ["dev", "--watch", options.Directory, "--no-build", "--watch-module-only"];
@@ -69,7 +69,7 @@ internal static class Development
                 }
                 await changed;
                 using var buildLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                var build = BuildAsync(options.Directory, runtime, changes, options.Json, buildLifetime.Token);
+                var build = BuildAsync(options.Directory, runtime, changes, options.Json, options.GuestRuntime, buildLifetime.Token);
                 if (await Task.WhenAny(build, exited) == exited)
                 {
                     buildLifetime.Cancel();
@@ -92,7 +92,7 @@ internal static class Development
         }
     }
 
-    private static async Task<int> BuildAsync(string directory, string runtime, SourceChanges changes, bool json, CancellationToken cancellation)
+    private static async Task<int> BuildAsync(string directory, string runtime, SourceChanges changes, bool json, GuestRuntimeProfile? guestRuntime, CancellationToken cancellation)
     {
         var staging = Path.Combine(directory, ".wisp", "publish", Guid.NewGuid().ToString("N"));
         try
@@ -101,7 +101,15 @@ internal static class Development
             changes.SetOutput(module);
             Directory.CreateDirectory(staging);
             var project = Directory.GetFiles(directory, "*.csproj").Single();
-            var result = await Processes.RunAsync("dotnet", ["publish", project, "-c", "Release", "-o", staging, "--disable-build-servers"], directory, runtime, cancellation, redirectOutput: json);
+            List<string> arguments = ["publish", project, "-c", "Release", "-o", staging, "--disable-build-servers"];
+            if (guestRuntime is not null)
+                arguments.Add("-p:WispGuestRuntime=" + (guestRuntime.Value switch
+                {
+                    GuestRuntimeProfile.Mono => "Mono",
+                    GuestRuntimeProfile.NativeAot => "NativeAOT",
+                    _ => throw new ArgumentOutOfRangeException(nameof(guestRuntime))
+                }));
+            var result = await Processes.RunAsync("dotnet", arguments, directory, runtime, cancellation, redirectOutput: json);
             if (result != 0)
                 return result;
             var modules = Directory.GetFiles(staging, "*.wasm");

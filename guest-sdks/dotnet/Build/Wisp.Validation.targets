@@ -1,0 +1,97 @@
+<Project>
+  <!--
+    The publish that links the module runs `wisp doctor` on it, after
+    `LinkNative`, so a validator rejection costs a build rather than a deploy.
+    A rejection is an error (WISP0001); no CLI (WISP0002) or a CLI that reached
+    no verdict (WISP0003) is a warning, since the build did produce a module;
+    `-warnaserror:WISP0002` makes the check a hard gate. `dotnet build` on a
+    guest compiles to IL only and produces no module, which the target below
+    says. Opt out with `-p:WispValidate=false`.
+  -->
+  <PropertyGroup>
+    <WispValidate Condition="'$(WispValidate)' == ''">true</WispValidate>
+
+    <!-- Which `wisp` to run, most explicit first; the checkout's own build
+         output before PATH, for the guests inside this repository. -->
+    <WispCli Condition="'$(WispCli)' == '' AND '$(WISP_CLI)' != ''">$(WISP_CLI)</WispCli>
+    <WispCli Condition="'$(WispCli)' == '' AND '$(CARGO_TARGET_DIR)' != '' AND Exists('$(CARGO_TARGET_DIR)/release/wisp')">$(CARGO_TARGET_DIR)/release/wisp</WispCli>
+    <_WispCheckout Condition="'$(WispCli)' == ''">$([MSBuild]::GetDirectoryNameOfFileAbove('$(MSBuildThisFileDirectory)', 'Cargo.toml'))</_WispCheckout>
+    <WispCli Condition="'$(WispCli)' == '' AND '$(_WispCheckout)' != '' AND Exists('$(_WispCheckout)/target/release/wisp')">$(_WispCheckout)/target/release/wisp</WispCli>
+    <WispCli Condition="'$(WispCli)' == ''">wisp</WispCli>
+
+    <!-- Empty: `wisp doctor` reads the plan from the app's `wisp.toml`. Not
+         defaulted from WispMemoryMaxBytes, which is what the module declares
+         rather than what it is allowed to. -->
+  </PropertyGroup>
+
+  <Target Name="WispValidateModule"
+          AfterTargets="LinkNative;WispPublishInContainer;WispMonoPublishCore"
+          Condition="'$(WispValidate)' != 'false' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
+
+    <PropertyGroup>
+      <!-- Absolute, so the paths in the messages can be pasted back. -->
+      <_WispModule>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(NativeBinary)'))))</_WispModule>
+      <_WispDoctor>&quot;$(WispCli)&quot; doctor &quot;$(_WispModule)&quot; --no-color</_WispDoctor>
+    </PropertyGroup>
+
+    <!-- The exit code is the result: 0 accepted, 2 rejected, 127 or 9009 no
+         such command, anything else no answer. -->
+    <Exec Command="$(_WispDoctor)"
+          IgnoreExitCode="true"
+          ContinueOnError="true"
+          IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low"
+          ConsoleToMSBuild="true">
+      <Output TaskParameter="ExitCode" PropertyName="_WispDoctorExit" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_WispDoctorSaid" />
+    </Exec>
+
+
+    <Message Condition="'$(_WispDoctorExit)' != '0'" Importance="high" Text="@(_WispDoctorSaid, '%0a')" />
+
+    <!-- One line on the happy path, naming the plan the verdict was reached
+         against. -->
+    <ItemGroup Condition="'$(_WispDoctorExit)' == '0'">
+      <_WispPlanLine Include="@(_WispDoctorSaid)"
+                     Condition="$([System.String]::Copy('%(Identity)').Contains('judged against'))" />
+    </ItemGroup>
+    <Message Condition="'$(_WispDoctorExit)' == '0'" Importance="high"
+             Text="wisp: $(TargetName).wasm passes validator rules V1-V4 — @(_WispPlanLine->Trim(), '; ')" />
+
+    <!-- The end-of-build summary reprints only the Error text, so the
+         violation is in it. -->
+    <ItemGroup Condition="'$(_WispDoctorExit)' == '2'">
+      <_WispVerdict Include="@(_WispDoctorSaid)"
+                    Condition="$([System.String]::Copy('%(Identity)').Contains('✗'))" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(_WispDoctorExit)' == '2' AND '@(_WispVerdict)' == ''">
+
+      <_WispVerdict Include="see the report above" />
+    </ItemGroup>
+
+    <Error Condition="'$(_WispDoctorExit)' == '2'"
+           Code="WISP0001"
+           File="$(MSBuildProjectFullPath)"
+           Text="the control plane would reject $(_WispModule): @(_WispVerdict->Trim(), ' / ') — reproduce with `$(WispCli) doctor $(_WispModule)`; skip this check with -p:WispValidate=false" />
+
+    <Warning Condition="'$(_WispDoctorExit)' == '127' OR '$(_WispDoctorExit)' == '9009'"
+             Code="WISP0002"
+             File="$(MSBuildProjectFullPath)"
+             Text="the module was NOT validated: no `wisp` CLI at '$(WispCli)'. $(_WispModule) was built but nothing checked it against validator rules V1-V4, so a violation will first surface at `wisp deploy`. Install the CLI (`cargo build --release -p wisp-cli`) or set -p:WispCli=/path/to/wisp; -p:WispValidate=false accepts the gap deliberately." />
+
+    <Warning Condition="'$(_WispDoctorExit)' != '0' AND '$(_WispDoctorExit)' != '2' AND '$(_WispDoctorExit)' != '127' AND '$(_WispDoctorExit)' != '9009'"
+             Code="WISP0003"
+             File="$(MSBuildProjectFullPath)"
+             Text="the module was NOT validated: `$(WispCli) doctor` exited $(_WispDoctorExit) without reaching a verdict (its output is above). $(_WispModule) is unchecked." />
+  </Target>
+
+  <!-- `_IsPublishing` is set for `dotnet publish` and empty for `dotnet build`. -->
+  <Target Name="WispSaysBuildDoesNotProduceAModule"
+          AfterTargets="Build"
+          Condition="'$(WispValidate)' != 'false' AND '$(_IsPublishing)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
+    <Message Importance="high"
+             Text="wisp: this was `dotnet build` — it compiled to IL and produced no .wasm, so nothing was validated. `dotnet publish` (what the guest's build.sh runs) is what links a module in, and where rules V1-V4 are checked." />
+  </Target>
+
+</Project>

@@ -1,0 +1,22 @@
+<Project>
+  <PropertyGroup>
+    <_WispSdkDirectory>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</_WispSdkDirectory>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <RuntimeFrameworkVersion>$(WispManagedRuntimeVersion)</RuntimeFrameworkVersion>
+    <OutputType>Exe</OutputType>
+    <PublishTrimmed>true</PublishTrimmed>
+    <SelfContained>true</SelfContained>
+    <WasmSingleFileBundle>true</WasmSingleFileBundle>
+    <WasmBuildNative>true</WasmBuildNative>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmEnableExceptionHandling>false</WasmEnableExceptionHandling>
+    <MSBuildEnableWorkloadResolver>true</MSBuildEnableWorkloadResolver>
+    <Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);WISP_MONO</DefineConstants>
+    <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageDownload Include="Microsoft.NETCore.App.Runtime.linux-x64" Version="[$(WispManagedRuntimeVersion)]" />
+  </ItemGroup>
+</Project>

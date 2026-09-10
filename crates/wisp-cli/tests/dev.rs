@@ -406,3 +406,50 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     );
     dev.stop();
 }
+
+#[tokio::test]
+async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_timers() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = wisp_fixtures::aspnet_project(directory.path());
+    let cli = wisp_fixtures::managed_cli(
+        directory.path(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
+        &app,
+    );
+    let mut dev = Dev::start_managed_with_args(&app, &cli, &["--guest-runtime", "mono"]);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap();
+    let response = client.get(&dev.url).send().await.unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the explicit Mono profile must serve the unchanged installed template"
+    );
+    assert_eq!(
+        response.text().await.unwrap(),
+        "Hello from Isoplane!",
+        "Mono must invoke the generated ASP.NET exports through the actual sandbox"
+    );
+    let source = app.join("Application.cs");
+    let original = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(&source, original.replace("return app;", "app.MapGet(\"/async\", async () => { await System.Threading.Tasks.Task.Delay(1); return \"async-ready\"; }); return app;")).unwrap();
+    dev.wait_event("reloaded");
+    let response = client
+        .get(format!("{}/async", dev.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the async route containing ordinary Task.Delay must complete successfully"
+    );
+    assert_eq!(
+        response.text().await.unwrap(),
+        "async-ready",
+        "the async Mono route must return its expected response body"
+    );
+    dev.stop();
+}

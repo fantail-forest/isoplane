@@ -1,6 +1,8 @@
 namespace Wisp.Cli;
 
-internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose)
+internal enum GuestRuntimeProfile { NativeAot, Mono }
+
+internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, GuestRuntimeProfile? GuestRuntime)
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
@@ -9,6 +11,7 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         var watch = true;
         var json = false;
         var shutdownOnInputClose = false;
+        GuestRuntimeProfile? guestRuntime = null;
         for (var index = 0; index < arguments.Length; index++)
         {
             switch (arguments[index])
@@ -20,6 +23,14 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                     if (!ushort.TryParse(arguments[++index], out var parsedPort))
                         throw new ArgumentException("--port must be between 0 and 65535.");
                     port = parsedPort;
+                    break;
+                case "--guest-runtime" when index + 1 < arguments.Length:
+                    guestRuntime = arguments[++index] switch
+                    {
+                        "mono" => GuestRuntimeProfile.Mono,
+                        "nativeaot" => GuestRuntimeProfile.NativeAot,
+                        _ => throw new ArgumentException("--guest-runtime must be mono or nativeaot.")
+                    };
                     break;
                 case "--json":
                     json = true;
@@ -40,6 +51,6 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException($"No wisp.toml in {directory}; create a project with dotnet new isoplane-web.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
-        return new(directory, port, watch, json, shutdownOnInputClose);
+        return new(directory, port, watch, json, shutdownOnInputClose, guestRuntime);
     }
 }

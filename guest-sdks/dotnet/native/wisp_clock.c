@@ -1,5 +1,7 @@
 #include <stdint.h>
 
+#define WISP_CLOCK_QUANTUM_NS 1000000LL
+
 __attribute__((import_module("wisp"), import_name("clock_now_coarse")))
 extern int64_t wisp_clock_now_coarse(void);
 
@@ -30,4 +32,17 @@ void __wasm_import_wall_clock_now(int32_t retptr)
     uint32_t *nanoseconds = (uint32_t *)(uintptr_t)(retptr + 8);
     *seconds = (uint64_t)ms / 1000u;
     *nanoseconds = (uint32_t)((uint64_t)ms % 1000u) * 1000000u;
+}
+
+int64_t __wasm_import_monotonic_clock_resolution(void)
+{
+    return WISP_CLOCK_QUANTUM_NS;
+}
+
+void __wasm_import_wall_clock_resolution(int32_t retptr)
+{
+    uint64_t *seconds = (uint64_t *)(uintptr_t)retptr;
+    uint32_t *nanoseconds = (uint32_t *)(uintptr_t)(retptr + 8);
+    *seconds = WISP_CLOCK_QUANTUM_NS / 1000000000LL;
+    *nanoseconds = WISP_CLOCK_QUANTUM_NS % 1000000000LL;
 }

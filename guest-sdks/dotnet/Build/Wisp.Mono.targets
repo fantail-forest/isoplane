@@ -1,0 +1,88 @@
+<Project>
+  <Import Project="Wisp.Validation.targets" />
+  <UsingTask TaskName="WispMonoToolchainGuard" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoToolchainGuard.cs" /></Task>
+  </UsingTask>
+  <UsingTask TaskName="WispMonoRewriteLink" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoRewriteLink.cs" /></Task>
+  </UsingTask>
+  <ItemGroup>
+    <LinkerArg Include="-nostartfiles" />
+    <LinkerArg Include="-Wl,--skip-wit-component,--no-entry,--export=wisp_alloc,--export=wisp_handle,--export=wisp_wake,--export=wisp_initialize,--export=wisp_gc_hint,--export=__stack_pointer,--max-memory=$(WispMemoryMaxBytes)" />
+    <LinkerArg Include="-Wl,--wrap=SystemNative_MksTemps,--wrap=socket,--wrap=close,--wrap=getsockopt,--wrap=setsockopt,--wrap=send,--wrap=sendmsg" />
+  </ItemGroup>
+  <Target Name="WispMonoPaths">
+    <PropertyGroup>
+      <_WispMonoDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'wisp-mono'))</_WispMonoDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_WispMonoDir)" />
+  </Target>
+  <Target Name="WispMonoAdapt" BeforeTargets="_ComputeManagedAssemblyToLink" DependsOnTargets="WispMonoPaths">
+    <ItemGroup>
+      <_WispMonoPrebuilt Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'dotnet' AND '%(Extension)' == '.wasm'" />
+      <ResolvedFileToPublish Remove="@(_WispMonoPrebuilt)" />
+      <_WispMonoCore Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'System.Private.CoreLib'" />
+      <_WispMonoSockets Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'System.Net.Sockets'" />
+      <_WispMonoDns Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'System.Net.NameResolution'" />
+      <_WispMonoSdk Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'Wisp.Sdk'" />
+      <_WispMonoOriginalCrypto Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'System.Security.Cryptography'" />
+      <_WispMonoCrypto Include="$(NuGetPackageRoot)/microsoft.netcore.app.runtime.linux-x64/$(WispManagedRuntimeVersion)/runtimes/linux-x64/lib/net10.0/System.Security.Cryptography.dll" />
+      <_WispMonoBc Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'BouncyCastle.Cryptography'" />
+    </ItemGroup>
+    <Error Condition="'@(_WispMonoCore->Count())' != '1' OR '@(_WispMonoSockets->Count())' != '1' OR '@(_WispMonoDns->Count())' != '1' OR '@(_WispMonoSdk->Count())' != '1' OR '@(_WispMonoBc->Count())' != '1'"
+           Text="wisp: expected one pinned Mono CoreLib, sockets, DNS, Wisp.Sdk and BouncyCastle assembly before trimming." />
+    <Exec Command="dotnet run --project &quot;$(_WispSdkDirectory)Build/RuntimeAdapter/RuntimeAdapter.csproj&quot; --configuration Release --disable-build-servers --property:BaseIntermediateOutputPath=&quot;$(_WispMonoDir)adapter-obj/&quot; --property:OutputPath=&quot;$(_WispMonoDir)adapter-bin/&quot; -- &quot;@(_WispMonoCore)&quot; &quot;$(_WispMonoDir)System.Private.CoreLib.dll&quot; &quot;@(_WispMonoSockets)&quot; &quot;$(_WispMonoDir)System.Net.Sockets.dll&quot; &quot;@(_WispMonoDns)&quot; &quot;$(_WispMonoDir)System.Net.NameResolution.dll&quot; &quot;@(_WispMonoSdk)&quot; &quot;@(_WispMonoCrypto)&quot; &quot;$(_WispMonoDir)System.Security.Cryptography.dll&quot; &quot;@(_WispMonoBc)&quot; &quot;$(_WispMonoDir)BouncyCastle.Cryptography.dll&quot;" />
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(_WispMonoCore);@(_WispMonoSockets);@(_WispMonoDns);@(_WispMonoBc);@(_WispMonoOriginalCrypto)" />
+      <ResolvedFileToPublish Include="@(_WispMonoCore->'$(_WispMonoDir)System.Private.CoreLib.dll')" />
+      <ResolvedFileToPublish Include="@(_WispMonoSockets->'$(_WispMonoDir)System.Net.Sockets.dll')" />
+      <ResolvedFileToPublish Include="@(_WispMonoDns->'$(_WispMonoDir)System.Net.NameResolution.dll')" />
+      <ResolvedFileToPublish Include="@(_WispMonoOriginalCrypto->'$(_WispMonoDir)System.Security.Cryptography.dll')" />
+      <ResolvedFileToPublish Include="@(_WispMonoBc->'$(_WispMonoDir)BouncyCastle.Cryptography.dll')" />
+      <FileWrites Include="$(_WispMonoDir)*.dll" />
+    </ItemGroup>
+  </Target>
+  <Target Name="WispMonoNativeEntry" BeforeTargets="_PrepareForWasiBuildNative" DependsOnTargets="WispMonoPaths">
+    <WriteLinesToFile File="$(_WispMonoDir)mono_assembly.h" Lines="#define WISP_MONO_ASSEMBLY &quot;$(AssemblyName)&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Copy SourceFiles="$(_WispSdkDirectory)native/mono_entry.c" DestinationFiles="$(_WispMonoDir)mono_entry.c" />
+    <ItemGroup>
+      <NativeFileReference Include="$(_WispMonoDir)mono_entry.c;$(_WispSdkDirectory)native/wisp_pal.c;$(_WispSdkDirectory)native/wisp_clock.c" />
+      <FileWrites Include="$(_WispMonoDir)mono_entry.c;$(_WispMonoDir)mono_assembly.h" />
+    </ItemGroup>
+  </Target>
+  <Target Name="WispMonoRawCoreLink" BeforeTargets="_WasiLinkDotNet" DependsOnTargets="WispMonoPaths">
+    <WispMonoRewriteLink Input="$(_WasmLinkRsp)" Output="$(_WispMonoDir)raw-link.rsp" ProjectDirectory="$(MSBuildProjectDirectory)" />
+    <PropertyGroup><_WasmLinkRsp>$(_WispMonoDir)raw-link.rsp</_WasmLinkRsp></PropertyGroup>
+    <ItemGroup><FileWrites Include="$(_WasmLinkRsp)" /></ItemGroup>
+  </Target>
+  <Target Name="WispMonoPublishCore" AfterTargets="_WasiLinkDotNet">
+    <PropertyGroup><NativeBinary>$(PublishDir)$(AssemblyName).wasm</NativeBinary></PropertyGroup>
+    <Copy SourceFiles="$(_WasiOutputFileName)" DestinationFiles="$(NativeBinary)" />
+    <Exec Command="bash &quot;$(_WispSdkDirectory)Build/validate-module.sh&quot; &quot;$(NativeBinary)&quot;" />
+    <ItemGroup><FileWrites Include="$(NativeBinary)" /></ItemGroup>
+  </Target>
+  <Target Name="_SetupWasiSdk" BeforeTargets="_SetupToolchain">
+    <WispMonoToolchainGuard UpstreamTarget="$([MSBuild]::NormalizePath('$(WasmAppHostDir)', '..', 'Sdk', 'WasiApp.targets'))" Sdk="$(WASI_SDK_PATH)">
+      <Output TaskParameter="ExpectedSdkVersion" PropertyName="_ExpectedWasiSdkVersion" />
+    </WispMonoToolchainGuard>
+    <PropertyGroup>
+      <_ToolchainMissingPaths Condition="'$(_ToolchainMissingPaths)' == '' and ('$(WasiClang)' == '' or !Exists('$(WasiClang)'))">%24(WasiClang)=$(WasiClang) </_ToolchainMissingPaths>
+    </PropertyGroup>
+
+    <ReadLinesFromFile Condition="'$(WASI_SDK_PATH)' != '' and Exists('$(WASI_SDK_PATH)/VERSION')" File="$(WASI_SDK_PATH)/VERSION">
+      <Output TaskParameter="Lines" ItemName="_WasiSdkVersionLines" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_FoundExpectedWasiSdkVersion Condition="'%(_WasiSdkVersionLines.Identity)' == '$(_ExpectedWasiSdkVersion)'">true</_FoundExpectedWasiSdkVersion>
+      <_ToolchainMissingErrorMessage Condition="'$(_FoundExpectedWasiSdkVersion)' == ''">Please use wasi-sdk version $(_ExpectedWasiSdkVersion) and set %24(WASI_SDK_PATH) . It can be obtained from https://github.com/WebAssembly/wasi-sdk/releases</_ToolchainMissingErrorMessage>
+      <_ToolchainMissingErrorMessage Condition="'$(WASI_SDK_PATH)' == '' or !Exists('$(WASI_SDK_PATH)/VERSION')">Could not find wasi-sdk. Install wasi-sdk and set %24(WASI_SDK_PATH) . It can be obtained from https://github.com/WebAssembly/wasi-sdk/releases</_ToolchainMissingErrorMessage>
+      <_ToolchainMissingErrorMessage Condition="'$(_ToolchainMissingErrorMessage)' == '' and '$(_ToolchainMissingPaths)' != ''">Using WASI_SDK_PATH=$(WASI_SDK_PATH), cannot find $(_ToolchainMissingPaths) .</_ToolchainMissingErrorMessage>
+      <_IsToolchainMissing Condition="'$(_ToolchainMissingErrorMessage)' != ''">true</_IsToolchainMissing>
+    </PropertyGroup>
+
+    <PropertyGroup>
+      <WasiSdkBinPath Condition="'$(WasiSdkBinPath)' != ''">$([MSBuild]::NormalizeDirectory($(WasiSdkBinPath)))</WasiSdkBinPath>
+      <_WasmLLVMPathForAOT>$(WasiSdkBinPath)</_WasmLLVMPathForAOT>
+    </PropertyGroup>
+  </Target>
+</Project>
