@@ -16,7 +16,6 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="10.0.0" GeneratePathProperty="true" PrivateAssets="all" />
     <Reference Include="Mono.Cecil" HintPath="$(PkgMicrosoft_NET_ILLink_Tasks)/tools/net/Mono.Cecil.dll" />
-    <Compile Include="../Build/RuntimeAdapter/BouncyCastleRandomness.cs" Link="BouncyCastleRandomness.cs" />
     <Compile Include="../Build/RuntimeAdapter/CryptoRuntime.cs" Link="CryptoRuntime.cs" />
     <Compile Include="../Build/RuntimeAdapter/RuntimeMethods.cs" Link="RuntimeMethods.cs" />
     <Compile Include="../Build/RuntimeAdapter/ManagedPbkdf2.cs" Link="ManagedPbkdf2.cs" />

@@ -161,6 +161,18 @@ initialized sample image. It reports repeated supported fields in those samples,
 not a cryptographic uniqueness guarantee. Values and generator state already
 written to guest memory remain captured.
 
+The same applies to a generator your own startup code seeds once and then
+only stirs (`new Random(seed)`, a library's own DRBG): created before the
+snapshot, it replays the same sequence in every clone. Do not retain one
+across pre-initialisation, or recreate it on `Wisp.Activation.Activated`,
+which the SDK raises once on the first dispatch of each activation and not
+again after a wake from hibernation:
+
+```csharp
+Wisp.Activation.Activated += () =>
+    _random = new Random(RandomNumberGenerator.GetInt32(int.MaxValue));
+```
+
 ## Pinned versions
 
 `Wisp.Guest.props` pins the experimental ILCompiler.LLVM package.

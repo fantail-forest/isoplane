@@ -1,64 +1,63 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-if (args.Length != 2 && args.Length != 4 && args.Length != 9 && args.Length != 11)
+// <corelib in> <corelib out> <sockets in> <sockets out> <dns in> <dns out> <sdk> <crypto in> <crypto out>
+//   the adaptation for a runtime whose CoreLib, sockets, DNS and cryptography
+//   have no WISP source integration; the source-built runtime needs none.
+if (args.Length != 9)
     throw new ArgumentException("Expected pinned runtime input/output pairs.");
-if (Path.GetFullPath(args[0]) == Path.GetFullPath(args[1]))
-    throw new ArgumentException("The runtime package is immutable; output must be a separate file.");
 
-using var module = ModuleDefinition.ReadModule(args[0]);
-var dispatch = module.Types.Single(type => type.FullName == "System.Threading.ThreadPoolWorkQueue")
-    .Methods.Single(method => method.Name == "Dispatch" && method.Parameters.Count == 0
-        && method.IsStatic && method.ReturnType.FullName == "System.Boolean" && method.HasBody);
-var thread = module.Types.Single(type => type.FullName == "System.Threading.Thread");
-if (thread.Methods.Any(method => method.Name == "WispRunReady"))
-    throw new InvalidOperationException("The input CoreLib already contains the WISP scheduler adaptation.");
+AdaptRuntime(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+AdaptCryptography(args[6], args[7], args[8]);
 
-var pump = new MethodDefinition("WispRunReady", MethodAttributes.Assembly | MethodAttributes.Static,
-    module.TypeSystem.Void);
-thread.Methods.Add(pump);
-var schedule = Polling.Adapt(module);
-NativeImports.Adapt(module, thread);
-var il = pump.Body.GetILProcessor();
-il.Append(Instruction.Create(OpCodes.Call, schedule));
-il.Append(Instruction.Create(OpCodes.Call, dispatch));
-il.Append(Instruction.Create(OpCodes.Pop));
-il.Append(Instruction.Create(OpCodes.Ret));
-var register = module.Types.Single(type => type.FullName == "System.Threading.WasiEventLoop")
-    .Methods.Single(method => method.Name == "RegisterWasiPollableHandle");
-var wait = new MethodDefinition("WispWaitPollable", MethodAttributes.Assembly | MethodAttributes.Static, register.ReturnType);
-thread.Methods.Add(wait);
-var waitIl = wait.Body.GetILProcessor();
-foreach (var parameter in register.Parameters)
+static void RequireSeparateOutput(string input, string output, string what)
 {
-    var copy = new ParameterDefinition(parameter.ParameterType);
-    wait.Parameters.Add(copy);
-    waitIl.Emit(OpCodes.Ldarg, copy);
+    if (Path.GetFullPath(input) == Path.GetFullPath(output))
+        throw new ArgumentException($"The {what} package is immutable; output must be a separate file.");
 }
-waitIl.Emit(OpCodes.Call, register);
-waitIl.Emit(OpCodes.Ret);
-module.Write(args[1]);
 
-if (args.Length >= 4)
+static void AdaptRuntime(string coreLibIn, string coreLibOut, string socketsIn, string socketsOut, string dnsIn, string dnsOut, string sdkPath)
 {
-    if (Path.GetFullPath(args[2]) == Path.GetFullPath(args[3]))
-        throw new ArgumentException("The sockets runtime package is immutable; output must be separate.");
-    using var sockets = ModuleDefinition.ReadModule(args[2]);
+    RequireSeparateOutput(coreLibIn, coreLibOut, "runtime");
+    using var module = ModuleDefinition.ReadModule(coreLibIn);
+    var dispatch = module.Types.Single(type => type.FullName == "System.Threading.ThreadPoolWorkQueue")
+        .Methods.Single(method => method.Name == "Dispatch" && method.Parameters.Count == 0
+            && method.IsStatic && method.ReturnType.FullName == "System.Boolean" && method.HasBody);
+    var thread = module.Types.Single(type => type.FullName == "System.Threading.Thread");
+    // The same entry the source-built runtime defines, so the SDK reaches one name in both.
+    if (thread.Methods.Any(method => method.Name == "RunWasiEventLoopOnce"))
+        throw new InvalidOperationException("The input CoreLib already contains the WISP scheduler adaptation.");
+
+    var pump = new MethodDefinition("RunWasiEventLoopOnce", MethodAttributes.Assembly | MethodAttributes.Static,
+        module.TypeSystem.Void);
+    thread.Methods.Add(pump);
+    var schedule = Polling.Adapt(module);
+    NativeImports.Adapt(module, thread);
+    var il = pump.Body.GetILProcessor();
+    il.Append(Instruction.Create(OpCodes.Call, schedule));
+    il.Append(Instruction.Create(OpCodes.Call, dispatch));
+    il.Append(Instruction.Create(OpCodes.Pop));
+    il.Append(Instruction.Create(OpCodes.Ret));
+    module.Write(coreLibOut);
+
+    RequireSeparateOutput(socketsIn, socketsOut, "sockets runtime");
+    using var sockets = ModuleDefinition.ReadModule(socketsIn);
     SocketPolling.Adapt(sockets);
-    sockets.Write(args[3]);
+    sockets.Write(socketsOut);
+
+    RequireSeparateOutput(dnsIn, dnsOut, "DNS runtime");
+    using var dns = ModuleDefinition.ReadModule(dnsIn);
+    // The DNS bridge lives in the SDK, which is an input here only to resolve that reference.
+    using var sdk = ModuleDefinition.ReadModule(sdkPath);
+    NameResolution.Adapt(dns, sdk);
+    dns.Write(dnsOut);
 }
 
-if (args.Length >= 9)
+static void AdaptCryptography(string sdkPath, string cryptoIn, string cryptoOut)
 {
-    if (Path.GetFullPath(args[4]) == Path.GetFullPath(args[5]))
-        throw new ArgumentException("The DNS runtime package is immutable; output must be separate.");
-    using var dns = ModuleDefinition.ReadModule(args[4]);
-    using var sdk = ModuleDefinition.ReadModule(args[6]);
-    NameResolution.Adapt(dns, sdk);
-    dns.Write(args[5]);
-    if (Path.GetFullPath(args[7]) == Path.GetFullPath(args[8]))
-        throw new ArgumentException("The cryptography runtime package is immutable; output must be separate.");
-    using var cryptography = CryptoRuntime.Read(args[7]);
+    RequireSeparateOutput(cryptoIn, cryptoOut, "cryptography runtime");
+    using var sdk = ModuleDefinition.ReadModule(sdkPath);
+    using var cryptography = CryptoRuntime.Read(cryptoIn);
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.RandomNumberGenerator", "Wisp.Runtime.Randomness");
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.SHA256", "Wisp.Runtime.Sha256");
     StaticMethods.Forward(cryptography, sdk, "System.Security.Cryptography.HMACSHA256", "Wisp.Runtime.HmacSha256");
@@ -66,15 +65,5 @@ if (args.Length >= 9)
     ManagedHashProviders.Adapt(cryptography, sdk);
     ManagedPbkdf2.Adapt(cryptography);
     CertificateValues.Adapt(cryptography, sdk);
-    cryptography.Write(args[8]);
-}
-
-if (args.Length == 11)
-{
-    if (Path.GetFullPath(args[9]) == Path.GetFullPath(args[10]))
-        throw new ArgumentException("The BouncyCastle package is immutable; output must be separate.");
-    using var bouncyCastle = BouncyCastleRandomness.Read(args[9]);
-
-    BouncyCastleRandomness.Adapt(bouncyCastle);
-    bouncyCastle.Write(args[10]);
+    cryptography.Write(cryptoOut);
 }

@@ -70,9 +70,24 @@ This is the **publish** pipeline, not `Build`: NativeAOT compilation hangs off
 at all. It says so rather than passing quietly.
 
 
-Errors are verdicts and warnings are the absence of one: a developer who has
-the SDK and not yet the CLI gets a module and a loud warning, not a failed
-build. `-warnaserror:WISP0002` makes it a hard gate for CI.
+The gate is mandatory: a module nothing has judged is not a publication, so
+the absence of a verdict fails the publish the same as a rejection. A local
+debugging publish (`WispLocalDebug=true`) links a raw artifact the control
+plane refuses by design and is the one publish the gate does not judge.
+
+## Randomness after activation
+
+An activation inherits captured guest memory. The BCL's
+`RandomNumberGenerator` requests host entropy when generating bytes. Values
+already stored in guest memory remain captured. A generator that seeds itself
+once and then advances private state (`new Random(seed)` or a library DRBG)
+can therefore repeat across copies if initialization created it before capture.
+Create that generator after activation, or recreate it on
+`Wisp.Activation.Activated`, raised on the first dispatch of each activation:
+
+```csharp
+Wisp.Activation.Activated += () => _random = new Random(RandomNumberGenerator.GetInt32(int.MaxValue));
+```
 
 ## The other SDK
 

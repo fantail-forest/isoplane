@@ -70,6 +70,7 @@ public static unsafe class Exports<TRouter>
         try
         {
             Boot();
+            Activation.Enter();
             byte[] bytes = TakeOwnership(ptr, len);
 
             DispatchRecord d;
@@ -116,6 +117,7 @@ public static unsafe class Exports<TRouter>
         try
         {
             Boot();
+            Activation.Enter();
             byte[] bytes = TakeOwnership(ptr, len);
 
             ResultRecord r;

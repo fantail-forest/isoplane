@@ -4,6 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The SDK targets build this project with its intermediates redirected under
+         the guest's obj; a leftover local obj/ would otherwise be globbed as source. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="NativeImports.tsv" />
