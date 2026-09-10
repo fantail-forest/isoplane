@@ -1,0 +1,26 @@
+diff --git a/src/libraries/System.Net.Security/Directory.Build.props b/src/libraries/System.Net.Security/Directory.Build.props
+index 58979d42f..ce244cbea 100644
+--- a/src/libraries/System.Net.Security/Directory.Build.props
++++ b/src/libraries/System.Net.Security/Directory.Build.props
+@@ -3,6 +3,6 @@
+   <PropertyGroup>
+     <StrongNameKeyId>Microsoft</StrongNameKeyId>
+     <IncludePlatformAttributes>true</IncludePlatformAttributes>
+-    <UnsupportedOSPlatforms>browser;wasi</UnsupportedOSPlatforms>
++    <UnsupportedOSPlatforms>browser</UnsupportedOSPlatforms>
+   </PropertyGroup>
+ </Project>
+\ No newline at end of file
+diff --git a/src/libraries/System.Net.Security/src/System.Net.Security.csproj b/src/libraries/System.Net.Security/src/System.Net.Security.csproj
+index b102289d5..f29871821 100644
+--- a/src/libraries/System.Net.Security/src/System.Net.Security.csproj
++++ b/src/libraries/System.Net.Security/src/System.Net.Security.csproj
+@@ -18,7 +18,7 @@
+     <DefineConstants Condition="'$(TargetPlatformIdentifier)' == 'osx' or '$(TargetPlatformIdentifier)' == 'ios' or '$(TargetPlatformIdentifier)' == 'tvos'">$(DefineConstants);TARGET_APPLE</DefineConstants>
+     <UseAndroidCrypto Condition="'$(TargetPlatformIdentifier)' == 'android'">true</UseAndroidCrypto>
+     <UseAppleCrypto Condition="'$(TargetPlatformIdentifier)' == 'osx' or '$(TargetPlatformIdentifier)' == 'ios' or '$(TargetPlatformIdentifier)' == 'tvos'">true</UseAppleCrypto>
+-    <UseManagedNtlm Condition="'$(TargetPlatformIdentifier)' == 'android' or '$(TargetPlatformIdentifier)' == 'tvos'">true</UseManagedNtlm>
++    <UseManagedNtlm Condition="'$(TargetPlatformIdentifier)' == 'android' or '$(TargetPlatformIdentifier)' == 'tvos' or '$(TargetPlatformIdentifier)' == 'wasi'">true</UseManagedNtlm>
+     <DefineConstants Condition="'$(UseAndroidCrypto)' == 'true' or '$(UseAppleCrypto)' == 'true'">$(DefineConstants);SYSNETSECURITY_NO_OPENSSL</DefineConstants>
+     <GenAPIExcludeApiList>ReferenceAssemblyExclusions.txt</GenAPIExcludeApiList>
+   </PropertyGroup>

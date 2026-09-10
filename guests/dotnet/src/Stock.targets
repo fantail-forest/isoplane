@@ -3,6 +3,10 @@
   <PropertyGroup>
     <WispValidate>false</WispValidate>
   </PropertyGroup>
-  <Target Name="WispCompilePal" />
+  <!-- Leaving the shim out changes the link and nothing ILC sees, so the
+       module a previous publish linked with it must not be reused. -->
+  <Target Name="WispCompilePal" BeforeTargets="LinkNativeLlvm">
+    <Delete Files="$(NativeBinary)" />
+  </Target>
   <Target Name="WispValidateImports" />
 </Project>

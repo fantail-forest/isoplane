@@ -167,9 +167,15 @@ require_build_inputs() {
   [ -f "$OUT/openssl/lib/libcrypto.a" ] || { echo "the openssl stage installs OpenSSL under $OUT/openssl; run it first" >&2; exit 1; }
   [ -x "$WASI_SDK/bin/clang" ] || { echo "the toolchain stage unpacks wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
 }
+# A managed P/Invoke whose wasm signature disagrees with its C prototype
+# traps on the first call; the audit refuses to build such a pack.
+audit_pinvokes() {
+  python3 "$HERE/audit-pinvokes.py" "$1"
+}
 stage_runtime() {
   echo "==> runtime (log: $LOGS/runtime-build.log)"
   require_build_inputs
+  audit_pinvokes "$RUNTIME"
   stamp_pack_version "$runtime_version_file"
   # An official build is the one Arcade versions from the label and build id
   # rather than stamping "dev" or "ci"; nothing else about it applies here.
@@ -194,6 +200,7 @@ stage_runtime() {
 stage_nativeaot() {
   echo "==> nativeaot (log: $LOGS/nativeaot-build.log)"
   require_build_inputs
+  audit_pinvokes "$RUNTIMELAB"
   stamp_pack_version "$nativeaot_version_file"
   (
     cd "$RUNTIMELAB"

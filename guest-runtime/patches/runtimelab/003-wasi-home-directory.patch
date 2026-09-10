@@ -1,0 +1,39 @@
+diff --git a/src/libraries/System.Private.CoreLib/src/System/IO/PersistedFiles.Unix.cs b/src/libraries/System.Private.CoreLib/src/System/IO/PersistedFiles.Unix.cs
+index 04a6b620b..e657ad084 100644
+--- a/src/libraries/System.Private.CoreLib/src/System/IO/PersistedFiles.Unix.cs
++++ b/src/libraries/System.Private.CoreLib/src/System/IO/PersistedFiles.Unix.cs
+@@ -55,6 +55,12 @@ private static void EnsureUserDirectories()
+             if (!string.IsNullOrEmpty(userHomeDirectory))
+                 return userHomeDirectory;
+ 
++            // A WASI guest has no user database to consult: its per-user
++            // files live at the fixed path a profile at the root would give,
++            // and exist only where a preopened directory supplies them.
++            if (OperatingSystem.IsWasi())
++                return "/";
++
+             // In initialization conditions, however, the "HOME" environment variable may
+             // not yet be set. For such cases, consult with the password entry.
+             return GetHomeDirectoryFromPasswd();
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslDirectoryBasedStoreProvider.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslDirectoryBasedStoreProvider.cs
+index 1d8bdb101..eca7f5876 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslDirectoryBasedStoreProvider.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslDirectoryBasedStoreProvider.cs
+@@ -323,14 +323,9 @@ internal static string GetStorePath(string storeName)
+             // Do this here instead of a static field initializer so that
+             // the static initializer isn't capable of throwing the "home directory not found"
+             // exception.
+-            // A WASI guest has no user profile to look up; its per-user
+-            // stores live at the fixed path a profile would give and are
+-            // empty unless a preopened directory supplies them.
+-            s_userStoreRoot ??= OperatingSystem.IsWasi()
+-                ? Path.Combine("/", ".dotnet", "corefx", X509Persistence.CryptographyFeatureName, X509Persistence.X509StoresSubFeatureName)
+-                : PersistedFiles.GetUserFeatureDirectory(
+-                    X509Persistence.CryptographyFeatureName,
+-                    X509Persistence.X509StoresSubFeatureName);
++            s_userStoreRoot ??= PersistedFiles.GetUserFeatureDirectory(
++                X509Persistence.CryptographyFeatureName,
++                X509Persistence.X509StoresSubFeatureName);
+ 
+             return Path.Combine(s_userStoreRoot, directoryName);
+         }

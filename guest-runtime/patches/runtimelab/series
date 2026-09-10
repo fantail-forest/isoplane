@@ -12,3 +12,9 @@
 ../runtime/010-wasi-stream-error-codes-and-socket-timeouts.patch
 002-wasi-openssl-backend.patch
 ../runtime/011-wasi-shim-strict-warnings.patch
+../runtime/012-wasi-zero-byte-receive-readiness.patch
+../runtime/013-wasi-net-security-platform-support.patch
+# The fork's PersistedFiles differs from the runtime's, so 014 is re-cut
+# against it.
+003-wasi-home-directory.patch
+../runtime/015-wasi-pinvoke-signatures.patch

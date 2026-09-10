@@ -1,0 +1,57 @@
+diff --git a/src/libraries/Common/src/Interop/Interop.Collation.cs b/src/libraries/Common/src/Interop/Interop.Collation.cs
+index 11fa2de62..143061c3c 100644
+--- a/src/libraries/Common/src/Interop/Interop.Collation.cs
++++ b/src/libraries/Common/src/Interop/Interop.Collation.cs
+@@ -35,14 +35,6 @@ internal static partial class Globalization
+         [return: MarshalAs(UnmanagedType.Bool)]
+         internal static unsafe partial bool EndsWith(IntPtr sortHandle, char* target, int cwTargetLength, char* source, int cwSourceLength, CompareOptions options, int* matchedLength);
+ 
+-        [LibraryImport(Libraries.GlobalizationNative, EntryPoint = "GlobalizationNative_StartsWith", StringMarshalling = StringMarshalling.Utf16)]
+-        [return: MarshalAs(UnmanagedType.Bool)]
+-        internal static partial bool StartsWith(IntPtr sortHandle, string target, int cwTargetLength, string source, int cwSourceLength, CompareOptions options);
+-
+-        [LibraryImport(Libraries.GlobalizationNative, EntryPoint = "GlobalizationNative_EndsWith", StringMarshalling = StringMarshalling.Utf16)]
+-        [return: MarshalAs(UnmanagedType.Bool)]
+-        internal static partial bool EndsWith(IntPtr sortHandle, string target, int cwTargetLength, string source, int cwSourceLength, CompareOptions options);
+-
+         [LibraryImport(Libraries.GlobalizationNative, EntryPoint = "GlobalizationNative_GetSortKey", StringMarshalling = StringMarshalling.Utf16)]
+         internal static unsafe partial int GetSortKey(IntPtr sortHandle, char* str, int strLength, byte* sortKey, int sortKeyLength, CompareOptions options);
+ 
+diff --git a/src/libraries/Common/src/Interop/Unix/System.Native/Interop.PathConf.cs b/src/libraries/Common/src/Interop/Unix/System.Native/Interop.PathConf.cs
+index 3b02546fe..cd4c8a88d 100644
+--- a/src/libraries/Common/src/Interop/Unix/System.Native/Interop.PathConf.cs
++++ b/src/libraries/Common/src/Interop/Unix/System.Native/Interop.PathConf.cs
+@@ -21,6 +21,6 @@ internal enum PathConfName : int
+         }
+ 
+         [LibraryImport(Libraries.SystemNative, EntryPoint = "SystemNative_PathConf", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+-        private static partial int PathConf(string path, PathConfName name);
++        private static partial long PathConf(string path, PathConfName name);
+     }
+ }
+diff --git a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.SslCtx.cs b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.SslCtx.cs
+index 7c3e8d2e1..a6a79c078 100644
+--- a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.SslCtx.cs
++++ b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.SslCtx.cs
+@@ -42,7 +42,7 @@ internal static partial class Ssl
+         internal static unsafe partial int SslCtxSetCaching(SafeSslContextHandle ctx, int mode, int cacheSize, int contextIdLength, Span<byte> contextId, delegate* unmanaged<IntPtr, IntPtr, int> neewSessionCallback, delegate* unmanaged<IntPtr, IntPtr, void> removeSessionCallback);
+ 
+         [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_SslCtxRemoveSession")]
+-        internal static unsafe partial void SslCtxRemoveSession(SafeSslContextHandle ctx, IntPtr session);
++        internal static unsafe partial int SslCtxRemoveSession(SafeSslContextHandle ctx, IntPtr session);
+ 
+         internal static bool AddExtraChainCertificates(SafeSslContextHandle ctx, ReadOnlyCollection<X509Certificate2> chain)
+         {
+diff --git a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.X509Ext.cs b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.X509Ext.cs
+index 6012d65fd..d73f09909 100644
+--- a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.X509Ext.cs
++++ b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.X509Ext.cs
+@@ -16,7 +16,7 @@ internal static partial class Crypto
+             SafeAsn1OctetStringHandle data);
+ 
+         [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_X509ExtensionDestroy")]
+-        internal static partial int X509ExtensionDestroy(IntPtr x);
++        internal static partial void X509ExtensionDestroy(IntPtr x);
+ 
+         [LibraryImport(Libraries.CryptoNative, EntryPoint = "CryptoNative_X509V3ExtPrint")]
+         [return: MarshalAs(UnmanagedType.Bool)]
