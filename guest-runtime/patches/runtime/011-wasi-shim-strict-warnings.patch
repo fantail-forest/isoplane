@@ -1,0 +1,40 @@
+diff --git a/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEngine.Wasi.cs b/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEngine.Wasi.cs
+index d79429ae7..b15f64890 100644
+--- a/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEngine.Wasi.cs
++++ b/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEngine.Wasi.cs
+@@ -25,6 +25,8 @@ internal sealed unsafe class SocketAsyncEngine
+ 
+         public static bool TryRegisterSocket(IntPtr socketHandle, SocketAsyncContext context, out SocketAsyncEngine? engine, out Interop.Error error)
+         {
++            // Readiness is asked of libc at each poll; the handle itself plays no part.
++            _ = socketHandle;
+             engine = s_engine;
+ 
+             RegisterWasiPollHook(context, BeforePollHook, HandleSocketEvent, context.unregisterPollHook.Token);
+diff --git a/src/native/libs/System.Native/pal_networking.c b/src/native/libs/System.Native/pal_networking.c
+index e04b926ab..9543c9b36 100644
+--- a/src/native/libs/System.Native/pal_networking.c
++++ b/src/native/libs/System.Native/pal_networking.c
+@@ -3454,6 +3454,12 @@ extern bool __real_streams_method_input_stream_read(streams_borrow_input_stream_
+ extern bool __real_streams_method_output_stream_check_write(streams_borrow_output_stream_t self, uint64_t* ret, streams_stream_error_t* err);
+ extern bool __real_streams_method_output_stream_write(streams_borrow_output_stream_t self, wasip2_list_u8_t* contents, streams_stream_error_t* err);
+ 
++// The wrappers the link installs for the symbols above and for poll_poll.
++bool __wrap_streams_method_input_stream_read(streams_borrow_input_stream_t self, uint64_t len, wasip2_list_u8_t* ret, streams_stream_error_t* err);
++bool __wrap_streams_method_output_stream_check_write(streams_borrow_output_stream_t self, uint64_t* ret, streams_stream_error_t* err);
++bool __wrap_streams_method_output_stream_write(streams_borrow_output_stream_t self, wasip2_list_u8_t* contents, streams_stream_error_t* err);
++void __wrap_poll_poll(poll_list_borrow_pollable_t* list, wasip2_list_u32_t* ready);
++
+ static int g_wasiStreamErrno;
+ 
+ static void RecordWasiStreamError(const streams_stream_error_t* error)
+@@ -3618,7 +3624,8 @@ int32_t SystemNative_WasiResolveAddressesStart(const uint8_t* name, int32_t leng
+ 
+     instance_network_own_network_t network = instance_network_instance_network();
+     wasip2_string_t text;
+-    text.ptr = (uint8_t*)name;
++    // The binding's string is not const; the lookup does not write through it.
++    text.ptr = (uint8_t*)(uintptr_t)name;
+     text.len = (size_t)length;
+     ip_name_lookup_own_resolve_address_stream_t addresses;
+     ip_name_lookup_error_code_t error;

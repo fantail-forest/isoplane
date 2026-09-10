@@ -1,0 +1,14 @@
+# The NativeAOT-LLVM fork's series: its own patches and the runtime patches
+# that apply to it, in order. build.sh excludes src/mono from the shared
+# ones. The toolchain patches (wasi-sdk 29, no emulated pthread) and the
+# Mono interpreter patch are absent: the fork already carries that state.
+001-wasi-descriptor-table-signature.patch
+../runtime/002-crypto-and-security-wasi-targets.patch
+../runtime/003-x509-store-wasi-dirent.patch
+../runtime/006-wasi-event-loop-host-driven.patch
+../runtime/007-wasi-socket-readiness.patch
+../runtime/008-wasi-async-name-resolution.patch
+../runtime/009-wasi-openssl-cryptography-native.patch
+../runtime/010-wasi-stream-error-codes-and-socket-timeouts.patch
+002-wasi-openssl-backend.patch
+../runtime/011-wasi-shim-strict-warnings.patch
