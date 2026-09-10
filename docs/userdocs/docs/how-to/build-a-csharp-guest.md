@@ -14,6 +14,9 @@ This guide covers the project layout and build options.
 The SDK's `Abi/Imports.cs` binds the host contract. A module links the imports
 its compiled code reaches; the validator checks the resulting module. The SDK source describes the managed surface at this revision.
 
+`HttpClient` uses the runtime's `wasi:http` client, delegated to the host's
+outbound HTTP capability under its destination policy. TLS terminates at the host.
+
 ## Layout
 
 `guest-sdks/dotnet/` is the SDK library. The reference guest uses a
@@ -116,7 +119,8 @@ NativeAOT framework pack the pinned ILCompiler.LLVM compiles against, from
 the same `dotnet/runtimelab` commit as the compiler. The same patch series
 integrates each with the host: the host-driven event loop, socket readiness
 through libc's `poll`, asynchronous name resolution, OpenSSL as the
-cryptography backend, and the network error codes libc drops. The build
+cryptography backend, and the network error codes libc drops; the runtime's
+own `wasi:http` client is delegated as it is. The build
 publishes both packs to a local feed whose `Wisp.GuestRuntime.props` names
 each pack's version and digest; the SDK refuses a pack whose digest differs
 from the feed's and records the identity it linked beside every module

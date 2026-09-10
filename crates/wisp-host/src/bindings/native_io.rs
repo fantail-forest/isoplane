@@ -1,9 +1,14 @@
 //! Instance-owned native networking resources, independent of the Wasmtime Store.
 
 mod addresses;
+mod http;
 mod streams;
 
 use addresses::Addresses;
+use http::{
+    Fields, FutureResponse, HttpInput, HttpOutput, IncomingBody, IncomingResponse, OutgoingBody,
+    OutgoingRequest,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -266,6 +271,15 @@ enum Resource {
     Error(StreamFailure),
     Subscription(ResourceHandle),
     Timer(Timer),
+    Fields(Fields),
+    OutgoingRequest(OutgoingRequest),
+    OutgoingBody(OutgoingBody),
+    HttpOutput(HttpOutput),
+    FutureResponse(FutureResponse),
+    IncomingResponse(IncomingResponse),
+    IncomingBody(IncomingBody),
+    HttpInput(HttpInput),
+    FutureTrailers,
 }
 
 /// What a failed stream operation leaves behind for the guest to inspect.
@@ -339,7 +353,16 @@ impl Resources {
                 | Resource::Input(_)
                 | Resource::Output(_)
                 | Resource::Subscription(_)
-                | Resource::Timer(_),
+                | Resource::Timer(_)
+                | Resource::Fields(_)
+                | Resource::OutgoingRequest(_)
+                | Resource::OutgoingBody(_)
+                | Resource::HttpOutput(_)
+                | Resource::FutureResponse(_)
+                | Resource::IncomingResponse(_)
+                | Resource::IncomingBody(_)
+                | Resource::HttpInput(_)
+                | Resource::FutureTrailers,
             )
             | None => Err(Error::InvalidHandle(handle)),
         }
@@ -364,11 +387,15 @@ impl Resources {
             Request::SocketAddress { .. } => "socket_address",
             Request::NoDelay { .. } => "no_delay",
             Request::Shutdown { .. } => "shutdown",
+            Request::CheckWrite(_) => "check_write",
+            Request::Write { .. } => "write",
+            Request::Flush(_) => "flush",
             Request::Subscribe(_) => "subscribe",
             Request::Timer(_) => "timer",
             Request::Ready(_) => "ready",
             Request::Poll(_) => "poll",
             Request::Drop { .. } => "drop",
+            Request::Http(_) => "http",
         };
         let observes_completion = matches!(
             &request,
@@ -468,6 +495,7 @@ impl Resources {
             Request::Read { stream, length } => {
                 let result = match self.entries.get_mut(&stream) {
                     Some(Resource::Input(input)) => input.read(length, bindings),
+                    Some(Resource::HttpInput(input)) => input.read(length, bindings),
                     _ => return Err(Error::InvalidHandle(stream)),
                 };
                 if let Err(error) = &result {
@@ -475,6 +503,36 @@ impl Resources {
                 }
                 self.stream_result(result)
             }
+            Request::CheckWrite(stream) => {
+                let result = match self.entries.get_mut(&stream) {
+                    Some(Resource::HttpOutput(output)) => output.check_write(bindings),
+                    // A socket's writes go through the native send bridge.
+                    Some(Resource::Output(_)) => {
+                        Err(Error::Unsupported("check-write on a socket stream"))
+                    }
+                    _ => return Err(Error::InvalidHandle(stream)),
+                };
+                self.stream_result(result)
+            }
+            Request::Write { stream, bytes } => {
+                let result = match self.entries.get_mut(&stream) {
+                    Some(Resource::HttpOutput(output)) => output.write(bytes, bindings),
+                    Some(Resource::Output(_)) => {
+                        Err(Error::Unsupported("write on a socket stream"))
+                    }
+                    _ => return Err(Error::InvalidHandle(stream)),
+                };
+                self.stream_result(result)
+            }
+            Request::Flush(stream) => match self.entries.get(&stream) {
+                // Frames reach the transport as they are written; nothing is held back.
+                Some(Resource::HttpOutput(_)) => Ok(Response::Done),
+                Some(Resource::Output(_)) => {
+                    self.stream_result(Err(Error::Unsupported("flush on a socket stream")))
+                }
+                _ => Err(Error::InvalidHandle(stream)),
+            },
+            Request::Http(request) => self.http(request, bindings).map(Response::Http),
             Request::TrySend { pollables, bytes } => {
                 let target = pollables
                     .into_iter()
@@ -525,13 +583,22 @@ impl Resources {
                         Resource::Socket(_)
                         | Resource::Input(_)
                         | Resource::Output(_)
-                        | Resource::Addresses(_),
+                        | Resource::Addresses(_)
+                        | Resource::FutureResponse(_)
+                        | Resource::HttpInput(_)
+                        | Resource::HttpOutput(_),
                     ) => {}
                     Some(
                         Resource::Network
                         | Resource::Error(_)
                         | Resource::Subscription(_)
-                        | Resource::Timer(_),
+                        | Resource::Timer(_)
+                        | Resource::Fields(_)
+                        | Resource::OutgoingRequest(_)
+                        | Resource::OutgoingBody(_)
+                        | Resource::IncomingResponse(_)
+                        | Resource::IncomingBody(_)
+                        | Resource::FutureTrailers,
                     )
                     | None => return Err(Error::InvalidHandle(handle)),
                 }
@@ -598,12 +665,28 @@ impl Resources {
                     (ResourceKind::Tcp, Resource::Socket(_))
                         | (ResourceKind::Addresses, Resource::Addresses(_))
                         | (ResourceKind::Error, Resource::Error(_))
-                        | (ResourceKind::Input, Resource::Input(_))
-                        | (ResourceKind::Output, Resource::Output(_))
+                        | (
+                            ResourceKind::Input,
+                            Resource::Input(_) | Resource::HttpInput(_)
+                        )
+                        | (
+                            ResourceKind::Output,
+                            Resource::Output(_) | Resource::HttpOutput(_)
+                        )
                         | (
                             ResourceKind::Pollable,
                             Resource::Timer(_) | Resource::Subscription(_)
                         )
+                        | (ResourceKind::Fields, Resource::Fields(_))
+                        | (ResourceKind::OutgoingRequest, Resource::OutgoingRequest(_))
+                        | (ResourceKind::OutgoingBody, Resource::OutgoingBody(_))
+                        | (ResourceKind::FutureResponse, Resource::FutureResponse(_))
+                        | (
+                            ResourceKind::IncomingResponse,
+                            Resource::IncomingResponse(_)
+                        )
+                        | (ResourceKind::IncomingBody, Resource::IncomingBody(_))
+                        | (ResourceKind::FutureTrailers, Resource::FutureTrailers)
                 );
                 if !valid {
                     return Err(Error::InvalidHandle(handle));
@@ -628,11 +711,22 @@ impl Resources {
                 },
                 Some(Resource::Input(input)) => input.ready(),
                 Some(Resource::Output(output)) => output.ready(),
+                Some(Resource::HttpInput(input)) => Ok(input.ready()),
+                Some(Resource::HttpOutput(output)) => Ok(output.ready()),
+                Some(Resource::FutureResponse(_)) => self
+                    .future_ready(*target)
+                    .ok_or(Error::InvalidHandle(*target)),
                 Some(
                     Resource::Network
                     | Resource::Error(_)
                     | Resource::Subscription(_)
-                    | Resource::Timer(_),
+                    | Resource::Timer(_)
+                    | Resource::Fields(_)
+                    | Resource::OutgoingRequest(_)
+                    | Resource::OutgoingBody(_)
+                    | Resource::IncomingResponse(_)
+                    | Resource::IncomingBody(_)
+                    | Resource::FutureTrailers,
                 )
                 | None => Err(Error::InvalidHandle(*target)),
             },
@@ -642,7 +736,16 @@ impl Resources {
                 | Resource::Error(_)
                 | Resource::Socket(_)
                 | Resource::Input(_)
-                | Resource::Output(_),
+                | Resource::Output(_)
+                | Resource::Fields(_)
+                | Resource::OutgoingRequest(_)
+                | Resource::OutgoingBody(_)
+                | Resource::HttpOutput(_)
+                | Resource::FutureResponse(_)
+                | Resource::IncomingResponse(_)
+                | Resource::IncomingBody(_)
+                | Resource::HttpInput(_)
+                | Resource::FutureTrailers,
             )
             | None => Err(Error::InvalidHandle(handle)),
         }

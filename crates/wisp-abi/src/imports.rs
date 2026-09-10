@@ -174,6 +174,11 @@ pub const IMPORTS: &[ImportDef] = &[
     ImportDef { buf: BufSpec::None, ..imp!("http_body_read", Http, Sig { params: &[I32, I32], results: &[I64] }, FUT,
         "Reads the next chunk of a response body through a host-owned future.") },
 
+    ImportDef { buf: BufSpec::None, ..imp!("http_call", Http, Sig { params: &[I32, I32, I32], results: &[I64] }, SYNC,
+        "outbound HTTP through the runtime's own wasi:http client: every exchange is issued by the host \
+         under the SSRF policy, TLS terminates at the host, and the guest streams bodies through \
+         host-owned streams") },
+
     // ---- inbound request --------------------------------------------------
     ImportDef { buf: BufSpec::None, ..imp!("req_body_read", Http, Sig { params: &[I32], results: &[I64] }, FUT,
         "reads at most max bytes from this dispatch's upload; max is positive, empty bytes mean EOF; declaring this capability permits inline body bytes followed by a host-owned upload") },

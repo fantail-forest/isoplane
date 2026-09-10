@@ -415,7 +415,9 @@ mod tests {
             };
             let def = imports::lookup(cap).expect("every delegation target is in IMPORTS");
             assert!(
-                !forbidden.contains(&def.group) || cap == crate::native_io::canonical::SOCKET_IMPORT,
+                !forbidden.contains(&def.group)
+                    || cap == crate::native_io::canonical::SOCKET_IMPORT
+                    || cap == crate::native_io::canonical::HTTP_IMPORT,
                 "{} delegates to `{cap}` in group {:?}; native I/O must remain behind its dedicated capability",
                 p.full_name(),
                 def.group
@@ -436,6 +438,7 @@ mod tests {
                 "clock_now_coarse",
                 "entropy_fill",
                 "filesystem_call",
+                "http_call",
                 "poll_call",
                 "socket_call"
             ],

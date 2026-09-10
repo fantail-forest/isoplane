@@ -88,7 +88,7 @@ impl InstanceCtx {
     }
 
     pub(crate) fn has_outbound_http(&self) -> bool {
-        self.http.lock().is_active()
+        self.http.lock().is_active() || self.native_io.lock().has_http_exchange()
     }
 
     pub fn new(

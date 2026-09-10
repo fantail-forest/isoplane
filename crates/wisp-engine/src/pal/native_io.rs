@@ -1,5 +1,7 @@
 //! Canonical scalar and memory conversion for host-owned native resources.
 
+pub mod http;
+
 use anyhow::{bail, ensure, Context, Result};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use wisp_abi::native_io::canonical::{Action, Definition, DEFINITIONS, MAX_ARGUMENTS};
@@ -56,7 +58,32 @@ pub fn call<T: PalSource>(
             .context("native I/O argument missing")
     };
     let handle = |index| scalar(index).and_then(|value| Ok(ResourceHandle(u32::try_from(value)?)));
+    if let Action::Http(action) = definition.action {
+        let request = http::request(&mut CallerMemory(caller), action, arguments)?;
+        let result = match caller.data_mut().native_io(Request::Http(request)) {
+            Ok(Response::Http(response)) => Ok(response),
+            Ok(other) => bail!("wasi:http {action:?} answered with an unrelated {other:?}"),
+            Err(error) => Err(error),
+        };
+        return http::respond(&mut CallerMemory(caller), action, arguments, result);
+    }
     let request = match definition.action {
+        Action::CheckWrite => Request::CheckWrite(handle(0)?),
+        Action::Write => {
+            let length = usize::try_from(scalar(2)?)?;
+            ensure!(
+                length <= wisp_abi::imports::MAX_OUT_BUFFER_BYTES,
+                "native stream write exceeds host buffer limit"
+            );
+            let mut bytes = vec![0; length];
+            CallerMemory(caller).read(u32::try_from(scalar(1)?)?, &mut bytes)?;
+            Request::Write {
+                stream: handle(0)?,
+                bytes,
+            }
+        }
+        Action::Flush => Request::Flush(handle(0)?),
+        Action::Http(_) => unreachable!("wasi:http operations are answered above"),
         Action::NoDelay => Request::NoDelay {
             socket: handle(0)?,
             enabled: match scalar(1)? {
@@ -185,6 +212,9 @@ pub fn call<T: PalSource>(
             if matches!(definition.action, Action::Connect | Action::Shutdown) {
                 CallerMemory(caller).write(return_pointer(arguments)?, &[0, 0])?;
             }
+            if matches!(definition.action, Action::Write | Action::Flush) {
+                CallerMemory(caller).write(return_pointer(arguments)?, &[0])?;
+            }
             Ok(0)
         }
         Ok(Response::Handle(handle)) => {
@@ -262,12 +292,23 @@ pub fn call<T: PalSource>(
             CallerMemory(caller).write(return_pointer(arguments)?, &record[..offset + 8])?;
             Ok(0)
         }
-        Ok(Response::Capacity(capacity)) => Ok(capacity.0),
+        Ok(Response::Capacity(capacity)) => {
+            if matches!(definition.action, Action::CheckWrite) {
+                // result<u64, stream-error>: the count at 8.
+                let mut record = [0; 16];
+                record[8..].copy_from_slice(&capacity.0.to_le_bytes());
+                CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
+                return Ok(0);
+            }
+            Ok(capacity.0)
+        }
         Ok(Response::Closed) => {
-            let mut record = [0; 12];
+            // stream-error::closed, at the offset the result's payload has.
+            let offset = stream_error_offset(definition.action);
+            let mut record = [0; 16];
             record[0] = 1;
-            record[4] = 1;
-            CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
+            record[offset] = 1;
+            CallerMemory(caller).write(return_pointer(arguments)?, &record[..=offset])?;
             Ok(0)
         }
         Ok(Response::ErrorCode(code)) => {
@@ -276,13 +317,19 @@ pub fn call<T: PalSource>(
             Ok(0)
         }
         Ok(Response::StreamError(handle)) => {
-            let offset = 4;
+            // stream-error::last-operation-failed, the error handle after
+            // its discriminant.
+            let offset = stream_error_offset(definition.action);
             let mut record = [0; 16];
             record[0] = 1;
             record[offset + 4..offset + 8].copy_from_slice(&handle.0.to_le_bytes());
             CallerMemory(caller).write(return_pointer(arguments)?, &record[..offset + 8])?;
             Ok(0)
         }
+        Ok(Response::Http(response)) => bail!(
+            "{} answered with an unrelated wasi:http {response:?}",
+            definition.pal.full_name()
+        ),
         Ok(Response::ReadyIndexes(indexes)) => {
             let bytes: Vec<_> = indexes
                 .iter()
@@ -319,6 +366,10 @@ pub fn call<T: PalSource>(
                 | Action::NoDelay
                 | Action::Subscribe
                 | Action::Read
+                | Action::CheckWrite
+                | Action::Write
+                | Action::Flush
+                | Action::Http(_)
                 | Action::TrySend
                 | Action::ErrorMessage
                 | Action::ErrorCode
@@ -335,6 +386,17 @@ pub fn call<T: PalSource>(
             write_error(&mut CallerMemory(caller), arguments, offset, code as u8)?;
             Ok(0)
         }
+    }
+}
+
+/// Where a `stream-error` payload sits in the result area of `action`:
+/// after an eight-byte count for check-write, after the discriminant word
+/// otherwise.
+fn stream_error_offset(action: Action) -> usize {
+    if matches!(action, Action::CheckWrite) {
+        8
+    } else {
+        4
     }
 }
 

@@ -569,6 +569,20 @@ impl crate::bindings::Fetcher for FakeFetcher {
             body: crate::bindings::OutboundBody::Inline(b"ok".to_vec()),
         })
     }
+
+    async fn exchange(
+        &self,
+        _owner: crate::egress::ConnectionOwner,
+        target: PinnedTarget,
+        _request: crate::bindings::OutboundRequest,
+    ) -> Result<crate::bindings::OutboundResponse, crate::bindings::ExchangeFailure> {
+        self.connected_to.lock().push(target.addr);
+        Ok(crate::bindings::OutboundResponse {
+            status: 200,
+            headers: vec![],
+            body: crate::bindings::OutboundBody::Inline(b"ok".to_vec()),
+        })
+    }
 }
 
 

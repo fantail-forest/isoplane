@@ -7,11 +7,13 @@ mod http_scope;
 mod instance;
 mod native_io;
 mod observability;
+mod outbound;
 pub(crate) mod request_body;
 mod runtime;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{InstanceCtx, Tenancy};
+pub use outbound::{BodyFrame, ExchangeFailure, OutboundRequest, RequestBody, TlsFailure};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 
 use std::sync::atomic::Ordering;
@@ -31,6 +33,7 @@ use crate::futures::INVALID_FUTURE;
 pub const SCALARS: &[(&str, &[&str])] = &[
     ("socket_call", &["operation", "arguments", "count"]),
     ("poll_call", &["operation", "arguments", "count"]),
+    ("http_call", &["operation", "arguments", "count"]),
     ("log_emit", &["level"]),
     ("trace_span_end", &["span"]),
     ("clock_deadline_in", &["ms"]),
@@ -176,7 +179,11 @@ impl HostBindings for CellBindings {
             | wisp_abi::native_io::Request::FinishConnect(_)
             | wisp_abi::native_io::Request::Read { .. }
             | wisp_abi::native_io::Request::TrySend { .. }
-            | wisp_abi::native_io::Request::Subscribe(_) => true,
+            | wisp_abi::native_io::Request::CheckWrite(_)
+            | wisp_abi::native_io::Request::Write { .. }
+            | wisp_abi::native_io::Request::Flush(_)
+            | wisp_abi::native_io::Request::Subscribe(_)
+            | wisp_abi::native_io::Request::Http(_) => true,
         };
         if self.ctx.is_cancelled() && starts_work {
             return Err(wisp_abi::native_io::Error::Denied(
