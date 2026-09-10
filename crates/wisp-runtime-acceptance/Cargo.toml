@@ -1,0 +1,19 @@
+[package]
+name = "wisp-runtime-acceptance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution and cryptography integrations driven through the real host reactor"
+
+[dependencies]
+
+[dev-dependencies]
+async-trait = { workspace = true }
+socket2 = { workspace = true }
+tokio = { workspace = true }
+wisp-abi = { workspace = true, features = ["host"] }
+wisp-engine = { workspace = true }
+wisp-fixtures = { workspace = true }
+wisp-harness = { workspace = true }
+wisp-host = { workspace = true }

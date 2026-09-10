@@ -1,8 +1,10 @@
 //! The real .NET modules through the validator, the init sandbox and the
 //! data plane. The `_stock` fixtures are built without the guest-side PAL
 //! object, so they carry the `wasi:*` surface NativeAOT-LLVM emits and the
-//! adapter has to compose; the shipped module resolves that surface in-module
-//! and needs no adapter. Each acceptance has a rejection beside it.
+//! adapter has to compose; the shipped module resolves wasi-libc's surface
+//! in-module and keeps only the readiness imports the runtime's event loop
+//! and timer queue make from managed code, which the adapter delegates. Each
+//! acceptance has a rejection beside it.
 
 use wasmtime::{Engine, Linker, Module};
 use wisp_abi::config::{InitSandbox, Limits};
@@ -39,7 +41,7 @@ fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
     let wasm = artifact("wisp_guest_dotnet_stock");
     let r = report("wisp_guest_dotnet_stock", &wasm);
 
-    assert_eq!(r.pal.len(), 32, "a stock module declares 32 wasi imports");
+    assert_eq!(r.pal.len(), 33, "a stock module declares 33 wasi imports");
     let delegated: Vec<String> = r
         .pal
         .iter()
@@ -73,8 +75,8 @@ fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
     let engine = Engine::default();
     let module = Module::new(&engine, &wasm).expect("real module must compile");
     let mut linker: Linker<Host> = Linker::new(&engine);
-    let composed = pal::link(&mut linker, &module).expect("the adapter must compose all 32");
-    assert_eq!(composed.len(), 32);
+    let composed = pal::link(&mut linker, &module).expect("the adapter must compose all 33");
+    assert_eq!(composed.len(), 33);
 }
 
 /// The module that drags LINQ, `Regex` and `System.Text.Json` out of the
@@ -85,7 +87,7 @@ fn the_compat_stock_dotnet_module_passes_v1_too() {
     let r = report("wisp_guest_dotnet_compat_stock", &wasm);
     assert_eq!(
         r.pal.len(),
-        44,
+        45,
         "the compatibility runtime must retain its declared platform imports"
     );
     assert_eq!(
@@ -108,20 +110,32 @@ fn the_compat_stock_dotnet_module_passes_v1_too() {
         pal::link(&mut linker, &module)
             .expect("the compatibility imports must link")
             .len(),
-        44,
+        45,
         "every admitted compatibility import must compose into the linker"
     );
 }
 
 #[test]
-fn the_shipped_dotnet_module_still_passes_and_needs_no_adapter() {
+fn the_shipped_dotnet_module_keeps_only_the_managed_readiness_imports() {
     let wasm = artifact("wisp_guest_dotnet");
     let r = report("wisp_guest_dotnet", &wasm);
-    assert!(
-        r.pal.is_empty(),
-        "the shipped build resolves wasi-libc's imports in-module"
+    let mut delegated: Vec<String> = r.pal.iter().map(|p| p.full_name()).collect();
+    delegated.sort_unstable();
+    assert_eq!(
+        delegated,
+        vec![
+            "wasi:clocks/monotonic-clock@0.2.0::subscribe-duration",
+            "wasi:io/poll@0.2.0::[resource-drop]pollable",
+            "wasi:io/poll@0.2.0::poll",
+        ],
+        "the shipped build resolves wasi-libc's imports in-module; what remains is the timer queue's and event loop's own readiness calls"
     );
-    assert!(!r.manifest().contains("wasi-pal"));
+    assert!(
+        r.pal.iter().all(
+            |p| p.disposition.capability() == Some(wisp_abi::native_io::canonical::POLL_IMPORT)
+        ),
+        "the readiness imports must delegate to the poll adapter"
+    );
     for c in &r.capabilities {
         assert!(wisp_abi::imports::lookup(c).is_some());
     }
@@ -220,7 +234,7 @@ fn negative_control_renaming_to_another_whitelisted_import_still_passes() {
             .expect("identity rewrite")
             .pal
             .len(),
-        32
+        33
     );
 }
 
@@ -306,8 +320,8 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
     );
     assert_eq!(
         t.pal_composed().len(),
-        32,
-        "all 32, the whole way through to the cell"
+        33,
+        "all 33, the whole way through to the cell"
     );
 
     // The same capabilities the validator reported.

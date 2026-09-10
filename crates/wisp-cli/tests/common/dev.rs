@@ -55,6 +55,10 @@ impl Dev {
         command.process_group(0);
         let mut child = command
             .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
+            .env(
+                "WISP_GUEST_RUNTIME_FEED",
+                wisp_fixtures::guest_runtime_feed(),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

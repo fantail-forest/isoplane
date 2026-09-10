@@ -18,6 +18,10 @@ fn dotnet_clean_removes_the_published_guest() {
         let result = process
             .current_dir(&app)
             .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
+            .env(
+                "WISP_GUEST_RUNTIME_FEED",
+                wisp_fixtures::guest_runtime_feed(),
+            )
             .output()
             .expect("dotnet SDK must be installed to test publication cleanup");
         assert!(
@@ -72,6 +76,10 @@ async fn a_csharp_project_publishes_and_reloads_offline_after_provisioning() {
         ])
         .current_dir(&app)
         .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
+        .env(
+            "WISP_GUEST_RUNTIME_FEED",
+            wisp_fixtures::guest_runtime_feed(),
+        )
         .output()
         .expect("dotnet SDK must be installed to test C# publishing");
     assert!(

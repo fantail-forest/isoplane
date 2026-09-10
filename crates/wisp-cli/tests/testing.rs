@@ -86,6 +86,10 @@ public sealed class ApplicationTests
         ])
         .env("TEST_APP", &app)
         .env("TEST_CLI", &cli)
+        .env(
+            "WISP_GUEST_RUNTIME_FEED",
+            wisp_fixtures::guest_runtime_feed(),
+        )
         .current_dir(consumer));
 }
 

@@ -212,19 +212,22 @@ fn trap_code_in_poll_status_cs_mirrors_the_rust_enum() {
 fn generated_aspnet_entrypoints_match_the_host_export_contract() {
     let source = sdk_file("../AspNetCore/buildTransitive/Wisp.AspNetCore.targets");
     let mut found = BTreeMap::new();
-    for line in source
-        .lines()
-        .filter(|line| line.contains("[UnmanagedCallersOnly("))
-    {
+    // The attribute is conditional on the runtime profile, so the export it
+    // names is the next declaration after it, not on its own line.
+    let lines: Vec<&str> = source.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains("[UnmanagedCallersOnly(") {
+            continue;
+        }
         let name = line
             .split("EntryPoint=\"")
             .nth(1)
             .and_then(|rest| rest.split('"').next())
             .expect("an export name");
-        let declaration = line
-            .split("public static ")
-            .nth(1)
-            .expect("a static export");
+        let declaration = lines[index + 1..]
+            .iter()
+            .find_map(|candidate| candidate.split("public static ").nth(1))
+            .expect("a static export after its attribute");
         let (result, method) = declaration.split_once(' ').expect("an export return type");
         let parameters = method
             .split_once('(')

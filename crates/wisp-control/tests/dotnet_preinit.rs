@@ -6,6 +6,7 @@ use wisp_abi::config::InitSandbox;
 use wisp_abi::config::Limits;
 use wisp_control::preinit::{PreInitRequest, PreInitializer};
 use wisp_control::validator;
+use wisp_engine::pal::{self, PalSource};
 
 #[test]
 fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
@@ -33,8 +34,12 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
 
     let engine = engine();
     let module = wasmtime::Module::new(&engine, &out.template_wasm).expect("the template compiles");
-    let mut store = wasmtime::Store::new(&engine, ());
-    let instance = host_linker(&engine)
+    let mut store = wasmtime::Store::new(&engine, Host);
+    let mut linker = host_linker(&engine);
+    // The runtime's readiness imports compose through the adapter, as in the
+    // data plane.
+    pal::link(&mut linker, &module).expect("the template's readiness imports compose");
+    let instance = linker
         .instantiate(&mut store, &module)
         .expect("the template instantiates");
     assert!(
@@ -52,6 +57,18 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
     assert!(p >= 0, "wisp_alloc must return a guest pointer");
 }
 
+/// The adapter is composed over the template, never reached: a template
+/// answers its first call without waiting on anything.
+struct Host;
+impl PalSource for Host {
+    fn slice_clock_ms(&mut self) -> u64 {
+        0
+    }
+    fn entropy_fill(&mut self, _out: &mut [u8]) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+
 fn engine() -> wasmtime::Engine {
     let mut cfg = wasmtime::Config::new();
     wisp_control::aot::engine_profile(&mut cfg);
@@ -61,9 +78,9 @@ fn engine() -> wasmtime::Engine {
 /// Every capability defined, init-only imports bound to traps: a template
 /// still declares them, and one that called them at runtime would be
 /// re-reading the escrowed seed.
-fn host_linker(engine: &wasmtime::Engine) -> wasmtime::Linker<()> {
+fn host_linker(engine: &wasmtime::Engine) -> wasmtime::Linker<Host> {
     use wisp_abi::imports::{self, Ty};
-    let mut linker: wasmtime::Linker<()> = wasmtime::Linker::new(engine);
+    let mut linker: wasmtime::Linker<Host> = wasmtime::Linker::new(engine);
     for def in imports::IMPORTS {
         let name = def.name;
         let cvt = |t: &Ty| match t {

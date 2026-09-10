@@ -11,6 +11,8 @@ members = [
     "crates/wispd",
     "crates/wisp-cli",
     "crates/wisp-fixtures",
+    "crates/wisp-runtime-acceptance",
+    "crates/wisp-harness",
 ]
 exclude = ["crates/spike", "guests"]
 
@@ -29,6 +31,7 @@ wisp-runtime   = { path = "crates/wisp-runtime", default-features = false }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
 wisp-fixtures  = { path = "crates/wisp-fixtures" }
+wisp-harness   = { path = "crates/wisp-harness" }
 
 anyhow      = "1"
 thiserror   = "2"

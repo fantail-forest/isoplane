@@ -1,21 +1,19 @@
-//! NativeAOT readiness across destroyed Stores using the real host reactor.
+//! Managed native I/O across destroyed Stores using the real host reactor, in
+//! both guest runtimes.
 
 use std::sync::Arc;
 use std::time::Duration;
-use wisp_abi::config::{HandlerLifecycle, Limits};
 use wisp_engine::Completion;
 #[path = "common/connection_factory.rs"]
 mod connection_factory;
 #[path = "common/native_io.rs"]
+#[macro_use]
 mod harness;
-use harness::ReturnedGuest;
-use wisp_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services, Tenancy, WakeSink};
+use harness::{GuestRuntime, Reactor, ReturnedGuest, WAKE_DEADLINE};
+use wisp_host::bindings::CellBindings;
 use wisp_host::egress::HostEgressPolicy;
-use wisp_host::fakes::FakeFetcher;
-use wisp_host::futures::FutureTable;
-use wisp_host::meters::Meters;
-use wisp_host::metrics::Metrics;
-use wisp_host::{InstanceId, ModuleId, Resolver};
+use wisp_host::{InstanceId, Resolver};
+use wisp_harness::EmittedGuestLogs as _;
 
 struct NoDns;
 #[async_trait::async_trait]
@@ -29,95 +27,97 @@ impl Resolver for NoDns {
     }
 }
 
-struct Wake(tokio::sync::Notify);
-impl WakeSink for Wake {
-    fn signal(&self, _: InstanceId) {
-        self.0.notify_one();
-    }
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_managed_timer_wakes_on_another_worker_after_its_store_is_destroyed() {
-    LogCapture::global();
-    let owner = InstanceId::alloc();
-    let (context, futures, wake) =
-        context(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
-    context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_timer", context.clone());
-    let outcome = guest.start("/");
-    assert_eq!(
-        outcome.completion,
-        Completion::Parked,
-        "Task.Delay must park: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
-    );
-    assert_eq!(
-        futures.pending_total(owner),
-        1,
-        "one managed timer must own one host wake"
-    );
-    tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_millis(100)).await;
-    context.begin_slice(101, 1);
-    let outcome = guest.wake(&wake.0).await;
-    assert_eq!(
-        outcome.completion,
-        Completion::Done,
-        "the managed timer must finish after Store destruction: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
-    );
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_abandoned_managed_timer_cannot_run_during_a_later_request() {
-    LogCapture::global();
-    let owner = InstanceId::alloc();
-    let (context, futures, _) = context(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
-    context.begin_dispatch(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_timer", context.clone());
-    let outcome = guest.start("/abandon");
-    assert_eq!(
-        outcome.completion,
-        Completion::Done,
-        "the request must finish without awaiting its timer: {outcome:?}"
-    );
-    assert_eq!(
-        futures.pending_total(owner),
-        1,
-        "the abandoned managed delay must register a real host timer"
-    );
-    futures.end_dispatch(owner, 1);
-    assert_eq!(
-        futures.live_futures(),
-        0,
-        "dispatch completion must cancel the timer's host future"
-    );
-    tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_millis(100)).await;
-    tokio::task::yield_now().await;
-
-    // Observe twice: a callback pumped after response creation must not escape detection.
-    for dispatch in 2..=3 {
-        context.begin_dispatch(101, dispatch);
-        let outcome = guest.start("/observe");
-        let wisp_abi::status::PollStatus::Done { response } = outcome.status else {
-            panic!(
-                "the later request must complete: {outcome:?}; logs: {:?}",
-                context.emitted_logs()
-            );
-        };
-        let body = context
-            .responses
-            .lock()
-            .take(response)
-            .expect("the timer probe must produce a response")
-            .body();
-        assert_eq!(
-            body,
-            format!("{dispatch}:0").as_bytes(),
-            "the reused guest lost state or ran an abandoned timer callback"
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn a_managed_timer_wakes_on_another_worker_after_its_store_is_destroyed(runtime: GuestRuntime) {
+        let owner = InstanceId::alloc();
+        let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+        let context = &reactor.context;
+        let futures = &reactor.futures;
+        context.begin_slice(1, 1);
+        let mut guest = ReturnedGuest::new(
+            &wisp_fixtures::dotnet_for("wisp_guest_dotnet_timer", runtime),
+            &reactor,
         );
-        futures.end_dispatch(owner, dispatch);
+        let outcome = guest.start("/");
+        assert_eq!(
+            outcome.completion,
+            Completion::Parked,
+            "Task.Delay must park: {outcome:?}; logs: {:?}",
+            context.emitted_logs()
+        );
+        assert_eq!(
+            futures.pending_total(owner),
+            1,
+            "one managed timer must own one host wake"
+        );
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        context.begin_slice(101, 1);
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "the managed timer must finish after Store destruction: {outcome:?}; logs: {:?}",
+            context.emitted_logs()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_abandoned_managed_timer_cannot_run_during_a_later_request(runtime: GuestRuntime) {
+        let owner = InstanceId::alloc();
+        let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+        let context = &reactor.context;
+        let futures = &reactor.futures;
+        context.begin_dispatch(1, 1);
+        let mut guest = ReturnedGuest::new(
+            &wisp_fixtures::dotnet_for("wisp_guest_dotnet_timer", runtime),
+            &reactor,
+        );
+        let outcome = guest.start("/abandon");
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "the request must finish without awaiting its timer: {outcome:?}"
+        );
+        assert_eq!(
+            futures.pending_total(owner),
+            1,
+            "the abandoned managed delay must register a real host timer"
+        );
+        futures.end_dispatch(owner, 1);
+        assert_eq!(
+            futures.live_futures(),
+            0,
+            "dispatch completion must cancel the timer's host future"
+        );
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
+
+        // Observe twice: a callback pumped after response creation must not escape detection.
+        for dispatch in 2..=3 {
+            context.begin_dispatch(101, dispatch);
+            let outcome = guest.start("/observe");
+            let wisp_abi::status::PollStatus::Done { response } = outcome.status else {
+                panic!(
+                    "the later request must complete: {outcome:?}; logs: {:?}",
+                    context.emitted_logs()
+                );
+            };
+            let body = context
+                .responses
+                .lock()
+                .take(response)
+                .expect("the timer probe must produce a response")
+                .body();
+            assert_eq!(
+                body,
+                format!("{dispatch}:0").as_bytes(),
+                "the reused guest lost state or ran an abandoned timer callback"
+            );
+            futures.end_dispatch(owner, dispatch);
+        }
     }
 }
 
@@ -134,41 +134,46 @@ impl wisp_host::egress::DestinationPolicy for ExactPeer {
     }
 }
 
-#[tokio::test]
-async fn a_managed_connection_survives_store_destruction_and_disposal_closes_its_real_peer() {
-    socket_round_trip("wisp_guest_dotnet_connect", None).await;
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_managed_connection_survives_store_destruction_and_disposal_closes_its_real_peer(runtime: GuestRuntime) {
+        socket_round_trip("wisp_guest_dotnet_connect", runtime, None).await;
+    }
+
+    #[tokio::test]
+    async fn a_managed_network_stream_reads_and_writes_after_store_destruction(runtime: GuestRuntime) {
+        socket_round_trip("wisp_guest_dotnet_stream", runtime, Some(b"wisp")).await;
+    }
+
+    #[tokio::test]
+    async fn a_managed_half_closed_socket_retains_its_read_direction_after_restoring(runtime: GuestRuntime) {
+        socket_transfer(
+            "wisp_guest_dotnet_stream",
+            runtime,
+            Some(b"wisp"),
+            true,
+            std::net::Ipv4Addr::LOCALHOST.into(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_managed_network_stream_survives_store_destruction(runtime: GuestRuntime) {
+        socket_transfer(
+            "wisp_guest_dotnet_stream",
+            runtime,
+            Some(b"wisp"),
+            false,
+            std::net::Ipv6Addr::LOCALHOST.into(),
+        )
+        .await;
+    }
 }
 
-#[tokio::test]
-async fn a_managed_network_stream_reads_and_writes_after_store_destruction() {
-    socket_round_trip("wisp_guest_dotnet_stream", Some(b"wisp")).await;
-}
-
-#[tokio::test]
-async fn a_managed_half_closed_socket_retains_its_read_direction_after_restoring() {
-    socket_transfer(
-        "wisp_guest_dotnet_stream",
-        Some(b"wisp"),
-        true,
-        std::net::Ipv4Addr::LOCALHOST.into(),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn an_ipv6_managed_network_stream_survives_store_destruction() {
-    socket_transfer(
-        "wisp_guest_dotnet_stream",
-        Some(b"wisp"),
-        false,
-        std::net::Ipv6Addr::LOCALHOST.into(),
-    )
-    .await;
-}
-
-async fn socket_round_trip(fixture: &str, payload: Option<&[u8]>) {
+async fn socket_round_trip(fixture: &str, runtime: GuestRuntime, payload: Option<&[u8]>) {
     socket_transfer(
         fixture,
+        runtime,
         payload,
         false,
         std::net::Ipv4Addr::LOCALHOST.into(),
@@ -178,11 +183,12 @@ async fn socket_round_trip(fixture: &str, payload: Option<&[u8]>) {
 
 async fn socket_transfer(
     fixture: &str,
+    runtime: GuestRuntime,
     payload: Option<&[u8]>,
     half_close: bool,
     ip: std::net::IpAddr,
 ) {
-    LogCapture::global();
+    wisp_harness::LogCapture::global();
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind(std::net::SocketAddr::new(ip, 0))
         .await
@@ -195,9 +201,11 @@ async fn socket_transfer(
         .with_connections(connections.clone())
         .with_destinations(Arc::new(ExactPeer(peer)));
     let owner = InstanceId::alloc();
-    let (context, futures, wake) = context(owner, policy);
+    let reactor = Reactor::new(owner, policy);
+    let context = &reactor.context;
+    let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new(fixture, context.clone());
+    let mut guest = ReturnedGuest::new(&wisp_fixtures::dotnet_for(fixture, runtime), &reactor);
     let suffix = if half_close { "/half" } else { "" };
     let outcome = guest.start(&format!("/{}/{}{suffix}", peer.ip(), peer.port()));
     assert_eq!(
@@ -207,13 +215,13 @@ async fn socket_transfer(
         futures.pending_total(owner),
         context.emitted_logs()
     );
-    let (mut server, _) = tokio::time::timeout(Duration::from_secs(60), listener.accept())
+    let (mut server, _) = tokio::time::timeout(WAKE_DEADLINE, listener.accept())
         .await
         .expect("the connect must reach its owned listener before the test deadline")
         .expect("the listener must accept the native connection");
     let phases = if payload.is_some() { 2 } else { 1 };
     for phase in 0..phases {
-        let outcome = guest.wake(&wake.0).await;
+        let outcome = guest.wake(&reactor).await;
         let expected = if phase + 1 == phases {
             Completion::Done
         } else {
@@ -225,11 +233,10 @@ async fn socket_transfer(
             if let Some(payload) = payload {
                 if half_close {
                     let mut byte = [0];
-                    let count =
-                        tokio::time::timeout(Duration::from_secs(60), server.read(&mut byte))
-                            .await
-                            .expect("the send shutdown must reach the peer before the deadline")
-                            .expect("the peer must observe send-direction EOF");
+                    let count = tokio::time::timeout(WAKE_DEADLINE, server.read(&mut byte))
+                        .await
+                        .expect("the send shutdown must reach the peer before the deadline")
+                        .expect("the peer must observe send-direction EOF");
                     assert_eq!(
                         count, 0,
                         "Socket.Shutdown(Send) must close the peer's input direction"
@@ -239,7 +246,7 @@ async fn socket_transfer(
                     .write_all(&payload[..1])
                     .await
                     .expect("the owned peer must deliver the first partial byte");
-                let partial = guest.wake(&wake.0).await;
+                let partial = guest.wake(&reactor).await;
                 assert_eq!(partial.completion, Completion::Parked,
                     "ReadExactlyAsync must retain partial input across another destroyed Store: {partial:?}; logs: {:?}", context.emitted_logs());
                 server
@@ -263,7 +270,7 @@ async fn socket_transfer(
             );
         } else {
             let mut received = vec![0; payload.len()];
-            tokio::time::timeout(Duration::from_secs(60), server.read_exact(&mut received))
+            tokio::time::timeout(WAKE_DEADLINE, server.read_exact(&mut received))
                 .await
                 .expect("the echo must arrive before the test deadline")
                 .expect("NetworkStream must send every payload byte");
@@ -276,7 +283,7 @@ async fn socket_transfer(
     assert_eq!(*connections.calls.lock(), vec![(wisp_host::egress::ConnectionOwner::new(context.tenant.clone(), owner).expect("the dispatch establishes the connection owner"), peer)],
         "managed TCP must open exactly one connection through the injected provider with its tenant and instance");
     let mut byte = [0];
-    let read = tokio::time::timeout(Duration::from_secs(60), server.read(&mut byte))
+    let read = tokio::time::timeout(WAKE_DEADLINE, server.read(&mut byte))
         .await
         .expect("socket disposal must close the real peer before the test deadline")
         .expect("the real peer must observe an orderly close");
@@ -286,47 +293,16 @@ async fn socket_transfer(
     );
 }
 
-fn context(
-    owner: InstanceId,
-    policy: HostEgressPolicy,
-) -> (Arc<InstanceCtx>, Arc<FutureTable>, Arc<Wake>) {
-    LogCapture::global();
-    let futures = Arc::new(FutureTable::new());
-    let wake = Arc::new(Wake(tokio::sync::Notify::new()));
-    let runtime = Arc::new(CellRuntime {
-        services: Arc::new(Services {
-            egress: Arc::new(policy),
-            fetcher: Arc::new(FakeFetcher::default()),
-        }),
-        futures: futures.clone(),
-        metrics: Arc::new(Metrics::new()),
-        wake: wake.clone(),
-        reactor: tokio::runtime::Handle::current(),
-    });
-    let context = Arc::new(InstanceCtx::new(
-        owner,
-        Tenancy {
-            module: ModuleId::new("native-timer", "v1"),
-            tenant: "timer-test".into(),
-            limits: Limits::default(),
-
-            lifecycle: HandlerLifecycle::Reuse,
-            allowlist: None,
-        },
-        Arc::new(Meters::new()),
-        Some(runtime),
-    ));
-    (context, futures, wake)
-}
-
 #[tokio::test(start_paused = true)]
 async fn dropping_a_native_timer_removes_its_host_work_without_entering_managed_code() {
     use wisp_abi::native_io::{DurationNanos, Request, Response};
     use wisp_engine::HostBindings;
     let owner = InstanceId::alloc();
-    let (context, futures, _) = context(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+    let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+    let context = &reactor.context;
+    let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut bindings = CellBindings::new(context);
+    let mut bindings = CellBindings::new(context.clone());
     let Response::Handle(timer) = bindings
         .native_io(Request::Timer(DurationNanos(100_000_000)))
         .expect("the host must create a bounded timer")
@@ -372,45 +348,51 @@ impl Resolver for PublicDns {
         Ok(vec![std::net::SocketAddr::from(([93, 184, 216, 34], port))])
     }
 }
-#[tokio::test]
-async fn managed_dns_finishes_after_its_store_is_destroyed() {
-    LogCapture::global();
-    let owner = InstanceId::alloc();
-    let (context, futures, wake) = context(
-        owner,
-        HostEgressPolicy::new(Box::new(PublicDns), 1, 1 << 20),
-    );
-    context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_dns", context.clone());
-    let outcome = guest.start("/owned.test");
-    assert_eq!(
-        outcome.completion,
-        Completion::Parked,
-        "Dns.GetHostAddressesAsync must return with pending DNS: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
-    );
-    assert_eq!(
-        futures.pending_total(owner),
-        1,
-        "one managed lookup must own one host wake"
-    );
-    let outcome = guest.wake(&wake.0).await;
-    assert_eq!(
-        outcome.completion,
-        Completion::Done,
-        "managed DNS must finish after Store destruction: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
-    );
-    assert_eq!(
-        context
-            .responses
-            .lock()
-            .get(1)
-            .expect("the DNS handler must produce a response")
-            .body(),
-        b"93.184.216.34",
-        "the restored managed DNS await must preserve the actual answer"
-    );
+in_both_runtimes! {
+    #[tokio::test]
+    async fn managed_dns_finishes_after_its_store_is_destroyed(runtime: GuestRuntime) {
+        let owner = InstanceId::alloc();
+        let reactor = Reactor::new(
+            owner,
+            HostEgressPolicy::new(Box::new(PublicDns), 1, 1 << 20),
+        );
+        let context = &reactor.context;
+        let futures = &reactor.futures;
+        context.begin_slice(1, 1);
+        let mut guest = ReturnedGuest::new(
+            &wisp_fixtures::dotnet_for("wisp_guest_dotnet_dns", runtime),
+            &reactor,
+        );
+        let outcome = guest.start("/owned.test");
+        assert_eq!(
+            outcome.completion,
+            Completion::Parked,
+            "Dns.GetHostAddressesAsync must return with pending DNS: {outcome:?}; logs: {:?}",
+            context.emitted_logs()
+        );
+        assert_eq!(
+            futures.pending_total(owner),
+            1,
+            "one managed lookup must own one host wake"
+        );
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "managed DNS must finish after Store destruction: {outcome:?}; logs: {:?}",
+            context.emitted_logs()
+        );
+        assert_eq!(
+            context
+                .responses
+                .lock()
+                .get(1)
+                .expect("the DNS handler must produce a response")
+                .body(),
+            b"93.184.216.34",
+            "the restored managed DNS await must preserve the actual answer"
+        );
+    }
 }
 
 struct PendingDns {
@@ -438,90 +420,95 @@ impl Resolver for PendingDns {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn managed_dns_cancellation_after_store_destruction_releases_host_work() {
-    LogCapture::global();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let stopped = Arc::new(tokio::sync::Notify::new());
-    let owner = InstanceId::alloc();
-    let (context, futures, wake) = context(
-        owner,
-        HostEgressPolicy::new(
-            Box::new(PendingDns {
-                entered: entered.clone(),
-                stopped: stopped.clone(),
-            }),
-            1,
-            1 << 20,
-        ),
-    );
-    context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_dns", context.clone());
-    let outcome = guest.start("/cancel.test");
-    assert_eq!(
-        outcome.completion,
-        Completion::Parked,
-        "DNS cancellation must wait on its host-owned timer: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
-    );
-    tokio::time::timeout(Duration::from_secs(60), entered.notified())
-        .await
-        .expect("DNS must start before the test deadline");
-    assert_eq!(
-        futures.pending_total(owner),
-        2,
-        "the pending lookup and cancellation timer must both be host-owned"
-    );
-    tokio::time::advance(Duration::from_millis(100)).await;
-    context.begin_slice(101, 1);
-    let outcome = guest.wake(&wake.0).await;
-    assert_eq!(
-        outcome.completion,
-        Completion::Done,
-        "managed DNS cancellation must finish after Store destruction: {outcome:?}; logs: {:?}",
-        context.emitted_logs()
-    );
-    tokio::time::timeout(Duration::from_secs(60), stopped.notified())
-        .await
-        .expect("managed cancellation must drop the active host DNS lookup");
-    assert_eq!(
-        futures.pending_total(owner),
-        0,
-        "managed cancellation must reclaim every pending DNS and timer future"
-    );
-    assert!(
-        !futures.has_ready(owner),
-        "cancelled DNS must leave no late guest wake"
-    );
-    assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("the test must own a reactor")
-            .services
-            .egress
-            .connections(),
-        0,
-        "cancelled name resolution must retain no connection quota"
-    );
-    assert_eq!(
-        context
-            .responses
-            .lock()
-            .get(1)
-            .expect("the cancellation handler must respond")
-            .body(),
-        b"cancelled",
-        "the ordinary DNS task must observe managed cancellation"
-    );
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn managed_dns_cancellation_after_store_destruction_releases_host_work(runtime: GuestRuntime) {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let stopped = Arc::new(tokio::sync::Notify::new());
+        let owner = InstanceId::alloc();
+        let reactor = Reactor::new(
+            owner,
+            HostEgressPolicy::new(
+                Box::new(PendingDns {
+                    entered: entered.clone(),
+                    stopped: stopped.clone(),
+                }),
+                1,
+                1 << 20,
+            ),
+        );
+        let context = &reactor.context;
+        let futures = &reactor.futures;
+        context.begin_slice(1, 1);
+        let mut guest = ReturnedGuest::new(
+            &wisp_fixtures::dotnet_for("wisp_guest_dotnet_dns", runtime),
+            &reactor,
+        );
+        let outcome = guest.start("/cancel.test");
+        assert_eq!(
+            outcome.completion,
+            Completion::Parked,
+            "DNS cancellation must wait on its host-owned timer: {outcome:?}; logs: {:?}",
+            context.emitted_logs()
+        );
+        tokio::time::timeout(WAKE_DEADLINE, entered.notified())
+            .await
+            .expect("DNS must start before the test deadline");
+        assert_eq!(
+            futures.pending_total(owner),
+            2,
+            "the pending lookup and cancellation timer must both be host-owned"
+        );
+        tokio::time::advance(Duration::from_millis(100)).await;
+        context.begin_slice(101, 1);
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(
+            outcome.completion,
+            Completion::Done,
+            "managed DNS cancellation must finish after Store destruction: {outcome:?}; logs: {:?}",
+            context.emitted_logs()
+        );
+        tokio::time::timeout(WAKE_DEADLINE, stopped.notified())
+            .await
+            .expect("managed cancellation must drop the active host DNS lookup");
+        assert_eq!(
+            futures.pending_total(owner),
+            0,
+            "managed cancellation must reclaim every pending DNS and timer future"
+        );
+        assert!(
+            !futures.has_ready(owner),
+            "cancelled DNS must leave no late guest wake"
+        );
+        assert_eq!(
+            reactor.runtime().services.egress.connections(),
+            0,
+            "cancelled name resolution must retain no connection quota"
+        );
+        assert_eq!(
+            context
+                .responses
+                .lock()
+                .get(1)
+                .expect("the cancellation handler must respond")
+                .body(),
+            b"cancelled",
+            "the ordinary DNS task must observe managed cancellation"
+        );
+    }
 }
 
-fn managed_network_refusal(path: &str, expected: &[u8]) {
-    LogCapture::global();
+fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
+    wisp_harness::LogCapture::global();
     let owner = InstanceId::alloc();
-    let (context, futures, _) = context(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1024));
+    let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1024));
+    let context = &reactor.context;
+    let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_network_refusal", context.clone());
+    let mut guest = ReturnedGuest::new(
+        &wisp_fixtures::dotnet_for("wisp_guest_dotnet_network_refusal", runtime),
+        &reactor,
+    );
     let outcome = guest.start(path);
     assert_eq!(outcome.completion, Completion::Done,
         "a forbidden managed listener must return a SocketException instead of trapping: {outcome:?}; logs: {:?}", context.emitted_logs());
@@ -541,115 +528,109 @@ fn managed_network_refusal(path: &str, expected: &[u8]) {
         "a refused listener must retain no reactor work"
     );
     assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("the refusal fixture must own its reactor")
-            .services
-            .egress
-            .connections(),
+        reactor.runtime().services.egress.connections(),
         0,
         "a refused listener must acquire no host connection quota"
     );
 }
 
-#[tokio::test]
-async fn a_managed_tcp_listener_receives_access_denied() {
-    managed_network_refusal("/tcp-listener", b"AccessDenied");
-}
-#[tokio::test]
-async fn a_managed_tcp_bind_receives_access_denied() {
-    managed_network_refusal("/tcp-bind", b"AccessDenied");
-}
-#[tokio::test]
-async fn a_managed_tcp_listen_receives_access_denied() {
-    managed_network_refusal("/tcp-listen", b"AccessDenied");
-}
-#[tokio::test]
-async fn a_managed_udp_client_receives_operation_not_supported() {
-    managed_network_refusal("/udp-client", b"OperationNotSupported");
-}
-#[tokio::test]
-async fn a_managed_udp_bind_receives_operation_not_supported() {
-    managed_network_refusal("/udp-bind", b"OperationNotSupported");
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_managed_tcp_listener_receives_access_denied(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/tcp-listener", b"AccessDenied");
+    }
+    #[tokio::test]
+    async fn a_managed_tcp_bind_receives_access_denied(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/tcp-bind", b"AccessDenied");
+    }
+    #[tokio::test]
+    async fn a_managed_tcp_listen_receives_access_denied(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/tcp-listen", b"AccessDenied");
+    }
+    #[tokio::test]
+    async fn a_managed_udp_client_receives_operation_not_supported(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/udp-client", b"OperationNotSupported");
+    }
+    #[tokio::test]
+    async fn a_managed_udp_bind_receives_operation_not_supported(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/udp-bind", b"OperationNotSupported");
+    }
+
+    #[tokio::test]
+    async fn a_refused_managed_connection_preserves_its_socket_error_after_restoring(runtime: GuestRuntime) {
+        let reservation = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .expect("the test must reserve its non-listening TCP endpoint");
+        reservation
+            .bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+            .expect("the non-listening endpoint must bind");
+        let peer = reservation
+            .local_addr()
+            .expect("the reservation must have an endpoint")
+            .as_socket()
+            .expect("the reservation must be an IP endpoint");
+        let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
+            .with_destinations(Arc::new(ExactPeer(peer)));
+        let owner = InstanceId::alloc();
+        let reactor = Reactor::new(owner, policy);
+        let context = &reactor.context;
+        let futures = &reactor.futures;
+        context.begin_slice(1, 1);
+        let mut guest = ReturnedGuest::new(
+            &wisp_fixtures::dotnet_for("wisp_guest_dotnet_connect", runtime),
+            &reactor,
+        );
+        let pending = guest.start(&format!("/{}/{}", peer.ip(), peer.port()));
+        assert_eq!(
+            pending.completion,
+            Completion::Parked,
+            "ConnectAsync must return before its owned reactor runs"
+        );
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(outcome.completion, Completion::Done,
+            "the connection refusal must reach the restored managed continuation: {outcome:?}; logs: {:?}", context.emitted_logs());
+        assert_eq!(
+            context
+                .responses
+                .lock()
+                .get(1)
+                .expect("the connection fixture must report its error")
+                .body(),
+            b"ConnectionRefused",
+            "the host must preserve the operating-system connection refusal through SocketException"
+        );
+        assert_eq!(
+            futures.pending_total(owner),
+            0,
+            "a refused connection must retain no wake"
+        );
+        assert_eq!(
+            reactor.runtime().services.egress.connections(),
+            0,
+            "a refused connection must release its reserved quota"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_managed_read_cancels_after_restoration_and_releases_its_connection(runtime: GuestRuntime) {
+        stream_failure(runtime, "cancel", b"cancelled").await;
+    }
+
+    #[tokio::test]
+    async fn a_managed_read_receives_clean_eof_after_restoration(runtime: GuestRuntime) {
+        stream_failure(runtime, "eof", b"eof").await;
+    }
+
+    #[tokio::test]
+    async fn a_managed_read_receives_a_peer_reset_after_restoration(runtime: GuestRuntime) {
+        stream_failure(runtime, "reset", b"stream-error").await;
+    }
 }
 
-#[tokio::test]
-async fn a_refused_managed_connection_preserves_its_socket_error_after_restoring() {
-    LogCapture::global();
-    let reservation = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::STREAM,
-        Some(socket2::Protocol::TCP),
-    )
-    .expect("the test must reserve its non-listening TCP endpoint");
-    reservation
-        .bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
-        .expect("the non-listening endpoint must bind");
-    let peer = reservation
-        .local_addr()
-        .expect("the reservation must have an endpoint")
-        .as_socket()
-        .expect("the reservation must be an IP endpoint");
-    let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
-        .with_destinations(Arc::new(ExactPeer(peer)));
-    let owner = InstanceId::alloc();
-    let (context, futures, wake) = context(owner, policy);
-    context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_connect", context.clone());
-    let pending = guest.start(&format!("/{}/{}", peer.ip(), peer.port()));
-    assert_eq!(
-        pending.completion,
-        Completion::Parked,
-        "ConnectAsync must return before its owned reactor runs"
-    );
-    let outcome = guest.wake(&wake.0).await;
-    assert_eq!(outcome.completion, Completion::Done,
-        "the connection refusal must reach the restored managed continuation: {outcome:?}; logs: {:?}", context.emitted_logs());
-    assert_eq!(
-        context
-            .responses
-            .lock()
-            .get(1)
-            .expect("the connection fixture must report its error")
-            .body(),
-        b"ConnectionRefused",
-        "the host must preserve the operating-system connection refusal through SocketException"
-    );
-    assert_eq!(
-        futures.pending_total(owner),
-        0,
-        "a refused connection must retain no wake"
-    );
-    assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("the connection test must have a reactor")
-            .services
-            .egress
-            .connections(),
-        0,
-        "a refused connection must release its reserved quota"
-    );
-}
-
-#[tokio::test]
-async fn a_managed_read_cancels_after_restoration_and_releases_its_connection() {
-    stream_failure("cancel", b"cancelled").await;
-}
-
-#[tokio::test]
-async fn a_managed_read_receives_clean_eof_after_restoration() {
-    stream_failure("eof", b"eof").await;
-}
-
-#[tokio::test]
-async fn a_managed_read_receives_a_peer_reset_after_restoration() {
-    stream_failure("reset", b"stream-error").await;
-}
-
-async fn stream_failure(mode: &str, expected: &[u8]) {
+async fn stream_failure(runtime: GuestRuntime, mode: &str, expected: &[u8]) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -660,20 +641,25 @@ async fn stream_failure(mode: &str, expected: &[u8]) {
     let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
         .with_destinations(Arc::new(ExactPeer(peer)));
     let owner = InstanceId::alloc();
-    let (context, futures, wake) = context(owner, policy);
+    let reactor = Reactor::new(owner, policy);
+    let context = &reactor.context;
+    let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_stream", context.clone());
+    let mut guest = ReturnedGuest::new(
+        &wisp_fixtures::dotnet_for("wisp_guest_dotnet_stream", runtime),
+        &reactor,
+    );
     let outcome = guest.start(&format!("/{}/{}/{mode}", peer.ip(), peer.port()));
     assert_eq!(
         outcome.completion,
         Completion::Parked,
         "the managed stream must return for its connection"
     );
-    let (mut server, _) = tokio::time::timeout(Duration::from_secs(60), listener.accept())
+    let (mut server, _) = tokio::time::timeout(WAKE_DEADLINE, listener.accept())
         .await
         .expect("the managed connection must arrive before the deadline")
         .expect("the peer must accept");
-    let pending = guest.wake(&wake.0).await;
+    let pending = guest.wake(&reactor).await;
     assert_eq!(
         pending.completion,
         Completion::Parked,
@@ -700,19 +686,19 @@ async fn stream_failure(mode: &str, expected: &[u8]) {
                 .set_linger(Some(Duration::ZERO))
                 .expect("the peer reset must be controlled");
             drop(server);
-            let outcome = guest.wake(&wake.0).await;
-            assert_stream_failure(&context, &futures, owner, outcome, expected).await;
+            let outcome = guest.wake(&reactor).await;
+            assert_stream_failure(&reactor, owner, outcome, expected).await;
             return;
         }
         _ => panic!("unknown controlled stream failure: {mode}"),
     }
-    let outcome = guest.wake(&wake.0).await;
+    let outcome = guest.wake(&reactor).await;
     if mode == "cancel" {
         tokio::time::resume();
     }
-    assert_stream_failure(&context, &futures, owner, outcome, expected).await;
+    assert_stream_failure(&reactor, owner, outcome, expected).await;
     let mut extra = [0];
-    let count = tokio::time::timeout(Duration::from_secs(60), server.read(&mut extra))
+    let count = tokio::time::timeout(WAKE_DEADLINE, server.read(&mut extra))
         .await
         .expect("managed cleanup must reach the peer before the deadline")
         .expect("the peer must observe cleanup");
@@ -723,13 +709,14 @@ async fn stream_failure(mode: &str, expected: &[u8]) {
 }
 
 async fn assert_stream_failure(
-    context: &InstanceCtx,
-    futures: &FutureTable,
+    reactor: &Reactor,
     owner: InstanceId,
     outcome: wisp_engine::DispatchOutcome,
     expected: &[u8],
 ) {
-    LogCapture::global();
+    wisp_harness::LogCapture::global();
+    let context = &reactor.context;
+    let futures = &reactor.futures;
     assert_eq!(
         outcome.completion,
         Completion::Done,
@@ -751,45 +738,33 @@ async fn assert_stream_failure(
         0,
         "a terminal stream operation must release every pending wake"
     );
-    tokio::time::timeout(Duration::from_secs(60), async {
-        while context
-            .rt
-            .as_ref()
-            .expect("the stream must own a reactor")
-            .services
-            .egress
-            .connections()
-            != 0
-        {
+    tokio::time::timeout(WAKE_DEADLINE, async {
+        while reactor.runtime().services.egress.connections() != 0 {
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("aborted stream work must release its connection before the deadline");
     assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("the stream must own a reactor")
-            .services
-            .egress
-            .connections(),
+        reactor.runtime().services.egress.connections(),
         0,
         "a terminal stream operation must release its connection quota"
     );
 }
 
-#[tokio::test]
-async fn an_unsupported_managed_keepalive_option_receives_operation_not_supported() {
-    managed_network_refusal("/keepalive", b"OperationNotSupported");
-}
-#[tokio::test]
-async fn an_unsupported_managed_keepalive_count_receives_operation_not_supported() {
-    managed_network_refusal("/keepalive-count", b"OperationNotSupported");
-}
-#[tokio::test]
-async fn an_unsupported_managed_buffer_option_receives_operation_not_supported() {
-    managed_network_refusal("/receive-buffer", b"OperationNotSupported");
+in_both_runtimes! {
+    #[tokio::test]
+    async fn an_unsupported_managed_keepalive_option_receives_operation_not_supported(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/keepalive", b"OperationNotSupported");
+    }
+    #[tokio::test]
+    async fn an_unsupported_managed_keepalive_count_receives_operation_not_supported(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/keepalive-count", b"OperationNotSupported");
+    }
+    #[tokio::test]
+    async fn an_unsupported_managed_buffer_option_receives_operation_not_supported(runtime: GuestRuntime) {
+        managed_network_refusal(runtime, "/receive-buffer", b"OperationNotSupported");
+    }
 }
 
 struct FailingDns(wisp_abi::native_io::DnsFailure);
@@ -808,19 +783,29 @@ impl Resolver for FailingDns {
     }
 }
 
-async fn managed_dns_error(resolver: Box<dyn Resolver>, expected: &[u8], denials: u64) {
-    LogCapture::global();
+async fn managed_dns_error(
+    runtime: GuestRuntime,
+    resolver: Box<dyn Resolver>,
+    expected: &[u8],
+    denials: u64,
+) {
+    wisp_harness::LogCapture::global();
     let owner = InstanceId::alloc();
-    let (context, futures, wake) = context(owner, HostEgressPolicy::new(resolver, 1, 1024));
+    let reactor = Reactor::new(owner, HostEgressPolicy::new(resolver, 1, 1024));
+    let context = &reactor.context;
+    let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new("wisp_guest_dotnet_dns", context.clone());
+    let mut guest = ReturnedGuest::new(
+        &wisp_fixtures::dotnet_for("wisp_guest_dotnet_dns", runtime),
+        &reactor,
+    );
     let started = guest.start("/error.test");
     assert_eq!(
         started.completion,
         Completion::Parked,
         "DNS errors must arrive through owned async work: {started:?}"
     );
-    let outcome = guest.wake(&wake.0).await;
+    let outcome = guest.wake(&reactor).await;
     assert_eq!(
         outcome.completion,
         Completion::Done,
@@ -838,10 +823,8 @@ async fn managed_dns_error(resolver: Box<dyn Resolver>, expected: &[u8], denials
         "the ordinary DNS API must expose the matching SocketErrorCode"
     );
     assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("DNS requires a reactor")
+        reactor
+            .runtime()
             .metrics
             .egress_denials
             .load(std::sync::atomic::Ordering::Relaxed),
@@ -849,13 +832,7 @@ async fn managed_dns_error(resolver: Box<dyn Resolver>, expected: &[u8], denials
         "only a destination policy refusal must increment denial accounting"
     );
     assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("DNS requires a reactor")
-            .services
-            .egress
-            .connections(),
+        reactor.runtime().services.egress.connections(),
         0,
         "a failed or denied DNS answer must acquire no outbound connection"
     );
@@ -866,44 +843,55 @@ async fn managed_dns_error(resolver: Box<dyn Resolver>, expected: &[u8], denials
     );
 }
 
-#[tokio::test]
-async fn managed_dns_reports_a_missing_name_without_counting_a_denial() {
-    managed_dns_error(
-        Box::new(FailingDns(wisp_abi::native_io::DnsFailure::NotFound)),
-        b"HostNotFound",
-        0,
-    )
-    .await;
-}
+in_both_runtimes! {
+    #[tokio::test]
+    async fn managed_dns_reports_a_missing_name_without_counting_a_denial(runtime: GuestRuntime) {
+        managed_dns_error(
+            runtime,
+            Box::new(FailingDns(wisp_abi::native_io::DnsFailure::NotFound)),
+            b"HostNotFound",
+            0,
+        )
+        .await;
+    }
 
-#[tokio::test]
-async fn managed_dns_reports_a_retryable_resolver_failure_without_counting_a_denial() {
-    managed_dns_error(
-        Box::new(FailingDns(wisp_abi::native_io::DnsFailure::Temporary)),
-        b"TryAgain",
-        0,
-    )
-    .await;
-}
+    #[tokio::test]
+    async fn managed_dns_reports_a_retryable_resolver_failure_without_counting_a_denial(runtime: GuestRuntime) {
+        managed_dns_error(
+            runtime,
+            Box::new(FailingDns(wisp_abi::native_io::DnsFailure::Temporary)),
+            b"TryAgain",
+            0,
+        )
+        .await;
+    }
 
-#[tokio::test]
-async fn managed_dns_reports_a_resolver_timeout_without_counting_a_denial() {
-    managed_dns_error(
-        Box::new(FailingDns(wisp_abi::native_io::DnsFailure::Timeout)),
-        b"TimedOut",
-        0,
-    )
-    .await;
-}
+    #[tokio::test]
+    async fn managed_dns_reports_a_resolver_timeout_without_counting_a_denial(runtime: GuestRuntime) {
+        managed_dns_error(
+            runtime,
+            Box::new(FailingDns(wisp_abi::native_io::DnsFailure::Timeout)),
+            b"TimedOut",
+            0,
+        )
+        .await;
+    }
 
-#[tokio::test]
-async fn managed_dns_reports_a_permanent_resolver_failure_without_counting_a_denial() {
-    managed_dns_error(
-        Box::new(FailingDns(wisp_abi::native_io::DnsFailure::Permanent)),
-        b"NoRecovery",
-        0,
-    )
-    .await;
+    #[tokio::test]
+    async fn managed_dns_reports_a_permanent_resolver_failure_without_counting_a_denial(runtime: GuestRuntime) {
+        managed_dns_error(
+            runtime,
+            Box::new(FailingDns(wisp_abi::native_io::DnsFailure::Permanent)),
+            b"NoRecovery",
+            0,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn managed_dns_refuses_a_mixed_public_private_answer_and_counts_the_policy_denial(runtime: GuestRuntime) {
+        managed_dns_error(runtime, Box::new(MixedDns), b"AccessDenied", 1).await;
+    }
 }
 
 struct MixedDns;
@@ -922,17 +910,12 @@ impl Resolver for MixedDns {
 }
 
 #[tokio::test]
-async fn managed_dns_refuses_a_mixed_public_private_answer_and_counts_the_policy_denial() {
-    managed_dns_error(Box::new(MixedDns), b"AccessDenied", 1).await;
-}
-
-#[tokio::test]
 async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
     use wisp_abi::native_io::{AddressFamily, Error, Request, Response};
     use wisp_engine::HostBindings;
     let owner = InstanceId::alloc();
-    let (context, futures, _) = context(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1024));
-    let mut bindings = CellBindings::new(context.clone());
+    let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1024));
+    let mut bindings = CellBindings::new(reactor.context.clone());
     let Response::Handle(network) = bindings
         .native_io(Request::Network)
         .expect("the instance network must exist")
@@ -954,10 +937,7 @@ async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
         matches!(result, Err(Error::Denied(_))),
         "native TCP must reject private destinations before dialing"
     );
-    let runtime = context
-        .rt
-        .as_ref()
-        .expect("the instance must have its reactor");
+    let runtime = reactor.runtime();
     assert_eq!(
         runtime
             .metrics
@@ -972,7 +952,7 @@ async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
         "a denied native destination must acquire no connection quota"
     );
     assert_eq!(
-        futures.pending_total(owner),
+        reactor.futures.pending_total(owner),
         0,
         "a denied native destination must start no pending reactor work"
     );
@@ -1016,9 +996,9 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
         },
     ));
     let owner = InstanceId::alloc();
-    let (context, futures, _) = context(owner, policy);
-    context.begin_slice(1, 1);
-    let mut bindings = CellBindings::new(context.clone());
+    let reactor = Reactor::new(owner, policy);
+    reactor.context.begin_slice(1, 1);
+    let mut bindings = CellBindings::new(reactor.context.clone());
     let (network, socket) = {
         let mut handle = |request| match bindings
             .native_io(request)
@@ -1039,11 +1019,11 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
             destination: std::net::SocketAddr::from(([93, 184, 216, 34], 443)),
         })
         .expect("the allowed connection must start its provider");
-    tokio::time::timeout(Duration::from_secs(60), started.notified())
+    tokio::time::timeout(WAKE_DEADLINE, started.notified())
         .await
         .expect("the connection provider must start before the test deadline");
     assert_eq!(
-        futures.pending_total(owner),
+        reactor.futures.pending_total(owner),
         1,
         "the pending connection must own exactly one reactor future"
     );
@@ -1054,130 +1034,16 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
         })
         .expect("dropping the pending socket must succeed");
     assert_eq!(
-        futures.pending_total(owner),
+        reactor.futures.pending_total(owner),
         0,
         "socket disposal must remove its pending wake immediately"
     );
-    tokio::time::timeout(Duration::from_secs(60), cancelled.notified())
+    tokio::time::timeout(WAKE_DEADLINE, cancelled.notified())
         .await
         .expect("socket disposal must cancel the provider before the test deadline");
     assert_eq!(
-        context
-            .rt
-            .as_ref()
-            .expect("the connection has a reactor")
-            .services
-            .egress
-            .connections(),
+        reactor.runtime().services.egress.connections(),
         0,
         "cancelling a pending connect must release its connection permit"
     );
 }
-
-/// Test writers that observe guest events at the formatted tracing boundary.
-pub mod logging {
-    use std::io::Write;
-    use std::sync::{Arc, Mutex, OnceLock};
-
-    /// Formatted bytes emitted by the guest logging subscriber under test.
-    #[derive(Clone, Default)]
-    pub struct LogCapture(Arc<Mutex<Vec<u8>>>);
-
-    /// A guest event decoded from the host's JSON formatter.
-    #[derive(Clone, Debug, serde::Deserialize)]
-    pub struct GuestLog {
-        /// Host-established instance identifier.
-        pub instance: String,
-        /// ABI severity recorded by the host.
-        pub level: u8,
-        /// Host-established dispatch identifier.
-        pub dispatch: u64,
-        /// Untrusted guest message text.
-        pub fields: String,
-        /// Remaining fields emitted by the host boundary.
-        #[serde(flatten)]
-        pub metadata: serde_json::Map<String, serde_json::Value>,
-    }
-
-    impl LogCapture {
-        /// Installs one guest-event writer before a test starts execution threads.
-        pub fn global() -> &'static Self {
-            use tracing_subscriber::prelude::*;
-            static CAPTURE: OnceLock<LogCapture> = OnceLock::new();
-            CAPTURE.get_or_init(|| {
-                let capture = Self::default();
-                let subscriber = tracing_subscriber::registry().with(
-                    tracing_subscriber::fmt::layer()
-                        .json()
-                        .with_ansi(false)
-                        .with_writer(capture.clone())
-                        .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
-                            metadata.target().contains("host::bindings")
-                        })),
-                );
-                tracing::subscriber::set_global_default(subscriber)
-                    .expect("one guest-event subscriber per test process");
-                capture
-            })
-        }
-
-        /// Decodes emitted events for `instance` in their publication order.
-        pub fn for_instance(&self, instance: impl std::fmt::Display) -> Vec<GuestLog> {
-            let instance = instance.to_string();
-            let bytes = self.0.lock().expect("test writer mutex").clone();
-            String::from_utf8(bytes)
-                .expect("tracing emits UTF-8")
-                .lines()
-                .filter_map(|line| {
-                    let event: serde_json::Value =
-                        serde_json::from_str(line).expect("tracing JSON event");
-                    if event["fields"]["message"] != "guest log"
-                        || event["fields"]["instance"] != instance
-                    {
-                        return None;
-                    }
-                    Some(
-                        serde_json::from_value(event["fields"].clone())
-                            .expect("the guest logging boundary emits complete records"),
-                    )
-                })
-                .collect()
-        }
-    }
-
-    impl Write for LogCapture {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("test writer mutex")
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogCapture {
-        type Writer = Self;
-
-        fn make_writer(&'writer self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
-    /// Guest diagnostics collected outside the production instance's state.
-    pub trait EmittedGuestLogs {
-        /// Returns actual output attributed to this instance by the host.
-        fn emitted_logs(&self) -> Vec<GuestLog>;
-    }
-
-    impl EmittedGuestLogs for wisp_host::bindings::InstanceCtx {
-        fn emitted_logs(&self) -> Vec<GuestLog> {
-            LogCapture::global().for_instance(self.instance)
-        }
-    }
-}
-
-pub use logging::{EmittedGuestLogs, GuestLog, LogCapture};

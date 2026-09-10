@@ -5023,6 +5023,20 @@ name = "wisp-fixtures"
 version = "0.1.0"
 
 [[package]]
+name = "wisp-harness"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wisp-abi",
+ "wisp-engine",
+ "wisp-host",
+]
+
+[[package]]
 name = "wisp-hibernate"
 version = "0.1.0"
 dependencies = [
@@ -5074,6 +5088,7 @@ dependencies = [
  "wisp-abi",
  "wisp-engine",
  "wisp-fixtures",
+ "wisp-harness",
  "wisp-hibernate",
 ]
 
@@ -5127,6 +5142,20 @@ dependencies = [
  "wisp-host",
  "wisp-proxy",
  "wizer",
+]
+
+[[package]]
+name = "wisp-runtime-acceptance"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "socket2",
+ "tokio",
+ "wisp-abi",
+ "wisp-engine",
+ "wisp-fixtures",
+ "wisp-harness",
+ "wisp-host",
 ]
 
 [[package]]

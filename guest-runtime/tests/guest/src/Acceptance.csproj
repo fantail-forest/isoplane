@@ -1,0 +1,24 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
+  <!--
+    The acceptance guest for the source-built runtime: one handler per family
+    of runtime modification, each request path one behaviour. Built by
+    ../build.sh in either SDK profile, each of which compiles against the
+    pack guest-runtime/build.sh publishes for it.
+  -->
+  <Import Project="../../../../guest-sdks/dotnet/Wisp.Guest.props" />
+
+  <PropertyGroup>
+    <AssemblyName>guest_runtime_acceptance</AssemblyName>
+    <RootNamespace>Acceptance</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
+  </ItemGroup>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../../../guest-sdks/dotnet/Wisp.Guest.targets" />
+</Project>
