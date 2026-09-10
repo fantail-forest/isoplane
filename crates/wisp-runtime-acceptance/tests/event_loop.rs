@@ -5,6 +5,8 @@
 
 #[macro_use]
 mod common;
+#[path = "common/no_dns.rs"]
+mod no_dns;
 #[path = "common/no_egress.rs"]
 mod no_egress;
 

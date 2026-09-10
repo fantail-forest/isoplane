@@ -7,6 +7,8 @@
 mod common;
 #[path = "common/crypto_vectors.rs"]
 mod crypto_vectors;
+#[path = "common/no_dns.rs"]
+mod no_dns;
 #[path = "common/no_egress.rs"]
 mod no_egress;
 

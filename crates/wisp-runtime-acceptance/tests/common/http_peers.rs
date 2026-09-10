@@ -13,29 +13,13 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::TlsAcceptor;
 use wisp_harness::Reactor;
-use wisp_host::egress::{DenyReason, DestinationPolicy, HostEgressPolicy};
 use wisp_host::{InstanceId, Resolver};
 
-use crate::tls_material::{
-    LEAF_CERTIFICATE, LEAF_KEY, ROOT_CERTIFICATE, STRANGER_CERTIFICATE, STRANGER_KEY,
-};
-
-/// A destination policy admitting exactly the test's own peers.
-struct OnlyPeers(Vec<SocketAddr>);
-
-impl DestinationPolicy for OnlyPeers {
-    fn authorize(&self, peer: SocketAddr) -> Result<(), DenyReason> {
-        if self.0.contains(&peer) {
-            Ok(())
-        } else {
-            Err(DenyReason::NotAllowlisted(peer.to_string()))
-        }
-    }
-}
+use crate::admitted::admitting;
+pub use crate::tls_chains::Certificate;
+use crate::tls_material::ROOT_CERTIFICATE;
 
 /// A reactor whose outbound HTTP may only reach `peers`, resolving names
 /// through `resolver`, trusting the material's root for TLS.
@@ -46,31 +30,9 @@ pub fn reactor_for_http(
 ) -> Reactor {
     Reactor::with_trusted_root(
         InstanceId(owner),
-        HostEgressPolicy::new(resolver, 8, 1 << 20).with_destinations(Arc::new(OnlyPeers(peers))),
+        admitting(peers, resolver),
         ROOT_CERTIFICATE,
     )
-}
-
-/// Waits for the reactor to release every connection permit: an aborted
-/// exchange is dropped on the scheduler's next turn, so a test that just
-/// cancelled one yields to it, failing rather than hanging past the deadline.
-pub async fn released(reactor: &Reactor) {
-    tokio::time::timeout(wisp_harness::WAKE_DEADLINE, async {
-        while reactor.runtime().services.egress.connections() != 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the reactor must release the cancelled exchange's connection");
-}
-
-/// The certificate a TLS peer presents.
-#[derive(Clone, Copy)]
-pub enum Certificate {
-    /// The leaf for `leaf.acceptance.test`, chained to the trusted root.
-    Leaf,
-    /// A self-signed certificate nothing trusts.
-    Stranger,
 }
 
 /// A running peer: its address and how many connections it accepted.
@@ -92,16 +54,7 @@ pub async fn http_peer() -> HttpPeer {
 
 /// Starts a peer behind TLS presenting `certificate`.
 pub async fn https_peer(certificate: Certificate) -> HttpPeer {
-    let (chain, key) = match certificate {
-        Certificate::Leaf => (LEAF_CERTIFICATE, LEAF_KEY),
-        Certificate::Stranger => (STRANGER_CERTIFICATE, STRANGER_KEY),
-    };
-    let certificates: Vec<CertificateDer<'static>> =
-        CertificateDer::pem_slice_iter(chain.as_bytes())
-            .collect::<Result<_, _>>()
-            .expect("the test material's certificate parses");
-    let key =
-        PrivateKeyDer::from_pem_slice(key.as_bytes()).expect("the test material's key parses");
+    let (certificates, key) = certificate.presented();
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certificates, key)

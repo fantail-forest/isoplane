@@ -7,19 +7,24 @@
 
 #[macro_use]
 mod common;
+#[path = "common/admitted.rs"]
+mod admitted;
 #[path = "common/http_peers.rs"]
 mod http_peers;
 #[path = "common/refusing.rs"]
 mod refusing;
 #[path = "common/resolvers.rs"]
 mod resolvers;
+#[path = "common/tls_chains.rs"]
+mod tls_chains;
 #[path = "common/tls_material.rs"]
 mod tls_material;
 
 use std::sync::Arc;
 
+use admitted::released;
 use common::{guest, GuestRuntime};
-use http_peers::{http_peer, https_peer, reactor_for_http, released, Certificate};
+use http_peers::{http_peer, https_peer, reactor_for_http, Certificate};
 use refusing::refusing_endpoint;
 use resolvers::{reactor_for_dns, FailingDns, FixedDns, PendingDns};
 use wisp_engine::Completion;
@@ -269,6 +274,20 @@ in_both_runtimes! {
             reactor.context.emitted_logs()
         );
         assert_eq!(reactor.runtime().services.egress.connections(), 0, "the TLS connection is released");
+    }
+
+    #[tokio::test]
+    async fn https_through_an_intermediate_chain_validates_against_the_anchor(runtime: GuestRuntime) {
+        let peer = https_peer(Certificate::Chained).await;
+        let reactor = reactor(14, vec![peer.address]);
+        reactor.context.begin_slice(1, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/https/chained.acceptance.test/{}", peer.address.port()), 8).await;
+        assert_eq!(
+            text, "status=200 content-type=text/plain body=hello from peer",
+            "the intermediate the peer presents must chain its leaf to the host's anchor; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
     }
 
     #[tokio::test]

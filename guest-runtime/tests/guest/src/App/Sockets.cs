@@ -40,6 +40,17 @@ internal sealed class Sockets
                 await Task.WhenAll(a, b).ConfigureAwait(false);
                 return a.Result + "+" + b.Result;
             }
+            case "zero-byte":
+            {
+                // The zero-byte read of a stream consumer such as SslStream or
+                // Kestrel: completes when data is available, then the data is
+                // still there for the real read.
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                int zero = await socket.ReceiveAsync(Memory<byte>.Empty, SocketFlags.None).ConfigureAwait(false);
+                byte[] buffer = new byte[16];
+                int count = await socket.ReceiveAsync(buffer, SocketFlags.None).ConfigureAwait(false);
+                return "zero=" + zero.ToString(CultureInfo.InvariantCulture) + " then " + Convert.ToHexString(buffer, 0, count);
+            }
             case "refused":
                 return await ExpectSocketError(() => ConnectAsync(path[1], path[2])).ConfigureAwait(false);
             case "eof":

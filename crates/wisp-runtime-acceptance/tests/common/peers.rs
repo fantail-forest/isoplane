@@ -6,32 +6,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Notify;
 use wisp_harness::Reactor;
-use wisp_host::egress::{DenyReason, DestinationPolicy, HostEgressPolicy};
 use wisp_host::InstanceId;
 
-use crate::no_egress::NoDns;
+use crate::admitted::admitting;
+use crate::no_dns::NoDns;
 
-/// A destination policy admitting exactly the test's own peers.
-struct OnlyPeers(Vec<SocketAddr>);
-
-impl DestinationPolicy for OnlyPeers {
-    fn authorize(&self, peer: SocketAddr) -> Result<(), DenyReason> {
-        if self.0.contains(&peer) {
-            Ok(())
-        } else {
-            Err(DenyReason::NotAllowlisted(peer.to_string()))
-        }
-    }
-}
-
-/// A reactor whose outbound connections may only reach `peers`.
+/// A reactor whose outbound connections may only reach `peers`, resolving
+/// nothing: the guest connects by address.
 pub fn reactor_for_peers(owner: u64, peers: Vec<SocketAddr>) -> Reactor {
-    Reactor::new(
-        InstanceId(owner),
-        HostEgressPolicy::new(Box::new(NoDns), 8, 1 << 20)
-            .with_destinations(Arc::new(OnlyPeers(peers))),
-    )
+    Reactor::new(InstanceId(owner), admitting(peers, Box::new(NoDns)))
 }
 
 /// What an owned peer does with a connection the guest opens.
@@ -65,6 +50,29 @@ pub async fn peer(peer: Peer) -> SocketAddr {
         }
     });
     address
+}
+
+/// Starts a peer that answers "wisp" to each connection only once the test
+/// releases the returned gate, so the guest's read is parked for certain.
+pub async fn gated_peer() -> (SocketAddr, Arc<Notify>) {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("the test peer must bind");
+    let address = listener.local_addr().expect("the test peer has an address");
+    let gate = Arc::new(Notify::new());
+    let released = gate.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            released.notified().await;
+            let _answered = stream.write_all(b"wisp").await;
+            let mut byte = [0u8];
+            let _closed = stream.read(&mut byte).await;
+        }
+    });
+    (address, gate)
 }
 
 async fn serve(peer: Peer, mut stream: tokio::net::TcpStream) {

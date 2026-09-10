@@ -6,6 +6,10 @@
 
 #[macro_use]
 mod common;
+#[path = "common/admitted.rs"]
+mod admitted;
+#[path = "common/no_dns.rs"]
+mod no_dns;
 #[path = "common/no_egress.rs"]
 mod no_egress;
 #[path = "common/peers.rs"]
@@ -13,13 +17,13 @@ mod peers;
 #[path = "common/refusing.rs"]
 mod refusing;
 
+use admitted::released;
 use common::{guest, GuestRuntime};
 use no_egress::reactor_without_egress;
-use peers::{peer, reactor_for_peers, Peer};
+use peers::{gated_peer, peer, reactor_for_peers, Peer};
 use refusing::refusing_endpoint;
 use wisp_engine::Completion;
 use wisp_harness::EmittedGuestLogs as _;
-use wisp_harness::WAKE_DEADLINE;
 
 in_both_runtimes! {
     #[tokio::test]
@@ -284,13 +288,7 @@ in_both_runtimes! {
             "cancellation must release the read's wake and the timer"
         );
         tokio::time::resume();
-        tokio::time::timeout(WAKE_DEADLINE, async {
-            while reactor.runtime().services.egress.connections() != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the cancelled socket's disposal must release its connection");
+        released(&reactor).await;
     }
 }
 
@@ -490,6 +488,37 @@ in_both_runtimes! {
             guest.answer(&reactor, "/sockets/udp", 2).await,
             "OperationNotSupported",
             "UDP must be refused as unsupported, not trapped"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_zero_byte_receive_parks_until_data_arrives_and_leaves_it_for_the_read(runtime: GuestRuntime) {
+        let (peer, gate) = gated_peer().await;
+        let reactor = reactor_for_peers(90, vec![peer]);
+        let mut guest = guest(&reactor, runtime);
+        let outcome = guest.start(&format!("/sockets/zero-byte/{}/{}", peer.ip(), peer.port()));
+        assert_eq!(outcome.completion, Completion::Parked, "the connect parks: {outcome:?}");
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(
+            outcome.completion,
+            Completion::Parked,
+            "a zero-byte receive with nothing to read parks on socket readiness: {outcome:?}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(
+            reactor.futures.pending_total(reactor.context.instance),
+            1,
+            "the parked zero-byte receive holds exactly one host future; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        gate.notify_one();
+        let text = guest.finish(&reactor, 8).await;
+        assert_eq!(
+            text, "zero=0 then 77697370",
+            "the zero-byte receive completes with nothing consumed and the real read gets the bytes; logs: {:?}",
+            reactor.context.emitted_logs()
         );
     }
 }
