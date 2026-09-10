@@ -465,3 +465,6 @@ mod owned_endpoint;
 
 #[path = "real_node/bodyless.rs"]
 mod bodyless;
+
+#[path = "real_node/app_identity.rs"]
+mod app_identity;

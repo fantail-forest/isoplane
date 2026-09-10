@@ -2,7 +2,7 @@
 
 mod admin;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -21,8 +21,8 @@ pub struct RealCells {
     cells: Vec<Arc<Cell>>,
     /// Configured application-to-cell assignment.
     placement: RwLock<HashMap<String, usize>>,
-    /// `app@version` -> the module registered for it.
-    modules: RwLock<HashMap<String, ModuleId>>,
+    /// Exact app/version identities registered on this node.
+    modules: RwLock<HashSet<ModuleId>>,
     /// app -> tenant.
     tenants: Arc<RwLock<HashMap<String, String>>>,
 }
@@ -49,10 +49,6 @@ impl RealPaths {
 impl RealCells {
     pub fn cells(&self) -> &[Arc<Cell>] {
         &self.cells
-    }
-
-    fn key(app: &str, version: &str) -> String {
-        format!("{app}@{version}")
     }
 }
 
@@ -86,3 +82,6 @@ impl Dispatcher for RealCells {
             .await
     }
 }
+
+#[cfg(test)]
+mod identity_tests;
