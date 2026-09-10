@@ -38,6 +38,8 @@ pub enum Action {
     TrySend,
     /// Return an owned error's diagnostic message.
     ErrorMessage,
+    /// Return an owned error's network error code.
+    ErrorCode,
     /// Read a connected endpoint.
     SocketAddress {
         /// Select the remote endpoint.
@@ -1173,12 +1175,43 @@ pub const DEFINITIONS: &[Definition] = &[
         },
         Action::NoDelay,
     ),
+    definition(
+        75,
+        "network_network_error_code",
+        "wasi:sockets/network@0.2.0",
+        "network-error-code",
+        SOCKET_IMPORT,
+        Sig {
+            params: &[Ty::I32, Ty::I32],
+            results: &[],
+        },
+        Action::ErrorCode,
+    ),
 ];
 
 /// A native send should retry after output readiness.
 pub const SEND_PENDING: u64 = u64::MAX;
-/// A native send failed without accepting bytes.
+/// A native send failed without accepting bytes, for no more specific
+/// reason; a failure with a reason is `SEND_FAILED` less its network error
+/// code, see [`send_failure`].
 pub const SEND_FAILED: u64 = u64::MAX - 1;
+/// How many network error codes the failure range below `SEND_FAILED` holds.
+pub const SEND_FAILURE_CODES: u64 = 64;
+
+/// The send result reporting a failure with `code`: the wrapper recovers the
+/// code with [`send_failure_code`] and sets the errno libc maps it to.
+pub const fn send_failure(code: super::network_error::NetworkErrorCode) -> u64 {
+    SEND_FAILED - code as u64
+}
+
+/// The network error code a failed send result carries, if it is a failure.
+pub const fn send_failure_code(result: u64) -> Option<u8> {
+    if result <= SEND_FAILED && result > SEND_FAILED - SEND_FAILURE_CODES {
+        Some((SEND_FAILED - result) as u8)
+    } else {
+        None
+    }
+}
 
 /// Maximum number of scalar arguments accepted by a canonical packet.
 pub const MAX_ARGUMENTS: usize = {
@@ -1199,6 +1232,8 @@ pub const MAX_ARGUMENTS: usize = {
 pub fn native_wrappers() -> String {
     let mut output = String::from("/* Generated from wisp_abi::native_io::canonical. */\n");
     output.push_str(&format!("#define WISP_SEND_PENDING UINT64_C({SEND_PENDING})\n#define WISP_SEND_FAILED UINT64_C({SEND_FAILED})\n"));
+    output.push_str(&format!("#define WISP_SEND_IS_FAILURE(result) ((uint64_t)(result) <= WISP_SEND_FAILED && (uint64_t)(result) > WISP_SEND_FAILED - UINT64_C({SEND_FAILURE_CODES}))\n"));
+    output.push_str("#define WISP_SEND_FAILURE_CODE(result) ((uint8_t)(WISP_SEND_FAILED - (uint64_t)(result)))\n");
     for capability in [SOCKET_IMPORT, POLL_IMPORT] {
         output.push_str(&format!("__attribute__((import_module(\"wisp\"), import_name(\"{capability}\")))\nextern int64_t wisp_{capability}(int32_t operation, const uint64_t *arguments, int32_t count);\n"));
     }

@@ -1,6 +1,8 @@
 /* Generated from wisp_abi::native_io::canonical. */
 #define WISP_SEND_PENDING UINT64_C(18446744073709551615)
 #define WISP_SEND_FAILED UINT64_C(18446744073709551614)
+#define WISP_SEND_IS_FAILURE(result) ((uint64_t)(result) <= WISP_SEND_FAILED && (uint64_t)(result) > WISP_SEND_FAILED - UINT64_C(64))
+#define WISP_SEND_FAILURE_CODE(result) ((uint8_t)(WISP_SEND_FAILED - (uint64_t)(result)))
 __attribute__((import_module("wisp"), import_name("socket_call")))
 extern int64_t wisp_socket_call(int32_t operation, const uint64_t *arguments, int32_t count);
 __attribute__((import_module("wisp"), import_name("poll_call")))
@@ -78,3 +80,4 @@ void __wasm_import_ip_name_lookup_method_resolve_address_stream_resolve_next_add
 int32_t __wasm_import_ip_name_lookup_method_resolve_address_stream_subscribe(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; return (int32_t)wisp_socket_call(72, args, 1); }
 void __wasm_import_ip_name_lookup_resolve_address_stream_drop(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; wisp_socket_call(73, args, 1); }
 int32_t __wasm_import_wisp_socket_no_delay(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; return (int32_t)wisp_socket_call(74, args, 2); }
+void __wasm_import_network_network_error_code(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; wisp_socket_call(75, args, 2); }

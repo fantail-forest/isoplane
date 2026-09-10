@@ -73,3 +73,4 @@ wasi:sockets/ip-name-lookup@0.2.0	[method]resolve-address-stream.resolve-next-ad
 wasi:sockets/ip-name-lookup@0.2.0	[method]resolve-address-stream.subscribe	socket_call	72
 wasi:sockets/ip-name-lookup@0.2.0	[resource-drop]resolve-address-stream	socket_call	73
 wisp:native-sockets	no-delay	socket_call	74
+wasi:sockets/network@0.2.0	network-error-code	socket_call	75

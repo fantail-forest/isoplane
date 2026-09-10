@@ -93,6 +93,8 @@ pub enum Request {
     },
     /// Inspect the message on an owned stream failure.
     ErrorMessage(ResourceHandle),
+    /// Inspect the network error code of an owned stream failure.
+    ErrorCode(ResourceHandle),
     /// Read the actual local or remote endpoint of a connected socket.
     SocketAddress {
         /// Owned socket.
@@ -152,6 +154,8 @@ pub enum Response {
     Closed,
     /// An owned error record describing a failed stream operation.
     StreamError(ResourceHandle),
+    /// The network error code an owned error record carries.
+    ErrorCode(network_error::NetworkErrorCode),
     /// Current readiness of one resource.
     Ready(bool),
     /// Indexes into the caller's poll list.
@@ -202,6 +206,43 @@ impl From<std::io::Error> for Error {
         Self::Connection {
             kind: error.kind(),
             message: error.to_string(),
+        }
+    }
+}
+
+impl Error {
+    /// The `wasi:sockets/network` error code this failure is reported as,
+    /// both in a failed call's result and through `network-error-code` on
+    /// the error record a failed stream operation leaves behind.
+    pub fn network_error_code(&self) -> network_error::NetworkErrorCode {
+        use network_error::NetworkErrorCode;
+        match self {
+            Error::Denied(_) => NetworkErrorCode::AccessDenied,
+            Error::Unsupported(_) => NetworkErrorCode::NotSupported,
+            Error::InvalidHandle(_) => NetworkErrorCode::InvalidArgument,
+            Error::InvalidState(_) => NetworkErrorCode::InvalidState,
+            Error::WouldBlock => NetworkErrorCode::WouldBlock,
+            Error::ResourceLimit => NetworkErrorCode::NewSocketLimit,
+            Error::Dns { kind, .. } => match kind {
+                DnsFailure::NotFound => NetworkErrorCode::NameUnresolvable,
+                DnsFailure::Temporary => NetworkErrorCode::TemporaryResolverFailure,
+                DnsFailure::Permanent => NetworkErrorCode::PermanentResolverFailure,
+                DnsFailure::Timeout => NetworkErrorCode::Timeout,
+            },
+            Error::Connection { kind, .. } => match kind {
+                std::io::ErrorKind::PermissionDenied => NetworkErrorCode::AccessDenied,
+                std::io::ErrorKind::TimedOut => NetworkErrorCode::Timeout,
+                std::io::ErrorKind::AddrNotAvailable => NetworkErrorCode::AddressNotBindable,
+                std::io::ErrorKind::AddrInUse => NetworkErrorCode::AddressInUse,
+                std::io::ErrorKind::NetworkUnreachable | std::io::ErrorKind::HostUnreachable => {
+                    NetworkErrorCode::RemoteUnreachable
+                }
+                std::io::ErrorKind::ConnectionRefused => NetworkErrorCode::ConnectionRefused,
+                std::io::ErrorKind::ConnectionReset => NetworkErrorCode::ConnectionReset,
+                std::io::ErrorKind::ConnectionAborted => NetworkErrorCode::ConnectionAborted,
+                // Other OS failures have no more specific WASI network equivalent.
+                _ => NetworkErrorCode::Unknown,
+            },
         }
     }
 }

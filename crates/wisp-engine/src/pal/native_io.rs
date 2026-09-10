@@ -1,7 +1,5 @@
 //! Canonical scalar and memory conversion for host-owned native resources.
 
-use wisp_abi::native_io::{network_error::NetworkErrorCode, DnsFailure};
-
 use anyhow::{bail, ensure, Context, Result};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use wisp_abi::native_io::canonical::{Action, Definition, DEFINITIONS, MAX_ARGUMENTS};
@@ -112,6 +110,7 @@ pub fn call<T: PalSource>(
             length: ByteCount(scalar(1)?),
         },
         Action::ErrorMessage => Request::ErrorMessage(handle(0)?),
+        Action::ErrorCode => Request::ErrorCode(handle(0)?),
         Action::TrySend => {
             let count = usize::try_from(scalar(1)?)?;
             ensure!(
@@ -271,6 +270,11 @@ pub fn call<T: PalSource>(
             CallerMemory(caller).write(return_pointer(arguments)?, &record)?;
             Ok(0)
         }
+        Ok(Response::ErrorCode(code)) => {
+            // option<error-code>: the discriminant, then the code.
+            CallerMemory(caller).write(return_pointer(arguments)?, &[1, code as u8])?;
+            Ok(0)
+        }
         Ok(Response::StreamError(handle)) => {
             let offset = 4;
             let mut record = [0; 16];
@@ -301,7 +305,7 @@ pub fn call<T: PalSource>(
                 return Ok(if matches!(error, Error::WouldBlock) {
                     wisp_abi::native_io::canonical::SEND_PENDING
                 } else {
-                    wisp_abi::native_io::canonical::SEND_FAILED
+                    wisp_abi::native_io::canonical::send_failure(error.network_error_code())
                 });
             }
             let offset = match definition.action {
@@ -317,6 +321,7 @@ pub fn call<T: PalSource>(
                 | Action::Read
                 | Action::TrySend
                 | Action::ErrorMessage
+                | Action::ErrorCode
                 | Action::Timer { .. }
                 | Action::ClockNow
                 | Action::ClockResolution
@@ -326,33 +331,7 @@ pub fn call<T: PalSource>(
                 | Action::Reject { .. }
                 | Action::Trap => return Err(error.into()),
             };
-            let code = match error {
-                Error::Denied(_) => NetworkErrorCode::AccessDenied,
-                Error::Unsupported(_) => NetworkErrorCode::NotSupported,
-                Error::InvalidHandle(_) => NetworkErrorCode::InvalidArgument,
-                Error::InvalidState(_) => NetworkErrorCode::InvalidState,
-                Error::WouldBlock => NetworkErrorCode::WouldBlock,
-                Error::ResourceLimit => NetworkErrorCode::NewSocketLimit,
-                Error::Dns { kind, .. } => match kind {
-                    DnsFailure::NotFound => NetworkErrorCode::NameUnresolvable,
-                    DnsFailure::Temporary => NetworkErrorCode::TemporaryResolverFailure,
-                    DnsFailure::Permanent => NetworkErrorCode::PermanentResolverFailure,
-                    DnsFailure::Timeout => NetworkErrorCode::Timeout,
-                },
-                Error::Connection { kind, .. } => match kind {
-                    std::io::ErrorKind::PermissionDenied => NetworkErrorCode::AccessDenied,
-                    std::io::ErrorKind::TimedOut => NetworkErrorCode::Timeout,
-                    std::io::ErrorKind::AddrNotAvailable => NetworkErrorCode::AddressNotBindable,
-                    std::io::ErrorKind::AddrInUse => NetworkErrorCode::AddressInUse,
-                    std::io::ErrorKind::NetworkUnreachable
-                    | std::io::ErrorKind::HostUnreachable => NetworkErrorCode::RemoteUnreachable,
-                    std::io::ErrorKind::ConnectionRefused => NetworkErrorCode::ConnectionRefused,
-                    std::io::ErrorKind::ConnectionReset => NetworkErrorCode::ConnectionReset,
-                    std::io::ErrorKind::ConnectionAborted => NetworkErrorCode::ConnectionAborted,
-                    // Other OS failures have no more specific WASI network equivalent.
-                    _ => NetworkErrorCode::Unknown,
-                },
-            };
+            let code = error.network_error_code();
             write_error(&mut CallerMemory(caller), arguments, offset, code as u8)?;
             Ok(0)
         }

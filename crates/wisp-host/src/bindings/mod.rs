@@ -162,6 +162,7 @@ impl HostBindings for CellBindings {
             wisp_abi::native_io::Request::Timer(duration) => duration.0 != 0,
             wisp_abi::native_io::Request::Ready(_)
             | wisp_abi::native_io::Request::ErrorMessage(_)
+            | wisp_abi::native_io::Request::ErrorCode(_)
             | wisp_abi::native_io::Request::SocketAddress { .. }
             | wisp_abi::native_io::Request::NoDelay { .. }
             | wisp_abi::native_io::Request::Shutdown { .. }

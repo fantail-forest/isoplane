@@ -263,9 +263,15 @@ enum Resource {
     Socket(Socket),
     Input(Input),
     Output(Output),
-    Error(String),
+    Error(StreamFailure),
     Subscription(ResourceHandle),
     Timer(Timer),
+}
+
+/// What a failed stream operation leaves behind for the guest to inspect.
+struct StreamFailure {
+    message: String,
+    code: wisp_abi::native_io::network_error::NetworkErrorCode,
 }
 
 /// Retained by InstanceCtx across Store destruction and released with its owner.
@@ -354,6 +360,7 @@ impl Resources {
             Request::Read { .. } => "read",
             Request::TrySend { .. } => "send",
             Request::ErrorMessage(_) => "error_message",
+            Request::ErrorCode(_) => "error_code",
             Request::SocketAddress { .. } => "socket_address",
             Request::NoDelay { .. } => "no_delay",
             Request::Shutdown { .. } => "shutdown",
@@ -484,7 +491,13 @@ impl Resources {
                 self.output(target)?.send(&bytes, bindings)
             }
             Request::ErrorMessage(handle) => match self.entries.get(&handle) {
-                Some(Resource::Error(message)) => Ok(Response::Bytes(message.as_bytes().to_vec())),
+                Some(Resource::Error(failure)) => {
+                    Ok(Response::Bytes(failure.message.as_bytes().to_vec()))
+                }
+                _ => Err(Error::InvalidHandle(handle)),
+            },
+            Request::ErrorCode(handle) => match self.entries.get(&handle) {
+                Some(Resource::Error(failure)) => Ok(Response::ErrorCode(failure.code)),
                 _ => Err(Error::InvalidHandle(handle)),
             },
             Request::SocketAddress { socket, peer } => {
@@ -646,7 +659,10 @@ impl Resources {
         match result {
             Ok(response) => Ok(response),
             Err(error) => self
-                .insert(Resource::Error(error.to_string()))
+                .insert(Resource::Error(StreamFailure {
+                    message: error.to_string(),
+                    code: error.network_error_code(),
+                }))
                 .map(Response::StreamError),
         }
     }
