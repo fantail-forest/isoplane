@@ -1,7 +1,9 @@
 //! Cryptography through the pack's native OpenSSL backend (runtime patch
 //! 009): the standard vectors hold, asymmetric primitives sign, verify and
 //! agree, certificates parse and chain to a custom root, and randomness is
-//! the host's entropy, fresh in every activation.
+//! the host's entropy, fresh in every activation. The negatives: tampered
+//! and malformed input is refused the way upstream .NET refuses it, key
+//! material round-trips every format, and a disposed key is unusable.
 
 #[macro_use]
 mod common;
@@ -14,8 +16,9 @@ mod no_egress;
 
 use common::{guest, GuestRuntime};
 use crypto_vectors::{
-    AES_GCM_CIPHERTEXT, AES_GCM_TAG, HKDF_RFC5869_1, HMAC_JEFE, LEAF_SERIAL,
-    LEAF_SIGNATURE_OF_WISP, LEAF_THUMBPRINT, PBKDF2_ONE, SHA256_ABC,
+    AES_CCM_RFC3610_1_CIPHERTEXT, AES_CCM_RFC3610_1_TAG, AES_GCM_CIPHERTEXT, AES_GCM_TAG,
+    CHACHA20_POLY1305_RFC8439_CIPHERTEXT, CHACHA20_POLY1305_RFC8439_TAG, HKDF_RFC5869_1, HMAC_JEFE,
+    LEAF_SERIAL, LEAF_SIGNATURE_OF_WISP, LEAF_THUMBPRINT, PBKDF2_ONE, SHA256_ABC,
 };
 use no_egress::reactor_without_egress;
 
@@ -225,5 +228,215 @@ in_both_runtimes! {
                 "GetInt32 must respect its range: {answer}"
             );
         }
+    }
+}
+
+/// The failure every AEAD reports for a nonce or tag one byte outside its
+/// range and for an output buffer one byte shorter than its input.
+const AEAD_LENGTH_FAILURES: &str = "nonce-short=ArgumentException nonce-long=ArgumentException tag-short=ArgumentException tag-long=ArgumentException output-short=ArgumentException";
+
+/// Altering the tag, the ciphertext or the associated data of `algorithm`
+/// fails its decryption as a tag mismatch, with the plaintext buffer cleared.
+async fn assert_rejects_every_tampered_input(runtime: GuestRuntime, owner: u64, algorithm: &str) {
+    for (index, input) in ["tag", "ciphertext", "associated-data"]
+        .into_iter()
+        .enumerate()
+    {
+        let answer = answer(
+            runtime,
+            owner + index as u64,
+            &format!("/crypto/aead/{algorithm}/tampered-{input}"),
+        )
+        .await;
+        assert_eq!(
+            answer, "AuthenticationTagMismatchException True",
+            "{algorithm} must fail a decryption whose {input} was altered as a tag mismatch and clear the plaintext buffer"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_gcm_rejects_every_tampered_input_and_clears_the_plaintext(runtime: GuestRuntime) {
+        assert_rejects_every_tampered_input(runtime, 67, "aes-gcm").await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_gcm_refuses_invalid_key_nonce_tag_and_buffer_lengths(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 70, "/crypto/aead/aes-gcm/invalid-lengths").await,
+            format!("key=CryptographicException {AEAD_LENGTH_FAILURES}"),
+            "AES-GCM must refuse a 15-byte key, a nonce other than 12 bytes, a tag outside 12..16 bytes and a short output buffer"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_ccm_matches_the_rfc_3610_vector_and_round_trips(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 71, "/crypto/aead/aes-ccm/known-answer").await,
+            format!("{AES_CCM_RFC3610_1_CIPHERTEXT} {AES_CCM_RFC3610_1_TAG} True"),
+            "AES-128-CCM must produce the RFC 3610 ciphertext and tag and decrypt them back"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_ccm_rejects_every_tampered_input_and_clears_the_plaintext(runtime: GuestRuntime) {
+        assert_rejects_every_tampered_input(runtime, 72, "aes-ccm").await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_ccm_refuses_invalid_key_nonce_tag_and_buffer_lengths(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 75, "/crypto/aead/aes-ccm/invalid-lengths").await,
+            format!("key=CryptographicException {AEAD_LENGTH_FAILURES} tag-odd=ArgumentException"),
+            "AES-CCM must refuse a 15-byte key, a nonce outside 7..13 bytes, a tag outside 4..16 bytes or of odd length, and a short output buffer"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn chacha20_poly1305_matches_the_rfc_8439_vector_and_round_trips(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 76, "/crypto/aead/chacha20-poly1305/known-answer").await,
+            format!("{CHACHA20_POLY1305_RFC8439_CIPHERTEXT} {CHACHA20_POLY1305_RFC8439_TAG} True"),
+            "ChaCha20-Poly1305 must produce the RFC 8439 ciphertext and tag and decrypt them back"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn chacha20_poly1305_rejects_every_tampered_input_and_clears_the_plaintext(runtime: GuestRuntime) {
+        assert_rejects_every_tampered_input(runtime, 77, "chacha20-poly1305").await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn chacha20_poly1305_refuses_invalid_key_nonce_tag_and_buffer_lengths(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 80, "/crypto/aead/chacha20-poly1305/invalid-lengths").await,
+            format!("key=CryptographicException {AEAD_LENGTH_FAILURES}"),
+            "ChaCha20-Poly1305 must refuse a 31-byte key, a nonce other than 12 bytes, a tag other than 16 bytes and a short output buffer"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_cbc_rejects_invalid_padding_and_a_partial_block(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 81, "/crypto/aes-cbc-invalid-padding").await,
+            "tampered=CryptographicException partial-block=CryptographicException intact=True",
+            "AES-CBC must refuse a ciphertext whose PKCS#7 padding no longer decodes and one that is not whole blocks, and still decrypt the untouched one"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn aes_cbc_refuses_invalid_key_and_iv_lengths(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 82, "/crypto/aes-cbc-invalid-lengths").await,
+            "key=CryptographicException key-size=CryptographicException iv=CryptographicException cbc-iv=ArgumentException",
+            "AES must refuse a 15-byte key, a 100-bit key size, a 15-byte IV property and a 15-byte IV argument"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn rsa_oaep_rejects_a_tampered_ciphertext_and_an_oversized_plaintext(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 83, "/crypto/rsa-tampered-ciphertext").await,
+            "tampered=CryptographicException truncated=CryptographicException too-large=CryptographicException",
+            "RSA-OAEP must refuse an altered ciphertext, a truncated one and a plaintext the modulus cannot hold"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn ecdsa_verifies_false_on_a_malformed_signature(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 84, "/crypto/ecdsa-malformed-signatures").await,
+            "empty=False truncated=False altered=False intact=True",
+            "an empty, truncated or altered P-256 signature must verify false without throwing, and the intact one true"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn rsa_keys_round_trip_through_every_import_and_export_format(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 85, "/crypto/rsa-import-export").await,
+            "pkcs8=True/True/True pkcs1=True/True/True spki=True/CryptographicException rsa-public=True/CryptographicException pkcs8-pem=True/True/True pkcs1-pem=True/True/True spki-pem=True/CryptographicException rsa-public-pem=True/CryptographicException parameters=True/True/True",
+            "every private RSA format must import a key that verifies, signs and carries the modulus, and every public one a key that verifies but cannot export a private key"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn ecdsa_keys_round_trip_through_every_import_and_export_format(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 87, "/crypto/ecdsa-import-export").await,
+            "pkcs8=True/True/True ec-private=True/True/True spki=True/CryptographicException pkcs8-pem=True/True/True ec-private-pem=True/True/True spki-pem=True/CryptographicException parameters=True/True/True",
+            "every private ECDSA format must import a key that verifies, signs and carries the public point, and every public one a key that verifies but cannot export a private key"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn ecdh_keys_round_trip_through_every_import_and_export_format(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 88, "/crypto/ecdh-import-export").await,
+            "pkcs8=True/True ec-private=True/True spki=True/CryptographicException public-key-spki=True/CryptographicException pkcs8-pem=True/True spki-pem=True/CryptographicException parameters=True/True",
+            "every private ECDH format must import a key that agrees from both sides, and every public one a key the peer agrees with but that cannot export a private key"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn malformed_key_material_is_refused_on_import(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 89, "/crypto/malformed-key-imports").await,
+            "garbage-pkcs8=CryptographicException garbage-spki=CryptographicException truncated-pkcs8=CryptographicException spki-as-pkcs8=CryptographicException ec-key-as-rsa=CryptographicException rsa-key-as-ec=CryptographicException rsa-pem-as-ec=CryptographicException not-pem=ArgumentException certificate-pem=ArgumentException",
+            "bytes that are not a key, a truncated key, a key of the other algorithm and a public key in a private slot must fail as cryptographic errors, and text that is not a key PEM as an argument error"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_disposed_key_refuses_every_operation(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 90, "/crypto/disposed-keys").await,
+            "rsa-pkcs8=ObjectDisposedException rsa-spki=ObjectDisposedException rsa-pem=ObjectDisposedException rsa-sign=ObjectDisposedException ecdsa-pkcs8=ObjectDisposedException ecdsa-spki=ObjectDisposedException ecdsa-sign=ObjectDisposedException ecdh-pkcs8=ObjectDisposedException ecdh-derive=ObjectDisposedException",
+            "a disposed RSA, ECDSA or ECDH key must refuse to export, sign or agree with ObjectDisposedException, and disposing twice must not throw"
+        );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn disposing_a_key_leaves_its_copies_usable(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 91, "/crypto/disposal-is-per-instance").await,
+            "copy=True exported=True certificate=True",
+            "disposing an RSA key must leave a key built from its parameters, its exported bytes and a fresh key from its certificate usable"
+        );
     }
 }

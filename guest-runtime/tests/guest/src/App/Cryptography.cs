@@ -13,7 +13,7 @@ namespace Acceptance;
 /// primitives round-trip and verify fixed signatures, certificates parse and
 /// chain, and randomness is the host's entropy.
 /// </summary>
-internal sealed class Cryptography
+internal sealed partial class Cryptography
 {
     public Task<string> RunAsync(string[] path) => Task.FromResult(Run(path));
 
@@ -138,6 +138,28 @@ internal sealed class Cryptography
             }
             case "random":
                 return Hex(RandomNumberGenerator.GetBytes(32)) + " " + RandomNumberGenerator.GetInt32(1000, 2000).ToString(CultureInfo.InvariantCulture);
+            case "aead":
+                return Aead(path[1], path[2]);
+            case "aes-cbc-invalid-padding":
+                return AesCbcInvalidPadding();
+            case "aes-cbc-invalid-lengths":
+                return AesCbcInvalidLengths();
+            case "rsa-tampered-ciphertext":
+                return RsaTamperedCiphertext();
+            case "ecdsa-malformed-signatures":
+                return EcdsaMalformedSignatures();
+            case "rsa-import-export":
+                return RsaImportExport();
+            case "ecdsa-import-export":
+                return EcdsaImportExport();
+            case "ecdh-import-export":
+                return EcdhImportExport();
+            case "malformed-key-imports":
+                return MalformedKeyImports();
+            case "disposed-keys":
+                return DisposedKeys();
+            case "disposal-is-per-instance":
+                return DisposalIsPerInstance();
             default:
                 throw new ArgumentException("unknown crypto case " + path[0]);
         }
@@ -155,4 +177,25 @@ internal sealed class Cryptography
     }
 
     private static string Hex(byte[] bytes) => Convert.ToHexString(bytes).ToLowerInvariant();
+
+    /// <summary>
+    /// The nearest public type of the exception <paramref name="action"/>
+    /// throws, the one a caller can catch (OpenSSL failures surface as an
+    /// internal subclass of CryptographicException); the answer a test
+    /// asserts on.
+    /// </summary>
+    private static string Failure(Action action)
+    {
+        try
+        {
+            action();
+            return "no exception";
+        }
+        catch (Exception error)
+        {
+            Type type = error.GetType();
+            while (!type.IsPublic && type.BaseType != null) type = type.BaseType;
+            return type.Name;
+        }
+    }
 }
