@@ -18,6 +18,7 @@ SHIMS = {
     "SystemNative": "System.Native",
     "CryptoNative": "System.Security.Cryptography.Native",
     "GlobalizationNative": "System.Globalization.Native",
+    "CompressionNative": "System.IO.Compression.Native",
 }
 I64_C = {"int64_t", "uint64_t", "long long", "unsigned long long", "off_t", "int64", "uint64"}
 I64_CS = {"long", "ulong", "Int64", "UInt64"}

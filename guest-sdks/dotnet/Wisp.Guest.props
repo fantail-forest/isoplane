@@ -25,6 +25,12 @@
     <WispWrappedSymbol Include="SystemNative_MksTemps;socket;close;getsockopt;setsockopt;send;sendmsg" />
     <WispWrappedSymbol Include="poll_poll;streams_method_input_stream_read;streams_method_output_stream_check_write;streams_method_output_stream_write" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- HttpClient runs SocketsHttpHandler over the delegated sockets, on
+         HTTP/1.1: the host's egress carries no HTTP/2 or HTTP/3. -->
+    <RuntimeHostConfigurationOption Include="System.Net.SocketsHttpHandler.Http3Support" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="System.Net.Http.SocketsHttpHandler.Http2Support" Value="false" />
+  </ItemGroup>
   <Import Project="Wisp.NativeAot.props" Condition="'$(WispGuestRuntime)' == 'NativeAOT'" />
   <Import Project="Build/Wisp.Mono.props" Condition="'$(WispGuestRuntime)' == 'Mono'" />
   <Target Name="WispValidateRuntimeProfile" BeforeTargets="PrepareForBuild">

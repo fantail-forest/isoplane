@@ -3,6 +3,7 @@
     <!-- The framework pack's cryptography shim is linked statically like
          System.Native, so ilc binds its P/Invokes directly. -->
     <DirectPInvoke Include="libSystem.Security.Cryptography.Native.OpenSsl" />
+    <DirectPInvoke Include="libSystem.IO.Compression.Native" />
   </ItemGroup>
   <!-- The pack the compile draws on must be the pack the feed offers: NuGet
        keeps one extraction per version, so a stale copy could shadow a
@@ -24,13 +25,16 @@
     <Error Condition="'$(_WispNativeAotPackDigest)' != '$(WispGuestNativeAotPackSha512)'"
            Text="wisp: the framework pack at $(_WispNativeAotPackDirectory) is not the pack the feed offers (digest $(_WispNativeAotPackDigest) vs $(WispGuestNativeAotPackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
   </Target>
-  <!-- The OpenSSL backend from the pack, after the shim that calls it. -->
-  <Target Name="WispNativeAotLinkCryptography" DependsOnTargets="SetupProperties" BeforeTargets="LinkNativeLlvm"
+  <!-- The native shims from the pack, each after the shim that calls it:
+       OpenSSL behind the cryptography shim, zlib behind the compression one. -->
+  <Target Name="WispNativeAotLinkShims" DependsOnTargets="SetupProperties" BeforeTargets="LinkNativeLlvm"
           Condition="'$(WispContainerBuild)' != 'true'">
     <ItemGroup>
       <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.Security.Cryptography.Native.OpenSsl.a" />
       <NativeLibrary Include="$(IlcFrameworkNativePath)libssl.a" />
       <NativeLibrary Include="$(IlcFrameworkNativePath)libcrypto.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.IO.Compression.Native.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libz.a" />
     </ItemGroup>
   </Target>
   <!-- The identity of the framework the module was compiled against, beside
