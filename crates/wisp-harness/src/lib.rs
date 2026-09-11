@@ -14,7 +14,7 @@ use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext
 use wisp_abi::result::ResultRecord;
 use wisp_engine::{
     Completion, CpuBudget, DispatchOutcome, EngineConfig, Instance, InstanceImage, InstanceOps,
-    Template, WispEngine,
+    PlatformFiles, Template, WispEngine,
 };
 
 use wisp_host::bindings::{CellBindings, CellRuntime, InstanceCtx, Services, Tenancy, WakeSink};
@@ -44,13 +44,25 @@ pub struct Reactor {
     /// The future table the reactor completes host work into.
     pub futures: Arc<FutureTable>,
     wake: Arc<Wake>,
+    platform_files: PlatformFiles,
 }
 
 impl Reactor {
     /// A reactor on the current tokio runtime for `owner`, whose outbound
     /// connections, lookups and fetches go through `policy` and the real
-    /// transport, trusting the host's certificate store.
+    /// transport, trusting the host's certificate store. The guest's PAL
+    /// filesystem holds no files.
     pub fn new(owner: InstanceId, policy: HostEgressPolicy) -> Self {
+        Self::with_platform_files(owner, policy, PlatformFiles::default())
+    }
+
+    /// As [`Self::new`], with `files` served read-only through the guest's
+    /// PAL filesystem.
+    pub fn with_platform_files(
+        owner: InstanceId,
+        policy: HostEgressPolicy,
+        files: PlatformFiles,
+    ) -> Self {
         LogCapture::global();
         let egress = Arc::new(policy);
         let fetcher = PinnedHttpFetcher::new(egress.clone(), 256 * 1024);
@@ -83,6 +95,7 @@ impl Reactor {
             context,
             futures,
             wake,
+            platform_files: files,
         }
     }
 
@@ -110,11 +123,29 @@ impl Reactor {
     }
 }
 
+fn engine_serving(module: &[u8], files: PlatformFiles) -> (WispEngine, Template) {
+    let engine = WispEngine::new(EngineConfig {
+        max_instances: 2,
+        max_memory_bytes: 256 << 20,
+        guard_size_bytes: 64 << 20,
+        platform_files: files,
+        ..EngineConfig::default()
+    })
+    .expect("the returned-guest engine must initialize");
+    let template = engine
+        .load_template(module)
+        .unwrap_or_else(|error| panic!("the guest module must load: {error:#}"));
+    (engine, template)
+}
+
 /// A guest that returns to the host on an empty stack: parked or done, its
 /// Store is destroyed, and the next call restores it on another thread.
 pub struct ReturnedGuest {
     engine: WispEngine,
     template: Template,
+    module: Arc<[u8]>,
+    module_hash: wisp_engine::ModuleHash,
+    platform_files: PlatformFiles,
     context: Arc<InstanceCtx>,
     snapshot: Option<(InstanceImage, Vec<u8>)>,
 }
@@ -122,21 +153,43 @@ pub struct ReturnedGuest {
 impl ReturnedGuest {
     /// Loads `module` for `reactor`'s instance.
     pub fn new(module: &[u8], reactor: &Reactor) -> Self {
-        let engine = WispEngine::new(EngineConfig {
-            max_instances: 2,
-            max_memory_bytes: 256 << 20,
-            guard_size_bytes: 64 << 20,
-            ..EngineConfig::default()
-        })
-        .expect("the returned-guest engine must initialize");
-        let template = engine
-            .load_template(module)
-            .unwrap_or_else(|error| panic!("the guest module must load: {error:#}"));
+        let (engine, template) = engine_serving(module, reactor.platform_files.clone());
         Self {
             engine,
             template,
+            module: module.into(),
+            module_hash: wisp_engine::ModuleHash::of(module),
+            platform_files: reactor.platform_files.clone(),
             context: reactor.context.clone(),
             snapshot: None,
+        }
+    }
+
+    /// Serves `files` to the guest from its next activation on: the engine
+    /// is rebuilt around the new set (a node's set is fixed for its life, so
+    /// this is a new node process serving the guest's saved state) and the
+    /// guest's saved memory carries over unchanged.
+    pub fn serve_platform_files(&mut self, files: PlatformFiles) {
+        let (engine, template) = engine_serving(&self.module, files.clone());
+        self.engine = engine;
+        self.template = template;
+        self.platform_files = files;
+    }
+
+    /// A second guest on the same engine whose first activation restores
+    /// this guest's saved memory: what activating a template that already
+    /// holds the guest's cached state amounts to. This guest keeps its own
+    /// copy.
+    pub fn activated_from_image(&self, reactor: &Reactor) -> Self {
+        let (engine, template) = engine_serving(&self.module, self.platform_files.clone());
+        Self {
+            engine,
+            template,
+            module: self.module.clone(),
+            module_hash: self.module_hash,
+            platform_files: self.platform_files.clone(),
+            context: reactor.context.clone(),
+            snapshot: self.snapshot.clone(),
         }
     }
 

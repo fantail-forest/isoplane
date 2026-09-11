@@ -36,6 +36,7 @@ pub use budget::{
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use meter::clock_read_failures;
+pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
 pub use snapshot::InstanceImage;
 pub use template::{ModuleHash, Template, DEFERRED_INIT_SECTION};
 
@@ -67,6 +68,9 @@ pub struct EngineConfig {
     /// Changing it changes generated code and so invalidates every cached
     /// artifact through the engine fingerprint.
     pub guard_size_bytes: u64,
+    /// Read-only files the PAL filesystem serves to every guest, at
+    /// pre-initialisation and at dispatch alike. Empty by default.
+    pub platform_files: PlatformFiles,
 }
 
 impl Default for EngineConfig {
@@ -78,6 +82,7 @@ impl Default for EngineConfig {
             pooling: true,
             spectre_mitigations: true,
             guard_size_bytes: 32 << 20,
+            platform_files: PlatformFiles::default(),
         }
     }
 }

@@ -43,7 +43,7 @@ impl<T: 'static> Memory for CallerMemory<'_, '_, T> {
             .typed::<(i32, i32, i32, i32), i32>(&*self.0)?
             .call(&mut *self.0, (0, 0, 4, size_bytes as i32))? as u32)
     }
-    fn free(&mut self, pointer: u32) -> Result<()> {
+    fn free(&mut self, pointer: u32, size_bytes: u32) -> Result<()> {
         if let Some(function) = self
             .0
             .get_export(wisp_abi::exports::FS_FREE)
@@ -61,7 +61,7 @@ impl<T: 'static> Memory for CallerMemory<'_, '_, T> {
             .ok_or_else(|| anyhow::anyhow!("filesystem guest has no allocator export"))?;
         function
             .typed::<(i32, i32, i32, i32), i32>(&*self.0)?
-            .call(&mut *self.0, (pointer as i32, 4, 4, 0))?;
+            .call(&mut *self.0, (pointer as i32, size_bytes as i32, 4, 0))?;
         Ok(())
     }
 }

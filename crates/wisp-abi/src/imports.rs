@@ -112,7 +112,7 @@ pub const IMPORTS: &[ImportDef] = &[
         "nonblocking resource readiness and coarse deadlines; pending work wakes through host-owned futures") },
     ImportDef { init_visible: true, buf: BufSpec::None,
         ..imp!("filesystem_call", Core, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
-        "empty read-only filesystem operations; arguments are canonical scalars in a guest u64 array; all filesystem records remain in guest memory") },
+        "read-only filesystem operations over the host-declared platform files; arguments are canonical scalars in a guest u64 array; all filesystem records remain in guest memory") },
     // ---- core -------------------------------------------------------------
     ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \

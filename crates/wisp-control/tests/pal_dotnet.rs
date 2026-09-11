@@ -307,6 +307,7 @@ fn the_stock_dotnet_template_loads_into_the_data_plane() {
         pooling: true,
         spectre_mitigations: true,
         guard_size_bytes: 2 << 20,
+        ..wisp_engine::EngineConfig::default()
     })
     .expect("engine");
 
@@ -351,6 +352,7 @@ fn negative_control_the_data_plane_refuses_an_off_whitelist_wasi_import() {
         pooling: true,
         spectre_mitigations: true,
         guard_size_bytes: 2 << 20,
+        ..wisp_engine::EngineConfig::default()
     })
     .expect("engine");
 

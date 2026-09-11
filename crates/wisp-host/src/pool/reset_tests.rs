@@ -82,6 +82,7 @@ fn completed_start_guest() -> (InstancePool, Arc<Slot>, Arc<ResetStartActivator>
         pooling: true,
         spectre_mitigations: true,
         guard_size_bytes: 2 << 20,
+        ..wisp_engine::EngineConfig::default()
     })
     .unwrap();
     let wasm = wat::parse_str(

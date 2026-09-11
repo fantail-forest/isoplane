@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use wisp_abi::imports::{self, ImportDef};
+use wisp_engine::PlatformFiles;
 use wizer::wasmtime as wt;
 
 use super::wasi::{install_pal_adapter, WasiImport};
@@ -37,10 +38,17 @@ pub(super) struct Sandbox {
     pal: InitSandbox,
     pub(super) pal_calls: BTreeMap<&'static str, u32>,
     entropy_draws: u64,
+    /// The read-only files the PAL filesystem serves, as at dispatch.
+    pub(super) platform_files: PlatformFiles,
 }
 
 impl Sandbox {
-    pub(super) fn new(config: Vec<u8>, deferred: BTreeSet<u32>, pal: InitSandbox) -> Self {
+    pub(super) fn new(
+        config: Vec<u8>,
+        deferred: BTreeSet<u32>,
+        pal: InitSandbox,
+        platform_files: PlatformFiles,
+    ) -> Self {
         Sandbox {
             seed: rand::random(),
             config,
@@ -54,6 +62,7 @@ impl Sandbox {
             pal,
             pal_calls: BTreeMap::new(),
             entropy_draws: 0,
+            platform_files,
         }
     }
 
@@ -121,7 +130,9 @@ fn install_init_visible(
                     let operation = arg_i32(args, 0)? as u32;
                     let pointer = arg_i32(args, 1)? as u32;
                     let count = arg_i32(args, 2)? as u32;
+                    let files = st.lock().platform_files.clone();
                     wisp_engine::pal::filesystem::packet(
+                        &files,
                         &mut super::filesystem::CallerMemory(&mut caller),
                         operation,
                         pointer,

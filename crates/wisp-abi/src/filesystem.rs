@@ -1,4 +1,6 @@
-//! Empty read-only filesystem adapter operations and their canonical WASI signatures.
+//! Read-only filesystem adapter operations and their canonical WASI signatures.
+//! The root is empty but for a host-declared set of read-only regular files,
+//! readable only through `descriptor.read`.
 use crate::imports::{Sig, Ty};
 use crate::pal::{Delegation, Disposition, PalDef, FS_PREOPENS, FS_TYPES};
 
@@ -16,7 +18,7 @@ pub struct Definition {
 }
 macro_rules! operations {
     ($( $variant:ident = $id:literal, $symbol:literal, $module:ident, $name:literal, [$($ty:ident),*]; )*) => {
-        /// Operations on an empty root; handles refer only to records in guest memory.
+        /// Operations on the read-only root; handles refer only to records in guest memory.
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         #[repr(u32)]
         pub enum Operation {
@@ -32,7 +34,7 @@ macro_rules! operations {
                     func: $name,
                     disposition: Disposition::Delegate(Delegation::Cap(IMPORT)),
                     sig: Some(Sig { params: &[$(Ty::$ty),*], results: &[] }),
-                    why: "empty read-only root; missing reads return no-entry, mutations return read-only, invalid handles return bad-descriptor; no host filesystem access",
+                    why: "read-only root holding only host-declared platform files, readable through descriptor.read alone; undeclared paths return no-entry, mutations and write-enabling opens return read-only, streams return not-permitted, invalid handles return bad-descriptor; no host filesystem access",
                 },
             },)*
         ];

@@ -3,14 +3,17 @@
 //! must satisfy a `wasi:*` import exactly as the validator admitted it.
 //!
 //! Grace poisoning and the adapter both intercept imports. The delegated
-//! sources, `clock_now_coarse` and `entropy_fill`, and the empty filesystem
-//! adapter are synchronous, and
+//! sources, `clock_now_coarse` and `entropy_fill`, and the read-only
+//! filesystem adapter are synchronous, and
 //! poisoning applies only to future-returning imports, so a delegated entry
 //! keeps answering during grace; a trap stub keeps trapping, since a grace
 //! window does not turn a denied capability on.
 
 pub mod filesystem;
 pub mod native_io;
+pub mod platform_files;
+
+use platform_files::PlatformFiles;
 
 use anyhow::bail;
 use wasmtime::bail as wt_bail;
@@ -53,6 +56,10 @@ impl PalSource for StoreState {
         self.clock_ms
     }
 
+    fn platform_files(&self) -> PlatformFiles {
+        self.platform_files.clone()
+    }
+
     fn entropy_fill(&mut self, out: &mut [u8]) -> wasmtime::Result<()> {
         let Some(mut b) = self.bindings.take() else {
             wt_bail!("PAL entropy delegation reached while the binding vtable was in use");
@@ -91,6 +98,11 @@ pub trait PalSource: Send + 'static {
     }
     /// The coarse clock, frozen for the slice.
     fn slice_clock_ms(&mut self) -> u64;
+    /// The host-declared read-only files the PAL filesystem serves; nothing
+    /// by default.
+    fn platform_files(&self) -> PlatformFiles {
+        PlatformFiles::default()
+    }
     /// Fill `out` from the host CSPRNG, once per guest draw.
     fn entropy_fill(&mut self, out: &mut [u8]) -> wasmtime::Result<()>;
 }
@@ -217,7 +229,9 @@ fn define_delegate<T: PalSource>(
                         }
                     };
                 }
+                let files = caller.data().platform_files();
                 filesystem::call(
+                    &files,
                     &mut filesystem::CallerMemory(&mut caller),
                     fs,
                     &scalars[..args.len()],

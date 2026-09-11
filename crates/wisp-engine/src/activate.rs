@@ -18,7 +18,7 @@ impl WispEngine {
     /// Map the template copy-on-write and bind `b` as this instance's import
     /// vtable.
     pub fn activate(&self, t: &Template, b: Box<dyn HostBindings>) -> Result<Instance> {
-        let data = StoreState::new(b, self.inner.cfg.max_memory_bytes as usize);
+        let data = StoreState::new(b, &self.inner.cfg);
         let live = instantiate(&self.inner, &t.inner, data)?;
         Ok(Instance {
             engine: self.inner.clone(),

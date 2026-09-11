@@ -17,6 +17,7 @@ pub fn small_engine_config() -> EngineConfig {
         pooling: true,
         spectre_mitigations: true,
         guard_size_bytes: 2 << 20,
+        ..EngineConfig::default()
     }
 }
 

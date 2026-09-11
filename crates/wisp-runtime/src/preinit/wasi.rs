@@ -114,7 +114,9 @@ pub(super) fn install_pal_adapter(
                             _ => anyhow::bail!("filesystem argument is not an integer"),
                         };
                     }
+                    let files = st.lock().platform_files.clone();
                     wisp_engine::pal::filesystem::call(
+                        &files,
                         &mut super::filesystem::CallerMemory(&mut caller),
                         fs,
                         &scalars[..args.len()],

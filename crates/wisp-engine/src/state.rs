@@ -6,6 +6,8 @@ use std::time::Instant;
 use wasmtime::{Memory, ResourceLimiter};
 
 use crate::bindings::HostBindings;
+use crate::pal::platform_files::PlatformFiles;
+use crate::EngineConfig;
 
 /// Why the engine terminated a dispatch. Recorded in the store rather than
 /// inferred from the error chain, so classification is exact.
@@ -133,10 +135,12 @@ pub(crate) struct StoreState {
     pub limits: Limits,
     /// Reused across import calls so the copy-out path does not allocate.
     pub scratch: Vec<u8>,
+    /// The engine's declared read-only files, served by the PAL filesystem.
+    pub platform_files: PlatformFiles,
 }
 
 impl StoreState {
-    pub(crate) fn new(bindings: Box<dyn HostBindings>, max_memory_bytes: usize) -> Self {
+    pub(crate) fn new(bindings: Box<dyn HostBindings>, cfg: &EngineConfig) -> Self {
         Self {
             bindings: Some(bindings),
             memory: None,
@@ -150,10 +154,11 @@ impl StoreState {
             violation: None,
             abort_msg: None,
             limits: Limits {
-                max_memory_bytes,
+                max_memory_bytes: cfg.max_memory_bytes as usize,
                 oom: false,
             },
             scratch: Vec::new(),
+            platform_files: cfg.platform_files.clone(),
         }
     }
 

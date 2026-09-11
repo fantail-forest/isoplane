@@ -210,7 +210,7 @@ impl WispEngine {
             Box::new(DenyAll {
                 called: called_import.clone(),
             }),
-            self.inner.cfg.max_memory_bytes as usize,
+            &self.inner.cfg,
         );
         probe_state.clock_ms = 0;
         let mut store = Store::new(&self.inner.wasmtime, probe_state);

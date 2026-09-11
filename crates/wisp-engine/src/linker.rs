@@ -107,7 +107,9 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
             .map_err(wasmtime::Error::from_anyhow);
         }
         "filesystem_call" => {
+            let files = c.data().platform_files.clone();
             crate::pal::filesystem::packet(
+                &files,
                 &mut crate::pal::filesystem::CallerMemory(c),
                 raw[0] as u32,
                 raw[1] as u32,

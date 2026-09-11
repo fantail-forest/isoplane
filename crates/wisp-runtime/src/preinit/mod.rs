@@ -19,7 +19,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use wisp_abi::config::InitSandbox;
 use wisp_abi::imports;
-use wisp_engine::ModuleHash;
+use wisp_engine::{ModuleHash, PlatformFiles};
 use wizer::wasmtime as wt;
 use wizer::Wizer;
 
@@ -59,6 +59,7 @@ fn serves(pal: InitSandbox, name: &str) -> bool {
 #[derive(Default)]
 pub struct PreInitializer {
     pal: InitSandbox,
+    platform_files: PlatformFiles,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +132,15 @@ impl PreInitializer {
         self
     }
 
+    /// Declare the read-only files the PAL filesystem serves during
+    /// pre-initialisation: the same set the execution engine serves, so a
+    /// static initialiser that reads one bakes the same bytes a dispatch
+    /// would see.
+    pub fn with_platform_files(mut self, files: PlatformFiles) -> Self {
+        self.platform_files = files;
+        self
+    }
+
     /// Run `wisp_initialize`, recording denied capabilities for the guest's unit protocol.
     pub fn run(&self, wasm: &[u8], req: &PreInitRequest) -> Result<PreInitOutcome, PreInitError> {
         if !exports_func(wasm, imports::exports::INITIALIZE) {
@@ -166,6 +176,7 @@ impl PreInitializer {
                 req.init_blob.clone(),
                 deferred.clone(),
                 self.pal,
+                self.platform_files.clone(),
             )));
 
             let result = wizen(wasm, state.clone());

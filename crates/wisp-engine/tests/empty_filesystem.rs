@@ -1,98 +1,34 @@
 #![forbid(unsafe_code)]
 //! Empty-filesystem conformance through the engine's real validator and linker.
 mod common;
+#[path = "common/filesystem.rs"]
+mod filesystem;
 use common::{activate, guest, test_engine, DONE};
-use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
+use filesystem::{call, dispatch, RET, ROOT};
 use wisp_abi::filesystem::{Operation, IMPORTS};
 use wisp_abi::imports::Ty;
 use wisp_engine::{Completion, CpuBudget, InstanceOps};
 
+/// The paths the tests below name, at the addresses they use.
+const STRINGS: &[(u32, &str)] = &[
+    (2000, "."),
+    (2010, "missing"),
+    (2030, "../etc/passwd"),
+    (2050, "/etc/passwd"),
+    (2070, "././"),
+];
+
 fn module(body: &str) -> Vec<u8> {
-    lifecycle_module(body, DONE)
+    filesystem::module(body, STRINGS)
 }
 
 fn lifecycle_module(body: &str, wake: &str) -> Vec<u8> {
-    let imports = IMPORTS
-        .iter()
-        .map(|definition| {
-            let signature = definition.pal.sig.expect("filesystem signature");
-            let types = signature
-                .params
-                .iter()
-                .map(|ty| match ty {
-                    Ty::I32 => "i32",
-                    Ty::I64 => "i64",
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!(
-                "(import \"{}\" \"{}\" (func $fs{} (param {types})))",
-                definition.pal.module, definition.pal.func, definition.operation as u32
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let functions = r#"
-        (global $heap (export "g_fs_heap") (mut i32) (i32.const 40000))
-        (func (export "cabi_realloc") (param i32 i32 i32) (param $size i32) (result i32)
-            (local $p i32)
-            (local.set $p (global.get $heap))
-            (global.set $heap (i32.add (global.get $heap) (i32.const 128)))
-            (local.get $p))
-        (data (i32.const 2000) ".")
-        (data (i32.const 2010) "missing")
-        (data (i32.const 2030) "../etc/passwd")
-        (data (i32.const 2050) "/etc/passwd")
-        (data (i32.const 2070) "././")
-    "#;
-    let preopen = format!("(call $fs{} (i32.const 1000)) (i32.store (i32.const 1010) (i32.load (i32.load (i32.const 1000))))", Operation::Directories as u32);
-    guest(
-        4,
-        &imports,
-        functions,
-        &format!("{preopen} {body} {DONE}"),
-        wake,
-    )
+    filesystem::lifecycle_module(body, wake, STRINGS)
 }
 
 fn run(body: &str) -> Vec<u8> {
-    let engine = test_engine();
-    let template = engine
-        .load_template(&module(body))
-        .expect("empty-filesystem imports must validate and link");
-    let mut instance = activate(&engine, &template);
-    let dispatch = dispatch();
-    assert_eq!(
-        instance.dispatch(&dispatch, CpuBudget::http()).completion,
-        Completion::Done,
-        "a filesystem result must return normally through the engine"
-    );
-    instance.memory().to_vec()
+    filesystem::run(&test_engine(), &module(body))
 }
-
-fn dispatch() -> DispatchRecord {
-    DispatchRecord {
-        dispatch_id: 1,
-        kind: DispatchKind::Http(HttpRequest {
-            method: "GET".into(),
-            url: "https://empty.test/".into(),
-            path: "/".into(),
-            query: vec![],
-            headers: vec![],
-            body: vec![],
-        }),
-        trace: TraceContext::default(),
-        cancel_future: 0,
-        cpu_budget_ms: 30_000,
-        now_ms: 0,
-    }
-}
-
-fn call(operation: Operation, arguments: &[&str]) -> String {
-    format!("(call $fs{} {})", operation as u32, arguments.join(" "))
-}
-const ROOT: &str = "(i32.load (i32.const 1010))";
-const RET: &str = "(i32.const 1100)";
 
 #[test]
 fn root_metadata_and_enumeration_describe_an_empty_directory() {

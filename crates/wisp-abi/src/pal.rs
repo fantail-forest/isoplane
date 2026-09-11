@@ -311,7 +311,7 @@ const fn all_imports() -> [PalDef; PAL_COUNT] {
     out
 }
 
-/// Every admitted WASI import, including the empty read-only filesystem adapter.
+/// Every admitted WASI import, including the read-only filesystem adapter.
 pub const PAL_IMPORTS: &[PalDef] = &all_imports();
 
 /// Whether `module` is a WASI interface at all, so a rejection can say "not in
