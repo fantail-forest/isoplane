@@ -659,7 +659,7 @@ fn read_directory_on_the_file_is_not_a_directory() {
 fn mutations_of_the_file_are_read_only() {
     let file = opened(1200);
     let certs = opened(1300);
-    let cases: [(&str, String, usize); 7] = [
+    let cases: [(&str, String, usize); 8] = [
         (
             "write",
             call(
@@ -730,6 +730,25 @@ fn mutations_of_the_file_are_read_only() {
             "append-via-stream",
             call(Operation::AppendViaStream, &[&file, &ret(3600)]),
             4,
+        ),
+        (
+            "set-times-at",
+            call(
+                Operation::SetTimesAt,
+                &[
+                    &certs,
+                    "(i32.const 0)",
+                    &path("ca-certificates.crt"),
+                    "(i32.const 1)",
+                    "(i64.const 0)",
+                    "(i32.const 0)",
+                    "(i32.const 1)",
+                    "(i64.const 0)",
+                    "(i32.const 0)",
+                    &ret(3700),
+                ],
+            ),
+            1,
         ),
     ];
     let body = format!(

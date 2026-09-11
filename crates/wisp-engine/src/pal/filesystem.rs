@@ -267,7 +267,7 @@ fn result_layout(operation: Operation) -> (usize, usize) {
         OpenAt | ReadDirectory | ReadViaStream | WriteViaStream | AppendViaStream => (8, 4),
         Directories => (8, 4),
         DropDescriptor | DropDirectoryStream => (0, 0),
-        Advise | Flags | Type | SetSize | SetTimes | Sync | CreateDirectoryAt
+        Advise | Flags | Type | SetSize | SetTimes | SetTimesAt | Sync | CreateDirectoryAt
         | RemoveDirectoryAt | RenameAt | SymlinkAt | LinkAt | UnlinkFileAt => (2, 1),
     }
 }
@@ -329,8 +329,8 @@ pub fn call(
     }
     let mut result = [0u8; 104];
     match operation {
-        SetSize | SetTimes | Write | WriteViaStream | AppendViaStream | CreateDirectoryAt
-        | RemoveDirectoryAt | RenameAt | SymlinkAt | LinkAt | UnlinkFileAt => {
+        SetSize | SetTimes | SetTimesAt | Write | WriteViaStream | AppendViaStream
+        | CreateDirectoryAt | RemoveDirectoryAt | RenameAt | SymlinkAt | LinkAt | UnlinkFileAt => {
             return error(memory, retptr, offset, READ_ONLY)
         }
         // A stream's blocking read would be blocking I/O inside a call.

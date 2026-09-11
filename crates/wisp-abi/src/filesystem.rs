@@ -69,6 +69,7 @@ operations! {
     SymlinkAt = 25, "filesystem_method_descriptor_symlink_at", FS_TYPES, "[method]descriptor.symlink-at", [I32, I32, I32, I32, I32, I32];
     SetTimes = 26, "filesystem_method_descriptor_set_times", FS_TYPES, "[method]descriptor.set-times", [I32, I32, I64, I32, I32, I64, I32, I32];
     LinkAt = 27, "filesystem_method_descriptor_link_at", FS_TYPES, "[method]descriptor.link-at", [I32, I32, I32, I32, I32, I32, I32, I32];
+    SetTimesAt = 28, "filesystem_method_descriptor_set_times_at", FS_TYPES, "[method]descriptor.set-times-at", [I32, I32, I32, I32, I32, I64, I32, I32, I64, I32, I32];
 }
 
 /// The largest canonical scalar packet in the declared filesystem interface.
