@@ -90,3 +90,21 @@ int __wrap_setsockopt(int fd, int level, int option, const void *value, socklen_
     memcpy(&enabled, value, sizeof(enabled));
     return wisp_no_delay(fd, enabled != 0) < 0 ? -1 : 0;
 }
+
+/* The PAL's LingerOption: non-zero OnOff enables lingering for Seconds. */
+struct wisp_pal_linger_option {
+    int32_t on_off;
+    int32_t seconds;
+};
+
+int32_t __real_SystemNative_SetLingerOption(intptr_t socket, struct wisp_pal_linger_option *option);
+
+/* The host closes a socket without lingering and never with a reset, so
+ * disabled linger is the only state a socket can be in. The PAL, built
+ * against a libc with no SO_LINGER, reports every linger setting
+ * unsupported; setting the state the socket is already in succeeds here as
+ * the no-op it is, and enabling keeps the PAL's refusal. */
+int32_t __wrap_SystemNative_SetLingerOption(intptr_t socket, struct wisp_pal_linger_option *option) {
+    if (option != NULL && option->on_off == 0) return 0;
+    return __real_SystemNative_SetLingerOption(socket, option);
+}

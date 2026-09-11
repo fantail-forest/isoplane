@@ -22,7 +22,7 @@
          runtime pack's System.Native observes a socket's pollables through
          libc's poll and recovers the network error code libc drops from a
          failed stream operation. -->
-    <WispWrappedSymbol Include="SystemNative_MksTemps;socket;close;getsockopt;setsockopt;send;sendmsg" />
+    <WispWrappedSymbol Include="SystemNative_MksTemps;SystemNative_SetLingerOption;socket;close;getsockopt;setsockopt;send;sendmsg" />
     <WispWrappedSymbol Include="poll_poll;streams_method_input_stream_read;streams_method_output_stream_check_write;streams_method_output_stream_write" />
   </ItemGroup>
   <ItemGroup>

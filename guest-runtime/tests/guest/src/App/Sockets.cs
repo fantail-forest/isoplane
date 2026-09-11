@@ -201,8 +201,136 @@ internal sealed class Sockets
                     return error.GetType().Name;
                 }
             }
+            case "linger":
+            {
+                // Enabled linger would ask the host to close with a reset;
+                // disabled linger is the platform default.
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                var option = new LingerOption(path[3] == "1", int.Parse(path[4], CultureInfo.InvariantCulture));
+                string set = Attempt(() => socket.LingerState = option);
+                string get = Attempt(() =>
+                {
+                    LingerOption? state = socket.LingerState;
+                    return state is null ? "null" : state.Enabled + "/" + state.LingerTime.ToString(CultureInfo.InvariantCulture);
+                });
+                return "set=" + set + " get=" + get + " echo=" + await EchoAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
+            }
+            case "invalid-value":
+            {
+                // Each rejected value leaves the option it targeted unchanged.
+                // An invalid value the host rejects marks the managed Socket
+                // disconnected, as .NET does on every platform, so the proof
+                // that the connection still carries bytes uses the socket
+                // calls rather than a NetworkStream.
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                socket.NoDelay = true;
+                socket.ReceiveTimeout = 1500;
+                string negativeTimeout = Attempt(() => socket.ReceiveTimeout = -5);
+                string negativeLinger = Attempt(() => socket.LingerState = new LingerOption(true, -1));
+                string shortNoDelay = Attempt(() => socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, new byte[1]));
+                return negativeTimeout + " " + negativeLinger + " " + shortNoDelay
+                    + " nodelay=" + socket.NoDelay + " timeout=" + socket.ReceiveTimeout.ToString(CultureInfo.InvariantCulture)
+                    + " connected=" + socket.Connected
+                    + " echo=" + await EchoThroughSocketAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
+            }
+            case "unsupported-option":
+            {
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                socket.NoDelay = true;
+                string setReceiveBuffer = Attempt(() => socket.ReceiveBufferSize = 65536);
+                string getSendBuffer = Attempt(() => socket.SendBufferSize.ToString(CultureInfo.InvariantCulture));
+                string keepAlive = Attempt(() => socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true));
+                return setReceiveBuffer + " " + getSendBuffer + " " + keepAlive
+                    + " nodelay=" + socket.NoDelay
+                    + " echo=" + await EchoAsync(socket, new byte[] { 0x77, 0x69, 0x73, 0x70 }).ConfigureAwait(false);
+            }
+            case "backpressure":
+            {
+                // One write larger than the socket buffers: the runtime's send
+                // loop parks on writability as often as the peer's draining requires.
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                byte[] payload = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
+                using var stream = new NetworkStream(socket, ownsSocket: false);
+                await stream.WriteAsync(payload).ConfigureAwait(false);
+                socket.Shutdown(SocketShutdown.Send);
+                return "sent " + payload.Length.ToString(CultureInfo.InvariantCulture);
+            }
+            case "drain":
+            {
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                byte[] buffer = new byte[int.Parse(path[3], CultureInfo.InvariantCulture)];
+                ulong digest = FnvOffset;
+                long total = 0;
+                while (true)
+                {
+                    int count = await socket.ReceiveAsync(buffer, SocketFlags.None).ConfigureAwait(false);
+                    if (count == 0)
+                    {
+                        break;
+                    }
+                    for (int i = 0; i < count; i++)
+                    {
+                        digest = unchecked((digest ^ buffer[i]) * FnvPrime);
+                    }
+                    total += count;
+                }
+                return "received " + total.ToString(CultureInfo.InvariantCulture) + " fnv=" + digest.ToString("x16", CultureInfo.InvariantCulture);
+            }
+            case "sync-send-large":
+            {
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                byte[] payload = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
+                return Attempt(() => "sent " + socket.Send(payload).ToString(CultureInfo.InvariantCulture) + " of " + payload.Length.ToString(CultureInfo.InvariantCulture));
+            }
+            case "timed-receive":
+            {
+                // A receive timeout governs a blocking receive, which never
+                // blocks here: the call reports what it did instead.
+                using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                socket.ReceiveTimeout = 50;
+                return Attempt(() => "received " + socket.Receive(new byte[4]).ToString(CultureInfo.InvariantCulture));
+            }
             default:
                 throw new ArgumentException("unknown sockets case " + path[0]);
+        }
+    }
+
+    private const ulong FnvOffset = 14695981039346656037;
+    private const ulong FnvPrime = 1099511628211;
+
+    /// <summary>
+    /// The byte at <paramref name="index"/> of the pattern the tests digest;
+    /// its host twin is <c>peers::pattern</c>.
+    /// </summary>
+    private static byte[] Pattern(int length)
+    {
+        byte[] bytes = new byte[length];
+        for (long i = 0; i < length; i++)
+        {
+            bytes[i] = (byte)((i * 131 + (i >> 9) * 29 + 7) & 0xff);
+        }
+        return bytes;
+    }
+
+    private static string Attempt(Action operation) => Attempt(() => { operation(); return "ok"; });
+
+    /// <summary>
+    /// The operation's result, or the socket error code or exception type
+    /// it failed with.
+    /// </summary>
+    private static string Attempt(Func<string> operation)
+    {
+        try
+        {
+            return operation();
+        }
+        catch (SocketException error)
+        {
+            return error.SocketErrorCode.ToString();
+        }
+        catch (Exception error)
+        {
+            return error.GetType().Name;
         }
     }
 
@@ -231,6 +359,23 @@ internal sealed class Sockets
         await stream.WriteAsync(payload).ConfigureAwait(false);
         byte[] echoed = new byte[payload.Length];
         await stream.ReadExactlyAsync(echoed).ConfigureAwait(false);
+        return Convert.ToHexString(echoed);
+    }
+
+    private static async Task<string> EchoThroughSocketAsync(Socket socket, byte[] payload)
+    {
+        await socket.SendAsync(payload, SocketFlags.None).ConfigureAwait(false);
+        byte[] echoed = new byte[payload.Length];
+        int received = 0;
+        while (received < echoed.Length)
+        {
+            int count = await socket.ReceiveAsync(new Memory<byte>(echoed, received, echoed.Length - received), SocketFlags.None).ConfigureAwait(false);
+            if (count == 0)
+            {
+                return "eof after " + received.ToString(CultureInfo.InvariantCulture);
+            }
+            received += count;
+        }
         return Convert.ToHexString(echoed);
     }
 
