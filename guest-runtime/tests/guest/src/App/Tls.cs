@@ -181,6 +181,50 @@ internal sealed class Tls
                 await tls.ShutdownAsync().ConfigureAwait(false);
                 return "shut down";
             }
+            case "system":
+            {
+                // Whatever the platform's trust holds: the bundle the host
+                // serves, or nothing.
+                string host = path.Length > 3 ? path[3] : LeafHost;
+                using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                try
+                {
+                    using var tls = await AuthenticateAsync(client, Trust.System, host).ConfigureAwait(false);
+                    return Describe(tls);
+                }
+                catch (AuthenticationException error)
+                {
+                    return "AuthenticationException: " + error.Message;
+                }
+            }
+            case "bundle-stat":
+            {
+                // The timestamps and size the guest sees for the served bundle
+                // and its directory, as the store provider's recheck sees them.
+                const string Dir = "/etc/ssl/certs";
+                const string File = Dir + "/ca-certificates.crt";
+                return "dir=" + Directory.GetLastWriteTimeUtc(Dir).Ticks.ToString(CultureInfo.InvariantCulture)
+                    + " file=" + System.IO.File.GetLastWriteTimeUtc(File).Ticks.ToString(CultureInfo.InvariantCulture)
+                    + " size=" + new FileInfo(File).Length.ToString(CultureInfo.InvariantCulture);
+            }
+            case "clock":
+            {
+                // The monotonic clock the store provider's recheck stopwatch runs on.
+                return "timestamp=" + System.Diagnostics.Stopwatch.GetTimestamp().ToString(CultureInfo.InvariantCulture)
+                    + " frequency=" + System.Diagnostics.Stopwatch.Frequency.ToString(CultureInfo.InvariantCulture)
+                    + " tick=" + Environment.TickCount64.ToString(CultureInfo.InvariantCulture);
+            }
+            case "roots":
+            {
+                // What the guest trusts right now, as the machine root store
+                // reports it: the thumbprints, sorted.
+                using var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
+                store.Open(OpenFlags.ReadOnly);
+                var thumbprints = new List<string>();
+                foreach (X509Certificate2 certificate in store.Certificates) thumbprints.Add(certificate.Thumbprint);
+                thumbprints.Sort(StringComparer.Ordinal);
+                return "roots=" + thumbprints.Count.ToString(CultureInfo.InvariantCulture) + " " + string.Join(",", thumbprints);
+            }
             case "sync-auth":
             {
                 // The synchronous handshake: the guest has one thread and no

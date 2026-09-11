@@ -24,3 +24,4 @@
 # The fork's CRL cache predates upstream's in-memory MRU cache, so runtime
 # 019 is re-cut against it: the cache and its events come along.
 004-wasi-crl-cache-async-in-memory.patch
+../runtime/020-wasi-system-store-immediate-read.patch

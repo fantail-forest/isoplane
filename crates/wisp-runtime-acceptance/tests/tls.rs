@@ -23,17 +23,22 @@ mod tls_chains;
 mod tls_material;
 #[path = "common/tls_peers.rs"]
 mod tls_peers;
+#[path = "common/trust_bundle.rs"]
+mod trust_bundle;
 
 use admitted::{admitting, released};
 use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
 use material_peer::{Crl, Issuers, MaterialPeer, Ocsp, RetrievalLeaf, Sentinel};
 use no_dns::NoDns;
+use tls_chains::parse_chain;
 use tls_peers::{tls_peer, Behaviour, Certificate, PeerEvent, TlsPeer};
 use tokio::sync::mpsc::UnboundedReceiver;
+use trust_bundle::bundle;
 use wisp_engine::Completion;
+use wisp_engine::PlatformFiles;
 use wisp_harness::EmittedGuestLogs as _;
-use wisp_harness::{Reactor, WAKE_DEADLINE};
+use wisp_harness::{Reactor, ReturnedGuest, WAKE_DEADLINE};
 use wisp_host::InstanceId;
 
 /// A wall clock inside the test material's validity: the guest checks the
@@ -784,6 +789,29 @@ in_both_runtimes! {
     }
 
     #[tokio::test]
+    async fn default_trust_and_retrieval_together_complete_a_presented_leaf(runtime: GuestRuntime) {
+        // The platform bundle holds the root, the peer presents its leaf
+        // alone: the issuer is fetched and the chain validates with no
+        // application trust configuration.
+        let material = MaterialPeer::start(Issuers::Served, Crl::Unavailable, Ocsp::Unavailable).await;
+        let peer = tls_peer(Certificate::RemoteAlone, Behaviour::Echo).await;
+        let reactor = Reactor::with_platform_files(
+            InstanceId::alloc(),
+            admitting(vec![peer, material.address()], Box::new(NoDns)),
+            bundle(&[tls_material::ROOT_CERTIFICATE]),
+        );
+        reactor.context.begin_slice(CLOCK_2030_MS, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/tls/system/{}/{}/remote.acceptance.test", peer.ip(), peer.port()), 64).await;
+        assert!(
+            text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=remote.acceptance.test"),
+            "a leaf presented alone completes through AIA and validates against the platform bundle: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(material.requests(), vec!["/intermediate.der"], "the issuer was fetched once");
+    }
+
+    #[tokio::test]
     async fn a_certificate_directed_request_obeys_the_destination_policy(runtime: GuestRuntime) {
         let peer = TlsPeer::presenting(RetrievalLeaf::Denied.presented(), Behaviour::Echo)
             .start()
@@ -919,7 +947,7 @@ in_both_runtimes! {
 
     /// This fixture serves no platform trust bundle and supplies no application roots.
     #[tokio::test]
-    async fn default_trust_holds_no_roots_so_even_the_leaf_is_untrusted(runtime: GuestRuntime) {
+    async fn with_no_bundle_served_default_trust_holds_no_roots(runtime: GuestRuntime) {
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
         let reactor = reactor_for_peers(vec![peer]);
         let mut guest = guest(&reactor, runtime);
@@ -1279,6 +1307,413 @@ in_both_runtimes! {
             observed(&mut events).await,
             PeerEvent::Closed { clean: true },
             "the peer must see the close_notify, not a dropped connection"
+        );
+    }
+}
+
+// The platform's default trust: the root bundle the host serves at
+// `/etc/ssl/certs/ca-certificates.crt`, read by the guest's own TLS stack
+// with no application trust configuration, independent of anything on the
+// host, and replaced by explicit custom trust. Rotation is what a guest sees
+// when the served file changes: its store provider rechecks the file when
+// it is next used and at least five seconds of guest time have passed since
+// the last check, so these tests move the clock and say exactly when the
+// old and the new roots are observed.
+
+/// Past the store provider's five-second recheck interval.
+const RECHECK_MS: u64 = 6_000;
+
+fn reactor_serving(peers: Vec<std::net::SocketAddr>, files: PlatformFiles) -> Reactor {
+    let reactor = Reactor::with_platform_files(
+        InstanceId::alloc(),
+        admitting(peers, Box::new(NoDns)),
+        files,
+    );
+    reactor.context.begin_slice(CLOCK_2030_MS, 1);
+    reactor
+}
+
+fn system_route(peer: std::net::SocketAddr, host: &str) -> String {
+    format!("/tls/system/{}/{}/{host}", peer.ip(), peer.port())
+}
+
+fn root_thumbprint(pem: &str) -> String {
+    let (chain, _) = parse_chain(pem, tls_material::LEAF_KEY);
+    let digest = <sha1::Sha1 as sha1::Digest>::digest(chain[0].as_ref());
+    digest.iter().map(|byte| format!("{byte:02X}")).collect()
+}
+
+/// A guest that validated once under `first`, so its store provider holds
+/// those roots, then sees `second` served instead.
+async fn validated_then_rotated(
+    runtime: GuestRuntime,
+    peer: std::net::SocketAddr,
+    first: &[&str],
+    second: &[&str],
+) -> (Reactor, ReturnedGuest) {
+    let reactor = reactor_serving(vec![peer], bundle(first));
+    let mut guest = guest(&reactor, runtime);
+    let text = guest
+        .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+        .await;
+    assert!(
+        text.starts_with("protocol=Tls1"),
+        "the first validation trusts the bundle's root: {text}"
+    );
+    guest.serve_platform_files(bundle(second));
+    (reactor, guest)
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn default_trust_validates_a_complete_chain_from_the_platform_bundle(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Chained, Behaviour::Echo).await;
+        let reactor = reactor_serving(vec![peer], bundle(&[tls_material::ROOT_CERTIFICATE]));
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "chained.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("protocol=Tls1") && text.ends_with(" peer=CN=chained.acceptance.test"),
+            "a complete chain validates against the platform bundle with no application trust configuration: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn default_trust_rejects_a_root_outside_the_bundle(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Stranger, Behaviour::Echo).await;
+        let reactor = reactor_serving(vec![peer], bundle(&[tls_material::ROOT_CERTIFICATE]));
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &system_route(peer, "stranger.acceptance.test"),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("RemoteCertificateChainErrors"),
+            "a root the bundle does not hold is untrusted (the stranger's name is not the peer's either, so the chain error comes with the name mismatch): {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        released(&reactor).await;
+    }
+
+    #[tokio::test]
+    async fn default_trust_does_not_excuse_a_wrong_host_name(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let reactor = reactor_serving(vec![peer], bundle(&[tls_material::ROOT_CERTIFICATE]));
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "other.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ")
+                && text.contains("RemoteCertificateNameMismatch"),
+            "the bundle trusts the root, the name check still fails: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_custom_trust_replaces_the_bundle_rather_than_adding_to_it(runtime: GuestRuntime) {
+        // Custom trust of the material's root, under a bundle holding only the
+        // stranger: the leaf validates (custom trust decides) and the stranger
+        // does not (the bundle is not consulted).
+        let leaf = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let stranger = tls_peer(Certificate::Stranger, Behaviour::Echo).await;
+        let reactor = reactor_serving(
+            vec![leaf, stranger],
+            bundle(&[tls_material::STRANGER_CERTIFICATE]),
+        );
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/leaf.acceptance.test/default",
+                    leaf.ip(),
+                    leaf.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("protocol=Tls1"),
+            "custom trust validates its own root: {text}"
+        );
+        let text = guest
+            .answer(
+                &reactor,
+                &format!(
+                    "/tls/handshake/{}/{}/stranger.acceptance.test/default",
+                    stranger.ip(),
+                    stranger.port()
+                ),
+                32,
+            )
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("RemoteCertificateChainErrors"),
+            "custom trust replaces the bundle: a bundle root is untrusted under it: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn trust_is_the_served_bundle_and_nothing_ambient(runtime: GuestRuntime) {
+        // The host running these tests has its own CAs; the guest sees
+        // exactly the served file: nothing when it is empty.
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let reactor = reactor_serving(vec![peer], bundle(&[]));
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
+            "an empty bundle trusts nothing, whatever the host machine trusts: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        let text = guest.answer(&reactor, "/tls/roots", 8).await;
+        assert_eq!(
+            text, "roots=0 ",
+            "the machine root store is the served file: empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_root_store_lists_the_bundle(runtime: GuestRuntime) {
+        let reactor = reactor_serving(
+            vec![],
+            bundle(&[
+                tls_material::ROOT_CERTIFICATE,
+                tls_material::STRANGER_CERTIFICATE,
+            ]),
+        );
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, "/tls/roots", 8).await;
+        let mut expected = [
+            root_thumbprint(tls_material::ROOT_CERTIFICATE),
+            root_thumbprint(tls_material::STRANGER_CERTIFICATE),
+        ];
+        expected.sort();
+        assert_eq!(
+            text,
+            format!("roots=2 {}", expected.join(",")),
+            "X509Store(Root) is the served bundle"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_slice_clock_advance_is_the_same_advance_on_the_guests_stopwatch(runtime: GuestRuntime) {
+        let reactor = reactor_serving(vec![], bundle(&[]));
+        let mut guest = guest(&reactor, runtime);
+        let before = guest.answer(&reactor, "/tls/clock", 8).await;
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let after = guest.answer(&reactor, "/tls/clock", 8).await;
+        let field = |text: &str, name: &str| -> i64 {
+            text.split(' ')
+                .find_map(|pair| pair.strip_prefix(&format!("{name}=")))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_else(|| panic!("the clock route reports {name}: {text}"))
+        };
+        let frequency = field(&before, "frequency");
+        let elapsed_ms =
+            (field(&after, "timestamp") - field(&before, "timestamp")) * 1_000 / frequency;
+        assert_eq!(
+            elapsed_ms as u64, RECHECK_MS,
+            "Stopwatch time is the slice clock: {before} / {after}"
+        );
+        assert_eq!(
+            (field(&after, "tick") - field(&before, "tick")) as u64,
+            RECHECK_MS,
+            "TickCount64 is the slice clock too: {before} / {after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_served_bundles_timestamps_follow_its_content(runtime: GuestRuntime) {
+        let reactor = reactor_serving(vec![], bundle(&[tls_material::ROOT_CERTIFICATE]));
+        let mut guest = guest(&reactor, runtime);
+        let before = guest.answer(&reactor, "/tls/bundle-stat", 8).await;
+        guest.serve_platform_files(bundle(&[tls_material::STRANGER_CERTIFICATE]));
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let after = guest.answer(&reactor, "/tls/bundle-stat", 8).await;
+        assert_ne!(before, after, "a different bundle has a different timestamp for the file and its directory: {before} / {after}");
+        let dir = |text: &str| text.split(' ').next().map(str::to_owned);
+        assert_ne!(
+            dir(&before),
+            dir(&after),
+            "the directory's timestamp follows its file: {before} / {after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_removed_root_stays_trusted_until_the_stores_next_recheck(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let (reactor, mut guest) = validated_then_rotated(
+            runtime,
+            peer,
+            &[tls_material::ROOT_CERTIFICATE],
+            &[tls_material::STRANGER_CERTIFICATE],
+        )
+        .await;
+        // Less than five seconds of guest time since the store was last
+        // checked: the cached roots still serve this validation.
+        reactor.context.begin_slice(CLOCK_2030_MS + 1_000, 2);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("protocol=Tls1"),
+            "within the recheck interval a validation still uses the roots the store cached: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_removed_root_is_untrusted_by_an_existing_guest_after_the_recheck(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let (reactor, mut guest) = validated_then_rotated(
+            runtime,
+            peer,
+            &[tls_material::ROOT_CERTIFICATE],
+            &[tls_material::STRANGER_CERTIFICATE],
+        )
+        .await;
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
+            "five seconds of guest time after the last check, the next validation reloads the served file and the removed root is gone: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        let text = guest.answer(&reactor, "/tls/roots", 8).await;
+        assert_eq!(
+            text,
+            format!(
+                "roots=1 {}",
+                root_thumbprint(tls_material::STRANGER_CERTIFICATE)
+            ),
+            "the cached runtime state is the rotated bundle"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_added_root_is_trusted_by_an_existing_guest_after_the_recheck(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let reactor = reactor_serving(vec![peer], bundle(&[tls_material::STRANGER_CERTIFICATE]));
+        let mut guest = guest(&reactor, runtime);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.contains("UntrustedRoot"),
+            "before the rotation the root is not in the bundle: {text}"
+        );
+        guest.serve_platform_files(bundle(&[
+            tls_material::STRANGER_CERTIFICATE,
+            tls_material::ROOT_CERTIFICATE,
+        ]));
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("protocol=Tls1"),
+            "after the recheck the added root is trusted: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rollback_to_the_previous_bundle_is_observed_like_any_change(runtime: GuestRuntime) {
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let (reactor, mut guest) = validated_then_rotated(
+            runtime,
+            peer,
+            &[tls_material::ROOT_CERTIFICATE],
+            &[tls_material::STRANGER_CERTIFICATE],
+        )
+        .await;
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.contains("UntrustedRoot"),
+            "the rotation removed the root: {text}"
+        );
+        // Back to the earlier bytes: the content-derived timestamp is the
+        // earlier one again, which differs from the current, so it is seen.
+        guest.serve_platform_files(bundle(&[tls_material::ROOT_CERTIFICATE]));
+        reactor
+            .context
+            .begin_slice(CLOCK_2030_MS + 2 * RECHECK_MS, 3);
+        let text = guest
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("protocol=Tls1"),
+            "the rollback restores trust at the next recheck: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_removed_root_is_untrusted_by_a_parked_guest_once_restored(runtime: GuestRuntime) {
+        // Start with cached roots, rotate the served bundle, then connect
+        // after the recheck interval. Every parked wake restores the saved
+        // instance before this handshake reports its result.
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let (reactor, mut guest) = validated_then_rotated(
+            runtime,
+            peer,
+            &[tls_material::ROOT_CERTIFICATE],
+            &[tls_material::ROOT_CERTIFICATE],
+        )
+        .await;
+        guest.serve_platform_files(bundle(&[tls_material::STRANGER_CERTIFICATE]));
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let outcome = guest.start(&system_route(peer, "leaf.acceptance.test"));
+        assert_eq!(
+            outcome.completion,
+            wisp_engine::Completion::Parked,
+            "the connect parks: {outcome:?}"
+        );
+        let text = guest.finish(&reactor, 32).await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
+            "restored after the rotation, the guest validates against the served bundle: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_guest_activated_from_an_image_holding_old_roots_reloads_after_the_recheck(runtime: GuestRuntime) {
+        // A memory image that already holds the cached store (as a template
+        // warmed at preparation would) activates under a rotated bundle.
+        let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
+        let (reactor, warmed) = validated_then_rotated(
+            runtime,
+            peer,
+            &[tls_material::ROOT_CERTIFICATE],
+            &[tls_material::STRANGER_CERTIFICATE],
+        )
+        .await;
+        let mut fresh = warmed.activated_from_image(&reactor);
+        reactor.context.begin_slice(CLOCK_2030_MS + RECHECK_MS, 2);
+        let text = fresh
+            .answer(&reactor, &system_route(peer, "leaf.acceptance.test"), 32)
+            .await;
+        assert!(
+            text.starts_with("AuthenticationException: ") && text.contains("UntrustedRoot"),
+            "the image's cached roots are rechecked against the served file on first use: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
         );
     }
 }
