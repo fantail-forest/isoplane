@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the WISP guest runtime from pinned sources: guest-runtime/build.sh [stage...]
 #
-# Stages, in order (default: all): acquire toolchain patch openssl runtime nativeaot feed
+# Stages, in order (default: all): acquire toolchain patch openssl packs feed
 #   acquire    download and verify the archives in manifest.env, extract the source
 #              trees under work/ and commit them pristine so every change is a diff
 #   toolchain  unpack the pinned wasi-sdk under work/wasi-sdk
@@ -10,6 +10,7 @@
 #              order; patches/runtimelab/series names the fork's own patches and
 #              the runtime patches that apply to it, Mono files excluded
 #   openssl    build OpenSSL to wasm32-wasip2 archives, installed under out/openssl
+#   packs      the runtime and nativeaot stages concurrently (separate trees)
 #   runtime    build the Mono WASI runtime pack (mono+libs+packs) for wasi-wasm
 #   nativeaot  build the NativeAOT-LLVM framework pack (clr.aot+libs) for wasi-wasm
 #   feed       write the packs into out/feed as a local NuGet source, unpacked under out/packs
@@ -124,7 +125,10 @@ stage_patch() {
 stage_openssl() {
   echo "==> openssl (log: $LOGS/openssl-build.log)"
   [ -x "$WASI_SDK/bin/clang" ] || { echo "the toolchain stage unpacks wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
-  # Out of tree, so the source tree stays a clean base for patches.
+  # Out of tree, so the source tree stays a clean base for patches. The
+  # OPENSSLDIR is a guest path: the compiled-in default certificate file and
+  # directory are then /etc/ssl/cert.pem and /etc/ssl/certs inside the
+  # guest, not the builder's output directory.
   mkdir -p "$OPENSSL_BUILD"
   (
     cd "$OPENSSL_BUILD"
@@ -132,7 +136,7 @@ stage_openssl() {
       CC="$WASI_SDK/bin/clang" AR="$WASI_SDK/bin/llvm-ar" RANLIB="$WASI_SDK/bin/llvm-ranlib" \
       perl "$OPENSSL/Configure" linux-generic32 no-shared no-threads no-asm no-dso no-module no-engine \
         no-sock no-async no-apps no-tests no-secure-memory no-ui-console \
-        --with-rand-seed=getrandom --prefix="$OUT/openssl"
+        --with-rand-seed=getrandom --prefix="$OUT/openssl" --openssldir=/etc/ssl
     fi
     make -j"$(nproc)" build_libs
     # Headers and archives under out/openssl, where the runtime build finds them.
@@ -216,6 +220,20 @@ stage_nativeaot() {
   ) > "$LOGS/nativeaot-build.log" 2>&1
 }
 
+# Both packs at once: the two trees, logs and version files are disjoint, and
+# the builds share only read-only inputs (OpenSSL, the wasi-sdk, the NuGet
+# cache). A failure in either fails the stage after both have stopped.
+stage_packs() {
+  local runtime_status=0 nativeaot_status=0
+  stage_runtime & local runtime_job=$!
+  stage_nativeaot & local nativeaot_job=$!
+  wait "$runtime_job" || runtime_status=$?
+  wait "$nativeaot_job" || nativeaot_status=$?
+  [ "$runtime_status" -eq 0 ] || { echo "the runtime stage failed ($runtime_status); see $LOGS/runtime-build.log" >&2; }
+  [ "$nativeaot_status" -eq 0 ] || { echo "the nativeaot stage failed ($nativeaot_status); see $LOGS/nativeaot-build.log" >&2; }
+  [ "$runtime_status" -eq 0 ] && [ "$nativeaot_status" -eq 0 ]
+}
+
 # The version a build stage recorded, or the message naming that stage.
 recorded_version() {
   local file="$1" stage="$2"
@@ -275,7 +293,7 @@ EOF
 }
 
 stages=("$@")
-[ ${#stages[@]} -gt 0 ] || stages=(acquire toolchain patch openssl runtime nativeaot feed)
+[ ${#stages[@]} -gt 0 ] || stages=(acquire toolchain patch openssl packs feed)
 for stage in "${stages[@]}"; do
   "stage_$stage"
 done
