@@ -14,8 +14,9 @@ This guide covers the project layout and build options.
 The SDK's `Abi/Imports.cs` binds the host contract. A module links the imports
 its compiled code reaches; the validator checks the resulting module. The SDK source describes the managed surface at this revision.
 
-`HttpClient` uses the runtime's `wasi:http` client, delegated to the host's
-outbound HTTP capability under its destination policy. TLS terminates at the host.
+`HttpClient` uses the runtime's `SocketsHttpHandler` over host-delegated
+sockets under the destination policy. Asynchronous operations park until their
+host-owned I/O is ready. HTTPS uses the guest's `SslStream`.
 
 ## Layout
 
@@ -122,8 +123,9 @@ through libc's `poll` (a zero-byte read is a readiness check, as
 `SslStream` and Kestrel issue), asynchronous name resolution, OpenSSL as the
 cryptography and TLS backend, the network error codes libc drops, and the
 P/Invoke declarations whose wasm signature differs from their C prototype
-(`guest-runtime/audit-pinvokes.py` refuses to build a pack with one); the
-runtime's own `wasi:http` client is delegated as it is. The build
+(`guest-runtime/audit-pinvokes.py` refuses to build a pack with one), and
+`HttpClient`'s `SocketsHttpHandler` compiled for wasi over those sockets
+(HTTP/1.1; the guest offers IPv4 sockets, so IPv6 is off). The build
 publishes both packs to a local feed whose `Wisp.GuestRuntime.props` names
 each pack's version and digest; the SDK refuses a pack whose digest differs
 from the feed's and records the identity it linked beside every module

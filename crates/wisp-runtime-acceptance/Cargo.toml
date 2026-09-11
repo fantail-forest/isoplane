@@ -11,6 +11,7 @@ description = "Acceptance tests for the source-built guest runtime: its scheduli
 [dev-dependencies]
 async-trait = { workspace = true }
 bytes = { workspace = true }
+flate2 = { workspace = true }
 futures = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }

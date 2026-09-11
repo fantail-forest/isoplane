@@ -1,6 +1,6 @@
 //! A destination policy admitting exactly the peers a test owns.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use wisp_harness::Reactor;
@@ -16,6 +16,16 @@ impl DestinationPolicy for OnlyPeers {
             Ok(())
         } else {
             Err(DenyReason::NotAllowlisted(peer.to_string()))
+        }
+    }
+
+    /// A name may resolve to an admitted peer's address: the peers live on
+    /// the loopback, which the production policy would refuse.
+    fn authorize_resolution(&self, address: IpAddr) -> Result<(), DenyReason> {
+        if self.0.iter().any(|peer| peer.ip() == address) {
+            Ok(())
+        } else {
+            Err(DenyReason::NotAllowlisted(address.to_string()))
         }
     }
 }
