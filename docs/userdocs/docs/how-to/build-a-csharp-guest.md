@@ -125,7 +125,10 @@ cryptography and TLS backend, the network error codes libc drops, and the
 P/Invoke declarations whose wasm signature differs from their C prototype
 (`guest-runtime/audit-pinvokes.py` refuses to build a pack with one), and
 `HttpClient`'s `SocketsHttpHandler` compiled for wasi over those sockets
-(HTTP/1.1; the guest offers IPv4 sockets, so IPv6 is off). The build
+(HTTP/1.1 and HTTP/2, the latter negotiated through the guest's TLS with
+ALPN or spoken h2c with prior knowledge when a request asks for version
+2.0; HTTP/3 is off, as the host carries no QUIC; the guest offers IPv4
+sockets, so IPv6 is off). The build
 publishes both packs to a local feed whose `Wisp.GuestRuntime.props` names
 each pack's version and digest; the SDK refuses a pack whose digest differs
 from the feed's and records the identity it linked beside every module
@@ -136,12 +139,43 @@ from the feed's and records the identity it linked beside every module
 
 `SslStream` works over sockets with the runtime's own OpenSSL, as any
 library that speaks TLS over a socket (database drivers, SMTP, brokers)
-expects: TLS 1.2 and 1.3, client certificates, ALPN, cancellation, and asynchronous reads return control while waiting for host-owned I/O. The guest has no
-system trust store: nothing is trusted until the application supplies its
-roots, through `SslClientAuthenticationOptions.CertificateChainPolicy` with
-`X509ChainTrustMode.CustomRootTrust`, or a
-`RemoteCertificateValidationCallback` that decides. Certificate validity is
-checked against the guest's clock, which is the host's.
+expects: TLS 1.2 and 1.3, client certificates, ALPN, cancellation, and asynchronous reads return control while waiting for host-owned I/O. Certificate
+validity is checked against the guest's clock, which is the host's.
+
+Public roots come from the platform: every guest sees the node's trust
+bundle as the read-only file `/etc/ssl/certs/ca-certificates.crt`, which
+.NET's machine root store reads with no configuration, so ordinary public
+HTTPS works out of the box. The bundle is the node's own asset (Mozilla's
+root program as curl publishes it; see the
+[trust bundle reference](../reference/trust-bundle.md)), never the host
+machine's certificate store: a CA installed on the host is not trusted by a
+guest. An application that supplies its own roots, through
+`SslClientAuthenticationOptions.CertificateChainPolicy` with
+`X509ChainTrustMode.CustomRootTrust`, or that decides in a
+`RemoteCertificateValidationCallback`, replaces the bundle for that
+connection rather than adding to it, as .NET does everywhere.
+
+A rotation is a node release serving a different bundle. What it reaches:
+
+- **New validations.** The store provider re-reads the file when it is next
+  used, provided five seconds of the guest's own clock have passed since it
+  last checked (and unconditionally after five minutes); a validation inside
+  that window still uses the roots it had. Those intervals are evaluated
+  when a validation happens, not in the background: a guest that validates
+  nothing sees nothing, and a rotation reaches the fleet as guests validate,
+  not by a deadline. A guest restored from hibernation, or activated from a
+  template whose memory already holds the store, rechecks on its first
+  validation the same way, with the same five-second rule against the
+  clock it now sees. Additions, removals and rollbacks are all detected: the
+  file's timestamp is derived from its content, so any change is a change.
+- **Established connections.** A session already authenticated stays up,
+  as on every platform; removing a root ends nothing. Terminating existing
+  connections on a rotation is a separate decision and is not implemented.
+- **Resumed sessions.** The guest's OpenSSL caches session tickets per
+  client configuration, and a resumed session is not re-authenticated by
+  the peer's certificate at the TLS layer. `SslStream` still runs its own
+  certificate validation on every new `SslStream`, resumed or not, so a
+  removed root fails a new connection even when the session resumes.
 
 Asynchronous authentication (`AuthenticateAsClientAsync`, and so
 `HttpClient`) builds the peer's chain the way .NET does elsewhere: a missing

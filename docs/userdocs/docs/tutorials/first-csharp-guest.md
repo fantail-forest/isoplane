@@ -144,7 +144,7 @@ Startup calls need working implementations; unsupported capabilities trap.
 wasi-libc leaves undefined, so `wasm-ld` resolves them locally and emits no
 wasi import. The live ones are answered from `wisp::clock_now_coarse`,
 `wisp::entropy_fill`, the empty filesystem adapter and a locally computed empty
-environment. The filesystem presents an empty read-only root; it never exposes
+environment. The filesystem presents a read-only root holding only the platform's trust bundle under `/etc/ssl/certs`; it never exposes
 host paths.
 
 The PAL covers the BCL surface the guests so far touch, and a new library can
