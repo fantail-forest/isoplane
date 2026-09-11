@@ -15,55 +15,74 @@ namespace Acceptance;
 /// over the delegated sockets: connections and reads park on socket
 /// readiness, bodies stream both ways in guest memory, TLS is the guest's
 /// <c>SslStream</c> with a root the application supplies, and every failure
-/// reaches the ordinary <see cref="HttpRequestException"/>.
+/// reaches the ordinary <see cref="HttpRequestException"/>. A leading
+/// <c>h2</c>, <c>h3</c> or <c>higher</c> segment selects the HTTP version
+/// the client asks for and how strictly; every behaviour then runs under it
+/// and reports the version the response came on.
 /// </summary>
 internal sealed class Http
 {
+    /// <summary>The version a run asks for and its policy; the client's defaults when unset.</summary>
+    private readonly record struct Selection(Version? Version, HttpVersionPolicy? Policy)
+    {
+        public static readonly Selection Default = new(null, null);
+
+        public bool IsExplicit => Version is not null;
+    }
+
     public async Task<string> RunAsync(string[] path)
     {
+        Selection selection = path[0] switch
+        {
+            "h2" => new Selection(HttpVersion.Version20, HttpVersionPolicy.RequestVersionExact),
+            "h3" => new Selection(HttpVersion.Version30, HttpVersionPolicy.RequestVersionExact),
+            "higher" => new Selection(HttpVersion.Version11, HttpVersionPolicy.RequestVersionOrHigher),
+            _ => Selection.Default,
+        };
+        if (selection.IsExplicit) path = path[1..];
         switch (path[0])
         {
             case "get":
-                return await GetAsync(new HttpClient(), "http", path[1], path[2], "/hello").ConfigureAwait(false);
+                return await GetAsync(Client(selection), selection, "http", path[1], path[2], "/hello").ConfigureAwait(false);
             case "https":
                 // Only the application's root: the guest has no system store.
-                return await GetAsync(new HttpClient(RootTrustHandler()), "https", path[1], path[2], "/hello").ConfigureAwait(false);
+                return await GetAsync(Client(selection, RootTrustHandler()), selection, "https", path[1], path[2], "/hello").ConfigureAwait(false);
             case "redirect":
-                return await GetAsync(new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }), "http", path[1], path[2], "/redirect").ConfigureAwait(false);
+                return await GetAsync(Client(selection, new HttpClientHandler { AllowAutoRedirect = false }), selection, "http", path[1], path[2], "/redirect").ConfigureAwait(false);
             case "follow":
-                return await GetAsync(new HttpClient(), "http", path[1], path[2], "/relative").ConfigureAwait(false);
+                return await GetAsync(Client(selection), selection, "http", path[1], path[2], "/relative").ConfigureAwait(false);
             case "hops":
-                return await GetAsync(new HttpClient(new HttpClientHandler { MaxAutomaticRedirections = 3 }), "http", path[1], path[2], "/hops/" + path[3]).ConfigureAwait(false);
+                return await GetAsync(Client(selection, new HttpClientHandler { MaxAutomaticRedirections = 3 }), selection, "http", path[1], path[2], "/hops/" + path[3]).ConfigureAwait(false);
             case "replay":
             {
                 // A 307 replays the method and the body.
                 byte[] payload = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 using var content = new ByteArrayContent(payload);
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                 using var response = await client.PostAsync(Url("http", path[1], path[2], "/replay"), content).ConfigureAwait(false);
                 byte[] echoed = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-                return Describe(response) + " replayed=" + (echoed.AsSpan().SequenceEqual(payload) ? "same" : "different");
+                return Describe(response, selection) + " replayed=" + (echoed.AsSpan().SequenceEqual(payload) ? "same" : "different");
             }
             case "gzip":
             case "deflate":
             {
-                using var client = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
+                using var client = Client(selection, new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
                 using var response = await client.GetAsync(Url("http", path[1], path[2], "/" + path[0] + "/" + path[3])).ConfigureAwait(false);
                 byte[] body = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
                 byte[] expected = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
-                return Describe(response) + " content-encoding=" + string.Join(",", response.Content.Headers.ContentEncoding)
+                return Describe(response, selection) + " content-encoding=" + string.Join(",", response.Content.Headers.ContentEncoding)
                     + " body=" + (body.AsSpan().SequenceEqual(expected) ? "decoded" : "raw " + body.Length.ToString(CultureInfo.InvariantCulture));
             }
             case "accept-encoding":
             {
-                using var client = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
+                using var client = Client(selection, new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
                 return await client.GetStringAsync(Url("http", path[1], path[2], "/accept-encoding")).ConfigureAwait(false);
             }
             case "reuse":
             {
                 // Sequential requests on one client share one pooled connection.
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 string joined = "";
                 for (int i = 0; i < 3; i++)
                 {
@@ -75,23 +94,23 @@ internal sealed class Http
             {
                 // The peer closes the idle connection after answering; the
                 // pool must notice and open another rather than fail.
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 string first = await client.GetStringAsync(Url("http", path[1], path[2], "/stale")).ConfigureAwait(false);
                 string second = await client.GetStringAsync(Url("http", path[1], path[2], "/stale")).ConfigureAwait(false);
                 return first + "|" + second;
             }
             case "headers":
             {
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 using var request = new HttpRequestMessage(HttpMethod.Get, Url("http", path[1], path[2], "/headers"));
                 request.Headers.Add("X-Wisp", "ping");
                 using var response = await client.SendAsync(request).ConfigureAwait(false);
                 string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return Describe(response) + " body=" + body + " x-answer=" + string.Join(",", response.Headers.GetValues("X-Answer"));
+                return Describe(response, selection) + " body=" + body + " x-answer=" + string.Join(",", response.Headers.GetValues("X-Answer"));
             }
             case "stream":
             {
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 using var response = await client.GetAsync(Url("http", path[1], path[2], "/stream/" + path[3]), HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
                 using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
                 using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -106,24 +125,24 @@ internal sealed class Http
                     length += count;
                     reads++;
                 }
-                return Describe(response) + " length=" + length.ToString(CultureInfo.InvariantCulture)
+                return Describe(response, selection) + " length=" + length.ToString(CultureInfo.InvariantCulture)
                     + " reads=" + reads.ToString(CultureInfo.InvariantCulture)
                     + " sha256=" + Convert.ToHexString(digest.GetHashAndReset());
             }
             case "post":
             {
                 byte[] payload = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 using var content = new StreamContent(new MemoryStream(payload));
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                 using var response = await client.PostAsync(Url("http", path[1], path[2], "/echo"), content).ConfigureAwait(false);
                 byte[] echoed = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-                return Describe(response) + " sent=" + Convert.ToHexString(SHA256.HashData(payload))
+                return Describe(response, selection) + " sent=" + Convert.ToHexString(SHA256.HashData(payload))
                     + " echoed=" + Convert.ToHexString(SHA256.HashData(echoed));
             }
             case "two":
             {
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 Task<string> hello = client.GetStringAsync(Url("http", path[1], path[2], "/hello"));
                 Task<string> world = client.GetStringAsync(Url("http", path[1], path[2], "/world"));
                 await Task.WhenAll(hello, world).ConfigureAwait(false);
@@ -131,11 +150,12 @@ internal sealed class Http
             }
             case "timeout":
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(int.Parse(path[3], CultureInfo.InvariantCulture)) };
+                using var client = Client(selection);
+                client.Timeout = TimeSpan.FromMilliseconds(int.Parse(path[3], CultureInfo.InvariantCulture));
                 try
                 {
                     using var response = await client.GetAsync(Url("http", path[1], path[2], "/stall")).ConfigureAwait(false);
-                    return "unexpected " + Describe(response);
+                    return "unexpected " + Describe(response, selection);
                 }
                 catch (TaskCanceledException)
                 {
@@ -144,13 +164,13 @@ internal sealed class Http
             }
             case "cancel":
             {
-                using var client = new HttpClient();
+                using var client = Client(selection);
                 using var cancellation = new CancellationTokenSource();
                 cancellation.CancelAfter(int.Parse(path[3], CultureInfo.InvariantCulture));
                 try
                 {
                     using var response = await client.GetAsync(Url("http", path[1], path[2], "/stall"), cancellation.Token).ConfigureAwait(false);
-                    return "unexpected " + Describe(response);
+                    return "unexpected " + Describe(response, selection);
                 }
                 catch (OperationCanceledException)
                 {
@@ -172,7 +192,16 @@ internal sealed class Http
         return handler;
     }
 
-    private static async Task<string> GetAsync(HttpClient client, string scheme, string host, string port, string route)
+    /// <summary>A client asking for the selected version, or the defaults (HTTP/1.1 or lower) when none is.</summary>
+    private static HttpClient Client(Selection selection, HttpMessageHandler? handler = null)
+    {
+        var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        if (selection.Version is not null) client.DefaultRequestVersion = selection.Version;
+        if (selection.Policy is HttpVersionPolicy policy) client.DefaultVersionPolicy = policy;
+        return client;
+    }
+
+    private static async Task<string> GetAsync(HttpClient client, Selection selection, string scheme, string host, string port, string route)
     {
         using (client)
         {
@@ -181,11 +210,11 @@ internal sealed class Http
                 using var response = await client.GetAsync(Url(scheme, host, port, route)).ConfigureAwait(false);
                 string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 string location = response.Headers.Location is null ? "" : " location=" + response.Headers.Location;
-                return Describe(response) + location + " body=" + body;
+                return Describe(response, selection) + location + " body=" + body;
             }
             catch (HttpRequestException error)
             {
-                return "HttpRequestException: " + error.Message + (error.InnerException is null ? "" : " <- " + error.InnerException.GetType().Name);
+                return "HttpRequestException(" + error.HttpRequestError + "): " + error.Message + (error.InnerException is null ? "" : " <- " + error.InnerException.GetType().Name);
             }
         }
     }
@@ -193,10 +222,12 @@ internal sealed class Http
     private static string Url(string scheme, string host, string port, string route)
         => scheme + "://" + host + ":" + port + route;
 
-    private static string Describe(HttpResponseMessage response)
+    /// <summary>The status and media type, and the response's HTTP version when the run selected one.</summary>
+    private static string Describe(HttpResponseMessage response, Selection selection)
     {
         string contentType = response.Content.Headers.ContentType is null ? "" : response.Content.Headers.ContentType.MediaType ?? "";
-        return "status=" + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + " content-type=" + contentType;
+        string version = selection.IsExplicit ? " version=" + response.Version : "";
+        return "status=" + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture) + version + " content-type=" + contentType;
     }
 
     private static byte[] Pattern(int length)

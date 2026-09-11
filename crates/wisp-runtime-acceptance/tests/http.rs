@@ -2,9 +2,10 @@
 //! delegated sockets: connections and reads park on socket readiness and
 //! survive Store restorations mid-request, bodies stream both ways in guest
 //! memory, redirects, decompression and pooling are the client's own, TLS
-//! is the guest's `SslStream` with a root the application supplies, and
-//! every failure reaches the ordinary `HttpRequestException` with the
-//! socket error that caused it.
+//! is the guest's `SslStream` with a root the application supplies, HTTP/2
+//! is negotiated through that TLS's ALPN or spoken h2c with prior
+//! knowledge while HTTP/3 stays off, and every failure reaches the ordinary
+//! `HttpRequestException` with the socket error that caused it.
 
 #[macro_use]
 mod common;
@@ -28,7 +29,9 @@ use std::sync::Arc;
 use admitted::released;
 use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
-use http_peers::{http_peer, https_peer, reactor_for_http, stale_peer, Certificate};
+use http_peers::{
+    goaway_peer, h2_https_peer, http_peer, https_peer, reactor_for_http, stale_peer, Certificate,
+};
 use refusing::refusing_endpoint;
 use resolvers::{reactor_for_dns, FailingDns, PendingDns};
 use wisp_engine::Completion;
@@ -242,7 +245,7 @@ in_both_runtimes! {
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/two/127.0.0.1/{}", peer.address.port()), 32).await;
         assert_eq!(text, "hello from peer+world", "each request must resume its own continuation");
-        assert_eq!(peer.connections(), 2, "two concurrent HTTP/1.1 requests take two connections");
+        assert_eq!(peer.connections(), 2, "two concurrent requests under the default policy stay on HTTP/1.1 in plaintext and take two connections");
     }
 
     #[tokio::test]
@@ -252,7 +255,7 @@ in_both_runtimes! {
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/get/127.0.0.1/{}", refused.port()), 16).await;
         assert!(
-            text.starts_with("HttpRequestException: ") && text.ends_with("<- SocketException"),
+            text.starts_with("HttpRequestException(ConnectionError): ") && text.ends_with("<- SocketException"),
             "a refused connection must reach the client as HttpRequestException over the socket error: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
@@ -267,7 +270,7 @@ in_both_runtimes! {
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/get/127.0.0.1/{}", peer.address.port()), 16).await;
         assert!(
-            text.starts_with("HttpRequestException: ") && text.ends_with("<- SocketException"),
+            text.starts_with("HttpRequestException(ConnectionError): ") && text.ends_with("<- SocketException"),
             "a policy refusal must reach the client as HttpRequestException over the socket error: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
@@ -282,7 +285,7 @@ in_both_runtimes! {
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, "/http/get/nowhere.test/80", 16).await;
         assert!(
-            text.starts_with("HttpRequestException: ") && text.ends_with("<- SocketException"),
+            text.starts_with("HttpRequestException(NameResolutionError): ") && text.ends_with("<- SocketException"),
             "a resolver failure must reach the client as HttpRequestException over the DNS error: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
@@ -393,7 +396,7 @@ in_both_runtimes! {
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/https/leaf.acceptance.test/{}", peer.address.port()), 32).await;
         assert!(
-            text.starts_with("HttpRequestException: ") && text.ends_with("<- AuthenticationException"),
+            text.starts_with("HttpRequestException(SecureConnectionError): ") && text.ends_with("<- AuthenticationException"),
             "an untrusted server certificate must fail the request through the TLS authentication error: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
@@ -409,7 +412,7 @@ in_both_runtimes! {
         let mut guest = guest(&reactor, runtime);
         let text = guest.answer(&reactor, &format!("/http/https/remote.acceptance.test/{}", peer.address.port()), 64).await;
         assert!(
-            text.starts_with("HttpRequestException: ") && text.ends_with("<- AuthenticationException"),
+            text.starts_with("HttpRequestException(SecureConnectionError): ") && text.ends_with("<- AuthenticationException"),
             "an issuer that cannot be fetched leaves the chain partial and the request failed: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
@@ -427,5 +430,161 @@ in_both_runtimes! {
             "the complete chain validates whatever revocation URLs it carries; logs: {:?}",
             reactor.context.emitted_logs()
         );
+    }
+
+    #[tokio::test]
+    async fn an_exact_http_2_request_over_tls_is_negotiated_through_alpn(runtime: GuestRuntime) {
+        let peer = h2_https_peer(Certificate::Leaf).await;
+        let reactor = reactor(25, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/h2/https/leaf.acceptance.test/{}", peer.address.port()), 32).await;
+        assert_eq!(
+            text, "status=200 version=2.0 content-type=text/plain body=hello from peer",
+            "a request pinned to HTTP/2 over TLS must complete on HTTP/2; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(
+            peer.negotiated_alpn(),
+            vec![Some("h2".to_owned())],
+            "the guest's TLS must offer h2 through ALPN and the peer select it"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_exact_http_2_request_in_plaintext_speaks_h2c_with_prior_knowledge(runtime: GuestRuntime) {
+        let peer = http_peer().await;
+        let reactor = reactor(26, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/h2/get/127.0.0.1/{}", peer.address.port()), 32).await;
+        assert_eq!(
+            text, "status=200 version=2.0 content-type=text/plain body=hello from peer",
+            "a request pinned to HTTP/2 over plaintext must open the connection with the h2 preface; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(peer.connections(), 1, "prior knowledge needs no upgrade round trip");
+    }
+
+    #[tokio::test]
+    async fn a_peer_offering_only_http_1_1_answers_a_version_or_higher_request_on_1_1(runtime: GuestRuntime) {
+        let peer = https_peer(Certificate::Leaf).await;
+        let reactor = reactor(27, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/higher/https/leaf.acceptance.test/{}", peer.address.port()), 32).await;
+        assert_eq!(
+            text, "status=200 version=1.1 content-type=text/plain body=hello from peer",
+            "RequestVersionOrHigher must settle on HTTP/1.1 when the peer offers nothing higher; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(
+            peer.negotiated_alpn(),
+            vec![Some("http/1.1".to_owned())],
+            "the client offered h2 and http/1.1 through ALPN and the peer took http/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_2_response_body_arrives_across_several_wakes(runtime: GuestRuntime) {
+        let peer = http_peer().await;
+        let reactor = reactor(28, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let outcome = guest.start(&format!("/http/h2/stream/127.0.0.1/{}/300000", peer.address.port()));
+        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
+        let (text, wakes) = guest.finish_counting(&reactor, 64).await;
+        assert!(
+            text.starts_with("status=200 version=2.0 content-type=application/octet-stream length=300000 "),
+            "every DATA frame of an HTTP/2 body must reach the client: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert!(text.ends_with(&format!(" sha256={STREAM_DIGEST}")), "the body must arrive intact and in order: {text}");
+        assert!(wakes >= 2, "a body larger than one socket read must park for readiness more than once ({wakes} wakes)");
+    }
+
+    #[tokio::test]
+    async fn an_http_2_response_body_mid_stream_survives_store_restoration_at_every_park(runtime: GuestRuntime) {
+        let peer = http_peer().await;
+        let reactor = reactor(29, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let outcome = guest.start(&format!("/http/h2/stream/127.0.0.1/{}/300000", peer.address.port()));
+        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
+        let text = guest.finish(&reactor, 64).await;
+        assert!(
+            text.starts_with("status=200 version=2.0 content-type=application/octet-stream length=300000 ")
+                && text.ends_with(&format!(" sha256={STREAM_DIGEST}")),
+            "the HTTP/2 connection, its stream state and the partly read body must survive every park being captured and restored: {text}; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_2_request_body_streams_to_the_peer_and_is_echoed_back(runtime: GuestRuntime) {
+        let peer = http_peer().await;
+        let reactor = reactor(30, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/h2/post/127.0.0.1/{}/200000", peer.address.port()), 64).await;
+        assert_eq!(
+            text,
+            format!("status=200 version=2.0 content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
+            "a request body sent as DATA frames under flow control must reach the peer intact; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_2_request_body_mid_stream_survives_store_restoration_at_every_park(runtime: GuestRuntime) {
+        let peer = http_peer().await;
+        let reactor = reactor(31, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let outcome = guest.start(&format!("/http/h2/post/127.0.0.1/{}/200000", peer.address.port()));
+        assert_eq!(outcome.completion, Completion::Parked, "the request parks: {outcome:?}");
+        let text = guest.finish(&reactor, 64).await;
+        assert_eq!(
+            text,
+            format!("status=200 version=2.0 content-type=application/octet-stream sent={POST_DIGEST} echoed={POST_DIGEST}"),
+            "the partly sent request body and its flow-control window must survive every park being captured and restored; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+    }
+
+    #[tokio::test]
+    async fn two_concurrent_http_2_requests_multiplex_on_one_connection(runtime: GuestRuntime) {
+        let peer = http_peer().await;
+        let reactor = reactor(32, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/h2/two/127.0.0.1/{}", peer.address.port()), 32).await;
+        assert_eq!(text, "hello from peer+world", "each request must resume its own continuation; logs: {:?}", reactor.context.emitted_logs());
+        assert_eq!(peer.connections(), 1, "two concurrent HTTP/2 requests are streams of one connection");
+    }
+
+    #[tokio::test]
+    async fn a_goaway_from_the_peer_makes_the_next_request_open_a_new_connection(runtime: GuestRuntime) {
+        let peer = goaway_peer().await;
+        let reactor = reactor(33, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/h2/reuse/127.0.0.1/{}", peer.address.port()), 64).await;
+        assert_eq!(
+            text, "hello from peer|hello from peer|hello from peer",
+            "every request completes although each connection is told to go away; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(peer.connections(), 3, "a connection that received GOAWAY carries no further request");
+    }
+
+    #[tokio::test]
+    async fn an_exact_http_3_request_fails_before_connecting_because_http_3_is_off(runtime: GuestRuntime) {
+        let peer = h2_https_peer(Certificate::Leaf).await;
+        let reactor = reactor(34, vec![peer.address]);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/h3/https/leaf.acceptance.test/{}", peer.address.port()), 32).await;
+        // The SDK builds guests with `UseSystemResourceKeys`, so the
+        // message is the resource key and its arguments rather than the
+        // sentence "Requesting HTTP version 3.0 with version policy
+        // RequestVersionExact while unable to establish HTTP/3 connection."
+        assert_eq!(
+            text,
+            "HttpRequestException(VersionNegotiationError): net_http_requested_version_cannot_establish, 3.0, RequestVersionExact, 3",
+            "HTTP/3 is switched off in the SDK, so a request pinned to it fails in the client; logs: {:?}",
+            reactor.context.emitted_logs()
+        );
+        assert_eq!(peer.connections(), 0, "a request the client cannot satisfy never reaches the peer");
     }
 }
