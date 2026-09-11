@@ -11,6 +11,7 @@ members = [
     # `wisp-abi` features as the guests that link it. Its own manifest names
     # this workspace, since Cargo would otherwise walk up to the repo root.
     "../guest-sdks/rust",
+    "hello",
     "quotes-api",
     "misbehaver",
     "undeclared-import",

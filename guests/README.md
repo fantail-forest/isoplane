@@ -29,6 +29,7 @@ emits no maximum by default.
 
 | Module | Purpose |
 | --- | --- |
+| `hello` | Minimal HTTP handler fixture returning a successful response. |
 | `quotes-api` | `Handler` fixture for host futures, response streaming and initialization units. |
 | `misbehaver` | Hostile execution fixtures: loops, sync-over-async, allocation pressure and explicit traps. |
 | `impure-cctor` | Initialization-unit fixture for bounded deferral and retry. |

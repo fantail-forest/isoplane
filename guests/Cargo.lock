@@ -79,6 +79,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello"
+version = "0.1.0"
+dependencies = [
+ "wisp-guest",
+]
+
+[[package]]
 name = "impure-cctor"
 version = "0.1.0"
 dependencies = [

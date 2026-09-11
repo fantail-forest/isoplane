@@ -71,10 +71,17 @@ fn read(path: &Path) -> Vec<u8> {
 }
 
 /// The path of a module `guests/build.sh` writes, built if missing or stale.
+/// A name the script's manifest does not list fails here, naming the script,
+/// rather than as a missing file or a stale module left in `guests/out`.
 pub fn rust_path(name: &str) -> PathBuf {
-    build("guests/build.sh")
-        .join("guests/out")
-        .join(format!("{name}.wasm"))
+    let root = build("guests/build.sh");
+    let manifest = rust_manifest();
+    assert!(
+        manifest.iter().any(|built| built == name),
+        "guests/build.sh does not build {name}.wasm; its GUESTS list names {}",
+        manifest.join(", ")
+    );
+    root.join("guests/out").join(format!("{name}.wasm"))
 }
 
 /// The bytes of a module `guests/build.sh` writes, built if missing or stale.

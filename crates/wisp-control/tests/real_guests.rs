@@ -9,6 +9,7 @@ use wisp_control::validator::{self, ViolationCode as V};
 /// the build script's manifest, as `(code, subject)` pairs; empty means the
 /// module is accepted.
 const VERDICTS: &[(&str, &[(V, &str)])] = &[
+    ("hello", &[]),
     ("quotes-api", &[]),
     ("misbehaver", &[]),
     ("bigheap", &[]),

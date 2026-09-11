@@ -78,7 +78,7 @@ if [ "${#preflight_missing[@]}" -ne 0 ]; then
 fi
 
 # `undeclared-import` is built twice, once per variant.
-GUESTS=(quotes-api misbehaver bigheap impure-cctor undeclared-import)
+GUESTS=(hello quotes-api misbehaver bigheap impure-cctor undeclared-import)
 
 # Remove only outputs owned by this script; other toolchains share the directory.
 echo "==> building guests for $TARGET ($PROFILE)"
