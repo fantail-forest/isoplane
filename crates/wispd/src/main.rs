@@ -16,6 +16,21 @@ fn effective_config(args: &Args) -> anyhow::Result<NodeConfig> {
     Ok(cfg)
 }
 
+/// One line of trust facts for `--check`.
+fn trust_summary(facts: &wispd::trust::TrustFacts) -> String {
+    format!(
+        "trust bundle {} generation {} sha256 {} ({} certificates, last upstream check {}, source {})",
+        facts.bundle_date.as_deref().unwrap_or("unknown"),
+        facts
+            .generation
+            .map_or_else(|| "unknown".to_string(), |g| g.to_string()),
+        facts.sha256_prefix(),
+        facts.certificate_count,
+        facts.ingested_at.as_deref().unwrap_or("unknown"),
+        facts.source,
+    )
+}
+
 /// Build the artifact this node's cells will map, then exit. The engine is
 /// built from the node's configuration because a `.cwasm` is loadable only by
 /// an engine whose fingerprint matches the one that produced it.
@@ -23,12 +38,8 @@ fn effective_config(args: &Args) -> anyhow::Result<NodeConfig> {
 fn precompile(cfg: &NodeConfig, wasm_path: &std::path::Path) -> anyhow::Result<()> {
     let wasm = std::fs::read(wasm_path)
         .map_err(|e| anyhow::anyhow!("reading {}: {e}", wasm_path.display()))?;
-    let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
-        max_instances: cfg.engine.max_instances,
-        max_memory_bytes: cfg.engine.max_memory_mib << 20,
-        guard_size_bytes: cfg.engine.guard_mib << 20,
-        ..wisp_engine::EngineConfig::default()
-    })?;
+    let engine =
+        wisp_engine::WispEngine::new(wispd::real::engine_config(cfg, &cfg.trust_bundle()?)?)?;
     let dir = wispd::real::RealPaths::under(&cfg.data_dir).artifacts;
     let t0 = std::time::Instant::now();
     let paths = engine.precompile_to_files(&wasm, &dir)?;
@@ -63,9 +74,14 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if args.check {
-        return match cfg.validate() {
-            Ok(()) => {
-                println!("ok: {} cells, {} apps", cfg.cells.len(), cfg.apps.len());
+        return match cfg.validate().and_then(|()| cfg.trust_bundle()) {
+            Ok(trust) => {
+                println!(
+                    "ok: {} cells, {} apps, {}",
+                    cfg.cells.len(),
+                    cfg.apps.len(),
+                    trust_summary(&trust.facts())
+                );
                 Ok(())
             }
             Err(e) => {

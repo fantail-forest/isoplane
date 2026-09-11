@@ -41,6 +41,7 @@ const sidebars = {
       link: {type: 'doc', id: 'reference/index'},
       items: [
         'reference/architecture',
+        'reference/trust-bundle',
       ],
     },
     {

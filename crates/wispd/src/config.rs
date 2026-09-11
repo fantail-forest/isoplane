@@ -32,6 +32,10 @@ pub struct NodeConfig {
     /// Full OTLP HTTP/protobuf endpoint for structured dispatch events. Unset disables export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub otlp_logs_endpoint: Option<crate::logs::OtlpEndpoint>,
+    /// The public TLS root bundle guests read at
+    /// `/etc/ssl/certs/ca-certificates.crt`.
+    #[serde(default)]
+    pub trust: crate::trust::TrustConfig,
 }
 
 fn default_response_queue_bytes() -> usize {
@@ -189,6 +193,8 @@ pub enum ConfigError {
     ZeroInFlight(usize),
     #[error("response_queue_bytes must be positive")]
     ZeroResponseQueue,
+    #[error(transparent)]
+    Trust(#[from] crate::trust::TrustError),
 }
 
 impl NodeConfig {
@@ -233,11 +239,23 @@ impl NodeConfig {
             }],
             data_dir: default_data_dir(),
             engine: EngineLimits::default(),
+            trust: crate::trust::TrustConfig::default(),
         }
     }
 
-    /// The startup gate: a refusal, never a warning.
+    /// The startup gate: a refusal, never a warning. Placement rules first,
+    /// then the trust bundle, which is the one check that reads a file.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_placement()?;
+        self.trust_bundle().map(drop)
+    }
+
+    /// The verified root bundle this node serves to guests.
+    pub fn trust_bundle(&self) -> Result<crate::trust::TrustBundle, ConfigError> {
+        Ok(crate::trust::TrustBundle::load(&self.trust)?)
+    }
+
+    fn validate_placement(&self) -> Result<(), ConfigError> {
         if self.cells.is_empty() {
             return Err(ConfigError::NoCells);
         }

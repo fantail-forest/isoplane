@@ -14,6 +14,32 @@ use wisp_host::{Cell, EngineActivator};
 
 pub use admin::RealNodeAdmin;
 
+/// The read-only files every guest sees, at pre-initialisation and at
+/// dispatch alike: today the trust bundle alone.
+pub fn platform_files(
+    trust: &crate::trust::TrustBundle,
+) -> Result<wisp_engine::PlatformFiles, wisp_engine::PlatformFilesError> {
+    wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
+        path: crate::trust::GUEST_PATH.to_string(),
+        bytes: trust.pem().into(),
+        modified_ns: trust.modified_ns(),
+    }])
+}
+
+/// The engine sizing from the node's config plus the platform files.
+pub fn engine_config(
+    cfg: &crate::config::NodeConfig,
+    trust: &crate::trust::TrustBundle,
+) -> Result<wisp_engine::EngineConfig, wisp_engine::PlatformFilesError> {
+    Ok(wisp_engine::EngineConfig {
+        max_instances: cfg.engine.max_instances,
+        max_memory_bytes: cfg.engine.max_memory_mib << 20,
+        guard_size_bytes: cfg.engine.guard_mib << 20,
+        platform_files: platform_files(trust)?,
+        ..wisp_engine::EngineConfig::default()
+    })
+}
+
 /// The node's cells on one engine, and the placement that puts an app on
 /// one of them.
 pub struct RealCells {

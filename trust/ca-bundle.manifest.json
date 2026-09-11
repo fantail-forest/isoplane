@@ -1,0 +1,11 @@
+{
+  "generation": 1,
+  "bundle_date": "2026-08-13",
+  "source_url": "https://curl.se/ca/cacert-2026-08-13.pem",
+  "bundle_sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
+  "certdata_sha256": "81b7f2576333a2e360e673f912d7b0b7a765d836c731003e348a46cac5d37198",
+  "mk_ca_bundle_version": "1.33",
+  "certificate_count": 121,
+  "mozilla_as_of": "Thu Aug 13 03:12:01 2026 GMT",
+  "ingested_at": "2026-09-11T05:39:49Z"
+}

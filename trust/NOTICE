@@ -1,0 +1,16 @@
+ca-bundle.pem is a PEM conversion of Mozilla's root certificate store
+(certdata.txt from the NSS source tree), produced by the curl project's
+mk-ca-bundle.pl and published at https://curl.se/docs/caextract.html.
+
+The curl project states that the converted PEM file is licensed under the
+same licence as the Mozilla source file: the Mozilla Public License, version
+2.0. The file carries no licence text of its own; this notice supplies it.
+
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can
+obtain one at https://mozilla.org/MPL/2.0/.
+
+Mozilla's certdata.txt and the derived bundle are distributed under the MPL
+2.0 unmodified in substance; the conversion changes the encoding, not the
+certificates. The rest of this repository is under its own licence (see the
+workspace manifest); the MPL 2.0 covers ca-bundle.pem alone.

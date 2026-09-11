@@ -417,17 +417,18 @@ async fn csharp_deployment_variables_are_captured_before_requests_run() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn managed_libraries_observe_the_empty_read_only_disk() {
+async fn managed_libraries_observe_a_read_only_disk_holding_only_the_platform_files() {
     let rig = start_with(
         wisp_fixtures::dotnet("wisp_guest_dotnet_filesystem"),
         InitSandbox::RuntimeBringUp,
     )
     .await;
     let mut mismatches = Vec::new();
+    // `/etc` exists because the trust bundle lives under it; nothing else does.
     for (path, expected) in [
-        ("/root", "/|True|"),
+        ("/root", "/|True|/etc"),
         ("/missing", "False|False|False"),
-        ("/read", "DirectoryNotFoundException:80070003"),
+        ("/read", "FileNotFoundException:80070002"),
         ("/read-root-file", "FileNotFoundException:80070002"),
         ("/resolve", "/missing"),
         ("/enumerate-missing", "DirectoryNotFoundException:80070003"),
