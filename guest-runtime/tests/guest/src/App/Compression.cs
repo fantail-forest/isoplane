@@ -31,6 +31,8 @@ internal sealed class Compression
                 return Zip();
             case "tar":
                 return Tar();
+            case "tar-disk":
+                return TarToDisk();
             case "disk":
                 return Disk();
             case "gzip-across-parks":
@@ -202,6 +204,26 @@ internal sealed class Compression
                     + ":" + entry.Length.ToString(CultureInfo.InvariantCulture) + ":" + data);
             }
             return string.Join(" ", lines);
+        }
+        catch (Exception error)
+        {
+            return error.GetType().Name;
+        }
+    }
+
+    /// <summary>Extracting an in-memory archive onto the empty disk.</summary>
+    private static string TarToDisk()
+    {
+        try
+        {
+            using var buffer = new MemoryStream();
+            using (var writer = new TarWriter(buffer, TarEntryFormat.Pax, leaveOpen: true))
+            {
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "hello.txt") { DataStream = new MemoryStream(new byte[] { 1 }) });
+            }
+            buffer.Position = 0;
+            TarFile.ExtractToDirectory(buffer, "/", overwriteFiles: false);
+            return "extracted";
         }
         catch (Exception error)
         {

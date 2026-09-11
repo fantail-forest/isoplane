@@ -1,0 +1,113 @@
+diff --git a/src/libraries/Common/src/System/Security/Cryptography/Helpers.cs b/src/libraries/Common/src/System/Security/Cryptography/Helpers.cs
+index e6b8ec6b9..e89009aa5 100644
+--- a/src/libraries/Common/src/System/Security/Cryptography/Helpers.cs
++++ b/src/libraries/Common/src/System/Security/Cryptography/Helpers.cs
+@@ -18,11 +18,12 @@ internal static partial class Helpers
+         private static readonly RandomNumberGenerator s_rng = RandomNumberGenerator.Create();
+ #endif
+ 
++        // The wasi build carries the OpenSSL backend, so symmetric encryption
++        // is there as on any Unix.
+         [UnsupportedOSPlatformGuard("browser")]
+-        [UnsupportedOSPlatformGuard("wasi")]
+         internal static bool HasSymmetricEncryption { get; } =
+ #if NET
+-            !OperatingSystem.IsBrowser() && !OperatingSystem.IsWasi();
++            !OperatingSystem.IsBrowser();
+ #else
+             true;
+ #endif
+@@ -45,10 +46,9 @@ internal static partial class Helpers
+ #endif
+ 
+         [UnsupportedOSPlatformGuard("browser")]
+-        [UnsupportedOSPlatformGuard("wasi")]
+         internal static bool HasMD5 { get; } =
+ #if NET
+-            !OperatingSystem.IsBrowser() && !OperatingSystem.IsWasi();
++            !OperatingSystem.IsBrowser();
+ #else
+             true;
+ #endif
+diff --git a/src/libraries/System.Formats.Tar/src/System.Formats.Tar.csproj b/src/libraries/System.Formats.Tar/src/System.Formats.Tar.csproj
+index 465e91734..d902ce1d1 100644
+--- a/src/libraries/System.Formats.Tar/src/System.Formats.Tar.csproj
++++ b/src/libraries/System.Formats.Tar/src/System.Formats.Tar.csproj
+@@ -1,7 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+ 
+   <PropertyGroup>
+-    <TargetFrameworks>$(NetCoreAppCurrent)-windows;$(NetCoreAppCurrent)-unix;$(NetCoreAppCurrent)</TargetFrameworks>
++    <TargetFrameworks>$(NetCoreAppCurrent)-windows;$(NetCoreAppCurrent)-unix;$(NetCoreAppCurrent)-wasi;$(NetCoreAppCurrent)</TargetFrameworks>
+     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+     <UseCompilerGeneratedDocXmlFile>false</UseCompilerGeneratedDocXmlFile>
+   </PropertyGroup>
+@@ -55,7 +55,7 @@
+   </ItemGroup>
+ 
+   <!-- Unix specific files -->
+-  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'unix'">
++  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'unix' or '$(TargetPlatformIdentifier)' == 'wasi'">
+     <Compile Include="System\Formats\Tar\TarEntry.Unix.cs" />
+     <Compile Include="System\Formats\Tar\TarHelpers.Unix.cs" />
+     <Compile Include="System\Formats\Tar\TarWriter.Unix.cs" />
+diff --git a/src/libraries/System.IO.Compression.Brotli/src/System.IO.Compression.Brotli.csproj b/src/libraries/System.IO.Compression.Brotli/src/System.IO.Compression.Brotli.csproj
+index 124cd52bc..cf9e41b1e 100644
+--- a/src/libraries/System.IO.Compression.Brotli/src/System.IO.Compression.Brotli.csproj
++++ b/src/libraries/System.IO.Compression.Brotli/src/System.IO.Compression.Brotli.csproj
+@@ -1,7 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+ 
+   <PropertyGroup>
+-    <TargetFrameworks>$(NetCoreAppCurrent)-windows;$(NetCoreAppCurrent)-unix;$(NetCoreAppCurrent)</TargetFrameworks>
++    <TargetFrameworks>$(NetCoreAppCurrent)-windows;$(NetCoreAppCurrent)-unix;$(NetCoreAppCurrent)-wasi;$(NetCoreAppCurrent)</TargetFrameworks>
+     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+     <UseCompilerGeneratedDocXmlFile>false</UseCompilerGeneratedDocXmlFile>
+   </PropertyGroup>
+@@ -36,7 +36,7 @@
+   </ItemGroup>
+ 
+   <!-- Unix specific files -->
+-  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'unix' ">
++  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'unix' or '$(TargetPlatformIdentifier)' == 'wasi'">
+     <Compile Include="$(CommonPath)Interop\Unix\Interop.Libraries.cs"
+              Link="Common\Interop\Unix\Interop.Libraries.cs" />
+   </ItemGroup>
+diff --git a/src/libraries/System.Net.Http/src/System/Net/Http/SocketsHttpHandler/DecompressionHandler.cs b/src/libraries/System.Net.Http/src/System/Net/Http/SocketsHttpHandler/DecompressionHandler.cs
+index 2f9c133f1..dc02b3699 100644
+--- a/src/libraries/System.Net.Http/src/System/Net/Http/SocketsHttpHandler/DecompressionHandler.cs
++++ b/src/libraries/System.Net.Http/src/System/Net/Http/SocketsHttpHandler/DecompressionHandler.cs
+@@ -428,17 +428,8 @@ private sealed class BrotliDecompressedContent : DecompressedContent
+                 base(originalContent)
+             { }
+ 
+-            protected override Stream GetDecompressedStream(Stream originalStream)
+-            {
+-                // System.IO.Compression.Brotli has no wasi target yet; the
+-                // decoder's constructor would throw the same.
+-                if (OperatingSystem.IsWasi())
+-                {
+-                    throw new PlatformNotSupportedException();
+-                }
+-
+-                return new BrotliStream(originalStream, CompressionMode.Decompress);
+-            }
++            protected override Stream GetDecompressedStream(Stream originalStream) =>
++                new BrotliStream(originalStream, CompressionMode.Decompress);
+         }
+     }
+ }
+diff --git a/src/mono/wasi/runtime/CMakeLists.txt b/src/mono/wasi/runtime/CMakeLists.txt
+index 95eea636f..db5b1d6d5 100644
+--- a/src/mono/wasi/runtime/CMakeLists.txt
++++ b/src/mono/wasi/runtime/CMakeLists.txt
+@@ -32,6 +32,9 @@ target_link_libraries(dotnet
+     ${NATIVE_BIN_DIR}/libSystem.Globalization.Native.a
+     ${NATIVE_BIN_DIR}/libSystem.IO.Compression.Native.a
+     ${NATIVE_BIN_DIR}/libz.a
++    ${NATIVE_BIN_DIR}/libbrotlienc.a
++    ${NATIVE_BIN_DIR}/libbrotlidec.a
++    ${NATIVE_BIN_DIR}/libbrotlicommon.a
+ )
+ 
+ # The cryptography backend, when the native libraries were built with OpenSSL

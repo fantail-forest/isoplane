@@ -40,11 +40,11 @@ in_both_runtimes! {
     /// `System.IO.Compression.Brotli` has no wasi native backend in the pack,
     /// so the codec declares itself unsupported rather than mis-encoding.
     #[tokio::test]
-    async fn brotli_is_declared_unsupported(runtime: GuestRuntime) {
-        assert_eq!(
-            answer(runtime, 303, "/compression/round-trip/brotli").await,
-            "PlatformNotSupportedException",
-            "Brotli must fail as unsupported on wasi, never encode or decode"
+    async fn a_brotli_stream_round_trips_a_compressible_buffer(runtime: GuestRuntime) {
+        let text = answer(runtime, 303, "/compression/round-trip/brotli").await;
+        assert!(
+            text.ends_with(" smaller=True restored=True"),
+            "Brotli encodes smaller and decodes back through the pack's brotli: {text}"
         );
     }
 }
@@ -90,11 +90,20 @@ in_both_runtimes! {
     /// `System.Formats.Tar` ships as a throwing stub for wasi in the
     /// framework: constructing a writer is `PlatformNotSupportedException`.
     #[tokio::test]
-    async fn system_formats_tar_is_declared_unsupported(runtime: GuestRuntime) {
+    async fn a_pax_tar_archive_round_trips_in_memory(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 307, "/compression/tar").await,
-            "PlatformNotSupportedException",
-            "the tar library must declare itself unsupported on wasi rather than write an archive"
+            "dir/:Directory:Pax:0: dir/hello.txt:RegularFile:Pax:14:hello from tar",
+            "a PAX archive written to memory reads back entry by entry with its data"
+        );
+    }
+
+    #[tokio::test]
+    async fn extracting_a_tar_archive_to_the_disk_is_refused_by_the_empty_filesystem(runtime: GuestRuntime) {
+        let text = answer(runtime, 309, "/compression/tar-disk").await;
+        assert!(
+            matches!(text.as_str(), "IOException" | "DirectoryNotFoundException" | "UnauthorizedAccessException"),
+            "extraction needs the disk and meets the read-only filesystem's refusal, never a trap or a file: {text}"
         );
     }
 }

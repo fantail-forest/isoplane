@@ -25,6 +25,10 @@ internal sealed partial class Cryptography
                 // The AEAD ciphers are only supported with a native backend;
                 // the managed adaptation reported none of them.
                 return AesGcm.IsSupported + " " + ChaCha20Poly1305.IsSupported + " " + AesCcm.IsSupported;
+            case "md5":
+                return Hex(MD5.HashData(Encoding.ASCII.GetBytes("abc")));
+            case "encrypted-pkcs8":
+                return EncryptedPkcs8();
             case "sha256":
                 return Hex(SHA256.HashData(Encoding.ASCII.GetBytes(path[1])));
             case "hmac":
@@ -184,6 +188,38 @@ internal sealed partial class Cryptography
     /// internal subclass of CryptographicException); the answer a test
     /// asserts on.
     /// </summary>
+    /// <summary>
+    /// An RSA key exported under a password as DER and as PEM, imported
+    /// back and proven by a signature, and the wrong password refused.
+    /// </summary>
+    private static string EncryptedPkcs8()
+    {
+        using var key = RSA.Create(2048);
+        byte[] data = Encoding.ASCII.GetBytes("encrypted pkcs8");
+        byte[] signature = key.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var parameters = new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 10_000);
+        byte[] der = key.ExportEncryptedPkcs8PrivateKey("correct horse", parameters);
+        string pem = key.ExportEncryptedPkcs8PrivateKeyPem("correct horse", parameters);
+        using var fromDer = RSA.Create();
+        fromDer.ImportEncryptedPkcs8PrivateKey("correct horse", der, out _);
+        using var fromPem = RSA.Create();
+        fromPem.ImportFromEncryptedPem(pem, "correct horse");
+        string derOk = fromDer.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1) ? "ok" : "mismatch";
+        string pemOk = fromPem.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1) ? "ok" : "mismatch";
+        string wrong;
+        try
+        {
+            using var stranger = RSA.Create();
+            stranger.ImportEncryptedPkcs8PrivateKey("wrong", der, out _);
+            wrong = "accepted";
+        }
+        catch (CryptographicException)
+        {
+            wrong = "CryptographicException";
+        }
+        return "der=" + derOk + " pem=" + pemOk + " wrong-password=" + wrong;
+    }
+
     private static string Failure(Action action)
     {
         try

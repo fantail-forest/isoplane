@@ -22,6 +22,26 @@ use crypto_vectors::{
 };
 use no_egress::reactor_without_egress;
 
+in_both_runtimes! {
+    #[tokio::test]
+    async fn encrypted_pkcs8_round_trips_and_refuses_the_wrong_password(runtime: GuestRuntime) {
+        let text = answer(runtime, 60, "/crypto/encrypted-pkcs8").await;
+        assert_eq!(
+            text, "der=ok pem=ok wrong-password=CryptographicException",
+            "an RSA key exported under a password (DER and PEM) imports back and verifies, and the wrong password is refused: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn md5_matches_its_vector(runtime: GuestRuntime) {
+        assert_eq!(
+            answer(runtime, 61, "/crypto/md5").await,
+            "900150983cd24fb0d6963f7d28e17f72",
+            "MD5 of `abc` is RFC 1321's value"
+        );
+    }
+}
+
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
     answer_at(runtime, owner, path, 1).await
 }

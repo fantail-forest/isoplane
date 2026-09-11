@@ -314,6 +314,14 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
     encoder.finish().expect("a memory encoder finishes")
 }
 
+fn brotli(bytes: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    let mut encoder = brotli::CompressorWriter::new(&mut encoded, 4096, 5, 22);
+    std::io::Write::write_all(&mut encoder, bytes).expect("a brotli encoder writes to memory");
+    drop(encoder);
+    encoded
+}
+
 fn deflate(bytes: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     encoder
@@ -382,6 +390,8 @@ async fn route(request: Request<Incoming>) -> Result<Response<PeerBody>, std::co
                 encoded("gzip", gzip(&pattern(length)))
             } else if let Some(length) = numbered("/deflate/") {
                 encoded("deflate", deflate(&pattern(length)))
+            } else if let Some(length) = numbered("/br/") {
+                encoded("br", brotli(&pattern(length)))
             } else if let Some(length) = numbered("/stream/") {
                 // Chunked, without a content length, so the body streams.
                 let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = pattern(length)

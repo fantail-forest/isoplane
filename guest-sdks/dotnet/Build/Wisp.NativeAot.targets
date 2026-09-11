@@ -35,6 +35,9 @@
       <NativeLibrary Include="$(IlcFrameworkNativePath)libcrypto.a" />
       <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.IO.Compression.Native.a" />
       <NativeLibrary Include="$(IlcFrameworkNativePath)libz.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libbrotlienc.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libbrotlidec.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libbrotlicommon.a" />
     </ItemGroup>
   </Target>
   <!-- The identity of the framework the module was compiled against, beside

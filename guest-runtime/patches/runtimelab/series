@@ -25,3 +25,5 @@
 # 019 is re-cut against it: the cache and its events come along.
 004-wasi-crl-cache-async-in-memory.patch
 ../runtime/020-wasi-system-store-immediate-read.patch
+../runtime/021-wasi-brotli-tar-encrypted-pkcs8.patch
+005-wasi-brotli-native.patch

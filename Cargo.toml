@@ -65,6 +65,7 @@ rand        = "0.9"
 scc            = "3.8"    # the future table's maps, on the wake path
 rusqlite    = { version = "0.37", features = ["bundled"] }
 hyper       = { version = "1", features = ["full"] }
+brotli      = "8"
 h2          = "0.4"    # the HTTP/2 framing hyper speaks, for test peers that drive it directly
 # TLS for host-terminated https egress (already in the graph through reqwest).
 rustls      = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

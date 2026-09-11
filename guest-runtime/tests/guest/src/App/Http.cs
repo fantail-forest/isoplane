@@ -64,10 +64,11 @@ internal sealed class Http
                 byte[] echoed = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
                 return Describe(response, selection) + " replayed=" + (echoed.AsSpan().SequenceEqual(payload) ? "same" : "different");
             }
+            case "br":
             case "gzip":
             case "deflate":
             {
-                using var client = Client(selection, new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
+                using var client = Client(selection, new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli });
                 using var response = await client.GetAsync(Url("http", path[1], path[2], "/" + path[0] + "/" + path[3])).ConfigureAwait(false);
                 byte[] body = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
                 byte[] expected = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
@@ -76,7 +77,7 @@ internal sealed class Http
             }
             case "accept-encoding":
             {
-                using var client = Client(selection, new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
+                using var client = Client(selection, new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli });
                 return await client.GetStringAsync(Url("http", path[1], path[2], "/accept-encoding")).ConfigureAwait(false);
             }
             case "reuse":

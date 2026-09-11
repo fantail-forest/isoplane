@@ -198,11 +198,11 @@ in_both_runtimes! {
     }
 
     #[tokio::test]
-    async fn gzip_and_deflate_responses_are_decompressed_by_the_client(runtime: GuestRuntime) {
+    async fn gzip_deflate_and_brotli_responses_are_decompressed_by_the_client(runtime: GuestRuntime) {
         let peer = http_peer().await;
         let reactor = reactor(10, vec![peer.address]);
         let mut guest = guest(&reactor, runtime);
-        for encoding in ["gzip", "deflate"] {
+        for encoding in ["gzip", "deflate", "br"] {
             let text = guest.answer(&reactor, &format!("/http/{encoding}/127.0.0.1/{}/100000", peer.address.port()), 32).await;
             assert_eq!(
                 text, "status=200 content-type=application/octet-stream content-encoding= body=decoded",
@@ -211,7 +211,7 @@ in_both_runtimes! {
             );
         }
         let text = guest.answer(&reactor, &format!("/http/accept-encoding/127.0.0.1/{}", peer.address.port()), 16).await;
-        assert_eq!(text, "gzip, deflate", "the client advertises the encodings it decodes");
+        assert_eq!(text, "gzip, deflate, br", "the client advertises the encodings it decodes");
     }
 
     #[tokio::test]
