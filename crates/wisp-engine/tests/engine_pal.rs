@@ -272,13 +272,8 @@ mod native_readiness {
         fn call_sync(&mut self, _: ImportCall<'_>) -> i64 {
             0
         }
-        fn native_io(&mut self, request: Request) -> Result<Response, wisp_abi::native_io::Error> {
-            Ok(match request {
-                Request::Http(_) => Response::Http(wisp_abi::native_io::http::Response::Handle(
-                    ResourceHandle(1),
-                )),
-                _ => Response::Handle(ResourceHandle(1)),
-            })
+        fn native_io(&mut self, _: Request) -> Result<Response, wisp_abi::native_io::Error> {
+            Ok(Response::Handle(ResourceHandle(1)))
         }
     }
 
@@ -443,108 +438,6 @@ mod native_readiness {
             packet(59, 1000, 1, ""),
             Completion::Trapped,
             "a canonical blocking wait must never enter the host resource implementation"
-        );
-    }
-
-    /// The id of the canonical entry named `function` in `module`.
-    fn operation(module: &str, function: &str) -> u32 {
-        wisp_abi::native_io::canonical::DEFINITIONS
-            .iter()
-            .find(|definition| definition.pal.module == module && definition.pal.func == function)
-            .unwrap_or_else(|| panic!("the canonical table must define {module}::{function}"))
-            .id
-            .0
-    }
-
-    const HTTP_TYPES: &str = "wasi:http/types@0.2.0";
-
-    #[test]
-    fn an_http_packet_with_its_canonical_argument_count_reaches_the_host() {
-        assert_eq!(
-            capability_packet(
-                "http_call",
-                operation(HTTP_TYPES, "[constructor]fields"),
-                1000,
-                0,
-                ""
-            ),
-            Completion::Done,
-            "a field set constructor packet must reach the host and answer with its handle"
-        );
-    }
-
-    #[test]
-    fn http_permission_cannot_create_a_socket_and_socket_permission_cannot_build_a_request() {
-        assert_eq!(
-            capability_packet(
-                "http_call",
-                operation("wasi:sockets/tcp-create-socket@0.2.0", "create-tcp-socket"),
-                1000,
-                2,
-                ""
-            ),
-            Completion::Trapped,
-            "a guest with only HTTP permission must not obtain a socket"
-        );
-        assert_eq!(
-            capability_packet(
-                "socket_call",
-                operation(HTTP_TYPES, "[constructor]outgoing-request"),
-                1000,
-                1,
-                ""
-            ),
-            Completion::Trapped,
-            "a guest with only socket permission must not build an HTTP request"
-        );
-    }
-
-    #[test]
-    fn an_http_field_list_cannot_exceed_the_host_buffer_budget() {
-        let count = wisp_abi::imports::MAX_OUT_BUFFER_BYTES / 16 + 1;
-        let setup = format!("(i64.store (i32.const 1000) (i64.const 2000)) (i64.store (i32.const 1008) (i64.const {count}))");
-        assert_eq!(
-            capability_packet(
-                "http_call",
-                operation(HTTP_TYPES, "[static]fields.from-list"),
-                1000,
-                3,
-                &setup
-            ),
-            Completion::Trapped,
-            "an oversized field list must trap before host allocation"
-        );
-    }
-
-    #[test]
-    fn an_http_option_discriminant_outside_the_canonical_form_is_rejected() {
-        // option<string> takes 0 or 1; 2 is not a canonical option.
-        let setup = "(i64.store (i32.const 1008) (i64.const 2))";
-        assert_eq!(
-            capability_packet(
-                "http_call",
-                operation(HTTP_TYPES, "[method]outgoing-request.set-path-with-query"),
-                1000,
-                4,
-                setup
-            ),
-            Completion::Trapped,
-            "an invalid option discriminant must trap before reaching host resources"
-        );
-    }
-
-    #[test]
-    fn the_request_options_the_client_never_sets_trap_on_call() {
-        assert_eq!(
-            capability_packet(
-                "http_call",
-                operation(HTTP_TYPES, "[constructor]request-options"),
-                1000,
-                0,
-                ""
-            ),
-            Completion::Trapped,
-            "request options are not implemented and must never reach host resources"
         );
     }
 }

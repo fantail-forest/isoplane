@@ -96,7 +96,7 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     }
 
     match def.name {
-        "socket_call" | "poll_call" | "http_call" => {
+        "socket_call" | "poll_call" => {
             return crate::pal::native_io::packet(
                 c,
                 def.name,

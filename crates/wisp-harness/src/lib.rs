@@ -48,26 +48,12 @@ pub struct Reactor {
 
 impl Reactor {
     /// A reactor on the current tokio runtime for `owner`, whose outbound
-    /// connections, lookups and HTTP exchanges go through `policy` and the
-    /// real transport, trusting the host's certificate store.
+    /// connections, lookups and fetches go through `policy` and the real
+    /// transport, trusting the host's certificate store.
     pub fn new(owner: InstanceId, policy: HostEgressPolicy) -> Self {
+        LogCapture::global();
         let egress = Arc::new(policy);
         let fetcher = PinnedHttpFetcher::new(egress.clone(), 256 * 1024);
-        Self::build(owner, egress, fetcher)
-    }
-
-    /// As [`Self::new`], also trusting the certificates in `root_pem` for
-    /// TLS peers a test owns.
-    pub fn with_trusted_root(owner: InstanceId, policy: HostEgressPolicy, root_pem: &str) -> Self {
-        let egress = Arc::new(policy);
-        let fetcher = PinnedHttpFetcher::new(egress.clone(), 256 * 1024)
-            .with_trust_anchor(root_pem)
-            .expect("the test's trust anchor is a CA certificate");
-        Self::build(owner, egress, fetcher)
-    }
-
-    fn build(owner: InstanceId, egress: Arc<HostEgressPolicy>, fetcher: PinnedHttpFetcher) -> Self {
-        LogCapture::global();
         let futures = Arc::new(FutureTable::new());
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let runtime = Arc::new(CellRuntime {

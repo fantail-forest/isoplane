@@ -1,15 +1,10 @@
-//! Canonical native socket, readiness and HTTP entrypoints observed in the
-//! pinned runtime.
+//! Canonical native socket and readiness entrypoints observed in the pinned runtime.
 use super::ResourceKind;
 use crate::imports::{Sig, Ty};
 use crate::pal::{Delegation, Disposition, PalDef};
 
-pub mod http;
-
 /// Outbound socket operations, authorized by the host for every connection.
 pub const SOCKET_IMPORT: &str = "socket_call";
-/// Outbound HTTP exchanges, each authorized by the host's egress policy.
-pub const HTTP_IMPORT: &str = "http_call";
 
 /// SDK-native partial-send bridge, outside the standard WASI interfaces.
 pub const SOCKET_BRIDGE_MODULE: &str = "wisp:native-sockets";
@@ -23,14 +18,6 @@ pub struct OperationId(pub u32);
 /// The host operation or explicit refusal implemented for a canonical entry.
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
-    /// A `wasi:http` operation on the instance's HTTP resources.
-    Http(HttpAction),
-    /// How many bytes an output stream accepts now.
-    CheckWrite,
-    /// Write bytes an earlier check-write admitted.
-    Write,
-    /// Flush an output stream; complete once its bytes are handed on.
-    Flush,
     /// Read or set the host socket's TCP_NODELAY option.
     NoDelay,
     /// Obtain the instance network capability.
@@ -88,71 +75,12 @@ pub enum Action {
     Trap,
 }
 
-/// The `wasi:http` operations, one per implemented entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HttpAction {
-    /// `[constructor]fields`.
-    FieldsNew,
-    /// `[static]fields.from-list`.
-    FieldsFromList,
-    /// `[method]fields.get`.
-    FieldsGet,
-    /// `[method]fields.has`.
-    FieldsHas,
-    /// `[method]fields.set`.
-    FieldsSet,
-    /// `[method]fields.delete`.
-    FieldsDelete,
-    /// `[method]fields.append`.
-    FieldsAppend,
-    /// `[method]fields.entries`.
-    FieldsEntries,
-    /// `[method]fields.clone`.
-    FieldsClone,
-    /// `[constructor]outgoing-request`.
-    RequestNew,
-    /// `[method]outgoing-request.body`.
-    RequestBody,
-    /// `[method]outgoing-request.set-method`.
-    RequestSetMethod,
-    /// `[method]outgoing-request.set-path-with-query`.
-    RequestSetPath,
-    /// `[method]outgoing-request.set-scheme`.
-    RequestSetScheme,
-    /// `[method]outgoing-request.set-authority`.
-    RequestSetAuthority,
-    /// `[method]outgoing-request.headers`.
-    RequestHeaders,
-    /// `[method]outgoing-body.write`.
-    OutgoingBodyWrite,
-    /// `[static]outgoing-body.finish`.
-    OutgoingBodyFinish,
-    /// `wasi:http/outgoing-handler.handle`.
-    Handle,
-    /// `[method]future-incoming-response.subscribe`.
-    FutureSubscribe,
-    /// `[method]future-incoming-response.get`.
-    FutureGet,
-    /// `[method]incoming-response.status`.
-    ResponseStatus,
-    /// `[method]incoming-response.headers`.
-    ResponseHeaders,
-    /// `[method]incoming-response.consume`.
-    ResponseConsume,
-    /// `[method]incoming-body.stream`.
-    IncomingBodyStream,
-    /// `[static]incoming-body.finish`.
-    IncomingBodyFinish,
-}
-
 /// The single definition consumed by the validator, native wrappers and engine adapter.
-#[derive(Debug, Clone, Copy)]
 pub struct Definition {
     /// Stable operation id in the scalar packet.
     pub id: OperationId,
-    /// Native wasi-libc symbol suffix, for an entry libc reaches; an entry
-    /// reached only from managed code has none and gets no wrapper.
-    pub symbol: Option<&'static str>,
+    /// Native wasi-libc symbol suffix.
+    pub symbol: &'static str,
     /// WISP capability used for this operation.
     pub capability: &'static str,
     /// Canonical imported signature and name.
@@ -170,14 +98,14 @@ const fn definition(
     sig: Sig,
     action: Action,
 ) -> Definition {
-    Definition { id: OperationId(id), symbol: Some(symbol), capability, action, pal: PalDef {
+    Definition { id: OperationId(id), symbol, capability, action, pal: PalDef {
         module, func: name, sig: Some(sig), disposition: Disposition::Delegate(Delegation::Cap(capability)),
         why: "host-owned outbound TCP and coarse readiness; bind, listen, UDP and unsupported operations remain denied",
     }}
 }
 
-/// The socket, stream and readiness entries, ids 0..=75.
-const SOCKET_DEFINITIONS: &[Definition] = &[
+/// Every admitted canonical entry, with no ambient network fallback.
+pub const DEFINITIONS: &[Definition] = &[
     definition(
         0,
         "monotonic_clock_subscribe_duration",
@@ -1125,7 +1053,7 @@ const SOCKET_DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::CheckWrite,
+        Action::Trap,
     ),
     definition(
         65,
@@ -1137,7 +1065,7 @@ const SOCKET_DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Write,
+        Action::Trap,
     ),
     definition(
         66,
@@ -1149,7 +1077,7 @@ const SOCKET_DEFINITIONS: &[Definition] = &[
             params: &[Ty::I32, Ty::I32],
             results: &[],
         },
-        Action::Flush,
+        Action::Trap,
     ),
     definition(
         67,
@@ -1261,31 +1189,6 @@ const SOCKET_DEFINITIONS: &[Definition] = &[
     ),
 ];
 
-/// Every admitted canonical entry, with no ambient network fallback: the
-/// socket entries followed by the `wasi:http` entries.
-pub const DEFINITIONS: &[Definition] = &concat::<
-    { SOCKET_DEFINITIONS.len() + http::DEFINITIONS.len() },
->(SOCKET_DEFINITIONS, http::DEFINITIONS);
-
-const fn concat<const N: usize>(first: &[Definition], second: &[Definition]) -> [Definition; N] {
-    assert!(
-        first.len() + second.len() == N,
-        "the canonical table's length is its parts' sum"
-    );
-    let mut all = [first[0]; N];
-    let mut index = 0;
-    while index < first.len() {
-        all[index] = first[index];
-        index += 1;
-    }
-    let mut offset = 0;
-    while offset < second.len() {
-        all[index + offset] = second[offset];
-        offset += 1;
-    }
-    all
-}
-
 /// A native send should retry after output readiness.
 pub const SEND_PENDING: u64 = u64::MAX;
 /// A native send failed without accepting bytes, for no more specific
@@ -1341,7 +1244,7 @@ pub fn native_wrappers() -> String {
         ) {
             continue;
         }
-        let (Some(signature), Some(symbol)) = (definition.pal.sig, definition.symbol) else {
+        let Some(signature) = definition.pal.sig else {
             continue;
         };
         let parameters: Vec<_> = signature
@@ -1388,7 +1291,7 @@ pub fn native_wrappers() -> String {
             ""
         };
         output.push_str(&format!("{result} __wasm_import_{}({}) {{ const uint64_t args[] = {{ {} }}; {capture}{returned}wisp_{}({}, args, {});{completed} }}\n",
-            symbol, if parameters.is_empty() { "void".to_string() } else { parameters.join(", ") },
+            definition.symbol, if parameters.is_empty() { "void".to_string() } else { parameters.join(", ") },
             if arguments.is_empty() { "0".to_string() } else { arguments.join(", ") }, definition.capability, definition.id.0, parameters.len()));
     }
     output

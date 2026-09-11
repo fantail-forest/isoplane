@@ -1,7 +1,6 @@
 //! Typed requests between the canonical socket adapter and host-owned resources.
 
 pub mod canonical;
-pub mod http;
 pub mod network_error;
 
 use std::net::SocketAddr;
@@ -38,20 +37,6 @@ pub enum ResourceKind {
     Error,
     /// Deadline or readiness subscription.
     Pollable,
-    /// A `wasi:http` header field set.
-    Fields,
-    /// An outgoing HTTP request under construction.
-    OutgoingRequest,
-    /// An outgoing HTTP request body.
-    OutgoingBody,
-    /// The future response of an issued request.
-    FutureResponse,
-    /// An arrived HTTP response.
-    IncomingResponse,
-    /// An HTTP response body.
-    IncomingBody,
-    /// The trailers of a finished response body.
-    FutureTrailers,
 }
 
 /// Bytes requested or admitted by one nonblocking stream operation.
@@ -124,17 +109,6 @@ pub enum Request {
         /// Directions closed by the caller.
         how: std::net::Shutdown,
     },
-    /// How many bytes an output stream accepts now.
-    CheckWrite(ResourceHandle),
-    /// Write bytes an earlier check-write admitted.
-    Write {
-        /// Owned output stream.
-        stream: ResourceHandle,
-        /// Bytes to write, at most the admitted count.
-        bytes: Vec<u8>,
-    },
-    /// Flush an output stream.
-    Flush(ResourceHandle),
     /// Subscribe to readiness of a socket or stream.
     Subscribe(ResourceHandle),
     /// Create a monotonic deadline pollable.
@@ -150,8 +124,6 @@ pub enum Request {
         /// Type established by the canonical destructor.
         kind: ResourceKind,
     },
-    /// An operation on the instance's `wasi:http` resources.
-    Http(http::Request),
 }
 
 /// The complete result of a nonblocking resource operation.
@@ -188,8 +160,6 @@ pub enum Response {
     Ready(bool),
     /// Indexes into the caller's poll list.
     ReadyIndexes(Vec<u32>),
-    /// The result of a `wasi:http` operation.
-    Http(http::Response),
 }
 
 /// A resource refusal or asynchronous connection failure.

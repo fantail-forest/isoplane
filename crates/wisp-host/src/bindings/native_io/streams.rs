@@ -24,19 +24,20 @@ pub(super) fn connection(state: &Mutex<SocketState>) -> Result<Arc<Connection>, 
     }
 }
 
-/// Runs `operation` on the reactor as a bounded future of `capability` and
-/// settles it when the operation completes: the wake source for one
-/// stream's readiness.
-pub(super) fn watch(
+/// Runs `operation` on the reactor as a bounded socket future and settles
+/// it when the operation completes: the wake source for one stream's
+/// readiness.
+fn watch(
     bindings: &CellBindings,
-    capability: &'static str,
     operation: impl Future<Output = ()> + Send + 'static,
 ) -> Result<ReactorWork, Error> {
     let runtime = bindings
         .rt()
         .ok_or(Error::Unsupported("stream operation without reactor"))?
         .clone();
-    let future = bindings.alloc(capability).ok_or(Error::ResourceLimit)?;
+    let future = bindings
+        .alloc(wisp_abi::native_io::canonical::SOCKET_IMPORT)
+        .ok_or(Error::ResourceLimit)?;
     let completion = runtime.clone();
     let span = tracing::info_span!("native_readiness", tenant = %bindings.ctx.tenant, instance = %bindings.ctx.instance);
     let task = runtime.reactor.spawn(tracing::Instrument::instrument(
@@ -114,15 +115,11 @@ impl Input {
             return Ok(());
         }
         let stream = connection(&self.state)?;
-        self.task = Some(watch(
-            bindings,
-            wisp_abi::native_io::canonical::SOCKET_IMPORT,
-            async move {
-                if let Err(error) = stream.stream.readable().await {
-                    tracing::warn!(%error, "native input readiness failed");
-                }
-            },
-        )?);
+        self.task = Some(watch(bindings, async move {
+            if let Err(error) = stream.stream.readable().await {
+                tracing::warn!(%error, "native input readiness failed");
+            }
+        })?);
         Ok(())
     }
 }
@@ -180,15 +177,11 @@ impl Output {
             return Ok(());
         }
         let stream = connection(&self.state)?;
-        self.task = Some(watch(
-            bindings,
-            wisp_abi::native_io::canonical::SOCKET_IMPORT,
-            async move {
-                if let Err(error) = stream.stream.writable().await {
-                    tracing::warn!(%error, "native output readiness failed");
-                }
-            },
-        )?);
+        self.task = Some(watch(bindings, async move {
+            if let Err(error) = stream.stream.writable().await {
+                tracing::warn!(%error, "native output readiness failed");
+            }
+        })?);
         Ok(())
     }
 }
