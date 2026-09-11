@@ -45,6 +45,7 @@ FIXTURES=(
   "wisp_guest_dotnet_certificates|$ROOT/dotnet/out/wisp_guest_dotnet_certificates.wasm|$ROOT/dotnet|-p:WispCertificateProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_streaming|$ROOT/dotnet/out/wisp_guest_dotnet_streaming.wasm|$ROOT/dotnet|-p:WispStreamingProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_hashing|$ROOT/dotnet/out/wisp_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:WispHashingProbe=true -p:IlcResilient=false"
+  "wisp_guest_dotnet_trust|$ROOT/dotnet/out/wisp_guest_dotnet_trust.wasm|$ROOT/dotnet|-p:WispTrustProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_randomness|$ROOT/dotnet/out/wisp_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:WispRandomnessProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_config|$ROOT/dotnet/out/wisp_guest_dotnet_config.wasm|$ROOT/dotnet|-p:WispConfigProbe=true"
   "wisp_guest_dotnet_failing_boot|$ROOT/dotnet/out/wisp_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:WispFailingBoot=true"
@@ -72,6 +73,7 @@ MONO_FIXTURES=(
   wisp_guest_dotnet_certificates
   wisp_guest_dotnet_streaming
   wisp_guest_dotnet_hashing
+  wisp_guest_dotnet_trust
   wisp_guest_dotnet_randomness
   wisp_guest_dotnet_network_refusal
   wisp_guest_dotnet_dns

@@ -8,6 +8,8 @@ using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ActivationPro
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.CertificateProbe>>;
 #elif WISP_HASHING_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.HashingProbe>>;
+#elif WISP_TRUST_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.TrustProbe>>;
 #elif WISP_RANDOMNESS_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RandomnessProbe>>;
 #elif WISP_CONFIG_PROBE

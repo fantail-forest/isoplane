@@ -44,6 +44,10 @@
     <DefineConstants>$(DefineConstants);WISP_HASHING_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispTrustProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_TRUST_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispRandomnessProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_RANDOMNESS_PROBE</DefineConstants>
   </PropertyGroup>
