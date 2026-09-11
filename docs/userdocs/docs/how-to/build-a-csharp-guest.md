@@ -140,12 +140,38 @@ expects: TLS 1.2 and 1.3, client certificates, ALPN, cancellation, and asynchron
 system trust store: nothing is trusted until the application supplies its
 roots, through `SslClientAuthenticationOptions.CertificateChainPolicy` with
 `X509ChainTrustMode.CustomRootTrust`, or a
-`RemoteCertificateValidationCallback` that decides. Such a policy defaults to
-online revocation checking, which the guest cannot perform (no CRL or OCSP
-fetch leaves the sandbox), so set `RevocationMode = NoCheck` unless the
-application supplies revocation lists; revocation policy beyond that is not
-decided. Certificate validity is checked against the guest's clock, which is
-the host's.
+`RemoteCertificateValidationCallback` that decides. Certificate validity is
+checked against the guest's clock, which is the host's.
+
+Asynchronous authentication (`AuthenticateAsClientAsync`, and so
+`HttpClient`) builds the peer's chain the way .NET does elsewhere: a missing
+intermediate is fetched from the URL its Authority Information Access
+record names, and the chain policy's `RevocationMode` decides whether CRLs
+and OCSP responses are fetched (`Online`), served from what earlier builds
+cached (`Offline`), or not consulted (`NoCheck`). Each fetch is an ordinary
+outbound HTTP request from the guest: it parks the instance like any other,
+obeys the same destination policy
+(a URL the policy refuses is a failed fetch, and the chain stays partial or
+the revocation status unknown), and is bounded by
+`X509ChainPolicy.UrlRetrievalTimeout`. `DisableCertificateDownloads` is
+honoured. What a build fetches is cached only in memory, bounded, for the
+life of the instance: downloaded issuers, CRLs until their next update, and
+definitive OCSP responses within their validity. A responder that cannot
+be reached, or a response that is expired or invalid, leaves the status
+`RevocationStatusUnknown` and fails an `Online` check as .NET does
+everywhere; a private root with no CRL should set `RevocationMode =
+NoCheck`.
+
+The synchronous `SslStream` API is not available: a guest has one thread
+and parks only with an empty stack, so nothing can wait on the network
+inside a call. `AuthenticateAsClient` throws `PlatformNotSupportedException`
+before touching the socket, and a synchronous `Write` or `Read` on a
+session the asynchronous API established fails with an `IOException`. A
+direct `X509Chain.Build` does work, without fetching: it builds from the
+certificates presented, the application's `ExtraStore` and what earlier
+asynchronous builds cached, and reports the ordinary failure
+(`PartialChain`, `RevocationStatusUnknown`) when that is not enough.
+`ExtraStore` supplies certificates, not revocation lists.
 
 ## The PAL shim
 

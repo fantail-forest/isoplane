@@ -9,6 +9,7 @@ description = "Acceptance tests for the source-built guest runtime: its scheduli
 [dependencies]
 
 [dev-dependencies]
+libc = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 flate2 = { workspace = true }

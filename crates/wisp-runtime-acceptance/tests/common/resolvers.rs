@@ -1,5 +1,5 @@
-//! Scripted resolvers the reactor answers name lookups from, and a reactor
-//! built around one.
+//! Scripted resolvers that fail or never answer, and a reactor built
+//! around one; the one that answers is [`fixed_dns`](../fixed_dns.rs).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,16 +14,6 @@ pub fn reactor_for_dns(owner: u64, resolver: Box<dyn Resolver>) -> Reactor {
         InstanceId(owner),
         HostEgressPolicy::new(resolver, 8, 1 << 20),
     )
-}
-
-/// A resolver answering every name with the same addresses.
-pub struct FixedDns(pub Vec<std::net::IpAddr>);
-
-#[async_trait::async_trait]
-impl Resolver for FixedDns {
-    async fn resolve(&self, _: &str, port: u16) -> Result<Vec<SocketAddr>, DnsError> {
-        Ok(self.0.iter().map(|ip| SocketAddr::new(*ip, port)).collect())
-    }
 }
 
 /// A resolver failing every name the same way.

@@ -10,6 +10,8 @@
 mod common;
 #[path = "common/admitted.rs"]
 mod admitted;
+#[path = "common/fixed_dns.rs"]
+mod fixed_dns;
 #[path = "common/http_peers.rs"]
 mod http_peers;
 #[path = "common/refusing.rs"]
@@ -25,9 +27,10 @@ use std::sync::Arc;
 
 use admitted::released;
 use common::{guest, GuestRuntime};
+use fixed_dns::FixedDns;
 use http_peers::{http_peer, https_peer, reactor_for_http, stale_peer, Certificate};
 use refusing::refusing_endpoint;
-use resolvers::{reactor_for_dns, FailingDns, FixedDns, PendingDns};
+use resolvers::{reactor_for_dns, FailingDns, PendingDns};
 use wisp_engine::Completion;
 use wisp_harness::EmittedGuestLogs as _;
 use wisp_harness::{Reactor, WAKE_DEADLINE};
@@ -397,15 +400,17 @@ in_both_runtimes! {
         released(&reactor).await;
     }
 
+    /// The issuer's URL names a port nothing listens on: the retrieval
+    /// fails and the chain stays partial, as it does off the network.
     #[tokio::test]
-    async fn a_missing_intermediate_fails_the_request_when_nothing_can_be_fetched(runtime: GuestRuntime) {
+    async fn a_missing_intermediate_fails_the_request_when_its_issuer_cannot_be_reached(runtime: GuestRuntime) {
         let peer = https_peer(Certificate::RemoteAlone).await;
         let reactor = reactor(23, vec![peer.address]);
         let mut guest = guest(&reactor, runtime);
-        let text = guest.answer(&reactor, &format!("/http/https/remote.acceptance.test/{}", peer.address.port()), 32).await;
+        let text = guest.answer(&reactor, &format!("/http/https/remote.acceptance.test/{}", peer.address.port()), 64).await;
         assert!(
             text.starts_with("HttpRequestException: ") && text.ends_with("<- AuthenticationException"),
-            "an issuer only reachable by AIA leaves the chain partial and the request failed: {text}; logs: {:?}",
+            "an issuer that cannot be fetched leaves the chain partial and the request failed: {text}; logs: {:?}",
             reactor.context.emitted_logs()
         );
         released(&reactor).await;

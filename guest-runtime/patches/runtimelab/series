@@ -20,3 +20,7 @@
 003-wasi-home-directory.patch
 ../runtime/015-wasi-pinvoke-signatures.patch
 ../runtime/016-wasi-sockets-http-handler.patch
+../runtime/018-wasi-async-chain-build.patch
+# The fork's CRL cache predates upstream's in-memory MRU cache, so runtime
+# 019 is re-cut against it: the cache and its events come along.
+004-wasi-crl-cache-async-in-memory.patch

@@ -1,0 +1,2562 @@
+diff --git a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.Chain.cs b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.Chain.cs
+index e2839011a..073ca7774 100644
+--- a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.Chain.cs
++++ b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.Chain.cs
+@@ -52,14 +52,20 @@ internal static bool X509ChainHasStapledOcsp(SafeX509StoreCtxHandle storeCtx)
+             SafeX509StoreCtxHandle ctx,
+             SafeOcspRequestHandle req,
+             SafeOcspResponseHandle resp,
+-            string cachePath,
++            string? cachePath,
+             int chainDepth);
+ 
++        /// <summary>
++        /// Verifies <paramref name="resp"/> against the chain element at <paramref name="chainDepth"/>.
++        /// <see cref="SafeOcspRequestHandle.InvalidHandle"/> for <paramref name="req"/> skips the nonce
++        /// check, as for a response that was not just requested; a null <paramref name="cachePath"/>
++        /// keeps a cacheable response out of the on-disk cache.
++        /// </summary>
+         internal static X509VerifyStatusCode X509ChainVerifyOcsp(
+             SafeX509StoreCtxHandle ctx,
+             SafeOcspRequestHandle req,
+             SafeOcspResponseHandle resp,
+-            string cachePath,
++            string? cachePath,
+             int chainDepth)
+         {
+             X509VerifyStatusCode response = (X509VerifyStatusCode)CryptoNative_X509ChainVerifyOcsp(ctx, req, resp, cachePath, chainDepth);
+diff --git a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.cs b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.cs
+index 8b07660a3..12ee3ba18 100644
+--- a/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.cs
++++ b/src/libraries/Common/src/Interop/Unix/System.Security.Cryptography.Native/Interop.OCSP.cs
+@@ -97,6 +97,9 @@ namespace System.Security.Cryptography.X509Certificates
+ {
+     internal sealed class SafeOcspRequestHandle : SafeHandleZeroOrMinusOneIsInvalid
+     {
++        /// <summary>Marshals as a null request: a response is verified without a nonce check.</summary>
++        internal static readonly SafeOcspRequestHandle InvalidHandle = new SafeOcspRequestHandle();
++
+         public SafeOcspRequestHandle()
+             : base(true)
+         {
+diff --git a/src/libraries/Common/src/System/Net/Http/X509ResourceClient.cs b/src/libraries/Common/src/System/Net/Http/X509ResourceClient.cs
+index 13361e54e..1b78aec29 100644
+--- a/src/libraries/Common/src/System/Net/Http/X509ResourceClient.cs
++++ b/src/libraries/Common/src/System/Net/Http/X509ResourceClient.cs
+@@ -28,19 +28,32 @@ internal static partial class X509ResourceClient
+ 
+         internal static byte[]? DownloadAsset(string uri, TimeSpan downloadTimeout)
+         {
+-            Task<byte[]?> task = DownloadAssetCore(uri, downloadTimeout, async: false);
++            Task<byte[]?> task = DownloadAssetCore(uri, downloadTimeout, async: false, CancellationToken.None);
+             Debug.Assert(task.IsCompletedSuccessfully);
+             return task.Result;
+         }
+ 
+         internal static Task<byte[]?> DownloadAssetAsync(string uri, TimeSpan downloadTimeout)
+         {
+-            return DownloadAssetCore(uri, downloadTimeout, async: true);
++            return DownloadAssetCore(uri, downloadTimeout, async: true, CancellationToken.None);
+         }
+ 
+-        private static async Task<byte[]?> DownloadAssetCore(string uri, TimeSpan downloadTimeout, bool async)
++        /// <summary>
++        /// Downloads an asset, giving up after <paramref name="downloadTimeout"/> or when
++        /// <paramref name="cancellationToken"/> is signalled. A timeout, like any other download
++        /// failure, yields null; the caller's cancellation throws <see cref="OperationCanceledException"/>.
++        /// </summary>
++        internal static Task<byte[]?> DownloadAssetAsync(string uri, TimeSpan downloadTimeout, CancellationToken cancellationToken)
+         {
+-            if (s_downloadBytes is null)
++            return DownloadAssetCore(uri, downloadTimeout, async: true, cancellationToken);
++        }
++
++        private static async Task<byte[]?> DownloadAssetCore(string uri, TimeSpan downloadTimeout, bool async, CancellationToken cancellationToken)
++        {
++            // A synchronous download would block a WASI guest's only thread on I/O that the
++            // host completes asynchronously, so a guest fetches only through the asynchronous
++            // entry and otherwise builds from the certificates it has, as with no client.
++            if (s_downloadBytes is null || (!async && OperatingSystem.IsWasi()))
+             {
+                 ReportNoClient();
+ 
+@@ -58,7 +71,18 @@ internal static partial class X509ResourceClient
+ 
+             ReportDownloadStart(totalMillis, uri);
+ 
+-            CancellationTokenSource? cts = totalMillis > int.MaxValue ? null : new CancellationTokenSource((int)totalMillis);
++            CancellationTokenSource? cts = null;
++
++            if (totalMillis <= int.MaxValue || cancellationToken.CanBeCanceled)
++            {
++                cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
++
++                if (totalMillis <= int.MaxValue)
++                {
++                    cts.CancelAfter((int)totalMillis);
++                }
++            }
++
+             byte[]? ret = null;
+ 
+             try
+@@ -67,7 +91,8 @@ internal static partial class X509ResourceClient
+                 await ((Task)task).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                 if (task.IsCompletedSuccessfully)
+                 {
+-                    return task.Result;
++                    ret = task.Result;
++                    return ret;
+                 }
+             }
+             catch { }
+@@ -78,6 +103,10 @@ internal static partial class X509ResourceClient
+                 ReportDownloadStop(ret?.Length ?? 0);
+             }
+ 
++            // The caller's own cancellation is theirs to observe; every other failure, the
++            // timeout included, is a download that did not happen.
++            cancellationToken.ThrowIfCancellationRequested();
++
+             return null;
+         }
+ 
+@@ -150,17 +179,15 @@ internal static partial class X509ResourceClient
+ 
+         private static Func<string, CancellationToken, bool, Task<byte[]?>>? CreateDownloadBytesFunc()
+         {
+-            // A chain's authority-information fetch would reach the network
+-            // through wasi:http, which a guest here cannot import; chains
+-            // build from the certificates supplied, as with no client.
+-            if (OperatingSystem.IsWasi()) return null;
+             try
+             {
+                 // Use reflection to access System.Net.Http:
+                 // Since System.Net.Http.dll explicitly depends on System.Security.Cryptography.X509Certificates.dll,
+                 // the latter can't in turn have an explicit dependency on the former.
+ 
+-                // Get the relevant types needed.
++                // Get the relevant types needed. Task<HttpResponseMessage>.Result stays on
++                // reflection: an UnsafeAccessor whose target is a generic instantiation crashes
++                // the ILC scanner's constraint check.
+                 Type? taskOfHttpResponseMessageType = Type.GetType(TaskOfHttpResponseMessageTypeName, throwOnError: false);
+ 
+                 PropertyInfo? taskResultProperty = taskOfHttpResponseMessageType?.GetProperty("Result");
+diff --git a/src/libraries/Common/src/System/Net/Security/CertificateValidation.Unix.cs b/src/libraries/Common/src/System/Net/Security/CertificateValidation.Unix.cs
+index da3cb38a8..d764daa8d 100644
+--- a/src/libraries/Common/src/System/Net/Security/CertificateValidation.Unix.cs
++++ b/src/libraries/Common/src/System/Net/Security/CertificateValidation.Unix.cs
+@@ -19,7 +19,16 @@ internal static SslPolicyErrors BuildChainAndVerifyProperties(X509Chain chain, X
+ 
+         internal static SslPolicyErrors BuildChainAndVerifyProperties(X509Chain chain, X509Certificate2 remoteCertificate, bool checkCertName, bool _ /*isServer*/, string? hostName)
+         {
+-            SslPolicyErrors errors = chain.Build(remoteCertificate) ?
++            return VerifyProperties(chain.Build(remoteCertificate), remoteCertificate, checkCertName, hostName);
++        }
++
++        /// <summary>
++        /// The policy errors for a chain that has been built (with <paramref name="chainBuilt"/>
++        /// its verdict) plus the host name check, for a caller that built the chain itself.
++        /// </summary>
++        internal static SslPolicyErrors VerifyProperties(bool chainBuilt, X509Certificate2 remoteCertificate, bool checkCertName, string? hostName)
++        {
++            SslPolicyErrors errors = chainBuilt ?
+                 SslPolicyErrors.None :
+                 SslPolicyErrors.RemoteCertificateChainErrors;
+ 
+diff --git a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Android.cs b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Android.cs
+index 8521a97f6..e6c9c6eee 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Android.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Android.cs
+@@ -3,13 +3,30 @@
+ 
+ using System.Net.Security;
+ using System.Security.Cryptography.X509Certificates;
++using System.Threading;
++using System.Threading.Tasks;
+ using Microsoft.Win32.SafeHandles;
+ 
+ namespace System.Net
+ {
+     internal static partial class CertificateValidationPal
+     {
+-        internal static SslPolicyErrors VerifyCertificateProperties(
++        // The Android chain engine retrieves for itself, so the verification completes synchronously.
++        internal static ValueTask<SslPolicyErrors> VerifyCertificatePropertiesAsync<TIOAdapter>(
++            SafeDeleteContext securityContext,
++            X509Chain chain,
++            X509Certificate2? remoteCertificate,
++            bool checkCertName,
++            bool isServer,
++            string? hostName,
++            CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
++        {
++            return new ValueTask<SslPolicyErrors>(
++                VerifyCertificateProperties(securityContext, chain, remoteCertificate, checkCertName, isServer, hostName));
++        }
++
++        private static SslPolicyErrors VerifyCertificateProperties(
+             SafeDeleteContext securityContext,
+             X509Chain chain,
+             X509Certificate2? remoteCertificate,
+diff --git a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.OSX.cs b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.OSX.cs
+index 213ee2f42..26520da76 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.OSX.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.OSX.cs
+@@ -4,6 +4,8 @@
+ using System.Diagnostics;
+ using System.Net.Security;
+ using System.Security.Cryptography.X509Certificates;
++using System.Threading;
++using System.Threading.Tasks;
+ using Microsoft.Win32.SafeHandles;
+ using SafeNwHandle = Interop.SafeNwHandle;
+ 
+@@ -11,15 +13,19 @@ namespace System.Net
+ {
+     internal static partial class CertificateValidationPal
+     {
+-        internal static SslPolicyErrors VerifyCertificateProperties(
++        // The Apple chain engine retrieves for itself, so the verification completes synchronously.
++        internal static ValueTask<SslPolicyErrors> VerifyCertificatePropertiesAsync<TIOAdapter>(
+             SafeDeleteContext? _ /*securityContext*/,
+             X509Chain chain,
+             X509Certificate2 remoteCertificate,
+             bool checkCertName,
+             bool isServer,
+-            string? hostName)
++            string? hostName,
++            CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
+         {
+-            return CertificateValidation.BuildChainAndVerifyProperties(chain, remoteCertificate, checkCertName, isServer, hostName, Span<byte>.Empty);
++            return new ValueTask<SslPolicyErrors>(
++                CertificateValidation.BuildChainAndVerifyProperties(chain, remoteCertificate, checkCertName, isServer, hostName, Span<byte>.Empty));
+         }
+ 
+         private static X509Certificate2? GetRemoteCertificate(
+diff --git a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Unix.cs b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Unix.cs
+index 6fda4835d..87ca812e9 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Unix.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Unix.cs
+@@ -3,24 +3,56 @@
+ 
+ using System.Diagnostics;
+ using System.Net.Security;
++using System.Runtime.CompilerServices;
+ using System.Security.Cryptography.X509Certificates;
++using System.Threading;
++using System.Threading.Tasks;
+ using Microsoft.Win32.SafeHandles;
+ 
+ namespace System.Net
+ {
+     internal static partial class CertificateValidationPal
+     {
+-        internal static SslPolicyErrors VerifyCertificateProperties(
++        /// <summary>
++        /// Builds the chain and checks the name. On the asynchronous adapter the chain's
++        /// retrievals are awaited; on the synchronous adapter the build is the synchronous one,
++        /// which on WASI retrieves nothing rather than blocking the guest's only thread.
++        /// </summary>
++        internal static ValueTask<SslPolicyErrors> VerifyCertificatePropertiesAsync<TIOAdapter>(
+             SafeDeleteContext? _ /*securityContext*/,
+             X509Chain chain,
+             X509Certificate2 remoteCertificate,
+             bool checkCertName,
+             bool isServer,
+-            string? hostName)
++            string? hostName,
++            CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
+         {
+-            return CertificateValidation.BuildChainAndVerifyProperties(chain, remoteCertificate, checkCertName, isServer, hostName);
++            if (typeof(TIOAdapter) == typeof(SyncReadWriteAdapter))
++            {
++                return new ValueTask<SslPolicyErrors>(
++                    CertificateValidation.BuildChainAndVerifyProperties(chain, remoteCertificate, checkCertName, isServer, hostName));
++            }
++
++            return BuildChainAndVerifyPropertiesAsync(chain, remoteCertificate, checkCertName, hostName, cancellationToken);
++        }
++
++        private static async ValueTask<SslPolicyErrors> BuildChainAndVerifyPropertiesAsync(
++            X509Chain chain,
++            X509Certificate2 remoteCertificate,
++            bool checkCertName,
++            string? hostName,
++            CancellationToken cancellationToken)
++        {
++            bool chainBuilt = await BuildChainAsync(chain, remoteCertificate, true, cancellationToken).ConfigureAwait(false);
++            return CertificateValidation.VerifyProperties(chainBuilt, remoteCertificate, checkCertName, hostName);
+         }
+ 
++        // X509Chain.BuildAsync is internal to System.Security.Cryptography, whose reference
++        // assembly this library compiles against; the accessor binds to it at load.
++        [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "BuildAsync")]
++        private static extern ValueTask<bool> BuildChainAsync(X509Chain chain, X509Certificate2 certificate, bool throwOnException, CancellationToken cancellationToken);
++
+         //
+         // Extracts a remote certificate upon request.
+         //
+diff --git a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Windows.cs b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Windows.cs
+index 53437a623..8d43377f5 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Windows.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/CertificateValidationPal.Windows.cs
+@@ -7,6 +7,8 @@
+ using System.Security.Cryptography;
+ using System.Security.Cryptography.X509Certificates;
+ using System.Security.Principal;
++using System.Threading;
++using System.Threading.Tasks;
+ using Microsoft.Win32.SafeHandles;
+ using static Interop.SspiCli;
+ 
+@@ -14,15 +16,19 @@ namespace System.Net
+ {
+     internal static partial class CertificateValidationPal
+     {
+-        internal static SslPolicyErrors VerifyCertificateProperties(
++        // The Windows chain engine retrieves for itself, so the verification completes synchronously.
++        internal static ValueTask<SslPolicyErrors> VerifyCertificatePropertiesAsync<TIOAdapter>(
+             SafeDeleteContext? _ /*securityContext*/,
+             X509Chain chain,
+             X509Certificate2 remoteCertificate,
+             bool checkCertName,
+             bool isServer,
+-            string? hostName)
++            string? hostName,
++            CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
+         {
+-            return CertificateValidation.BuildChainAndVerifyProperties(chain, remoteCertificate, checkCertName, isServer, hostName);
++            return new ValueTask<SslPolicyErrors>(
++                CertificateValidation.BuildChainAndVerifyProperties(chain, remoteCertificate, checkCertName, isServer, hostName));
+         }
+ 
+         //
+diff --git a/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Android.cs b/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Android.cs
+index 317375cec..d4b448587 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Android.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Android.cs
+@@ -7,6 +7,7 @@
+ using System.Runtime.InteropServices;
+ using System.Security.Cryptography.X509Certificates;
+ using System.Threading;
++using System.Threading.Tasks;
+ 
+ namespace System.Net.Security
+ {
+@@ -14,31 +15,41 @@ public partial class SslStream
+     {
+         private JavaProxy.RemoteCertificateValidationResult VerifyRemoteCertificate()
+         {
+-            ProtocolToken alertToken = default;
+-            var isValid = VerifyRemoteCertificate(
++            // The Java TrustManager calls back synchronously; the Android chain engine never
++            // awaits, so the verification completes on the spot.
++            ValueTask<CertificateVerificationResult> verification = VerifyRemoteCertificateAsync<SyncReadWriteAdapter>(
+                 _sslAuthenticationOptions.CertValidationDelegate,
+                 _sslAuthenticationOptions.CertificateContext?.Trust,
+-                ref alertToken,
+-                out SslPolicyErrors sslPolicyErrors,
+-                out X509ChainStatusFlags chainStatus);
++                CancellationToken.None);
++
++            Debug.Assert(verification.IsCompleted);
++            CertificateVerificationResult result = verification.GetAwaiter().GetResult();
+ 
+             return new()
+             {
+-                IsValid = isValid,
+-                SslPolicyErrors = sslPolicyErrors,
+-                ChainStatus = chainStatus,
+-                AlertToken = alertToken,
++                IsValid = result.Success,
++                SslPolicyErrors = result.SslPolicyErrors,
++                ChainStatus = result.ChainStatus,
++                AlertToken = result.AlertToken,
+             };
+         }
+ 
+-        private bool TryGetRemoteCertificateValidationResult(out SslPolicyErrors sslPolicyErrors, out X509ChainStatusFlags chainStatus, ref ProtocolToken alertToken, out bool isValid)
++        private bool TryGetRemoteCertificateValidationResult(out CertificateVerificationResult result)
+         {
+             JavaProxy.RemoteCertificateValidationResult? validationResult = _securityContext?.SslStreamProxy.ValidationResult;
+-            sslPolicyErrors = validationResult?.SslPolicyErrors ?? default;
+-            chainStatus = validationResult?.ChainStatus ?? default;
+-            isValid = validationResult?.IsValid ?? default;
+-            alertToken = validationResult?.AlertToken ?? default;
+-            return validationResult is not null;
++
++            if (validationResult is null)
++            {
++                result = default;
++                return false;
++            }
++
++            result = new CertificateVerificationResult(
++                validationResult.IsValid,
++                validationResult.SslPolicyErrors,
++                validationResult.ChainStatus,
++                validationResult.AlertToken ?? default);
++            return true;
+         }
+ 
+         internal sealed class JavaProxy : IDisposable
+diff --git a/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.IO.cs b/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.IO.cs
+index cda4db5e7..62aaafa3f 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.IO.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.IO.cs
+@@ -259,7 +259,7 @@ private async Task RenegotiateAsync<TIOAdapter>(CancellationToken cancellationTo
+                 }
+                 while (token.Status.ErrorCode == SecurityStatusPalErrorCode.ContinueNeeded);
+ 
+-                CompleteHandshake(_sslAuthenticationOptions);
++                await CompleteHandshakeAsync<TIOAdapter>(_sslAuthenticationOptions, cancellationToken).ConfigureAwait(false);
+             }
+             finally
+             {
+@@ -315,7 +315,7 @@ private async Task ForceAuthenticationAsync<TIOAdapter>(bool receiveFirst, byte[
+                         throw new AuthenticationException(SR.net_auth_SSPI, ex);
+                     }
+ 
+-                    CompleteHandshake(_sslAuthenticationOptions);
++                    await CompleteHandshakeAsync<TIOAdapter>(_sslAuthenticationOptions, cancellationToken).ConfigureAwait(false);
+                     return;
+                 }
+ #endif // TARGET_APPLE
+@@ -401,7 +401,7 @@ private async Task ForceAuthenticationAsync<TIOAdapter>(bool receiveFirst, byte[
+                     }
+                 }
+ 
+-                CompleteHandshake(_sslAuthenticationOptions);
++                await CompleteHandshakeAsync<TIOAdapter>(_sslAuthenticationOptions, cancellationToken).ConfigureAwait(false);
+             }
+             finally
+             {
+@@ -573,7 +573,8 @@ private void SendAuthResetSignal(ReadOnlySpan<byte> alert, ExceptionDispatchInfo
+         //
+         // - Returns false if failed to verify the Remote Cert
+         //
+-        private bool CompleteHandshake(ref ProtocolToken alertToken, out SslPolicyErrors sslPolicyErrors, out X509ChainStatusFlags chainStatus)
++        private async ValueTask<CertificateVerificationResult> CompleteHandshakeAsync<TIOAdapter>(CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
+         {
+             ProcessHandshakeSuccess();
+ 
+@@ -581,9 +582,7 @@ private bool CompleteHandshake(ref ProtocolToken alertToken, out SslPolicyErrors
+             {
+                 if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, $"Ignoring unsolicited renegotiated certificate.");
+                 // ignore certificates received outside of handshake or requested renegotiation.
+-                sslPolicyErrors = SslPolicyErrors.None;
+-                chainStatus = X509ChainStatusFlags.NoError;
+-                return true;
++                return new CertificateVerificationResult(true, SslPolicyErrors.None, X509ChainStatusFlags.NoError, default);
+             }
+ 
+ #if TARGET_ANDROID
+@@ -594,42 +593,43 @@ private bool CompleteHandshake(ref ProtocolToken alertToken, out SslPolicyErrors
+             // The Java TrustManager callback is called only when the peer has a certificate. It's possible that
+             // the peer didn't provide any certificate (for example when the peer is the client) and the validation
+             // result hasn't been set. In that case we still need to run the verification at this point.
+-            if (TryGetRemoteCertificateValidationResult(out sslPolicyErrors, out chainStatus, ref alertToken, out bool isValid))
++            if (TryGetRemoteCertificateValidationResult(out CertificateVerificationResult javaResult))
+             {
+-                _handshakeCompleted = isValid;
+-                return isValid;
++                _handshakeCompleted = javaResult.Success;
++                return javaResult;
+             }
+ #endif
+ 
+-            if (!VerifyRemoteCertificate(_sslAuthenticationOptions.CertValidationDelegate, _sslAuthenticationOptions.CertificateContext?.Trust, ref alertToken, out sslPolicyErrors, out chainStatus))
+-            {
+-                _handshakeCompleted = false;
+-                return false;
+-            }
++            CertificateVerificationResult result = await VerifyRemoteCertificateAsync<TIOAdapter>(
++                _sslAuthenticationOptions.CertValidationDelegate,
++                _sslAuthenticationOptions.CertificateContext?.Trust,
++                cancellationToken).ConfigureAwait(false);
+ 
+-            _handshakeCompleted = true;
+-            return true;
++            _handshakeCompleted = result.Success;
++            return result;
+         }
+ 
+-        private void CompleteHandshake(SslAuthenticationOptions sslAuthenticationOptions)
++        private async ValueTask CompleteHandshakeAsync<TIOAdapter>(SslAuthenticationOptions sslAuthenticationOptions, CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
+         {
+-            ProtocolToken alertToken = default;
+-            if (!CompleteHandshake(ref alertToken, out SslPolicyErrors sslPolicyErrors, out X509ChainStatusFlags chainStatus))
++            CertificateVerificationResult result = await CompleteHandshakeAsync<TIOAdapter>(cancellationToken).ConfigureAwait(false);
++
++            if (!result.Success)
+             {
+                 if (sslAuthenticationOptions!.CertValidationDelegate != null)
+                 {
+                     // there may be some chain errors but the decision was made by custom callback. Details should be tracing if enabled.
+-                    SendAuthResetSignal(new ReadOnlySpan<byte>(alertToken.Payload), ExceptionDispatchInfo.Capture(new AuthenticationException(SR.net_ssl_io_cert_custom_validation, null)));
++                    SendAuthResetSignal(new ReadOnlySpan<byte>(result.AlertToken.Payload), ExceptionDispatchInfo.Capture(new AuthenticationException(SR.net_ssl_io_cert_custom_validation, null)));
+                 }
+-                else if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors && chainStatus != X509ChainStatusFlags.NoError)
++                else if (result.SslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors && result.ChainStatus != X509ChainStatusFlags.NoError)
+                 {
+                     // We failed only because of chain and we have some insight.
+-                    SendAuthResetSignal(new ReadOnlySpan<byte>(alertToken.Payload), ExceptionDispatchInfo.Capture(new AuthenticationException(SR.Format(SR.net_ssl_io_cert_chain_validation, chainStatus), null)));
++                    SendAuthResetSignal(new ReadOnlySpan<byte>(result.AlertToken.Payload), ExceptionDispatchInfo.Capture(new AuthenticationException(SR.Format(SR.net_ssl_io_cert_chain_validation, result.ChainStatus), null)));
+                 }
+                 else
+                 {
+                     // Simple add sslPolicyErrors as crude info.
+-                    SendAuthResetSignal(new ReadOnlySpan<byte>(alertToken.Payload), ExceptionDispatchInfo.Capture(new AuthenticationException(SR.Format(SR.net_ssl_io_cert_validation, sslPolicyErrors), null)));
++                    SendAuthResetSignal(new ReadOnlySpan<byte>(result.AlertToken.Payload), ExceptionDispatchInfo.Capture(new AuthenticationException(SR.Format(SR.net_ssl_io_cert_validation, result.SslPolicyErrors), null)));
+                 }
+             }
+         }
+diff --git a/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Protocol.cs b/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Protocol.cs
+index 0b811b6a8..5f275b24d 100644
+--- a/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Protocol.cs
++++ b/src/libraries/System.Net.Security/src/System/Net/Security/SslStream.Protocol.cs
+@@ -11,6 +11,8 @@
+ using System.Security.Authentication.ExtendedProtection;
+ using System.Security.Cryptography;
+ using System.Security.Cryptography.X509Certificates;
++using System.Threading;
++using System.Threading.Tasks;
+ 
+ namespace System.Net.Security
+ {
+@@ -1037,11 +1039,17 @@ internal SecurityStatusPal Decrypt(Span<byte> buffer, out int outputOffset, out
+             checkCertName, if true checks the CN field of the certificate
+         --*/
+ 
+-        //This method validates a remote certificate.
+-        internal bool VerifyRemoteCertificate(RemoteCertificateValidationCallback? remoteCertValidationCallback, SslCertificateTrust? trust, ref ProtocolToken alertToken, out SslPolicyErrors sslPolicyErrors, out X509ChainStatusFlags chainStatus)
++        // This method validates a remote certificate. The chain build is the one awaited step,
++        // and only on the asynchronous adapter path; the synchronous adapter builds synchronously.
++        internal async ValueTask<CertificateVerificationResult> VerifyRemoteCertificateAsync<TIOAdapter>(
++            RemoteCertificateValidationCallback? remoteCertValidationCallback,
++            SslCertificateTrust? trust,
++            CancellationToken cancellationToken)
++            where TIOAdapter : IReadWriteAdapter
+         {
+-            sslPolicyErrors = SslPolicyErrors.None;
+-            chainStatus = X509ChainStatusFlags.NoError;
++            SslPolicyErrors sslPolicyErrors = SslPolicyErrors.None;
++            X509ChainStatusFlags chainStatus = X509ChainStatusFlags.NoError;
++            ProtocolToken alertToken = default;
+ 
+             // We don't catch exceptions in this method, so it's safe for "accepted" be initialized with true.
+             bool success = false;
+@@ -1064,7 +1072,7 @@ internal bool VerifyRemoteCertificate(RemoteCertificateValidationCallback? remot
+                     // This is renegotiation or TLS 1.3 and the certificate did not change.
+                     // There is no reason to process callback again as we already established trust.
+                     certificate.Dispose();
+-                    return true;
++                    return new CertificateVerificationResult(true, sslPolicyErrors, chainStatus, alertToken);
+                 }
+ 
+                 // don't assign to _remoteCertificate yet, this prevents weird exceptions if SslStream is disposed in parallel with X509Chain building
+@@ -1108,13 +1116,14 @@ internal bool VerifyRemoteCertificate(RemoteCertificateValidationCallback? remot
+                         chain.ChainPolicy.ApplicationPolicy.Add(_sslAuthenticationOptions.IsServer ? s_clientAuthOid : s_serverAuthOid);
+                     }
+ 
+-                    sslPolicyErrors |= CertificateValidationPal.VerifyCertificateProperties(
++                    sslPolicyErrors |= await CertificateValidationPal.VerifyCertificatePropertiesAsync<TIOAdapter>(
+                         _securityContext!,
+                         chain,
+                         certificate,
+                         _sslAuthenticationOptions.CheckCertName,
+                         _sslAuthenticationOptions.IsServer,
+-                        TargetHostNameHelper.NormalizeHostName(_sslAuthenticationOptions.TargetHost));
++                        TargetHostNameHelper.NormalizeHostName(_sslAuthenticationOptions.TargetHost),
++                        cancellationToken).ConfigureAwait(false);
+                 }
+ 
+                 _remoteCertificate = certificate;
+@@ -1186,7 +1195,7 @@ internal bool VerifyRemoteCertificate(RemoteCertificateValidationCallback? remot
+                 }
+             }
+ 
+-            return success;
++            return new CertificateVerificationResult(success, sslPolicyErrors, chainStatus, alertToken);
+         }
+ 
+         private void CreateFatalHandshakeAlertToken(SslPolicyErrors sslPolicyErrors, X509Chain chain, ref ProtocolToken alertToken)
+@@ -1352,6 +1361,27 @@ private void LogCertificateValidation(RemoteCertificateValidationCallback? remot
+         }
+     }
+ 
++    /// <summary>
++    /// The outcome of verifying the remote certificate: whether it was accepted, why not, and
++    /// the alert to send when it was not. Returned rather than passed by reference because the
++    /// verification awaits its chain build.
++    /// </summary>
++    internal readonly struct CertificateVerificationResult
++    {
++        internal bool Success { get; }
++        internal SslPolicyErrors SslPolicyErrors { get; }
++        internal X509ChainStatusFlags ChainStatus { get; }
++        internal ProtocolToken AlertToken { get; }
++
++        internal CertificateVerificationResult(bool success, SslPolicyErrors sslPolicyErrors, X509ChainStatusFlags chainStatus, ProtocolToken alertToken)
++        {
++            Success = success;
++            SslPolicyErrors = sslPolicyErrors;
++            ChainStatus = chainStatus;
++            AlertToken = alertToken;
++        }
++    }
++
+     // ProtocolToken - used to process and handle the return codes from the SSPI wrapper
+     internal struct ProtocolToken
+     {
+diff --git a/src/libraries/System.Security.Cryptography/src/ILLink/ILLink.Descriptors.LibraryBuild.xml b/src/libraries/System.Security.Cryptography/src/ILLink/ILLink.Descriptors.LibraryBuild.xml
+index 6a151eaf8..f2f4f5521 100644
+--- a/src/libraries/System.Security.Cryptography/src/ILLink/ILLink.Descriptors.LibraryBuild.xml
++++ b/src/libraries/System.Security.Cryptography/src/ILLink/ILLink.Descriptors.LibraryBuild.xml
+@@ -8,5 +8,9 @@
+       <method name="EnableMemoryTracking" />
+       <method name="DisableMemoryTracking" />
+     </type>
++    <type fullname="System.Security.Cryptography.X509Certificates.X509Chain">
++      <!-- Reached only through System.Net.Security's UnsafeAccessor -->
++      <method name="BuildAsync" />
++    </type>
+   </assembly>
+ </linker>
+diff --git a/src/libraries/System.Security.Cryptography/src/System.Security.Cryptography.csproj b/src/libraries/System.Security.Cryptography/src/System.Security.Cryptography.csproj
+index 825a1eca2..c93fdbf58 100644
+--- a/src/libraries/System.Security.Cryptography/src/System.Security.Cryptography.csproj
++++ b/src/libraries/System.Security.Cryptography/src/System.Security.Cryptography.csproj
+@@ -1140,9 +1140,12 @@
+     <Compile Include="System\Security\Cryptography\X509Certificates\ManagedCertificateFinder.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslCachedDirectoryStoreProvider.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslCachedSystemStoreProvider.cs" />
++    <Compile Include="System\Security\Cryptography\X509Certificates\BoundedMruCache.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslCertificateAssetDownloader.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslCertificateFinder.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslCrlCache.cs" />
++    <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslIssuerCache.cs" />
++    <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslOcspCache.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslDirectoryBasedStoreProvider.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslExportProvider.cs" />
+     <Compile Include="System\Security\Cryptography\X509Certificates\OpenSslPkcsFormatReader.cs" />
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/BoundedMruCache.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/BoundedMruCache.cs
+new file mode 100644
+index 000000000..22efdb283
+--- /dev/null
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/BoundedMruCache.cs
+@@ -0,0 +1,170 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++
++using System.Collections.Generic;
++using System.Diagnostics;
++using System.Diagnostics.CodeAnalysis;
++using System.Threading;
++
++namespace System.Security.Cryptography.X509Certificates
++{
++    /// <summary>
++    /// A most-recently-used cache bounded by entry count and by the total size its entries
++    /// report, for material that would otherwise be persisted to disk. Eviction runs outside
++    /// the lock, so an evicted value may be released while another reader holds a value it
++    /// looked up earlier; values must therefore be safe to use after eviction (immutable data)
++    /// or be re-referenced by the reader before the lock is released.
++    /// </summary>
++    internal sealed class BoundedMruCache<TValue> where TValue : class
++    {
++        private readonly int _maxItems;
++        private readonly long _maxTotalSize;
++        private readonly Func<TValue, long>? _sizeOf;
++        private readonly Action<TValue>? _onEvict;
++
++        private readonly Lock _lock = new();
++        private readonly Dictionary<string, LinkedListNode<Entry>> _index = new(StringComparer.Ordinal);
++        private readonly LinkedList<Entry> _mostRecentFirst = new();
++        private long _totalSize;
++
++        internal BoundedMruCache(int maxItems, long maxTotalSize, Func<TValue, long>? sizeOf, Action<TValue>? onEvict)
++        {
++            Debug.Assert(maxItems > 0);
++            Debug.Assert(maxTotalSize > 0);
++            Debug.Assert(sizeOf is not null || maxTotalSize == long.MaxValue);
++
++            _maxItems = maxItems;
++            _maxTotalSize = maxTotalSize;
++            _sizeOf = sizeOf;
++            _onEvict = onEvict;
++        }
++
++        internal bool TryGetValue(string key, [NotNullWhen(true)] out TValue? value)
++        {
++            lock (_lock)
++            {
++                if (_index.TryGetValue(key, out LinkedListNode<Entry>? node))
++                {
++                    _mostRecentFirst.Remove(node);
++                    _mostRecentFirst.AddFirst(node);
++                    value = node.Value.Value;
++                    return true;
++                }
++            }
++
++            value = null;
++            return false;
++        }
++
++        /// <summary>
++        /// Adds or replaces the value under <paramref name="key"/>; a value larger than the whole
++        /// budget is not cached. Anything evicted to stay within bounds is released after the lock.
++        /// </summary>
++        internal void AddOrUpdate(string key, TValue value)
++        {
++            long size = _sizeOf?.Invoke(value) ?? 0;
++
++            if (size > _maxTotalSize)
++            {
++                _onEvict?.Invoke(value);
++                return;
++            }
++
++            List<TValue>? evicted = null;
++
++            lock (_lock)
++            {
++                if (_index.TryGetValue(key, out LinkedListNode<Entry>? existing))
++                {
++                    Unlink(existing, ref evicted);
++                }
++
++                LinkedListNode<Entry> node = new(new Entry(key, value, size));
++                _mostRecentFirst.AddFirst(node);
++                _index[key] = node;
++                _totalSize += size;
++
++                while (_index.Count > _maxItems || _totalSize > _maxTotalSize)
++                {
++                    Debug.Assert(_mostRecentFirst.Last is not null && _mostRecentFirst.Last != node);
++                    Unlink(_mostRecentFirst.Last, ref evicted);
++                }
++            }
++
++            Release(evicted);
++        }
++
++        internal void Remove(string key)
++        {
++            List<TValue>? evicted = null;
++
++            lock (_lock)
++            {
++                if (_index.TryGetValue(key, out LinkedListNode<Entry>? node))
++                {
++                    Unlink(node, ref evicted);
++                }
++            }
++
++            Release(evicted);
++        }
++
++        /// <summary>
++        /// Runs <paramref name="action"/> over every cached value, most recent first, under the
++        /// cache's lock so no value is released while it is being visited.
++        /// </summary>
++        internal void ForEachValue<TState>(TState state, Action<TState, TValue> action)
++        {
++            lock (_lock)
++            {
++                for (LinkedListNode<Entry>? node = _mostRecentFirst.First; node is not null; node = node.Next)
++                {
++                    action(state, node.Value.Value);
++                }
++            }
++        }
++
++        private void Unlink(LinkedListNode<Entry> node, ref List<TValue>? evicted)
++        {
++            Debug.Assert(_lock.IsHeldByCurrentThread);
++
++            _mostRecentFirst.Remove(node);
++            _index.Remove(node.Value.Key);
++            _totalSize -= node.Value.Size;
++
++            if (_onEvict is not null)
++            {
++                (evicted ??= new List<TValue>()).Add(node.Value.Value);
++            }
++        }
++
++        private void Release(List<TValue>? evicted)
++        {
++            if (evicted is null)
++            {
++                return;
++            }
++
++            Debug.Assert(_onEvict is not null);
++
++            foreach (TValue value in evicted)
++            {
++                _onEvict(value);
++            }
++        }
++
++        private readonly struct Entry
++        {
++            internal string Key { get; }
++            internal TValue Value { get; }
++            internal long Size { get; }
++
++            internal Entry(string key, TValue value, long size)
++            {
++                Key = key;
++                Value = value;
++                Size = size;
++            }
++        }
++    }
++}
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Android.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Android.cs
+index 4e75aa664..c1ccd724a 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Android.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Android.cs
+@@ -6,6 +6,8 @@
+ using System.Diagnostics;
+ using System.Runtime.InteropServices;
+ using System.Security.Cryptography;
++using System.Threading;
++using System.Threading.Tasks;
+ using Internal.Cryptography;
+ using Microsoft.Win32.SafeHandles;
+ 
+@@ -24,6 +26,36 @@ internal sealed partial class ChainPal
+             return true;
+         }
+ 
++        internal static partial ValueTask<IChainPal?> BuildChainAsync(
++            bool useMachineContext,
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            CancellationToken cancellationToken)
++        {
++            return new ValueTask<IChainPal?>(BuildChain(
++                useMachineContext,
++                cert,
++                extraStore,
++                applicationPolicy,
++                certificatePolicy,
++                revocationMode,
++                revocationFlag,
++                customTrustStore,
++                trustMode,
++                verificationTime,
++                timeout,
++                disableAia));
++        }
++
+         internal static partial IChainPal? BuildChain(
+             bool useMachineContext,
+             ICertificatePal cert,
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Apple.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Apple.cs
+index da6a16cf5..97aea32ee 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Apple.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Apple.cs
+@@ -4,6 +4,8 @@
+ using System.Collections.Generic;
+ using System.Diagnostics;
+ using System.Runtime.InteropServices;
++using System.Threading;
++using System.Threading.Tasks;
+ using Internal.Cryptography;
+ using Microsoft.Win32.SafeHandles;
+ 
+@@ -583,6 +585,36 @@ internal sealed partial class ChainPal
+             return true;
+         }
+ 
++        internal static partial ValueTask<IChainPal?> BuildChainAsync(
++            bool useMachineContext,
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            CancellationToken cancellationToken)
++        {
++            return new ValueTask<IChainPal?>(BuildChain(
++                useMachineContext,
++                cert,
++                extraStore,
++                applicationPolicy,
++                certificatePolicy,
++                revocationMode,
++                revocationFlag,
++                customTrustStore,
++                trustMode,
++                verificationTime,
++                timeout,
++                disableAia));
++        }
++
+         internal static partial IChainPal? BuildChain(
+             bool useMachineContext,
+             ICertificatePal cert,
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.NotSupported.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.NotSupported.cs
+index b687b3d4f..9652ef160 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.NotSupported.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.NotSupported.cs
+@@ -1,6 +1,9 @@
+ // Licensed to the .NET Foundation under one or more agreements.
+ // The .NET Foundation licenses this file to you under the MIT license.
+ 
++using System.Threading;
++using System.Threading.Tasks;
++
+ namespace System.Security.Cryptography.X509Certificates
+ {
+     internal static partial class ChainPal
+@@ -32,6 +35,24 @@ internal static partial class ChainPal
+         {
+             throw new PlatformNotSupportedException(SR.SystemSecurityCryptographyX509Certificates_PlatformNotSupported);
+         }
++
++        internal static partial ValueTask<IChainPal?> BuildChainAsync(
++            bool useMachineContext,
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            CancellationToken cancellationToken)
++        {
++            throw new PlatformNotSupportedException(SR.SystemSecurityCryptographyX509Certificates_PlatformNotSupported);
++        }
+ #pragma warning restore IDE0060
+     }
+ }
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.OpenSsl.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.OpenSsl.cs
+index 2c034f6d1..86686ae99 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.OpenSsl.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.OpenSsl.cs
+@@ -3,6 +3,8 @@
+ 
+ using System.Collections.Generic;
+ using System.Diagnostics;
++using System.Threading;
++using System.Threading.Tasks;
+ 
+ namespace System.Security.Cryptography.X509Certificates
+ {
+@@ -40,6 +42,73 @@ public static void FlushStores()
+             DateTime verificationTime,
+             TimeSpan timeout,
+             bool disableAia)
++        {
++            ValueTask<IChainPal?> build = BuildChainCoreAsync(
++                cert,
++                extraStore,
++                applicationPolicy,
++                certificatePolicy,
++                revocationMode,
++                revocationFlag,
++                customTrustStore,
++                trustMode,
++                verificationTime,
++                timeout,
++                disableAia,
++                async: false,
++                CancellationToken.None);
++
++            Debug.Assert(build.IsCompleted, "A synchronous chain build must not yield.");
++            return build.GetAwaiter().GetResult();
++        }
++
++        internal static partial ValueTask<IChainPal?> BuildChainAsync(
++            bool useMachineContext,
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            CancellationToken cancellationToken)
++        {
++            return BuildChainCoreAsync(
++                cert,
++                extraStore,
++                applicationPolicy,
++                certificatePolicy,
++                revocationMode,
++                revocationFlag,
++                customTrustStore,
++                trustMode,
++                verificationTime,
++                timeout,
++                disableAia,
++                async: true,
++                cancellationToken);
++        }
++
++        // One sequence serves both entries: with async false every retrieval completes
++        // synchronously (on WASI, without a network), so the ValueTask is already complete.
++        private static async ValueTask<IChainPal?> BuildChainCoreAsync(
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            bool async,
++            CancellationToken cancellationToken)
+         {
+             if (OpenSslX509ChainEventSource.Log.IsEnabled())
+             {
+@@ -48,8 +117,7 @@ public static void FlushStores()
+ 
+             try
+             {
+-                return BuildChainCore(
+-                    useMachineContext,
++                return await BuildChainCore(
+                     cert,
+                     extraStore,
+                     applicationPolicy,
+@@ -60,7 +128,9 @@ public static void FlushStores()
+                     trustMode,
+                     verificationTime,
+                     timeout,
+-                    disableAia);
++                    disableAia,
++                    async,
++                    cancellationToken).ConfigureAwait(false);
+             }
+             finally
+             {
+@@ -71,8 +141,7 @@ public static void FlushStores()
+             }
+         }
+ 
+-        private static OpenSslX509ChainProcessor? BuildChainCore(
+-            bool useMachineContext,
++        private static async ValueTask<OpenSslX509ChainProcessor?> BuildChainCore(
+             ICertificatePal cert,
+             X509Certificate2Collection? extraStore,
+             OidCollection? applicationPolicy,
+@@ -83,7 +152,9 @@ public static void FlushStores()
+             X509ChainTrustMode trustMode,
+             DateTime verificationTime,
+             TimeSpan timeout,
+-            bool disableAia)
++            bool disableAia,
++            bool async,
++            CancellationToken cancellationToken)
+         {
+             if (timeout == TimeSpan.Zero)
+             {
+@@ -121,73 +192,84 @@ public static void FlushStores()
+                 verificationTime,
+                 downloadTimeout);
+ 
+-            Interop.Crypto.X509VerifyStatusCode status = chainPal.FindFirstChain(extraStore);
+-
+-            if (OpenSslX509ChainEventSource.Log.IsEnabled())
++            try
+             {
+-                OpenSslX509ChainEventSource.Log.FindFirstChainFinished(status);
+-            }
++                Interop.Crypto.X509VerifyStatusCode status = chainPal.FindFirstChain(extraStore);
+ 
+-            if (!OpenSslX509ChainProcessor.IsCompleteChain(status))
+-            {
+-                if (disableAia)
++                if (OpenSslX509ChainEventSource.Log.IsEnabled())
+                 {
+-                    if (OpenSslX509ChainEventSource.Log.IsEnabled())
+-                    {
+-                        OpenSslX509ChainEventSource.Log.AiaDisabled();
+-                    }
++                    OpenSslX509ChainEventSource.Log.FindFirstChainFinished(status);
+                 }
+-                else
+-                {
+-                    List<X509Certificate2>? tmp = null;
+-                    status = chainPal.FindChainViaAia(ref tmp);
+ 
+-                    if (OpenSslX509ChainEventSource.Log.IsEnabled())
++                if (!OpenSslX509ChainProcessor.IsCompleteChain(status))
++                {
++                    if (disableAia)
+                     {
+-                        OpenSslX509ChainEventSource.Log.FindChainViaAiaFinished(status, tmp?.Count ?? 0);
++                        if (OpenSslX509ChainEventSource.Log.IsEnabled())
++                        {
++                            OpenSslX509ChainEventSource.Log.AiaDisabled();
++                        }
+                     }
+-
+-                    if (tmp != null)
++                    else
+                     {
+-                        if (status == Interop.Crypto.X509VerifyStatusCode.X509_V_OK)
++                        OpenSslX509ChainProcessor.AiaResult aia =
++                            await chainPal.FindChainViaAiaAsync(async, cancellationToken).ConfigureAwait(false);
++
++                        status = aia.Status;
++
++                        if (OpenSslX509ChainEventSource.Log.IsEnabled())
+                         {
+-                            SaveIntermediateCertificates(tmp);
++                            OpenSslX509ChainEventSource.Log.FindChainViaAiaFinished(status, aia.Downloaded?.Count ?? 0);
+                         }
+ 
+-                        foreach (X509Certificate2 downloaded in tmp)
++                        if (aia.Downloaded != null)
+                         {
+-                            downloaded.Dispose();
++                            if (status == Interop.Crypto.X509VerifyStatusCode.X509_V_OK)
++                            {
++                                SaveIntermediateCertificates(aia.Downloaded);
++                            }
++
++                            foreach (X509Certificate2 downloaded in aia.Downloaded)
++                            {
++                                downloaded.Dispose();
++                            }
+                         }
+                     }
+                 }
+-            }
+ 
+-            chainPal.CommitToChain();
++                chainPal.CommitToChain();
+ 
+-            if (revocationMode != X509RevocationMode.NoCheck)
+-            {
+-                if (OpenSslX509ChainProcessor.IsCompleteChain(status))
++                if (revocationMode != X509RevocationMode.NoCheck)
+                 {
+-                    // Checking the validity period for the certificates in the chain is done after the
+-                    // check for a trusted root, so accept expired (or not yet valid) as acceptable for
+-                    // processing revocation.
+-                    if (status != Interop.Crypto.X509VerifyStatusCode.X509_V_OK &&
+-                        status != Interop.Crypto.X509VerifyStatusCodeUniversal.X509_V_ERR_CERT_NOT_YET_VALID &&
+-                        status != Interop.Crypto.X509VerifyStatusCodeUniversal.X509_V_ERR_CERT_HAS_EXPIRED)
++                    if (OpenSslX509ChainProcessor.IsCompleteChain(status))
+                     {
+-                        if (OpenSslX509ChainEventSource.Log.IsEnabled())
++                        // Checking the validity period for the certificates in the chain is done after the
++                        // check for a trusted root, so accept expired (or not yet valid) as acceptable for
++                        // processing revocation.
++                        if (status != Interop.Crypto.X509VerifyStatusCode.X509_V_OK &&
++                            status != Interop.Crypto.X509VerifyStatusCodeUniversal.X509_V_ERR_CERT_NOT_YET_VALID &&
++                            status != Interop.Crypto.X509VerifyStatusCodeUniversal.X509_V_ERR_CERT_HAS_EXPIRED)
+                         {
+-                            OpenSslX509ChainEventSource.Log.UntrustedChainWithRevocation();
++                            if (OpenSslX509ChainEventSource.Log.IsEnabled())
++                            {
++                                OpenSslX509ChainEventSource.Log.UntrustedChainWithRevocation();
++                            }
++
++                            revocationMode = X509RevocationMode.NoCheck;
+                         }
+ 
+-                        revocationMode = X509RevocationMode.NoCheck;
++                        await chainPal.ProcessRevocationAsync(revocationMode, revocationFlag, async, cancellationToken).ConfigureAwait(false);
+                     }
+-
+-                    chainPal.ProcessRevocation(revocationMode, revocationFlag);
+                 }
+-            }
+ 
+-            chainPal.Finish(applicationPolicy, certificatePolicy);
++                chainPal.Finish(applicationPolicy, certificatePolicy);
++            }
++            catch
++            {
++                // A build that a cancelled or failed retrieval abandoned still owns native state.
++                chainPal.Dispose();
++                throw;
++            }
+ 
+ #if DEBUG
+             if (chainPal.ChainElements!.Length > 0)
+@@ -202,6 +284,21 @@ public static void FlushStores()
+ 
+         private static void SaveIntermediateCertificates(List<X509Certificate2> downloadedCerts)
+         {
++            if (!OpenSslCrlCache.PersistsToDisk)
++            {
++                foreach (X509Certificate2 cert in downloadedCerts)
++                {
++                    if (OpenSslX509ChainEventSource.Log.IsEnabled())
++                    {
++                        OpenSslX509ChainEventSource.Log.CachingIntermediate(cert);
++                    }
++
++                    OpenSslIssuerCache.Add(cert);
++                }
++
++                return;
++            }
++
+             using (var userIntermediate = new X509Store(StoreName.CertificateAuthority, StoreLocation.CurrentUser))
+             {
+                 try
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Windows.BuildChain.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Windows.BuildChain.cs
+index 9c141bb8f..a6c0a4976 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Windows.BuildChain.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.Windows.BuildChain.cs
+@@ -2,6 +2,8 @@
+ // The .NET Foundation licenses this file to you under the MIT license.
+ 
+ using System.Runtime.InteropServices;
++using System.Threading;
++using System.Threading.Tasks;
+ using Internal.Cryptography;
+ using Microsoft.Win32.SafeHandles;
+ 
+@@ -11,6 +13,36 @@ namespace System.Security.Cryptography.X509Certificates
+ {
+     internal sealed partial class ChainPal : IDisposable, IChainPal
+     {
++        internal static partial ValueTask<IChainPal?> BuildChainAsync(
++            bool useMachineContext,
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            CancellationToken cancellationToken)
++        {
++            return new ValueTask<IChainPal?>(BuildChain(
++                useMachineContext,
++                cert,
++                extraStore,
++                applicationPolicy,
++                certificatePolicy,
++                revocationMode,
++                revocationFlag,
++                customTrustStore,
++                trustMode,
++                verificationTime,
++                timeout,
++                disableAia));
++        }
++
+         /// <summary>
+         /// Does not throw on error. Returns null ChainPal instead.
+         /// </summary>
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.cs
+index 2d765b6f8..18089a1f5 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/ChainPal.cs
+@@ -1,6 +1,9 @@
+ // Licensed to the .NET Foundation under one or more agreements.
+ // The .NET Foundation licenses this file to you under the MIT license.
+ 
++using System.Threading;
++using System.Threading.Tasks;
++
+ namespace System.Security.Cryptography.X509Certificates
+ {
+     internal partial class ChainPal
+@@ -22,5 +25,25 @@ internal partial class ChainPal
+             DateTime verificationTime,
+             TimeSpan timeout,
+             bool disableAia);
++
++        /// <summary>
++        /// <see cref="BuildChain"/> with every network retrieval (issuer, CRL, OCSP) awaited rather
++        /// than blocked on, and cancelled through <paramref name="cancellationToken"/>. Platforms
++        /// whose chain engine retrieves for itself complete synchronously.
++        /// </summary>
++        internal static partial ValueTask<IChainPal?> BuildChainAsync(
++            bool useMachineContext,
++            ICertificatePal cert,
++            X509Certificate2Collection? extraStore,
++            OidCollection? applicationPolicy,
++            OidCollection? certificatePolicy,
++            X509RevocationMode revocationMode,
++            X509RevocationFlag revocationFlag,
++            X509Certificate2Collection? customTrustStore,
++            X509ChainTrustMode trustMode,
++            DateTime verificationTime,
++            TimeSpan timeout,
++            bool disableAia,
++            CancellationToken cancellationToken);
+     }
+ }
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslCertificateAssetDownloader.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslCertificateAssetDownloader.cs
+index b47ea354d..75ced87c7 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslCertificateAssetDownloader.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslCertificateAssetDownloader.cs
+@@ -6,6 +6,7 @@
+ using System.IO;
+ using System.Reflection;
+ using System.Threading;
++using System.Threading.Tasks;
+ using Microsoft.Win32.SafeHandles;
+ using OpenSslX509ChainEventSource = System.Security.Cryptography.X509Certificates.OpenSslX509ChainEventSource;
+ 
+@@ -15,8 +16,49 @@ internal static class OpenSslCertificateAssetDownloader
+     {
+         internal static X509Certificate2? DownloadCertificate(string uri, TimeSpan downloadTimeout)
+         {
+-            byte[]? data = DownloadAsset(uri, downloadTimeout);
++            return DecodeCertificate(DownloadAsset(uri, downloadTimeout));
++        }
++
++        internal static async ValueTask<X509Certificate2?> DownloadCertificateAsync(
++            string uri,
++            TimeSpan downloadTimeout,
++            CancellationToken cancellationToken)
++        {
++            return DecodeCertificate(await DownloadAssetAsync(uri, downloadTimeout, cancellationToken).ConfigureAwait(false));
++        }
++
++        internal static SafeX509CrlHandle? DownloadCrl(string uri, TimeSpan downloadTimeout)
++        {
++            return DecodeCrl(DownloadAsset(uri, downloadTimeout));
++        }
++
++        internal static async ValueTask<SafeX509CrlHandle?> DownloadCrlAsync(
++            string uri,
++            TimeSpan downloadTimeout,
++            CancellationToken cancellationToken)
++        {
++            return DecodeCrl(await DownloadAssetAsync(uri, downloadTimeout, cancellationToken).ConfigureAwait(false));
++        }
++
++        /// <summary>
++        /// Fetches an OCSP response by GET, returning its bytes for the caller to decode (and
++        /// possibly keep) through <see cref="DecodeOcspResponse"/>.
++        /// </summary>
++        internal static byte[]? DownloadOcspGet(string uri, TimeSpan downloadTimeout)
++        {
++            return DownloadAsset(uri, downloadTimeout);
++        }
++
++        internal static ValueTask<byte[]?> DownloadOcspGetAsync(
++            string uri,
++            TimeSpan downloadTimeout,
++            CancellationToken cancellationToken)
++        {
++            return new ValueTask<byte[]?>(DownloadAssetAsync(uri, downloadTimeout, cancellationToken));
++        }
+ 
++        private static X509Certificate2? DecodeCertificate(byte[]? data)
++        {
+             if (data == null || data.Length == 0)
+             {
+                 return null;
+@@ -55,10 +97,8 @@ internal static class OpenSslCertificateAssetDownloader
+             }
+         }
+ 
+-        internal static SafeX509CrlHandle? DownloadCrl(string uri, TimeSpan downloadTimeout)
++        private static SafeX509CrlHandle? DecodeCrl(byte[]? data)
+         {
+-            byte[]? data = DownloadAsset(uri, downloadTimeout);
+-
+             if (data == null)
+             {
+                 return null;
+@@ -102,10 +142,9 @@ internal static class OpenSslCertificateAssetDownloader
+             return null;
+         }
+ 
+-        internal static SafeOcspResponseHandle? DownloadOcspGet(string uri, TimeSpan downloadTimeout)
++        /// <summary>Decodes a downloaded response; an undecodable one yields an invalid handle.</summary>
++        internal static SafeOcspResponseHandle? DecodeOcspResponse(byte[]? data)
+         {
+-            byte[]? data = DownloadAsset(uri, downloadTimeout);
+-
+             if (data == null)
+             {
+                 return null;
+@@ -134,6 +173,11 @@ internal static class OpenSslCertificateAssetDownloader
+         {
+             return System.Net.Http.X509ResourceClient.DownloadAsset(uri, downloadTimeout);
+         }
++
++        private static Task<byte[]?> DownloadAssetAsync(string uri, TimeSpan downloadTimeout, CancellationToken cancellationToken)
++        {
++            return System.Net.Http.X509ResourceClient.DownloadAssetAsync(uri, downloadTimeout, cancellationToken);
++        }
+     }
+ }
+ 
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslIssuerCache.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslIssuerCache.cs
+new file mode 100644
+index 000000000..83e58ea18
+--- /dev/null
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslIssuerCache.cs
+@@ -0,0 +1,32 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++
++using Microsoft.Win32.SafeHandles;
++
++namespace System.Security.Cryptography.X509Certificates
++{
++    /// <summary>
++    /// The in-memory stand-in for the user's intermediate certificate store on a platform that
++    /// persists nothing: issuers fetched through Authority Information Access are kept so later
++    /// chains find them without another download.
++    /// </summary>
++    internal static class OpenSslIssuerCache
++    {
++        private const int MaxIssuers = 30;
++
++        private static readonly BoundedMruCache<SafeX509Handle> s_cache =
++            new(MaxIssuers, long.MaxValue, sizeOf: null, onEvict: static handle => handle.Dispose());
++
++        internal static void Add(X509Certificate2 certificate)
++        {
++            string key = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256));
++            s_cache.AddOrUpdate(key, Interop.Crypto.X509UpRef(certificate.Handle));
++        }
++
++        /// <summary>Pushes an up-referenced copy of every cached issuer onto <paramref name="untrusted"/>.</summary>
++        internal static void AddToStack(SafeX509StackHandle untrusted)
++        {
++            s_cache.ForEachValue(untrusted, static (stack, issuer) => OpenSslX509ChainProcessor.AddToStackAndUpRef(issuer, stack));
++        }
++    }
++}
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslOcspCache.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslOcspCache.cs
+new file mode 100644
+index 000000000..03aa6284d
+--- /dev/null
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslOcspCache.cs
+@@ -0,0 +1,64 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++
++using System.Diagnostics.CodeAnalysis;
++using System.Runtime.InteropServices;
++using Microsoft.Win32.SafeHandles;
++
++namespace System.Security.Cryptography.X509Certificates
++{
++    /// <summary>
++    /// The in-memory stand-in for the OCSP response directory on a platform that persists
++    /// nothing. Entries are the downloaded DER responses, keyed the way the native cache names
++    /// its files (issuer name hash, subject name hash), and carry no freshness rule of their
++    /// own: a cached response is re-verified, and its cacheability re-judged, on every use.
++    /// </summary>
++    internal static class OpenSslOcspCache
++    {
++        // Responses are a few hundred bytes to a few kilobytes; a chain that outgrows this
++        // simply downloads again.
++        private const int MaxResponses = 30;
++        private const long MaxTotalBytes = 256 * 1024;
++
++        private static readonly BoundedMruCache<byte[]> s_cache =
++            new(MaxResponses, MaxTotalBytes, static der => der.Length, onEvict: null);
++
++        internal static string GetKey(SafeX509Handle subject)
++        {
++            // X509_issuer_name_hash only sets 32 bits worth of data.
++            ulong issuerHashLong = Interop.Crypto.X509IssuerNameHash(subject);
++
++            if (issuerHashLong == 0)
++            {
++                Interop.Crypto.ErrClearError();
++            }
++
++            uint issuerHash = unchecked((uint)issuerHashLong);
++
++            // The native cache uses X509_subject_name_hash for the second component; that is not
++            // exported to managed code, so hash the subject name's encoding instead. Only
++            // consistency matters, not the function.
++            byte[] subjectName = Interop.Crypto.LoadX500Name(Interop.Crypto.X509GetSubjectName(subject)).RawData;
++            Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
++            SHA256.HashData(subjectName, hash);
++            uint subjectHash = MemoryMarshal.Read<uint>(hash);
++
++            return $"{issuerHash:x8}.{subjectHash:x8}";
++        }
++
++        internal static bool TryGet(string key, [NotNullWhen(true)] out byte[]? der)
++        {
++            return s_cache.TryGetValue(key, out der);
++        }
++
++        internal static void Add(string key, byte[] der)
++        {
++            s_cache.AddOrUpdate(key, der);
++        }
++
++        internal static void Evict(string key)
++        {
++            s_cache.Remove(key);
++        }
++    }
++}
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslX509ChainProcessor.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslX509ChainProcessor.cs
+index b0118c9c6..74d5322ca 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslX509ChainProcessor.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/OpenSslX509ChainProcessor.cs
+@@ -11,6 +11,8 @@
+ using System.Security.Cryptography.Asn1;
+ using System.Security.Cryptography.X509Certificates.Asn1;
+ using System.Text;
++using System.Threading;
++using System.Threading.Tasks;
+ using Internal.Cryptography;
+ using Microsoft.Win32.SafeHandles;
+ using X509VerifyStatusCodeUniversal = Interop.Crypto.X509VerifyStatusCodeUniversal;
+@@ -111,6 +113,7 @@ public void Dispose()
+                 untrusted = Interop.Crypto.NewX509Stack();
+                 Interop.Crypto.X509StackAddMultiple(untrusted, s_userIntermediateStore.GetNativeCollection());
+                 Interop.Crypto.X509StackAddMultiple(untrusted, s_userPersonalStore.GetNativeCollection());
++                OpenSslIssuerCache.AddToStack(untrusted);
+ 
+                 store = GetTrustStore(trustMode, customTrustStore, untrusted, systemTrust);
+ 
+@@ -212,126 +215,169 @@ internal static bool IsCompleteChain(Interop.Crypto.X509VerifyStatusCode statusC
+             }
+         }
+ 
+-        internal Interop.Crypto.X509VerifyStatusCode FindChainViaAia(
+-            ref List<X509Certificate2>? downloadedCerts)
++        internal readonly struct AiaResult
++        {
++            internal Interop.Crypto.X509VerifyStatusCode Status { get; }
++
++            /// <summary>The downloaded issuers the completed chain uses, for the caller to dispose.</summary>
++            internal List<X509Certificate2>? Downloaded { get; }
++
++            internal AiaResult(Interop.Crypto.X509VerifyStatusCode status, List<X509Certificate2>? downloaded)
++            {
++                Status = status;
++                Downloaded = downloaded;
++            }
++        }
++
++        /// <summary>
++        /// Follows the current chain's missing issuer through its Authority Information Access
++        /// record, one download at a time, until the chain completes or no progress is possible.
++        /// With <paramref name="async"/> false every download completes synchronously.
++        /// </summary>
++        internal async ValueTask<AiaResult> FindChainViaAiaAsync(bool async, CancellationToken cancellationToken)
+         {
+             IntPtr lastCert = IntPtr.Zero;
+-            SafeX509StoreCtxHandle storeCtx = _storeCtx;
++            List<X509Certificate2>? downloadedCerts = null;
+ 
+             Interop.Crypto.X509VerifyStatusCode statusCode =
+                 X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT;
+ 
+             while (!IsCompleteChain(statusCode))
+             {
+-                using (SafeX509Handle currentCert = Interop.Crypto.X509StoreCtxGetCurrentCert(storeCtx))
++                string? issuerUri = GetCurrentCertIssuerUri(ref lastCert);
++
++                if (issuerUri == null)
+                 {
+-                    IntPtr currentHandle = currentCert.DangerousGetHandle();
++                    break;
++                }
+ 
+-                    // No progress was made, give up.
+-                    if (currentHandle == lastCert)
+-                    {
+-                        break;
+-                    }
++                X509Certificate2? downloaded = async ?
++                    await OpenSslCertificateAssetDownloader.DownloadCertificateAsync(issuerUri, _downloadTimeout, cancellationToken).ConfigureAwait(false) :
++                    OpenSslCertificateAssetDownloader.DownloadCertificate(issuerUri, _downloadTimeout);
+ 
+-                    lastCert = currentHandle;
++                if (downloaded == null)
++                {
++                    break;
++                }
+ 
+-                    ArraySegment<byte> authorityInformationAccess =
+-                        OpenSslX509CertificateReader.FindFirstExtension(
+-                            currentCert,
+-                            Oids.AuthorityInformationAccess);
++                downloadedCerts ??= new List<X509Certificate2>();
+ 
+-                    if (authorityInformationAccess.Count == 0)
+-                    {
+-                        if (OpenSslX509ChainEventSource.Log.IsEnabled())
+-                        {
+-                            OpenSslX509ChainEventSource.Log.NoAiaFound(currentCert);
+-                        }
++                AddToStackAndUpRef(downloaded.Handle, _untrustedLookup);
++                downloadedCerts.Add(downloaded);
+ 
+-                        break;
+-                    }
++                Interop.Crypto.X509StoreCtxRebuildChain(_storeCtx);
++                statusCode = Interop.Crypto.X509StoreCtxGetError(_storeCtx);
++            }
+ 
+-                    X509Certificate2? downloaded = DownloadCertificate(
+-                        authorityInformationAccess,
+-                        _downloadTimeout);
++            if (statusCode == Interop.Crypto.X509VerifyStatusCode.X509_V_OK && downloadedCerts != null)
++            {
++                downloadedCerts = PruneUnusedDownloads(downloadedCerts);
++            }
+ 
+-                    // The AIA record is contained in a public structure, so no need to clear it.
+-                    CryptoPool.Return(authorityInformationAccess.Array!, clearSize: 0);
++            return new AiaResult(statusCode, downloadedCerts);
++        }
+ 
+-                    if (downloaded == null)
++        /// <summary>
++        /// The caIssuers URI of the certificate the chain is stuck on, or null when the chain made
++        /// no progress since the last call or the certificate names no HTTP issuer. The extension
++        /// buffer is rented, so the URI is lifted out and the buffer returned before any download.
++        /// </summary>
++        private string? GetCurrentCertIssuerUri(ref IntPtr lastCert)
++        {
++            using (SafeX509Handle currentCert = Interop.Crypto.X509StoreCtxGetCurrentCert(_storeCtx))
++            {
++                IntPtr currentHandle = currentCert.DangerousGetHandle();
++
++                // No progress was made, give up.
++                if (currentHandle == lastCert)
++                {
++                    return null;
++                }
++
++                lastCert = currentHandle;
++
++                ArraySegment<byte> authorityInformationAccess =
++                    OpenSslX509CertificateReader.FindFirstExtension(
++                        currentCert,
++                        Oids.AuthorityInformationAccess);
++
++                if (authorityInformationAccess.Count == 0)
++                {
++                    if (OpenSslX509ChainEventSource.Log.IsEnabled())
+                     {
+-                        break;
++                        OpenSslX509ChainEventSource.Log.NoAiaFound(currentCert);
+                     }
+ 
+-                    downloadedCerts ??= new List<X509Certificate2>();
++                    return null;
++                }
+ 
+-                    AddToStackAndUpRef(downloaded.Handle, _untrustedLookup);
+-                    downloadedCerts.Add(downloaded);
++                string? issuerUri = FindHttpAiaRecord(authorityInformationAccess, Oids.CertificateAuthorityIssuers);
+ 
+-                    Interop.Crypto.X509StoreCtxRebuildChain(storeCtx);
+-                    statusCode = Interop.Crypto.X509StoreCtxGetError(storeCtx);
+-                }
++                // The AIA record is contained in a public structure, so no need to clear it.
++                CryptoPool.Return(authorityInformationAccess.Array!, clearSize: 0);
++
++                return issuerUri;
+             }
++        }
+ 
+-            if (statusCode == Interop.Crypto.X509VerifyStatusCode.X509_V_OK && downloadedCerts != null)
++        /// <summary>
++        /// Disposes and drops the downloaded certificates the completed chain did not use,
++        /// returning the remaining list or null when nothing remains.
++        /// </summary>
++        private List<X509Certificate2>? PruneUnusedDownloads(List<X509Certificate2> downloadedCerts)
++        {
++            using (SafeX509StackHandle chainStack = Interop.Crypto.X509StoreCtxGetChain(_storeCtx))
+             {
+-                using (SafeX509StackHandle chainStack = Interop.Crypto.X509StoreCtxGetChain(_storeCtx))
+-                {
+-                    int chainSize = Interop.Crypto.GetX509StackFieldCount(chainStack);
+-                    Span<IntPtr> tempChain = stackalloc IntPtr[DefaultChainCapacity];
+-                    byte[]? tempChainRent = null;
+-
+-                    if (chainSize <= tempChain.Length)
+-                    {
+-                        tempChain = tempChain.Slice(0, chainSize);
+-                    }
+-                    else
+-                    {
+-                        int targetSize = checked(chainSize * IntPtr.Size);
+-                        tempChainRent = CryptoPool.Rent(targetSize);
+-                        tempChain = MemoryMarshal.Cast<byte, IntPtr>(tempChainRent.AsSpan(0, targetSize));
+-                    }
++                int chainSize = Interop.Crypto.GetX509StackFieldCount(chainStack);
++                Span<IntPtr> tempChain = stackalloc IntPtr[DefaultChainCapacity];
++                byte[]? tempChainRent = null;
+ 
+-                    for (int i = 0; i < chainSize; i++)
+-                    {
+-                        tempChain[i] = Interop.Crypto.GetX509StackField(chainStack, i);
+-                    }
++                if (chainSize <= tempChain.Length)
++                {
++                    tempChain = tempChain.Slice(0, chainSize);
++                }
++                else
++                {
++                    int targetSize = checked(chainSize * IntPtr.Size);
++                    tempChainRent = CryptoPool.Rent(targetSize);
++                    tempChain = MemoryMarshal.Cast<byte, IntPtr>(tempChainRent.AsSpan(0, targetSize));
++                }
+ 
+-                    // In the average case we never made it here.
+-                    //
+-                    // Given that we made it here, in the average remaining case
+-                    // we are doing a one item for which will match in the second position
+-                    // of an (on-average) 3 item collection.
+-                    //
+-                    // The only case where this loop really matters is if downloading the
+-                    // certificate made an alternate chain better, which may have resulted in
+-                    // an extra download and made the first one not be involved any longer. In
+-                    // that case, it's a 2 item for loop matching against a three item set.
+-                    //
+-                    // So N*M is well contained.
+-                    for (int i = downloadedCerts.Count - 1; i >= 0; i--)
+-                    {
+-                        X509Certificate2 downloadedCert = downloadedCerts[i];
++                for (int i = 0; i < chainSize; i++)
++                {
++                    tempChain[i] = Interop.Crypto.GetX509StackField(chainStack, i);
++                }
+ 
+-                        if (!tempChain.Contains(downloadedCert.Handle))
+-                        {
+-                            downloadedCert.Dispose();
+-                            downloadedCerts.RemoveAt(i);
+-                        }
+-                    }
++                // In the average case we never made it here.
++                //
++                // Given that we made it here, in the average remaining case
++                // we are doing a one item for which will match in the second position
++                // of an (on-average) 3 item collection.
++                //
++                // The only case where this loop really matters is if downloading the
++                // certificate made an alternate chain better, which may have resulted in
++                // an extra download and made the first one not be involved any longer. In
++                // that case, it's a 2 item for loop matching against a three item set.
++                //
++                // So N*M is well contained.
++                for (int i = downloadedCerts.Count - 1; i >= 0; i--)
++                {
++                    X509Certificate2 downloadedCert = downloadedCerts[i];
+ 
+-                    if (downloadedCerts.Count == 0)
++                    if (!tempChain.Contains(downloadedCert.Handle))
+                     {
+-                        downloadedCerts = null;
++                        downloadedCert.Dispose();
++                        downloadedCerts.RemoveAt(i);
+                     }
++                }
+ 
+-                    if (tempChainRent != null)
+-                    {
+-                        CryptoPool.Return(tempChainRent);
+-                    }
++                if (tempChainRent != null)
++                {
++                    CryptoPool.Return(tempChainRent);
+                 }
+             }
+ 
+-            return statusCode;
++            return downloadedCerts.Count == 0 ? null : downloadedCerts;
+         }
+ 
+         internal void CommitToChain()
+@@ -351,9 +397,16 @@ internal static void FlushStores()
+             s_userIntermediateStore.DoRefresh();
+         }
+ 
+-        internal void ProcessRevocation(
++        /// <summary>
++        /// Checks revocation for the chain as committed: CRLs first, then OCSP where a CRL left
++        /// the status unknown. With <paramref name="async"/> false every download completes
++        /// synchronously.
++        /// </summary>
++        internal async ValueTask ProcessRevocationAsync(
+             X509RevocationMode revocationMode,
+-            X509RevocationFlag revocationFlag)
++            X509RevocationFlag revocationFlag,
++            bool async,
++            CancellationToken cancellationToken)
+         {
+             int chainSize;
+             int revocationSize;
+@@ -397,12 +450,25 @@ internal static void FlushStores()
+                             using (SafeX509Handle cert =
+                                 Interop.Crypto.X509UpRef(Interop.Crypto.GetX509StackField(chainStack, i)))
+                             {
+-                                OpenSslCrlCache.AddCrlForCertificate(
+-                                    cert,
+-                                    _store,
+-                                    revocationMode,
+-                                    _verificationTime,
+-                                    _downloadTimeout);
++                                if (async)
++                                {
++                                    await OpenSslCrlCache.AddCrlForCertificateAsync(
++                                        cert,
++                                        _store,
++                                        revocationMode,
++                                        _verificationTime,
++                                        _downloadTimeout,
++                                        cancellationToken).ConfigureAwait(false);
++                                }
++                                else
++                                {
++                                    OpenSslCrlCache.AddCrlForCertificate(
++                                        cert,
++                                        _store,
++                                        revocationMode,
++                                        _verificationTime,
++                                        _downloadTimeout);
++                                }
+                             }
+                         }
+                     }
+@@ -423,7 +489,7 @@ internal static void FlushStores()
+             // or clearing an unwanted root revocation flag.
+             if (errorCode != Interop.Crypto.X509VerifyStatusCode.X509_V_OK)
+             {
+-                FinishRevocation(revocationMode, revocationFlag, chainSize);
++                await FinishRevocationAsync(revocationMode, revocationFlag, chainSize, async, cancellationToken).ConfigureAwait(false);
+             }
+ 
+             if (OpenSslX509ChainEventSource.Log.IsEnabled())
+@@ -432,10 +498,14 @@ internal static void FlushStores()
+             }
+         }
+ 
+-        private void FinishRevocation(
++        // Error collections are reached by index around each OCSP check rather than held by
++        // reference, because a reference cannot survive the await the check may contain.
++        private async ValueTask FinishRevocationAsync(
+             X509RevocationMode revocationMode,
+             X509RevocationFlag revocationFlag,
+-            int chainSize)
++            int chainSize,
++            bool async,
++            CancellationToken cancellationToken)
+         {
+             WorkingChain workingChain = BuildWorkingChain();
+ 
+@@ -463,30 +533,29 @@ internal static void FlushStores()
+             }
+ 
+             Interop.Crypto.X509VerifyStatusCode statusCode;
+-            ref ErrorCollection refErrors = ref workingChain[0];
+ 
+             // EndCertificateOnly, not testing a trusted self-signed certificate.
+             if (revocationFlag == X509RevocationFlag.EndCertificateOnly && chainSize > 1)
+             {
+-                if (refErrors.HasCorruptRevocation())
++                if (workingChain[0].HasCorruptRevocation())
+                 {
+-                    refErrors.ClearRevoked();
++                    workingChain[0].ClearRevoked();
+                 }
+ 
+-                if (refErrors.IsRevoked())
++                if (workingChain[0].IsRevoked())
+                 {
+-                    refErrors.ClearRevocationUnknown();
++                    workingChain[0].ClearRevocationUnknown();
+                     return;
+                 }
+ 
+-                Debug.Assert(refErrors.HasRevocationUnknown());
+-                refErrors.ClearRevocationUnknown();
++                Debug.Assert(workingChain[0].HasRevocationUnknown());
++                workingChain[0].ClearRevocationUnknown();
+ 
+-                statusCode = CheckOcsp(0, _leafHandle, revocationMode);
++                statusCode = await CheckOcspAsync(0, _leafHandle, revocationMode, async, cancellationToken).ConfigureAwait(false);
+ 
+                 if (statusCode != Interop.Crypto.X509VerifyStatusCode.X509_V_OK)
+                 {
+-                    refErrors.Add(statusCode);
++                    workingChain[0].Add(statusCode);
+                 }
+ 
+                 return;
+@@ -506,14 +575,12 @@ internal static void FlushStores()
+ 
+                 if (workingChain.LastError >= start)
+                 {
+-                    refErrors = ref workingChain[start];
+-
+-                    if (refErrors.HasCorruptRevocation())
++                    if (workingChain[start].HasCorruptRevocation())
+                     {
+-                        refErrors.ClearRevoked();
++                        workingChain[start].ClearRevoked();
+                     }
+ 
+-                    encounteredRevocation = refErrors.IsRevoked();
++                    encounteredRevocation = workingChain[start].IsRevoked();
+ 
+                     Debug.Assert(chainSize == 1 || revocationFlag != X509RevocationFlag.EndCertificateOnly);
+ 
+@@ -524,10 +591,10 @@ internal static void FlushStores()
+                     // since the root IS the end certificate, keep the revoked result.
+                     if (encounteredRevocation && revocationFlag == X509RevocationFlag.ExcludeRoot)
+                     {
+-                        refErrors.ClearRevoked();
++                        workingChain[start].ClearRevoked();
+                         encounteredRevocation = false;
+                     }
+-                    else if (refErrors.HasRevocationUnknown() && revocationFlag != X509RevocationFlag.ExcludeRoot)
++                    else if (workingChain[start].HasRevocationUnknown() && revocationFlag != X509RevocationFlag.ExcludeRoot)
+                     {
+                         // If the chain size is 1 we need to copy the root cert into untrusted so
+                         // OCSP_basic_verify can find it.
+@@ -546,19 +613,19 @@ internal static void FlushStores()
+ 
+                         using (SafeX509Handle rootHandle = Interop.Crypto.X509UpRef(rootPtr))
+                         {
+-                            statusCode = CheckOcsp(start, rootHandle, revocationMode);
++                            statusCode = await CheckOcspAsync(start, rootHandle, revocationMode, async, cancellationToken).ConfigureAwait(false);
+                         }
+ 
+                         if (statusCode != Interop.Crypto.X509VerifyStatusCode.X509_V_OK)
+                         {
+-                            refErrors.Add(statusCode);
+-                            encounteredRevocation = refErrors.IsRevoked();
++                            workingChain[start].Add(statusCode);
++                            encounteredRevocation = workingChain[start].IsRevoked();
+                         }
+                     }
+ 
+                     // Root is revoked and we care, revoked and we don't care, or it's OK.
+                     // Clear any of the bits that indicate revocation is unknown (for the root).
+-                    refErrors.ClearRevocationUnknown();
++                    workingChain[start].ClearRevocationUnknown();
+                     start--;
+                 }
+                 else
+@@ -574,34 +641,32 @@ internal static void FlushStores()
+ 
+                 for (int i = start; i >= 0; i--)
+                 {
+-                    refErrors = ref workingChain[i];
+-
+                     if (encounteredRevocation)
+                     {
+-                        refErrors.ClearRevoked();
+-                        refErrors.AddRevocationUnknown();
++                        workingChain[i].ClearRevoked();
++                        workingChain[i].AddRevocationUnknown();
+                         continue;
+                     }
+ 
+-                    if (refErrors.HasCorruptRevocation())
++                    if (workingChain[i].HasCorruptRevocation())
+                     {
+-                        refErrors.ClearRevoked();
++                        workingChain[i].ClearRevoked();
+                     }
+ 
+-                    if (refErrors.IsRevoked())
++                    if (workingChain[i].IsRevoked())
+                     {
+-                        refErrors.ClearRevocationUnknown();
++                        workingChain[i].ClearRevocationUnknown();
+                         encounteredRevocation = true;
+                         continue;
+                     }
+ 
+-                    if (refErrors.HasRevocationUnknown())
++                    if (workingChain[i].HasRevocationUnknown())
+                     {
+-                        refErrors.ClearRevocationUnknown();
++                        workingChain[i].ClearRevocationUnknown();
+ 
+                         if (i == 0)
+                         {
+-                            statusCode = CheckOcsp(0, _leafHandle, revocationMode);
++                            statusCode = await CheckOcspAsync(0, _leafHandle, revocationMode, async, cancellationToken).ConfigureAwait(false);
+                         }
+                         else
+                         {
+@@ -609,14 +674,14 @@ internal static void FlushStores()
+ 
+                             using (SafeX509Handle certHandle = Interop.Crypto.X509UpRef(certPtr))
+                             {
+-                                statusCode = CheckOcsp(i, certHandle, revocationMode);
++                                statusCode = await CheckOcspAsync(i, certHandle, revocationMode, async, cancellationToken).ConfigureAwait(false);
+                             }
+                         }
+ 
+                         if (statusCode != Interop.Crypto.X509VerifyStatusCode.X509_V_OK)
+                         {
+-                            refErrors.Add(statusCode);
+-                            encounteredRevocation = refErrors.IsRevoked();
++                            workingChain[i].Add(statusCode);
++                            encounteredRevocation = workingChain[i].IsRevoked();
+                         }
+                     }
+                 }
+@@ -736,16 +801,20 @@ private void CloneChainForSignatureErrors()
+             }
+         }
+ 
+-        private Interop.Crypto.X509VerifyStatusCode CheckOcsp(
++        private async ValueTask<Interop.Crypto.X509VerifyStatusCode> CheckOcspAsync(
+             int chainDepth,
+             SafeX509Handle certHandle,
+-            X509RevocationMode revocationMode)
++            X509RevocationMode revocationMode,
++            bool async,
++            CancellationToken cancellationToken)
+         {
+             if (revocationMode == X509RevocationMode.NoCheck)
+             {
+                 return X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL;
+             }
+ 
++            // Serves a stapled response at depth 0 as well as the on-disk cache, so it is
++            // consulted even where nothing is ever written to that directory.
+             string ocspCache = OpenSslCrlCache.GetCachedOcspResponseDirectory();
+             Interop.Crypto.X509VerifyStatusCode status =
+                 Interop.Crypto.X509ChainGetCachedOcspStatus(_storeCtx, ocspCache, chainDepth);
+@@ -760,6 +829,24 @@ private void CloneChainForSignatureErrors()
+                 return status;
+             }
+ 
++            string? memoryCacheKey = null;
++
++            if (!OpenSslCrlCache.PersistsToDisk)
++            {
++                memoryCacheKey = OpenSslOcspCache.GetKey(certHandle);
++                status = CheckOcspFromMemoryCache(memoryCacheKey, chainDepth);
++
++                if (OpenSslX509ChainEventSource.Log.IsEnabled())
++                {
++                    OpenSslX509ChainEventSource.Log.OcspResponseFromCache(chainDepth, status);
++                }
++
++                if (status != X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL)
++                {
++                    return status;
++                }
++            }
++
+             if (revocationMode != X509RevocationMode.Online)
+             {
+                 return X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL;
+@@ -774,17 +861,7 @@ private void CloneChainForSignatureErrors()
+ 
+             using (SafeOcspRequestHandle req = Interop.Crypto.X509ChainBuildOcspRequest(_storeCtx, chainDepth))
+             {
+-                ArraySegment<byte> encoded = Interop.Crypto.OpenSslRentEncode(
+-                    Interop.Crypto.GetOcspRequestDerSize,
+-                    Interop.Crypto.EncodeOcspRequest,
+-                    req);
+-
+-                ArraySegment<char> urlEncoded = UrlBase64Encoding.RentEncode(encoded);
+-                string requestUrl = UrlPathAppend(baseUri, urlEncoded);
+-
+-                // Nothing sensitive is in the encoded request (it was sent via HTTP-non-S)
+-                CryptoPool.Return(encoded.Array!, clearSize: 0);
+-                ArrayPool<char>.Shared.Return(urlEncoded.Array!);
++                string requestUrl = BuildOcspGetUrl(baseUri, req);
+ 
+                 // https://tools.ietf.org/html/rfc6960#appendix-A describes both a GET and a POST
+                 // version of an OCSP responder.
+@@ -794,37 +871,130 @@ private void CloneChainForSignatureErrors()
+                 // (On-line Revocation Checking Requirements) says that the GET method must be supported.
+                 //
+                 // So, for now, only try GET.
+-                SafeOcspResponseHandle? resp =
++                byte[]? der = async ?
++                    await OpenSslCertificateAssetDownloader.DownloadOcspGetAsync(requestUrl, _downloadTimeout, cancellationToken).ConfigureAwait(false) :
+                     OpenSslCertificateAssetDownloader.DownloadOcspGet(requestUrl, _downloadTimeout);
+ 
+-                using (resp)
++                using (SafeOcspResponseHandle? resp = OpenSslCertificateAssetDownloader.DecodeOcspResponse(der))
+                 {
+                     if (resp == null || resp.IsInvalid)
+                     {
+                         return X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL;
+                     }
+ 
+-                    try
+-                    {
+-                        System.IO.Directory.CreateDirectory(ocspCache);
+-                    }
+-                    catch
++                    string? cachePath = null;
++
++                    if (OpenSslCrlCache.PersistsToDisk)
+                     {
+-                        // Opportunistic create, suppress all errors.
++                        try
++                        {
++                            System.IO.Directory.CreateDirectory(ocspCache);
++                        }
++                        catch
++                        {
++                            // Opportunistic create, suppress all errors.
++                        }
++
++                        cachePath = ocspCache;
+                     }
+ 
+-                    status = Interop.Crypto.X509ChainVerifyOcsp(_storeCtx, req, resp, ocspCache, chainDepth);
++                    status = Interop.Crypto.X509ChainVerifyOcsp(_storeCtx, req, resp, cachePath, chainDepth);
+ 
+                     if (OpenSslX509ChainEventSource.Log.IsEnabled())
+                     {
+                         OpenSslX509ChainEventSource.Log.OcspResponseFromDownload(chainDepth, status);
+                     }
+ 
++                    if (memoryCacheKey != null &&
++                        (status == Interop.Crypto.X509VerifyStatusCode.X509_V_OK ||
++                            status == X509VerifyStatusCodeUniversal.X509_V_ERR_CERT_REVOKED) &&
++                        IsCacheableOcspResponse(der!, chainDepth))
++                    {
++                        OpenSslOcspCache.Add(memoryCacheKey, der!);
++                    }
++
+                     return status;
+                 }
+             }
+         }
+ 
++        /// <summary>
++        /// The in-memory counterpart of the native on-disk lookup: a stored response that is no
++        /// longer cacheable, or no longer verifies, is dropped so a live request follows.
++        /// </summary>
++        private Interop.Crypto.X509VerifyStatusCode CheckOcspFromMemoryCache(string memoryCacheKey, int chainDepth)
++        {
++            if (!OpenSslOcspCache.TryGet(memoryCacheKey, out byte[]? der))
++            {
++                return X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL;
++            }
++
++            Interop.Crypto.X509VerifyStatusCode status = X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL;
++
++            if (IsCacheableOcspResponse(der, chainDepth))
++            {
++                using (SafeOcspResponseHandle resp = Interop.Crypto.DecodeOcspResponse(der))
++                {
++                    if (!resp.IsInvalid)
++                    {
++                        status = Interop.Crypto.X509ChainVerifyOcsp(
++                            _storeCtx,
++                            SafeOcspRequestHandle.InvalidHandle,
++                            resp,
++                            cachePath: null,
++                            chainDepth);
++                    }
++                }
++            }
++
++            if (status == X509VerifyStatusCodeUniversal.X509_V_ERR_UNABLE_TO_GET_CRL)
++            {
++                OpenSslOcspCache.Evict(memoryCacheKey);
++                Interop.Crypto.ErrClearError();
++            }
++
++            return status;
++        }
++
++        /// <summary>
++        /// Whether the response is definitive and inside its validity window right now, judged
++        /// for the chain element at <paramref name="chainDepth"/> and its issuer.
++        /// </summary>
++        private bool IsCacheableOcspResponse(byte[] der, int chainDepth)
++        {
++            using (SafeX509StackHandle chainStack = Interop.Crypto.X509StoreCtxGetChain(_storeCtx))
++            {
++                int chainSize = Interop.Crypto.GetX509StackFieldCount(chainStack);
++                int issuerDepth = chainSize == chainDepth + 1 ? chainDepth : chainDepth + 1;
++                IntPtr subject = Interop.Crypto.GetX509StackField(chainStack, chainDepth);
++                ReadOnlySpan<IntPtr> issuers = [Interop.Crypto.GetX509StackField(chainStack, issuerDepth)];
++
++                return Interop.Crypto.X509DecodeOcspToExpiration(
++                    der,
++                    SafeOcspRequestHandle.InvalidHandle,
++                    subject,
++                    issuers,
++                    out _);
++            }
++        }
++
++        private static string BuildOcspGetUrl(string baseUri, SafeOcspRequestHandle req)
++        {
++            ArraySegment<byte> encoded = Interop.Crypto.OpenSslRentEncode(
++                Interop.Crypto.GetOcspRequestDerSize,
++                Interop.Crypto.EncodeOcspRequest,
++                req);
++
++            ArraySegment<char> urlEncoded = UrlBase64Encoding.RentEncode(encoded);
++            string requestUrl = UrlPathAppend(baseUri, urlEncoded);
++
++            // Nothing sensitive is in the encoded request (it was sent via HTTP-non-S)
++            CryptoPool.Return(encoded.Array!, clearSize: 0);
++            ArrayPool<char>.Shared.Return(urlEncoded.Array!);
++
++            return requestUrl;
++        }
++
+         private static string UrlPathAppend(string baseUri, ReadOnlyMemory<char> resource)
+         {
+             Debug.Assert(baseUri.Length > 0);
+@@ -1196,20 +1366,6 @@ private static X509ChainStatusFlags MapOpenSsl111Code(Interop.Crypto.X509VerifyS
+             }
+         }
+ 
+-        private static X509Certificate2? DownloadCertificate(
+-            ReadOnlyMemory<byte> authorityInformationAccess,
+-            TimeSpan downloadTimeout)
+-        {
+-            string? uri = FindHttpAiaRecord(authorityInformationAccess, Oids.CertificateAuthorityIssuers);
+-
+-            if (uri == null)
+-            {
+-                return null;
+-            }
+-
+-            return OpenSslCertificateAssetDownloader.DownloadCertificate(uri, downloadTimeout);
+-        }
+-
+         private static string? GetOcspEndpoint(SafeX509Handle cert)
+         {
+             ArraySegment<byte> authorityInformationAccess =
+@@ -1284,7 +1440,7 @@ private static X509ChainStatusFlags MapOpenSsl111Code(Interop.Crypto.X509VerifyS
+             return null;
+         }
+ 
+-        private static void AddToStackAndUpRef(SafeX509Handle cert, SafeX509StackHandle stack)
++        internal static void AddToStackAndUpRef(SafeX509Handle cert, SafeX509StackHandle stack)
+         {
+             using (SafeX509Handle tmp = Interop.Crypto.X509UpRef(cert))
+             {
+diff --git a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/X509Chain.cs b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/X509Chain.cs
+index 72707a421..09534d038 100644
+--- a/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/X509Chain.cs
++++ b/src/libraries/System.Security.Cryptography/src/System/Security/Cryptography/X509Certificates/X509Chain.cs
+@@ -3,6 +3,8 @@
+ 
+ using System.Diagnostics;
+ using System.Runtime.Versioning;
++using System.Threading;
++using System.Threading.Tasks;
+ 
+ using SafeX509ChainHandle = Microsoft.Win32.SafeHandles.SafeX509ChainHandle;
+ 
+@@ -16,6 +18,7 @@ public class X509Chain : IDisposable
+         private IChainPal? _pal;
+         private bool _useMachineContext;
+         private readonly object _syncRoot = new object();
++        private int _asyncBuildInProgress;
+ 
+         public X509Chain() { }
+ 
+@@ -95,37 +98,16 @@ internal bool Build(X509Certificate2 certificate, bool throwOnException)
+         {
+             lock (_syncRoot)
+             {
+-                if (certificate == null || certificate.Pal == null)
+-                    throw new ArgumentException(SR.Cryptography_InvalidContextHandle, nameof(certificate));
+-
+-                if (_chainPolicy != null)
++                if (_asyncBuildInProgress != 0)
+                 {
+-                    if (_chainPolicy._customTrustStore != null)
+-                    {
+-                        if (_chainPolicy.TrustMode == X509ChainTrustMode.System && _chainPolicy.CustomTrustStore.Count > 0)
+-                            throw new CryptographicException(SR.Cryptography_CustomTrustCertsInSystemMode);
+-
+-                        foreach (X509Certificate2 customCertificate in _chainPolicy.CustomTrustStore)
+-                        {
+-                            if (customCertificate == null || customCertificate.Handle == IntPtr.Zero)
+-                            {
+-                                throw new CryptographicException(SR.Cryptography_InvalidTrustCertificate);
+-                            }
+-                        }
+-                    }
+-
+-                    if (_chainPolicy.TrustMode == X509ChainTrustMode.CustomRootTrust && _chainPolicy._customTrustStore == null)
+-                    {
+-                        _chainPolicy._customTrustStore = new X509Certificate2Collection();
+-                    }
++                    throw new InvalidOperationException(SR.Cryptography_ConcurrentUseNotSupported);
+                 }
+ 
+-                Reset();
++                X509ChainPolicy chainPolicy = PrepareBuild(certificate);
+ 
+-                X509ChainPolicy chainPolicy = ChainPolicy;
+-                _pal = ChainPal.BuildChain(
++                IChainPal? pal = ChainPal.BuildChain(
+                     _useMachineContext,
+-                    certificate.Pal,
++                    certificate.Pal!,
+                     chainPolicy._extraStore,
+                     chainPolicy._applicationPolicy!,
+                     chainPolicy._certificatePolicy!,
+@@ -137,58 +119,148 @@ internal bool Build(X509Certificate2 certificate, bool throwOnException)
+                     chainPolicy.UrlRetrievalTimeout,
+                     chainPolicy.DisableCertificateDownloads);
+ 
+-                bool success = false;
+-                if (_pal is not null)
++                return CompleteBuild(pal, chainPolicy, throwOnException);
++            }
++        }
++
++        /// <summary>
++        /// <see cref="Build(X509Certificate2, bool)"/> with the chain's network retrievals (issuer,
++        /// CRL and OCSP downloads) awaited rather than blocked on. Cancelling
++        /// <paramref name="cancellationToken"/> abandons a pending retrieval and throws
++        /// <see cref="OperationCanceledException"/>. Builds on one chain are not concurrent: a
++        /// build overlapping another throws <see cref="InvalidOperationException"/>.
++        /// </summary>
++        internal async ValueTask<bool> BuildAsync(X509Certificate2 certificate, bool throwOnException, CancellationToken cancellationToken)
++        {
++            // The synchronous lock cannot span an await, so an asynchronous build holds a flag
++            // that both entries respect instead.
++            if (Interlocked.CompareExchange(ref _asyncBuildInProgress, 1, 0) != 0)
++            {
++                throw new InvalidOperationException(SR.Cryptography_ConcurrentUseNotSupported);
++            }
++
++            try
++            {
++                X509ChainPolicy chainPolicy;
++
++                lock (_syncRoot)
++                {
++                    chainPolicy = PrepareBuild(certificate);
++                }
++
++                IChainPal? pal = await ChainPal.BuildChainAsync(
++                    _useMachineContext,
++                    certificate.Pal!,
++                    chainPolicy._extraStore,
++                    chainPolicy._applicationPolicy!,
++                    chainPolicy._certificatePolicy!,
++                    chainPolicy.RevocationMode,
++                    chainPolicy.RevocationFlag,
++                    chainPolicy._customTrustStore,
++                    chainPolicy.TrustMode,
++                    chainPolicy.VerificationTimeIgnored ? DateTime.Now : chainPolicy.VerificationTime,
++                    chainPolicy.UrlRetrievalTimeout,
++                    chainPolicy.DisableCertificateDownloads,
++                    cancellationToken).ConfigureAwait(false);
++
++                lock (_syncRoot)
++                {
++                    return CompleteBuild(pal, chainPolicy, throwOnException);
++                }
++            }
++            finally
++            {
++                Volatile.Write(ref _asyncBuildInProgress, 0);
++            }
++        }
++
++        private X509ChainPolicy PrepareBuild(X509Certificate2 certificate)
++        {
++            if (certificate == null || certificate.Pal == null)
++                throw new ArgumentException(SR.Cryptography_InvalidContextHandle, nameof(certificate));
++
++            if (_chainPolicy != null)
++            {
++                if (_chainPolicy._customTrustStore != null)
+                 {
+-                    _chainElements = new X509ChainElementCollection(_pal.ChainElements!);
++                    if (_chainPolicy.TrustMode == X509ChainTrustMode.System && _chainPolicy.CustomTrustStore.Count > 0)
++                        throw new CryptographicException(SR.Cryptography_CustomTrustCertsInSystemMode);
+ 
+-                    Exception? verificationException;
+-                    bool? verified = _pal.Verify(chainPolicy.VerificationFlags, out verificationException);
+-                    if (!verified.HasValue)
++                    foreach (X509Certificate2 customCertificate in _chainPolicy.CustomTrustStore)
+                     {
+-                        if (throwOnException)
+-                        {
+-                            throw verificationException!;
+-                        }
+-                        else
++                        if (customCertificate == null || customCertificate.Handle == IntPtr.Zero)
+                         {
+-                            verified = false;
++                            throw new CryptographicException(SR.Cryptography_InvalidTrustCertificate);
+                         }
+                     }
++                }
+ 
+-                    success = verified.Value;
++                if (_chainPolicy.TrustMode == X509ChainTrustMode.CustomRootTrust && _chainPolicy._customTrustStore == null)
++                {
++                    _chainPolicy._customTrustStore = new X509Certificate2Collection();
+                 }
++            }
+ 
+-                // There are two reasons success might be false here.
+-                //
+-                // The most common reason is that we built the chain but the chain appears to run
+-                // afoul of policy. This is represented by BuildChain returning a non-null object
+-                // and storing potential policy violations in the chain structure. The public Build
+-                // method returns false to the caller, and the caller can inspect the ChainStatus
+-                // and ChainElements properties and evaluate the failure reason against app-level
+-                // policies. If the caller does not care about these policy violations, they can
+-                // choose to ignore them and to treat chain building as successful.
+-                //
+-                // The other type of failure is that BuildChain simply can't build the chain at all.
+-                // Perhaps something within the certificate is not valid or is unsupported, or perhaps
+-                // there's an internal failure within the OS layer we're invoking, etc. Whatever the
+-                // reason, we're not meaningfully able to initialize the ChainStatus property, which
+-                // means callers may observe a non-empty list of policy violations. Depending on the
+-                // caller's logic, they might incorrectly interpret this as there being no policy
+-                // violations at all, which means they might treat this condition as success.
+-                //
+-                // To avoid callers misinterpreting this latter condition as success, we'll throw an
+-                // exception, which matches general .NET API behavior when a method cannot complete
+-                // its objective. If throwOnException is false, it means the caller explicitly wants
+-                // to suppress exceptions and normalize them to a false return value.
+-
+-                if (!success && throwOnException && _pal?.ChainStatus is not { Length: > 0 })
++            Reset();
++
++            return ChainPolicy;
++        }
++
++        private bool CompleteBuild(IChainPal? pal, X509ChainPolicy chainPolicy, bool throwOnException)
++        {
++            _pal = pal;
++
++            bool success = false;
++            if (_pal is not null)
++            {
++                _chainElements = new X509ChainElementCollection(_pal.ChainElements!);
++
++                Exception? verificationException;
++                bool? verified = _pal.Verify(chainPolicy.VerificationFlags, out verificationException);
++                if (!verified.HasValue)
+                 {
+-                    throw new CryptographicException(SR.Cryptography_X509_ChainBuildingFailed);
++                    if (throwOnException)
++                    {
++                        throw verificationException!;
++                    }
++                    else
++                    {
++                        verified = false;
++                    }
+                 }
+ 
+-                return success;
++                success = verified.Value;
++            }
++
++            // There are two reasons success might be false here.
++            //
++            // The most common reason is that we built the chain but the chain appears to run
++            // afoul of policy. This is represented by BuildChain returning a non-null object
++            // and storing potential policy violations in the chain structure. The public Build
++            // method returns false to the caller, and the caller can inspect the ChainStatus
++            // and ChainElements properties and evaluate the failure reason against app-level
++            // policies. If the caller does not care about these policy violations, they can
++            // choose to ignore them and to treat chain building as successful.
++            //
++            // The other type of failure is that BuildChain simply can't build the chain at all.
++            // Perhaps something within the certificate is not valid or is unsupported, or perhaps
++            // there's an internal failure within the OS layer we're invoking, etc. Whatever the
++            // reason, we're not meaningfully able to initialize the ChainStatus property, which
++            // means callers may observe a non-empty list of policy violations. Depending on the
++            // caller's logic, they might incorrectly interpret this as there being no policy
++            // violations at all, which means they might treat this condition as success.
++            //
++            // To avoid callers misinterpreting this latter condition as success, we'll throw an
++            // exception, which matches general .NET API behavior when a method cannot complete
++            // its objective. If throwOnException is false, it means the caller explicitly wants
++            // to suppress exceptions and normalize them to a false return value.
++
++            if (!success && throwOnException && _pal?.ChainStatus is not { Length: > 0 })
++            {
++                throw new CryptographicException(SR.Cryptography_X509_ChainBuildingFailed);
+             }
++
++            return success;
+         }
+ 
+         public void Dispose()
+diff --git a/src/native/libs/System.Security.Cryptography.Native/pal_x509.c b/src/native/libs/System.Security.Cryptography.Native/pal_x509.c
+index 82e09ba19..f6a3dafd6 100644
+--- a/src/native/libs/System.Security.Cryptography.Native/pal_x509.c
++++ b/src/native/libs/System.Security.Cryptography.Native/pal_x509.c
+@@ -1245,7 +1245,8 @@ static int32_t X509ChainVerifyOcsp(X509_STORE_CTX* storeCtx, X509* subject, X509
+     int canCache = 0;
+     ret = CheckOcsp(req, resp, subject, issuer, storeCtx, &canCache);
+ 
+-    if (canCache)
++    // A caller with nowhere to persist passes no cache path and keeps the response itself.
++    if (canCache && cachePath != NULL)
+     {
+         char* fullPath = BuildOcspCacheFilename(cachePath, subject);
+ 
+@@ -1301,7 +1302,8 @@ int32_t CryptoNative_X509ChainHasStapledOcsp(X509_STORE_CTX* storeCtx)
+ int32_t
+ CryptoNative_X509ChainVerifyOcsp(X509_STORE_CTX* storeCtx, OCSP_REQUEST* req, OCSP_RESPONSE* resp, char* cachePath, int chainDepth)
+ {
+-    if (storeCtx == NULL || req == NULL || resp == NULL)
++    // A NULL request verifies a stored response, whose nonce (if any) matched an earlier request.
++    if (storeCtx == NULL || resp == NULL)
+     {
+         return -1;
+     }

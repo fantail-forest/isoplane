@@ -43,11 +43,19 @@ impl Certificate {
             ),
             Certificate::Stranger => (STRANGER_CERTIFICATE.to_owned(), STRANGER_KEY),
         };
-        let certificates = CertificateDer::pem_slice_iter(chain.as_bytes())
-            .collect::<Result<_, _>>()
-            .expect("the test material's certificates parse");
-        let key =
-            PrivateKeyDer::from_pem_slice(key.as_bytes()).expect("the test material's key parses");
-        (certificates, key)
+        parse_chain(&chain, key)
     }
+}
+
+/// A PEM chain, leaf first, and its leaf's PEM key, as the peer's material.
+pub fn parse_chain(
+    chain: &str,
+    key: &str,
+) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
+    let certificates = CertificateDer::pem_slice_iter(chain.as_bytes())
+        .collect::<Result<_, _>>()
+        .expect("the test material's certificates parse");
+    let key =
+        PrivateKeyDer::from_pem_slice(key.as_bytes()).expect("the test material's key parses");
+    (certificates, key)
 }

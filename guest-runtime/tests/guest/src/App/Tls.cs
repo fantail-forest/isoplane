@@ -181,6 +181,60 @@ internal sealed class Tls
                 await tls.ShutdownAsync().ConfigureAwait(false);
                 return "shut down";
             }
+            case "sync-auth":
+            {
+                // The synchronous handshake: the guest has one thread and no
+                // blocking import, so this cannot wait for the peer.
+                using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                using var tls = new SslStream(new NetworkStream(client, ownsSocket: false), leaveInnerStreamOpen: false);
+                try
+                {
+                    tls.AuthenticateAsClient(RootTrustOptions(LeafHost));
+                    return "unexpected " + Describe(tls);
+                }
+                catch (Exception error)
+                {
+                    return "failed: " + error.GetType().Name + ": " + error.Message;
+                }
+            }
+            case "sync-read":
+            {
+                // Synchronous I/O on an established session against a peer
+                // that sends nothing: the write goes out, the read cannot wait.
+                using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                using var tls = await AuthenticateAsync(client, Trust.Root, LeafHost).ConfigureAwait(false);
+                string step = "write";
+                try
+                {
+                    tls.Write(new byte[] { 1, 2, 3 });
+                    tls.Flush();
+                    step = "read";
+                    int count = tls.Read(new byte[4], 0, 4);
+                    return "read: " + count.ToString(CultureInfo.InvariantCulture) + " bytes";
+                }
+                catch (Exception error)
+                {
+                    return step + " failed: " + error.GetType().Name + ": " + error.Message;
+                }
+            }
+            case "sync-chain":
+            {
+                // A direct synchronous X509Chain.Build on the peer's certificate
+                // with nothing but local material: the handshake that captured
+                // it fetched nothing (downloads off, callback accepts).
+                using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                X509Certificate2 remote = await CaptureRemoteCertificateAsync(client, path[3], downloads: false).ConfigureAwait(false);
+                return DescribeSyncBuild(remote);
+            }
+            case "sync-chain-after-async":
+            {
+                // The same build after an asynchronous authentication completed
+                // the chain through retrieval: the issuer it fetched is local
+                // material now.
+                using var client = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
+                X509Certificate2 remote = await CaptureRemoteCertificateAsync(client, path[3], downloads: true).ConfigureAwait(false);
+                return DescribeSyncBuild(remote);
+            }
             default:
                 throw new ArgumentException("unknown tls behaviour " + path[0]);
         }
@@ -207,6 +261,14 @@ internal sealed class Tls
         Online,
         /// <summary>Offline revocation check (cached lists only).</summary>
         Offline,
+        /// <summary>Online revocation check of the end certificate only.</summary>
+        OnlineLeaf,
+        /// <summary>Offline revocation check of the end certificate only.</summary>
+        OfflineLeaf,
+        /// <summary>Online check of the end certificate with a brief retrieval timeout.</summary>
+        OnlineLeafBrief,
+        /// <summary>No revocation check; a download limit of one kilobyte.</summary>
+        Limit,
     }
 
     private static async Task<Socket> ConnectAsync(string host, string port)
@@ -234,6 +296,23 @@ internal sealed class Tls
                 policy.RevocationMode = X509RevocationMode.Offline;
                 policy.RevocationFlag = X509RevocationFlag.EntireChain;
                 break;
+            case ChainVariant.OnlineLeaf:
+                policy.RevocationMode = X509RevocationMode.Online;
+                policy.RevocationFlag = X509RevocationFlag.EndCertificateOnly;
+                break;
+            case ChainVariant.OfflineLeaf:
+                policy.RevocationMode = X509RevocationMode.Offline;
+                policy.RevocationFlag = X509RevocationFlag.EndCertificateOnly;
+                break;
+            case ChainVariant.OnlineLeafBrief:
+                policy.RevocationMode = X509RevocationMode.Online;
+                policy.RevocationFlag = X509RevocationFlag.EndCertificateOnly;
+                policy.UrlRetrievalTimeout = TimeSpan.FromMilliseconds(500);
+                break;
+            case ChainVariant.Limit:
+                // Read once, at the download client's first use.
+                AppContext.SetData("System.Security.Cryptography.AiaDownloadLimit", 1024L);
+                break;
             case ChainVariant.Default:
                 break;
         }
@@ -255,6 +334,38 @@ internal sealed class Tls
             throw;
         }
         return tls;
+    }
+
+    /// <summary>
+    /// Authenticates with the material's root, accepting the peer whatever the
+    /// chain said, and returns the certificate the peer presented.
+    /// </summary>
+    private static async Task<X509Certificate2> CaptureRemoteCertificateAsync(Socket socket, string host, bool downloads)
+    {
+        X509Certificate2? captured = null;
+        var options = RootTrustOptions(host, downloads ? ChainVariant.Default : ChainVariant.DownloadsOff);
+        options.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+        {
+            captured = certificate is null ? null : new X509Certificate2(certificate);
+            return true;
+        };
+        using var tls = new SslStream(new NetworkStream(socket, ownsSocket: false), leaveInnerStreamOpen: false);
+        await tls.AuthenticateAsClientAsync(options).ConfigureAwait(false);
+        return captured ?? throw new InvalidOperationException("the peer presented no certificate");
+    }
+
+    /// <summary>What a synchronous build of <paramref name="remote"/> under the material's root reports.</summary>
+    private static string DescribeSyncBuild(X509Certificate2 remote)
+    {
+        using var chain = new X509Chain();
+        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        chain.ChainPolicy.CustomTrustStore.Add(X509CertificateLoader.LoadCertificate(PemBytes(CryptoMaterial.RootCertificate)));
+        bool built = chain.Build(remote);
+        var status = new List<string>();
+        foreach (X509ChainStatus entry in chain.ChainStatus) status.Add(entry.Status.ToString());
+        return "built=" + built + " elements=" + chain.ChainElements.Count.ToString(CultureInfo.InvariantCulture)
+            + " status=" + (status.Count == 0 ? "NoError" : string.Join(",", status));
     }
 
     private static async Task<string> RoundTripAsync(SslStream tls, byte[] payload)

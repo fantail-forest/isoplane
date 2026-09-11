@@ -5,6 +5,8 @@
 
 #[macro_use]
 mod common;
+#[path = "common/fixed_dns.rs"]
+mod fixed_dns;
 #[path = "common/no_dns.rs"]
 mod no_dns;
 #[path = "common/no_egress.rs"]
@@ -15,8 +17,9 @@ mod resolvers;
 use std::sync::Arc;
 
 use common::{guest, GuestRuntime};
+use fixed_dns::FixedDns;
 use no_egress::reactor_without_egress;
-use resolvers::{reactor_for_dns, FailingDns, FixedDns, PendingDns};
+use resolvers::{reactor_for_dns, FailingDns, PendingDns};
 use wisp_abi::native_io::DnsFailure;
 use wisp_engine::Completion;
 use wisp_harness::EmittedGuestLogs as _;

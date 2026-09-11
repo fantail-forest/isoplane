@@ -245,6 +245,12 @@ impl ReturnedGuest {
         (self.text_of("the dispatch", outcome), wakes)
     }
 
+    /// The text a completed dispatch answered with, failing on any other
+    /// outcome; for a test that drives the wakes itself.
+    pub fn text_of_outcome(&self, outcome: DispatchOutcome) -> String {
+        self.text_of("the dispatch", outcome)
+    }
+
     fn text_of(&self, what: &str, outcome: DispatchOutcome) -> String {
         let wisp_abi::status::PollStatus::Done { response } = outcome.status else {
             panic!(

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rustls::server::WebPkiClientVerifier;
 use rustls::RootCertStore;
 use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::CertificateDer;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -32,6 +32,12 @@ pub enum Behaviour {
     CloseDuringHandshake,
     /// Accepts the connection and never answers.
     Silent,
+    /// Handshakes, then reads whatever the guest sends and never answers,
+    /// keeping the connection open.
+    Quiet,
+    /// Handshakes, then answers each HTTP/1.1 request with a greeting and
+    /// keeps the connection open.
+    HttpHello,
 }
 
 /// What a peer observed on one connection.
@@ -49,7 +55,7 @@ pub enum PeerEvent {
 
 /// A TLS peer under construction.
 pub struct TlsPeer {
-    certificate: Certificate,
+    chain: (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>),
     behaviour: Behaviour,
     client_auth: bool,
     alpn: Vec<Vec<u8>>,
@@ -57,8 +63,16 @@ pub struct TlsPeer {
 
 impl TlsPeer {
     pub fn new(certificate: Certificate, behaviour: Behaviour) -> Self {
+        Self::presenting(certificate.presented(), behaviour)
+    }
+
+    /// A peer presenting exactly this chain with its leaf's key.
+    pub fn presenting(
+        chain: (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>),
+        behaviour: Behaviour,
+    ) -> Self {
         Self {
-            certificate,
+            chain,
             behaviour,
             client_auth: false,
             alpn: Vec::new(),
@@ -84,8 +98,8 @@ impl TlsPeer {
             .await
             .expect("the TLS peer must bind");
         let address = listener.local_addr().expect("the TLS peer has an address");
-        let acceptor = self.acceptor();
         let behaviour = self.behaviour;
+        let acceptor = self.acceptor();
         let (events, observed) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             loop {
@@ -98,8 +112,8 @@ impl TlsPeer {
         (address, observed)
     }
 
-    fn acceptor(&self) -> TlsAcceptor {
-        let (certificates, key) = self.certificate.presented();
+    fn acceptor(self) -> TlsAcceptor {
+        let (certificates, key) = self.chain;
         let builder = rustls::ServerConfig::builder();
         let builder = if self.client_auth {
             let mut roots = RootCertStore::empty();
@@ -149,7 +163,11 @@ async fn serve(
             let _read = tcp.read(&mut hello).await;
             return;
         }
-        Behaviour::Echo | Behaviour::Eof | Behaviour::TruncatedRecord => {}
+        Behaviour::Echo
+        | Behaviour::Eof
+        | Behaviour::TruncatedRecord
+        | Behaviour::HttpHello
+        | Behaviour::Quiet => {}
     }
     // A handshake the client refuses ends here; that is the stranger's
     // purpose.
@@ -205,6 +223,37 @@ async fn serve(
                 .expect("rustls encodes the record");
             let _sent = tcp.write_all(&record[..record.len() / 2]).await;
             let _flushed = tcp.flush().await;
+        }
+        Behaviour::HttpHello => {
+            let mut buffer = [0; 4096];
+            let mut head = Vec::new();
+            loop {
+                let Ok(count) = stream.read(&mut buffer).await else {
+                    return;
+                };
+                if count == 0 {
+                    return;
+                }
+                head.extend_from_slice(&buffer[..count]);
+                if head.windows(4).any(|window| window == b"\r\n\r\n") {
+                    head.clear();
+                    let body = b"hello from peer";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\n\r\n",
+                        body.len()
+                    );
+                    if stream.write_all(response.as_bytes()).await.is_err()
+                        || stream.write_all(body).await.is_err()
+                        || stream.flush().await.is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        Behaviour::Quiet => {
+            let mut sink = [0u8; 1024];
+            while matches!(stream.read(&mut sink).await, Ok(count) if count > 0) {}
         }
         Behaviour::Silent | Behaviour::CloseDuringHandshake => {}
     }
