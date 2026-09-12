@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 DOTNET = shutil.which("dotnet")
@@ -20,7 +21,38 @@ class ContainerPublishTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.bin = self.root / "tools"
         self.bin.mkdir()
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + "/usr/bin:/bin", FAKE_ROOT=str(self.root))
+        self.env = dict(os.environ, PATH=str(self.bin), FAKE_ROOT=str(self.root))
+        for command in ["dotnet", "id", "sh"]:
+            executable = shutil.which(command)
+            self.assertIsNotNone(executable, f"install {command} to test the MSBuild integration")
+            (self.bin / command).symlink_to(executable)
+        feed = self.root / "runtime-feed"
+        sdk = self.root / "wasi-sdk"
+        feed.mkdir()
+        (sdk / "Sdk").mkdir(parents=True)
+        (sdk / "Sdk/Sdk.targets").write_text("<Project />")
+        props = ET.Element("Project")
+        group = ET.SubElement(props, "PropertyGroup")
+        for name, value in {
+            "WispGuestRuntimePackVersion": "1.0.0",
+            "WispGuestNativeAotPackVersion": "1.0.0",
+            "WispGuestWasiSdkPackDirectory": str(sdk) + "/",
+        }.items():
+            ET.SubElement(group, name).text = value
+        ET.ElementTree(props).write(feed / "Wisp.GuestRuntime.props")
+        self.env["WISP_GUEST_RUNTIME_FEED"] = str(feed)
+        validator = self.bin / "wisp-validator"
+        validator.write_text(f"#!{sys.executable}\n" + """
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['FAKE_ROOT'])
+assert sys.argv[1] == 'doctor', 'container output must pass the normal validator entry point'
+with (root / 'validator-calls').open('a') as log:
+    log.write(json.dumps(sys.argv[1:]) + '\\n')
+assert pathlib.Path(sys.argv[2]).read_bytes() == b'published module', 'validate the actual compiler result'
+sys.exit(2 if os.environ.get('FAKE_MODE') == 'validator-rejection' else 0)
+""")
+        validator.chmod(0o755)
+        self.env["WISP_CLI"] = str(validator)
         self.project = self.root / "Guest.csproj"
         self.project.write_text(f'''<Project Sdk="Microsoft.NET.Sdk">
 <Import Project="{ROOT}/guest-sdks/dotnet/Wisp.Guest.props" />
@@ -50,6 +82,7 @@ elif args[0] == 'start':
     output.mkdir()
     if mode != 'missing-module':
         (output / 'guest.wasm').write_bytes(b'published module')
+        (output / 'guest.wasm.runtime').write_text('test-runtime@sha512:test-digest')
 elif args[0] == 'ps':
     if (root / 'created').exists(): print('owned-container')
 elif args[0] == 'rm':
@@ -67,7 +100,7 @@ else:
         self.assertIsNotNone(DOTNET, "install the .NET SDK to test the MSBuild integration")
         return subprocess.run([
             DOTNET, "msbuild", str(self.project), "-t:Publish", "-nologo",
-            "-p:WispContainerBuild=true", "-p:WispValidate=false",
+            "-p:WispContainerBuild=true",
             "-p:Configuration=Release", f"-p:PublishDir={self.root}/out",
             f"-p:WispCompilerCache={self.root}/cache",
             *properties,
@@ -116,6 +149,18 @@ else:
         self.assertEqual(module.read_bytes(), b"working", "a failed compiler must preserve the previous module")
         self.assertTrue((self.root / "removed").exists(), "a failed compilation must remove its container")
 
+    def test_validator_rejection_preserves_previous_output_and_cleans_up(self):
+        self.env["FAKE_MODE"] = "validator-rejection"
+        (self.root / "out").mkdir()
+        module = self.root / "out/guest.wasm"
+        module.write_bytes(b"working")
+        result = self.publish()
+        self.assertNotEqual(result.returncode, 0, "a rejected compiler artifact must fail publication")
+        self.assertIn("validating the linked module", result.stdout, result.stdout)
+        self.assertTrue((self.root / "validator-calls").exists(), "publication must call the validator")
+        self.assertEqual(module.read_bytes(), b"working", "rejection must preserve the prior valid module")
+        self.assertTrue((self.root / "removed").exists(), "rejection must reclaim its compiler container")
+
     def test_offline_builds_preserve_arguments_isolate_outputs_and_disable_network(self):
         result = self.publish("-p:WispOffline=true", "-p:DefineConstants=FIRST%3BSECOND")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -154,6 +199,7 @@ else:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for output in outputs:
                 self.assertFalse((output / "guest.wasm").exists(), "clean must remove every recorded publish output")
+                self.assertFalse((output / "guest.wasm.runtime").exists(), "clean must remove the published runtime identity alongside its module")
         self.assertEqual(unrelated.read_bytes(), b"another project's output", "clean must preserve files this project did not produce")
         self.assertEqual(cache.read_bytes(), b"cached package", "clean must preserve shared compiler packages")
 

@@ -14,6 +14,8 @@ mod no_egress;
 
 use common::{guest, GuestRuntime};
 use no_egress::reactor_without_egress;
+use wisp_engine::Completion;
+use wisp_host::InstanceId;
 
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
     let reactor = reactor_without_egress(owner);
@@ -180,5 +182,123 @@ in_both_runtimes! {
             "doc 2 1",
             "JsonDocument must parse and navigate without any serializer"
         );
+    }
+}
+
+async fn answer_after_restore(runtime: GuestRuntime, owner: InstanceId, path: &str) -> String {
+    let reactor = reactor_without_egress(owner.0);
+    reactor.context.begin_slice(1, 1);
+    let mut guest = guest(&reactor, runtime);
+    let outcome = guest.start(path);
+    assert_eq!(
+        outcome.completion,
+        Completion::Parked,
+        "runtime state must park before capture: {outcome:?}"
+    );
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_millis(60)).await;
+    reactor.context.begin_slice(61, 1);
+    let outcome = guest.wake(&reactor).await;
+    assert_eq!(
+        outcome.completion,
+        Completion::Done,
+        "runtime state must remain usable after restoring its memory image: {outcome:?}"
+    );
+    reactor.response_text(1)
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn interpreted_expression_closures_remain_callable_after_store_restoration(runtime: GuestRuntime) {
+        assert_eq!(answer_after_restore(runtime, InstanceId(380), "/reflection/expression-after-park").await,
+            "42/43", "expression delegates must preserve their captured mutable state across Store restoration");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn disposing_a_safe_handle_twice_releases_it_once(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 381, "/reflection/safe-handle-dispose").await,
+            "1", "SafeHandle must release its owned resource exactly once");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn a_finalized_safe_handle_is_not_released_again_after_store_restoration(runtime: GuestRuntime) {
+        assert_eq!(answer_after_restore(runtime, InstanceId(382), "/reflection/safe-handle-finalizer-after-park").await,
+            "1/1", "finalization must release an unreachable SafeHandle once and preserve that state across Store restoration");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_interpreted_emitted_delegate_remains_callable_after_store_restoration() {
+    assert_eq!(
+        answer_after_restore(
+            GuestRuntime::Mono,
+            InstanceId(383),
+            "/reflection/emitted-delegate-after-park"
+        )
+        .await,
+        "42/43",
+        "Mono must preserve emitted IL and its callable delegate across Store restoration"
+    );
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn default_expression_compilation_remains_callable_after_store_restoration(runtime: GuestRuntime) {
+        assert_eq!(answer_after_restore(runtime, InstanceId(384), "/reflection/expression-default-after-park").await,
+            "42/43", "ordinary expression compilation must choose an available execution path and preserve captured state across Store restoration");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_interpreted_loaded_assembly_remains_callable_after_store_restoration() {
+    assert_eq!(
+        answer_after_restore(
+            GuestRuntime::Mono,
+            InstanceId(390),
+            "/reflection/assembly-after-park"
+        )
+        .await,
+        "42/43",
+        "Mono must preserve a loaded assembly and its reflection metadata across Store restoration"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn interpreted_dynamic_members_remain_callable_after_store_restoration() {
+    assert_eq!(
+        answer_after_restore(
+            GuestRuntime::Mono,
+            InstanceId(392),
+            "/reflection/dynamic-after-park/member"
+        )
+        .await,
+        "42/43",
+        "a preserved user method must remain dynamically callable across Store restoration"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn interpreted_dynamic_expando_bindings_survive_store_restoration() {
+    assert_eq!(
+        answer_after_restore(
+            GuestRuntime::Mono,
+            InstanceId(393),
+            "/reflection/dynamic-after-park/expando"
+        )
+        .await,
+        "42/43",
+        "ExpandoObject dynamic binding rules must preserve mutable state across Store restoration"
+    );
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn enabled_event_listeners_survive_store_restoration_and_stop_at_disposal(runtime: GuestRuntime) {
+        assert_eq!(answer_after_restore(runtime, InstanceId(396), "/reflection/events-after-park").await,
+            "42,43", "an enabled listener must preserve payloads across Store restoration and receive nothing after disposal");
     }
 }

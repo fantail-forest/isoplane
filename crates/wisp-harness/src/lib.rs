@@ -50,8 +50,8 @@ pub struct Reactor {
 impl Reactor {
     /// A reactor on the current tokio runtime for `owner`, whose outbound
     /// connections, lookups and fetches go through `policy` and the real
-    /// transport, trusting the host's certificate store. The guest's PAL
-    /// filesystem holds no files.
+    /// transport. The guest's PAL filesystem holds no files, including no
+    /// default trust bundle; TLS tests supply their trust explicitly.
     pub fn new(owner: InstanceId, policy: HostEgressPolicy) -> Self {
         Self::with_platform_files(owner, policy, PlatformFiles::default())
     }
@@ -218,26 +218,24 @@ impl ReturnedGuest {
         outcome
     }
 
-    async fn await_readiness(&self, reactor: &Reactor) {
-        if tokio::time::timeout(WAKE_DEADLINE, reactor.wake.0.notified())
-            .await
-            .is_err()
-        {
+    async fn await_completion(&self, reactor: &Reactor) -> (u64, ResultRecord) {
+        tokio::time::timeout(
+            WAKE_DEADLINE,
+            next_completion(&reactor.futures, self.context.instance, &reactor.wake.0),
+        )
+        .await
+        .unwrap_or_else(|_| {
             panic!(
-                "the reactor must signal readiness before the test deadline; logs: {:?}",
+                "the reactor must deliver a completion before the test deadline; logs: {:?}",
                 self.context.emitted_logs()
-            );
-        }
+            )
+        })
     }
 
     /// Waits for the reactor to signal readiness, then delivers the ready
     /// completion to the guest restored on another thread.
     pub async fn wake(&mut self, reactor: &Reactor) -> DispatchOutcome {
-        self.await_readiness(reactor).await;
-        let (future, result) = reactor
-            .futures
-            .take_ready(self.context.instance)
-            .expect("a host wake must carry its owner's completion");
+        let (future, result) = self.await_completion(reactor).await;
         self.restore_and_wake(future, &result)
     }
 
@@ -381,6 +379,93 @@ fn budget() -> CpuBudget {
         cpu_ms: 30_000,
         wall_ms_cap: 60_000,
         spent_ns: 0,
+    }
+}
+
+async fn next_completion(
+    futures: &FutureTable,
+    owner: InstanceId,
+    wake: &tokio::sync::Notify,
+) -> (u64, ResultRecord) {
+    loop {
+        if let Some(completion) = futures.take_ready(owner) {
+            return completion;
+        }
+        // Notifications coalesce and can outlive a cancelled completion.
+        // The table, not a wake permit, determines whether work is ready.
+        wake.notified().await;
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    use wisp_host::futures::WakeTarget;
+
+    fn complete(table: &FutureTable, owner: InstanceId, id: u64) {
+        assert_eq!(
+            table.complete(id, ResultRecord::Ok(vec![7])),
+            WakeTarget::Instance(owner),
+            "the completion must belong to the waiting guest"
+        );
+    }
+
+    fn alloc(table: &FutureTable, owner: InstanceId) -> u64 {
+        table
+            .alloc(owner, 1, "sleep", 4)
+            .expect("the test dispatch must have a free future slot")
+    }
+
+    #[test]
+    fn coalesced_notifications_do_not_hide_a_second_ready_completion() {
+        let table = FutureTable::new();
+        let owner = InstanceId(1);
+        let wake = tokio::sync::Notify::new();
+        let first = alloc(&table, owner);
+        let second = alloc(&table, owner);
+        complete(&table, owner, first);
+        complete(&table, owner, second);
+        wake.notify_one();
+        let mut context = Context::from_waker(Waker::noop());
+        for id in [first, second] {
+            let mut waiter = std::pin::pin!(next_completion(&table, owner, &wake));
+            assert_eq!(
+                waiter.as_mut().poll(&mut context),
+                Poll::Ready((id, ResultRecord::Ok(vec![7]))),
+                "each ready completion must be delivered even when wake permits coalesce"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cancelled_completion_notification_does_not_disrupt_the_next_completion() {
+        let table = FutureTable::new();
+        let owner = InstanceId(1);
+        let wake = tokio::sync::Notify::new();
+        let cancelled = alloc(&table, owner);
+        complete(&table, owner, cancelled);
+        wake.notify_one();
+        assert!(
+            table.cancel_owned(owner, cancelled.into()),
+            "the old completion must be cancelled"
+        );
+        let pending = alloc(&table, owner);
+        let mut waiter = std::pin::pin!(next_completion(&table, owner, &wake));
+        let mut context = Context::from_waker(Waker::noop());
+        assert_eq!(
+            waiter.as_mut().poll(&mut context),
+            Poll::Pending,
+            "a stale notification must wait for a real completion"
+        );
+        complete(&table, owner, pending);
+        wake.notify_one();
+        assert_eq!(
+            waiter.as_mut().poll(&mut context),
+            Poll::Ready((pending, ResultRecord::Ok(vec![7]))),
+            "the replacement completion must still wake its guest"
+        );
     }
 }
 

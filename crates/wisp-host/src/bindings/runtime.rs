@@ -29,16 +29,6 @@ pub trait Fetcher: Send + Sync + 'static {
         target: wisp_abi::host::PinnedTarget,
         req: FetchRequest,
     ) -> Result<super::http_scope::OutboundResponse, FutureError>;
-
-    /// Sends a request the guest built through its own HTTP client, streaming
-    /// the body it writes, and answers with the response head once it
-    /// arrives; the failure names why no head came.
-    async fn exchange(
-        &self,
-        owner: crate::egress::ConnectionOwner,
-        target: wisp_abi::host::PinnedTarget,
-        request: super::outbound::OutboundRequest,
-    ) -> Result<super::http_scope::OutboundResponse, super::outbound::ExchangeFailure>;
 }
 
 /// Everything the vtable routes to.

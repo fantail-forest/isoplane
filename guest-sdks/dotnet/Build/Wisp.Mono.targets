@@ -1,4 +1,9 @@
 <Project>
+  <Target Name="WispMonoSelectRuntimePack" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <FrameworkReference Update="Microsoft.NETCore.App" RuntimeFrameworkVersion="$(WispGuestRuntimePackVersion)" />
+    </ItemGroup>
+  </Target>
   <Import Project="Wisp.Validation.targets" />
   <ItemGroup>
     <LinkerArg Include="-nostartfiles" />

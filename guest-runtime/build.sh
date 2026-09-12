@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Build the WISP guest runtime from pinned sources: guest-runtime/build.sh [stage...]
 #
-# Stages, in order (default: all): acquire toolchain patch openssl packs feed
-#   acquire    download and verify the archives in manifest.env, extract the source
-#              trees under work/ and commit them pristine so every change is a diff
+# Stages, in order (default: all): acquire toolchain patch openssl icu packs feed
+#   acquire    download and verify the archives in manifest.env
 #   toolchain  unpack the pinned wasi-sdk under work/wasi-sdk
-#   patch      apply the patch series to each source tree, one commit each:
+#   patch      reconcile pinned source trees and patches, preserving local commits:
 #              patches/runtime and patches/openssl are directories applied in
 #              order; patches/runtimelab/series names the fork's own patches and
 #              the runtime patches that apply to it, Mono files excluded
 #   openssl    build OpenSSL to wasm32-wasip2 archives, installed under out/openssl
+#   icu        build complete ICU data and stage each pinned WASI native transport
 #   packs      the runtime and nativeaot stages concurrently (separate trees)
 #   runtime    build the Mono WASI runtime pack (mono+libs+packs) for wasi-wasm
 #   nativeaot  build the NativeAOT-LLVM framework pack (clr.aot+libs) for wasi-wasm
@@ -28,9 +28,15 @@ RUNTIMELAB="$WORK/runtimelab"
 OPENSSL="$WORK/openssl"
 OPENSSL_BUILD="$WORK/openssl-build"
 WASI_SDK="$WORK/wasi-sdk"
+ICU="$WORK/icu"
+ICU_BUILD="$WORK/icu-build"
+ICU_MONO_NATIVE="$OUT/icu/mono/runtimes/wasi-wasm/native"
+ICU_NATIVEAOT_NATIVE="$OUT/icu/nativeaot/runtimes/wasi-wasm/native"
 DOWNLOADS="$WORK/downloads"
 LOGS="$WORK/logs"
 mkdir -p "$DOWNLOADS" "$LOGS" "$OUT"
+exec 9>"$WORK/.build.lock"
+flock 9
 
 fetch() {
   local url="$1" sha="$2" file="$3"
@@ -40,20 +46,18 @@ fetch() {
   echo "$sha  $file" | sha256sum --check --quiet
 }
 
-extract_pristine() {
-  local tarball="$1" target="$2"
-  if [ -d "$target/.git" ]; then
-    echo "    $target already extracted"
-    return
-  fi
-  rm -rf "$target"
-  mkdir -p "$target"
-  tar --strip-components=1 -xzf "$tarball" -C "$target"
-  git -C "$target" init -q
-  # The applied-patch list is build state, never part of a patch.
-  echo ".wisp-applied" >> "$target/.git/info/exclude"
-  git -C "$target" -c user.name=wisp -c user.email=wisp@localhost add -A
-  git -C "$target" -c user.name=wisp -c user.email=wisp@localhost commit -q -m "pristine $(basename "$tarball")"
+verify_archive() {
+  local sha="$1" file="$2"
+  printf '%s  %s\n' "$sha" "$file" | sha256sum --check --status || {
+    echo "archive does not match its pinned SHA256: $file; run guest-runtime/build.sh acquire" >&2
+    return 1
+  }
+}
+
+require_ninja() {
+  local ninja
+  ninja="$(command -v ninja || command -v ninja-build)" || { echo "Ninja is missing from PATH; install a working Ninja before building runtime packs" >&2; return 1; }
+  "$ninja" --version >/dev/null 2>&1 || { echo "Ninja cannot run at $ninja; select a working Ninja on PATH" >&2; return 1; }
 }
 
 stage_acquire() {
@@ -62,69 +66,64 @@ stage_acquire() {
   fetch "$RUNTIMELAB_TARBALL_URL" "$RUNTIMELAB_TARBALL_SHA256" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz"
   fetch "$OPENSSL_TARBALL_URL" "$OPENSSL_TARBALL_SHA256" "$DOWNLOADS/$OPENSSL_TAG.tar.gz"
   fetch "$WASI_SDK_URL" "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz"
-  extract_pristine "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz" "$RUNTIME"
-  extract_pristine "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz" "$RUNTIMELAB"
-  extract_pristine "$DOWNLOADS/$OPENSSL_TAG.tar.gz" "$OPENSSL"
+  fetch "$ICU_SOURCE_URL" "$ICU_SOURCE_SHA256" "$DOWNLOADS/icu-$ICU_SOURCE_COMMIT.tar.gz"
+  fetch "$ICU_MONO_TRANSPORT_URL" "$ICU_MONO_TRANSPORT_SHA256" "$DOWNLOADS/icu-mono-$ICU_MONO_TRANSPORT_VERSION.nupkg"
+  fetch "$ICU_NATIVEAOT_TRANSPORT_URL" "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$DOWNLOADS/icu-nativeaot-$ICU_NATIVEAOT_TRANSPORT_VERSION.nupkg"
 }
 
 stage_toolchain() {
   echo "==> toolchain"
   # The marker is what the runtime build checks before provisioning its own copy.
-  if [ -f "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION" ]; then
+  if [ -f "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION" ] && [ -f "$WASI_SDK/.wisp-archive-sha256" ] && [ "$(cat "$WASI_SDK/.wisp-archive-sha256")" = "$WASI_SDK_SHA256" ]; then
     echo "    wasi-sdk $WASI_SDK_VERSION already unpacked"
     return
   fi
+  verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz"
   rm -rf "$WASI_SDK"
   mkdir -p "$WASI_SDK"
   tar --strip-components=1 -xzf "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz" -C "$WASI_SDK"
-  cp "$RUNTIME/src/mono/wasi/wasi-sdk-version.txt" "$WASI_SDK/wasi-sdk-version.txt" 2>/dev/null || echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
+  echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
   touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
+  echo "$WASI_SDK_SHA256" > "$WASI_SDK/.wisp-archive-sha256"
 }
 
-# The patches of a directory in name order, or the entries of its series
-# file (one path per line, relative to the directory, `#` comments).
-patch_series() {
-  local directory="$1"
-  if [ -f "$directory/series" ]; then
-    grep -v '^\s*\(#\|$\)' "$directory/series" | sed "s|^|$directory/|"
-  else
-    ls "$directory"/*.patch 2>/dev/null || true
-  fi
+source_tree() {
+  local action="$1" tree="$2" archive="$3" sha="$4" patches="$5"
+  shift 5
+  python3 "$HERE/source-tree.py" "$action" "$tree" "$archive" "$sha" "$patches" "$@"
 }
 
-# apply_patches <tree> <patch directory> [git apply option...]
-apply_patches() {
-  local tree="$1" directory="$2"
-  shift 2
-  local applied="$tree/.wisp-applied"
-  touch "$applied"
-  local patch name
-  while IFS= read -r patch; do
-    [ -n "$patch" ] || continue
-    name="$(basename "$patch")"
-    if grep -qx "$name" "$applied"; then
-      continue
-    fi
-    echo "    applying $name"
-    git -C "$tree" apply --index "$@" "$patch"
-    git -C "$tree" -c user.name=wisp -c user.email=wisp@localhost commit -q -m "$name"
-    echo "$name" >> "$applied"
-  done < <(patch_series "$directory")
+runtime_source() {
+  source_tree "$1" "$RUNTIME" "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz" "$RUNTIME_TARBALL_SHA256" "$HERE/patches/runtime"
+}
+nativeaot_source() {
+  source_tree "$1" "$RUNTIMELAB" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz" "$RUNTIMELAB_TARBALL_SHA256" "$HERE/patches/runtimelab" --exclude='src/mono/*'
+}
+openssl_source() {
+  source_tree "$1" "$OPENSSL" "$DOWNLOADS/$OPENSSL_TAG.tar.gz" "$OPENSSL_TARBALL_SHA256" "$HERE/patches/openssl"
+}
+
+icu_source() {
+  source_tree "$1" "$ICU" "$DOWNLOADS/icu-$ICU_SOURCE_COMMIT.tar.gz" "$ICU_SOURCE_SHA256" "$HERE/patches/icu"
 }
 
 stage_patch() {
   echo "==> patch"
-  apply_patches "$RUNTIME" "$HERE/patches/runtime"
-  # The fork has no Mono; a shared patch's Mono hunks do not apply to it.
-  apply_patches "$RUNTIMELAB" "$HERE/patches/runtimelab" --exclude='src/mono/*'
-  apply_patches "$OPENSSL" "$HERE/patches/openssl"
-  # The runtime tree's own copy of the version file feeds the toolchain marker.
-  cp "$RUNTIME/src/mono/wasi/wasi-sdk-version.txt" "$WASI_SDK/wasi-sdk-version.txt" 2>/dev/null || true
+  runtime_source materialize
+  nativeaot_source materialize
+  openssl_source materialize
+  icu_source materialize
+}
+
+openssl_inputs_digest() {
+  find "$HERE/patches/openssl" -type f | LC_ALL=C sort | xargs cat "$HERE/manifest.env" "$HERE/build.sh" "$HERE/source-tree.py" | sha256sum | cut -d' ' -f1
 }
 
 stage_openssl() {
   echo "==> openssl (log: $LOGS/openssl-build.log)"
-  [ -x "$WASI_SDK/bin/clang" ] || { echo "the toolchain stage unpacks wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
+  openssl_source verify
+  local build_inputs="$(openssl_inputs_digest)"
+  [ -x "$WASI_SDK/bin/clang" ] && [ -f "$WASI_SDK/.wisp-archive-sha256" ] && [ "$(cat "$WASI_SDK/.wisp-archive-sha256")" = "$WASI_SDK_SHA256" ] || { echo "the toolchain stage unpacks the pinned wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
   # Out of tree, so the source tree stays a clean base for patches. The
   # OPENSSLDIR is a guest path: the compiled-in default certificate file and
   # directory are then /etc/ssl/cert.pem and /etc/ssl/certs inside the
@@ -132,7 +131,8 @@ stage_openssl() {
   mkdir -p "$OPENSSL_BUILD"
   (
     cd "$OPENSSL_BUILD"
-    if [ ! -f Makefile ]; then
+    if [ ! -f "$OUT/openssl/.wisp-build-identity" ] || [ "$(cat "$OUT/openssl/.wisp-build-identity")" != "$(openssl_inputs_digest)" ]; then
+      if [ -f Makefile ]; then make clean; fi
       CC="$WASI_SDK/bin/clang" AR="$WASI_SDK/bin/llvm-ar" RANLIB="$WASI_SDK/bin/llvm-ranlib" \
       perl "$OPENSSL/Configure" linux-generic32 no-shared no-threads no-asm no-dso no-module no-engine \
         no-sock no-async no-apps no-tests no-secure-memory no-ui-console \
@@ -141,7 +141,50 @@ stage_openssl() {
     make -j"$(nproc)" build_libs
     # Headers and archives under out/openssl, where the runtime build finds them.
     make install_dev
+    openssl_source verify
+    [ "$build_inputs" = "$(openssl_inputs_digest)" ] || { echo "OpenSSL inputs changed during compilation; rerun the build" >&2; exit 1; }
+    find "$OUT/openssl/include" "$OUT/openssl/lib" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$WORK/openssl-build-artifacts"
+    echo "$build_inputs" > "$OUT/openssl/.wisp-build-identity"
   ) > "$LOGS/openssl-build.log" 2>&1
+}
+
+icu_inputs_digest() {
+  find "$HERE/patches/icu" -type f | LC_ALL=C sort | xargs cat "$HERE/manifest.env" "$HERE/build.sh" "$HERE/source-tree.py" | sha256sum | cut -d' ' -f1
+}
+
+stage_icu() {
+  echo "==> icu (log: $LOGS/icu-build.log)"
+  icu_source verify
+  local build_inputs="$(icu_inputs_digest)"
+  local mono_archive="$DOWNLOADS/icu-mono-$ICU_MONO_TRANSPORT_VERSION.nupkg"
+  local nativeaot_archive="$DOWNLOADS/icu-nativeaot-$ICU_NATIVEAOT_TRANSPORT_VERSION.nupkg"
+  verify_archive "$ICU_MONO_TRANSPORT_SHA256" "$mono_archive"
+  verify_archive "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$nativeaot_archive"
+  (
+    if [ ! -f "$WORK/icu-build-inputs" ] || [ "$(cat "$WORK/icu-build-inputs")" != "$build_inputs" ]; then
+      rm -rf "$ICU_BUILD"
+    fi
+    mkdir -p "$ICU_BUILD"
+    cd "$ICU_BUILD"
+    unset ICU_DATA_FILTER_FILE
+    if [ ! -f Makefile ]; then
+      "$ICU/icu/icu4c/source/runConfigureICU" Linux --disable-tests --disable-samples --disable-shared --enable-static --with-data-packaging=archive
+    fi
+    make -j"$(nproc)"
+    [ -f "data/out/$ICU_DATA_FILE" ] || { echo "the ICU build produced no data/out/$ICU_DATA_FILE" >&2; exit 1; }
+    verify_archive "$ICU_MONO_TRANSPORT_SHA256" "$mono_archive"
+    verify_archive "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$nativeaot_archive"
+    rm -rf "$OUT/icu"
+    mkdir -p "$OUT/icu/mono" "$OUT/icu/nativeaot"
+    unzip -q "$mono_archive" 'runtimes/wasi-wasm/native/*' -d "$OUT/icu/mono"
+    unzip -q "$nativeaot_archive" 'runtimes/wasi-wasm/native/*' -d "$OUT/icu/nativeaot"
+    cp "data/out/$ICU_DATA_FILE" "$ICU_MONO_NATIVE/lib/icudt.dat"
+    cp "data/out/$ICU_DATA_FILE" "$ICU_NATIVEAOT_NATIVE/lib/icudt.dat"
+    icu_source verify
+    [ "$build_inputs" = "$(icu_inputs_digest)" ] || { echo "ICU inputs changed during compilation; rerun the build" >&2; exit 1; }
+    find "$OUT/icu" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$WORK/icu-build-artifacts"
+    echo "$build_inputs" > "$WORK/icu-build-inputs"
+  ) > "$LOGS/icu-build.log" 2>&1
 }
 
 # A pack version is never reused: its label carries a digest of the inputs
@@ -151,7 +194,7 @@ stage_openssl() {
 # two-digit revision, so the time lives in the label. The exact version is
 # recorded under work/ for the feed stage, one file per pack.
 inputs_digest() {
-  find "$HERE/patches" -type f | LC_ALL=C sort | xargs cat "$HERE/manifest.env" | sha256sum | cut -c1-8
+  python3 "$HERE/feed-identity.py" digest "$HERE"
 }
 runtime_version_file="$WORK/pack-version"
 nativeaot_version_file="$WORK/nativeaot-pack-version"
@@ -159,7 +202,7 @@ nativeaot_version_file="$WORK/nativeaot-pack-version"
 stamp_pack_version() {
   local build_id label stamp
   build_id="$(date -u +%Y%m%d).1"
-  label="$PACK_LABEL-$(inputs_digest)-$(date -u +%H%M%S)"
+  label="$PACK_LABEL-$(inputs_digest | cut -c1-8)-$(date -u +%H%M%S)"
   # Arcade's date stamp: yy * 1000 + mm * 50 + dd.
   stamp=$((10#$(date -u +%y) * 1000 + 10#$(date -u +%m) * 50 + 10#$(date -u +%d)))
   echo "10.0.$PACK_PATCH-$label.$PACK_ITERATION.$stamp.1" > "$1"
@@ -168,18 +211,46 @@ stamp_pack_version() {
   echo "    pack version $(cat "$1")"
 }
 require_build_inputs() {
+  require_ninja
+  icu_source verify
+  [ -f "$WORK/icu-build-inputs" ] && [ "$(cat "$WORK/icu-build-inputs")" = "$(icu_inputs_digest)" ] || { echo "the ICU data does not match current build inputs; run guest-runtime/build.sh icu" >&2; exit 1; }
+  [ -f "$WORK/icu-build-artifacts" ] && sha256sum --check --status "$WORK/icu-build-artifacts" || { echo "staged ICU native libraries or data changed; run guest-runtime/build.sh icu" >&2; exit 1; }
+  openssl_source verify
+  [ -f "$OUT/openssl/.wisp-build-identity" ] && [ "$(cat "$OUT/openssl/.wisp-build-identity")" = "$(openssl_inputs_digest)" ] || { echo "the OpenSSL archives do not match current build inputs; run guest-runtime/build.sh openssl" >&2; exit 1; }
+  [ -f "$WORK/openssl-build-artifacts" ] && sha256sum --check --status "$WORK/openssl-build-artifacts" || { echo "OpenSSL headers or archives changed; run guest-runtime/build.sh openssl" >&2; exit 1; }
   [ -f "$OUT/openssl/lib/libcrypto.a" ] || { echo "the openssl stage installs OpenSSL under $OUT/openssl; run it first" >&2; exit 1; }
-  [ -x "$WASI_SDK/bin/clang" ] || { echo "the toolchain stage unpacks wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
+  [ -x "$WASI_SDK/bin/clang" ] && [ -f "$WASI_SDK/.wisp-archive-sha256" ] && [ "$(cat "$WASI_SDK/.wisp-archive-sha256")" = "$WASI_SDK_SHA256" ] || { echo "the toolchain stage unpacks the pinned wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
 }
 # A managed P/Invoke whose wasm signature disagrees with its C prototype
 # traps on the first call; the audit refuses to build such a pack.
 audit_pinvokes() {
   python3 "$HERE/audit-pinvokes.py" "$1"
 }
+# Source timestamps cannot establish whether generated native/managed outputs
+# match a different patch set or build configuration. Invalidate those outputs
+# whenever their input receipt changes; package caches remain reusable.
+prepare_pack_outputs() {
+  local tree="$1" receipt="$2"
+  if [ ! -f "$receipt" ] || [ "$(cat "$receipt")" != "$(inputs_digest)" ]; then
+    rm -rf "$tree/artifacts"
+    rm -f "$receipt"
+  fi
+}
+
+complete_pack_build() {
+  local expected="$1" receipt="$2" source_check="$3"
+  "$source_check" verify
+  [ "$expected" = "$(inputs_digest)" ] || { echo "runtime inputs changed during compilation; rerun the build" >&2; exit 1; }
+  echo "$expected" > "$receipt"
+}
+
 stage_runtime() {
   echo "==> runtime (log: $LOGS/runtime-build.log)"
   require_build_inputs
+  runtime_source verify
+  local build_inputs="$(inputs_digest)"
   audit_pinvokes "$RUNTIME"
+  prepare_pack_outputs "$RUNTIME" "$WORK/runtime-build-inputs"
   stamp_pack_version "$runtime_version_file"
   # An official build is the one Arcade versions from the label and build id
   # rather than stamping "dev" or "ci"; nothing else about it applies here.
@@ -193,8 +264,13 @@ stage_runtime() {
       "/p:PreReleaseVersionIteration=$PACK_ITERATION" /p:WasmNativeStrip=false \
       /p:EnableSourceLink=false \
       "/p:WasiOpenSslLibDir=$OUT/openssl/lib" \
+      "/p:_IcuDir=$ICU_MONO_NATIVE" "/p:ICULibDir=$ICU_MONO_NATIVE/lib" \
       -cmakeargs "-DOPENSSL_ROOT_DIR=$OUT/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE"
   ) > "$LOGS/runtime-build.log" 2>&1
+  complete_pack_build "$build_inputs" "$WORK/runtime-build-inputs" runtime_source
+  local shipping="$RUNTIME/artifacts/packages/Release/Shipping" version
+  version="$(cat "$runtime_version_file")"
+  sha256sum "$runtime_version_file" "$shipping/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.$version.nupkg" "$shipping/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.$version.nupkg" > "$WORK/runtime-pack-artifacts"
 }
 
 # The NativeAOT framework: the fork's CoreLib and libraries under the same
@@ -204,12 +280,16 @@ stage_runtime() {
 stage_nativeaot() {
   echo "==> nativeaot (log: $LOGS/nativeaot-build.log)"
   require_build_inputs
+  nativeaot_source verify
+  local build_inputs="$(inputs_digest)"
   audit_pinvokes "$RUNTIMELAB"
+  prepare_pack_outputs "$RUNTIMELAB" "$WORK/nativeaot-build-inputs"
   stamp_pack_version "$nativeaot_version_file"
   (
     cd "$RUNTIMELAB"
     WASI_SDK_PATH="$WASI_SDK/" DOTNET_CLI_USE_MSBUILD_SERVER=0 \
     ./build.sh -os wasi -arch wasm -subset clr.aot+libs+nativeaot.packages -c Release -bl \
+      "/p:_IcuDir=$ICU_NATIVEAOT_NATIVE" \
       /nodeReuse:false /p:UseSharedCompilation=false \
       /p:OfficialBuild=true "/p:OfficialBuildId=$PACK_BUILD_ID" \
       "/p:PatchVersion=$PACK_PATCH" "/p:PreReleaseVersionLabel=$PACK_VERSION_LABEL" \
@@ -218,6 +298,10 @@ stage_nativeaot() {
       "/p:WasiOpenSslLibDir=$OUT/openssl/lib" \
       -cmakeargs "-DOPENSSL_ROOT_DIR=$OUT/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE"
   ) > "$LOGS/nativeaot-build.log" 2>&1
+  complete_pack_build "$build_inputs" "$WORK/nativeaot-build-inputs" nativeaot_source
+  local version
+  version="$(cat "$nativeaot_version_file")"
+  sha256sum "$nativeaot_version_file" "$RUNTIMELAB/artifacts/packages/Release/Shipping/runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM.$version.nupkg" > "$WORK/nativeaot-pack-artifacts"
 }
 
 # Both packs at once: the two trees, logs and version files are disjoint, and
@@ -253,6 +337,15 @@ unpack() {
 }
 stage_feed() {
   echo "==> feed"
+  runtime_source verify
+  nativeaot_source verify
+  require_build_inputs
+  for receipt in "$WORK/runtime-build-inputs" "$WORK/nativeaot-build-inputs"; do
+    [ -f "$receipt" ] && [ "$(cat "$receipt")" = "$(inputs_digest)" ] || { echo "the runtime packs do not match current build inputs; run guest-runtime/build.sh packs" >&2; exit 1; }
+  done
+  for receipt in "$WORK/runtime-pack-artifacts" "$WORK/nativeaot-pack-artifacts"; do
+    [ -f "$receipt" ] && sha256sum --check --status "$receipt" || { echo "runtime package bytes or version identity changed after compilation; rebuild packs" >&2; exit 1; }
+  done
   local feed="$OUT/feed"
   mkdir -p "$feed"
   local version nativeaot_version
@@ -277,13 +370,16 @@ stage_feed() {
   cat > "$feed/Wisp.GuestRuntime.props" <<EOF
 <Project>
   <PropertyGroup>
+    <WispGuestRuntimeInputsSha256>$(inputs_digest)</WispGuestRuntimeInputsSha256>
+    <WispGuestWasiSdkPackVersion>$version</WispGuestWasiSdkPackVersion>
+    <WispGuestWasiSdkPackSha512>$(pack_digest "$sdkpack")</WispGuestWasiSdkPackSha512>
     <WispGuestRuntimePackVersion>$version</WispGuestRuntimePackVersion>
     <WispGuestRuntimePackSha512>$(pack_digest "$pack")</WispGuestRuntimePackSha512>
-    <WispGuestRuntimePackDirectory>$OUT/packs/runtime/</WispGuestRuntimePackDirectory>
-    <WispGuestWasiSdkPackDirectory>$OUT/packs/wasi-sdk/</WispGuestWasiSdkPackDirectory>
+    <WispGuestRuntimePackDirectory>\$(MSBuildThisFileDirectory)../packs/runtime/</WispGuestRuntimePackDirectory>
+    <WispGuestWasiSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/wasi-sdk/</WispGuestWasiSdkPackDirectory>
     <WispGuestNativeAotPackVersion>$nativeaot_version</WispGuestNativeAotPackVersion>
     <WispGuestNativeAotPackSha512>$(pack_digest "$nativeaot_pack")</WispGuestNativeAotPackSha512>
-    <WispGuestNativeAotPackDirectory>$OUT/packs/nativeaot/</WispGuestNativeAotPackDirectory>
+    <WispGuestNativeAotPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot/</WispGuestNativeAotPackDirectory>
   </PropertyGroup>
 </Project>
 EOF
@@ -293,7 +389,7 @@ EOF
 }
 
 stages=("$@")
-[ ${#stages[@]} -gt 0 ] || stages=(acquire toolchain patch openssl packs feed)
+[ ${#stages[@]} -gt 0 ] || stages=(acquire toolchain patch openssl icu packs feed)
 for stage in "${stages[@]}"; do
   "stage_$stage"
 done

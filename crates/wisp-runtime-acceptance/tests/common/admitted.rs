@@ -32,7 +32,24 @@ impl DestinationPolicy for OnlyPeers {
 
 /// An egress policy whose outbound connections may only reach `peers`,
 /// resolving names through `resolver`.
-pub fn admitting(peers: Vec<SocketAddr>, resolver: Box<dyn Resolver>) -> HostEgressPolicy {
+pub fn admitting(mut peers: Vec<SocketAddr>, resolver: Box<dyn Resolver>) -> HostEgressPolicy {
+    let aliases: Vec<_> = peers
+        .iter()
+        .filter_map(|peer| match peer {
+            SocketAddr::V4(address) => Some(SocketAddr::new(
+                IpAddr::V6(address.ip().to_ipv6_mapped()),
+                address.port(),
+            )),
+            SocketAddr::V6(address) if address.scope_id() == 0 && address.flowinfo() == 0 => {
+                address
+                    .ip()
+                    .to_ipv4_mapped()
+                    .map(|ip| SocketAddr::new(IpAddr::V4(ip), address.port()))
+            }
+            SocketAddr::V6(_) => None,
+        })
+        .collect();
+    peers.extend(aliases);
     HostEgressPolicy::new(resolver, 8, 1 << 20).with_destinations(Arc::new(OnlyPeers(peers)))
 }
 

@@ -314,9 +314,10 @@ impl FutureTable {
     /// still pending or completed and undelivered; a result left in `ready`
     /// would be served to the next request on this instance as a wake for a
     /// future it never issued.
-    pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) {
+    /// Returns whether guest work was abandoned, excluding implicit cancellation bookkeeping.
+    pub fn end_dispatch(&self, owner: InstanceId, dispatch: u64) -> bool {
         let Some(arc) = self.existing(owner) else {
-            return;
+            return false;
         };
         let mut o = arc.inner.lock();
         o.per_dispatch.remove(&dispatch);
@@ -329,13 +330,16 @@ impl FutureTable {
                     .unwrap_or(false)
             })
             .collect();
+        let mut abandoned_guest_work = false;
         for id in doomed {
             if let Some((_, mut entry)) = self.entries.remove_sync(&id) {
+                abandoned_guest_work |= entry.import != "ctx_cancel";
                 entry.cancel_task();
             }
             o.pending.remove(&id);
             o.ready.retain(|r| *r != id);
         }
+        abandoned_guest_work
     }
 
     /// Instance death: every future the instance held is reclaimed. A whole
@@ -652,12 +656,43 @@ mod tests {
 
 
     #[test]
+    fn implicit_cancellation_and_delivered_work_do_not_prevent_warm_reuse() {
+        let t = table();
+        let owner = InstanceId(1);
+        t.alloc_cancellation(owner, 1);
+        let id = t
+            .alloc(owner, 1, "kv_get", 64)
+            .expect("guest work must allocate");
+        t.complete(id, ResultRecord::Ok(vec![1]));
+        assert!(
+            t.take_ready(owner).is_some(),
+            "the guest must receive its completed work"
+        );
+        assert!(
+            !t.end_dispatch(owner, 1),
+            "delivered work and implicit cancellation leave no guest operation abandoned"
+        );
+        assert_eq!(
+            t.live_futures(),
+            0,
+            "dispatch bookkeeping must still be reclaimed"
+        );
+        assert!(
+            !t.end_dispatch(owner, 1),
+            "repeated cleanup must not invent abandoned work"
+        );
+    }
+
+    #[test]
     fn ending_a_dispatch_reclaims_only_its_own_handles() {
         let t = table();
         let owner = InstanceId(1);
         let doomed = t.alloc(owner, 1, "kv_get", 64).expect("alloc");
         let other = t.alloc(owner, 2, "queue_send", 64).expect("alloc");
-        t.end_dispatch(owner, 1);
+        assert!(
+            t.end_dispatch(owner, 1),
+            "pending guest work must prevent warm reuse"
+        );
         assert_eq!(
             t.pending_total(owner),
             1,
@@ -685,7 +720,10 @@ mod tests {
             WakeTarget::Instance(owner),
             "the future completes during dispatch"
         );
-        t.end_dispatch(owner, 1);
+        assert!(
+            t.end_dispatch(owner, 1),
+            "undelivered guest results must prevent warm reuse"
+        );
         assert_eq!(
             t.take_ready(owner),
             None,

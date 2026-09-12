@@ -262,9 +262,7 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
                     url: "http://upstream.test/".into(),
                     times: 1,
                 },
-                wisp_host::fakes::Step::Park {
-                    imports: vec![("clock_deadline_in", 600_000)],
-                },
+                wisp_host::fakes::Step::Park { imports: vec![] },
             ]),
         ));
         let (cell, response) = common::cell(svc.clone(), activator.clone());
@@ -325,9 +323,12 @@ async fn capture_refuses_pending_fetches_retained_bodies_and_inflight_reads() {
             result.status, 200,
             "the dispatch must complete when its read settles"
         );
+        while slot.state() != wisp_host::LifecycleTier::Parked {
+            tokio::task::yield_now().await;
+        }
         common::capture(&cell, instance)
             .await
-            .expect("ending outbound ownership must make the instance capturable");
+            .expect("ending outbound ownership must make the idle instance capturable");
         assert_eq!(
             svc.egress.connections(),
             0,

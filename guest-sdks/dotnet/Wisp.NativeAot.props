@@ -31,8 +31,8 @@
     <LinkerFlavor>lld</LinkerFlavor>
     <DebugType>none</DebugType>
 
+    <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">false</InvariantGlobalization>
     <!-- Strip what a guest cannot use. -->
-    <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EventSourceSupport>false</EventSourceSupport>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>

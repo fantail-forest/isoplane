@@ -26,7 +26,7 @@ class FixtureTests(unittest.TestCase):
                                  "--if-stale", "--fixture", "not-a-fixture"],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 2, "an unknown fixture must fail before invoking the toolchain")
-        self.assertIn("unknown C# fixture: not-a-fixture", result.stderr,
+        self.assertIn("unknown C# fixture for runtime nativeaot: not-a-fixture", result.stderr,
                       "the fixture error must identify the requested name")
 
     def test_selecting_one_dotnet_fixture_builds_only_that_fixture(self):
@@ -41,8 +41,23 @@ class FixtureTests(unittest.TestCase):
             scripts.mkdir()
             shutil.copy2(ROOT / "guests/build-dotnet.sh", guests / "build-dotnet.sh")
             shutil.copy2(TOOLS, scripts / TOOLS.name)
+            (guests / "aspnet").mkdir()
+            (root / "guest-sdks/dotnet").mkdir(parents=True)
+            (root / "nuget.config").write_text("<configuration />")
+            (root / "global.json").write_text("{}")
+            runtime = root / "guest-runtime"
+            feed = runtime / "out/feed"
+            feed.mkdir(parents=True)
+            (feed / "Wisp.GuestRuntime.props").write_text(
+                "<Project><WispGuestNativeAotPackVersion>test</WispGuestNativeAotPackVersion>"
+                "<WispGuestNativeAotPackSha512>digest</WispGuestNativeAotPackSha512></Project>")
+            # This test isolates variant selection; feed integrity has its own real verifier tests.
+            (runtime / "feed-identity.py").write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "assert sys.argv[1] == 'verify-current'\n"
+                "Path(sys.argv[2], 'verified').write_text(sys.argv[3])\n")
             builder = project / "build.sh"
-            builder.write_text('#!/bin/sh\nmkdir -p "$WISP_OUT_DIR"\nprintf fixture > "$WISP_OUT_DIR/$WISP_OUT.wasm"\n')
+            builder.write_text('#!/bin/sh\nmkdir -p "$WISP_OUT_DIR"\nprintf fixture > "$WISP_OUT_DIR/$WISP_OUT.wasm"\nprintf test@sha512:digest > "$WISP_OUT_DIR/$WISP_OUT.wasm.runtime"\n')
             builder.chmod(0o755)
             tools = root / "tools"
             tools.mkdir()
@@ -54,27 +69,32 @@ class FixtureTests(unittest.TestCase):
                                     env=dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"]),
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual([path.name for path in (project / "out").iterdir()], [selected + ".wasm"],
+            self.assertEqual(sorted(path.name for path in (project / "out").iterdir()),
+                             sorted([selected + suffix for suffix in (".wasm", ".wasm.runtime", ".wasm.fixture.json")]),
                              "fixture selection must not build or reuse another variant")
+            self.assertEqual(Path((runtime / "verified").read_text()).resolve(), feed.resolve(),
+                             "default fixture selection must verify the current feed before building")
 
     def test_the_compiler_image_recipe_invalidates_cached_fixtures(self):
-        import os
         with tempfile.TemporaryDirectory() as scratch:
             recipe = Path(scratch) / "Dockerfile"
             recipe.write_text("FROM compiler:pinned")
-            os.utime(recipe, ns=(123456789, 123456789))
-            newest = subprocess.check_output(["python3", str(TOOLS), "newest", scratch], text=True)
-            self.assertEqual(int(newest), 123456789, "fixture freshness must include the pinned compiler image recipe")
+            before = subprocess.check_output(["python3", str(TOOLS), "fingerprint", scratch], text=True)
+            recipe.write_text("FROM compiler:updated")
+            after = subprocess.check_output(["python3", str(TOOLS), "fingerprint", scratch], text=True)
+            self.assertNotEqual(before, after, "fixture freshness must include the compiler image recipe")
 
-    def test_source_changes_invalidate_a_fixture_timestamp(self):
+    def test_source_changes_invalidate_a_fixture_with_preserved_timestamps(self):
+        import os
         with tempfile.TemporaryDirectory() as scratch:
             source = Path(scratch) / "guest.cs"
             source.write_text("first")
-            before = subprocess.check_output(["python3", str(TOOLS), "newest", scratch], text=True)
-            import os
-            os.utime(source, ns=(int(before) + 1_000_000_000, int(before) + 1_000_000_000))
-            after = subprocess.check_output(["python3", str(TOOLS), "newest", scratch], text=True)
-            self.assertGreater(int(after), int(before), "editing a source did not invalidate its fixture")
+            stamp = source.stat()
+            before = subprocess.check_output(["python3", str(TOOLS), "fingerprint", scratch], text=True)
+            source.write_text("second")
+            os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            after = subprocess.check_output(["python3", str(TOOLS), "fingerprint", scratch], text=True)
+            self.assertNotEqual(before, after, "editing source must invalidate its fixture despite preserved timestamps")
 
     def test_the_build_lock_is_held_until_the_builder_exits(self):
         import fcntl

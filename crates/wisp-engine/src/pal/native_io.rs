@@ -111,7 +111,7 @@ pub fn call<T: PalSource>(
         },
         Action::ErrorMessage => Request::ErrorMessage(handle(0)?),
         Action::ErrorCode => Request::ErrorCode(handle(0)?),
-        Action::TrySend => {
+        Action::TrySend | Action::TrySendWithErrorCode => {
             let count = usize::try_from(scalar(1)?)?;
             ensure!(
                 count <= wisp_abi::imports::MAX_OUT_BUFFER_BYTES / 4,
@@ -303,9 +303,14 @@ pub fn call<T: PalSource>(
             if matches!(definition.action, Action::NoDelay) {
                 return Ok(u64::MAX);
             }
-            if matches!(definition.action, Action::TrySend) {
+            if matches!(
+                definition.action,
+                Action::TrySend | Action::TrySendWithErrorCode
+            ) {
                 return Ok(if matches!(error, Error::WouldBlock) {
                     wisp_abi::native_io::canonical::SEND_PENDING
+                } else if matches!(definition.action, Action::TrySend) {
+                    wisp_abi::native_io::canonical::SEND_FAILED
                 } else {
                     wisp_abi::native_io::canonical::send_failure(error.network_error_code())
                 });
@@ -322,6 +327,7 @@ pub fn call<T: PalSource>(
                 | Action::Subscribe
                 | Action::Read
                 | Action::TrySend
+                | Action::TrySendWithErrorCode
                 | Action::ErrorMessage
                 | Action::ErrorCode
                 | Action::Timer { .. }

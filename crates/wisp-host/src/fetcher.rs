@@ -1,143 +1,66 @@
 //! Outbound HTTP. [`PinnedHttpFetcher`] connects to the address the egress
-//! policy pinned and uses the URL only for the request line, the `Host`
-//! header and the TLS server name; nothing here resolves a name, which is
-//! what makes DNS rebinding impossible after the check. `https://` egress
-//! terminates TLS here, verifying the server against the host's trust
-//! anchors, so a guest never holds a key or a root.
+//! policy pinned and uses the URL only for the request line and the `Host`
+//! header; nothing here resolves a name, which is what makes DNS rebinding
+//! impossible after the check. This legacy capability supports plain HTTP only;
+//! HTTPS belongs to the guest socket/TLS implementation.
 
-use crate::egress::{ConnectionError, ConnectionOwner, HostEgressPolicy};
+use crate::egress::{ConnectionOwner, HostEgressPolicy};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full, StreamBody};
-use hyper::body::{Frame, Incoming};
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, ServerName};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::mpsc;
 
 use wisp_abi::calls::FetchRequest;
 use wisp_abi::host::PinnedTarget;
 use wisp_abi::result::{BodyChunk, FutureError};
 
-use crate::bindings::{
-    BodyFrame, ExchangeFailure, Fetcher, OutboundBody, OutboundRequest, OutboundResponse,
-    RequestBody, ResponseBody, TlsFailure,
-};
+use crate::bindings::{Fetcher, OutboundBody, OutboundResponse, ResponseBody};
 
 /// Bodies at or below this size return inline and release their transport
 /// before the fetch completes.
 pub const INLINE_BODY_LIMIT: usize = 256 * 1024;
 
-/// A request body error: the guest abandoned the body it was streaming.
-#[derive(Debug)]
-struct BodyAbandoned;
-
-impl std::fmt::Display for BodyAbandoned {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the request body was abandoned before it was finished")
-    }
-}
-
-impl std::error::Error for BodyAbandoned {}
-
-type OutgoingBody = BoxBody<Bytes, BodyAbandoned>;
-
 /// Sends HTTP through the same connection provider as managed TCP.
 pub struct PinnedHttpFetcher {
     egress: Arc<HostEgressPolicy>,
     inline_limit: usize,
-    roots: rustls::RootCertStore,
 }
 
 impl PinnedHttpFetcher {
-    /// Use the node's egress provider and inline response threshold, trusting
-    /// the operating system's certificate store for `https://`.
+    /// Use the node's egress provider and inline response threshold.
     pub fn new(egress: Arc<HostEgressPolicy>, inline_limit: usize) -> Self {
-        let mut roots = rustls::RootCertStore::empty();
-        let native = rustls_native_certs::load_native_certs();
-        for error in &native.errors {
-            tracing::warn!(%error, "a system trust anchor could not be loaded");
-        }
-        let (added, ignored) = roots.add_parsable_certificates(native.certs);
-        tracing::debug!(added, ignored, "system trust anchors loaded");
         Self {
             egress,
             inline_limit,
-            roots,
         }
-    }
-
-    /// Also trust the certificates in `pem`, for destinations under a
-    /// private authority.
-    pub fn with_trust_anchor(mut self, pem: &str) -> Result<Self, String> {
-        let certificates: Vec<CertificateDer<'static>> =
-            CertificateDer::pem_slice_iter(pem.as_bytes())
-                .collect::<Result<_, _>>()
-                .map_err(|error| format!("trust anchor is not PEM: {error}"))?;
-        if certificates.is_empty() {
-            return Err("trust anchor PEM holds no certificate".into());
-        }
-        for certificate in certificates {
-            self.roots
-                .add(certificate)
-                .map_err(|error| format!("trust anchor is not a CA certificate: {error}"))?;
-        }
-        Ok(self)
-    }
-
-    fn tls(&self) -> Result<tokio_rustls::TlsConnector, ExchangeFailure> {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let config = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|error| ExchangeFailure::Internal(format!("TLS versions: {error}")))?
-            .with_root_certificates(self.roots.clone())
-            .with_no_client_auth();
-        Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
-    }
-
-    async fn transport(
-        &self,
-        owner: &ConnectionOwner,
-        addr: SocketAddr,
-        host: &str,
-        tls: bool,
-    ) -> Result<Box<dyn Transport>, ExchangeFailure> {
-        let stream = self
-            .egress
-            .connect(owner, addr)
-            .await
-            .map_err(ExchangeFailure::Connect)?;
-        if !tls {
-            return Ok(Box::new(stream));
-        }
-        let name = ServerName::try_from(host.to_owned()).map_err(|error| {
-            ExchangeFailure::Uri(format!("host is not a TLS server name: {error}"))
-        })?;
-        let stream = self
-            .tls()?
-            .connect(name, stream)
-            .await
-            .map_err(|error| ExchangeFailure::Tls(classify_tls(&error)))?;
-        Ok(Box::new(stream))
     }
 
     async fn send(
         &self,
         owner: &ConnectionOwner,
         addr: SocketAddr,
-        host: &str,
-        tls: bool,
-        req: Request<OutgoingBody>,
-    ) -> Result<(Response<Incoming>, ConnectionTask), ExchangeFailure> {
-        let stream = self.transport(owner, addr, host, tls).await?;
+        req: Request<Full<Bytes>>,
+    ) -> Result<(Response<Incoming>, ConnectionTask), FutureError> {
+        let stream = self
+            .egress
+            .connect(owner, addr)
+            .await
+            .map_err(|error| match error {
+                crate::egress::ConnectionError::Denied(reason) => {
+                    FutureError::Denied(reason.to_string())
+                }
+                failure @ (crate::egress::ConnectionError::Io(_)
+                | crate::egress::ConnectionError::PeerMismatch { .. }) => {
+                    FutureError::Io(format!("connect {addr}: {failure}"))
+                }
+            })?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
-            .map_err(|e| ExchangeFailure::Protocol(format!("handshake: {e}")))?;
+            .map_err(|e| FutureError::Io(format!("handshake: {e}")))?;
         let task = tokio::spawn(async move {
             if let Err(e) = conn.await {
                 tracing::debug!(error = %e, "egress connection closed");
@@ -147,45 +70,8 @@ impl PinnedHttpFetcher {
         let response = sender
             .send_request(req)
             .await
-            .map_err(|e| ExchangeFailure::Protocol(format!("request: {e}")))?;
+            .map_err(|e| FutureError::Io(format!("request: {e}")))?;
         Ok((response, connection))
-    }
-}
-
-/// A connected byte stream, plain or under TLS.
-trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
-
-impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
-
-fn classify_tls(error: &std::io::Error) -> TlsFailure {
-    match error
-        .get_ref()
-        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
-    {
-        Some(rustls::Error::InvalidCertificate(_)) => TlsFailure::Certificate,
-        Some(rustls::Error::AlertReceived(_)) => TlsFailure::Alert,
-        _ => TlsFailure::Protocol,
-    }
-}
-
-fn request_body(body: RequestBody) -> OutgoingBody {
-    match body {
-        RequestBody::Empty => Full::new(Bytes::new())
-            .map_err(|never| match never {})
-            .boxed(),
-        RequestBody::Stream(receiver) => {
-            let frames = futures::stream::unfold(Some(receiver), |receiver| async move {
-                let mut receiver = receiver?;
-                match receiver.recv().await {
-                    Some(BodyFrame::Data(data)) => Some((Ok(Frame::data(data)), Some(receiver))),
-                    Some(BodyFrame::End) => None,
-                    // The sender went away without finishing: the request
-                    // must not look complete to the peer.
-                    None => Some((Err(BodyAbandoned), None)),
-                }
-            });
-            BodyExt::boxed(StreamBody::new(frames))
-        }
     }
 }
 
@@ -197,68 +83,30 @@ impl Fetcher for PinnedHttpFetcher {
         target: PinnedTarget,
         req: FetchRequest,
     ) -> Result<OutboundResponse, FutureError> {
-        let request = OutboundRequest {
-            method: req.method,
-            url: target.url.clone(),
-            headers: req
-                .headers
-                .into_iter()
-                .map(|(name, value)| (name, value.into_bytes()))
-                .collect(),
-            body: if req.body.is_empty() {
-                RequestBody::Empty
-            } else {
-                let (sender, receiver) = mpsc::channel(2);
-                // Both frames fit the channel; nothing waits on the guest.
-                sender
-                    .try_send(BodyFrame::Data(Bytes::from(req.body)))
-                    .map_err(|error| FutureError::Io(format!("request body: {error}")))?;
-                sender
-                    .try_send(BodyFrame::End)
-                    .map_err(|error| FutureError::Io(format!("request body: {error}")))?;
-                RequestBody::Stream(receiver)
-            },
-        };
-        self.exchange(owner, target, request)
-            .await
-            .map_err(|failure| match failure {
-                ExchangeFailure::Uri(reason) => FutureError::Denied(reason),
-                ExchangeFailure::Connect(ConnectionError::Denied(reason)) => {
-                    FutureError::Denied(reason.to_string())
-                }
-                other => FutureError::Io(other.to_string()),
-            })
-    }
-
-    async fn exchange(
-        &self,
-        owner: ConnectionOwner,
-        target: PinnedTarget,
-        request: OutboundRequest,
-    ) -> Result<OutboundResponse, ExchangeFailure> {
         let parsed = crate::egress::parse_url(&target.url)
-            .map_err(|e| ExchangeFailure::Uri(e.to_string()))?;
-        let tls = parsed.scheme == "https";
-        let default_port = if tls { 443 } else { 80 };
-        let authority = if parsed.port == default_port {
+            .map_err(|e| FutureError::Denied(e.to_string()))?;
+        if parsed.scheme == "https" {
+            return Err(FutureError::Io(
+                "legacy http_fetch does not support HTTPS; use guest TLS over sockets".into(),
+            ));
+        }
+        let authority = if parsed.port == 80 {
             parsed.host.clone()
         } else {
             format!("{}:{}", parsed.host, parsed.port)
         };
         let mut builder = Request::builder()
-            .method(request.method.as_str())
+            .method(req.method.as_str())
             .uri(&parsed.path_and_query)
             .header(hyper::header::HOST, &authority);
-        for (name, value) in &request.headers {
-            builder = builder.header(name.as_str(), value.as_slice());
+        for (k, v) in &req.headers {
+            builder = builder.header(k.as_str(), v.as_str());
         }
-        let hyper_request = builder
-            .body(request_body(request.body))
-            .map_err(|e| ExchangeFailure::Uri(format!("bad request: {e}")))?;
+        let request = builder
+            .body(Full::new(Bytes::from(req.body)))
+            .map_err(|e| FutureError::Denied(format!("bad request: {e}")))?;
 
-        let (resp, connection) = self
-            .send(&owner, target.addr, &parsed.host, tls, hyper_request)
-            .await?;
+        let (resp, connection) = self.send(&owner, target.addr, request).await?;
         let status = resp.status().as_u16();
         let headers: Vec<(String, String)> = resp
             .headers()
@@ -282,7 +130,7 @@ impl Fetcher for PinnedHttpFetcher {
             let collected = body
                 .collect()
                 .await
-                .map_err(|e| ExchangeFailure::Protocol(format!("body: {e}")))?
+                .map_err(|e| FutureError::Io(format!("body: {e}")))?
                 .to_bytes();
             return Ok(OutboundResponse {
                 status,
@@ -341,5 +189,138 @@ impl ResponseBody for IncomingBody {
             data: self.unread.split_to(length).to_vec(),
             eof: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::egress::{ConnectionFactory, DnsError, Resolver};
+
+    struct NoNetwork;
+
+    #[async_trait::async_trait]
+    impl Resolver for NoNetwork {
+        async fn resolve(&self, host: &str, _: u16) -> Result<Vec<SocketAddr>, DnsError> {
+            panic!("the pinned fetch must not resolve {host}");
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionFactory for NoNetwork {
+        async fn connect(
+            &self,
+            _: &ConnectionOwner,
+            destination: SocketAddr,
+        ) -> std::io::Result<tokio::net::TcpStream> {
+            panic!("legacy HTTPS must be refused before connecting to {destination}");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_https_fetch_is_refused_before_any_host_tls_or_connection() {
+        let egress = HostEgressPolicy::new(Box::new(NoNetwork), 8, 1 << 20)
+            .with_connections(Arc::new(NoNetwork));
+        let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
+        let url = "https://public.example/".to_string();
+        let result = fetcher
+            .fetch(
+                ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
+                    .expect("identified owner"),
+                PinnedTarget {
+                    url: url.clone(),
+                    addr: "8.8.8.8:443".parse().expect("public endpoint"),
+                },
+                FetchRequest {
+                    method: "GET".into(),
+                    url,
+                    headers: vec![],
+                    body: vec![],
+                },
+            )
+            .await;
+        assert!(
+            matches!(result, Err(FutureError::Io(_))),
+            "legacy fetch must refuse HTTPS; TLS belongs to the guest socket path"
+        );
+    }
+    struct OnlyPeer(SocketAddr);
+
+    impl crate::egress::DestinationPolicy for OnlyPeer {
+        fn authorize(&self, address: SocketAddr) -> Result<(), crate::egress::DenyReason> {
+            if address == self.0 {
+                Ok(())
+            } else {
+                Err(crate::egress::DenyReason::PrivateAddress(address.ip()))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_plain_http_still_sends_the_request_and_returns_the_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local peer");
+        let address = listener.local_addr().expect("the peer endpoint");
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("the pinned connection");
+            let service = hyper::service::service_fn(|request: Request<Incoming>| async move {
+                assert_eq!(
+                    request.method(),
+                    "POST",
+                    "the fetch method must reach the peer"
+                );
+                assert_eq!(
+                    request.uri(),
+                    "/echo?x=1",
+                    "the path must come from the request URL"
+                );
+                let bytes = request
+                    .into_body()
+                    .collect()
+                    .await
+                    .expect("the request body")
+                    .to_bytes();
+                assert_eq!(
+                    bytes.as_ref(),
+                    b"payload",
+                    "the complete request body must reach the peer"
+                );
+                Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(
+                    b"ok",
+                ))))
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+                .expect("the peer HTTP exchange");
+        });
+        let egress = HostEgressPolicy::new(Box::new(NoNetwork), 8, 1 << 20)
+            .with_destinations(Arc::new(OnlyPeer(address)));
+        let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
+        let url = format!("http://pinned.example:{}/echo?x=1", address.port());
+        let response = fetcher
+            .fetch(
+                ConnectionOwner::new("tenant".into(), crate::InstanceId(1))
+                    .expect("identified owner"),
+                PinnedTarget {
+                    url: url.clone(),
+                    addr: address,
+                },
+                FetchRequest {
+                    method: "POST".into(),
+                    url,
+                    headers: vec![],
+                    body: b"payload".to_vec(),
+                },
+            )
+            .await
+            .expect("plain HTTP remains supported");
+        assert_eq!(response.status, 200, "the peer's status must be returned");
+        assert!(
+            matches!(response.body, OutboundBody::Inline(ref body) if body == b"ok"),
+            "the small response must be returned intact"
+        );
+        peer.await.expect("the peer task completes cleanly");
     }
 }

@@ -16,9 +16,24 @@ namespace Acceptance;
 /// compiler never generated exists only where code can be created at run
 /// time. Every route reports what the runtime under test did.
 /// </summary>
-internal sealed class Reflection
+internal sealed partial class Reflection
 {
-    public Task<string> RunAsync(string[] path) => Task.FromResult(Run(path));
+    public Task<string> RunAsync(string[] path) => path[0] switch
+    {
+        "events-after-park" => EventsAfterPark(),
+#if WISP_MONO
+        "assembly-after-park" => LoadedAssemblyAfterPark(),
+        "dynamic-after-park" => DynamicBindingAfterPark(path[1]),
+#endif
+        "expression-after-park" => ExpressionAfterPark(preferInterpretation: true),
+        "expression-default-after-park" => ExpressionAfterPark(preferInterpretation: false),
+        "safe-handle-dispose" => Task.FromResult(DisposeSafeHandle()),
+        "safe-handle-finalizer-after-park" => FinalizeSafeHandleAfterPark(),
+#if WISP_MONO
+        "emitted-delegate-after-park" => EmittedDelegateAfterPark(),
+#endif
+        _ => Task.FromResult(Run(path)),
+    };
 
     private static string Run(string[] path)
     {

@@ -16,7 +16,7 @@ ssize_t __wrap_send(int fd, const void *buffer, size_t length, int flags) {
         errno = error;
         return -1;
     }
-    uint64_t result = (uint64_t)__wasm_import_wisp_socket_try_send(
+    uint64_t result = (uint64_t)__wasm_import_wisp_socket_try_send_with_error_code(
         (int32_t)(uintptr_t)pollables, count, (int32_t)(uintptr_t)buffer,
         (int32_t)length);
     wisp_socket_pollables_free(pollables);

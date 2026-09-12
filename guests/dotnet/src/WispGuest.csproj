@@ -76,6 +76,10 @@
     <DefineConstants>$(DefineConstants);WISP_CONNECT_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispCleanupProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_CLEANUP_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispTimerProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_TIMER_PROBE</DefineConstants>
   </PropertyGroup>

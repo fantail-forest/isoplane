@@ -43,6 +43,8 @@ blake3 = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-proxy = { workspace = true }
 
@@ -70,5 +72,4 @@ opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 wat = { workspace = true }
 tempfile = { workspace = true }
-rustls-pki-types = { workspace = true }
 wisp-fixtures = { workspace = true }

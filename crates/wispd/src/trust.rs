@@ -9,6 +9,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -25,7 +27,6 @@ pub const MODIFIED_EPOCH_UNIX_SECS: u64 = 946_684_800;
 pub const MODIFIED_SPAN_SECS: u64 = 50 * 365 * 86_400;
 
 const SECS_PER_DAY: u64 = 86_400;
-const PEM_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
 
 fn default_warn_after_days() -> u32 {
     30
@@ -135,6 +136,12 @@ pub enum TrustError {
         path: String,
         manifest: u32,
         bundle: usize,
+    },
+    #[error("trust bundle {bundle} contains an invalid certificate at entry {entry}: {error}")]
+    InvalidCertificate {
+        bundle: TrustSource,
+        entry: usize,
+        error: String,
     },
     #[error("trust bundle {bundle} contains no certificates")]
     NoCertificates { bundle: TrustSource },
@@ -299,7 +306,7 @@ impl TrustBundle {
                 recorded_by: recorded_by.to_string(),
             });
         }
-        let certificate_count = count_certificates(&pem);
+        let certificate_count = validate_certificates(&pem, &source)?;
         if certificate_count == 0 {
             return Err(TrustError::NoCertificates { bundle: source });
         }
@@ -423,10 +430,23 @@ fn parse_manifest(path: &str, text: &str) -> Result<Manifest, TrustError> {
     })
 }
 
-fn count_certificates(pem: &[u8]) -> usize {
-    pem.windows(PEM_BEGIN.len())
-        .filter(|window| *window == PEM_BEGIN)
-        .count()
+fn validate_certificates(pem: &[u8], source: &TrustSource) -> Result<usize, TrustError> {
+    let mut roots = rustls::RootCertStore::empty();
+    for (index, certificate) in CertificateDer::pem_slice_iter(pem).enumerate() {
+        let certificate = certificate.map_err(|error| TrustError::InvalidCertificate {
+            bundle: source.clone(),
+            entry: index + 1,
+            error: error.to_string(),
+        })?;
+        roots
+            .add(certificate)
+            .map_err(|error| TrustError::InvalidCertificate {
+                bundle: source.clone(),
+                entry: index + 1,
+                error: error.to_string(),
+            })?;
+    }
+    Ok(roots.len())
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` to seconds since the Unix epoch.
@@ -681,6 +701,52 @@ mod tests {
     }
 
     #[test]
+    fn a_bundle_header_without_a_certificate_is_refused_even_with_the_right_hash() {
+        let pem = b"-----BEGIN CERTIFICATE-----\n";
+        let sha = hex::encode(Sha256::digest(pem));
+        let (_dir, path) = operator_dir(pem, None);
+        assert!(
+            TrustBundle::load(&operator_config(&path, &sha)).is_err(),
+            "integrity of a PEM header does not make it a usable trust store"
+        );
+    }
+
+    #[test]
+    fn a_malformed_der_certificate_is_refused_even_with_the_right_hash() {
+        let pem = b"-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+        let sha = hex::encode(Sha256::digest(pem));
+        let (_dir, path) = operator_dir(pem, None);
+        assert!(
+            TrustBundle::load(&operator_config(&path, &sha)).is_err(),
+            "base64 bytes that are not a certificate must fail at startup"
+        );
+    }
+
+    #[test]
+    fn a_valid_bundle_followed_by_a_truncated_pem_entry_is_refused() {
+        let mut pem = SHIPPED_PEM.to_vec();
+        pem.extend_from_slice(b"\n-----BEGIN CERTIFICATE-----\n");
+        let sha = hex::encode(Sha256::digest(&pem));
+        let (_dir, path) = operator_dir(&pem, None);
+        assert!(
+            TrustBundle::load(&operator_config(&path, &sha)).is_err(),
+            "a usable prefix must not conceal an incomplete certificate entry"
+        );
+    }
+
+    #[test]
+    fn a_valid_bundle_followed_by_a_malformed_certificate_is_refused() {
+        let mut pem = SHIPPED_PEM.to_vec();
+        pem.extend_from_slice(b"\n-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n");
+        let sha = hex::encode(Sha256::digest(&pem));
+        let (_dir, path) = operator_dir(&pem, None);
+        assert!(
+            TrustBundle::load(&operator_config(&path, &sha)).is_err(),
+            "one usable root must not hide another malformed certificate"
+        );
+    }
+
+    #[test]
     fn an_unreadable_bundle_names_its_path() {
         let cfg = TrustConfig {
             bundle: Some(PathBuf::from("/nonexistent/roots.pem")),
@@ -827,13 +893,5 @@ mod tests {
         ] {
             assert_eq!(parse_utc(bad), None, "`{bad}` is not accepted");
         }
-    }
-
-    #[test]
-    fn certificates_are_counted_by_their_begin_line() {
-        let pem = b"junk\n-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n\
-                    -----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
-        assert_eq!(count_certificates(pem), 2, "two blocks, two certificates");
-        assert_eq!(count_certificates(b""), 0, "no blocks, no certificates");
     }
 }

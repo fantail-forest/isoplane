@@ -65,3 +65,5 @@ guest-sdks/dotnet/obj/
 /guest-runtime/tests/guest/src/bin/
 /guest-runtime/tests/guest/src/obj/
 /guests/dotnet/out/**/*.runtime
+*.wasm.fixture.json
+/guest-runtime/**/__pycache__/

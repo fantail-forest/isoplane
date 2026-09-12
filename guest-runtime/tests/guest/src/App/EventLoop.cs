@@ -57,6 +57,32 @@ internal sealed class EventLoop
                     return "cancelled";
                 }
             }
+            case "cancel-then-delay":
+            {
+                using var cancellation = new CancellationTokenSource();
+                Task cancelled = Task.Delay(100, cancellation.Token);
+                cancellation.Cancel();
+                await cancelled.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                if (!cancelled.IsCanceled) throw new InvalidOperationException("the first delay was not cancelled");
+                await Task.Delay(Milliseconds(path[1])).ConfigureAwait(false);
+                return "resumed";
+            }
+            case "dispose-then-delay":
+            {
+                var timer = new Timer(_ => _abandonedCallbacks++, null, 100, Timeout.Infinite);
+                timer.Dispose();
+                await Task.Delay(Milliseconds(path[1])).ConfigureAwait(false);
+                return "resumed";
+            }
+            case "cancel-only":
+            {
+                using var cancellation = new CancellationTokenSource();
+                Task cancelled = Task.Delay(100, cancellation.Token);
+                cancellation.Cancel();
+                await cancelled.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                if (!cancelled.IsCanceled) throw new InvalidOperationException("the first delay was not cancelled");
+                return "cancelled";
+            }
             case "ready-work":
             {
                 // Queued work must run in this invocation, before the timer parks the guest.

@@ -29,24 +29,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-PROPS="$ROOT/guest-runtime/out/feed/Wisp.GuestRuntime.props"
-if [ ! -f "$PROPS" ]; then
-  echo "FATAL: no source-built runtime packs under guest-runtime/out/feed; run guest-runtime/build.sh first." >&2
-  exit 1
+FEED="${WISP_TEST_RUNTIME_FEED:-$ROOT/guest-runtime/out/feed}"
+if [ -n "${WISP_TEST_RUNTIME_FEED:-}" ]; then
+  python3 "$ROOT/guest-runtime/feed-identity.py" verify-artifact "$FEED"
+  echo "==> explicitly selected runtime artifacts: $FEED"
+else
+  python3 "$ROOT/guest-runtime/feed-identity.py" verify-current "$ROOT/guest-runtime" "$FEED"
 fi
-
+export WISP_GUEST_RUNTIME_FEED="$FEED"
+PROPS="$FEED/Wisp.GuestRuntime.props"
 OUT="$HERE/out/$RUNTIME/guest_runtime_acceptance.wasm"
-# Fresh only when built after every input and against the pack the feed
-# offers this runtime now, by the identity the publish recorded beside the
-# module.
-if [ "$IF_STALE" = 1 ] && [ -f "$OUT" ] && [ -f "$OUT.runtime" ]; then
-  newest=$(python3 "$TOOLS" newest "$HERE/src" "$ROOT/guest-sdks/dotnet" "$HERE/build.sh" "$ROOT/guest-runtime/out/feed")
-  built=$(python3 "$TOOLS" mtime "$OUT")
-  if [ "$(cat "$OUT.runtime")" = "$(python3 "$TOOLS" runtime-identity "$PROPS" "$RUNTIME")" ] \
-     && awk -v a="$built" -v b="${newest:-0}" 'BEGIN { exit !(a >= b) }'; then
-    echo "==> acceptance guest ($RUNTIME) is up to date"
-    exit 0
-  fi
+INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/src" "$ROOT/guest-sdks/dotnet" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
+if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
+   && [ "$(cat "$OUT.runtime")" = "$(python3 "$TOOLS" runtime-identity "$PROPS" "$RUNTIME")" ] \
+   && python3 "$TOOLS" fresh "$OUT.fixture.json" "$INPUTS" "$OUT" "$OUT.runtime"; then
+  echo "==> acceptance guest ($RUNTIME) is up to date"
+  exit 0
 fi
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the acceptance guest cannot be built." >&2; exit 1; }
 
@@ -55,6 +53,14 @@ case "$RUNTIME" in
   mono) profile=(-p:WispGuestRuntime=Mono -p:WasmNativeStrip=false) ;;
   nativeaot) profile=(-p:WispGuestRuntime=NativeAOT) ;;
 esac
+if [ "$RUNTIME" = mono ]; then
+  payload="$HERE/obj/$RUNTIME/payload"
+  dotnet build "$HERE/src/Payload/Payload.csproj" --configuration Release \
+    --artifacts-path "$HERE/obj/$RUNTIME/payload-artifacts" --output "$payload"
+  profile+=("-p:WispAcceptancePayload=$payload/Wisp.Acceptance.DynamicPayload.dll")
+fi
 rm -f "$OUT"
 WISP_OUT_DIR="$HERE/out/$RUNTIME" WISP_OUT=guest_runtime_acceptance "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
   "${profile[@]}" --artifacts-path "$HERE/obj/$RUNTIME"
+
+python3 "$TOOLS" record "$OUT.fixture.json" "$INPUTS" "$OUT" "$OUT.runtime"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Check every managed P/Invoke into the native shims against the C
-prototype it binds to, as wasm signatures.
+"""Check managed LibraryImport declarations into the four native shims against
+their C prototypes, as wasm signatures.
 
     guest-runtime/audit-pinvokes.py <runtime tree>
 
@@ -60,12 +60,16 @@ def c_param_type(param):
 
 def native_prototypes(tree):
     prototypes = {}
+    headers = []
     for shim in SHIMS.values():
-        for header in glob.glob(os.path.join(tree, "src", "native", "libs", shim, "*.h")):
-            text = strip_comments(open(header).read())
-            for match in re.finditer(r"PALEXPORT\s+(?P<ret>[\w\s\*]+?)\s*\b(?P<name>\w+)\s*\((?P<args>[^;]*?)\)\s*;", text, re.S):
-                args = [c_param_type(a) for a in split_params(match.group("args"))]
-                prototypes[match.group("name")] = (c_wasm_type(match.group("ret")), [a for a in args if a])
+        headers.extend(glob.glob(os.path.join(tree, "src", "native", "libs", shim, "*.h")))
+    headers.extend(glob.glob(os.path.join(tree, "src", "native", "external", "brotli", "c", "include", "brotli", "*.h")))
+    for header in headers:
+        text = strip_comments(open(header).read())
+        text = re.sub(r"\bFUNCTIONCALLINGCONVENTION\b", "", text)
+        for match in re.finditer(r"(?:PALEXPORT|FUNCTIONEXPORT|BROTLI_(?:DEC|ENC|COMMON)_API)\s+(?P<ret>[\w\s\*()]+?)\s*\b(?P<name>\w+)\s*\((?P<args>[^;]*?)\)\s*;", text, re.S):
+            args = [c_param_type(a) for a in split_params(match.group("args"))]
+            prototypes[match.group("name")] = (c_wasm_type(match.group("ret")), [a for a in args if a])
     return prototypes
 
 
@@ -102,7 +106,7 @@ def cs_param_type(param, wide_enums):
 
 
 def managed_declarations(tree):
-    declarations = {}
+    declarations = []
     wide_enums = set()
     sources = glob.glob(os.path.join(tree, "src", "libraries", "**", "*.cs"), recursive=True)
     texts = {}
@@ -124,18 +128,19 @@ def managed_declarations(tree):
             entry = re.search(r'EntryPoint\s*=\s*"(\w+)"', match.group("attr"))
             decl = match.group("decl")
             signature = re.search(
-                r"partial\s+(?P<ret>(?:\[[^\]]*\]\s*)*[\w\.<>\*\[\]]+(?:\s*\*)*)\s+(?P<name>\w+)\s*\((?P<args>.*)\)\s*$",
+                r"partial\s+(?P<ret>(?:\[[^\]]*\]\s*)*[\w\.<>?\*\[\]]+(?:\s*\*)*)\s+(?P<name>\w+)\s*\((?P<args>.*)\)\s*$",
                 decl, re.S,
             )
             if signature is None:
-                continue
-            name = entry.group(1) if entry else f"{match.group('lib')}_{signature.group('name')}"
+                raise ValueError(f"{os.path.relpath(source, tree)}: cannot parse selected LibraryImport declaration")
+            name = entry.group(1) if entry else signature.group("name")
             args = [cs_param_type(a, wide_enums) for a in split_params(signature.group("args"))]
-            declarations[name] = (
+            declarations.append((
+                name,
                 cs_wasm_type(signature.group("ret"), wide_enums),
                 [a for a in args if a],
                 os.path.relpath(source, tree),
-            )
+            ))
     return declarations
 
 
@@ -162,11 +167,19 @@ def main():
         return 2
     tree = sys.argv[1]
     native = native_prototypes(tree)
-    managed = managed_declarations(tree)
+    try:
+        managed = managed_declarations(tree)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 1
+    if not native or not managed:
+        print("no native prototypes or managed declarations found; verify the runtime source path", file=sys.stderr)
+        return 1
     checked = 0
     mismatches = []
-    for name, (ret, args, source) in sorted(managed.items()):
+    for name, ret, args, source in sorted(managed):
         if name not in native:
+            mismatches.append(f"{name} ({source}): no parsed native prototype")
             continue
         checked += 1
         native_ret, native_args = native[name]

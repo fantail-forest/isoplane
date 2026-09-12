@@ -81,3 +81,4 @@ int32_t __wasm_import_ip_name_lookup_method_resolve_address_stream_subscribe(int
 void __wasm_import_ip_name_lookup_resolve_address_stream_drop(int32_t a0) { const uint64_t args[] = { (uint32_t)a0 }; wisp_socket_call(73, args, 1); }
 int32_t __wasm_import_wisp_socket_no_delay(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; return (int32_t)wisp_socket_call(74, args, 2); }
 void __wasm_import_network_network_error_code(int32_t a0, int32_t a1) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1 }; wisp_socket_call(75, args, 2); }
+int64_t __wasm_import_wisp_socket_try_send_with_error_code(int32_t a0, int32_t a1, int32_t a2, int32_t a3) { const uint64_t args[] = { (uint32_t)a0, (uint32_t)a1, (uint32_t)a2, (uint32_t)a3 }; return (int64_t)wisp_socket_call(76, args, 4); }

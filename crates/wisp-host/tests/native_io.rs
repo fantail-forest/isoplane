@@ -1047,3 +1047,113 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
         "cancelling a pending connect must release its connection permit"
     );
 }
+
+struct RefusedConnections;
+
+#[async_trait::async_trait]
+impl wisp_host::egress::ConnectionFactory for RefusedConnections {
+    async fn connect(
+        &self,
+        _: &wisp_host::egress::ConnectionOwner,
+        _: std::net::SocketAddr,
+    ) -> std::io::Result<tokio::net::TcpStream> {
+        Err(std::io::ErrorKind::ConnectionRefused.into())
+    }
+}
+
+#[tokio::test]
+async fn a_failed_connection_retains_readable_and_configurable_socket_options() {
+    use wisp_abi::native_io::{AddressFamily, Error, Request, ResourceKind, Response};
+    use wisp_engine::HostBindings;
+    let owner = InstanceId::alloc();
+    let reactor = Reactor::new(
+        owner,
+        HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
+            .with_connections(Arc::new(RefusedConnections)),
+    );
+    reactor.context.begin_dispatch(1, 1);
+    let mut bindings = CellBindings::new(reactor.context.clone());
+    let (network, socket) = {
+        let mut handle = |request| match bindings
+            .native_io(request)
+            .expect("the owned native resource must allocate")
+        {
+            Response::Handle(handle) => handle,
+            other => panic!("native allocation must return a handle: {other:?}"),
+        };
+        (
+            handle(Request::Network),
+            handle(Request::CreateTcp(AddressFamily::V4)),
+        )
+    };
+    assert!(
+        matches!(
+            bindings.native_io(Request::NoDelay {
+                socket,
+                enabled: Some(true)
+            }),
+            Ok(Response::NoDelay(true))
+        ),
+        "pre-connect configuration must be accepted"
+    );
+    bindings
+        .native_io(Request::Connect {
+            socket,
+            network,
+            destination: std::net::SocketAddr::from(([93, 184, 216, 34], 443)),
+        })
+        .expect("the controlled connection attempt must start");
+    let result = tokio::time::timeout(WAKE_DEADLINE, async {
+        loop {
+            let result = bindings.native_io(Request::FinishConnect(socket));
+            if !matches!(result, Err(Error::WouldBlock)) {
+                break result;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the controlled connection failure must complete");
+    assert!(
+        matches!(
+            result,
+            Err(Error::Connection {
+                kind: std::io::ErrorKind::ConnectionRefused,
+                ..
+            })
+        ),
+        "the socket must actually enter its failed-connect state"
+    );
+    for (enabled, expected) in [
+        (None, true),
+        (Some(false), false),
+        (None, false),
+        (Some(true), true),
+        (None, true),
+    ] {
+        assert!(
+            matches!(bindings.native_io(Request::NoDelay { socket, enabled }), Ok(Response::NoDelay(actual)) if actual == expected),
+            "failed-connect sockets must retain their configurable NoDelay value"
+        );
+    }
+    assert!(
+        matches!(
+            bindings.native_io(Request::FinishConnect(socket)),
+            Err(Error::Connection {
+                kind: std::io::ErrorKind::ConnectionRefused,
+                ..
+            })
+        ),
+        "option changes must not erase the original connection failure"
+    );
+    bindings
+        .native_io(Request::Drop {
+            handle: socket,
+            kind: ResourceKind::Tcp,
+        })
+        .expect("a failed socket must remain disposable");
+    assert!(
+        matches!(bindings.native_io(Request::NoDelay { socket, enabled: None }), Err(Error::InvalidHandle(handle)) if handle == socket),
+        "a disposed socket must not retain configuration authority"
+    );
+}

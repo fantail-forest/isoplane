@@ -261,7 +261,10 @@ mod native_readiness {
     use wisp_abi::native_io::{Request, ResourceHandle, Response};
     use wisp_engine::{Completion, CpuBudget, HostBindings, ImportCall, InstanceOps};
 
-    struct ReadyHost;
+    #[derive(Default)]
+    struct ReadyHost {
+        send: Option<Result<u64, wisp_abi::native_io::Error>>,
+    }
     impl HostBindings for ReadyHost {
         fn slice_clock_ms(&self) -> u64 {
             1
@@ -272,7 +275,17 @@ mod native_readiness {
         fn call_sync(&mut self, _: ImportCall<'_>) -> i64 {
             0
         }
-        fn native_io(&mut self, _: Request) -> Result<Response, wisp_abi::native_io::Error> {
+        fn native_io(&mut self, request: Request) -> Result<Response, wisp_abi::native_io::Error> {
+            if let Some(result) = &self.send {
+                assert!(
+                    matches!(request, Request::TrySend { ref pollables, ref bytes }
+                    if pollables == &[ResourceHandle(7)] && bytes == b"abc"),
+                    "the send bridge must preserve pollables and payload"
+                );
+                return result
+                    .clone()
+                    .map(|count| Response::Capacity(wisp_abi::native_io::ByteCount(count)));
+            }
             Ok(Response::Handle(ResourceHandle(1)))
         }
     }
@@ -296,7 +309,7 @@ mod native_readiness {
             .load_template(&wasm)
             .expect("the native readiness import must validate");
         let mut instance = engine
-            .activate(&template, Box::new(ReadyHost))
+            .activate(&template, Box::new(ReadyHost::default()))
             .expect("the native readiness guest must activate");
         instance
             .dispatch(
@@ -322,6 +335,127 @@ mod native_readiness {
                 },
             )
             .completion
+    }
+
+    fn send_bridge(
+        import: &str,
+        answer: Result<u64, wisp_abi::native_io::Error>,
+        legacy_wrapper: bool,
+    ) -> i64 {
+        let engine = test_engine();
+        // The v1 C wrapper recognizes only -1 (pending) and -2 (failed),
+        // returning -1 for either; any other value becomes ssize_t directly.
+        let decode = if legacy_wrapper {
+            "(if (result i64) (i32.or (i64.eq (local.get $result) (i64.const -1)) \
+                (i64.eq (local.get $result) (i64.const -2))) \
+                (then (i64.const -1)) (else (local.get $result)))"
+        } else {
+            "(local.get $result)"
+        };
+        let wasm = guest(2,
+            &format!(r#"(import "wisp:native-sockets" "{import}" (func $send (param i32 i32 i32 i32) (result i64)))"#),
+            &format!(r#"(data (i32.const 2000) "abc")
+                (func $wrapper (result i64) (local $result i64)
+                    (local.set $result (call $send (i32.const 3000) (i32.const 1) (i32.const 2000) (i32.const 3)))
+                    {decode})"#),
+            &format!("(i32.store (i32.const 3000) (i32.const 7)) (i64.store (i32.const 1000) (call $wrapper)) {DONE}"), DONE);
+        let template = engine
+            .load_template(&wasm)
+            .expect("the socket bridge must remain admitted");
+        let mut instance = engine
+            .activate(&template, Box::new(ReadyHost { send: Some(answer) }))
+            .expect("the send fixture must activate");
+        assert_eq!(
+            instance
+                .dispatch(&super::http_dispatch(1), CpuBudget::http())
+                .completion,
+            Completion::Done,
+            "a nonblocking send must return its result without trapping"
+        );
+        i64::from_le_bytes(
+            instance.memory()[1000..1008]
+                .try_into()
+                .expect("the returned send result"),
+        )
+    }
+
+    #[test]
+    fn legacy_send_errors_still_reach_the_original_wrappers_failure_branch() {
+        for kind in [
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            let error = wisp_abi::native_io::Error::from(std::io::Error::from(kind));
+            assert_eq!(send_bridge("try-send", Err(error), true), -1,
+                "an existing guest must not receive an unrecognized negative byte count for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn the_versioned_send_bridge_preserves_distinct_network_failures() {
+        use wisp_abi::native_io::network_error::NetworkErrorCode;
+        for (kind, code) in [
+            (
+                std::io::ErrorKind::ConnectionReset,
+                NetworkErrorCode::ConnectionReset,
+            ),
+            (
+                std::io::ErrorKind::PermissionDenied,
+                NetworkErrorCode::AccessDenied,
+            ),
+        ] {
+            let error = wisp_abi::native_io::Error::from(std::io::Error::from(kind));
+            let encoded = send_bridge("try-send-with-error-code", Err(error), false) as u64;
+            assert_eq!(
+                wisp_abi::native_io::canonical::send_failure_code(encoded),
+                Some(code as u8),
+                "the new bridge must carry the actual network error for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn both_send_bridges_distinguish_pending_from_partial_success() {
+        for import in ["try-send", "try-send-with-error-code"] {
+            assert_eq!(
+                send_bridge(import, Err(wisp_abi::native_io::Error::WouldBlock), false),
+                -1,
+                "{import} must retain the pending sentinel"
+            );
+            assert_eq!(
+                send_bridge(import, Ok(2), false),
+                2,
+                "{import} must report the number of bytes actually accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn readiness_permission_cannot_invoke_the_versioned_send_bridge() {
+        let operation = wisp_abi::native_io::canonical::DEFINITIONS
+            .iter()
+            .find(|definition| definition.pal.func == "try-send-with-error-code")
+            .expect("the canonical contract defines the detailed send bridge");
+        assert_eq!(
+            packet(operation.id.0, 1000, 4, ""),
+            Completion::Trapped,
+            "a readiness-only packet must not acquire socket send authority"
+        );
+    }
+
+    #[test]
+    fn the_versioned_send_bridge_rejects_a_wrong_import_signature() {
+        let wasm = guest(
+            2,
+            r#"(import "wisp:native-sockets" "try-send-with-error-code" (func $send (param i32) (result i64)))"#,
+            "",
+            DONE,
+            DONE,
+        );
+        assert!(
+            test_engine().load_template(&wasm).is_err(),
+            "the detailed send bridge must enforce its canonical signature"
+        );
     }
 
     #[test]

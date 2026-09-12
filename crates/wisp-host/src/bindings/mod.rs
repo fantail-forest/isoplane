@@ -7,13 +7,11 @@ mod http_scope;
 mod instance;
 mod native_io;
 mod observability;
-mod outbound;
 pub(crate) mod request_body;
 mod runtime;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{InstanceCtx, Tenancy};
-pub use outbound::{BodyFrame, ExchangeFailure, OutboundRequest, RequestBody, TlsFailure};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 
 use std::sync::atomic::Ordering;

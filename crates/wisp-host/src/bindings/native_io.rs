@@ -62,6 +62,82 @@ mod tests {
         }
     }
 
+    struct EndpointPeer(std::net::SocketAddr);
+
+    impl crate::egress::DestinationPolicy for EndpointPeer {
+        fn authorize(
+            &self,
+            address: std::net::SocketAddr,
+        ) -> Result<(), crate::egress::DenyReason> {
+            if address == self.0 {
+                Ok(())
+            } else {
+                Err(crate::egress::DenyReason::NotAllowlisted(
+                    address.to_string(),
+                ))
+            }
+        }
+    }
+
+    async fn connected_endpoints(family: AddressFamily) {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let remote = listener.local_addr().unwrap();
+        let stream = TcpStream::connect(remote).await.unwrap();
+        let (_accepted, local) = listener.accept().await.unwrap();
+        let policy = Arc::new(
+            crate::egress::HostEgressPolicy::system(1, 1024)
+                .unwrap()
+                .with_destinations(Arc::new(EndpointPeer(remote))),
+        );
+        let permit = policy.check_socket(remote, None).unwrap();
+        let (mut resources, bindings) = resources(1);
+        let socket = resources
+            .insert(Resource::Socket(Socket {
+                family,
+                no_delay: Arc::new(AtomicBool::new(false)),
+                streams_taken: false,
+                state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(Connection {
+                    stream: Arc::new(stream),
+                    permit,
+                })))),
+                task: None,
+            }))
+            .unwrap();
+        for (peer, native) in [(true, remote), (false, local)] {
+            let result = resources
+                .call(Request::SocketAddress { socket, peer }, &bindings)
+                .unwrap();
+            let Response::SocketAddress(address) = result else {
+                panic!("socket endpoint query returned {result:?}")
+            };
+            let expected = match family {
+                AddressFamily::V4 => native,
+                AddressFamily::V6 => {
+                    let std::net::IpAddr::V4(ip) = native.ip() else {
+                        panic!("test peer must be IPv4")
+                    };
+                    std::net::SocketAddr::new(ip.to_ipv6_mapped().into(), native.port())
+                }
+            };
+            assert_eq!(
+                address, expected,
+                "guest endpoints must preserve the logical socket family and actual peer identity"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ipv6_guest_endpoints_preserve_mapped_addresses_over_native_ipv4() {
+        connected_endpoints(AddressFamily::V6).await;
+    }
+
+    #[tokio::test]
+    async fn ipv4_guest_endpoints_preserve_native_addresses() {
+        connected_endpoints(AddressFamily::V4).await;
+    }
+
     #[test]
     fn exhausting_native_handles_refuses_allocation_until_a_resource_is_dropped() {
         let (mut resources, bindings) = resources(1);
@@ -246,6 +322,7 @@ enum SocketState {
 }
 
 struct Socket {
+    family: AddressFamily,
     no_delay: Arc<AtomicBool>,
     streams_taken: bool,
     state: Arc<Mutex<SocketState>>,
@@ -431,6 +508,7 @@ impl Resources {
             }
             Request::CreateTcp(family) => self
                 .insert(Resource::Socket(Socket {
+                    family,
                     no_delay: Arc::new(AtomicBool::new(false)),
                     streams_taken: false,
                     state: Arc::new(Mutex::new(SocketState::Created(family))),
@@ -501,14 +579,25 @@ impl Resources {
                 _ => Err(Error::InvalidHandle(handle)),
             },
             Request::SocketAddress { socket, peer } => {
-                let state = self.socket(socket)?;
-                let connection = streams::connection(&state)?;
+                let socket = self.tcp(socket)?;
+                let connection = streams::connection(&socket.state)?;
                 let address = if peer {
                     connection.stream.peer_addr()
                 } else {
                     connection.stream.local_addr()
                 }
                 .map_err(Error::from)?;
+                let address = match (socket.family, address) {
+                    (AddressFamily::V6, std::net::SocketAddr::V4(address)) => {
+                        std::net::SocketAddr::new(
+                            address.ip().to_ipv6_mapped().into(),
+                            address.port(),
+                        )
+                    }
+                    (AddressFamily::V4, _) | (AddressFamily::V6, std::net::SocketAddr::V6(_)) => {
+                        address
+                    }
+                };
                 Ok(Response::SocketAddress(address))
             }
             Request::Shutdown { socket, how } => {
@@ -706,13 +795,26 @@ impl Resources {
                 }
                 connection.stream.nodelay().map_err(Error::from)
             }
-            SocketState::Created(_) | SocketState::Connecting => {
+            SocketState::Created(_) | SocketState::Connecting | SocketState::Failed(_) => {
                 if let Some(enabled) = enabled {
                     socket.no_delay.store(enabled, Ordering::Relaxed);
                 }
                 Ok(socket.no_delay.load(Ordering::Relaxed))
             }
-            SocketState::Failed(error) => Err(error.clone()),
+        }
+    }
+
+    fn has_resolved_address(&self, address: std::net::IpAddr) -> bool {
+        if self.resolved.contains(&address) {
+            return true;
+        }
+        match address {
+            std::net::IpAddr::V4(address) => self
+                .resolved
+                .contains(&std::net::IpAddr::V6(address.to_ipv6_mapped())),
+            std::net::IpAddr::V6(address) => address
+                .to_ipv4_mapped()
+                .is_some_and(|address| self.resolved.contains(&std::net::IpAddr::V4(address))),
         }
     }
 
@@ -759,7 +861,7 @@ impl Resources {
         let permit = policy
             .check_socket(
                 destination,
-                if self.resolved.contains(&destination.ip()) {
+                if self.has_resolved_address(destination.ip()) {
                     None
                 } else {
                     bindings.ctx.allowlist.as_deref()

@@ -1,3 +1,4 @@
+# shared ../runtime
 # The NativeAOT-LLVM fork's series: its own patches and the runtime patches
 # that apply to it, in order. build.sh excludes src/mono from the shared
 # ones. The toolchain patches (wasi-sdk 29, no emulated pthread) and the
@@ -27,3 +28,20 @@
 ../runtime/020-wasi-system-store-immediate-read.patch
 ../runtime/021-wasi-brotli-tar-encrypted-pkcs8.patch
 005-wasi-brotli-native.patch
+006-wasi-full-globalization-data.patch
+
+../runtime/023-wasi-dual-mode-sockets.patch
+../runtime/025-wasi-managed-websockets.patch
+# omit ../runtime/001-wasi-sdk-29.patch -- The fork already selects wasi-sdk29.
+# omit ../runtime/004-mono-wasm-fnptr-signature.patch -- Mono interpreter-only implementation; excluded from the NativeAOT tree.
+# omit ../runtime/005-wasi-sdk-29-no-emulated-pthread.patch -- The fork already omits emulated pthread linking.
+# omit ../runtime/014-wasi-home-directory.patch -- Replaced by fork patch003 for its different PersistedFiles layout.
+# omit ../runtime/017-wasi-family-agnostic-socket-ipv4.patch -- The fork already uses OSSupportsIPv6DualMode for family selection.
+# omit ../runtime/019-wasi-crl-cache-async-in-memory.patch -- Replaced by fork patch004 including the upstream cache and event changes.
+# omit ../runtime/022-wasi-full-globalization-data.patch -- Replaced by fork patch006 for its distinct CoreLib and native layout.
+# omit ../runtime/024-wasi-dual-mode-accessors.patch -- The fork already routes DualMode through IPV6_V6ONLY under OSSupportsIPv6DualMode.
+../runtime/026-wasi-legacy-http-requests.patch
+../runtime/027-wasi-async-smtp.patch
+../runtime/028-wasi-networking-platform-metadata.patch
+../runtime/030-wasi-task-backed-socket-apm.patch
+../runtime/031-wasi-vectored-stream-io.patch

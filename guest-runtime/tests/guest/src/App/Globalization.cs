@@ -6,20 +6,59 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Globalization under the SDK's invariant mode (no ICU, no culture data)
-/// and time zones on a disk that carries no tz database: what the culture
-/// APIs answer, how strings compare, and which time-zone operations work
-/// without data.
-/// </summary>
 internal sealed class Globalization
 {
-    public Task<string> RunAsync(string[] path) => Task.FromResult(Run(path));
+    public async Task<string> RunAsync(string[] path)
+    {
+        if (path[0] == "culture-after-park")
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
+            await Task.Delay(50);
+            return CultureInfo.CurrentCulture.Name + "/" + "istanbul".ToUpper(CultureInfo.CurrentCulture);
+        }
+        return Run(path);
+    }
 
     private static string Run(string[] path)
     {
         switch (path[0])
         {
+            case "named-format":
+                return 1234.5m.ToString("N1", CultureInfo.GetCultureInfo("de-DE"))
+                    + "/" + decimal.Parse("1.234,5", CultureInfo.GetCultureInfo("de-DE")).ToString(CultureInfo.InvariantCulture);
+            case "welsh-day":
+                return new DateTime(2020, 1, 10).ToString("dddd", CultureInfo.GetCultureInfo("cy-GB"));
+            case "hebrew-month":
+            {
+                var culture = new CultureInfo("he-IL");
+                culture.DateTimeFormat.Calendar = new HebrewCalendar();
+                return new DateTime(2024, 1, 1).ToString("MMMM", culture);
+            }
+            case "timezone-names":
+            {
+                CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
+                TimeZoneInfo zone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+                return zone.StandardName + "|" + zone.DaylightName;
+            }
+            case "windows-zone":
+            {
+                TimeZoneInfo zone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+                return zone.GetUtcOffset(new DateTime(2020, 1, 1)).ToString("c", CultureInfo.InvariantCulture)
+                    + "/" + zone.GetUtcOffset(new DateTime(2020, 7, 1)).ToString("c", CultureInfo.InvariantCulture);
+            }
+            case "invalid-normalization-form":
+                return Attempt(() => "é".Normalize((NormalizationForm)99));
+            case "invalid-normalization-input":
+                return Attempt(() => "\uD800".Normalize(NormalizationForm.FormKC));
+            case "calendars":
+                return "hebrew=" + new HebrewCalendar().GetYear(new DateTime(2024, 1, 1))
+                    + " japanese=" + new JapaneseCalendar().GetYear(new DateTime(2019, 5, 1));
+            case "unicode-forms":
+                return "hangul=" + ("\u1100\u1161".Normalize(NormalizationForm.FormC) == "\uAC00")
+                    + " decomposed=" + ("\uAC00".Normalize(NormalizationForm.FormD) == "\u1100\u1161")
+                    + " compatibility=" + ("\uFF21\u2460".Normalize(NormalizationForm.FormKC) == "A1")
+                    + " compatibility-decomposed=" + ("\uFB03".Normalize(NormalizationForm.FormKD) == "ffi")
+                    + " needs-normalization=" + !"\u1100\u1161".IsNormalized();
             case "culture":
                 return Culture();
             case "format":
@@ -52,7 +91,7 @@ internal sealed class Globalization
             "current=" + Quote(CultureInfo.CurrentCulture.Name),
             "ui=" + Quote(CultureInfo.CurrentUICulture.Name),
             "invariant=" + CultureInfo.CurrentCulture.Equals(CultureInfo.InvariantCulture),
-            "known=" + CultureInfo.GetCultures(CultureTypes.AllCultures).Length.ToString(CultureInfo.InvariantCulture),
+            "named-cultures=" + Array.Exists(CultureInfo.GetCultures(CultureTypes.AllCultures), culture => culture.Name == "de-DE"),
         };
         parts.Add("de-DE=" + Attempt(() => Quote(CultureInfo.GetCultureInfo("de-DE").Name)));
         parts.Add("en-US=" + Attempt(() => Quote(new CultureInfo("en-US").Name)));
@@ -94,34 +133,18 @@ internal sealed class Globalization
     private static string Compare()
     {
         CompareInfo invariant = CultureInfo.InvariantCulture.CompareInfo;
-        return string.Join("|",
-            "a-vs-B=" + Math.Sign(string.Compare("a", "B", StringComparison.InvariantCulture)),
-            "a-vs-B-ignore-case=" + Math.Sign(string.Compare("a", "B", StringComparison.InvariantCultureIgnoreCase)),
-            "sharp-s=" + Math.Sign(invariant.Compare("Straße", "Strasse", CompareOptions.None)),
-            "ae-ligature=" + "encyclopædia".IndexOf("ae", StringComparison.InvariantCulture),
-            "composed=" + string.Equals("\u00C5", "A\u030A", StringComparison.InvariantCulture),
-            "ignore-symbols=" + Attempt(() => Math.Sign(invariant.Compare("co-op", "coop", CompareOptions.IgnoreSymbols)).ToString(CultureInfo.InvariantCulture)),
-            "sorted=" + string.Join(",", Sorted("banana", "Apple", "cherry", "apple")),
-            "prefix=" + invariant.IsPrefix("Wisp", "wi", CompareOptions.IgnoreCase),
-            "sort-key=" + Attempt(() => Convert.ToHexString(invariant.GetSortKey("ab").KeyData).ToLowerInvariant()));
-    }
-
-    private static IEnumerable<string> Sorted(params string[] words)
-    {
-        var list = new List<string>(words);
-        list.Sort(StringComparer.InvariantCulture);
-        return list;
+        var swedish = CultureInfo.GetCultureInfo("sv-SE").CompareInfo;
+        return "composed=" + (invariant.Compare("\u00C5", "A\u030A") == 0)
+            + " ignore-symbols=" + (invariant.Compare("co-op", "coop", CompareOptions.IgnoreSymbols) == 0)
+            + " swedish-z-before-a-ring=" + (swedish.Compare("z", "å") < 0)
+            + " japanese-width=" + (CultureInfo.GetCultureInfo("ja-JP").CompareInfo.Compare("Ａ", "A", CompareOptions.IgnoreWidth) == 0);
     }
 
     private static string Casing()
     {
-        return string.Join("|",
-            "straße".ToUpper(CultureInfo.CurrentCulture),
-            "İstanbul".ToLower(CultureInfo.CurrentCulture).Length.ToString(CultureInfo.InvariantCulture),
-            "ǆ".ToUpperInvariant(),
-            "σς".ToUpperInvariant(),
-            CultureInfo.CurrentCulture.TextInfo.ToTitleCase("hello wisp world"),
-            char.ToUpperInvariant('ñ').ToString());
+        var turkish = CultureInfo.GetCultureInfo("tr-TR");
+        return "istanbul".ToUpper(turkish) + "/" + "I".ToLower(turkish)
+            + "/" + "αβγ".ToUpper(CultureInfo.GetCultureInfo("el-GR"));
     }
 
     private static string Normalize()
@@ -150,7 +173,7 @@ internal sealed class Globalization
             "utc=" + TimeZoneInfo.Utc.Id,
             "local=" + TimeZoneInfo.Local.Id + "/" + TimeZoneInfo.Local.BaseUtcOffset.ToString("c", CultureInfo.InvariantCulture),
             "local-is-utc=" + TimeZoneInfo.Local.Equals(TimeZoneInfo.Utc),
-            "system-zones=" + TimeZoneInfo.GetSystemTimeZones().Count.ToString(CultureInfo.InvariantCulture),
+            "new-york-winter=" + TimeZoneInfo.FindSystemTimeZoneById("America/New_York").GetUtcOffset(new DateTime(2026, 1, 1)).TotalHours.ToString(CultureInfo.InvariantCulture),
             "london=" + Attempt(() => TimeZoneInfo.FindSystemTimeZoneById("Europe/London").Id),
             "london-offset=" + Attempt(() => TimeZoneInfo.FindSystemTimeZoneById("Europe/London")
                 .GetUtcOffset(new DateTime(2026, 9, 11, 12, 0, 0, DateTimeKind.Utc)).ToString("c", CultureInfo.InvariantCulture)),

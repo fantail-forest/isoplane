@@ -30,3 +30,4 @@ wisp-engine = { workspace = true }
 wisp-fixtures = { workspace = true }
 wisp-harness = { workspace = true }
 wisp-host = { workspace = true }
+wisp-proxy = { workspace = true }

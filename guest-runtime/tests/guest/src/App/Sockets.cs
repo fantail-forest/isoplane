@@ -20,6 +20,10 @@ internal sealed class Sockets
     {
         switch (path[0])
         {
+            case "apm":
+                return await SocketApm.RunAsync(path[1..]).ConfigureAwait(false);
+            case "client":
+                return await TcpClients.RunAsync(path[1..]).ConfigureAwait(false);
             case "connect":
             {
                 using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);

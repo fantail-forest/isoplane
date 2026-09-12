@@ -2,7 +2,7 @@
 # Build every Rust guest to guests/out/*.wasm and list them in guests/out/manifest.
 #
 #   scripts/dev guests/build.sh            # build all
-#   scripts/dev guests/build.sh --if-stale # only when a source is newer than an output
+#   scripts/dev guests/build.sh --if-stale # only when inputs or outputs differ from the build receipt
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,22 +16,13 @@ if [ "${WISP_FIXTURE_LOCK:-}" != "$ROOT/build.sh" ]; then
   exec python3 "$TOOLS" lock "$ROOT/.build.lock" "$ROOT/build.sh" "$@"
 fi
 
-# The guests depend on the Rust SDK and the contract crate by path, so a
-# change to either is a change to every module.
-newest_source() {
-  python3 "$TOOLS" newest "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/wisp-abi" "$TOOLS" "$ROOT/build.sh"
-}
+INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/wisp-abi" "$TOOLS" "$ROOT/build.sh")
 
 is_fresh() {
   [ -f "$MANIFEST" ] || return 1
-  local src; src=$(newest_source); : "${src:=0}"
-  local g f t
-  while read -r g; do
-    f="$OUT/$g.wasm"
-    [ -f "$f" ] || return 1
-    t=$(python3 "$TOOLS" mtime "$f")
-    awk -v a="$t" -v b="$src" 'BEGIN { exit !(a >= b) }' || return 1
-  done < "$MANIFEST"
+  local outputs=("$MANIFEST") g
+  while read -r g; do outputs+=("$OUT/$g.wasm"); done < "$MANIFEST"
+  python3 "$TOOLS" fresh "$OUT/.fixture-receipt.json" "$INPUTS" "${outputs[@]}"
 }
 
 if [ "$IF_STALE" = 1 ] && is_fresh; then
@@ -159,3 +150,7 @@ fi
 printf '%s\n' "${GUESTS[@]}" foreign-module > "$MANIFEST"
 echo
 echo "==> wrote $(wc -l < "$MANIFEST") modules to $OUT"
+
+outputs=("$MANIFEST")
+while read -r g; do outputs+=("$OUT/$g.wasm"); done < "$MANIFEST"
+python3 "$TOOLS" record "$OUT/.fixture-receipt.json" "$INPUTS" "${outputs[@]}"

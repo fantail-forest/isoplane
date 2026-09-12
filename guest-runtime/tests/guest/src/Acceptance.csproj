@@ -13,9 +13,11 @@
     <AssemblyName>guest_runtime_acceptance</AssemblyName>
     <RootNamespace>Acceptance</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
+    <EventSourceSupport>true</EventSourceSupport>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Payload/**/*.cs" />
     <ProjectReference Include="../../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
   </ItemGroup>
 
@@ -30,6 +32,17 @@
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
   </ItemGroup>
+
+  <ItemGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
+    <TrimmerRootAssembly Include="System.Runtime" />
+    <EmbeddedResource Include="$(WispAcceptancePayload)" LogicalName="dynamic-payload" />
+  </ItemGroup>
+
+  <Target Name="RequireAcceptancePayload" BeforeTargets="PrepareForBuild"
+          Condition="'$(WispGuestRuntime)' == 'Mono'">
+    <Error Condition="!Exists('$(WispAcceptancePayload)')"
+           Text="Build the acceptance payload through guest-runtime/tests/guest/build.sh." />
+  </Target>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <Import Project="../../../../guest-sdks/dotnet/Wisp.Guest.targets" />

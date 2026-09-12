@@ -157,3 +157,43 @@ name = "cell-1"
          expected `{expected}` in: {stdout}"
     );
 }
+
+#[test]
+fn the_binary_refuses_a_hash_valid_bundle_with_malformed_certificates() {
+    use sha2::Digest;
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let bundle = dir.path().join("roots.pem");
+    let pem = b"-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+    std::fs::write(&bundle, pem).expect("write malformed certificate bytes");
+    let path = dir.path().join("bad-trust.toml");
+    let config = toml::toml! {
+        deployment = "development"
+        node = "trust-test"
+        [[cells]]
+        name = "cell-1"
+        [trust]
+        bundle = (bundle.to_str().expect("temporary path is UTF-8"))
+        sha256 = (hex::encode(sha2::Sha256::digest(pem)))
+    };
+    std::fs::write(
+        &path,
+        toml::to_string(&config).expect("configuration serializes"),
+    )
+    .expect("write node configuration");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wispd"))
+        .arg("--config")
+        .arg(&path)
+        .arg("--check")
+        .output()
+        .expect("the daemon's checker starts");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "matching the hash must not let an unusable trust bundle start serving: {stderr}"
+    );
+    assert!(
+        stderr.contains("invalid certificate") && stderr.contains("roots.pem"),
+        "the diagnostic must identify the malformed bundle and certificate: {stderr}"
+    );
+}

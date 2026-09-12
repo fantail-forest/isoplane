@@ -96,7 +96,7 @@ index d5af01ca5..9178141ab 100644
              }
              catch (Exception e)
              {
-@@ -70,22 +79,49 @@ private static unsafe void SetNextTimer(long shortestDueTimeMs, long currentTime
+@@ -70,22 +79,50 @@ private static unsafe void SetNextTimer(long shortestDueTimeMs, long currentTime
          {
              if (shortestDueTimeMs == long.MaxValue)
              {
@@ -130,6 +130,7 @@ index d5af01ca5..9178141ab 100644
 +                return;
 +            }
 +            _isScheduled = false;
++            _isTimerScheduled = false;
 +            s_scheduledTimers?.Remove(this);
 +            // The armed registration was for this queue's deadline; the host
 +            // timer is re-armed for whatever remains, or released.

@@ -39,6 +39,8 @@ public sealed class AcceptanceHandler : IWispHandler
                 "dns" => await _names.RunAsync(rest).ConfigureAwait(false),
                 "crypto" => await _cryptography.RunAsync(rest).ConfigureAwait(false),
                 "http" => await _http.RunAsync(rest).ConfigureAwait(false),
+                "protocols" => await Protocols.RunAsync(rest).ConfigureAwait(false),
+                "legacy" => await LegacyNetworking.RunAsync(rest).ConfigureAwait(false),
                 "tls" => await _tls.RunAsync(rest).ConfigureAwait(false),
                 "compression" => await _compression.RunAsync(rest).ConfigureAwait(false),
                 "globalization" => await _globalization.RunAsync(rest).ConfigureAwait(false),

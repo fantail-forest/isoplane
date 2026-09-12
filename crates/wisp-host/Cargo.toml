@@ -27,10 +27,6 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
-rustls = { workspace = true }
-tokio-rustls = { workspace = true }
-rustls-pki-types = { workspace = true }
-rustls-native-certs = { workspace = true }
 rand = { workspace = true }
 scc = { workspace = true }
 serde_json = { workspace = true }

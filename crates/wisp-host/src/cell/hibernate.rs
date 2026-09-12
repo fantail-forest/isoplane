@@ -8,6 +8,9 @@ impl Cell {
         let slot = self
             .slot(id)
             .ok_or_else(|| anyhow::anyhow!("no such instance {id}"))?;
+        let _reservation = slot.ctx.di().map(|(identity, _)| {
+            self.reserve_durable(&identity).ok_or_else(|| anyhow::anyhow!("durable instance {identity} has an admitted dispatch; eviction requires an idle boundary"))
+        }).transpose()?;
         let _execution = slot.try_lock_execution().ok_or_else(|| {
             anyhow::anyhow!("instance {id} is executing; eviction requires an idle boundary")
         })?;

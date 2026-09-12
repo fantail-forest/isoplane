@@ -1,0 +1,13 @@
+diff --git a/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs b/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs
+--- a/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs
++++ b/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs
+@@ -261,8 +261,7 @@
+ 
+         public static bool OSSupportsIPv4 => SocketProtocolSupportPal.OSSupportsIPv4;
+         public static bool OSSupportsIPv6 => SocketProtocolSupportPal.OSSupportsIPv6;
+-        [UnsupportedOSPlatformGuard("wasi")]
+-        internal static bool OSSupportsIPv6DualMode => !OperatingSystem.IsWasi() && OSSupportsIPv6;
++        internal static bool OSSupportsIPv6DualMode => OSSupportsIPv6;
+         [UnsupportedOSPlatformGuard("wasi")]
+         internal static bool OSSupportsThreads => !OperatingSystem.IsWasi();
+         public static bool OSSupportsUnixDomainSockets => SocketProtocolSupportPal.OSSupportsUnixDomainSockets;

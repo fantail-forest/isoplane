@@ -8,6 +8,8 @@
 mod common;
 #[path = "common/admitted.rs"]
 mod admitted;
+#[path = "common/fixed_dns.rs"]
+mod fixed_dns;
 #[path = "common/no_dns.rs"]
 mod no_dns;
 #[path = "common/no_egress.rs"]
@@ -862,4 +864,196 @@ in_both_runtimes! {
         )
         .await;
     }
+}
+
+async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
+    wisp_harness::LogCapture::global();
+    let endpoint = if ipv6 {
+        peers::ipv6_peer(Peer::Echo).await
+    } else {
+        peer(Peer::Echo).await
+    };
+    let guard = if mode == "mixed" {
+        let socket =
+            tokio::net::TcpSocket::new_v4().expect("the refused IPv4 address must be reservable");
+        socket
+            .bind((std::net::Ipv4Addr::LOCALHOST, endpoint.port()).into())
+            .expect("the IPv4 control port must be reserved without listening");
+        Some(socket)
+    } else {
+        None
+    };
+    let mut admitted = vec![endpoint];
+    if !ipv6 {
+        admitted.push(
+            (
+                std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
+                endpoint.port(),
+            )
+                .into(),
+        );
+    }
+    if guard.is_some() {
+        admitted.push((std::net::Ipv4Addr::LOCALHOST, endpoint.port()).into());
+        admitted.push(
+            (
+                std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
+                endpoint.port(),
+            )
+                .into(),
+        );
+    }
+    let mut reactor = if mode == "dns" {
+        wisp_harness::Reactor::new(
+            wisp_host::InstanceId::alloc(),
+            admitted::admitting(
+                admitted,
+                Box::new(fixed_dns::FixedDns(vec![
+                    std::net::Ipv4Addr::LOCALHOST.into()
+                ])),
+            ),
+        )
+    } else {
+        reactor_for_peers(880, admitted)
+    };
+    if mode == "dns" || mode == "literal" {
+        let allowed = if mode == "dns" {
+            "approved.test".to_owned()
+        } else {
+            endpoint.ip().to_string()
+        };
+        std::sync::Arc::get_mut(&mut reactor.context)
+            .expect("the context is not shared before guest creation")
+            .allowlist = Some(vec![allowed]);
+    }
+    reactor.context.begin_slice(1, 1);
+    let mut guest = guest(&reactor, runtime);
+    let answer = guest
+        .answer(
+            &reactor,
+            &format!(
+                "/sockets/client/{mode}/{}/{}",
+                endpoint.ip(),
+                endpoint.port()
+            ),
+            30,
+        )
+        .await;
+    let expected = if mode == "cancelled" {
+        "cancelled"
+    } else if mode == "only-v6" {
+        "IPv6-only refused mapped IPv4"
+    } else if mode == "only-v4" {
+        "IPv4-only refused IPv6"
+    } else if mode == "connected-option" {
+        "connected mode refused"
+    } else {
+        "echo; same client; configuration retained"
+    };
+    assert_eq!(answer, expected, "TcpClient must retain its public Socket and configured options while connecting through the selected address family; logs: {:?}", reactor.context.emitted_logs());
+    released(&reactor).await;
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_default_tcp_client_connects_to_ipv4_with_its_configuration(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "address", false).await;
+    }
+    #[tokio::test]
+    async fn a_default_tcp_client_connects_to_ipv6_with_its_configuration(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "address", true).await;
+    }
+    #[tokio::test]
+    async fn a_default_tcp_client_connects_to_an_ipv6_string(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "string", true).await;
+    }
+    #[tokio::test]
+    async fn a_default_tcp_client_connects_to_an_ipv6_address_list(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "list", true).await;
+    }
+    #[tokio::test]
+    async fn a_default_tcp_client_retries_ipv6_after_ipv4_refusal(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "mixed", true).await;
+    }
+    #[tokio::test]
+    async fn an_explicit_ipv6_tcp_client_keeps_its_family_and_configuration(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "explicit", true).await;
+    }
+    #[tokio::test]
+    async fn a_cancelled_default_tcp_client_connect_keeps_its_socket(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "cancelled", true).await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn an_ipv6_only_tcp_client_refuses_an_ipv4_mapped_destination(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "only-v6", false).await;
+    }
+    #[tokio::test]
+    async fn a_tcp_clients_dual_socket_option_enables_ipv4_mapped_connect(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "option-mapped", false).await;
+    }
+    #[tokio::test]
+    async fn a_default_tcp_client_keeps_an_exposed_socket_handle_when_connecting(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "exposed", false).await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_default_tcp_client_retains_an_approved_ipv4_dns_answers_authority(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "dns", false).await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn an_explicit_ipv4_tcp_client_refuses_an_ipv6_destination(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "only-v4", true).await;
+    }
+
+    #[tokio::test]
+    async fn a_connected_socket_refuses_changing_its_family_mode(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "connected-option", true).await;
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_default_tcp_client_retains_an_allowlisted_ipv4_literals_authority(runtime: GuestRuntime) {
+        configured_tcp_client(runtime, "literal", false).await;
+    }
+}
+
+async fn socket_apm(runtime: GuestRuntime, mode: &str) {
+    let echo = peer(Peer::Echo).await;
+    let reactor = reactor_for_peers(934, vec![echo]);
+    reactor.context.begin_slice(1, 1);
+    let mut guest = guest(&reactor, runtime);
+    let started = guest.start(&format!(
+        "/sockets/apm/{mode}/{}/{}",
+        echo.ip(),
+        echo.port()
+    ));
+    assert_eq!(
+        started.completion,
+        Completion::Parked,
+        "APM fixture must first park while connecting"
+    );
+    let answer = guest.finish(&reactor, 64).await;
+    assert_eq!(answer, "APM callbacks restored; unfinished End refused", "task-backed APM callbacks, state, completed End calls and unfinished-wait refusal must survive Store restoration");
+    released(&reactor).await;
+}
+in_both_runtimes! {
+    #[tokio::test]
+    async fn network_stream_apm_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "stream").await; }
+    #[tokio::test]
+    async fn socket_apm_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "socket").await; }
+    #[tokio::test]
+    async fn socket_apm_error_code_overloads_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "socket-error").await; }
+    #[tokio::test]
+    async fn socket_apm_vector_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "vector").await; }
+    #[tokio::test]
+    async fn socket_apm_vector_error_code_overloads_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "vector-error").await; }
 }

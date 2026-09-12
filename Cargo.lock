@@ -5096,6 +5096,9 @@ dependencies = [
 [[package]]
 name = "wisp-fixtures"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "wisp-harness"
@@ -5150,16 +5153,12 @@ dependencies = [
  "parking_lot",
  "postcard",
  "rand 0.9.5",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
  "scc",
  "serde",
  "serde_json",
  "socket2",
  "thiserror 2.0.20",
  "tokio",
- "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "wat",
@@ -5248,6 +5247,7 @@ dependencies = [
  "wisp-fixtures",
  "wisp-harness",
  "wisp-host",
+ "wisp-proxy",
 ]
 
 [[package]]
@@ -5274,6 +5274,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "rand 0.9.5",
+ "rustls",
  "rustls-pki-types",
  "serde",
  "serde_json",

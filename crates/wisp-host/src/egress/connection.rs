@@ -76,7 +76,7 @@ pub trait ConnectionFactory: Send + Sync + 'static {
     ) -> std::io::Result<TcpStream>;
 }
 
-/// Native local networking for the open-source node and developer runtime.
+/// Native local networking for the local node and developer runtime.
 #[derive(Default)]
 pub struct LocalConnections;
 
@@ -88,13 +88,140 @@ impl ConnectionFactory for LocalConnections {
         destination: SocketAddr,
     ) -> std::io::Result<TcpStream> {
         tracing::debug!(tenant = owner.tenant(), instance = %owner.instance(), %destination, "opening local outbound connection");
-        TcpStream::connect(destination).await
+        TcpStream::connect(canonical_destination(destination)?).await
     }
+}
+
+pub(super) fn canonical_destination(address: SocketAddr) -> std::io::Result<SocketAddr> {
+    if let SocketAddr::V6(ipv6) = address {
+        if let Some(ipv4) = ipv6.ip().to_ipv4_mapped() {
+            if ipv6.scope_id() != 0 || ipv6.flowinfo() != 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "an IPv4-mapped destination cannot carry IPv6 scope or flow information",
+                ));
+            }
+            return Ok(SocketAddr::new(ipv4.into(), ipv6.port()));
+        }
+    }
+    Ok(address)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct OwnedPeer(SocketAddr);
+
+    impl crate::egress::DestinationPolicy for OwnedPeer {
+        fn authorize(&self, address: SocketAddr) -> Result<(), crate::egress::DenyReason> {
+            if address.ip().to_canonical() == self.0.ip().to_canonical()
+                && address.port() == self.0.port()
+            {
+                Ok(())
+            } else {
+                Err(crate::egress::DenyReason::NotAllowlisted(
+                    address.to_string(),
+                ))
+            }
+        }
+    }
+
+    async fn ipv4_round_trip(mapped: bool, hostname: bool) {
+        use crate::egress::{HostEgressPolicy, Resolver, SystemResolver};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let resolved = if hostname {
+            SystemResolver::new()
+                .unwrap()
+                .resolve("localhost", address.port())
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|address| address.is_ipv4())
+                .expect("localhost must identify its IPv4 loopback peer")
+        } else {
+            address
+        };
+        let destination = if mapped {
+            let std::net::IpAddr::V4(ip) = resolved.ip() else {
+                panic!("the fixture selected an IPv4 peer")
+            };
+            SocketAddr::new(ip.to_ipv6_mapped().into(), resolved.port())
+        } else {
+            resolved
+        };
+        let policy = HostEgressPolicy::system(1, 1024)
+            .unwrap()
+            .with_destinations(std::sync::Arc::new(OwnedPeer(address)));
+        let owner =
+            ConnectionOwner::new("ipv4-qualification".into(), crate::InstanceId(1)).unwrap();
+        let mut stream = policy.connect(&owner, destination).await.unwrap();
+        let (mut peer, _) = listener.accept().await.unwrap();
+        stream.write_all(b"ipv4").await.unwrap();
+        let mut received = [0; 4];
+        peer.read_exact(&mut received).await.unwrap();
+        assert_eq!(
+            received, *b"ipv4",
+            "the checked provider must deliver bytes to the owned IPv4 peer"
+        );
+        assert!(
+            stream.peer_addr().unwrap().is_ipv4(),
+            "an IPv4 destination must use native IPv4 without requiring IPv6 support"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_numeric_ipv4_peer_uses_native_ipv4() {
+        ipv4_round_trip(false, false).await;
+    }
+
+    #[tokio::test]
+    async fn a_mapped_numeric_ipv4_peer_does_not_require_ipv6() {
+        ipv4_round_trip(true, false).await;
+    }
+
+    #[tokio::test]
+    async fn a_mapped_hostname_ipv4_peer_does_not_require_ipv6() {
+        ipv4_round_trip(true, true).await;
+    }
+
+    #[test]
+    fn native_ipv6_destination_metadata_is_preserved() {
+        let address = SocketAddr::V6(std::net::SocketAddrV6::new(
+            "fe80::7".parse().unwrap(),
+            443,
+            17,
+            4,
+        ));
+        assert_eq!(
+            canonical_destination(address).unwrap(),
+            address,
+            "native IPv6 must retain its scope, flow information, address and port"
+        );
+    }
+
+    #[test]
+    fn mapped_ipv4_scope_and_flow_information_are_refused() {
+        for (flow, scope) in [(1, 0), (0, 1)] {
+            let address = SocketAddr::V6(std::net::SocketAddrV6::new(
+                std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
+                443,
+                flow,
+                scope,
+            ));
+            let error =
+                canonical_destination(address).expect_err("IPv4 cannot preserve IPv6 metadata");
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "mapped metadata must not be silently discarded"
+            );
+        }
+    }
 
     #[test]
     fn a_connection_cannot_default_an_absent_tenant_identity() {

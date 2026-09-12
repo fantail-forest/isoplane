@@ -16,6 +16,7 @@
     </PropertyGroup>
     <WispContainerPublish ProjectPath="$(MSBuildProjectFullPath)" SourceRoot="$(WispBuildRoot)"
                           SdkDirectory="$(_WispSdkDirectory)" PublishDirectory="$(PublishDir)"
+                          GuestRuntimeFeed="$(WispGuestRuntimeFeed)" WasiSdkPackDirectory="$(WispGuestWasiSdkPackDirectory)" Validator="$(WispCli)"
                           Configuration="$(Configuration)" Offline="$(WispOffline)"
                           CacheDirectory="$(WispCompilerCache)"
                           CommandTimeoutSeconds="$(WispContainerCommandTimeoutSeconds)">
@@ -49,6 +50,7 @@
           Condition="'$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
     <ItemGroup>
       <_WispPublishOutput Include="$(NativeBinary)" />
+      <_WispPublishOutput Include="$(NativeBinary).runtime" Condition="Exists('$(NativeBinary).runtime')" />
       <_WispPublishOutput Include="$(WispPalObject)" Condition="'$(WispPalObject)' != ''" />
       <_WispPublishOutput Include="$(WispClockObject)" Condition="'$(WispClockObject)' != ''" />
       <_WispPublishOutput Include="$(PublishDir)$([System.IO.Path]::GetFileName('$(NativeBinary)'))"

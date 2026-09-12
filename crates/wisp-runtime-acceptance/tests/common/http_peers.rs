@@ -8,7 +8,7 @@
 
 use std::future::Future;
 use std::io::Write as _;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -115,6 +115,21 @@ pub async fn h2_https_peer(certificate: Certificate) -> HttpPeer {
     .await
 }
 
+/// Starts a plaintext peer on the requested loopback address family.
+pub async fn http_peer_on(address: IpAddr) -> HttpPeer {
+    serve_on(None, Protocols::Http1And2, address).await
+}
+
+/// Starts an HTTPS peer on the requested loopback address family.
+pub async fn https_peer_on(certificate: Certificate, address: IpAddr) -> HttpPeer {
+    serve_on(
+        Some(tls_acceptor(certificate, Protocols::Http1)),
+        Protocols::Http1,
+        address,
+    )
+    .await
+}
+
 fn tls_acceptor(certificate: Certificate, protocols: Protocols) -> TlsAcceptor {
     let (certificates, key) = certificate.presented();
     let mut config = rustls::ServerConfig::builder()
@@ -200,7 +215,11 @@ pub async fn goaway_peer() -> HttpPeer {
 }
 
 async fn bind() -> (TcpListener, HttpPeer) {
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+    bind_on(IpAddr::V4(Ipv4Addr::LOCALHOST)).await
+}
+
+async fn bind_on(address: IpAddr) -> (TcpListener, HttpPeer) {
+    let listener = TcpListener::bind((address, 0))
         .await
         .expect("the test peer must bind");
     let address = listener.local_addr().expect("the test peer has an address");
@@ -231,7 +250,11 @@ where
 }
 
 async fn serve(tls: Option<TlsAcceptor>, protocols: Protocols) -> HttpPeer {
-    let (listener, peer) = bind().await;
+    serve_on(tls, protocols, IpAddr::V4(Ipv4Addr::LOCALHOST)).await
+}
+
+async fn serve_on(tls: Option<TlsAcceptor>, protocols: Protocols, address: IpAddr) -> HttpPeer {
+    let (listener, peer) = bind_on(address).await;
     let alpn = peer.alpn.clone();
     accept_loop(listener, peer.accepted.clone(), move |stream| {
         let tls = tls.clone();

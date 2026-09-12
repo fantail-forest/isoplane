@@ -30,7 +30,8 @@ use admitted::released;
 use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
 use http_peers::{
-    goaway_peer, h2_https_peer, http_peer, https_peer, reactor_for_http, stale_peer, Certificate,
+    goaway_peer, h2_https_peer, http_peer, http_peer_on, https_peer, https_peer_on,
+    reactor_for_http, stale_peer, Certificate,
 };
 use refusing::refusing_endpoint;
 use resolvers::{reactor_for_dns, FailingDns, PendingDns};
@@ -586,5 +587,54 @@ in_both_runtimes! {
             reactor.context.emitted_logs()
         );
         assert_eq!(peer.connections(), 0, "a request the client cannot satisfy never reaches the peer");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn an_ipv6_only_dns_destination_is_reachable_by_the_default_http_client(runtime: GuestRuntime) {
+        let ipv6 = std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+        let peer = http_peer_on(ipv6).await;
+        let reactor = reactor_for_http(81, vec![peer.address], Box::new(FixedDns(vec![ipv6])));
+        reactor.context.begin_slice(CLOCK_2030_MS, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/get/ipv6.acceptance.test/{}", peer.address.port()), 32).await;
+        assert_eq!(text, "status=200 content-type=text/plain body=hello from peer", "a hostname with only an IPv6 address must connect through the default handler");
+        assert_eq!(peer.connections(), 1, "the IPv6 peer must receive the connection");
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_literal_is_reachable_by_the_default_http_client(runtime: GuestRuntime) {
+        let ipv6 = std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+        let peer = http_peer_on(ipv6).await;
+        let reactor = reactor_for_http(82, vec![peer.address], Box::new(FixedDns(vec![])));
+        reactor.context.begin_slice(CLOCK_2030_MS, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/get/[::1]/{}", peer.address.port()), 32).await;
+        assert_eq!(text, "status=200 content-type=text/plain body=hello from peer", "an IPv6 literal must connect without DNS or dual mode");
+    }
+
+    #[tokio::test]
+    async fn https_authenticates_an_ipv6_only_destination(runtime: GuestRuntime) {
+        let ipv6 = std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+        let peer = https_peer_on(Certificate::Leaf, ipv6).await;
+        let reactor = reactor_for_http(83, vec![peer.address], Box::new(FixedDns(vec![ipv6])));
+        reactor.context.begin_slice(CLOCK_2030_MS, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/https/leaf.acceptance.test/{}", peer.address.port()), 32).await;
+        assert_eq!(text, "status=200 content-type=text/plain body=hello from peer", "TLS over IPv6 must preserve hostname and chain validation");
+    }
+
+    #[tokio::test]
+    async fn an_ipv4_connection_failure_falls_back_to_the_dns_ipv6_address(runtime: GuestRuntime) {
+        let ipv6 = std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+        let peer = http_peer_on(ipv6).await;
+        let unavailable = std::net::SocketAddr::new(LOCALHOST, peer.address.port());
+        let reactor = reactor_for_http(84, vec![unavailable, peer.address], Box::new(FixedDns(vec![LOCALHOST, ipv6])));
+        reactor.context.begin_slice(CLOCK_2030_MS, 1);
+        let mut guest = guest(&reactor, runtime);
+        let text = guest.answer(&reactor, &format!("/http/get/mixed.acceptance.test/{}", peer.address.port()), 32).await;
+        assert_eq!(text, "status=200 content-type=text/plain body=hello from peer", "a failed IPv4 attempt must not suppress the next IPv6 address");
+        assert_eq!(peer.connections(), 1, "the successful address must own exactly one peer connection");
     }
 }

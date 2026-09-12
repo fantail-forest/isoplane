@@ -53,6 +53,7 @@ FIXTURES=(
   "wisp_guest_dotnet_dns|$ROOT/dotnet/out/wisp_guest_dotnet_dns.wasm|$ROOT/dotnet|-p:WispDnsProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_stream|$ROOT/dotnet/out/wisp_guest_dotnet_stream.wasm|$ROOT/dotnet|-p:WispStreamProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_connect|$ROOT/dotnet/out/wisp_guest_dotnet_connect.wasm|$ROOT/dotnet|-p:WispConnectProbe=true -p:IlcResilient=false"
+  "wisp_guest_dotnet_cleanup|$ROOT/dotnet/out/wisp_guest_dotnet_cleanup.wasm|$ROOT/dotnet|-p:WispCleanupProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_timer|$ROOT/dotnet/out/wisp_guest_dotnet_timer.wasm|$ROOT/dotnet|-p:WispTimerProbe=true"
   "wisp_guest_dotnet_async|$ROOT/dotnet/out/wisp_guest_dotnet_async.wasm|$ROOT/dotnet|-p:WispAsyncProbe=true"
   "wisp_guest_dotnet_filesystem|$ROOT/dotnet/out/wisp_guest_dotnet_filesystem.wasm|$ROOT/dotnet|-p:WispFilesystemProbe=true"
@@ -79,6 +80,7 @@ MONO_FIXTURES=(
   wisp_guest_dotnet_dns
   wisp_guest_dotnet_stream
   wisp_guest_dotnet_connect
+  wisp_guest_dotnet_cleanup
   wisp_guest_dotnet_timer
   wisp_guest_dotnet_async
   wisp_guest_dotnet_filesystem
@@ -109,39 +111,29 @@ if [ -n "$SELECTED" ]; then
   FIXTURES=("${selected[@]}")
 fi
 
-# Coarse on purpose: a per-fixture dependency graph would be a second copy of
-# what MSBuild knows, and a stale fixture costs more than a spare rebuild.
-# Both flavours link a source-built pack, so the feed and the patch series
-# that produced it count as sources.
-newest_source() {
-  python3 "$TOOLS" newest "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config" \
-    "$ROOT/../guest-runtime/manifest.env" "$ROOT/../guest-runtime/patches" "$ROOT/../guest-runtime/out/feed"
-}
-
-# A fixture is also stale when the pack it links (recorded beside it by the
-# publish) is not the pack the feed offers its runtime now.
-FEED_IDENTITY=""
-if [ -f "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props" ]; then
-  FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$ROOT/../guest-runtime/out/feed/Wisp.GuestRuntime.props" "$RUNTIME")
+FEED="${WISP_TEST_RUNTIME_FEED:-$ROOT/../guest-runtime/out/feed}"
+if [ -n "${WISP_TEST_RUNTIME_FEED:-}" ]; then
+  python3 "$ROOT/../guest-runtime/feed-identity.py" verify-artifact "$FEED"
+  echo "==> explicitly selected runtime artifacts: $FEED"
+else
+  python3 "$ROOT/../guest-runtime/feed-identity.py" verify-current "$ROOT/../guest-runtime" "$FEED"
 fi
+export WISP_GUEST_RUNTIME_FEED="$FEED"
+FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$FEED/Wisp.GuestRuntime.props" "$RUNTIME")
+INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config" "$ROOT/../global.json" "$FEED")
 
 is_stale() {
-  local out="$1" src="$2"
-  [ -f "$out" ] || return 0
+  local out="$1"
   [ -f "$out.runtime" ] || return 0
   [ "$(cat "$out.runtime")" = "$FEED_IDENTITY" ] || return 0
-  local t; t=$(python3 "$TOOLS" mtime "$out")
-  awk -v a="$t" -v b="$src" 'BEGIN { exit !(a < b) }'
+  ! python3 "$TOOLS" fresh "$out.fixture.json" "$INPUTS" "$out" "$out.runtime"
 }
-
-SRC_T=$(newest_source)
-: "${SRC_T:=0}"
 
 if [ "$IF_STALE" = 1 ]; then
   fresh=1
   for spec in "${FIXTURES[@]}"; do
     IFS='|' read -r name out dir extra <<<"$spec"
-    if is_stale "$out" "$SRC_T"; then fresh=0; break; fi
+    if is_stale "$out"; then fresh=0; break; fi
   done
   if [ "$fresh" = 1 ]; then
     echo "==> C# fixtures are up to date"
@@ -162,7 +154,7 @@ rc=0
 built=0 skipped=0
 for spec in "${FIXTURES[@]}"; do
   IFS='|' read -r name out dir extra <<<"$spec"
-  if [ "$IF_STALE" = 1 ] && ! is_stale "$out" "$SRC_T"; then
+  if [ "$IF_STALE" = 1 ] && ! is_stale "$out"; then
     skipped=$((skipped + 1))
     continue
   fi
@@ -174,6 +166,7 @@ for spec in "${FIXTURES[@]}"; do
   built=$((built + 1))
 
   if [ "$ok" = 1 ]; then
+    python3 "$TOOLS" record "$out.fixture.json" "$INPUTS" "$out" "$out.runtime"
     echo "  ok      $name"
   else
     echo "  FAILED  $name"; sed 's/^/      /' "$log" >&2; rc=1

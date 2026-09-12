@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
+using Task = Microsoft.Build.Utilities.Task;
 
 /// <summary>Publishes with the local Linux compiler and returns its WASM output.</summary>
 public sealed class WispContainerPublish : Task, ICancelableTask
@@ -17,6 +18,13 @@ public sealed class WispContainerPublish : Task, ICancelableTask
     [Required] public string SourceRoot { get; set; }
     /// <summary>The installed Wisp SDK directory.</summary>
     [Required] public string SdkDirectory { get; set; }
+    /// <summary>The local feed supplying the source-built runtime packs.</summary>
+    [Required] public string GuestRuntimeFeed { get; set; }
+    /// <summary>The unpacked WASI SDK named by the selected runtime feed.</summary>
+    [Required] public string WasiSdkPackDirectory { get; set; }
+    /// <summary>The host-native CLI that validates the linked artifact before publication.</summary>
+    [Required] public string Validator { get; set; }
+
     /// <summary>The local publish directory.</summary>
     [Required] public string PublishDirectory { get; set; }
     /// <summary>The selected build configuration.</summary>
@@ -82,6 +90,14 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         if (!ProjectPath.StartsWith(SourceRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new InvalidOperationException("WispBuildRoot must contain the guest project and its project references.");
 
+        GuestRuntimeFeed = Path.GetFullPath(GuestRuntimeFeed).TrimEnd(Path.DirectorySeparatorChar);
+        if (!File.Exists(Path.Combine(GuestRuntimeFeed, "Wisp.GuestRuntime.props")))
+            throw new InvalidOperationException("The guest runtime feed has no Wisp.GuestRuntime.props: " + GuestRuntimeFeed);
+
+        WasiSdkPackDirectory = Path.GetFullPath(WasiSdkPackDirectory).TrimEnd(Path.DirectorySeparatorChar);
+        if (!File.Exists(Path.Combine(WasiSdkPackDirectory, "Sdk", "Sdk.targets")))
+            throw new InvalidOperationException("The runtime feed's unpacked WASI SDK is missing: " + WasiSdkPackDirectory);
+
         if (Run("docker", new[] { "info" }, false, true).ExitCode != 0)
             throw new InvalidOperationException("Docker is unavailable. Install and start Docker Desktop (or a compatible local Docker runtime), then retry dotnet publish.");
         runtimeAvailable = true;
@@ -114,6 +130,8 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         };
         if (!SdkDirectory.StartsWith(SourceRoot + "/", StringComparison.Ordinal) && SdkDirectory != SourceRoot)
             args.AddRange(new[] { "--volume", SdkDirectory + ":" + SdkDirectory + ":ro" });
+        args.AddRange(new[] { "--volume", GuestRuntimeFeed + ":" + GuestRuntimeFeed + ":ro" });
+        args.AddRange(new[] { "--volume", WasiSdkPackDirectory + ":" + WasiSdkPackDirectory + ":ro" });
         if (Offline) args.AddRange(new[] { "--network", "none" });
         args.AddRange(new[] { image, "dotnet", "publish", ProjectPath, "--configuration", Configuration, "--disable-build-servers" });
         foreach (var property in ((IBuildEngine6)BuildEngine).GetGlobalProperties())
@@ -122,7 +140,8 @@ public sealed class WispContainerPublish : Task, ICancelableTask
             args.Add("-p:" + property.Key + "=" + property.Value);
         }
         args.AddRange(new[] {
-            "-p:WispContainerBuild=false", "-p:WispValidate=false",
+            "-p:WispContainerBuild=false", "-p:_WispContainerIntermediate=true",
+            "-p:WispGuestRuntimeFeed=" + GuestRuntimeFeed + "/",
             "-p:UseArtifactsOutput=true", "-p:ArtifactsPath=/build/artifacts",
             "-p:PublishDir=/build/publish/", "-p:NuGetAudit=false",
             "-p:UseSharedCompilation=false", "-nodeReuse:false",
@@ -141,6 +160,12 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         string[] modules = Directory.GetFiles(Path.Combine(scratch, "publish"), "*.wasm");
         if (modules.Length != 1)
             throw new InvalidOperationException("the compiler did not publish exactly one WASM module.");
+        var validation = new List<string> { "doctor", modules[0], "--no-color" };
+
+        Require(Run(Validator, validation, true), "validating the linked module before publication");
+        string identity = modules[0] + ".runtime";
+        if (!File.Exists(identity))
+            throw new InvalidOperationException("The compiler did not record the linked runtime pack identity.");
         PublishDirectory = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(ProjectPath), PublishDirectory));
         Directory.CreateDirectory(PublishDirectory);
         Module = Path.GetFullPath(Path.Combine(PublishDirectory, Path.GetFileName(modules[0])));
@@ -155,6 +180,7 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         {
             if (File.Exists(pending)) File.Delete(pending);
         }
+        File.Copy(identity, Module + ".runtime", true);
         Log.LogMessage(MessageImportance.High, "wisp: published {0}", Module);
     }
 
@@ -206,7 +232,7 @@ public sealed class WispContainerPublish : Task, ICancelableTask
     private Result Run(string executable, IEnumerable<string> arguments, bool stream, bool bounded = false, bool cleanup = false)
     {
         if (!cleanup) cancellation.Token.ThrowIfCancellationRequested();
-        var start = new ProcessStartInfo(executable) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        var start = new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(ProjectPath), RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         var command = new CommandLineBuilder();
         foreach (string argument in arguments) command.AppendSwitchIfNotNull("", argument);
         start.Arguments = command.ToString();

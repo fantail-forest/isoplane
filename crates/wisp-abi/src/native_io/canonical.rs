@@ -36,6 +36,8 @@ pub enum Action {
     Read,
     /// Send bytes without a host queue, returning the actual accepted count.
     TrySend,
+    /// Send bytes with a specific network error code on failure.
+    TrySendWithErrorCode,
     /// Return an owned error's diagnostic message.
     ErrorMessage,
     /// Return an owned error's network error code.
@@ -1187,13 +1189,25 @@ pub const DEFINITIONS: &[Definition] = &[
         },
         Action::ErrorCode,
     ),
+    definition(
+        76,
+        "wisp_socket_try_send_with_error_code",
+        SOCKET_BRIDGE_MODULE,
+        "try-send-with-error-code",
+        SOCKET_IMPORT,
+        Sig {
+            params: &[Ty::I32, Ty::I32, Ty::I32, Ty::I32],
+            results: &[Ty::I64],
+        },
+        Action::TrySendWithErrorCode,
+    ),
 ];
 
 /// A native send should retry after output readiness.
 pub const SEND_PENDING: u64 = u64::MAX;
-/// A native send failed without accepting bytes, for no more specific
-/// reason; a failure with a reason is `SEND_FAILED` less its network error
-/// code, see [`send_failure`].
+/// A legacy native send failed without accepting bytes. The detailed send
+/// bridge encodes a failure as `SEND_FAILED` less its network error code,
+/// see [`send_failure`].
 pub const SEND_FAILED: u64 = u64::MAX - 1;
 /// How many network error codes the failure range below `SEND_FAILED` holds.
 pub const SEND_FAILURE_CODES: u64 = 64;

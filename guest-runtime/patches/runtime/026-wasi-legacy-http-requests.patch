@@ -1,0 +1,21 @@
+diff --git a/src/libraries/System.Net.Requests/src/System.Net.Requests.csproj b/src/libraries/System.Net.Requests/src/System.Net.Requests.csproj
+--- a/src/libraries/System.Net.Requests/src/System.Net.Requests.csproj
++++ b/src/libraries/System.Net.Requests/src/System.Net.Requests.csproj
+@@ -1,7 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+ 
+   <PropertyGroup>
+-    <TargetFrameworks>$(NetCoreAppCurrent)-windows;$(NetCoreAppCurrent)-unix;$(NetCoreAppCurrent)</TargetFrameworks>
++    <TargetFrameworks>$(NetCoreAppCurrent)-windows;$(NetCoreAppCurrent)-unix;$(NetCoreAppCurrent)-wasi;$(NetCoreAppCurrent)</TargetFrameworks>
+     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+     <!-- SYSLIB0014: WebRequest, HttpWebRequest, ServicePoint, and WebClient are obsolete. Use HttpClient instead. -->
+     <NoWarn>$(NoWarn);SYSLIB0014</NoWarn>
+@@ -93,7 +93,7 @@
+     <Compile Include="System\Net\WebExceptionPal.Windows.cs" />
+   </ItemGroup>
+ 
+-  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'unix'">
++  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'unix' or '$(TargetPlatformIdentifier)' == 'wasi'">
+     <Compile Include="$(CommonPath)System\Net\ContextAwareResult.Unix.cs"
+              Link="Common\System\Net\ContextAwareResult.Unix.cs" />
+     <Compile Include="System\Net\WebExceptionPal.Unix.cs" />

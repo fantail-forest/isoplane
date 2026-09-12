@@ -330,3 +330,76 @@ in_both_runtimes! {
         assert_eq!(answer, "waited", "a wait that needs no wake must complete");
     }
 }
+
+async fn replacement_timer_resumes(runtime: GuestRuntime, path: &str) {
+    let reactor = reactor_without_egress(51);
+    reactor.context.begin_slice(1, 1);
+    let mut guest = guest(&reactor, runtime);
+    let outcome = guest.start(path);
+    assert_eq!(
+        outcome.completion,
+        Completion::Parked,
+        "the replacement delay must await a timer: {outcome:?}"
+    );
+    assert_eq!(
+        reactor.futures.pending_total(reactor.context.instance),
+        1,
+        "cancelling the last timer must not prevent its replacement from arming"
+    );
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_millis(201)).await;
+    reactor.context.begin_slice(202, 1);
+    let outcome = guest.wake(&reactor).await;
+    assert_eq!(
+        outcome.completion,
+        Completion::Done,
+        "the replacement timer must resume after restoration: {outcome:?}"
+    );
+    assert_eq!(
+        reactor.response_text(1),
+        "resumed",
+        "the replacement delay must complete"
+    );
+    assert_eq!(
+        reactor.futures.pending_total(reactor.context.instance),
+        0,
+        "replacement completion must release the host timer"
+    );
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_the_last_delay_allows_a_later_replacement_to_fire(runtime: GuestRuntime) {
+        replacement_timer_resumes(runtime, "/loop/cancel-then-delay/200").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_the_last_delay_allows_an_earlier_replacement_to_fire(runtime: GuestRuntime) {
+        replacement_timer_resumes(runtime, "/loop/cancel-then-delay/50").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn disposing_the_last_timer_allows_a_replacement_to_fire(runtime: GuestRuntime) {
+        replacement_timer_resumes(runtime, "/loop/dispose-then-delay/200").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_delay_can_be_armed_after_the_cancelled_deadline_has_passed(runtime: GuestRuntime) {
+        let reactor = reactor_without_egress(52);
+        reactor.context.begin_slice(1, 1);
+        let mut guest = guest(&reactor, runtime);
+        let outcome = guest.start("/loop/cancel-only");
+        assert_eq!(outcome.completion, Completion::Done, "cancelling the delay must finish without waiting: {outcome:?}");
+        assert_eq!(reactor.futures.pending_total(reactor.context.instance), 0, "the cancelled delay must leave no timer");
+        reactor.context.begin_slice(201, 2);
+        let outcome = guest.start("/loop/delay/200");
+        assert_eq!(outcome.completion, Completion::Parked, "the new request must await its timer: {outcome:?}");
+        assert_eq!(reactor.futures.pending_total(reactor.context.instance), 1, "an elapsed cancelled deadline must not suppress a new timer");
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(201)).await;
+        reactor.context.begin_slice(402, 2);
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(outcome.completion, Completion::Done, "the next request's delay must resume: {outcome:?}");
+        assert_eq!(reactor.response_text(2), "resumed", "the next request's delay must complete");
+    }
+}

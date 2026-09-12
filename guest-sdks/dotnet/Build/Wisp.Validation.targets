@@ -25,7 +25,7 @@
 
   <Target Name="WispValidateModule"
           AfterTargets="LinkNative;WispPublishInContainer;WispMonoPublishCore"
-          Condition="'$(WispLocalDebug)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
+          Condition="'$(WispLocalDebug)' != 'true' AND '$(_WispContainerIntermediate)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
 
     <PropertyGroup>
       <!-- Absolute, so the paths in the messages can be pasted back. -->

@@ -91,6 +91,21 @@ pub async fn peer(peer: Peer) -> SocketAddr {
     serve_peer(peer, listener(None))
 }
 
+/// An IPv6-only listener, so a dual-family client must actually use IPv6.
+pub async fn ipv6_peer(peer: Peer) -> SocketAddr {
+    let socket = TcpSocket::new_v6().expect("the IPv6 test peer must open a socket");
+    socket2::SockRef::from(&socket)
+        .set_only_v6(true)
+        .expect("the test peer must require IPv6");
+    socket
+        .bind((std::net::Ipv6Addr::LOCALHOST, 0).into())
+        .expect("the IPv6 test peer must bind");
+    serve_peer(
+        peer,
+        socket.listen(8).expect("the IPv6 test peer must listen"),
+    )
+}
+
 /// As [`peer`], with the accepted connections' kernel receive buffer capped
 /// at `receive_buffer_bytes`, so a sender fills it quickly.
 pub async fn peer_with_receive_buffer(peer: Peer, receive_buffer_bytes: u32) -> SocketAddr {

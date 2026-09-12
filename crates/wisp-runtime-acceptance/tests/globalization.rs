@@ -1,10 +1,4 @@
-//! Globalization under the SDK's invariant mode (`InvariantGlobalization`
-//! in both profiles: no ICU, one culture) and time zones on a disk that
-//! carries no tz database: formatting and parsing are the invariant
-//! culture's, comparison is ordinal, named cultures are refused explicitly,
-//! named zones come from the tz bundle both packs embed, zones the
-//! application builds itself convert, and the guest's wall clock is the
-//! host's, in UTC.
+//! ICU-backed culture, Unicode, calendar and time-zone behavior in both guest runtimes.
 
 #[macro_use]
 mod common;
@@ -15,8 +9,8 @@ mod no_egress;
 
 use common::{guest, GuestRuntime};
 use no_egress::reactor_without_egress;
+use wisp_engine::Completion;
 
-/// A wall-clock instant on 2026-09-11 (UTC), the date the clock route reports.
 const ON_THE_ELEVENTH_MS: u64 = 1_789_100_000_000;
 
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
@@ -27,15 +21,12 @@ async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
 }
 
 in_both_runtimes! {
-    /// The one culture is the invariant one; a named culture is refused
-    /// (`PredefinedCulturesOnly`, the default under invariant mode) rather
-    /// than silently answered with invariant data under another name.
     #[tokio::test]
-    async fn the_only_culture_is_the_invariant_one_and_named_cultures_are_refused(runtime: GuestRuntime) {
+    async fn named_cultures_are_available_while_the_default_culture_is_invariant(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 320, "/globalization/culture").await,
-            "current='' ui='' invariant=True known=1 de-DE=CultureNotFoundException en-US=CultureNotFoundException region=IV",
-            "invariant mode must expose exactly the invariant culture and refuse de-DE and en-US by name"
+            "current='' ui='' invariant=True named-cultures=True de-DE='de-DE' en-US='en-US' region=IV",
+            "the empty environment must default to invariant culture while exposing ICU named cultures"
         );
     }
 }
@@ -63,51 +54,39 @@ in_both_runtimes! {
 }
 
 in_both_runtimes! {
-    /// Under invariant mode culture-sensitive comparison is ordinal (with
-    /// case folding for the ignore-case options): `a` sorts after `B`,
-    /// ligatures and combining sequences are not equivalent, the options
-    /// that need collation data are accepted but change nothing, and a sort
-    /// key is the big-endian code units.
     #[tokio::test]
-    async fn culture_comparison_is_ordinal(runtime: GuestRuntime) {
+    async fn culture_comparison_uses_unicode_collation_data(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 323, "/globalization/compare").await,
-            "a-vs-B=1|a-vs-B-ignore-case=-1|sharp-s=1|ae-ligature=-1|composed=False|ignore-symbols=-1|sorted=Apple,apple,banana,cherry|prefix=True|sort-key=00610062",
-            "invariant-mode comparison must be ordinal and sort keys must be the code units"
+            "composed=True ignore-symbols=True swedish-z-before-a-ring=True japanese-width=True",
+            "culture comparisons must honor canonical equivalence, language sorting, symbols and width"
         );
     }
 }
 
 in_both_runtimes! {
-    /// Casing is the simple Unicode mapping: no expansion of `ß`, no
-    /// Turkish or Greek final forms.
     #[tokio::test]
-    async fn casing_is_the_simple_unicode_mapping(runtime: GuestRuntime) {
+    async fn casing_honors_turkish_and_greek_cultures(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 324, "/globalization/casing").await,
-            "STRAßE|8|Ǆ|ΣΣ|Hello Wisp World|Ñ",
-            "invariant-mode casing must apply simple one-to-one mappings only"
+            "İSTANBUL/ı/ΑΒΓ",
+            "named cultures must provide their language-specific casing"
         );
     }
 }
 
 in_both_runtimes! {
-    /// Invariant mode has no normalization data: `Normalize` returns its
-    /// input and `IsNormalized` is true, while IDN punycode is managed and
-    /// works.
     #[tokio::test]
-    async fn normalization_is_a_no_op_and_idn_works_without_icu(runtime: GuestRuntime) {
+    async fn unicode_normalization_and_idn_use_standard_data(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 325, "/globalization/normalize").await,
-            "composed=False decomposed=1 is-normalized=True idn=xn--bcher-kva.example",
-            "under invariant mode normalization must leave the string as it is and IDN must still encode"
+            "composed=True decomposed=2 is-normalized=True idn=xn--bcher-kva.example",
+            "normalization must compose and decompose equivalent Unicode strings and IDN must encode"
         );
     }
 }
 
 in_both_runtimes! {
-    /// The built-in encodings are present; code-page encodings need the
-    /// provider a guest registers itself.
     #[tokio::test]
     async fn built_in_encodings_are_present_and_code_pages_need_a_provider(runtime: GuestRuntime) {
         assert_eq!(
@@ -119,24 +98,17 @@ in_both_runtimes! {
 }
 
 in_both_runtimes! {
-    /// The disk has no tz database; both packs embed the wasm time-zone
-    /// bundle, so 313 zones exist and `Europe/London` is found with its
-    /// summer offset. Local time is UTC (no `TZ`, no `/etc/localtime`), the
-    /// built-in UTC zone is found by id, and the IANA/Windows id maps need
-    /// ICU data and answer false.
     #[tokio::test]
     async fn named_time_zones_come_from_the_packs_embedded_data(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 327, "/globalization/timezone").await,
-            "utc=UTC local=UTC/00:00:00 local-is-utc=True system-zones=313 london=Europe/London london-offset=01:00:00 utc-by-id=UTC try-london=True iana-to-windows=False/'' windows-to-iana=False/''",
+            "utc=UTC local=UTC/00:00:00 local-is-utc=True new-york-winter=-5 london=Europe/London london-offset=01:00:00 utc-by-id=UTC try-london=True iana-to-windows=True/'GMT Standard Time' windows-to-iana=True/'Europe/London'",
             "local time must be UTC and a named zone must be answered from the pack's embedded tz bundle alone"
         );
     }
 }
 
 in_both_runtimes! {
-    /// A zone the application constructs, with a daylight rule, converts
-    /// both ways without data, as does the built-in UTC zone by id.
     #[tokio::test]
     async fn a_custom_time_zone_with_a_daylight_rule_converts_both_ways(runtime: GuestRuntime) {
         assert_eq!(
@@ -155,5 +127,96 @@ in_both_runtimes! {
             "2026-09-11|Utc|Local|00:00:00|00:00:00|00:00:00",
             "DateTime.UtcNow must be the slice's clock and DateTime.Now must equal it with a zero offset"
         );
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn named_cultures_format_and_parse_their_decimal_and_group_separators(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 330, "/globalization/named-format").await, "1.234,5/1234.5",
+            "German number formatting and parsing must use ICU culture data");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn non_gregorian_calendars_are_available(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 331, "/globalization/calendars").await, "hebrew=5784 japanese=1",
+            "Hebrew year and Japanese era transitions must match their calendar data");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn non_latin_and_compatibility_normalization_use_unicode_data(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 332, "/globalization/unicode-forms").await,
+            "hangul=True decomposed=True compatibility=True compatibility-decomposed=True needs-normalization=True",
+            "Hangul composition and decomposition and compatibility forms must use Unicode normalization data");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn a_named_culture_remains_usable_after_a_store_restoration_delta(runtime: GuestRuntime) {
+        let reactor = reactor_without_egress(333);
+        reactor.context.begin_slice(1, 1);
+        let mut guest = guest(&reactor, runtime);
+        let outcome = guest.start("/globalization/culture-after-park");
+        assert_eq!(outcome.completion, Completion::Parked, "the culture-bearing continuation must park: {outcome:?}");
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(60)).await;
+        reactor.context.begin_slice(61, 1);
+        let outcome = guest.wake(&reactor).await;
+        assert_eq!(outcome.completion, Completion::Done, "ICU must remain usable after restoring the guest: {outcome:?}");
+        assert_eq!(reactor.response_text(1), "tr-TR/İSTANBUL", "the current culture and its ICU-backed casing must survive Store restoration");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn a_locale_outside_the_browser_subset_has_its_own_day_names(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 334, "/globalization/welsh-day").await,
+            "Dydd Gwener", "Welsh date formatting must use its locale data rather than a fallback culture");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn non_gregorian_calendar_month_names_use_their_cultures_data(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 335, "/globalization/hebrew-month").await,
+            "טבת", "the Hebrew calendar must supply its own month names");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn windows_time_zone_ids_resolve_and_observe_daylight_rules(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 336, "/globalization/windows-zone").await,
+            "-05:00:00/-04:00:00", "Windows time zone identifiers must resolve through ICU to the embedded time zone rules");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn an_unknown_normalization_form_is_rejected(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 337, "/globalization/invalid-normalization-form").await,
+            "ArgumentException", "enabling compatibility normalization must preserve invalid-form rejection");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn normalization_rejects_an_unpaired_surrogate(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 338, "/globalization/invalid-normalization-input").await,
+            "ArgumentException", "compatibility normalization must reject malformed UTF-16 rather than emit corrupted text");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test]
+    async fn system_timezones_have_localized_standard_and_daylight_names(runtime: GuestRuntime) {
+        assert_eq!(answer(runtime, 339, "/globalization/timezone-names").await,
+            "Eastern Standard Time|Eastern Daylight Time",
+            "system timezone names must use full ICU display-name data instead of abbreviations");
     }
 }

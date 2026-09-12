@@ -598,14 +598,17 @@ impl Cell {
         slot.ctx.end_http_dispatch();
 
         let req = self.active.remove(&slot.id);
+        let mut abandoned_guest_work = false;
         if let Some(r) = &req {
-            self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
+            abandoned_guest_work = self.rt.futures.end_dispatch(slot.id, r.dispatch_id);
             if let Some(total_wall_ns) = r.completion.total_wall_ns() {
                 self.metrics.request_us.record(total_wall_ns / 1_000);
             }
             self.metrics.park_ms.record(slot.parked_ms_total());
             entry.meters.record_park(slot.parked_ms_total());
         }
+
+        let d = if abandoned_guest_work { evict() } else { d };
 
         if !d.is_warm() && !matches!(d.kind(), crate::disposition::DispositionKind::Reset) {
             self.forget(slot);

@@ -1,0 +1,32 @@
+diff --git a/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs b/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs
+--- a/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs
++++ b/src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs
+@@ -69,8 +69,6 @@
+         private int _closeTimeout = Socket.DefaultCloseTimeout;
+         private bool _disposed;
+ 
+-        // An IPv6 socket reaches IPv4 peers only in dual mode; where the OS
+-        // offers none (wasi), the family-agnostic socket is an IPv4 one.
+         public Socket(SocketType socketType, ProtocolType protocolType)
+             : this(OSSupportsIPv6DualMode ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork, socketType, protocolType)
+         {
+@@ -746,10 +744,6 @@
+                 {
+                     return false;
+                 }
+-                if (OperatingSystem.IsWasi())
+-                {
+-                    return false;
+-                }
+                 return ((int)GetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only)! == 0);
+             }
+             set
+@@ -758,8 +752,6 @@
+                 {
+                     throw new NotSupportedException(SR.net_invalidversion);
+                 }
+-
+-                if (OperatingSystem.IsWasi() && value) throw new PlatformNotSupportedException();
+ 
+                 SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, value ? 0 : 1);
+             }

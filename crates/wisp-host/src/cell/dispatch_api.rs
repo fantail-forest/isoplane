@@ -132,6 +132,18 @@ impl Cell {
         timeout: Duration,
         http: Option<super::HttpDispatch>,
     ) -> crate::Result<DispatchResult> {
+        self.dispatch_with_resources(module, target, rec, timeout, http)
+    }
+
+    fn dispatch_with_resources(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        timeout: Duration,
+        resources: Option<super::HttpDispatch>,
+    ) -> crate::Result<DispatchResult> {
+        let http = resources;
         let (stream, upload) = match http {
             Some(http) => (Some(http.response), http.upload),
             None => (None, None),

@@ -7,3 +7,6 @@ license-file.workspace = true
 description = "Test support: builds the guest fixtures on demand and hands their bytes to a test"
 
 [dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true

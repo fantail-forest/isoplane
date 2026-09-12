@@ -7,7 +7,8 @@
     <SelfContained>true</SelfContained>
     <WasmSingleFileBundle>true</WasmSingleFileBundle>
     <WasmBuildNative>true</WasmBuildNative>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">false</InvariantGlobalization>
+    <WasmIncludeFullIcuData Condition="'$(WasmIncludeFullIcuData)' == ''">true</WasmIncludeFullIcuData>
     <WasmEnableExceptionHandling>false</WasmEnableExceptionHandling>
     <MSBuildEnableWorkloadResolver>true</MSBuildEnableWorkloadResolver>
     <Nullable>enable</Nullable>
@@ -18,7 +19,6 @@
          it, imported by Wisp.Guest.targets, not from the installed
          workload's copy, whose link flags belong to its own runtime pack. -->
     <UsingWasiRuntimeWorkload>false</UsingWasiRuntimeWorkload>
-    <RuntimeFrameworkVersion>$(WispGuestRuntimePackVersion)</RuntimeFrameworkVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(WispLocalDebug)' == 'true'">
     <WasmDebugLevel>1</WasmDebugLevel>

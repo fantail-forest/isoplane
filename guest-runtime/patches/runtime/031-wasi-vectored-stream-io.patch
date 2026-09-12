@@ -1,0 +1,54 @@
+--- a/src/native/libs/System.Native/pal_networking.c
++++ b/src/native/libs/System.Native/pal_networking.c
+@@ -1592,9 +1592,23 @@
+ 
+     ssize_t res;
+ #if !defined(CMSG_SPACE)
+-    // we will only use 0th buffer
++    if (messageHeader->IOVectorCount == 0)
++    {
++        *received = 0;
++        return Error_SUCCESS;
++    }
+     struct iovec* msg_iov = (struct iovec*)messageHeader->IOVectors;
+-    while ((res = recvfrom(fd, msg_iov[0].iov_base, msg_iov[0].iov_len, socketFlags, (sockaddr *)messageHeader->SocketAddress, (socklen_t*) &(messageHeader->SocketAddressLen))) < 0 && errno == EINTR);
++    int32_t index = 0;
++    while (index + 1 < messageHeader->IOVectorCount && msg_iov[index].iov_len == 0)
++        index++;
++    if (messageHeader->SocketAddress == NULL)
++    {
++        while ((res = recv(fd, msg_iov[index].iov_base, msg_iov[index].iov_len, socketFlags)) < 0 && errno == EINTR);
++    }
++    else
++    {
++        while ((res = recvfrom(fd, msg_iov[index].iov_base, msg_iov[index].iov_len, socketFlags, (sockaddr *)messageHeader->SocketAddress, (socklen_t*) &(messageHeader->SocketAddressLen))) < 0 && errno == EINTR);
++    }
+ #else // CMSG_SPACE
+     struct msghdr header;
+     ConvertMessageHeaderToMsghdr(&header, messageHeader, fd);
+@@ -1689,9 +1703,23 @@
+     while ((res = sendmsg(fd, &header, socketFlags)) < 0 && errno == EINTR);
+ #endif
+ #else // CMSG_SPACE
+-    // we will only use 0th buffer
++    if (messageHeader->IOVectorCount == 0)
++    {
++        *sent = 0;
++        return Error_SUCCESS;
++    }
+     struct iovec* msg_iov = (struct iovec*)messageHeader->IOVectors;
+-    while ((res = sendto(fd, msg_iov[0].iov_base, msg_iov[0].iov_len, socketFlags, (sockaddr *)messageHeader->SocketAddress, (socklen_t)messageHeader->SocketAddressLen)) < 0 && errno == EINTR);
++    int32_t index = 0;
++    while (index + 1 < messageHeader->IOVectorCount && msg_iov[index].iov_len == 0)
++        index++;
++    if (messageHeader->SocketAddress == NULL)
++    {
++        while ((res = send(fd, msg_iov[index].iov_base, msg_iov[index].iov_len, socketFlags)) < 0 && errno == EINTR);
++    }
++    else
++    {
++        while ((res = sendto(fd, msg_iov[index].iov_base, msg_iov[index].iov_len, socketFlags, (sockaddr *)messageHeader->SocketAddress, (socklen_t)messageHeader->SocketAddressLen)) < 0 && errno == EINTR);
++    }
+ #endif // CMSG_SPACE
+ 
+     if (res != -1)

@@ -330,7 +330,9 @@ impl HostEgressPolicy {
         self.destinations.authorize(destination)?;
         let stream = self.connections_factory.connect(owner, destination).await?;
         let peer = stream.peer_addr()?;
-        if peer != destination {
+        if connection::canonical_destination(peer)?
+            != connection::canonical_destination(destination)?
+        {
             return Err(ConnectionError::PeerMismatch {
                 expected: destination,
                 actual: peer,
@@ -430,7 +432,10 @@ impl HostEgressPolicy {
             let pat = pat.trim().to_ascii_lowercase();
             match pat.strip_prefix("*.") {
                 Some(suffix) => host == suffix || host.ends_with(&format!(".{suffix}")),
-                None => host == pat,
+                None => match (host.parse::<IpAddr>(), pat.parse::<IpAddr>()) {
+                    (Ok(address), Ok(allowed)) => address.to_canonical() == allowed.to_canonical(),
+                    _ => host == pat,
+                },
             }
         })
     }
@@ -696,6 +701,55 @@ mod tests {
                 Err(EgressError::Denied(DenyReason::Malformed(_)))
             ),
             "userinfo in the authority is refused"
+        );
+    }
+
+    #[test]
+    fn numeric_allowlists_match_only_the_same_ipv4_or_mapped_address() {
+        let policy = Arc::new(policy(Fixed(vec![])));
+        for (allowed, destination) in [
+            ("93.184.216.34", "::ffff:93.184.216.34"),
+            ("::ffff:93.184.216.34", "93.184.216.34"),
+        ] {
+            let address = SocketAddr::new(destination.parse().expect("fixture IP"), 443);
+            let permit = policy.check_socket(address, Some(&[allowed.to_owned()]));
+            assert!(permit.is_ok(), "numeric allowlist must admit its exact IPv4/mapped equivalent: {allowed} -> {destination}");
+            drop(permit);
+        }
+        for destination in [
+            "93.184.216.35",
+            "::ffff:93.184.216.35",
+            "::93.184.216.34",
+            "64:ff9b::5db8:d822",
+        ] {
+            let address = SocketAddr::new(destination.parse().expect("fixture IP"), 443);
+            assert!(matches!(policy.check_socket(address, Some(&["93.184.216.34".to_owned()])), Err(DenyReason::NotAllowlisted(_))),
+                "numeric equivalence must not authorize a different or merely embedded address: {destination}");
+        }
+        assert_eq!(
+            policy.connections(),
+            0,
+            "numeric policy checks must release all admitted permits"
+        );
+    }
+
+    #[test]
+    fn numeric_allowlist_equivalence_cannot_authorize_private_destinations() {
+        let policy = Arc::new(policy(Fixed(vec![])));
+        let destination = "[::ffff:127.0.0.1]:443"
+            .parse()
+            .expect("fixture socket address");
+        assert!(
+            matches!(
+                policy.check_socket(destination, Some(&["127.0.0.1".to_owned()])),
+                Err(DenyReason::PrivateAddress(_))
+            ),
+            "an equivalent numeric allowlist must not bypass the private destination policy"
+        );
+        assert_eq!(
+            policy.connections(),
+            0,
+            "private destinations must acquire no connection permit"
         );
     }
 

@@ -24,6 +24,8 @@ using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.DnsProbe>>;
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamProbe>>;
 #elif WISP_CONNECT_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConnectProbe>>;
+#elif WISP_CLEANUP_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.CleanupProbe>>;
 #elif WISP_TIMER_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.TimerProbe>>;
 #elif WISP_ASYNC_PROBE

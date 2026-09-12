@@ -1,7 +1,8 @@
 //! Test support: the one way a test obtains a guest module from `guests/`.
 //!
-//! Each accessor runs the owning build script with `--if-stale`, so a fresh
-//! fixture costs a stat and a stale or missing one is rebuilt. The scripts
+//! The first access to each fixture runs its build script with `--if-stale`.
+//! A fresh fixture validates its content receipt; stale or missing output is rebuilt.
+//! Successful selections are reused for the remainder of the test process. The scripts
 //! take a file lock, and this crate serialises callers within a process, so
 //! concurrent test binaries never build the same fixture twice. A missing
 //! toolchain fails the test with the script's message naming the tool.
@@ -14,11 +15,19 @@ mod dotnet_template;
 
 pub use dotnet_template::{aspnet_project, managed_cli};
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
-static BUILD: Mutex<()> = Mutex::new(());
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct BuildSelection {
+    script: String,
+    fixture: Option<String>,
+    runtime: Option<String>,
+}
+
+static BUILT: Mutex<BTreeSet<BuildSelection>> = Mutex::new(BTreeSet::new());
 
 pub(crate) fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -35,9 +44,17 @@ fn build(script: &str) -> PathBuf {
 fn build_selected(script: &str, fixture: Option<&str>, runtime: Option<&str>) -> PathBuf {
     let root = repo_root();
     let path = root.join(script);
-    let _one_at_a_time = BUILD
+    let mut built = BUILT
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let selection = BuildSelection {
+        script: script.to_owned(),
+        fixture: fixture.map(str::to_owned),
+        runtime: runtime.map(str::to_owned),
+    };
+    if built.contains(&selection) {
+        return root;
+    }
     let mut command = Command::new("bash");
     command.arg(&path).arg("--if-stale");
     if let Some(name) = fixture {
@@ -58,6 +75,7 @@ fn build_selected(script: &str, fixture: Option<&str>, runtime: Option<&str>) ->
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
+    built.insert(selection);
     root
 }
 
@@ -203,8 +221,50 @@ pub fn dotnet_runtime_identity(name: &str, runtime: GuestRuntime) -> String {
 /// The local feed `guest-runtime/build.sh feed` publishes both packs to. An
 /// installed package has no checkout to find it in, so a test points one at
 /// this path through `WISP_GUEST_RUNTIME_FEED`, as a customer names theirs.
+/// The feed is verified once per test process against current build inputs.
+/// `WISP_TEST_RUNTIME_FEED` explicitly selects an independently verified artifact
+/// feed instead, including when deliberately qualifying historical artifacts.
 pub fn guest_runtime_feed() -> PathBuf {
-    repo_root().join("guest-runtime/out/feed")
+    static FEED: OnceLock<PathBuf> = OnceLock::new();
+    FEED.get_or_init(|| {
+        let root = repo_root().join("guest-runtime");
+        let explicit = std::env::var_os("WISP_TEST_RUNTIME_FEED");
+        let feed = explicit
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.join("out/feed"));
+        assert!(
+            feed.is_absolute(),
+            "WISP_TEST_RUNTIME_FEED must name an absolute artifact-feed path"
+        );
+        let mut command = Command::new("python3");
+        command.arg(root.join("feed-identity.py"));
+        if explicit.is_some() {
+            command.arg("verify-artifact");
+        } else {
+            command.arg("verify-current").arg(&root);
+        }
+        let output = command
+            .arg(&feed)
+            .output()
+            .expect("runtime artifact verifier must execute");
+        assert!(
+            output.status.success(),
+            "runtime artifacts at {} are not valid for this test run:\n{}{}",
+            feed.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if explicit.is_some() {
+            eprintln!(
+                "explicitly selected runtime artifacts: {}\n{}",
+                feed.display(),
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        feed
+    })
+    .clone()
 }
 
 /// The identity of the pack the local feed currently offers `runtime`, from
@@ -315,4 +375,52 @@ pub fn assert_cpu_clock_advances(read_clock: impl Fn() -> Option<u64>) {
         after > before,
         "CPU work must advance the native clock, including on ARM"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_successful_fixture_selection_is_built_once_per_test_process() {
+        let directory = tempfile::tempdir().expect("isolated fixture cache test directory");
+        let script = directory.path().join("build.sh");
+        std::fs::write(&script, "printf x >> \"${0}.calls\"\n")
+            .expect("write controlled fixture builder");
+        let script_name = script.to_str().expect("temporary script path is Unicode");
+        build_selected(script_name, Some("first"), Some("mono"));
+        build_selected(script_name, Some("first"), Some("mono"));
+        assert_eq!(
+            std::fs::read(script.with_extension("sh.calls")).expect("read build invocations"),
+            b"x",
+            "a fixture must not be rebuilt or revalidated during the same test process"
+        );
+        build_selected(script_name, Some("second"), Some("mono"));
+        assert_eq!(
+            std::fs::read(script.with_extension("sh.calls")).expect("read build invocations"),
+            b"xx",
+            "a different fixture selection must establish its own startup artifacts"
+        );
+    }
+
+    #[test]
+    fn a_failed_fixture_build_is_not_cached_as_successful() {
+        let directory = tempfile::tempdir().expect("isolated failed build test directory");
+        let script = directory.path().join("build.sh");
+        std::fs::write(&script, "exit 9\n").expect("write failing fixture builder");
+        let script_name = script.to_str().expect("temporary script path is Unicode");
+        let failure = std::panic::catch_unwind(|| build_selected(script_name, None, None));
+        assert!(
+            failure.is_err(),
+            "a failed build must fail the requesting test"
+        );
+        std::fs::write(&script, "printf x >> \"${0}.calls\"\n")
+            .expect("repair the controlled fixture builder");
+        build_selected(script_name, None, None);
+        assert_eq!(
+            std::fs::read(script.with_extension("sh.calls")).expect("read successful retry"),
+            b"x",
+            "a failed attempt must not let a later caller consume missing artifacts"
+        );
+    }
 }
