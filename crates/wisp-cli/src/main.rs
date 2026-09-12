@@ -107,6 +107,7 @@ async fn run() -> anyhow::Result<()> {
         }
 
         Cmd::Dev {
+            runtime_config_stdin,
             port,
             watch,
             no_watch,
@@ -128,6 +129,7 @@ async fn run() -> anyhow::Result<()> {
             dev(
                 &st,
                 DevOpts {
+                    runtime_configuration: dev::read_runtime_configuration(runtime_config_stdin)?,
                     json: cli.json,
                     port,
                     watch,

@@ -1,14 +1,13 @@
 {
-  "name": "wisp-userdocs",
+  "name": "isoplane-userdocs",
   "version": "0.1.0",
   "private": true,
-  "description": "Internal user documentation for the WISP proof of concept",
+  "description": "Isoplane customer development guides",
   "scripts": {
-    "start": "docusaurus start --host 0.0.0.0 --port 3123",
+    "start": "docusaurus start --host 127.0.0.1 --port 3123",
     "build": "docusaurus build",
-    "serve": "docusaurus serve --host 0.0.0.0 --port 3123",
-    "clear": "docusaurus clear",
-    "typecheck": "tsc --noEmit"
+    "serve": "docusaurus serve --host 127.0.0.1 --port 3123",
+    "clear": "docusaurus clear"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",

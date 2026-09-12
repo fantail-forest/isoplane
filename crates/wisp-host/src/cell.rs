@@ -155,6 +155,7 @@ impl Cell {
         let futures = Arc::new(FutureTable::new());
 
         let rt = Arc::new(CellRuntime {
+            runtime_configuration: Default::default(),
             services,
             futures,
             metrics: metrics.clone(),

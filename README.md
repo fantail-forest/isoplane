@@ -9,9 +9,8 @@ Rust; the guest SDK is C#.
 
 [`AGENTS.md`](AGENTS.md) is the engineering handbook: architecture, tooling,
 the rules code is held to, and the four invariants every host mechanism
-derives from. [Workload security and isolation](docs/userdocs/docs/explanation/workload-security.md)
-explains the current enforcement boundaries and limitations.
-[`docs/userdocs/`](docs/userdocs/) is the documentation site.
+derives from.
+[Customer guides](docs/userdocs/) cover using Isoplane.
 
 ## Building and testing
 
@@ -39,8 +38,7 @@ scripts/dev cargo test --workspace
 The optional repository toolchain image remains available through
 `scripts/dev --container --build` for running Linux toolchain commands.
 
-See [the development tools guide](docs/userdocs/docs/how-to/use-development-tools.md)
-for native commands and the optional container workflow.
+See `scripts/dev` for native commands and the optional container workflow.
 
 Tests that need a guest module build it on demand through the `wisp-fixtures`
 crate, which runs `guests/build.sh` and `guests/build-dotnet.sh` and fails
@@ -62,6 +60,6 @@ cargo metadata --no-deps --format-version 1 \
 | `guest-sdks/dotnet`    | The C# guest SDK. |
 | `guest-sdks/rust`      | Internal Rust helpers for guest test fixtures. |
 | `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |
-| `docs/userdocs`       | The Docusaurus documentation site.                                        |
+| `docs/userdocs` | Customer guides for Isoplane. |
 | `docs/opinion-registry` | How software is built here.                                             |
 | `scripts/`            | `scripts/dev` runs a local command; `scripts/clean` reclaims build intermediates. |

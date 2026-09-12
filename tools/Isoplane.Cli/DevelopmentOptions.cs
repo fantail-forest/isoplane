@@ -2,10 +2,13 @@ namespace Wisp.Cli;
 
 internal enum GuestRuntimeProfile { NativeAot, Mono }
 
-internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, GuestRuntimeProfile? GuestRuntime, bool Debug)
+internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, GuestRuntimeProfile? GuestRuntime, bool Debug, string Configuration = "Debug", bool NoBuild = false, string? Module = null)
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
+        var configuration = "Debug";
+        var noBuild = false;
+        string? module = null;
         var directory = Environment.CurrentDirectory;
         ushort? port = null;
         var watch = true;
@@ -17,6 +20,16 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         {
             switch (arguments[index])
             {
+                case "--configuration" when index + 1 < arguments.Length:
+                case "-c" when index + 1 < arguments.Length:
+                    configuration = arguments[++index];
+                    break;
+                case "--no-build":
+                    noBuild = true;
+                    break;
+                case "--module" when index + 1 < arguments.Length:
+                    module = Path.GetFullPath(arguments[++index]);
+                    break;
                 case "--project" when index + 1 < arguments.Length:
                     directory = Path.GetFullPath(arguments[++index]);
                     break;
@@ -49,6 +62,12 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                     throw new ArgumentException($"Invalid or incomplete option '{arguments[index]}'. Run isoplane --help.");
             }
         }
+        if (noBuild && watch)
+            throw new ArgumentException("--no-build requires --no-watch; use dotnet watch to own rebuilds.");
+        if (module is not null && !noBuild)
+            throw new ArgumentException("--module requires --no-build.");
+        if (debug && noBuild)
+            throw new ArgumentException("--debug cannot be combined with --no-build.");
         if (debug && watch)
             throw new ArgumentException("--debug requires --no-watch; each debug session handles one request.");
         if (debug && guestRuntime == GuestRuntimeProfile.NativeAot)
@@ -59,6 +78,6 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException($"No wisp.toml in {directory}; create a project with dotnet new isoplane-web.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
-        return new(directory, port, watch, json, shutdownOnInputClose, guestRuntime, debug);
+        return new(directory, port, watch, json, shutdownOnInputClose, guestRuntime, debug, configuration, noBuild, module);
     }
 }

@@ -6,6 +6,9 @@ public sealed record ApplicationOptions
     /// <summary>The installed isoplane executable, resolved through PATH unless an absolute path is supplied.</summary>
     public string CliPath { get; init; } = "isoplane";
 
+    /// <summary>The application's ordinary MSBuild configuration, which selects its guest execution mode.</summary>
+    public string Configuration { get; init; } = "Debug";
+
     /// <summary>Time allowed for owned process cleanup before the remaining process tree is terminated.</summary>
     public TimeSpan ShutdownTimeout { get; init; } = TimeSpan.FromSeconds(10);
 

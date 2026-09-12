@@ -1,18 +1,24 @@
 //! A local development process, observed through its output and HTTP listener.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
 pub struct Dev {
-    child: Child,
+    child: Box<dyn portable_pty::Child + Send>,
+    terminal: Option<Terminal>,
     lines: Receiver<String>,
     pub url: String,
     pub debugger: Option<serde_json::Value>,
     output_timeout: Duration,
+}
+
+struct Terminal {
+    input: Box<dyn Write + Send>,
+    _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
 impl Dev {
@@ -30,7 +36,7 @@ impl Dev {
             .args(["--no-color", "--json", "dev", "--port", "0", "--watch"])
             .arg(project)
             .args(args);
-        Self::spawn(&mut command, output_timeout)
+        Self::spawn(&mut command, output_timeout, true)
     }
 
     pub fn start_managed(project: &std::path::Path, executable: &std::path::Path) -> Self {
@@ -47,33 +53,81 @@ impl Dev {
             .args(["dev", "--json", "--port", "0", "--project"])
             .arg(project)
             .args(args);
-        Self::spawn(&mut command, Duration::from_secs(600))
+        Self::spawn(&mut command, Duration::from_secs(600), true)
     }
 
-    fn spawn(command: &mut Command, output_timeout: Duration) -> Self {
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command
+    pub fn spawn(command: &mut Command, output_timeout: Duration, structured_stdout: bool) -> Self {
+        command
             .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
             .env(
                 "WISP_GUEST_RUNTIME_FEED",
                 wisp_fixtures::guest_runtime_feed(),
+            );
+        let (child, terminal, streams) = if structured_stdout {
+            #[cfg(unix)]
+            command.process_group(0);
+            let mut child = command
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+            (
+                Box::new(child) as Box<dyn portable_pty::Child + Send>,
+                None,
+                vec![
+                    (Box::new(stdout) as Box<dyn std::io::Read + Send>, true),
+                    (Box::new(stderr) as Box<dyn std::io::Read + Send>, false),
+                ],
             )
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        } else {
+            let pair = portable_pty::native_pty_system()
+                .openpty(portable_pty::PtySize {
+                    rows: 40,
+                    cols: 200,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .expect("create a real development terminal");
+            let mut invocation = portable_pty::CommandBuilder::new(command.get_program());
+            invocation.args(command.get_args());
+            if let Some(directory) = command.get_current_dir() {
+                invocation.cwd(directory);
+            }
+            for (name, value) in command.get_envs() {
+                match value {
+                    Some(value) => invocation.env(name, value),
+                    None => invocation.env_remove(name),
+                }
+            }
+            invocation.env("NO_COLOR", "1");
+            invocation.env("TERM", "dumb");
+            let child = pair
+                .slave
+                .spawn_command(invocation)
+                .expect("start development tooling in its terminal");
+            drop(pair.slave);
+            let reader = pair.master.try_clone_reader().unwrap();
+            let input = pair.master.take_writer().unwrap();
+            (
+                child as Box<dyn portable_pty::Child + Send>,
+                Some(Terminal {
+                    input,
+                    _master: pair.master,
+                }),
+                vec![(reader, false)],
+            )
+        };
         let (tx, lines) = channel();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        for (stream, machine) in [
-            (Box::new(stdout) as Box<dyn std::io::Read + Send>, true),
-            (Box::new(stderr) as Box<dyn std::io::Read + Send>, false),
-        ] {
+        for (stream, machine) in streams {
             let tx = tx.clone();
             std::thread::spawn(move || {
                 for line in BufReader::new(stream).lines() {
                     let line = line.expect("development output remains readable");
+                    if !structured_stdout {
+                        eprintln!("{line}");
+                    }
                     let line =
                         if machine && serde_json::from_str::<serde_json::Value>(&line).is_err() {
                             format!("invalid machine output: {line}")
@@ -89,6 +143,7 @@ impl Dev {
         drop(tx);
         let mut dev = Self {
             child,
+            terminal,
             lines,
             url: String::new(),
             debugger: None,
@@ -137,14 +192,22 @@ impl Dev {
     }
 
     pub fn stop(&mut self) {
-        let status = Command::new("kill")
-            .args(["-INT", &self.child.id().to_string()])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "the local process must receive its shutdown signal"
-        );
+        if let Some(terminal) = &mut self.terminal {
+            terminal
+                .input
+                .write_all(b"\x03")
+                .expect("send Ctrl+C through the development terminal");
+            terminal.input.flush().unwrap();
+        } else {
+            let status = Command::new("kill")
+                .args(["-INT", "--", &format!("-{}", self.pid())])
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "the local process must receive its shutdown signal"
+            );
+        }
         self.wait_exit();
     }
 
@@ -153,7 +216,9 @@ impl Dev {
     }
 
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        self.child
+            .process_id()
+            .expect("development child has a process identifier")
     }
 
     pub fn wait_exit(&mut self) {
@@ -179,7 +244,12 @@ impl Drop for Dev {
     fn drop(&mut self) {
         #[cfg(unix)]
         {
-            let group = format!("-{}", self.child.id());
+            let group = format!(
+                "-{}",
+                self.child
+                    .process_id()
+                    .expect("development child has a process identifier")
+            );
             match Command::new("kill").args(["-KILL", "--", &group]).output() {
                 Ok(output) if output.status.success() => {}
                 Ok(output) => {
@@ -246,7 +316,7 @@ fn dropping_the_harness_closes_descendant_output_pipes() {
         "-c",
         r#"sleep 60 & printf '{"event":"ready","url":"http://127.0.0.1:1"}\n'; wait"#,
     ]);
-    let mut dev = Dev::spawn(&mut command, Duration::from_secs(10));
+    let mut dev = Dev::spawn(&mut command, Duration::from_secs(10), true);
     let (_, unused) = channel();
     let lines = std::mem::replace(&mut dev.lines, unused);
     drop(dev);

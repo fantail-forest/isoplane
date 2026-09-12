@@ -7,6 +7,7 @@ members = [
     "crates/wisp-host",
     "crates/wisp-control",
     "crates/wisp-runtime",
+    "crates/wisp-trust",
     "crates/wisp-proxy",
     "crates/wispd",
     "crates/wisp-cli",
@@ -23,10 +24,12 @@ license-file = "LICENSE.txt"
 rust-version = "1.88"
 
 [workspace.dependencies]
+portable-pty = "0.9.0"
 wisp-abi       = { path = "crates/wisp-abi" }
 wisp-engine    = { path = "crates/wisp-engine" }
 wisp-hibernate = { path = "crates/wisp-hibernate" }
 wisp-host      = { path = "crates/wisp-host" }
+wisp-trust     = { path = "crates/wisp-trust" }
 wisp-runtime   = { path = "crates/wisp-runtime", default-features = false }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }

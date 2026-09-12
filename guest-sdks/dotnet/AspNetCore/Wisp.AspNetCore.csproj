@@ -15,10 +15,21 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Wisp.Sdk.csproj" />
     <None Update="README.md" Pack="true" PackagePath="/" />
-    <None Include="Sdk/**" Pack="true" PackagePath="Sdk/" />
+    <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
     <None Include="../Wisp.Guest.props;../Wisp.Guest.targets;../Wisp.NativeAot.props" Pack="true" PackagePath="tools/" />
     <None Include="../Build/**" Exclude="../Build/**/obj/**;../Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
     <None Include="../native/**" Pack="true" PackagePath="tools/native/" />
     <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
+  <Target Name="StampPackagedSdkVersion" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_PackagedSdkProps>$(IntermediateOutputPath)package/Sdk.props</_PackagedSdkProps>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <Copy SourceFiles="Sdk/Sdk.props" DestinationFiles="$(_PackagedSdkProps)" />
+    <XmlPoke XmlInputPath="$(_PackagedSdkProps)" Query="/Project/ItemGroup/PackageReference[@Include='Wisp.AspNetCore']/@Version" Value="$(PackageVersion)" />
+    <ItemGroup>
+      <None Include="$(_PackagedSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" />
+    </ItemGroup>
+  </Target>
 </Project>

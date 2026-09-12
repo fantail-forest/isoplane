@@ -13,14 +13,21 @@
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../ProcessOwnership/OwnedProcess.cs" Link="OwnedProcess.cs" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup Condition="'$(WispRuntimePath)' != ''">
     <None Include="$(WispRuntimePath)" Link="runtime/wisp" CopyToOutputDirectory="PreserveNewest"
           Pack="false" />
   </ItemGroup>
+  <ItemGroup Condition="'$(WispProcessPath)' != ''">
+    <None Include="$(WispProcessPath)" Link="runtime/wisp-process" CopyToOutputDirectory="PreserveNewest" Pack="false" />
+  </ItemGroup>
   <Target Name="RequireLocalRuntimeForPackage" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(WispProcessPath)' == '' Or !Exists('$(WispProcessPath)')"
+           Text="Set WispProcessPath to the built process supervisor executable before packing the local CLI." />
     <Error Condition="'$(WispRuntimePath)' == '' Or !Exists('$(WispRuntimePath)')"
            Text="Set WispRuntimePath to the built shared Rust runtime executable before packing the local CLI." />
   </Target>

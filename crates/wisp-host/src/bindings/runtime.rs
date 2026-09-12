@@ -40,6 +40,8 @@ pub struct Services {
 /// The per-cell machinery an instance's bindings share; per-instance state
 /// lives in [`InstanceCtx`].
 pub struct CellRuntime {
+    /// Activation configuration is host-resident and never part of a template.
+    pub runtime_configuration: super::RuntimeConfigurations,
     pub services: Arc<Services>,
     pub futures: Arc<FutureTable>,
     pub metrics: Arc<Metrics>,

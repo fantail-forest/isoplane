@@ -1,23 +1,23 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Wisp.Processes;
 
 namespace Wisp.Testing;
 
 /// <summary>Owns an installed CLI session and HTTP client that execute an app in the real WASM sandbox.</summary>
 public sealed class IsoplaneApplication : IAsyncDisposable
 {
-    private readonly Process process;
+    private readonly OwnedProcess process;
     private readonly ApplicationOptions options;
     private readonly Diagnostics diagnostics;
     private readonly Task errors;
     private readonly CancellationTokenSource outputLifetime = new();
-    private int? processGroup;
     private Task output = Task.CompletedTask;
     private readonly TaskCompletionSource<Uri> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object disposalGate = new();
     private Task? disposal;
 
-    private IsoplaneApplication(Process process, ApplicationOptions options)
+    private IsoplaneApplication(OwnedProcess process, ApplicationOptions options)
     {
         this.process = process;
         this.options = options;
@@ -44,6 +44,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(projectDirectory);
         options ??= new ApplicationOptions();
         ArgumentException.ThrowIfNullOrWhiteSpace(options.CliPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Configuration);
         if (options.ShutdownTimeout <= TimeSpan.Zero || options.ShutdownTimeout.TotalMilliseconds > uint.MaxValue - 1)
             throw new ArgumentOutOfRangeException(nameof(options), "ShutdownTimeout must be a positive supported process-cleanup duration.");
         if (options.DiagnosticLimitCharacters <= 0)
@@ -53,9 +54,9 @@ public sealed class IsoplaneApplication : IAsyncDisposable
             throw new ArgumentException($"Project directory does not exist: {directory}", nameof(projectDirectory));
         cancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsLinux())
-            throw new PlatformNotSupportedException("The packaged local runtime is validated on Linux; this fixture requires Linux process-group ownership (setsid and kill).");
-        await ProcessOwnership.ValidateCleanupToolAsync("kill", options.ShutdownTimeout, cancellationToken);
-        var start = new ProcessStartInfo("setsid")
+            throw new PlatformNotSupportedException("The packaged local runtime and process owner are currently supported on Linux.");
+        var supervisor = await ProcessOwnership.ResolveAsync(options.CliPath, options.ShutdownTimeout, cancellationToken);
+        var start = new ProcessStartInfo(options.CliPath)
         {
             WorkingDirectory = directory,
             UseShellExecute = false,
@@ -63,23 +64,20 @@ public sealed class IsoplaneApplication : IAsyncDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        foreach (var argument in new[] { "--wait", "sh", "-c", ProcessOwnership.Launch, "isoplane-test-session", options.CliPath, "dev", "--project", directory, "--port", "0", "--no-watch", "--json", "--shutdown-on-stdin-close" })
+        foreach (var argument in new[] { "dev", "--project", directory, "--configuration", options.Configuration, "--port", "0", "--no-watch", "--json", "--shutdown-on-stdin-close" })
             start.ArgumentList.Add(argument);
-        Process process;
+        OwnedProcess process;
         try
         {
-            process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start {options.CliPath}.");
+            process = OwnedProcess.Start(supervisor, start, options.ShutdownTimeout);
         }
         catch (System.ComponentModel.Win32Exception error)
         {
-            throw new InvalidOperationException($"Could not start installed CLI '{options.CliPath}'; install Isoplane.Cli and Linux setsid/kill, or set ApplicationOptions.CliPath.", error);
+            throw new InvalidOperationException($"Could not start installed CLI '{options.CliPath}'; install Isoplane.Cli, or set ApplicationOptions.CliPath.", error);
         }
         var application = new IsoplaneApplication(process, options);
         try
         {
-            application.processGroup = await ProcessOwnership.VerifyAsync(process.StandardOutput, cancellationToken);
-            await process.StandardInput.WriteLineAsync("start".AsMemory(), cancellationToken);
-            await process.StandardInput.FlushAsync(cancellationToken);
             application.output = application.ReadOutputAsync(application.outputLifetime.Token);
             var exited = process.WaitForExitAsync(cancellationToken);
             if (await Task.WhenAny(application.ready.Task, exited).WaitAsync(cancellationToken) == exited)
@@ -161,15 +159,8 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         catch (Exception error) { failures.Add(error); }
         try
         {
-            if (processGroup is { } group)
-                forced = await ProcessOwnership.TerminateAsync(group, options.ShutdownTimeout);
-            else if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                forced = true;
-            }
-            using var cleanup = new CancellationTokenSource(options.ShutdownTimeout);
-            await process.WaitForExitAsync(cleanup.Token);
+            await process.StopAsync(options.ShutdownTimeout + TimeSpan.FromSeconds(1));
+            forced = process.ExitCode == 125 || process.ExitCode >= 128;
         }
         catch (Exception error) { failures.Add(error); }
         finally
@@ -190,7 +181,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
                 var reason = forced ? "Remaining owned CLI processes required termination." : "CLI cleanup exceeded its shutdown deadline.";
                 failures.Add(new TimeoutException($"{reason}\n{DiagnosticOutput}"));
             }
-            if (process.HasExited && process.ExitCode != 0)
+            if (process.HasExited && process.ExitCode != 0 && !forced)
                 failures.Add(new InvalidOperationException($"The CLI exited with code {process.ExitCode}.\n{DiagnosticOutput}"));
             process.Dispose();
             outputLifetime.Dispose();

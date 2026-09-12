@@ -253,12 +253,5 @@ public static unsafe class Exports<TRouter>
     /// The log import; stdout would put <c>wasi:cli/stdout</c> in the module's
     /// imports.
     /// </summary>
-    private static void Log(int level, string message)
-    {
-        byte[] utf8 = Encoding.UTF8.GetBytes(message);
-        fixed (byte* p = utf8)
-        {
-            H.LogEmit(level, p, utf8.Length);
-        }
-    }
+    private static void Log(int level, string message) => GuestLog.Emit(level, message);
 }

@@ -2,6 +2,7 @@
 
 use anyhow::Context;
 use serde::Deserialize;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use wisp_abi::config::{AppManifest, InitSandbox};
 
@@ -19,6 +20,8 @@ pub struct Project {
     pub module: PathBuf,
     pub init_sandbox: InitSandbox,
     pub build: Option<String>,
+    pub allow_endpoints: Vec<SocketAddr>,
+    pub platform_files: wisp_engine::PlatformFiles,
 }
 
 #[derive(Deserialize)]
@@ -34,6 +37,10 @@ struct Development {
     build: Option<String>,
     #[serde(default)]
     init_sandbox: InitSandbox,
+    #[serde(default)]
+    allow_endpoints: Vec<SocketAddr>,
+    #[serde(default)]
+    trust: wisp_trust::TrustConfig,
 }
 
 impl Project {
@@ -55,7 +62,7 @@ impl Project {
         })?;
         let manifest: AppManifest =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        let inputs: Inputs = toml::from_str(&text)
+        let mut inputs: Inputs = toml::from_str(&text)
             .with_context(|| format!("parsing local inputs in {}", path.display()))?;
         anyhow::ensure!(
             !manifest.name.trim().is_empty(),
@@ -69,6 +76,25 @@ impl Project {
             !inputs.module.as_os_str().is_empty(),
             "wisp.toml must name the module to execute"
         );
+        anyhow::ensure!(
+            inputs
+                .dev
+                .allow_endpoints
+                .iter()
+                .all(|address| address.port() != 0
+                    && !address.ip().is_unspecified()
+                    && !address.ip().is_multicast()),
+            "dev.allow_endpoints must name individual IP addresses and nonzero ports"
+        );
+        if let Some(path) = &mut inputs.dev.trust.bundle {
+            *path = root.join(&*path);
+        }
+        let trust = wisp_trust::TrustBundle::load(&inputs.dev.trust)?;
+        let platform_files = wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
+            path: wisp_trust::GUEST_PATH.to_owned(),
+            bytes: trust.pem().into(),
+            modified_ns: trust.modified_ns(),
+        }])?;
         let command = if no_build {
             None
         } else {
@@ -85,6 +111,8 @@ impl Project {
             tenant: inputs.tenant,
             init_sandbox: sandbox.unwrap_or(inputs.dev.init_sandbox),
             build: command,
+            allow_endpoints: inputs.dev.allow_endpoints,
+            platform_files,
         })
     }
 
@@ -158,6 +186,32 @@ fn scan(dir: &Path, module: &Path, hash: &mut blake3::Hasher) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_local_project_refuses_wildcard_service_exceptions() {
+        let directory = tempfile::tempdir().unwrap();
+        for endpoint in ["0.0.0.0:5432", "127.0.0.1:0", "224.0.0.1:5432"] {
+            std::fs::write(directory.path().join("wisp.toml"), format!("name='app'\ntenant='owner'\nmodule='app.wasm'\n[dev]\nallow_endpoints=['{endpoint}']\n")).unwrap();
+            assert!(
+                Project::load(directory.path(), None, None, true).is_err(),
+                "development services must not grant wildcard endpoint {endpoint}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unverified_local_trust_override_is_refused_before_preparation() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("wisp.toml"),
+            "name='app'\ntenant='owner'\nmodule='app.wasm'\n[dev.trust]\nbundle='local-ca.pem'\n",
+        )
+        .unwrap();
+        assert!(
+            Project::load(directory.path(), None, None, true).is_err(),
+            "a trust override without its expected digest must not start the app"
+        );
+    }
 
     #[test]
     fn a_project_requires_explicit_identity_and_a_module() {

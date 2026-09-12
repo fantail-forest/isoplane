@@ -38,14 +38,28 @@ internal static class Development
 
     private static async Task<int> RunOwnedAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
     {
+        if (options.GuestRuntime is not null)
+            await RuntimeProfileAsync(options, runtime, cancellation);
         if (options.Debug)
             return await DebugDevelopment.RunAsync(options, runtime, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
-        var result = await BuildAsync(options.Directory, runtime, changes, options.Json, options.GuestRuntime, lifetime.Token);
+        var result = 0;
+        if (options.NoBuild)
+        {
+            var module = await ModuleAsync(options.Directory, runtime, lifetime.Token);
+            changes.SetOutput(module);
+            if (options.Module is { } published)
+                PublishModule(published, module);
+            if (!File.Exists(module))
+                throw new InvalidOperationException($"No built module at {module}; run dotnet build first.");
+        }
+        else
+            result = await BuildAsync(options, runtime, changes, lifetime.Token);
         if (result != 0)
             return result;
-        List<string> hostArguments = ["dev", "--watch", options.Directory, "--no-build", "--watch-module-only"];
+        var configuration = await LocalSecrets.ReadAsync(options, runtime, cancellation);
+        List<string> hostArguments = ["dev", "--runtime-config-stdin", "--watch", options.Directory, "--no-build", "--watch-module-only"];
         if (options.Json)
             hostArguments.Add("--json");
         if (options.Port is { } port)
@@ -53,6 +67,8 @@ internal static class Development
         if (!options.Watch)
             hostArguments.Add("--no-watch");
         using var host = Processes.Start(runtime, hostArguments, options.Directory, runtime);
+        await host.StandardInput.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(configuration).AsMemory(), lifetime.Token);
+        await host.StandardInput.FlushAsync(lifetime.Token);
         var exited = host.WaitForExitAsync(lifetime.Token);
         try
         {
@@ -71,7 +87,7 @@ internal static class Development
                 }
                 await changed;
                 using var buildLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                var build = BuildAsync(options.Directory, runtime, changes, options.Json, options.GuestRuntime, buildLifetime.Token);
+                var build = BuildAsync(options, runtime, changes, buildLifetime.Token);
                 if (await Task.WhenAny(build, exited) == exited)
                 {
                     buildLifetime.Cancel();
@@ -94,8 +110,9 @@ internal static class Development
         }
     }
 
-    private static async Task<int> BuildAsync(string directory, string runtime, SourceChanges changes, bool json, GuestRuntimeProfile? guestRuntime, CancellationToken cancellation)
+    private static async Task<int> BuildAsync(DevelopmentOptions options, string runtime, SourceChanges changes, CancellationToken cancellation)
     {
+        var directory = options.Directory;
         var staging = Path.Combine(directory, ".wisp", "publish", Guid.NewGuid().ToString("N"));
         try
         {
@@ -103,22 +120,21 @@ internal static class Development
             changes.SetOutput(module);
             Directory.CreateDirectory(staging);
             var project = Directory.GetFiles(directory, "*.csproj").Single();
-            List<string> arguments = ["publish", project, "-c", "Release", "-o", staging, "--disable-build-servers"];
-            if (guestRuntime is not null)
-                arguments.Add("-p:WispGuestRuntime=" + (guestRuntime.Value switch
+            List<string> arguments = ["publish", project, "-c", options.Configuration, "-o", staging, "--disable-build-servers"];
+            if (options.GuestRuntime is not null)
+                arguments.Add("-p:WispGuestRuntime=" + (options.GuestRuntime.Value switch
                 {
                     GuestRuntimeProfile.Mono => "Mono",
                     GuestRuntimeProfile.NativeAot => "NativeAOT",
-                    _ => throw new ArgumentOutOfRangeException(nameof(guestRuntime))
+                    _ => throw new ArgumentOutOfRangeException(nameof(options.GuestRuntime))
                 }));
-            var result = await Processes.RunAsync("dotnet", arguments, directory, runtime, cancellation, redirectOutput: json);
+            var result = await Processes.RunAsync("dotnet", arguments, directory, runtime, cancellation, redirectOutput: options.Json);
             if (result != 0)
                 return result;
             var modules = Directory.GetFiles(staging, "*.wasm");
             if (modules.Length != 1)
                 throw new InvalidOperationException("Publication must produce exactly one WASM module.");
-            Directory.CreateDirectory(Path.GetDirectoryName(module)!);
-            File.Move(modules[0], module, overwrite: true);
+            PublishModule(modules[0], module);
             return 0;
         }
         catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
@@ -137,6 +153,53 @@ internal static class Development
             {
                 Console.Error.WriteLine($"isoplane: could not remove publication directory {staging}: {error.Message}");
             }
+        }
+    }
+
+    private static void PublishModule(string source, string destination)
+    {
+        if (!File.Exists(source))
+            throw new InvalidOperationException($"No built module at {source}; run dotnet build first.");
+        if (Path.GetFullPath(source) == Path.GetFullPath(destination))
+            return;
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        var staging = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.Copy(source, staging);
+            File.Move(staging, destination, overwrite: true);
+            if (File.Exists(source + ".runtime"))
+                File.Copy(source + ".runtime", destination + ".runtime", overwrite: true);
+        }
+        finally
+        {
+            File.Delete(staging);
+        }
+    }
+
+    internal static async Task<GuestRuntimeProfile> RuntimeProfileAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    {
+        var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
+        using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration, "-getProperty:WispGuestRuntime"], options.Directory, runtime, captureOutput: true);
+        try
+        {
+            var output = await process.StandardOutput.ReadToEndAsync(cancellation);
+            await process.WaitForExitAsync(cancellation);
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException("Could not evaluate the project's selected runtime; fix the MSBuild diagnostics above.");
+            var selected = output.Trim() switch
+            {
+                "Mono" => GuestRuntimeProfile.Mono,
+                "NativeAOT" => GuestRuntimeProfile.NativeAot,
+                _ => throw new InvalidOperationException("The project did not select a supported WISP guest runtime.")
+            };
+            if (options.GuestRuntime is { } requested && requested != selected)
+                throw new ArgumentException("--guest-runtime conflicts with the project configuration. Select the intended configuration with --configuration instead.");
+            return selected;
+        }
+        finally
+        {
+            await Processes.StopAsync(process);
         }
     }
 

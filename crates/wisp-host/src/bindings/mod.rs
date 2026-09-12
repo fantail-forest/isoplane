@@ -9,10 +9,14 @@ mod native_io;
 mod observability;
 pub(crate) mod request_body;
 mod runtime;
+mod runtime_configuration;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{InstanceCtx, Tenancy};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
+pub use runtime_configuration::{
+    RuntimeConfiguration, RuntimeConfigurationError, RuntimeConfigurations,
+};
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -274,7 +278,7 @@ impl HostBindings for CellBindings {
             // Out-buffer imports belong to `call_fill`; here there is nowhere
             // to put the bytes, and a zero-filled buffer would be a constant
             // CSPRNG.
-            "entropy_fill" | "init_hash_seed" | "init_config_get" => {
+            "entropy_fill" | "init_hash_seed" | "init_config_get" | "runtime_config_get" => {
                 ctx.latch_trap(TrapCode::Protocol);
                 -1
             }
@@ -309,6 +313,16 @@ impl HostBindings for CellBindings {
                 self.ctx.entropy_calls.fetch_add(1, Ordering::Relaxed);
                 *self.ctx.out_buffer.lock() = out.to_vec();
                 out.len() as i64
+            }
+            "runtime_config_get" => {
+                let configuration = self
+                    .rt()
+                    .map(|rt| {
+                        rt.runtime_configuration
+                            .get(&self.ctx.tenant, &self.ctx.module)
+                    })
+                    .unwrap_or_default();
+                configuration.fill(out)
             }
             // Served in the sealed init sandbox by the control plane; at
             // runtime the guest already holds the config in linear memory.

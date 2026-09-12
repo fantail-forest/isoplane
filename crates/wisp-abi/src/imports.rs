@@ -36,6 +36,9 @@ pub enum BufSpec {
 /// the host allocate on its behalf.
 pub const MAX_OUT_BUFFER_BYTES: usize = 1 << 20;
 
+/// Maximum encoded activation configuration size, bounded by the output-buffer limit.
+pub const MAX_RUNTIME_CONFIGURATION_BYTES: usize = MAX_OUT_BUFFER_BYTES;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportKind {
     Sync,
@@ -148,6 +151,13 @@ pub const IMPORTS: &[ImportDef] = &[
             "the init-visible config blob, so a config parse happens once at deploy time instead of \
              once per activation; returns the blob's FULL length, so a guest can size its buffer \
              with a zero-length probe") }
+    },
+
+    ImportDef {
+        sensitive: true,
+        ..ImportDef { buf: BufSpec::Out(0), ..imp!("runtime_config_get", Core, BUF_TO_I32, SYNC,
+            "activation-only JSON configuration from the registered module owner; returns the full \
+             byte length for a zero-length sizing probe; unavailable during preparation") }
     },
 
     // ---- observability ----------------------------------------------------
@@ -286,10 +296,10 @@ mod tests {
         }
     }
 
-    /// A fourth out-buffer import is a new path for host bytes to cross the
+    /// An additional out-buffer import is a new path for host bytes to cross the
     /// sandbox boundary, and gets a design conversation before this list.
     #[test]
-    fn host_writes_into_guest_memory_through_exactly_three_imports() {
+    fn host_writes_into_guest_memory_through_the_reviewed_imports() {
         let out: Vec<_> = IMPORTS
             .iter()
             .filter(|i| matches!(i.buf, BufSpec::Out(_)))
@@ -297,7 +307,12 @@ mod tests {
             .collect();
         assert_eq!(
             out,
-            vec!["init_hash_seed", "init_config_get", "entropy_fill"],
+            vec![
+                "init_hash_seed",
+                "init_config_get",
+                "runtime_config_get",
+                "entropy_fill"
+            ],
             "the set of imports that write into guest memory has changed"
         );
     }

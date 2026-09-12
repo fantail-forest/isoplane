@@ -88,7 +88,7 @@ cargo run -p wispd -- --config wispd.toml --check  # Validate a config without r
 cargo run -p wisp-cli -- deploy --app <name> --module <wasm> --host <hostname>
 cargo run -p wisp-cli -- doctor <wasm>             # Validate a module locally
 
-cd docs/userdocs && npm run start                  # Serve the docs site
+cd docs/userdocs && npm run start                  # Serve customer docs
 
 scripts/clean                                      # Reclaim build intermediates
 ```

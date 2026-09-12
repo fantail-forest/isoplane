@@ -15,6 +15,17 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="../AspNetCore/README.md" Pack="true" PackagePath="/" />
-    <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**" />
+    <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**;content/aspnet/IsoplaneApp.csproj" />
   </ItemGroup>
+  <Target Name="StampTemplateSdkVersion" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_PackagedTemplateProject>$(IntermediateOutputPath)package/IsoplaneApp.csproj</_PackagedTemplateProject>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <Copy SourceFiles="content/aspnet/IsoplaneApp.csproj" DestinationFiles="$(_PackagedTemplateProject)" />
+    <XmlPoke XmlInputPath="$(_PackagedTemplateProject)" Query="/Project/@Sdk" Value="Wisp.AspNetCore/$(PackageVersion)" />
+    <ItemGroup>
+      <Content Include="$(_PackagedTemplateProject)" Pack="true" PackagePath="content/content/aspnet/IsoplaneApp.csproj" />
+    </ItemGroup>
+  </Target>
 </Project>

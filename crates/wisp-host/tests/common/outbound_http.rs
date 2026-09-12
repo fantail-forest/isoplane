@@ -135,6 +135,7 @@ impl Rig {
     pub fn new(services: Arc<Services>, tenant: &str, instance: InstanceId) -> Self {
         let wake = Arc::new(Wake::default());
         let runtime = Arc::new(CellRuntime {
+            runtime_configuration: Default::default(),
             services,
             futures: Arc::new(FutureTable::new()),
             metrics: Arc::new(Metrics::new()),

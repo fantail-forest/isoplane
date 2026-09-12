@@ -32,7 +32,7 @@
       <WispClockObject>$(IntermediateOutputPath)wisp_clock.o</WispClockObject>
     </PropertyGroup>
     <Error Condition="!Exists('$(WASI_SDK_PATH)/bin/clang')"
-           Text="wisp: missing wasi-sdk clang at $(WASI_SDK_PATH)/bin/clang; install wasi-sdk 29 and set WASI_SDK_PATH." />
+           Text="wisp: missing wasi-sdk clang at $(WASI_SDK_PATH)/bin/clang; run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispPalObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_pal.c&quot;" />
     <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispClockObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_clock.c&quot;" />

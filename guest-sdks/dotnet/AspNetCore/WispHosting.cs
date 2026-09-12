@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Routing;
@@ -22,7 +23,9 @@ public static class WispHosting
             ContentRootPath = "/",
             Args = []
         });
+        ((IConfigurationBuilder)builder.Configuration).Add(new RuntimeConfigurationSource());
         builder.Logging.ClearProviders();
+        builder.Logging.AddProvider(new WispLoggerProvider());
         builder.Services.AddRouting();
         builder.WebHost.UseWisp();
         return builder;

@@ -30,6 +30,28 @@ pub(super) struct ActiveRequest {
 }
 
 impl Cell {
+    /// Sets activation configuration for a registered module owned by `tenant`.
+    /// The blob remains host-resident and is unavailable during preparation.
+    pub fn set_runtime_configuration(
+        &self,
+        tenant: &str,
+        module: &ModuleId,
+        configuration: crate::bindings::RuntimeConfiguration,
+    ) -> Result<(), crate::bindings::RuntimeConfigurationError> {
+        use crate::bindings::RuntimeConfigurationError;
+        let modules = self.modules.read();
+        let entry = modules
+            .get(module)
+            .ok_or(RuntimeConfigurationError::UnknownModule)?;
+        if entry.tenant != tenant {
+            return Err(RuntimeConfigurationError::WrongTenant);
+        }
+        self.rt
+            .runtime_configuration
+            .set(tenant, module, configuration);
+        Ok(())
+    }
+
     pub(crate) fn module_imports(&self, module: &ModuleId, name: &str) -> bool {
         self.modules.read().get(module).is_some_and(|entry| {
             entry

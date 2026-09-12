@@ -6,7 +6,7 @@ capabilities, arena allocation and initialization units.
 The [C# SDK](../dotnet) is the customer SDK. These Rust helpers support
 fixtures, hostile guests and benchmarks, and evolve with those tests.
 
-The [API source](src/lib.rs) documents the helper surface.
+The [public API source](src/lib.rs) documents the SDK surface.
 
 ## Declaring an entrypoint
 

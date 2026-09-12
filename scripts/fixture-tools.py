@@ -92,7 +92,17 @@ def main():
             env = dict(os.environ, WISP_FIXTURE_LOCK=script)
             result = subprocess.run(["bash", script, *command_args], env=env)
             return result.returncode
-    if action == "wisp-cli":
+    if action == "wisp-process":
+        root = Path(args[0])
+        target = root / "target" / "fixture-tools"
+        result = subprocess.run(
+            ["cargo", "build", "--quiet", "--release", "-p", "wisp-cli", "--bin", "wisp-process", "--target-dir", str(target)],
+            cwd=root,
+        )
+        if result.returncode != 0:
+            sys.exit(f"building the process supervisor failed (exit {result.returncode})")
+        print(target / "release" / "wisp-process")
+    elif action == "wisp-cli":
         # The `wisp` CLI whose `doctor` verdict gates every guest build here:
         # WISP_CLI when set, else this checkout's, built into its own target
         # directory so a fixture build started by `cargo test` never waits

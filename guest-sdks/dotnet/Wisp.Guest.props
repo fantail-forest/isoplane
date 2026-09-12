@@ -1,5 +1,12 @@
 <Project>
   <PropertyGroup>
+    <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == '' AND '$(WISP_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(WISP_GUEST_RUNTIME_FEED)'))</WispGuestRuntimeFeed>
+    <WispCli Condition="'$(WispCli)' == '' AND '$(WISP_CLI)' != ''">$(WISP_CLI)</WispCli>
+    <_WispToolchainHome Condition="'$(ISOPLANE_HOME)' != ''">$(ISOPLANE_HOME)</_WispToolchainHome>
+    <_WispToolchainHome Condition="'$(_WispToolchainHome)' == ''">$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.isoplane</_WispToolchainHome>
+  </PropertyGroup>
+  <Import Project="$(_WispToolchainHome)/toolchain.props" Condition="Exists('$(_WispToolchainHome)/toolchain.props')" />
+  <PropertyGroup>
     <WispGuestRuntime Condition="'$(WispGuestRuntime)' == ''">NativeAOT</WispGuestRuntime>
     <WispMemoryMaxBytes Condition="'$(WispMemoryMaxBytes)' == ''">134217728</WispMemoryMaxBytes>
     <_WispSdkDirectory>$(MSBuildThisFileDirectory)</_WispSdkDirectory>
@@ -9,7 +16,6 @@
          each pack's version and digest. A project outside this checkout
          names its feed with WispGuestRuntimeFeed or WISP_GUEST_RUNTIME_FEED;
          a published feed replaces this path later. -->
-    <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == '' AND '$(WISP_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(WISP_GUEST_RUNTIME_FEED)'))</WispGuestRuntimeFeed>
     <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == ''">$([MSBuild]::NormalizeDirectory('$(_WispSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</WispGuestRuntimeFeed>
     <_WispGuestRuntimeFeedDirectory>$([MSBuild]::EnsureTrailingSlash('$(WispGuestRuntimeFeed)'))</_WispGuestRuntimeFeedDirectory>
   </PropertyGroup>
@@ -35,13 +41,15 @@
   </ItemGroup>
   <Import Project="Wisp.NativeAot.props" Condition="'$(WispGuestRuntime)' == 'NativeAOT'" />
   <Import Project="Build/Wisp.Mono.props" Condition="'$(WispGuestRuntime)' == 'Mono'" />
-  <Target Name="WispValidateRuntimeProfile" BeforeTargets="PrepareForBuild">
-    <Error Condition="'$(WispLocalDebug)' == 'true' AND '$(WispGuestRuntime)' != 'Mono'" Text="Local debugging requires WispGuestRuntime=Mono." />
+  <Target Name="WispValidateRuntimeProfile" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(TargetFramework)' != 'net10.0'" Text="This WISP SDK requires TargetFramework=net10.0." />
+    <Error Condition="'$(WispContainerBuild)' != 'true' AND '$(RuntimeIdentifier)' != 'wasi-wasm'" Text="WISP applications require RuntimeIdentifier=wasi-wasm." />
+    <Error Condition="'$(WispLocalDebug)' == 'true' AND '$(WispGuestRuntime)' != 'Mono'" Text="Local debugging requires an interpreted project configuration (PublishAot=false)." />
     <Error Condition="'$(WispGuestRuntime)' != 'NativeAOT' AND '$(WispGuestRuntime)' != 'Mono'"
-           Text="WispGuestRuntime must be NativeAOT or Mono." />
+           Text="The project selected an unsupported guest runtime; choose an interpreted or NativeAOT project configuration." />
   </Target>
   <Target Name="WispRequireGuestRuntimeFeed" BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(WispGuestRuntimePackVersion)' == '' OR '$(WispGuestNativeAotPackVersion)' == ''"
-           Text="wisp: the guest runtime feed at $(WispGuestRuntimeFeed) has no Wisp.GuestRuntime.props naming both packs; build them with guest-runtime/build.sh or set WispGuestRuntimeFeed." />
+           Text="wisp: the guest runtime feed at $(WispGuestRuntimeFeed) has no Wisp.GuestRuntime.props naming both packs; run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
   </Target>
 </Project>

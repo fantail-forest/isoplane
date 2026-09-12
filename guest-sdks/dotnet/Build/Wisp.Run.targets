@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup><_WispBuildsRunnableModule>true</_WispBuildsRunnableModule></PropertyGroup>
+  <ItemGroup><Watch Include="$(MSBuildProjectDirectory)/wisp.toml" /></ItemGroup>
+  <!-- Publish the sandbox artifact before watch regards a rebuild as successful. -->
+  <Target Name="WispBuildRunnableModule" AfterTargets="Build"
+          Condition="'$(_IsPublishing)' != 'true' AND '$(NoBuild)' != 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish"
+             Properties="NoBuild=true;_IsPublishing=true" BuildInParallel="false" />
+  </Target>
+  <Target Name="ComputeRunArguments">
+    <PropertyGroup>
+      <RunCommand>isoplane</RunCommand>
+      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-build --no-watch --module &quot;$([System.IO.Path]::GetFullPath('$(PublishDir)$(AssemblyName).wasm', '$(MSBuildProjectDirectory)'))&quot;</RunArguments>
+      <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
+    </PropertyGroup>
+  </Target>
+</Project>

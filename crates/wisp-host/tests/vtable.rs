@@ -63,6 +63,7 @@ fn vtable_with_resolver(
     let wake = Arc::new(RecordingWake::default());
     let meters = Arc::new(Meters::new());
     let rt = Arc::new(CellRuntime {
+        runtime_configuration: Default::default(),
         services,
         futures: futures.clone(),
         metrics: Arc::new(Metrics::new()),

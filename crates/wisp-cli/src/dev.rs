@@ -2,6 +2,7 @@
 
 mod build;
 pub mod debug;
+mod destinations;
 mod project;
 mod runtime;
 
@@ -21,6 +22,34 @@ use wisp_cli::render::Style;
 use project::Project;
 use runtime::{LocalApp, Prepared};
 
+/// Reads activation-only settings from a bounded private parent pipe.
+pub fn read_runtime_configuration(
+    from_input: bool,
+) -> anyhow::Result<wisp_host::bindings::RuntimeConfiguration> {
+    if !from_input {
+        return Ok(wisp_host::bindings::RuntimeConfiguration::from_json(b"{}")?);
+    }
+    read_configuration_line(std::io::stdin().lock())
+}
+
+fn read_configuration_line(
+    input: impl std::io::BufRead,
+) -> anyhow::Result<wisp_host::bindings::RuntimeConfiguration> {
+    use std::io::BufRead;
+    let mut bytes = Vec::new();
+    input
+        .take(wisp_abi::imports::MAX_OUT_BUFFER_BYTES as u64 + 2)
+        .read_until(b'\n', &mut bytes)?;
+    anyhow::ensure!(
+        bytes.last() == Some(&b'\n'),
+        "runtime configuration pipe must supply one complete JSON line"
+    );
+    bytes.pop();
+    Ok(wisp_host::bindings::RuntimeConfiguration::from_json(
+        &bytes,
+    )?)
+}
+
 /// Resolves the configured module without building it or requiring it to exist.
 /// Fails when the project directory or local manifest is invalid.
 pub fn project_module(directory: &Path) -> anyhow::Result<PathBuf> {
@@ -28,6 +57,7 @@ pub fn project_module(directory: &Path) -> anyhow::Result<PathBuf> {
 }
 
 pub struct DevOpts {
+    pub runtime_configuration: wisp_host::bindings::RuntimeConfiguration,
     pub json: bool,
     pub port: u16,
     pub watch: PathBuf,
@@ -67,7 +97,12 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     };
     observed.module = project.fingerprint(opts.watch_module_only)?.module;
     let data = project.state_dir();
-    let mut app = LocalApp::start(prepared, &data, ).await?;
+    let mut app = LocalApp::start(
+        prepared,
+        &data,
+        opts.runtime_configuration.clone(),
+    )
+    .await?;
     let result = serve(st, &opts, project, observed, &mut app).await;
     app.proxy.shutdown_sockets();
     tokio::task::spawn_blocking(move || app.cell.shutdown()).await?;
@@ -185,7 +220,7 @@ async fn serve(
                         app.proxy.shutdown_sockets();
                         let old = app.clone();
                         tokio::task::spawn_blocking(move || old.cell.shutdown()).await?;
-                        *app = LocalApp::start(prepared, &next_project.state_dir()).await?;
+                        *app = LocalApp::start(prepared, &next_project.state_dir(), opts.runtime_configuration.clone()).await?;
                         *current_proxy.write() = app.proxy.clone();
                         project = next_project;
                         observed.module = project.fingerprint(opts.watch_module_only)?.module;
@@ -255,4 +290,39 @@ fn report(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::read_configuration_line;
+
+    #[test]
+    fn activation_configuration_requires_a_complete_parent_frame() {
+        assert!(
+            read_configuration_line(&b"{}"[..]).is_err(),
+            "a truncated parent frame must not start an application"
+        );
+    }
+
+    #[test]
+    fn activation_configuration_rejects_oversized_parent_input() {
+        let bytes = vec![b' '; wisp_abi::imports::MAX_OUT_BUFFER_BYTES + 3];
+        assert!(
+            read_configuration_line(bytes.as_slice()).is_err(),
+            "an unbounded parent frame must be refused before reading further"
+        );
+    }
+
+    #[test]
+    fn activation_configuration_leaves_following_parent_input_unconsumed() {
+        let mut bytes = &b"{}\nnext"[..];
+        assert!(
+            read_configuration_line(&mut bytes).is_ok(),
+            "a complete settings map must be accepted"
+        );
+        assert_eq!(
+            bytes, b"next",
+            "the settings reader must consume only its own frame"
+        );
+    }
 }

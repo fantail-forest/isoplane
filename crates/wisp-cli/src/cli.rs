@@ -43,6 +43,9 @@ pub enum Cmd {
 
     /// Build and run the current project locally; rebuild on source changes.
     Dev {
+        /// Read activation-only configuration as one JSON line from the owning CLI.
+        #[arg(long, hide = true)]
+        runtime_config_stdin: bool,
         /// Local HTTP port; zero selects an available port.
         #[arg(long, default_value_t = wisp_abi::config::DEFAULT_PROXY_PORT)]
         port: u16,

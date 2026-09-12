@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -116,6 +117,7 @@ public sealed class StreamingTests
     private static WebApplicationBuilder Builder(RecordingResponseTransport transport)
     {
         var builder = WispHosting.CreateBuilder(typeof(StreamingTests).Assembly.GetName().Name!);
+        builder.Logging.ClearProviders();
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => transport);
         return builder;
     }

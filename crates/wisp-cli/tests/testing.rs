@@ -50,13 +50,15 @@ using Xunit;
 
 public sealed class ApplicationTests
 {
-    [Fact]
-    public async Task the_application_runs_inside_the_installed_sandbox_and_releases_its_listener()
+    [Theory]
+    [InlineData("WispInterpretedDebug")]
+    [InlineData("WispNativeAotRelease")]
+    public async Task the_application_runs_inside_the_installed_sandbox_and_releases_its_listener(string configuration)
     {
         using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(20));
         var app = await IsoplaneApplication.StartAsync(
             Environment.GetEnvironmentVariable("TEST_APP")!,
-            new ApplicationOptions { CliPath = Environment.GetEnvironmentVariable("TEST_CLI")! },
+            new ApplicationOptions { CliPath = Environment.GetEnvironmentVariable("TEST_CLI")!, Configuration = configuration },
             startup.Token);
         var address = app.Client.BaseAddress!;
         try

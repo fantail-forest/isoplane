@@ -188,3 +188,38 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
         "no violation is recorded outside the sandbox"
     );
 }
+
+#[test]
+fn runtime_configuration_is_refused_before_the_preparation_binding_runs() {
+    let engine = test_engine();
+    let wasm = guest(
+        4,
+        &import("runtime_config_get", "(param i32 i32)", "(result i32)"),
+        r#"(func (export "wisp_initialize") (drop (call $runtime_config_get (i32.const 0) (i32.const 0))))"#,
+        DONE,
+        DONE,
+    );
+    let template = engine
+        .load_template(&wasm)
+        .expect("valid runtime configuration import");
+    let recorder = Recorder::default();
+    let mut instance = engine
+        .activate(
+            &template,
+            Box::new(TestBindings::init_sandbox(recorder.clone())),
+        )
+        .expect("activation");
+    let outcome = instance.run_initialize(budget(10_000));
+    assert_eq!(
+        outcome
+            .trap
+            .expect("runtime configuration must trap during preparation")
+            .kind,
+        TrapKind::CapabilityViolation,
+        "preparation must not receive runtime secrets"
+    );
+    assert!(
+        recorder.calls.lock().is_empty(),
+        "runtime secrets must be refused before calling the host binding"
+    );
+}

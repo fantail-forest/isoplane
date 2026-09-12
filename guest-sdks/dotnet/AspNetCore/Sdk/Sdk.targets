@@ -1,7 +1,19 @@
 <Project>
+  <!-- Profile imports must see properties declared in the application body. -->
+  <PropertyGroup>
+    <WispGuestRuntime Condition="'$(WispGuestRuntime)' == '' AND '$(PublishAot)' == 'true'">NativeAOT</WispGuestRuntime>
+    <WispGuestRuntime Condition="'$(WispGuestRuntime)' == '' AND '$(PublishAot)' == 'false'">Mono</WispGuestRuntime>
+  </PropertyGroup>
+  <Import Project="../tools/Wisp.Guest.props" />
+  <PropertyGroup>
+    <WasmBuildOnlyAfterPublish Condition="'$(WispGuestRuntime)' == 'Mono'">true</WasmBuildOnlyAfterPublish>
+    <SupportsHotReload>false</SupportsHotReload>
+    <RunCommand Condition="'$(RunCommand)' == ''">isoplane</RunCommand>
+  </PropertyGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
   <ItemGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
     <FrameworkReference Remove="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <Import Project="../tools/Wisp.Guest.targets" />
+  <Import Project="../tools/Build/Wisp.Run.targets" />
 </Project>

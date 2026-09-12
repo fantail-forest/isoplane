@@ -14,7 +14,12 @@ path = "src/lib.rs"
 name = "wisp"
 path = "src/main.rs"
 
+[[bin]]
+name = "wisp-process"
+path = "src/process/main.rs"
+
 [dependencies]
+wisp-trust = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -44,6 +49,7 @@ zstd = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 tempfile = { workspace = true }
+libc = { workspace = true }
 
 [features]
 # Include the full validator in local module checks by default.
@@ -51,6 +57,7 @@ default = ["control"]
 control = []
 
 [dev-dependencies]
+portable-pty = { workspace = true }
 tokio = { workspace = true }
 wat = { workspace = true }
 wisp-fixtures = { workspace = true }

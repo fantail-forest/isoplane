@@ -99,11 +99,25 @@ fn run(command: &mut Command) {
 
 /// Packs and installs the managed CLI with a supplied native runtime into a local tool directory.
 pub fn managed_cli(destination: &Path, runtime: &Path, app: &Path) -> PathBuf {
+    let supervisor = Command::new("python3")
+        .arg(super::repo_root().join("scripts/fixture-tools.py"))
+        .arg("wisp-process")
+        .arg(super::repo_root())
+        .output()
+        .expect("build the packaged process supervisor through the fixture helper");
+    assert!(
+        supervisor.status.success(),
+        "the process supervisor must build before CLI packaging: {}",
+        String::from_utf8_lossy(&supervisor.stderr)
+    );
+    let supervisor =
+        String::from_utf8(supervisor.stdout).expect("the supervisor path must be UTF-8");
     let packages = destination.join("packages");
     run(Command::new("dotnet")
         .arg("pack")
         .arg(super::repo_root().join("tools/Isoplane.Cli/Isoplane.Cli.csproj"))
         .arg(format!("-p:WispRuntimePath={}", runtime.display()))
+        .arg(format!("-p:WispProcessPath={}", supervisor.trim()))
         .arg("--artifacts-path")
         .arg(destination.join("cli-artifacts"))
         .arg("-o")

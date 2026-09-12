@@ -25,19 +25,20 @@
          builds from the same runtimelab commit (guest-runtime/manifest.env)
          under the WISP patch series, named by the feed. -->
     <ILCompilerVersion Condition="'$(ILCompilerVersion)' == ''">10.0.0-rc.1.26357.1</ILCompilerVersion>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
     <!-- A reactor with named exports, not a command. -->
     <OutputType>library</OutputType>
-    <RuntimeIdentifier Condition="'$(WispContainerBuild)' != 'true'">wasi-wasm</RuntimeIdentifier>
-    <RootNamespace>Wisp</RootNamespace>
-    <Nullable>enable</Nullable>
-    <LangVersion>14.0</LangVersion>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <ImplicitUsings>false</ImplicitUsings>
+    <RuntimeIdentifier Condition="'$(WispContainerBuild)' != 'true' AND '$(RuntimeIdentifier)' == ''">wasi-wasm</RuntimeIdentifier>
+    <RootNamespace Condition="'$(RootNamespace)' == ''">Wisp</RootNamespace>
+    <Nullable Condition="'$(Nullable)' == ''">enable</Nullable>
+    <LangVersion Condition="'$(LangVersion)' == ''">14.0</LangVersion>
+    <AllowUnsafeBlocks Condition="'$(AllowUnsafeBlocks)' == ''">true</AllowUnsafeBlocks>
+    <ImplicitUsings Condition="'$(ImplicitUsings)' == ''">false</ImplicitUsings>
 
     <PublishTrimmed Condition="'$(WispContainerBuild)' != 'true'">true</PublishTrimmed>
     <SelfContained Condition="'$(WispContainerBuild)' != 'true'">true</SelfContained>
     <IsPublishable Condition="'$(WispContainerBuild)' == 'true'">false</IsPublishable>
+    <PublishAotUsingRuntimePack>false</PublishAotUsingRuntimePack>
     <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
     <LinkerFlavor>lld</LinkerFlavor>
     <DebugType>none</DebugType>
@@ -62,8 +63,14 @@
          the Standard plan; -p:WispMemoryMaxBytes=67108864 targets Free. -->
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <!-- The .NET SDK imports this once; the LLVM package also auto-imports it unless build assets are excluded. -->
+    <ILCompilerTargetsPath Condition="Exists('$(NuGetPackageRoot)/microsoft.dotnet.ilcompiler.llvm/$(ILCompilerVersion)/build/Microsoft.DotNet.ILCompiler.SingleEntry.targets')">$(NuGetPackageRoot)/microsoft.dotnet.ilcompiler.llvm/$(ILCompilerVersion)/build/Microsoft.DotNet.ILCompiler.SingleEntry.targets</ILCompilerTargetsPath>
+  </PropertyGroup>
   <ItemGroup Condition="'$(WispContainerBuild)' != 'true'">
-    <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
+    <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)">
+      <ExcludeAssets Condition="'$(PublishAot)' == 'true'">build</ExcludeAssets>
+    </PackageReference>
     <PackageReference Include="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(WispGuestCompilerVersion)" />
     <!-- The target pack: a direct reference outranks the compiler package's
          own, so the compiler's targets resolve the feed's framework. -->

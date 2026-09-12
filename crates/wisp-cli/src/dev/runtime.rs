@@ -25,6 +25,7 @@ pub struct Prepared {
     manifest: AppManifest,
     tenant: String,
     version: String,
+    allow_endpoints: Vec<std::net::SocketAddr>,
 }
 
 impl Prepared {
@@ -36,6 +37,7 @@ impl Prepared {
         let template = if report.has_initialize() {
             wisp_runtime::PreInitializer::new()
                 .with_pal(project.init_sandbox)
+                .with_platform_files(project.platform_files.clone())
                 .run(wasm, &wisp_runtime::PreInitRequest {
                     module_hash: wisp_engine::ModuleHash::of(wasm),
                     init_blob: serde_json::to_vec(&manifest.init_visible_vars)?,
@@ -48,6 +50,7 @@ impl Prepared {
         let engine = Arc::new(wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
             pooling: false,
             max_memory_bytes: manifest.limits.instance_memory_max,
+            platform_files: project.platform_files.clone(),
             ..Default::default()
         })?);
         let module = ModuleId::new(&manifest.name, &version);
@@ -57,6 +60,7 @@ impl Prepared {
             manifest,
             tenant: project.tenant.clone(),
             version,
+            allow_endpoints: project.allow_endpoints.clone(),
         })
     }
     /// Validates and compiles a marked debug module without pre-initialization.
@@ -67,6 +71,7 @@ impl Prepared {
         let engine = Arc::new(wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
             pooling: false,
             max_memory_bytes: manifest.limits.instance_memory_max,
+            platform_files: project.platform_files.clone(),
             ..Default::default()
         })?);
         let module = ModuleId::new(&manifest.name, &version);
@@ -78,6 +83,7 @@ impl Prepared {
             manifest,
             tenant: project.tenant.clone(),
             version,
+            allow_endpoints: project.allow_endpoints.clone(),
         })
     }
 }
@@ -121,8 +127,12 @@ pub struct LocalApp {
 
 impl LocalApp {
     /// Registers ordinary prepared code with local state.
-    pub async fn start(prepared: Prepared, data: &Path) -> anyhow::Result<Arc<Self>> {
-        Self::start_with_peer(prepared, data, None).await
+    pub async fn start(
+        prepared: Prepared,
+        data: &Path,
+        configuration: wisp_host::bindings::RuntimeConfiguration,
+    ) -> anyhow::Result<Arc<Self>> {
+        Self::start_with_peer(prepared, data, None, configuration).await
     }
 
     /// Registers raw debug code with the exact session peer allowed through egress.
@@ -131,20 +141,29 @@ impl LocalApp {
         data: &Path,
         peer: super::debug::DebugPeer,
     ) -> anyhow::Result<Arc<Self>> {
-        Self::start_with_peer(prepared, data, Some(peer)).await
+        Self::start_with_peer(
+            prepared,
+            data,
+            Some(peer),
+            wisp_host::bindings::RuntimeConfiguration::from_json(b"{}")?,
+        )
+        .await
     }
 
     async fn start_with_peer(
         prepared: Prepared,
         data: &Path,
         peer: Option<super::debug::DebugPeer>,
+        configuration: wisp_host::bindings::RuntimeConfiguration,
     ) -> anyhow::Result<Arc<Self>> {
         let network = wisp_runtime::network::NetworkLimits::default();
-        let mut egress =
+        let egress =
             wisp_host::HostEgressPolicy::system(network.connections, network.egress_bytes)?;
-        if let Some(peer) = peer {
-            egress = egress.with_destinations(Arc::new(peer));
-        }
+        let egress =
+            egress.with_destinations(Arc::new(super::destinations::DevelopmentDestinations {
+                endpoints: prepared.allow_endpoints.clone(),
+                debugger: peer,
+            }));
         let egress = Arc::new(egress);
         std::fs::create_dir_all(data)?;
         let scratch = tempfile::tempdir_in(data)?;
@@ -209,6 +228,11 @@ impl LocalApp {
                 cell.register_debug_module(&prepared.tenant, activator, prepared.manifest.clone())?
             }
         }
+        cell.set_runtime_configuration(
+            &prepared.tenant,
+            &ModuleId::new(&prepared.manifest.name, &prepared.version),
+            configuration,
+        )?;
         let target = RouteTarget {
             app: prepared.manifest.name,
             tenant: prepared.tenant,

@@ -69,6 +69,7 @@ impl Reactor {
         let futures = Arc::new(FutureTable::new());
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let runtime = Arc::new(CellRuntime {
+            runtime_configuration: Default::default(),
             services: Arc::new(Services {
                 egress,
                 fetcher: Arc::new(fetcher),

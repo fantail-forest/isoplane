@@ -28,6 +28,22 @@ public sealed class RuntimePublicationTests : IDisposable
     }
 
     [Theory]
+    [InlineData("WispInterpretedDebug", "false")]
+    [InlineData("WispNativeAotRelease", "true")]
+    public async Task template_configurations_select_their_named_optimization_mode(string configuration, string optimize)
+    {
+        var template = XDocument.Load(Path.Combine(SdkDirectory(), "Templates/content/aspnet/IsoplaneApp.csproj"));
+        var project = WriteProject(
+            new XElement("Import", new XAttribute("Project", "Sdk.props"), new XAttribute("Sdk", "Microsoft.NET.Sdk")),
+            new XElement("PropertyGroup", new XElement("Configuration", configuration), new XElement("TargetFramework", "net10.0")),
+            template.Root!.Element("PropertyGroup")!,
+            new XElement("Import", new XAttribute("Project", "Sdk.targets"), new XAttribute("Sdk", "Microsoft.NET.Sdk")));
+        var result = await Run(Msbuild(project, "-getProperty:Optimize"));
+        Assert.True(result.Exit == 0 && result.Output.Trim() == optimize,
+            "The named template configuration must select its intended optimization mode: " + result.Output);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(2)]
     public async Task a_container_publication_mounts_the_feed_and_requires_host_validation(int verdict)
@@ -117,6 +133,27 @@ public sealed class RuntimePublicationTests : IDisposable
             new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Validation.targets"))));
         var result = await Run(Msbuild(project, "-t:WispValidateModule"));
         Assert.True(result.Exit != 0 && result.Output.Contains("WISP0002", StringComparison.Ordinal), "A missing validator must fail ordinary publication even when the obsolete bypass is supplied: " + result.Output);
+    }
+
+    [Theory]
+    [InlineData("WispInterpretedDebug")]
+    [InlineData("WispNativeAotRelease")]
+    public async Task dotnet_run_passes_the_selected_configuration_to_local_metadata_evaluation(string configuration)
+    {
+        var project = WriteProject(
+            new XElement("PropertyGroup", new XElement("Configuration", configuration),
+                new XElement("PublishDir", "published/"), new XElement("AssemblyName", "App")),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Run.targets"))));
+        var start = Msbuild(project, "-t:ComputeRunArguments");
+        start.ArgumentList.Add("-getProperty:RunArguments,RunCommand");
+        var result = await Run(start);
+        Assert.True(result.Exit == 0, "Run arguments must evaluate successfully: " + result.Output);
+        using var document = JsonDocument.Parse(result.Output);
+        var properties = document.RootElement.GetProperty("Properties");
+        Assert.True(properties.GetProperty("RunArguments").GetString()!.Contains("--configuration \"" + configuration + "\"", StringComparison.Ordinal),
+            "The CLI must evaluate UserSecretsId under the same configuration that built the running guest.");
+        Assert.True(properties.GetProperty("RunCommand").GetString() == "isoplane",
+            "The run command must launch the sandbox CLI even when dotnet watch invokes it.");
     }
 
     private string ContainerProject(string app, string feed, string wasiSdk, string validator, string publish)

@@ -22,6 +22,10 @@ internal static unsafe partial class H
     internal static extern int InitConfigGet(byte* ptr, int len);
 
     [WasmImportLinkage]
+    [DllImport("wisp", EntryPoint = "runtime_config_get")]
+    internal static extern int RuntimeConfigGet(byte* ptr, int len);
+
+    [WasmImportLinkage]
     [DllImport("wisp", EntryPoint = "abort")]
     internal static extern void Abort(byte* ptr, int len);
 

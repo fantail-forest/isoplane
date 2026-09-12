@@ -1,4 +1,24 @@
 <Project>
+  <!-- Teach the SDK which compiler handles WASI; its bundled compiler does not. -->
+  <Target Name="WispSelectLlvmCompiler" BeforeTargets="ProcessFrameworkReferences" Condition="'$(PublishAot)' == 'true'">
+    <ItemGroup>
+      <_WispCompilerPlatform Include="@(KnownILCompilerPack)" Condition="'%(TargetFramework)' == '$(TargetFramework)'" />
+      <KnownILCompilerPack Remove="@(_WispCompilerPlatform)" />
+      <KnownILCompilerPack Include="Microsoft.DotNet.ILCompiler.LLVM">
+        <TargetFramework>$(TargetFramework)</TargetFramework>
+        <ILCompilerPackNamePattern>runtime.**RID**.Microsoft.DotNet.ILCompiler.LLVM</ILCompilerPackNamePattern>
+        <ILCompilerPackVersion>$(ILCompilerVersion)</ILCompilerPackVersion>
+        <ILCompilerRuntimeIdentifiers>@(_WispCompilerPlatform->'%(ILCompilerRuntimeIdentifiers)');wasi-wasm</ILCompilerRuntimeIdentifiers>
+        <ILCompilerPortableRuntimeIdentifiers>@(_WispCompilerPlatform->'%(ILCompilerPortableRuntimeIdentifiers)')</ILCompilerPortableRuntimeIdentifiers>
+      </KnownILCompilerPack>
+    </ItemGroup>
+  </Target>
+  <!-- Explicit references above resolve the separately versioned host and guest packs. -->
+  <Target Name="WispUseExplicitCompilerPacks" AfterTargets="ProcessFrameworkReferences" Condition="'$(PublishAot)' == 'true'">
+    <ItemGroup>
+      <PackageDownload Remove="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM;runtime.$(NETCoreSdkPortableRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM;runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" />
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <!-- The framework pack's cryptography shim is linked statically like
          System.Native, so ilc binds its P/Invokes directly. -->

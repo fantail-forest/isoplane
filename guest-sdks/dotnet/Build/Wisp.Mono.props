@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">wasi-wasm</RuntimeIdentifier>
     <OutputType>Exe</OutputType>
     <PublishTrimmed>true</PublishTrimmed>
     <SelfContained>true</SelfContained>
@@ -11,7 +11,7 @@
     <WasmIncludeFullIcuData Condition="'$(WasmIncludeFullIcuData)' == ''">true</WasmIncludeFullIcuData>
     <WasmEnableExceptionHandling>false</WasmEnableExceptionHandling>
     <MSBuildEnableWorkloadResolver>true</MSBuildEnableWorkloadResolver>
-    <Nullable>enable</Nullable>
+    <Nullable Condition="'$(Nullable)' == ''">enable</Nullable>
     <DefineConstants>$(DefineConstants);WISP_MONO</DefineConstants>
     <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
     <!-- The interpreter runs the feed's Mono runtime pack. The build

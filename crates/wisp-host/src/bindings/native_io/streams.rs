@@ -255,6 +255,7 @@ mod tests {
         let mut context =
             InstanceCtx::for_test(InstanceId(83), HandlerLifecycle::Reuse, Limits::default());
         context.rt = Some(Arc::new(CellRuntime {
+            runtime_configuration: Default::default(),
             services: Arc::new(Services {
                 egress: policy,
                 fetcher: Arc::new(FakeFetcher::default()),

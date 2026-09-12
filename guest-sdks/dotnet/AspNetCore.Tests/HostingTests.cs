@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -14,6 +15,7 @@ public sealed class HostingTests
     private static WebApplicationBuilder Builder()
     {
         var builder = WispHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!);
+        builder.Logging.ClearProviders();
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => new RecordingResponseTransport());
         return builder;
     }

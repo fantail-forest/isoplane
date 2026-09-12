@@ -8,6 +8,8 @@ internal static class DebugDevelopment
 {
     internal static async Task<int> RunAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
     {
+        if (await Development.RuntimeProfileAsync(options, runtime, cancellation) != GuestRuntimeProfile.Mono)
+            throw new ArgumentException("Debugging currently requires an explicitly selected interpreted project configuration; NativeAOT debugging is not supported.");
         var ordinaryModule = await Development.ModuleAsync(options.Directory, runtime, cancellation);
         var session = Path.Combine(options.Directory, ".wisp", "debug", Guid.NewGuid().ToString("N"));
         try
@@ -19,8 +21,8 @@ internal static class DebugDevelopment
             await using var relay = new DebugRelay(cancellation);
             var endpoint = relay.Endpoint.ToString();
             var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
-            List<string> publication = ["publish", project, "-c", "Debug", "-o", session, "--disable-build-servers",
-                "-p:WispGuestRuntime=Mono", "-p:WispLocalDebug=true", "-p:WispDebugEndpoint=" + endpoint];
+            List<string> publication = ["publish", project, "-c", options.Configuration, "-o", session, "--disable-build-servers",
+                "-p:WispLocalDebug=true", "-p:WispDebugEndpoint=" + endpoint];
             var result = await Processes.RunAsync("dotnet", publication, options.Directory, runtime, cancellation, redirectOutput: options.Json);
             if (result != 0)
                 return result;
