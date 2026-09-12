@@ -122,25 +122,37 @@ integrates each with the host: the host-driven event loop, socket readiness
 through libc's `poll` (a zero-byte read is a readiness check, as
 `SslStream` and Kestrel issue), asynchronous name resolution, OpenSSL as the
 cryptography and TLS backend, the network error codes libc drops, and the
-P/Invoke declarations whose wasm signature differs from their C prototype
-(`guest-runtime/audit-pinvokes.py` refuses to build a pack with one), and
+`LibraryImport` declarations in the four native shims (`System.Native`,
+OpenSSL cryptography, compression and globalization) whose wasm signatures
+differ from their C prototypes. `guest-runtime/audit-pinvokes.py` checks
+those declarations before building a pack. The runtime also includes
 `HttpClient`'s `SocketsHttpHandler` compiled for wasi over those sockets
 (HTTP/1.1 and HTTP/2, the latter negotiated through the guest's TLS with
 ALPN or spoken h2c with prior knowledge when a request asks for version
-2.0; HTTP/3 is off, as the host carries no QUIC; the guest offers IPv4
-sockets, so IPv6 is off). The build
+2.0). HTTP uses IPv4 and IPv6 sockets; HTTP/3 is off because the host
+provides no QUIC capability. Explicit HTTP proxies, Basic origin/proxy
+authentication and HTTPS CONNECT are tested in both profiles. The upstream
+managed `ClientWebSocket` implementation supports tested WS/WSS exchanges,
+fragmented messages, cancellation and close across hibernation. These tests
+do not qualify every authentication mechanism or WebSocket extension. The build
 publishes both packs to a local feed whose `Wisp.GuestRuntime.props` names
 each pack's version and digest; the SDK refuses a pack whose digest differs
 from the feed's and records the identity it linked beside every module
 (`<module>.wasm.runtime`). A project outside this checkout names its feed with
 `WispGuestRuntimeFeed` or `WISP_GUEST_RUNTIME_FEED`.
 
+Both profiles include ICU and its complete data by default. Culture-aware
+formatting, casing, collation, Unicode normalization and calendars use the
+runtime's existing ICU integration. A project may explicitly set
+`InvariantGlobalization` to `true` when it wants invariant behavior.
+
 ## TLS in the guest
 
 `SslStream` works over sockets with the runtime's own OpenSSL, as any
-library that speaks TLS over a socket (database drivers, SMTP, brokers)
-expects: TLS 1.2 and 1.3, client certificates, ALPN, cancellation, and asynchronous reads return control while waiting for host-owned I/O. Certificate
-validity is checked against the guest's clock, which is the host's.
+library that speaks TLS over a socket expects: TLS 1.2 and 1.3, client certificates, ALPN, cancellation, and asynchronous reads return control while waiting for host-owned I/O. Certificate
+validity is checked against the guest's clock, which is the host's. This
+qualifies the TLS transport; it does not establish compatibility for every
+database, mail or broker client built on it.
 
 Public roots come from the platform: every guest sees the node's trust
 bundle as the read-only file `/etc/ssl/certs/ca-certificates.crt`, which
