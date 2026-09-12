@@ -21,6 +21,7 @@ mod activate;
 mod artifact;
 mod call;
 mod capture;
+mod compiler;
 mod layout;
 mod linker;
 mod meter;
@@ -33,6 +34,7 @@ pub use bindings::{HostBindings, ImportCall};
 pub use budget::{
     CpuBudget, CpuMeasurement, DispatchOutcome, ExecutionLimit, KillPhase, TrapInfo, TrapKind,
 };
+pub use compiler::COMPILER_STACK_BYTES;
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use meter::clock_read_failures;

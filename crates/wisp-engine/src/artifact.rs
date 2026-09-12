@@ -19,7 +19,7 @@ impl WispEngine {
     /// the resource-capped validator sandbox.
     pub fn load_template(&self, template_wasm: &[u8]) -> Result<Template> {
         template::structural_check(template_wasm)?;
-        let module = wasmtime::Module::new(&self.inner.wasmtime, template_wasm)
+        let module = crate::compiler::compile(&self.inner.wasmtime, template_wasm)
             .map_err(anyhow::Error::from)
             .context("compiling template module")?;
         let deferred = template::read_deferred_units(template_wasm)?;

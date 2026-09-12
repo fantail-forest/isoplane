@@ -96,6 +96,9 @@ pub struct PreInitOutcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PreInitError {
+    /// Native compiler workers could not be created.
+    #[error("creating pre-initialisation compiler workers: {0}")]
+    CompilerWorkers(#[from] rayon::ThreadPoolBuildError),
     #[error("module does not export `{0}`; nothing to pre-initialize")]
     NoInitFunc(&'static str),
     /// Nothing to defer: deferring a guess would change program behaviour.
@@ -153,14 +156,8 @@ impl PreInitializer {
                 limit: INIT_MEMORY_LIMIT_BYTES,
             });
         }
-        // `install` runs the closure on a worker of this pool, and wasmtime's
-        // parallel compile resolves against the pool of the calling thread,
-        // so only wizer's compile is bounded; the data plane keeps the global
-        // pool it was sized for.
-        match compile_pool() {
-            Some(pool) => pool.install(|| self.replay(wasm, req)),
-            None => self.replay(wasm, req),
-        }
+        let pool = compile_pool()?;
+        pool.install(|| self.replay(wasm, req))
     }
 
     /// Runs on the thread that does the work, so the CPU clock started here
@@ -233,24 +230,13 @@ impl PreInitializer {
     }
 }
 
-/// A pool of [`PREINIT_COMPILE_THREADS`] workers, built per call so a daemon
-/// that deploys rarely keeps no idle threads. `None` when one cannot be
-/// built; the deploy then compiles on the global pool rather than failing.
-fn compile_pool() -> Option<rayon::ThreadPool> {
-    match rayon::ThreadPoolBuilder::new()
+/// A deploy-scoped pool keeps preparation CPU on its measured worker.
+fn compile_pool() -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
+    rayon::ThreadPoolBuilder::new()
         .num_threads(PREINIT_COMPILE_THREADS)
+        .stack_size(wisp_engine::COMPILER_STACK_BYTES)
         .thread_name(|i| format!("wisp-preinit-{i}"))
         .build()
-    {
-        Ok(pool) => Some(pool),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "could not build the pre-init compile pool; falling back to rayon's global pool"
-            );
-            None
-        }
-    }
 }
 
 /// Digest of explicit initialization inputs; fresh random output is excluded.

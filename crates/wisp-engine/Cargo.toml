@@ -30,6 +30,7 @@ wasmtime = { workspace = true, features = [
 wasmparser = { workspace = true }
 cpu-time = { workspace = true }
 parking_lot = { workspace = true }
+rayon = { workspace = true }
 postcard = { workspace = true }
 blake3 = { workspace = true }
 
