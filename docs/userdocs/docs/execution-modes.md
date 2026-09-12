@@ -20,18 +20,15 @@ what `dotnet build`, `dotnet run` and the integration test fixture execute.
 Ahead-of-time compilation needs to determine reachable code before the request
 runs. Reflection and dynamic-code assumptions in an application or its libraries
 can therefore expose trimming warnings or compilation failures that an
-interpreted build does not. An interpreted test result does not qualify that
-application's NativeAOT build.
+interpreted build does not. Build and test your application in the mode you
+intend to deploy.
 
-The PostgreSQL sample includes EF model and query generation for its particular
-workload. That supplies code needed by its NativeAOT path; it does not establish
-that every EF application works without adaptation.
+The PostgreSQL sample generates its EF model and queries at build time so they
+can run under NativeAOT.
 
-## A debug configuration is not a debugger
+## Debugging
 
-The current release does not ship a supported debugger adapter. Selecting a
-configuration whose name includes `Debug` does not add breakpoint support.
-The execution mode and the availability of a debugger are separate concerns.
+Breakpoint debugging is currently unavailable in both execution modes.
 
 For the commands, use [build and run](run-and-rebuild.md). For validation in each
 mode, use [sandbox integration tests](test-an-application.md).

@@ -32,6 +32,18 @@ Add a page for a feature when a test exercises that feature through the interfac
 
 **Exception:** None.
 
+## Write for the developer using the product
+
+Explain concrete behavior, requirements and actions. Keep internal acceptance
+assessments and statements about what a test result proves in issue comments or
+review reports. When a limitation matters to the reader, name it and explain
+what they can do about it.
+
+**Not this:** “Passing this sample does not establish compatibility.” Say which
+build configuration to test or which feature requires a change.
+
+**Exception:** None.
+
 ## One home per topic
 
 Explain a topic once and link to it from everywhere else. Give container hygiene, the sandbox convention, the four invariants, and the benchmark method one page each.

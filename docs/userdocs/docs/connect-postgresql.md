@@ -117,9 +117,8 @@ Check the table independently in your database's SQL console. Restart the app
 after creating a row to confirm persistence comes from the database.
 
 Stop the application, run `dotnet run -c WispNativeAotRelease`, and repeat the
-same operations. The sample includes EF model and query generation needed for
-this NativeAOT workload; copying only its connection registration into a
-reflection-heavy EF application does not establish NativeAOT compatibility.
+same operations. The sample generates its EF model and queries at build time
+for NativeAOT.
 
 ## Local private trust
 

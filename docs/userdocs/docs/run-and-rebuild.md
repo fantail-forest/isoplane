@@ -47,7 +47,6 @@ configuration you would pass to `dotnet run`.
 
 ## Debugging
 
-The preview tools do not yet ship a supported debugger adapter. A configuration
-named `Debug` does not establish breakpoint support. Use ordinary .NET unit tests
+Breakpoint debugging is currently unavailable. Use ordinary .NET unit tests
 for isolated application logic and [sandbox integration tests](test-an-application.md)
 to exercise platform behavior in both modes.

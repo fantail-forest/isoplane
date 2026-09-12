@@ -2,10 +2,10 @@
 title: The application lifecycle
 ---
 
-An application instance is not a permanently running server process. Successive
-requests may reach different instances, and in-memory state and open connections
-are not guaranteed to survive between requests. An external database provides
-persistence independently of which instance handles the next request.
+Isoplane may reuse an application instance for subsequent requests or discard it
+after a request finishes. Successive requests may reach different instances, so
+in-memory state and open connections are not guaranteed to survive between
+requests. Store any state that needs to persist in a database external to the instance.
 
 ## A request owns its work
 
