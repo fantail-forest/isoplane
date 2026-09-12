@@ -1,0 +1,8 @@
+{
+  "package": "runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM",
+  "version": "10.0.0-rc.1.26357.1",
+  "sha256": "d5ecbf4efc3cd6756e9cbef17ab83764f9770c0a5f35de4fed787e5507f8ecc8",
+  "source": "https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-experimental/nuget/v3/index.json",
+  "llvm_version": "18.1.3",
+  "runtime_identifier": "linux-x64"
+}

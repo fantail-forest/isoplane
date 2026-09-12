@@ -5,6 +5,17 @@
 -->
 <Project>
   <PropertyGroup>
+    <_WispGuestCompilerDirectory>$([MSBuild]::NormalizeDirectory('$(_WispGuestRuntimeFeedDirectory)', '..', 'compiler'))</_WispGuestCompilerDirectory>
+  </PropertyGroup>
+  <Import Project="$(_WispGuestCompilerDirectory)Wisp.GuestCompiler.props" Condition="Exists('$(_WispGuestCompilerDirectory)Wisp.GuestCompiler.props')" />
+  <PropertyGroup>
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(_WispGuestCompilerDirectory)</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <Target Name="WispRequireGuestCompiler" BeforeTargets="CollectPackageReferences;PrepareForBuild" Condition="'$(WispContainerBuild)' != 'true'">
+    <Error Condition="'$(WispGuestCompilerVersion)' == ''" Text="The NativeAOT compiler is missing. Run isoplane setup with a current toolchain bundle, then isoplane doctor. Repository builds use guest-runtime/compiler/build.py build." />
+    <Error Condition="'$(WispGuestCompilerVersion)' != '' AND '$(NETCoreSdkRuntimeIdentifier)' != '$(WispGuestCompilerRuntimeIdentifier)'" Text="This supplied NativeAOT compiler supports $(WispGuestCompilerRuntimeIdentifier); the current SDK runs on $(NETCoreSdkRuntimeIdentifier)." />
+  </Target>
+  <PropertyGroup>
     <WispContainerBuild Condition="'$(WispContainerBuild)' == ''">$([MSBuild]::IsOSPlatform('OSX'))</WispContainerBuild>
     <WispOffline Condition="'$(WispOffline)' == ''">false</WispOffline>
     <NuGetAudit Condition="'$(WispOffline)' == 'true'">false</NuGetAudit>
@@ -53,7 +64,7 @@
 
   <ItemGroup Condition="'$(WispContainerBuild)' != 'true'">
     <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
-    <PackageReference Include="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)" />
+    <PackageReference Include="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(WispGuestCompilerVersion)" />
     <!-- The target pack: a direct reference outranks the compiler package's
          own, so the compiler's targets resolve the feed's framework. -->
     <PackageReference Include="runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" Version="$(WispGuestNativeAotPackVersion)" Condition="'$(WispGuestNativeAotPackVersion)' != ''" />

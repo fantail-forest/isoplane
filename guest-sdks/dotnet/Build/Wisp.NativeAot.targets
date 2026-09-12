@@ -25,6 +25,17 @@
     <Error Condition="'$(_WispNativeAotPackDigest)' != '$(WispGuestNativeAotPackSha512)'"
            Text="wisp: the framework pack at $(_WispNativeAotPackDirectory) is not the pack the feed offers (digest $(_WispNativeAotPackDigest) vs $(WispGuestNativeAotPackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
   </Target>
+  <Target Name="WispNativeAotVerifyCompiler" DependsOnTargets="SetupProperties;WispRequireGuestCompiler" BeforeTargets="IlcCompile"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <PropertyGroup>
+      <_WispCompilerDigestFile>$([MSBuild]::NormalizeDirectory('$(IlcHostPackagePath)'))runtime.$(NETCoreSdkRuntimeIdentifier).microsoft.dotnet.ilcompiler.llvm.$(WispGuestCompilerVersion.ToLowerInvariant()).nupkg.sha512</_WispCompilerDigestFile>
+    </PropertyGroup>
+    <Error Condition="'$(IlcHostPackagePath)' == '' OR !Exists('$(_WispCompilerDigestFile)')" Text="The resolved NativeAOT compiler has no verified package identity. Run isoplane setup and restore the project." />
+    <ReadLinesFromFile File="$(_WispCompilerDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_WispCompilerDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_WispCompilerDigest)' != '$(WispGuestCompilerSha512)'" Text="The resolved NativeAOT compiler differs from the supplied toolchain. Restore the matching compiler package before building." />
+  </Target>
   <!-- The native shims from the pack, each after the shim that calls it:
        OpenSSL behind the cryptography shim, zlib behind the compression one. -->
   <Target Name="WispNativeAotLinkShims" DependsOnTargets="SetupProperties" BeforeTargets="LinkNativeLlvm"

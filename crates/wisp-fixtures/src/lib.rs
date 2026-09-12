@@ -169,6 +169,7 @@ pub fn dotnet_for(name: &str, runtime: GuestRuntime) -> Vec<u8> {
 }
 
 fn dotnet_path(name: &str, runtime: GuestRuntime) -> PathBuf {
+    verify_compiler_for(runtime);
     build_selected(
         "guests/build-dotnet.sh",
         Some(name),
@@ -202,7 +203,22 @@ pub fn runtime_acceptance_for(runtime: GuestRuntime) -> Vec<u8> {
     read(&path)
 }
 
+/// The unoptimised NativeAOT compiler regression guest, rebuilt when its
+/// source or verified compiler changes.
+pub fn compiler_acceptance() -> Vec<u8> {
+    guest_compiler_feed();
+    let path = build_selected(
+        "guest-runtime/tests/guest/build.sh",
+        Some("compiler"),
+        Some("nativeaot"),
+    )
+    .join("guest-runtime/tests/guest/out/nativeaot/guest_compiler_acceptance.wasm");
+    assert_attributed_to_feed(&path, GuestRuntime::NativeAot);
+    read(&path)
+}
+
 fn runtime_acceptance_path(runtime: GuestRuntime) -> PathBuf {
+    verify_compiler_for(runtime);
     build_selected(
         "guest-runtime/tests/guest/build.sh",
         None,
@@ -267,6 +283,51 @@ pub fn guest_runtime_feed() -> PathBuf {
     .clone()
 }
 
+fn verify_compiler_for(runtime: GuestRuntime) {
+    match runtime {
+        GuestRuntime::NativeAot => {
+            guest_compiler_feed();
+        }
+        GuestRuntime::Mono => {}
+    }
+}
+
+/// The verified NativeAOT compiler beside the selected runtime feed.
+/// Default fixtures require current sources; `WISP_TEST_RUNTIME_FEED` permits
+/// explicitly selected historical artifacts after checking their integrity.
+pub fn guest_compiler_feed() -> PathBuf {
+    static COMPILER: OnceLock<PathBuf> = OnceLock::new();
+    COMPILER
+        .get_or_init(|| {
+            let feed = guest_runtime_feed();
+            let compiler = feed
+                .parent()
+                .expect("an absolute runtime feed has a parent")
+                .join("compiler");
+            let action = if std::env::var_os("WISP_TEST_RUNTIME_FEED").is_some() {
+                "verify-artifact"
+            } else {
+                "verify-current"
+            };
+            let output = Command::new("python3")
+                .arg(repo_root().join("guest-runtime/compiler/build.py"))
+                .arg(action)
+                .arg("--output")
+                .arg(&compiler)
+                .output()
+                .expect("python3 is required to verify NativeAOT compiler artifacts");
+            assert!(
+                output.status.success(),
+                "NativeAOT compiler artifacts at {} are not valid for this test run:\n{}{}",
+                compiler.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            compiler
+        })
+        .clone()
+}
+
 /// The identity of the pack the local feed currently offers `runtime`, from
 /// the props file `guest-runtime/build.sh feed` writes: the pack version and
 /// the digest NuGet records for the package, `version@sha512:digest`, the
@@ -304,10 +365,13 @@ pub fn feed_runtime_identity(runtime: GuestRuntime) -> String {
 /// segment that starts with a digit), for a consumer that maps package ids
 /// to sources.
 pub fn feed_package_ids() -> Vec<String> {
-    let feed = guest_runtime_feed();
-    let mut ids: Vec<String> = std::fs::read_dir(&feed)
+    package_ids(&guest_runtime_feed())
+}
+
+fn package_ids(feed: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(feed)
         .unwrap_or_else(|e| panic!("{} is unreadable ({e})", feed.display()))
-        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.expect("read a package feed entry"))
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
             let stem = name.strip_suffix(".nupkg")?.to_string();

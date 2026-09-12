@@ -49,25 +49,24 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         .arg(&packages)
         .args(["--name", "template-packages", "--configfile"])
         .arg(&config));
-    // A project with source mapping must map the source-built runtime pack's
-    // ids to the feed that offers them, as a customer's would; the feed is
-    // this checkout's, offered to the Mono profile through the environment
-    // the dev harness sets.
-    let feed = crate::guest_runtime_feed();
-    let runtime_mapping = if feed.is_dir() {
+    let mut runtime_mapping = String::new();
+    for (name, feed) in [
+        ("wisp-guest-runtime", crate::guest_runtime_feed()),
+        ("wisp-guest-compiler", crate::guest_compiler_feed()),
+    ] {
         run(Command::new("dotnet")
             .args(["nuget", "add", "source"])
             .arg(&feed)
-            .args(["--name", "wisp-guest-runtime", "--configfile"])
+            .args(["--name", name, "--configfile"])
             .arg(&config));
-        let patterns: String = crate::feed_package_ids()
+        let patterns: String = super::package_ids(&feed)
             .iter()
             .map(|id| format!("<package pattern=\"{id}\" />"))
             .collect();
-        format!("<packageSource key=\"wisp-guest-runtime\">{patterns}</packageSource>\n")
-    } else {
-        String::new()
-    };
+        runtime_mapping.push_str(&format!(
+            "<packageSource key=\"{name}\">{patterns}</packageSource>\n"
+        ));
+    }
     let xml = std::fs::read_to_string(&config).expect("read generated package sources");
     let xml = xml.replace(
         "</configuration>",

@@ -10,6 +10,24 @@ public sealed class RuntimePublicationTests : IDisposable
     private static string SdkDirectory([CallerFilePath] string source = "") => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, ".."));
 
     [Theory]
+    [InlineData("", "linux-x64", "compiler is missing")]
+    [InlineData("test-compiler", "linux-arm64", "supports linux-x64")]
+    public async Task native_compiler_prerequisites_fail_with_actionable_diagnostics(string version, string host, string diagnostic)
+    {
+        var project = WriteProject(
+            new XElement("PropertyGroup",
+                new XElement("_WispGuestRuntimeFeedDirectory", Path.Combine(directory, "feed")),
+                new XElement("WispContainerBuild", "false"),
+                new XElement("WispGuestCompilerVersion", version),
+                new XElement("WispGuestCompilerRuntimeIdentifier", "linux-x64"),
+                new XElement("NETCoreSdkRuntimeIdentifier", host)),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Wisp.NativeAot.props"))));
+        var result = await Run(Msbuild(project, "-t:WispRequireGuestCompiler"));
+        Assert.True(result.Exit != 0 && result.Output.Contains(diagnostic, StringComparison.Ordinal),
+            "A missing or incompatible compiler must fail before publication with its prerequisite diagnosis: " + result.Output);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(2)]
     public async Task a_container_publication_mounts_the_feed_and_requires_host_validation(int verdict)

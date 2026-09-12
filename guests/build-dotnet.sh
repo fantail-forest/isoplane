@@ -118,9 +118,17 @@ if [ -n "${WISP_TEST_RUNTIME_FEED:-}" ]; then
 else
   python3 "$ROOT/../guest-runtime/feed-identity.py" verify-current "$ROOT/../guest-runtime" "$FEED"
 fi
+COMPILER_DIRECTORY="$(dirname "$FEED")/compiler"
+COMPILER_INPUTS=()
+if [ "$RUNTIME" != mono ]; then
+  compiler_verification=verify-current
+  [ -z "${WISP_TEST_RUNTIME_FEED:-}" ] || compiler_verification=verify-artifact
+  python3 "$ROOT/../guest-runtime/compiler/build.py" "$compiler_verification" --output "$COMPILER_DIRECTORY"
+  COMPILER_INPUTS+=("$COMPILER_DIRECTORY/compiler.json")
+fi
 export WISP_GUEST_RUNTIME_FEED="$FEED"
 FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$FEED/Wisp.GuestRuntime.props" "$RUNTIME")
-INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config" "$ROOT/../global.json" "$FEED")
+INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config" "$ROOT/../global.json" "$FEED" "${COMPILER_INPUTS[@]}")
 
 is_stale() {
   local out="$1"

@@ -16,6 +16,19 @@
     <EventSourceSupport>true</EventSourceSupport>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispCompilerProbe)' == 'true'">
+    <Optimize>false</Optimize>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);WISP_COMPILER_PROBE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(WispCompilerProbe)' == 'true'">
+    <Compile Remove="App/**/*.cs" />
+    <Compile Include="../compiler/Handler.cs" />
+    <Compile Include="../../../../guest-sdks/dotnet/Abi/Tests/NativeCompilerProbe.cs" />
+    <DirectPInvoke Include="wisp_compiler_probe" />
+    <NativeLibrary Include="$(WispCompilerProbeObject)" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Remove="Payload/**/*.cs" />
     <ProjectReference Include="../../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />

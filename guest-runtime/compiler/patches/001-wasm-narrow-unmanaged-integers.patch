@@ -1,0 +1,94 @@
+diff --git a/src/coreclr/jit/llvmcodegen.cpp b/src/coreclr/jit/llvmcodegen.cpp
+index 7ed301a313..a89f61b34a 100644
+--- a/src/coreclr/jit/llvmcodegen.cpp
++++ b/src/coreclr/jit/llvmcodegen.cpp
+@@ -141,6 +141,25 @@ void Llvm::initializeFunctions()
+     annotateFunctions();
+ }
+ 
++// The WebAssembly C ABI extends scalar integers smaller than i32 at the call
++// boundary. LLVM integer types alone leave the high bits unspecified.
++static llvm::Attribute::AttrKind getUnmanagedIntegerExtension(CorInfoType type)
++{
++    switch (type)
++    {
++        case CORINFO_TYPE_BOOL:
++        case CORINFO_TYPE_CHAR:
++        case CORINFO_TYPE_UBYTE:
++        case CORINFO_TYPE_USHORT:
++            return llvm::Attribute::ZExt;
++        case CORINFO_TYPE_BYTE:
++        case CORINFO_TYPE_SHORT:
++            return llvm::Attribute::SExt;
++        default:
++            return llvm::Attribute::None;
++    }
++}
++
+ void Llvm::annotateFunctions()
+ {
+     auto addDerefAttr = [this](Function* llvmFunc, unsigned argNum, unsigned derefSize, bool mayBeNull = false) {
+@@ -166,6 +185,28 @@ void Llvm::annotateFunctions()
+ 
+         if (funcIdx == ROOT_FUNC_IDX)
+         {
++            if (_compiler->opts.IsReversePInvoke())
++            {
++                for (unsigned i = 0; i < _compiler->lvaCount; i++)
++                {
++                    LclVarDsc* varDsc = _compiler->lvaGetDesc(i);
++                    if (varDsc->lvIsParam)
++                    {
++                        llvm::Attribute::AttrKind extension = getUnmanagedIntegerExtension(varDsc->lvCorInfoType);
++                        if (extension != llvm::Attribute::None)
++                        {
++                            llvmFunc->addParamAttr(varDsc->lvLlvmArgNum, extension);
++                        }
++                    }
++                }
++                CORINFO_SIG_INFO* sig = &m_info->compMethodInfo->args;
++                llvm::Attribute::AttrKind extension = getUnmanagedIntegerExtension(sig->retType);
++                if (extension != llvm::Attribute::None)
++                {
++                    llvmFunc->addRetAttr(extension);
++                }
++            }
++
+             if ((_compiler->info.compFlags & CORINFO_FLG_DONT_INLINE) != 0)
+             {
+                 llvmFunc->addFnAttr(llvm::Attribute::NoInline);
+@@ -1860,6 +1901,34 @@ void Llvm::buildCall(GenTreeCall* call)
+     CallSiteFacts callSiteFacts = getCallSiteFactsForCall(call);
+     llvm::CallBase* callValue = emitCallOrInvoke(llvmFuncCallee, AsRef(argVec), callSiteFacts);
+ 
++    if (call->IsUnmanaged())
++    {
++        Function* directCallee = callValue->getCalledFunction();
++        unsigned index = 0;
++        for (CallArg& arg : call->gtArgs.Args())
++        {
++            llvm::Attribute::AttrKind extension = getUnmanagedIntegerExtension(getLlvmArgTypeForCallArg(&arg));
++            if (extension != llvm::Attribute::None)
++            {
++                callValue->addParamAttr(index, extension);
++                if (directCallee != nullptr)
++                {
++                    directCallee->addParamAttr(index, extension);
++                }
++            }
++            index++;
++        }
++        llvm::Attribute::AttrKind extension = getUnmanagedIntegerExtension(call->gtCorInfoType);
++        if (extension != llvm::Attribute::None)
++        {
++            callValue->addRetAttr(extension);
++            if (directCallee != nullptr)
++            {
++                directCallee->addRetAttr(extension);
++            }
++        }
++    }
++
+     if (JitConfig.JitGcStress())
+     {
+         callValue = emitGcStressCall(call, callValue);

@@ -25,7 +25,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Wisp.AspNetCore.Tests" />
-    <Compile Include="Abi/**/*.cs" />
+    <Compile Include="Abi/**/*.cs" Exclude="Abi/Tests/**/*.cs" />
     <Compile Include="Runtime/**/*.cs" />
     <Compile Include="Sdk/**/*.cs" />
   </ItemGroup>
