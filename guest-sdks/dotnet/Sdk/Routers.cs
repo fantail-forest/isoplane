@@ -36,9 +36,8 @@ public interface IStreamingHttpRouter : IWispRouter
 public interface IWispHandler
 {
     /// <summary>
-    /// Handle one HTTP request. Whether the instance is reused between
-    /// requests or reset first is the app's <c>lifecycle</c> setting, and a
-    /// handler depends on neither.
+    /// Handles one HTTP request. Instances may be reused or evicted between requests;
+    /// do not rely on retained in-process state or work continuing after the response.
     /// </summary>
     Task<Response> HandleAsync(Request req, Ctx ctx);
 }

@@ -17,7 +17,10 @@ dotnet add package Isoplane.Testing --version "$preview_version" \
   --source "$preview_release/packages"
 ```
 
-Replace the generated test with:
+Replace the generated test with the example below. It expects the original
+template response; if you followed the first-application tutorial, change the
+expected body to `Hello from my API!`. For another application, assert the
+response its route should return.
 
 ```csharp
 using Wisp.Testing;

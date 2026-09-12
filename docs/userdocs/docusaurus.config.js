@@ -20,7 +20,7 @@ export default {
   themeConfig: {
     colorMode: {respectPrefersColorScheme: true},
     navbar: {title: 'Isoplane', items: [
-      {type: 'doc', docId: 'index', label: 'Developer guides', position: 'left'},
+      {type: 'doc', docId: 'index', label: 'Documentation', position: 'left'},
     ]},
     prism: {theme: prismThemes.github, darkTheme: prismThemes.dracula,
       additionalLanguages: ['bash', 'csharp', 'json', 'markup']},

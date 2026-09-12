@@ -12,7 +12,7 @@ sandbox's capabilities and the selected compilation mode.
 
 ## Create the application wrapper
 
-Follow [Create an application](create-an-application.md) to make a `MyApi`
+Follow [the template creation steps](create-an-application.md#create-the-application) to make a `MyApi`
 project next to your existing code. This supplies the matching SDK, configurations
 and local manifest. Move your startup registrations into its `Application.cs`.
 If your application logic is already in a separate library, add an ordinary

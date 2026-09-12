@@ -5,4 +5,4 @@
 - [sqlite.md](sqlite.md): connection discipline, migrations, what lives in rows, fencing
 - [nativeaot-llvm.md](nativeaot-llvm.md): the C# guest toolchain and the PAL
 - [tracing.md](tracing.md): spans, events, export
-- [docusaurus.md](docusaurus.md): generated reference docs, hand-written guides, what the site describes
+- [docusaurus.md](docusaurus.md): Diátaxis structure, generated reference docs, hand-written guides, what the site describes

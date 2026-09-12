@@ -14,7 +14,7 @@ public sealed class BindingException : Exception
 {
     internal BindingException(FutureError e) => WispError = (int)e;
     /// <summary>
-    /// The <c>wisp-abi::result::FutureError</c> discriminant the host returned.
+    /// The numeric error code returned by the host for the failed capability call.
     /// </summary>
     public int WispError { get; }
 }
@@ -70,9 +70,8 @@ public sealed class Response
         new(status, System.Text.Encoding.UTF8.GetBytes(json), "application/json");
 
     /// <summary>
-    /// Bytes with no headers, the shape a Durable Instance reply takes. The
-    /// array is handed to the host as is, so a reused buffer must be copied
-    /// first.
+    /// Returns bytes without a Content-Type header. Copy a shared buffer before
+    /// passing it here if other code might modify it before the response completes.
     /// </summary>
     public static Response Raw(byte[] body, ushort status = 200) =>
         new(status, body, (string?)null);

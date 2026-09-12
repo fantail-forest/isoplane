@@ -10,10 +10,17 @@ using Microsoft.Extensions.Hosting;
 
 namespace Wisp.AspNetCore;
 
-/// <summary>Registers ASP.NET hosting on WISP's buffered request transport.</summary>
+/// <summary>Hosts ASP.NET applications on WISP's buffered and streaming request transport.</summary>
 public static class WispHosting
 {
-    /// <summary>Creates a builder without configuration files, environment variables or a listener.</summary>
+    /// <summary>Creates an ASP.NET builder with host-provided runtime configuration and sandbox logging.</summary>
+    /// <param name="applicationName">The assembly name used to discover application endpoints.</param>
+    /// <returns>A builder configured to receive requests from WISP without opening a listener.</returns>
+    /// <remarks>
+    /// The environment name is Production. Configuration files and environment variables are not loaded.
+    /// Runtime configuration, including local User Secrets, becomes available after activation;
+    /// resolve request-dependent settings through dependency injection rather than capturing them during preparation.
+    /// </remarks>
     public static WebApplicationBuilder CreateBuilder(string applicationName)
     {
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions

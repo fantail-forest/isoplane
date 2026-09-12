@@ -2,16 +2,9 @@
 title: Build and run
 ---
 
-The project selects its execution mode through ordinary MSBuild configuration.
-The template provides two configurations:
-
-| Configuration | Execution |
-| --- | --- |
-| `WispInterpretedDebug` | Interpreted WebAssembly guest |
-| `WispNativeAotRelease` | Ahead-of-time compiled WebAssembly guest |
-
-`PublishAot` selects the mode in the project file. You do not need to configure
-the underlying interpreter by name. The target remains `wasi-wasm` in both modes.
+Use the configuration selected in your project file. The examples below use the
+configurations supplied by the template. See [execution modes](execution-modes.md)
+for the differences between them.
 
 ## Build and run a configuration
 
@@ -32,9 +25,9 @@ A successful build includes WebAssembly publication and platform validation.
 Compilation failures and unsupported imports are build failures. Fix them before
 running the new application.
 
-NativeAOT can expose trimming or dynamic-code assumptions that do not affect an
-interpreted build. Test the configuration you intend to use, even if you normally
-iterate with the interpreted configuration.
+Test the configuration you intend to use, even if you normally iterate with
+the interpreted configuration. See [execution modes](execution-modes.md) when a
+NativeAOT build exposes different compatibility requirements.
 
 ## Watch for source changes
 
