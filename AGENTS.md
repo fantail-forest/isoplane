@@ -66,9 +66,9 @@ migration into unrelated work.
 ## Common Operations
 
 ```sh
-scripts/setup                                     # Install native sandbox and guest tools
-scripts/dev <command>                              # Run a native sandboxed command
-scripts/dev                                       # A sandboxed shell
+scripts/setup                                     # Install native guest tools
+scripts/dev <command>                              # Run a native development command
+scripts/dev                                       # A development shell
 scripts/dev --container --build                    # Optional Linux toolchain image
 scripts/dev --container --stop                     # Remove your container when done
 
@@ -130,7 +130,7 @@ These rules are **non-negotiable**. If you can't satisfy a requirement without b
 | **No `unsafe`** except for operations that are unsafe by nature (FFI, memory mapping, deserialising native code)                                | Give every such block a `// SAFETY:` comment naming the invariant and where the caller enforces it. Put `#![forbid(unsafe_code)]` in every crate with no such operation. |
 | **No C# `DllImport` or `unsafe`** outside the SDK's one interop layer | None. |
 | **No test that cannot fail** (prints a figure and asserts nothing; asserts a constant against itself; downgrades a miss to a pass by default)   | None.                                                                                                                                                              |
-| **No test that is known to fail** committed without the fix that makes it pass | None. Marking it ignored, or inverting the assertion so it passes by asserting the defect, is the same thing: it records that the code should be broken. Never leave anything in an intentionally broken state. |
+| **No test that is known to fail** committed without the fix that makes it pass | The two external-adapter CLI debugger tests are explicitly ignored by owner direction until #105 supplies the modern adapter and packaged prerequisites; restore them then. Otherwise, ignoring a known failure or asserting the defect is prohibited. |
 
 ### Types
 

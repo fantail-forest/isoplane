@@ -28,9 +28,8 @@ guests/.build-dotnet.lock
 guest-sdks/dotnet/bin/
 guest-sdks/dotnet/obj/
 
-# Native sandbox home, temporary files and dependency caches.
+# Local development tools and caches.
 /.wisp-dev/
-/scripts/node_modules/
 /scripts/**/__pycache__/
 
 # Local guest development state and build logs.

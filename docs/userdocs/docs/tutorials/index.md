@@ -21,9 +21,8 @@ the fixture guests are written against.
 :::
 
 :::info About `scripts/dev`
-Every command is written as `scripts/dev <cmd>`, which runs it inside the
-`wisp-dev:latest` image carrying Rust's wasm targets, the .NET SDK,
-`wasm-tools` and wasi-sdk. It is not a requirement: drop the prefix and the
-same commands run on any machine with those tools installed. See
-[Use the sandbox](../how-to/use-the-sandbox.md).
+Every command is written as `scripts/dev <cmd>`, which runs it directly on
+the host and adds the repository's installed guest tools to `PATH`.
+The optional Linux toolchain image uses `scripts/dev --container <cmd>`. See
+[Use development tools](../how-to/use-development-tools.md).
 :::

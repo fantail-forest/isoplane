@@ -15,16 +15,15 @@ explains the current enforcement boundaries and limitations.
 
 ## Building and testing
 
-`scripts/dev` runs commands natively through the pinned open-source
-[Sandbox Runtime](https://github.com/anthropics/sandbox-runtime): Seatbelt on
-macOS and Bubblewrap on Linux. Install Rust, Node.js (20.11 or newer), Python 3,
-and your platform's C compiler first; Linux also needs `bubblewrap` and `socat`.
+`scripts/dev` runs commands directly on the host, using your environment and
+adding `.wisp-dev/tools/bin` to `PATH`. Install Rust, Python 3 and your
+platform's C compiler first. Node.js is needed for frontend and docs builds.
 
 ```sh
-scripts/setup                             # sandbox tool and Rust guest tools
+scripts/setup                             # Rust guest tools
 scripts/dev cargo build --workspace --all-targets
 scripts/dev cargo test --workspace
-scripts/dev                               # interactive sandboxed shell
+scripts/dev                               # interactive development shell
 ```
 
 C# builds require the .NET 10 SDK. On macOS, start Docker Desktop or a
@@ -40,10 +39,8 @@ scripts/dev cargo test --workspace
 The optional repository toolchain image remains available through
 `scripts/dev --container --build` for running Linux toolchain commands.
 
-The sandbox uses a separate home and caches in `.wisp-dev`, permits local TCP
-and package downloads, and does not inherit arbitrary shell credentials. It
-imposes no CPU affinity or minimum core count. See [the sandbox guide](docs/userdocs/docs/how-to/use-the-sandbox.md)
-for manual runs, network access, and the optional container workflow.
+See [the development tools guide](docs/userdocs/docs/how-to/use-development-tools.md)
+for native commands and the optional container workflow.
 
 Tests that need a guest module build it on demand through the `wisp-fixtures`
 crate, which runs `guests/build.sh` and `guests/build-dotnet.sh` and fails
@@ -67,4 +64,4 @@ cargo metadata --no-deps --format-version 1 \
 | `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |
 | `docs/userdocs`       | The Docusaurus documentation site.                                        |
 | `docs/opinion-registry` | How software is built here.                                             |
-| `scripts/`            | `scripts/dev` sandboxes a local command; `scripts/clean` reclaims build intermediates. |
+| `scripts/`            | `scripts/dev` runs a local command; `scripts/clean` reclaims build intermediates. |

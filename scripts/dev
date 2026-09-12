@@ -1,36 +1,11 @@
 #!/usr/bin/env python3
-"""Run local commands in an OS sandbox: scripts/dev [--allow-domain HOST] <command> ..."""
+"""Run a local development command: scripts/dev [--container] [command ...]"""
 
-import json
 import os
-import shlex
-import signal
-import subprocess
-import tempfile
 from pathlib import Path
-import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-
-
-def local_docker():
-    """Resolve the selected macOS daemon without exposing Docker credentials."""
-    docker = shutil.which("docker")
-    if sys.platform != "darwin" or not docker:
-        return None
-    endpoint = os.environ.get("DOCKER_HOST")
-    if not endpoint or os.environ.get("DOCKER_CONTEXT"):
-        result = subprocess.run(
-            [docker, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode:
-            sys.exit(f"Cannot resolve the Docker context: {result.stderr.strip()}")
-        endpoint = result.stdout.strip()
-    if not endpoint.startswith("unix://"):
-        sys.exit("scripts/dev requires a local Docker Unix socket; select a local Docker context or set DOCKER_HOST.")
-    return Path(docker).resolve(), Path(endpoint.removeprefix("unix://")).resolve()
 
 
 def main():
@@ -39,122 +14,14 @@ def main():
         os.execv(str(ROOT / "scripts/dev-container"), ["dev-container", *args[1:]])
     if args and args[0] in ("--help", "-h"):
         print(__doc__)
-        print("Network: local testing and package downloads; --allow-domain HOST permits another destination.")
-        print("Use --container for the optional Docker toolchain. No CPU affinity is imposed.")
+        print("Commands inherit your environment and run in the repository root.")
         return
-    domains = ["index.crates.io", "static.crates.io", "static.rust-lang.org",
-               "api.nuget.org", "*.nuget.org", "pkgs.dev.azure.com", "*.vsassets.io",
-               "github.com", "*.githubusercontent.com"]
-    while args and args[0] == "--allow-domain":
-        if len(args) < 2:
-            sys.exit("--allow-domain needs a host name")
-        domains.append(args[1])
-        del args[:2]
     if args and args[0] == "--":
         args.pop(0)
-    if args and args[0].startswith("--"):
-        sys.exit(f"Unknown option {args[0]}; see scripts/dev --help")
-    args = args or ["/bin/bash", "--noprofile", "--norc"]
-    runtime = ROOT / "scripts/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js"
-    node = shutil.which("node")
-    if not node or not runtime.is_file():
-        sys.exit("Missing development tools: install Node >=20.11 and run npm ci --prefix scripts")
-
-    state = ROOT / ".wisp-dev"
-    for name in ("home", "cargo", "nuget"):
-        (state / name).mkdir(parents=True, exist_ok=True)
-    home = Path.home().resolve()
-    rustup = Path(os.environ.get("RUSTUP_HOME", home / ".rustup")).resolve()
-    cargo_bin = Path(os.environ.get("CARGO_HOME", home / ".cargo")) / "bin"
-    tool_dirs = [rustup, cargo_bin.resolve(), home / ".dotnet", Path(node).resolve().parent.parent]
-    if os.environ.get("WASI_SDK_PATH"):
-        tool_dirs.append(Path(os.environ["WASI_SDK_PATH"]).resolve())
-    tool_dirs = [p for p in tool_dirs if p.exists()]
-    docker = local_docker()
-    if docker:
-        tool_dirs.append(docker[0].parent)
-    env = {
-        "HOME": str(state / "home"),
-        "CARGO_HOME": str(state / "cargo"),
-        "RUSTUP_HOME": str(rustup),
-        "NUGET_PACKAGES": str(state / "nuget"),
-        "WispCompilerCache": str(state / "compiler"),
-        "PATH": ":".join([str(state / "tools/bin"), str(cargo_bin), str(home / ".dotnet"),
-                           "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]),
-        "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
-        "DOTNET_NOLOGO": "1",
-        "RUST_BACKTRACE": "1",
-    }
-    if sys.platform == "darwin":
-        def xcrun(*options):
-            return subprocess.check_output(["xcrun", *options], text=True).strip()
-
-        env["CC"] = xcrun("--find", "clang")
-        env["CXX"] = xcrun("--find", "clang++")
-        env["SDKROOT"] = xcrun("--show-sdk-path")
-        target = "AARCH64" if os.uname().machine == "arm64" else "X86_64"
-        env[f"CARGO_TARGET_{target}_APPLE_DARWIN_LINKER"] = env["CC"]
-    for key, value in os.environ.items():
-        if key.startswith("WISP_") or key in ("TERM", "LANG", "WASI_SDK_PATH", "CARGO_BUILD_JOBS"):
-            env[key] = value
-    os.chdir(ROOT / "scripts")
-    settings = {
-        "allowPty": True,
-        "network": {
-            "allowedDomains": domains,
-            "deniedDomains": [],
-            "allowLocalBinding": True,
-        },
-        "filesystem": {
-            "denyRead": ["/Users", "/home", "/root"],
-            "allowRead": [str(ROOT), *map(str, tool_dirs)],
-            "allowWrite": [str(ROOT)],
-            "denyWrite": [str(ROOT / name) for name in (".git", ".vscode", ".idea")],
-        },
-    }
-    if docker:
-        executable, socket = docker
-        env["DOCKER_HOST"] = "unix://" + str(socket)
-        env["PATH"] = str(executable.parent) + ":" + env["PATH"]
-        settings["network"]["allowUnixSockets"] = [str(socket)]
-        settings["filesystem"]["allowRead"].append(str(socket))
-    if sys.platform == "darwin":
-        settings["network"]["allowMachLookup"] = ["com.apple.trustd.agent"]
-        # CoreCLR's named mutexes use this fixed path, independently of TMPDIR.
-        settings["filesystem"]["allowWrite"].append(str(Path("/tmp/.dotnet").resolve()))
-        # macOS system tools can choose the per-user OS scratch directory instead of TMPDIR.
-        settings["filesystem"]["allowWrite"].append(str(Path(tempfile.gettempdir()).resolve()))
-    env["PATH"] = str(Path(node).parent) + ":" + env["PATH"]
-    # Unix socket path limits apply even when the checkout or inherited TMPDIR is deep.
-    with tempfile.TemporaryDirectory(prefix="wisp-", dir="/tmp") as scratch, \
-            tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir=state) as config:
-        scratch = str(Path(scratch).resolve())
-        env["TMPDIR"] = scratch
-        env["CLAUDE_CODE_TMPDIR"] = scratch
-        settings["filesystem"]["allowRead"].append(scratch)
-        settings["filesystem"]["allowWrite"].append(scratch)
-        json.dump(settings, config)
-        config.flush()
-        child = subprocess.Popen(
-            [node, str(runtime), "--settings", config.name, "-c", "cd " + shlex.quote(str(ROOT)) + " && exec " + shlex.join(args)],
-            env=env,
-        )
-        received_signal = None
-
-        def forward_signal(number, _frame):
-            nonlocal received_signal
-            received_signal = number
-            child.send_signal(number)
-
-        signal.signal(signal.SIGINT, forward_signal)
-        signal.signal(signal.SIGTERM, forward_signal)
-        code = child.wait()
-    if received_signal:
-        code = 128 + received_signal
-    elif code < 0:
-        code = 128 - code
-    sys.exit(code)
-
+    args = args or [os.environ.get("SHELL", "/bin/bash")]
+    os.chdir(ROOT)
+    os.environ["PATH"] = str(ROOT / ".wisp-dev/tools/bin") + os.pathsep + os.environ.get("PATH", os.defpath)
+    os.execvp(args[0], args)
 
 
 if __name__ == "__main__":

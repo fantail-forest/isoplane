@@ -542,12 +542,16 @@ fn installed_debug_acceptance(mode: &str) {
     );
 }
 
+// TODO(#105): Restore this test when the modern .NET adapter and its test prerequisites are packaged.
 #[test]
+#[ignore = "requires the modern .NET debugger adapter and packaged test prerequisites (#105)"]
 fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
     installed_debug_acceptance("continue");
 }
 
+// TODO(#105): Restore this test when the modern .NET adapter and its test prerequisites are packaged.
 #[test]
+#[ignore = "requires the modern .NET debugger adapter and packaged test prerequisites (#105)"]
 fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
     installed_debug_acceptance("stop");
 }
