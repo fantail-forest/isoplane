@@ -308,7 +308,7 @@ so the conflict does not recur.
 
 Use the repository issue tracker. Apply the acceptance-criteria rule under Testing Standards. Ask in the current conversation unless posting to the issue is authorized.
 
-Tracking issues have exactly one checkbox per linked issue, with each issue listed once per tracker. Group related issues under functional subheadings, not dates or work sessions. Put detailed acceptance criteria in the child issue; create an issue for untracked work rather than a compound or unlinked tracker checkbox. Keep bodies focused on current scope, decisions, dependencies and remaining work. Use checkboxes and linked issues for current status; lengthy current-state summaries belong in comments too. Retrospective status, test runs and chronology belong in comments; retain historical context in the body only when it explains work still to do. Preserve evidence when restructuring. A milestone tracker includes required work, completed or pending, and clearly labeled optional work under consideration for that milestone. Keep deferred work and unrelated issue references out of its body. For an issue spanning milestone and later work, state the required portion explicitly.
+Follow the [issue-tracking opinion](docs/opinion-registry/workflow/issue-tracking.md) when creating, restructuring, triaging or closing issues. It defines tracker checkboxes, functional grouping, milestone scope, evidence and where status belongs.
 
 ### Measurements
 

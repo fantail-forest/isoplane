@@ -30,6 +30,8 @@ For conflicts with AGENTS.md, follow its [owner-resolution procedure](../../AGEN
 - [production/](production/INDEX.md): isolation, metering, observability
 - [measurement/](measurement/INDEX.md): quoting measurements, benchmarking
 
+- [workflow/](workflow/INDEX.md): issue types, functional tracking, milestone scope, triage and closure
+
 ## Adding Opinions
 
 Add opinions when they represent a significant pit of success: a practice that, if followed by default, prevents a known class of problems. Don't add opinions for:
