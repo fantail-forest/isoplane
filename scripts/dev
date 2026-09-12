@@ -61,7 +61,7 @@ def main():
         sys.exit("Missing development tools: install Node >=20.11 and run npm ci --prefix scripts")
 
     state = ROOT / ".wisp-dev"
-    for name in ("home", "tmp", "cargo", "nuget"):
+    for name in ("home", "cargo", "nuget"):
         (state / name).mkdir(parents=True, exist_ok=True)
     home = Path.home().resolve()
     rustup = Path(os.environ.get("RUSTUP_HOME", home / ".rustup")).resolve()
@@ -75,8 +75,6 @@ def main():
         tool_dirs.append(docker[0].parent)
     env = {
         "HOME": str(state / "home"),
-        "TMPDIR": str(state / "tmp"),
-        "CLAUDE_CODE_TMPDIR": str(state / "tmp"),
         "CARGO_HOME": str(state / "cargo"),
         "RUSTUP_HOME": str(rustup),
         "NUGET_PACKAGES": str(state / "nuget"),
@@ -127,7 +125,14 @@ def main():
         # macOS system tools can choose the per-user OS scratch directory instead of TMPDIR.
         settings["filesystem"]["allowWrite"].append(str(Path(tempfile.gettempdir()).resolve()))
     env["PATH"] = str(Path(node).parent) + ":" + env["PATH"]
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir=state) as config:
+    # Unix socket path limits apply even when the checkout or inherited TMPDIR is deep.
+    with tempfile.TemporaryDirectory(prefix="wisp-", dir="/tmp") as scratch, \
+            tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir=state) as config:
+        scratch = str(Path(scratch).resolve())
+        env["TMPDIR"] = scratch
+        env["CLAUDE_CODE_TMPDIR"] = scratch
+        settings["filesystem"]["allowRead"].append(scratch)
+        settings["filesystem"]["allowWrite"].append(scratch)
         json.dump(settings, config)
         config.flush()
         child = subprocess.Popen(
