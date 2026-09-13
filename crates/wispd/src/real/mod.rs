@@ -44,6 +44,9 @@ pub fn engine_config(
 /// one of them.
 pub struct RealCells {
     engine: Arc<wisp_engine::WispEngine>,
+    /// Compiled template artifacts, mapped rather than read, so a restart
+    /// does not recompile.
+    artifacts: std::path::PathBuf,
     cells: Vec<Arc<Cell>>,
     /// Configured application-to-cell assignment.
     placement: RwLock<HashMap<String, usize>>,
@@ -75,6 +78,42 @@ impl RealPaths {
 impl RealCells {
     pub fn cells(&self) -> &[Arc<Cell>] {
         &self.cells
+    }
+
+    /// Local preparation using this node's existing compiler-owned artifact cache.
+    pub fn local_preparation(&self) -> anyhow::Result<wisp_prepare::LocalPreparation> {
+        // SAFETY: the node owns this cache and uses only the atomic, content-addressed
+        // compiler writer, the same provenance required by its legacy mapped loader.
+        let cache = unsafe {
+            wisp_engine::CompilationCache::from_trusted_directory(self.artifacts.clone())
+        }?;
+        Ok(wisp_prepare::LocalPreparation::with_cache(Arc::new(cache))?)
+    }
+
+    /// Registers a prepared template without acquiring artifacts or invoking preparation.
+    pub async fn install_prepared(
+        &self,
+        app: &str,
+        version: &str,
+        tenant: &str,
+        manifest: wisp_abi::config::AppManifest,
+        template: wisp_engine::Template,
+    ) -> anyhow::Result<ModuleId> {
+        let cell = self.cell_for(app)?;
+        let module = ModuleId::new(app, version);
+        let activator = EngineActivator::new(self.engine.clone(), template, module.clone());
+        cell.register_module(tenant, Arc::new(activator), manifest)?;
+        self.tenants
+            .write()
+            .insert(app.to_owned(), tenant.to_owned());
+        self.modules.write().insert(module.clone());
+        tracing::info!(app, version, cell = %cell.cfg.name, "prepared module registered");
+        Ok(module)
+    }
+
+    /// The exact execution engine used to admit and activate this node's prepared templates.
+    pub fn engine(&self) -> &wisp_engine::WispEngine {
+        &self.engine
     }
 }
 

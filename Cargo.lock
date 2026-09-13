@@ -2083,6 +2083,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3967,6 +3976,16 @@ dependencies = [
 
 [[package]]
 name = "wasm-encoder"
+version = "0.244.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "990065f2fe63003fe337b932cfb5e3b80e0b4d0f5ff650e6985b1048f62c8319"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.244.0",
+]
+
+[[package]]
+name = "wasm-encoder"
 version = "0.254.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09480d646178e5fdd12bb06e812d0af9a3a191dbc9cd697fdc86687beade7393"
@@ -5180,6 +5199,9 @@ dependencies = [
  "anyhow",
  "blake3",
  "cpu-time",
+ "libc",
+ "linux-raw-sys 0.12.1",
+ "memmap2",
  "parking_lot",
  "postcard",
  "rayon",
@@ -5269,6 +5291,31 @@ dependencies = [
  "wisp-fixtures",
  "wisp-harness",
  "wisp-hibernate",
+]
+
+[[package]]
+name = "wisp-prepare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "parking_lot",
+ "postcard",
+ "rand 0.9.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "wasm-encoder 0.244.0",
+ "wasmparser 0.244.0",
+ "wat",
+ "wisp-abi",
+ "wisp-engine",
+ "wisp-runtime",
 ]
 
 [[package]]
@@ -5409,6 +5456,7 @@ dependencies = [
  "wisp-fixtures",
  "wisp-hibernate",
  "wisp-host",
+ "wisp-prepare",
  "wisp-proxy",
  "wisp-runtime",
  "wisp-trust",

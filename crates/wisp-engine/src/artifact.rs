@@ -162,8 +162,7 @@ impl WispEngine {
     ) -> Result<ArtifactPaths> {
         let paths = ArtifactPaths::new(dir, &self.artifact_key(template_wasm));
         let (meta, cwasm) = self.precompile(template_wasm)?;
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("creating artifact cache {}", dir.display()))?;
+        CompilationCache::create_directory(dir)?;
         write_atomic(&paths.meta, &meta)?;
         write_atomic(&paths.cwasm, &cwasm)?;
         Ok(paths)
@@ -189,9 +188,44 @@ impl WispEngine {
         }
         let meta = std::fs::read(&paths.meta)
             .with_context(|| format!("reading {}", paths.meta.display()))?;
+        let identity: template::ArtifactMeta =
+            postcard::from_bytes(&meta).context("decoding cached input identity")?;
+        if identity.module_hash != ModuleHash::of(template_wasm).0 {
+            bail!("compiled cache entry does not match the requested portable input");
+        }
         // SAFETY: the caller vouches for `dir`, which is where `meta` came from.
         let t = unsafe { self.deserialize_file(&meta, &paths.cwasm) }?;
         Ok((t, compiled))
+    }
+
+    pub(crate) fn template_linker(
+        &self,
+        module: &wasmtime::Module,
+    ) -> Result<(
+        Option<wasmtime::Linker<StoreState>>,
+        Vec<&'static wisp_abi::pal::PalDef>,
+    )> {
+        let needs_pal = module
+            .imports()
+            .any(|i| crate::pal::is_foreign_module(i.module()));
+        let (pal_linker, pal_composed) = if needs_pal {
+            let mut l = self.inner.linker.clone();
+            let composed = crate::pal::link(&mut l, module)
+                .context("composing the WASI PAL adapter for a template")?;
+            tracing::info!(
+                composed = composed.len(),
+                delegated = composed
+                    .iter()
+                    .filter(|d| d.disposition.is_delegated())
+                    .count(),
+                "composed the WASI PAL adapter for a template"
+            );
+            (Some(l), composed)
+        } else {
+            (None, Vec::new())
+        };
+
+        Ok((pal_linker, pal_composed))
     }
 
     fn finish_template(
@@ -221,25 +255,7 @@ impl WispEngine {
         // the module's own declaration, and every instance of the module
         // shares the result. A module importing only `wisp` takes the shared
         // linker.
-        let needs_pal = module
-            .imports()
-            .any(|i| crate::pal::is_foreign_module(i.module()));
-        let (pal_linker, pal_composed) = if needs_pal {
-            let mut l = self.inner.linker.clone();
-            let composed = crate::pal::link(&mut l, &module)
-                .context("composing the WASI PAL adapter for a template")?;
-            tracing::info!(
-                composed = composed.len(),
-                delegated = composed
-                    .iter()
-                    .filter(|d| d.disposition.is_delegated())
-                    .count(),
-                "composed the WASI PAL adapter for a template"
-            );
-            (Some(l), composed)
-        } else {
-            (None, Vec::new())
-        };
+        let (pal_linker, pal_composed) = self.template_linker(&module)?;
 
         let inst = pal_linker
             .as_ref()
@@ -335,14 +351,19 @@ impl ArtifactPaths {
 /// the whole file or no file. A half-written `.cwasm` faults inside guest code
 /// rather than failing to load.
 fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension(format!(
-        "{}.tmp{}",
-        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-        std::process::id()
-    ));
-    std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))?;
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .context("compiled artifact has no parent directory")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("creating private artifact file in {}", parent.display()))?;
+    temporary
+        .write_all(bytes)
+        .with_context(|| format!("writing artifact {}", path.display()))?;
+    temporary
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("publishing artifact {}", path.display()))?;
     Ok(())
 }
 
@@ -365,4 +386,93 @@ impl HostBindings for DenyAll {
     fn slice_clock_ms(&self) -> u64 {
         0
     }
+}
+
+/// A compiler-owned cache whose native-code provenance was established by host composition.
+/// Entries are keyed by exact portable bytes and the consuming engine's compatibility profile.
+pub struct CompilationCache {
+    directory: std::path::PathBuf,
+}
+
+impl CompilationCache {
+    /// Create missing cache directories with private permissions on Unix.
+    /// Existing directories are unchanged; this does not establish native-code provenance.
+    pub fn create_directory(directory: &std::path::Path) -> Result<()> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(directory).with_context(|| {
+            format!("creating private compilation cache {}", directory.display())
+        })?;
+        Ok(())
+    }
+
+    /// Encapsulates the ownership obligation of the legacy local compilation cache.
+    /// Refuses symlinks, non-directory roots and, on Unix, group/other write permissions.
+    /// These checks do not establish compiler provenance; the caller still supplies it.
+    ///
+    /// # Safety
+    /// The directory must contain only artifacts written by trusted calls to
+    /// `WispEngine::precompile_to_files` for their content-addressed keys. All writers
+    /// must retain that rule, keep the resolved directory path under trusted ownership,
+    /// and replace files atomically; replacing bytes in place
+    /// while an entry is mapped can cause process faults or native-code substitution.
+    pub unsafe fn from_trusted_directory(directory: std::path::PathBuf) -> Result<Self> {
+        Self::create_directory(&directory)?;
+        check_cache_path(&directory, true)?;
+        Ok(Self {
+            directory: directory
+                .canonicalize()
+                .context("resolving compiler-owned cache")?,
+        })
+    }
+
+    /// Load a compiled input, compiling it on a miss. Returns whether compilation was needed.
+    pub fn load(&self, engine: &WispEngine, wasm: &[u8]) -> Result<(Template, bool)> {
+        check_cache_path(&self.directory, true)?;
+        let paths = ArtifactPaths::new(&self.directory, &engine.artifact_key(wasm));
+        for path in [&paths.meta, &paths.cwasm] {
+            match std::fs::symlink_metadata(path) {
+                Ok(_) => check_cache_path(path, false)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("examining cache entry {}", path.display()))
+                }
+            }
+        }
+        // SAFETY: construction established trusted compiler provenance and immutable mapped inodes
+        // for this directory; this method writes only through the same atomic compiler path.
+        unsafe { engine.load_mapped(wasm, &self.directory) }
+    }
+}
+
+fn check_cache_path(path: &std::path::Path, directory: bool) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("examining compiler-owned cache {}", path.display()))?;
+    if metadata.file_type().is_symlink()
+        || (directory && !metadata.is_dir())
+        || (!directory && !metadata.is_file())
+    {
+        bail!(
+            "compiler-owned cache path {} is not a regular {}",
+            path.display(),
+            if directory { "directory" } else { "file" }
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o022 != 0 {
+            bail!(
+                "compiler-owned cache path {} permits group or other writers",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }

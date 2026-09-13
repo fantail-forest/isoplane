@@ -263,3 +263,210 @@ fn append_custom_section(wasm: &mut Vec<u8>, name: &str, data: &[u8]) {
     leb(body.len() as u32, wasm);
     wasm.extend_from_slice(&body);
 }
+
+fn table_guest(change: &str) -> Vec<u8> {
+    guest(
+        2,
+        "",
+        r#"
+        (table (export "table") 2 3 funcref)
+        (elem (i32.const 0) $first)
+        (elem declare func $second)
+        (func $first)
+        (func $second)
+    "#,
+        &format!("{change} (i64.const 0)"),
+        DONE,
+    )
+}
+
+#[test]
+fn replacing_a_non_null_function_refuses_a_lossy_checkpoint() {
+    let engine = test_engine();
+    let template = engine
+        .load_template(&table_guest("(table.set (i32.const 0) (ref.func $second))"))
+        .expect("table fixture");
+    let mut instance = activate(&engine, &template);
+    let outcome = instance.dispatch(&http_dispatch(1), CpuBudget::http());
+    assert_eq!(
+        outcome.completion,
+        Completion::Done,
+        "the table replacement must execute"
+    );
+    let error = instance
+        .capture_mutable_state()
+        .expect_err("a changed function cannot be silently omitted");
+    assert!(
+        matches!(
+            error.downcast_ref::<wisp_engine::snapshot::SnapshotError>(),
+            Some(wisp_engine::snapshot::SnapshotError::TableMutation { slot: Some(0), .. })
+        ),
+        "the capture refusal must identify the changed table slot through a typed error"
+    );
+}
+
+#[test]
+fn unchanged_function_and_null_slots_capture_across_independent_stores() {
+    let engine = test_engine();
+    let template = engine
+        .load_template(&table_guest(
+            "(table.set (i32.const 0) (ref.func $first)) (table.set (i32.const 1) (ref.null func))",
+        ))
+        .expect("table fixture");
+    for _ in 0..2 {
+        let mut instance = activate(&engine, &template);
+        assert_eq!(
+            instance
+                .dispatch(&http_dispatch(1), CpuBudget::http())
+                .completion,
+            Completion::Done,
+            "writing the original references must execute"
+        );
+        assert!(
+            instance.capture_mutable_state().is_ok(),
+            "each store must compare against its own original function identities"
+        );
+    }
+}
+
+#[test]
+fn growing_a_table_refuses_an_unrepresentable_checkpoint() {
+    let engine = test_engine();
+    let template = engine
+        .load_template(&table_guest(
+            "(drop (table.grow (ref.null func) (i32.const 1)))",
+        ))
+        .expect("table fixture");
+    let mut instance = activate(&engine, &template);
+    assert_eq!(
+        instance
+            .dispatch(&http_dispatch(1), CpuBudget::http())
+            .completion,
+        Completion::Done,
+        "table growth must execute within the declared maximum"
+    );
+    let error = instance
+        .capture_mutable_state()
+        .expect_err("table growth cannot be silently omitted");
+    assert!(
+        matches!(
+            error.downcast_ref::<wisp_engine::snapshot::SnapshotError>(),
+            Some(wisp_engine::snapshot::SnapshotError::TableMutation { slot: None, .. })
+        ),
+        "the capture refusal must identify changed table dimensions"
+    );
+}
+
+#[test]
+fn changing_a_slots_nullness_refuses_a_lossy_checkpoint() {
+    let engine = test_engine();
+    for (change, slot) in [
+        ("(table.set (i32.const 0) (ref.null func))", 0),
+        ("(table.set (i32.const 1) (ref.func $first))", 1),
+    ] {
+        let template = engine
+            .load_template(&table_guest(change))
+            .expect("table fixture");
+        let mut instance = activate(&engine, &template);
+        assert_eq!(
+            instance
+                .dispatch(&http_dispatch(1), CpuBudget::http())
+                .completion,
+            Completion::Done,
+            "the nullness change must execute"
+        );
+        let error = instance
+            .capture_mutable_state()
+            .expect_err("changed nullness must not be omitted");
+        assert!(
+            matches!(error.downcast_ref::<wisp_engine::snapshot::SnapshotError>(), Some(wisp_engine::snapshot::SnapshotError::TableMutation { slot: Some(changed), .. }) if *changed == slot),
+            "the typed refusal must identify the slot whose nullness changed"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_compilation_cache_refuses_group_writable_directories() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().expect("owned cache fixture");
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o770))
+        .expect("shared writer fixture");
+    // SAFETY: the directory is empty and test-owned; refusal occurs before native loading.
+    let result =
+        unsafe { wisp_engine::CompilationCache::from_trusted_directory(directory.path().into()) };
+    assert!(
+        result.is_err(),
+        "a shared-writer directory must not become a native compilation authority"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_compilation_cache_refuses_symlinked_metadata_even_when_the_target_is_valid() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("owned cache");
+    let cache_directory = directory.path().join("cache");
+    let external = tempfile::tempdir().expect("owned external metadata");
+    let wasm = echo_guest();
+    let paths = engine
+        .precompile_to_files(&wasm, &cache_directory)
+        .expect("trusted compilation");
+    let metadata = external.path().join("valid.meta");
+    std::fs::rename(&paths.meta, &metadata).expect("move valid metadata");
+    std::os::unix::fs::symlink(&metadata, &paths.meta).expect("symlink fixture");
+    // SAFETY: all bytes were created by this test's compiler; no other process writes them.
+    let cache = unsafe { wisp_engine::CompilationCache::from_trusted_directory(cache_directory) }
+        .expect("owned directory");
+    assert!(
+        cache.load(&engine, &wasm).is_err(),
+        "a valid metadata target must not allow redirection outside the compiler-owned cache"
+    );
+}
+
+#[test]
+fn a_cached_entry_for_another_source_is_refused_before_activation() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("owned cache");
+    let cache_directory = directory.path().join("cache");
+    let wasm = echo_guest();
+    let expected = engine
+        .precompile_to_files(&wasm, &cache_directory)
+        .expect("expected compilation");
+    let other = engine
+        .precompile_to_files(&guest(2, "", "", DONE, DONE), &cache_directory)
+        .expect("other trusted compilation");
+    std::fs::copy(&other.meta, &expected.meta).expect("misplaced metadata fixture");
+    std::fs::copy(&other.cwasm, &expected.cwasm).expect("misplaced native fixture");
+    // SAFETY: both native files came from this compiler and have no live mappings;
+    // the test checks refusal of a misplaced, otherwise valid artifact pair.
+    let cache = unsafe { wisp_engine::CompilationCache::from_trusted_directory(cache_directory) }
+        .expect("owned cache");
+    assert!(
+        cache.load(&engine, &wasm).is_err(),
+        "matching native digest and engine metadata must not substitute another portable source"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn newly_compiled_cache_entries_are_private_to_the_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().expect("owned cache fixture");
+    let cache_directory = directory.path().join("cache");
+    let paths = test_engine()
+        .precompile_to_files(&echo_guest(), &cache_directory)
+        .expect("compile private cache entry");
+    for path in [&cache_directory, &paths.meta, &paths.cwasm] {
+        let mode = std::fs::metadata(path)
+            .expect("published cache path")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "new native cache paths must grant no access to group or other users: {}",
+            path.display()
+        );
+    }
+}

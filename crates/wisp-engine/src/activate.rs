@@ -8,7 +8,7 @@ use wasmtime::{CallHook, Extern, Store, UpdateDeadline};
 
 use wisp_abi::imports::exports as guest_exports;
 
-use crate::bindings::HostBindings;
+use crate::bindings::{Bindings, HostBindings, InitializationBindings};
 use crate::instance::Live;
 use crate::state::{BudgetExceeded, Kill, StoreState, WallCapExceeded};
 use crate::template::TemplateInner;
@@ -18,7 +18,20 @@ impl WispEngine {
     /// Map the template copy-on-write and bind `b` as this instance's import
     /// vtable.
     pub fn activate(&self, t: &Template, b: Box<dyn HostBindings>) -> Result<Instance> {
-        let data = StoreState::new(b, &self.inner.cfg);
+        self.activate_with(t, Bindings::Runtime(b))
+    }
+
+    /// Activate for restricted preparation without host resource authority.
+    pub fn activate_initialization(
+        &self,
+        t: &Template,
+        b: Box<dyn InitializationBindings>,
+    ) -> Result<Instance> {
+        self.activate_with(t, Bindings::Initialization(b))
+    }
+
+    fn activate_with(&self, t: &Template, bindings: Bindings) -> Result<Instance> {
+        let data = StoreState::with_bindings(bindings, &self.inner.cfg);
         let live = instantiate(&self.inner, &t.inner, data)?;
         Ok(Instance {
             engine: self.inner.clone(),
@@ -186,6 +199,7 @@ pub(crate) fn instantiate(
         );
     }
 
+    let table_baseline = crate::capture::TableBaseline::capture(&mut store, &tables)?;
     store.data_mut().memory = Some(memory);
 
     Ok(Live {
@@ -198,5 +212,6 @@ pub(crate) fn instantiate(
         f_initialize,
         globals,
         tables,
+        table_baseline,
     })
 }

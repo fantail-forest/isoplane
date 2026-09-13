@@ -5,6 +5,19 @@ use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use wasmtime::Val;
 
+/// Live state cannot be represented by the current snapshot format.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SnapshotError {
+    /// A function-table entry or its size changed from this activation's baseline.
+    #[error("table `{table}` changed at slot {slot:?}; table mutations cannot be represented in a delta")]
+    TableMutation {
+        /// Exported table name.
+        table: String,
+        /// Changed slot, or `None` when the table size changed.
+        slot: Option<u64>,
+    },
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InstanceImage {
     /// Exported mutable globals, in module index order.

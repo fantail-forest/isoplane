@@ -48,9 +48,9 @@ fn is_no_unit(id: u32) -> bool {
     id == NO_UNIT || id == NO_UNIT_ALT
 }
 
-/// Runtime PAL names considered by the additional capability policy.
-/// Application entropy is admitted separately from this mode and scope list.
-pub const RUNTIME_PAL: &[&str] = &["clock_now_coarse", "entropy_fill"];
+/// The imports `InitSandbox::RuntimeBringUp` answers: the clock frozen at zero,
+/// and entropy as a PRF over the escrowed seed.
+pub use wisp_abi::imports::RUNTIME_INIT_CAPABILITIES as RUNTIME_PAL;
 
 fn serves(pal: InitSandbox, name: &str) -> bool {
     pal == InitSandbox::RuntimeBringUp && RUNTIME_PAL.contains(&name)

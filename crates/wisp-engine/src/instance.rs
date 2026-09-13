@@ -31,6 +31,7 @@ pub(crate) struct Live {
     pub(crate) f_initialize: Option<TypedFunc<(), ()>>,
     pub(crate) globals: Vec<Global>,
     pub(crate) tables: Vec<Table>,
+    pub(crate) table_baseline: crate::capture::TableBaseline,
 }
 
 pub struct Instance {
@@ -90,6 +91,20 @@ impl Drop for HotInvocation<'_> {
 }
 
 impl Instance {
+    /// Runtime capabilities answered during initialization, counted at the engine boundary.
+    pub fn initialization_pal_calls(&self) -> Result<Vec<(String, u32)>> {
+        let live = self.live.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("initialization observations require a live instance")
+        })?;
+        Ok(live
+            .store
+            .data()
+            .init_pal_calls
+            .iter()
+            .map(|(name, count)| (name.to_string(), *count))
+            .collect())
+    }
+
     /// The import that tripped capability policy on the last call, if any.
     /// Pre-initialisation identifies an impure static initialiser by which
     /// forbidden import it touched.
@@ -324,7 +339,7 @@ pub trait InstanceOps {
 }
 
 /// How a call into the guest ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Completion {
     Done,
     /// Returned `pending`: empty stack, futures registered.

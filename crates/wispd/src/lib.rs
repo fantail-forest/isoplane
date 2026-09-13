@@ -3,9 +3,13 @@
 pub mod admin;
 pub mod cli;
 pub mod config;
+#[cfg(feature = "real-backends")]
+pub mod deploy;
 pub mod logs;
 pub mod metrics;
 pub mod node;
+#[cfg(feature = "real-backends")]
+pub mod preparation;
 #[cfg(feature = "real-backends")]
 pub mod real;
 pub use wisp_trust as trust;

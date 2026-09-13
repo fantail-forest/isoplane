@@ -86,13 +86,20 @@ fn define(l: &mut Linker<StoreState>, def: &'static ImportDef) -> Result<()> {
 fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) -> Result<u64> {
     // Refuse this call before its side effect. Earlier permitted initialization
     // I/O is not undone when preparation retries a deferred unit.
-    if c.data().is_init_sandbox() && !def.init_visible {
+    if c.data().is_init_sandbox()
+        && !def.init_visible
+        && !c.data().init_runtime_capability(def.name)
+    {
         c.data_mut().violation = Some(def.name);
         return Err(CapabilityViolation {
             import: def.name,
             init_sandbox: true,
         }
         .into());
+    }
+
+    if c.data().is_init_sandbox() && !def.init_visible {
+        *c.data_mut().init_pal_calls.entry(def.name).or_default() += 1;
     }
 
     match def.name {
@@ -201,18 +208,20 @@ fn call_binding(
         scalars,
     };
     let ret = if layout::is_out(def) {
-        bindings.call_fill(
-            ImportCall {
-                import: def.name,
-                payload: &[],
-                scalars,
-            },
-            scratch.as_mut_slice(),
-        ) as u64
+        bindings
+            .call_fill(
+                ImportCall {
+                    import: def.name,
+                    payload: &[],
+                    scalars,
+                },
+                scratch.as_mut_slice(),
+            )
+            .map(|value| value as u64)
     } else {
         match def.kind {
             ImportKind::Future => bindings.call_future(call),
-            ImportKind::Sync => bindings.call_sync(call) as u64,
+            ImportKind::Sync => bindings.call_sync(call).map(|value| value as u64),
         }
     };
 
@@ -226,6 +235,7 @@ fn call_binding(
     }
 
     c.data_mut().bindings = Some(bindings);
+    let ret = ret?;
 
     if def.name == "entropy_fill" && ret != scratch.len() as u64 {
         bail!(

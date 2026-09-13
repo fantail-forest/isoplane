@@ -2,7 +2,7 @@
 //! mutable globals and tables against its template's baseline.
 
 use anyhow::{bail, Context};
-use wasmtime::{Ref, Val};
+use wasmtime::{Ref, Store, Table, Val};
 
 use crate::instance::Instance;
 use crate::snapshot::GlobalValue;
@@ -24,47 +24,12 @@ pub(crate) fn capture_mutable_state(inst: &mut Instance) -> Result<InstanceImage
         globals.push(GlobalValue::of(v, &live.store)?);
     }
 
-    // wasmtime's public API cannot name a funcref by function index, so a
-    // table mutation can be detected but not represented in a delta.
-    let table_mutations = Vec::new();
-    for (i, t) in live.tables.iter().enumerate() {
-        let baseline = template
-            .table_nullness
-            .get(i)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
-        let size = t.size(&live.store);
-        let table_name = template
-            .tables
-            .get(i)
-            .map(|(n, _)| n.as_str())
-            .unwrap_or("?");
-        if size as usize != baseline.len() {
-            bail!(
-                "table `{table_name}` grew from {} to {size} entries; table mutations cannot \
-                 be represented in a delta",
-                baseline.len()
-            );
-        }
-        for (slot, was_non_null) in baseline.iter().enumerate() {
-            let now_non_null = match t.get(&mut live.store, slot as u64) {
-                Some(Ref::Func(f)) => f.is_some(),
-                Some(Ref::Extern(e)) => e.is_some(),
-                Some(_) => true,
-                None => false,
-            };
-            if now_non_null != *was_non_null {
-                bail!(
-                    "table `{table_name}` slot {slot} changed since activation; table \
-                     mutations cannot be represented in a delta"
-                );
-            }
-        }
-    }
+    live.table_baseline
+        .verify(&mut live.store, &live.tables, &template)?;
 
     Ok(InstanceImage {
         globals,
-        table_mutations,
+        table_mutations: Vec::new(),
         memory_pages: live.memory.size(&live.store) as u32,
     })
 }
@@ -102,4 +67,84 @@ pub(crate) fn restore_mutable_state(inst: &mut Instance, img: &InstanceImage) ->
             .context("restoring a mutable global")?;
     }
     Ok(())
+}
+
+// These identities are compared only inside the Live store that owns them; they are
+// never serialized, dereferenced, or reused by another activation.
+#[derive(PartialEq, Eq)]
+struct FunctionIdentity(usize);
+
+#[derive(PartialEq, Eq)]
+enum TableEntry {
+    Null,
+    Function(FunctionIdentity),
+}
+
+pub(crate) struct TableBaseline(Vec<Vec<TableEntry>>);
+
+impl TableBaseline {
+    pub(crate) fn capture(
+        store: &mut Store<crate::state::StoreState>,
+        tables: &[Table],
+    ) -> Result<Self> {
+        let mut baseline = Vec::with_capacity(tables.len());
+        for table in tables {
+            let mut entries = Vec::with_capacity(table.size(&*store) as usize);
+            for index in 0..table.size(&*store) {
+                entries.push(table_entry(store, table, index)?);
+            }
+            baseline.push(entries);
+        }
+        Ok(Self(baseline))
+    }
+
+    fn verify(
+        &self,
+        store: &mut Store<crate::state::StoreState>,
+        tables: &[Table],
+        template: &crate::template::TemplateInner,
+    ) -> Result<()> {
+        for (index, table) in tables.iter().enumerate() {
+            let baseline = self
+                .0
+                .get(index)
+                .context("table baseline missing from its live store")?;
+            let name = &template.tables[index].0;
+            let size = table.size(&*store);
+            if size as usize != baseline.len() {
+                return Err(crate::snapshot::SnapshotError::TableMutation {
+                    table: name.clone(),
+                    slot: None,
+                }
+                .into());
+            }
+            for (slot, expected) in baseline.iter().enumerate() {
+                if table_entry(store, table, slot as u64)? != *expected {
+                    return Err(crate::snapshot::SnapshotError::TableMutation {
+                        table: name.clone(),
+                        slot: Some(slot as u64),
+                    }
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn table_entry(
+    store: &mut Store<crate::state::StoreState>,
+    table: &Table,
+    index: u64,
+) -> Result<TableEntry> {
+    match table
+        .get(&mut *store, index)
+        .context("live table slot disappeared")?
+    {
+        Ref::Func(None) => Ok(TableEntry::Null),
+        Ref::Func(Some(function)) => Ok(TableEntry::Function(FunctionIdentity(
+            function.to_raw(store) as usize,
+        ))),
+        _ => bail!("table slot {index} is not a function reference and cannot be captured"),
+    }
 }

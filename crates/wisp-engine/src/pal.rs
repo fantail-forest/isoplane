@@ -35,6 +35,20 @@ pub(crate) fn is_foreign_module(name: &str) -> bool {
 /// `entropy_fill` binding through the same `call_fill` path every host-to-guest
 /// byte takes.
 impl PalSource for StoreState {
+    fn check_capability(&mut self, import: &'static str) -> wasmtime::Result<()> {
+        if self.is_init_sandbox() && !self.init_runtime_capability(import) {
+            self.violation = Some(import);
+            return Err(crate::state::CapabilityViolation {
+                import,
+                init_sandbox: true,
+            }
+            .into());
+        }
+        if self.is_init_sandbox() {
+            *self.init_pal_calls.entry(import).or_default() += 1;
+        }
+        Ok(())
+    }
     fn native_io(
         &mut self,
         request: wisp_abi::native_io::Request,
@@ -73,6 +87,7 @@ impl PalSource for StoreState {
             out,
         );
         self.bindings = Some(b);
+        let n = n?;
         if n < 0 || n as usize != out.len() {
             // A partial fill leaves guest-visible zeroes that look like entropy.
             wt_bail!(
@@ -87,6 +102,10 @@ impl PalSource for StoreState {
 /// Host capabilities available to composed native runtime imports.
 /// Sealed initialization provides clock and entropy but refuses readiness resources.
 pub trait PalSource: Send + 'static {
+    /// Apply context-specific policy before a delegated clock or entropy call.
+    fn check_capability(&mut self, _import: &'static str) -> wasmtime::Result<()> {
+        Ok(())
+    }
     /// Perform nonblocking native I/O; sealed initialization has no resource authority.
     fn native_io(
         &mut self,
@@ -248,20 +267,26 @@ fn define_delegate<T: PalSource>(
             linker.func_wrap(
                 def.module,
                 def.func,
-                |mut c: wasmtime::Caller<'_, T>| -> i64 {
+                |mut c: wasmtime::Caller<'_, T>| -> wasmtime::Result<i64> {
+                    c.data_mut().check_capability("clock_now_coarse")?;
                     let ms = c.data_mut().slice_clock_ms();
                     // Saturating: a clock that stops is a better answer than
                     // one that runs backwards.
-                    i64::try_from(ms)
+                    Ok(i64::try_from(ms)
                         .unwrap_or(i64::MAX)
-                        .saturating_mul(CLOCK_QUANTUM_NS)
+                        .saturating_mul(CLOCK_QUANTUM_NS))
                 },
             )?;
         }
         (MONOTONIC, "resolution") => {
-            linker.func_wrap(def.module, def.func, |_: wasmtime::Caller<'_, T>| -> i64 {
-                CLOCK_QUANTUM_NS
-            })?;
+            linker.func_wrap(
+                def.module,
+                def.func,
+                |mut c: wasmtime::Caller<'_, T>| -> wasmtime::Result<i64> {
+                    c.data_mut().check_capability("clock_now_coarse")?;
+                    Ok(CLOCK_QUANTUM_NS)
+                },
+            )?;
         }
         // Both canonical list results lower to a (ptr, len) pair in a
         // caller-supplied return area; (0, 0) is the empty list.
@@ -284,6 +309,7 @@ fn define_delegate<T: PalSource>(
                 def.module,
                 def.func,
                 |mut c: wasmtime::Caller<'_, T>, len: i64, retptr: i32| -> wasmtime::Result<()> {
+                    c.data_mut().check_capability("entropy_fill")?;
                     let n = if len < 0 { 0u64 } else { len as u64 };
                     if n > MAX_ENTROPY_BYTES {
                         return Err(wasmtime::Error::msg(format!(

@@ -36,6 +36,10 @@ pub struct NodeConfig {
     /// `/etc/ssl/certs/ca-certificates.crt`.
     #[serde(default)]
     pub trust: crate::trust::TrustConfig,
+    /// Initialization limits and installed runtime selection.
+    #[cfg(feature = "real-backends")]
+    #[serde(default)]
+    pub preparation: Option<crate::preparation::PreparationConfig>,
 }
 
 fn default_response_queue_bytes() -> usize {
@@ -179,6 +183,8 @@ pub struct VersionConfig {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("invalid preparation configuration: {0}")]
+    Preparation(String),
     #[error("no cells configured: a node needs at least one")]
     NoCells,
     #[error("duplicate cell name `{0}`")]
@@ -240,12 +246,20 @@ impl NodeConfig {
             data_dir: default_data_dir(),
             engine: EngineLimits::default(),
             trust: crate::trust::TrustConfig::default(),
+            #[cfg(feature = "real-backends")]
+            preparation: None,
         }
     }
 
     /// The startup gate: a refusal, never a warning. Placement rules first,
     /// then the trust bundle, which is the one check that reads a file.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        #[cfg(feature = "real-backends")]
+        if let Some(preparation) = &self.preparation {
+            preparation
+                .validate()
+                .map_err(|error| ConfigError::Preparation(error.to_string()))?;
+        }
         self.validate_placement()?;
         self.trust_bundle().map(drop)
     }

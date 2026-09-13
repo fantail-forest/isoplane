@@ -14,6 +14,7 @@ pub mod budget;
 pub mod image;
 pub mod instance;
 pub mod pal;
+pub mod prepared;
 pub mod snapshot;
 pub mod template;
 
@@ -29,7 +30,7 @@ mod state;
 mod watchdog;
 mod wtconfig;
 
-pub use artifact::ArtifactPaths;
+pub use artifact::{ArtifactPaths, CompilationCache};
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{
     CpuBudget, CpuMeasurement, DispatchOutcome, ExecutionLimit, KillPhase, TrapInfo, TrapKind,
@@ -38,6 +39,7 @@ pub use compiler::COMPILER_STACK_BYTES;
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use meter::clock_read_failures;
+pub use meter::try_thread_cpu_nanos;
 pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
 pub use snapshot::InstanceImage;
 pub use template::{ModuleHash, Template, DEFERRED_INIT_SECTION};
@@ -47,7 +49,7 @@ use state::StoreState;
 pub type Result<T> = anyhow::Result<T>;
 
 /// Engine-wide configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EngineConfig {
     /// Ceiling on concurrently resident instances in this cell.
     pub max_instances: u32,
@@ -105,6 +107,11 @@ pub(crate) struct EngineInner {
 }
 
 impl WispEngine {
+    /// Settings used by this engine, for compatible external preparation.
+    pub fn configuration(&self) -> EngineConfig {
+        self.inner.cfg.clone()
+    }
+
     /// Fails on a configuration wasmtime rejects, on an epoch tick too coarse
     /// to deliver the grace window, and on an engine that turns out to accept
     /// threads or shared memory.

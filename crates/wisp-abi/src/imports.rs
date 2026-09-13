@@ -4,6 +4,9 @@
 /// Core-wasm module name that every WISP import lives under.
 pub const HOST_MODULE: &str = "wisp";
 
+/// Clock and entropy capability names considered during local preparation.
+pub const RUNTIME_INIT_CAPABILITIES: &[&str] = &["clock_now_coarse", "entropy_fill"];
+
 pub use crate::exports;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

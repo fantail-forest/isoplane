@@ -7,6 +7,7 @@ members = [
     "crates/wisp-host",
     "crates/wisp-control",
     "crates/wisp-runtime",
+    "crates/wisp-prepare",
     "crates/wisp-trust",
     "crates/wisp-proxy",
     "crates/wispd",
@@ -24,6 +25,7 @@ license-file = "LICENSE.txt"
 rust-version = "1.88"
 
 [workspace.dependencies]
+rustix = { version = "1.1.4", features = ["process"] }
 portable-pty = "0.9.0"
 wisp-abi       = { path = "crates/wisp-abi" }
 wisp-engine    = { path = "crates/wisp-engine" }
@@ -31,6 +33,7 @@ wisp-hibernate = { path = "crates/wisp-hibernate" }
 wisp-host      = { path = "crates/wisp-host" }
 wisp-trust     = { path = "crates/wisp-trust" }
 wisp-runtime   = { path = "crates/wisp-runtime", default-features = false }
+wisp-prepare   = { path = "crates/wisp-prepare" }
 wisp-control   = { path = "crates/wisp-control" }
 wisp-proxy     = { path = "crates/wisp-proxy" }
 wisp-fixtures  = { path = "crates/wisp-fixtures" }
@@ -81,11 +84,14 @@ flate2      = "1"
 aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"
+wasm-encoder = { version = "0.244", features = ["wasmparser"] }
 # Default features off: the defaults pull in `async` (fiber stack switching)
 # and `threads`. Each crate names the features it needs.
 wasmtime    = { version = "48", default-features = false }
 wat         = "1"
 tempfile    = "3"
+memmap2 = "0.9"
+linux-raw-sys = { version = "0.12", features = ["ioctl"] }
 fd-lock     = "4"
 # Pre-init runs wizer's embedded wasmtime, which compiles through rayon. Named
 # here so guest preparation can bound that pool; must resolve to the same rayon

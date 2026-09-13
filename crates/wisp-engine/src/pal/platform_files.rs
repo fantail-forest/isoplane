@@ -7,11 +7,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// One read-only regular file served from host memory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlatformFile {
     /// Absolute, normalised path: a leading `/`, no empty, `.` or `..`
     /// component.
     pub path: String,
+    #[serde(with = "file_bytes")]
     pub bytes: Arc<[u8]>,
     /// Reported as the file's access, modification and status-change time.
     pub modified_ns: u64,
@@ -122,6 +123,19 @@ struct Tree {
 /// engine.
 #[derive(Debug, Clone, Default)]
 pub struct PlatformFiles(Arc<Tree>);
+
+impl serde::Serialize for PlatformFiles {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.files().serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PlatformFiles {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let files = Vec::<PlatformFile>::deserialize(deserializer)?;
+        Self::new(files).map_err(serde::de::Error::custom)
+    }
+}
 
 impl PlatformFiles {
     /// Validate and index the set. Fails on a relative path, an empty, `.`
@@ -647,5 +661,23 @@ mod tests {
             None,
             "the empty set has no file nodes"
         );
+    }
+}
+
+mod file_bytes {
+    use serde::{Deserialize, Serialize};
+    use std::sync::Arc;
+
+    pub fn serialize<S: serde::Serializer>(
+        bytes: &Arc<[u8]>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        bytes.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Arc<[u8]>, D::Error> {
+        Vec::<u8>::deserialize(deserializer).map(Arc::from)
     }
 }

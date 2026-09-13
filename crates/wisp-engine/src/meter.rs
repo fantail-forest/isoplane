@@ -41,7 +41,7 @@ fn clock_failure_forced() -> bool {
 /// Nanoseconds of CPU consumed by the calling thread, or `None` if the clock
 /// could not be read.
 #[inline]
-pub(crate) fn try_thread_cpu_nanos() -> Option<u64> {
+pub fn try_thread_cpu_nanos() -> Option<u64> {
     if clock_failure_forced() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;

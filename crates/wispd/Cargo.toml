@@ -15,6 +15,7 @@ name = "wispd"
 path = "src/main.rs"
 
 [dependencies]
+zstd.workspace = true
 wisp-trust = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -54,6 +55,8 @@ wisp-proxy = { workspace = true }
 wisp-control   = { workspace = true, optional = true }
 wisp-host      = { workspace = true, optional = true }
 wisp-hibernate = { workspace = true, optional = true }
+wisp-prepare   = { workspace = true, optional = true }
+tempfile       = { workspace = true, optional = true }
 wisp-engine    = { workspace = true, optional = true }
 
 wisp-runtime = { workspace = true, optional = true, features = ["local"] }
@@ -66,6 +69,8 @@ real-backends = [
     "dep:wisp-host",
     "dep:wisp-hibernate",
     "dep:wisp-engine",
+    "dep:wisp-prepare",
+    "dep:tempfile",
 ]
 
 [dev-dependencies]
@@ -74,3 +79,6 @@ prost = { workspace = true }
 wat = { workspace = true }
 tempfile = { workspace = true }
 wisp-fixtures = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true

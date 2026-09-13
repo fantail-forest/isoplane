@@ -34,9 +34,15 @@ rayon = { workspace = true }
 postcard = { workspace = true }
 blake3 = { workspace = true }
 
+memmap2 = { workspace = true }
+tempfile = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-raw-sys = { workspace = true }
+libc = { workspace = true }
+
 [dev-dependencies]
 # Hand-written .wat fixtures, so a guest-SDK bug is never mistaken for an
 # engine bug.
 wat = { workspace = true }
-tempfile = { workspace = true }
 wisp-fixtures = { workspace = true }

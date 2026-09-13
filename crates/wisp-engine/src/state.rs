@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use wasmtime::{Memory, ResourceLimiter};
 
-use crate::bindings::HostBindings;
+use crate::bindings::{Bindings, HostBindings};
 use crate::pal::platform_files::PlatformFiles;
 use crate::EngineConfig;
 
@@ -111,7 +111,8 @@ pub(crate) struct StoreState {
     /// `Option` so the engine can move the box out for the duration of an
     /// import call: `HostBindings` methods take `&mut self` while the payload
     /// borrows the scratch buffer in this same struct.
-    pub bindings: Option<Box<dyn HostBindings>>,
+    pub bindings: Option<Bindings>,
+    pub init_pal_calls: std::collections::BTreeMap<&'static str, u32>,
     pub memory: Option<Memory>,
     /// The coarse clock, frozen for the slice. With no threads, no shared
     /// memory and no fine clock, the guest has no timing primitive to build a
@@ -141,8 +142,13 @@ pub(crate) struct StoreState {
 
 impl StoreState {
     pub(crate) fn new(bindings: Box<dyn HostBindings>, cfg: &EngineConfig) -> Self {
+        Self::with_bindings(Bindings::Runtime(bindings), cfg)
+    }
+
+    pub(crate) fn with_bindings(bindings: Bindings, cfg: &EngineConfig) -> Self {
         Self {
             bindings: Some(bindings),
+            init_pal_calls: std::collections::BTreeMap::new(),
             memory: None,
             clock_ms: 0,
             wasm_depth: 0,
@@ -181,6 +187,21 @@ impl StoreState {
             .as_ref()
             .map(|b| b.is_init_sandbox())
             .unwrap_or(false)
+    }
+
+    pub(crate) fn init_runtime_capability(&self, name: &str) -> bool {
+        if name == "entropy_fill" {
+            return self
+                .bindings
+                .as_ref()
+                .is_some_and(|bindings| bindings.permits_initialization_entropy());
+        }
+
+        wisp_abi::imports::RUNTIME_INIT_CAPABILITIES.contains(&name)
+            && self
+                .bindings
+                .as_ref()
+                .is_some_and(|b| b.init_runtime_bringup())
     }
 }
 

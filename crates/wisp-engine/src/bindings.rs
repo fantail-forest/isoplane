@@ -63,3 +63,98 @@ pub trait HostBindings: Send + 'static {
     /// dispatch takes the hard trap at B+G.
     fn enter_grace(&mut self) {}
 }
+
+/// A synchronous binding refusal that the engine converts into a guest trap.
+#[derive(Debug, thiserror::Error)]
+pub enum BindingError {
+    /// The execution context cannot perform this operation.
+    #[error("unsupported host binding: {0}")]
+    Unsupported(&'static str),
+    /// The guest supplied invalid arguments for an operation.
+    #[error("invalid host binding request: {0}")]
+    InvalidRequest(&'static str),
+}
+
+/// Fallible initialization operations, with no facility for creating host futures or resources.
+pub trait InitializationBindings: Send + 'static {
+    /// Whether application initialization may draw ambient entropy.
+    fn permits_entropy(&self) -> bool {
+        false
+    }
+
+    /// Answer an init-visible scalar operation or return a typed refusal.
+    fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError>;
+    /// Fill an init-visible output buffer, returning its full logical length.
+    fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> Result<i64, BindingError>;
+    /// Whether the additional runtime-initialization capability policy is enabled.
+    fn runtime_bringup(&self) -> bool;
+}
+
+pub(crate) enum Bindings {
+    Runtime(Box<dyn HostBindings>),
+    Initialization(Box<dyn InitializationBindings>),
+}
+
+impl Bindings {
+    /// Whether the active initializer permits ambient entropy.
+    pub fn permits_initialization_entropy(&self) -> bool {
+        match self {
+            Self::Runtime(_) => false,
+            Self::Initialization(bindings) => bindings.permits_entropy(),
+        }
+    }
+
+    pub fn is_init_sandbox(&self) -> bool {
+        match self {
+            Self::Runtime(bindings) => bindings.is_init_sandbox(),
+            Self::Initialization(_) => true,
+        }
+    }
+    pub fn init_runtime_bringup(&self) -> bool {
+        match self {
+            Self::Runtime(_) => false,
+            Self::Initialization(bindings) => bindings.runtime_bringup(),
+        }
+    }
+    pub fn slice_clock_ms(&self) -> u64 {
+        match self {
+            Self::Runtime(bindings) => bindings.slice_clock_ms(),
+            Self::Initialization(_) => 0,
+        }
+    }
+    pub fn enter_grace(&mut self) {
+        match self {
+            Self::Runtime(bindings) => bindings.enter_grace(),
+            Self::Initialization(_) => {}
+        }
+    }
+    pub fn native_io(
+        &mut self,
+        request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        match self {
+            Self::Runtime(bindings) => bindings.native_io(request),
+            Self::Initialization(_) => Err(wisp_abi::native_io::Error::Denied(
+                "native I/O during initialization".into(),
+            )),
+        }
+    }
+    pub fn call_future(&mut self, call: ImportCall<'_>) -> Result<u64, BindingError> {
+        match self {
+            Self::Runtime(bindings) => Ok(bindings.call_future(call)),
+            Self::Initialization(_) => Err(BindingError::Unsupported(call.import)),
+        }
+    }
+    pub fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError> {
+        match self {
+            Self::Runtime(bindings) => Ok(bindings.call_sync(call)),
+            Self::Initialization(bindings) => bindings.call_sync(call),
+        }
+    }
+    pub fn call_fill(&mut self, call: ImportCall<'_>, out: &mut [u8]) -> Result<i64, BindingError> {
+        match self {
+            Self::Runtime(bindings) => Ok(bindings.call_fill(call, out)),
+            Self::Initialization(bindings) => bindings.call_fill(call, out),
+        }
+    }
+}

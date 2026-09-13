@@ -14,6 +14,10 @@ use wispd::node::Node;
 /// A guest that answers every dispatch with one canned response, its
 /// postcard-encoded head dropped in as a data segment.
 fn guest(head: &ResponseHead) -> Vec<u8> {
+    guest_with_functions(head, "", "")
+}
+
+fn guest_with_functions(head: &ResponseHead, functions: &str, before_response: &str) -> Vec<u8> {
     let encoded = wisp_abi::encode(head).expect("encoding a response head");
     let escaped: String = encoded.iter().map(|b| format!("\\{b:02x}")).collect();
     let len = encoded.len();
@@ -37,12 +41,14 @@ fn guest(head: &ResponseHead) -> Vec<u8> {
 
   ;; PollStatus::Done {{ response: h }} packs as (h as u64) << 32.
   (func (export "wisp_handle") (param $ptr i32) (param $len i32) (result i64)
+    {before_response}
     (i64.shl
       (i64.extend_i32_u (call $resp_new (i32.const 4096) (i32.const {len})))
       (i64.const 32)))
 
   (func (export "wisp_wake") (param $future i64) (param $ptr i32) (param $len i32) (result i64)
     (i64.const 0))
+  {functions}
 )
 "#
     );

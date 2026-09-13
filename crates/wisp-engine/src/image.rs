@@ -1,33 +1,38 @@
-//! The template's post-init linear memory, stored as its non-zero byte runs.
-//!
-//! A pre-initialised .NET template declares tens of megabytes of which a
-//! fraction of a percent is content, and the GC writes a few dozen bytes at
-//! the head and tail of every 64 KiB region, so no 4 KiB page is entirely
-//! zero: a dense `Vec<u8>` charges the whole span and a sparse-page map saves
-//! almost nothing. Byte runs store what is there. The one operation the
-//! hibernation page diff needs, [`MemoryImage::page_eq`], is a binary search
-//! plus a walk of the runs overlapping one page.
+//! Sparse template memory with a persisted index and demand-readable payload.
+
+use std::sync::Arc;
 
 /// The unit hibernation diffs in.
 pub const PAGE: usize = wisp_abi::PAGE_SIZE;
-
-/// Zero gaps shorter than this stay inside a run. A separate run costs an
-/// index entry and a binary-search step, more than a few zero bytes.
 const COALESCE_GAP: usize = 32;
+const MAGIC: &[u8; 8] = b"WISPSPR1";
+const HEADER_BYTES: usize = 32;
+const RUN_BYTES: usize = 24;
 
-/// A logical length plus the non-zero runs; everything else is zero, which is
-/// what unwritten wasm memory reads as. `PartialEq` is logical equality:
-/// [`MemoryImage::from_dense`] produces one canonical run set for a memory.
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct MemoryImage {
-    len: usize,
-    /// Sorted by offset and non-overlapping. One payload `Vec` for all runs
-    /// rather than one per run: a .NET template has thousands.
-    runs: Vec<Run>,
-    bytes: Vec<u8>,
+pub(crate) enum ImageStorage {
+    Owned(Vec<u8>),
+    Mapped(memmap2::Mmap),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl AsRef<[u8]> for ImageStorage {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Mapped(bytes) => bytes,
+        }
+    }
+}
+
+/// Sparse memory shared by templates and instances; zero gaps allocate no payload.
+#[derive(Clone)]
+pub struct MemoryImage {
+    len: usize,
+    run_count: usize,
+    payload_offset: usize,
+    storage: Arc<ImageStorage>,
+}
+
+#[derive(Clone, Copy)]
 struct Run {
     off: usize,
     start: usize,
@@ -35,7 +40,19 @@ struct Run {
 }
 
 impl MemoryImage {
-    /// Scan a dense image once and keep only what is non-zero.
+    /// Iterates stored regions in logical address order, without expanding zero gaps.
+    pub fn regions(&self) -> impl Iterator<Item = (usize, &[u8])> {
+        (0..self.run_count).map(|index| {
+            let run = self.run(index);
+            (
+                run.off,
+                &self.encoded()
+                    [self.payload_offset + run.start..self.payload_offset + run.start + run.len],
+            )
+        })
+    }
+
+    /// Scans a dense image once during preparation.
     pub fn from_dense(dense: &[u8]) -> Self {
         let mut runs: Vec<Run> = Vec::new();
         let mut bytes: Vec<u8> = Vec::new();
@@ -70,80 +87,183 @@ impl MemoryImage {
         }
         runs.shrink_to_fit();
         bytes.shrink_to_fit();
-        MemoryImage {
+        let mut encoded = Vec::with_capacity(HEADER_BYTES + runs.len() * RUN_BYTES + bytes.len());
+        encoded.extend_from_slice(MAGIC);
+        for value in [dense.len(), runs.len(), bytes.len()] {
+            encoded.extend_from_slice(&(value as u64).to_le_bytes());
+        }
+        for run in &runs {
+            for value in [run.off, run.start, run.len] {
+                encoded.extend_from_slice(&(value as u64).to_le_bytes());
+            }
+        }
+        encoded.extend_from_slice(&bytes);
+        Self {
             len: dense.len(),
-            runs,
-            bytes,
+            run_count: runs.len(),
+            payload_offset: HEADER_BYTES + runs.len() * RUN_BYTES,
+            storage: std::sync::Arc::new(ImageStorage::Owned(encoded)),
         }
     }
 
-    /// The logical size of the memory, zeros included.
+    pub(crate) fn encoded(&self) -> &[u8] {
+        self.storage.as_ref().as_ref()
+    }
+
+    pub(crate) fn from_storage(
+        storage: ImageStorage,
+        max_memory_bytes: usize,
+    ) -> Result<Self, &'static str> {
+        let bytes = storage.as_ref();
+        if bytes.get(..8) != Some(MAGIC.as_slice()) {
+            return Err("invalid sparse baseline magic");
+        }
+        let len = number(bytes, 8)?;
+        let run_count = number(bytes, 16)?;
+        let payload_bytes = number(bytes, 24)?;
+        let payload_offset = run_count
+            .checked_mul(RUN_BYTES)
+            .and_then(|n| n.checked_add(HEADER_BYTES))
+            .ok_or("sparse index overflow")?;
+        if len > max_memory_bytes || payload_offset.checked_add(payload_bytes) != Some(bytes.len())
+        {
+            return Err("sparse baseline length exceeds its bounds");
+        }
+        let mut previous_end = 0;
+        let mut payload_end = 0;
+        for index in 0..run_count {
+            let position = HEADER_BYTES + index * RUN_BYTES;
+            let off = number(bytes, position)?;
+            let start = number(bytes, position + 8)?;
+            let size = number(bytes, position + 16)?;
+            let end = off
+                .checked_add(size)
+                .ok_or("sparse memory range overflow")?;
+            if size == 0 || off < previous_end || end > len || start != payload_end {
+                return Err("sparse regions are overlapping, unordered or out of bounds");
+            }
+            payload_end = start
+                .checked_add(size)
+                .ok_or("sparse payload range overflow")?;
+            if payload_end > payload_bytes {
+                return Err("sparse region exceeds payload");
+            }
+            previous_end = end;
+        }
+        if payload_end != payload_bytes {
+            return Err("sparse payload contains unindexed bytes");
+        }
+        Ok(Self {
+            len,
+            run_count,
+            payload_offset,
+            storage: Arc::new(storage),
+        })
+    }
+
+    fn run(&self, index: usize) -> Run {
+        let position = HEADER_BYTES + index * RUN_BYTES;
+        // The constructor validates every index before the immutable storage is retained.
+        let field = |offset| {
+            let mut bytes = [0; 8];
+            bytes.copy_from_slice(&self.encoded()[offset..offset + 8]);
+            u64::from_le_bytes(bytes) as usize
+        };
+        Run {
+            off: field(position),
+            start: field(position + 8),
+            len: field(position + 16),
+        }
+    }
+
+    /// Logical memory length, including zero gaps.
     pub fn len(&self) -> usize {
         self.len
     }
-
+    /// Whether the logical memory is empty.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
-
     #[cfg(test)]
     fn runs(&self) -> usize {
-        self.runs.len()
+        self.run_count
     }
 
-    /// Index of the first run whose end is strictly after `off`.
-    fn first_run_from(&self, off: usize) -> usize {
-        self.runs.partition_point(|r| r.off + r.len <= off)
-    }
-
-    /// Whether the live 4 KiB page at index `page` is byte-identical to the
-    /// template's. A page beyond the image compares against zeros, which is
-    /// what a guest that grew its memory sees there.
+    /// Compares a live page with the baseline, treating grown memory as zero.
     pub fn page_eq(&self, page: usize, live: &[u8]) -> bool {
-        let off = page * PAGE;
+        let Some(off) = page.checked_mul(PAGE) else {
+            return false;
+        };
+        let Some(end) = off.checked_add(live.len()) else {
+            return false;
+        };
+        let mut low = 0;
+        let mut high = self.run_count;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let run = self.run(mid);
+            if run.off + run.len <= off {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
         let mut cursor = off;
-        let end = off + live.len();
-        let mut k = self.first_run_from(off);
-        while let Some(r) = self.runs.get(k) {
-            if r.off >= end {
+        for index in low..self.run_count {
+            let run = self.run(index);
+            if run.off >= end {
                 break;
             }
-            let lo = r.off.max(off);
-            let hi = (r.off + r.len).min(end);
-            if lo >= hi {
-                k += 1;
-                continue;
-            }
-            if live[cursor - off..lo - off].iter().any(|&b| b != 0) {
+            let lo = run.off.max(off);
+            let hi = (run.off + run.len).min(end);
+            if live[cursor - off..lo - off].iter().any(|&byte| byte != 0) {
                 return false;
             }
-            let src = r.start + (lo - r.off);
-            if live[lo - off..hi - off] != self.bytes[src..src + (hi - lo)] {
+            let src = self.payload_offset + run.start + lo - run.off;
+            if live[lo - off..hi - off] != self.encoded()[src..src + hi - lo] {
                 return false;
             }
             cursor = hi;
-            k += 1;
         }
-        live[cursor - off..].iter().all(|&b| b == 0)
+        live[cursor - off..].iter().all(|&byte| byte == 0)
     }
 
-    /// Materialise the whole memory. The allocation this type exists to
-    /// avoid; for tests and oracles, never a per-instance path.
+    /// Expands the baseline for explicit inspection; activation never calls this.
     pub fn to_dense(&self) -> Vec<u8> {
-        let mut out = vec![0u8; self.len];
-        for r in &self.runs {
-            out[r.off..r.off + r.len].copy_from_slice(&self.bytes[r.start..r.start + r.len]);
+        let mut out = vec![0; self.len];
+        for (offset, bytes) in self.regions() {
+            out[offset..offset + bytes.len()].copy_from_slice(bytes);
         }
         out
     }
 }
 
+fn number(bytes: &[u8], offset: usize) -> Result<usize, &'static str> {
+    let field = bytes
+        .get(offset..offset + 8)
+        .ok_or("truncated sparse baseline")?;
+    let mut value = [0; 8];
+    value.copy_from_slice(field);
+    usize::try_from(u64::from_le_bytes(value)).map_err(|_| "sparse field exceeds address space")
+}
+
+impl Default for MemoryImage {
+    fn default() -> Self {
+        Self::from_dense(&[])
+    }
+}
+impl PartialEq for MemoryImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.encoded() == other.encoded()
+    }
+}
+impl Eq for MemoryImage {}
 impl std::fmt::Debug for MemoryImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryImage")
             .field("len", &self.len)
-            .field("runs", &self.runs.len())
-            .field("bytes", &self.bytes.len())
+            .field("runs", &self.run_count)
+            .field("bytes", &self.encoded().len())
             .finish()
     }
 }
@@ -168,6 +288,58 @@ mod tests {
                 "page {p} of the image must compare equal to itself"
             );
         }
+    }
+
+    #[test]
+    fn persisted_sparse_format_has_stable_bytes() {
+        let image = MemoryImage::from_dense(&[0, 9, 0]);
+        let golden: &[u8] = b"WISPSPR1\x03\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\x09";
+        assert_eq!(
+            image.encoded(),
+            golden,
+            "the versioned sparse encoding must not drift"
+        );
+        let decoded =
+            MemoryImage::from_storage(ImageStorage::Owned(golden.to_vec()), 3).expect("decode");
+        assert_eq!(
+            decoded.to_dense(),
+            [0, 9, 0],
+            "persisted index must restore logical memory"
+        );
+    }
+
+    #[test]
+    fn malformed_persisted_indexes_are_rejected_before_page_comparison() {
+        let mut dense = vec![0; 100];
+        dense[1] = 7;
+        dense[99] = 8;
+        let encoded = MemoryImage::from_dense(&dense).encoded().to_vec();
+        for offset in [8, 16, 24, 32, 40, 48, 56, 64, 72] {
+            let mut bad = encoded.clone();
+            bad[offset..offset + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+            assert!(
+                MemoryImage::from_storage(ImageStorage::Owned(bad), 100).is_err(),
+                "overflowing sparse field at {offset} must be refused"
+            );
+        }
+        let mut overlapping = encoded.clone();
+        overlapping[56..64].copy_from_slice(&1u64.to_le_bytes());
+        assert!(
+            MemoryImage::from_storage(ImageStorage::Owned(overlapping), 100).is_err(),
+            "overlapping regions must be refused"
+        );
+        assert!(
+            MemoryImage::from_storage(
+                ImageStorage::Owned(encoded[..encoded.len() - 1].to_vec()),
+                100
+            )
+            .is_err(),
+            "truncated payload must be refused"
+        );
+        assert!(
+            MemoryImage::from_storage(ImageStorage::Owned(encoded), 99).is_err(),
+            "configured memory bound must be enforced"
+        );
     }
 
     #[test]
