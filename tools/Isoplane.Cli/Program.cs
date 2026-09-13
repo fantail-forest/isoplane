@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Wisp.Cli;
 
 try
@@ -27,6 +28,11 @@ try
     }
     using var cancellation = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
+    using var termination = OperatingSystem.IsWindows() ? null : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+    {
+        context.Cancel = true;
+        cancellation.Cancel();
+    });
     if (args is ["setup", "--source", var source])
     {
         var installed = await Toolchain.InstallAsync(source, Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
@@ -63,7 +69,7 @@ try
         _ => throw new ArgumentException($"Unknown command '{args[0]}'. Run isoplane --help.")
     };
 }
-catch (OperationCanceledException)
+catch (OperationCanceledException error) when (error.CancellationToken.IsCancellationRequested)
 {
     return 0;
 }

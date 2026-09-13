@@ -5,6 +5,46 @@ namespace Wisp.Cli.Tests;
 
 public sealed class ProcessLifetimeTests
 {
+    [Theory]
+    [InlineData("-TERM")]
+    [InlineData("-INT")]
+    public async Task stopping_the_cli_cleans_up_its_children_and_exits_successfully(string signal)
+    {
+        using var fixture = new ProcessFixture();
+        using var cli = fixture.StartCli("sleep 300 & echo $! > child.pid; wait");
+        try
+        {
+            await fixture.WaitForChildAsync();
+            using var request = Process.Start("kill", [signal, cli.Id.ToString()])
+                ?? throw new InvalidOperationException("Could not signal the CLI.");
+            await request.WaitForExitAsync(fixture.Cancellation);
+            Assert.True(request.ExitCode == 0, "The running CLI must receive the shutdown signal.");
+            await cli.WaitForExitAsync(fixture.Cancellation);
+            Assert.True(cli.ExitCode == 0, "An intentional CLI shutdown must not appear as a failed application in dotnet watch.");
+            await fixture.AssertChildStoppedAsync();
+        }
+        finally
+        {
+            await fixture.StopCliAsync(cli);
+        }
+    }
+
+    [Fact]
+    public async Task the_cli_preserves_a_command_failure_exit_code()
+    {
+        using var fixture = new ProcessFixture();
+        using var cli = fixture.StartCli("exit 23");
+        try
+        {
+            await cli.WaitForExitAsync(fixture.Cancellation);
+            Assert.True(cli.ExitCode == 23, "A command failure must remain visible to dotnet watch and other CLI callers.");
+        }
+        finally
+        {
+            await fixture.StopCliAsync(cli);
+        }
+    }
+
     [Fact]
     public async Task a_command_exiting_with_pipe_holding_descendants_is_cleaned_up_and_reported()
     {
@@ -65,6 +105,32 @@ public sealed class ProcessLifetimeTests
         internal string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("wisp-process-test-").FullName;
         internal string Runtime => Path.Combine(AppContext.BaseDirectory, "runtime", "wisp");
         internal CancellationToken Cancellation => deadline.Token;
+
+        internal Process StartCli(string command)
+        {
+            foreach (var file in System.IO.Directory.GetFiles(AppContext.BaseDirectory))
+                File.Copy(file, Path.Combine(Directory, Path.GetFileName(file)));
+            var runtimeDirectory = Path.Combine(Directory, "runtime");
+            System.IO.Directory.CreateDirectory(runtimeDirectory);
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "runtime", "wisp-process"), Path.Combine(runtimeDirectory, "wisp-process"));
+            File.WriteAllText(Path.Combine(runtimeDirectory, "wisp"), "#!/bin/sh\n" + command + "\n");
+            var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, WorkingDirectory = Directory };
+            start.ArgumentList.Add(Path.Combine(Directory, "Isoplane.Cli.dll"));
+            start.ArgumentList.Add("doctor");
+            start.ArgumentList.Add("fixture.wasm");
+            start.Environment["ISOPLANE_HOME"] = Path.Combine(Directory, "home");
+            return Process.Start(start) ?? throw new InvalidOperationException("Could not start the CLI.");
+        }
+
+        internal async Task StopCliAsync(Process cli)
+        {
+            if (!cli.HasExited)
+            {
+                cli.Kill();
+                await cli.WaitForExitAsync(Cancellation);
+                await AssertChildStoppedAsync();
+            }
+        }
 
         internal async Task<int> WaitForChildAsync()
         {
