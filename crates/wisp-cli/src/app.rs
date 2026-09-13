@@ -19,6 +19,9 @@ pub struct CliManifest {
     #[serde(default)]
     /// Optional numeric resource budgets from the local application manifest.
     pub limits: Option<wisp_abi::config::Limits>,
+    /// Optional local memory ceiling, independent of the selected limits.
+    #[serde(default)]
+    pub guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -59,55 +62,77 @@ impl CliManifest {
     }
 }
 
-/// Resolve application budgets and an optional memory-only override.
-pub fn resolve_limits(
-    memory_flag: Option<u64>,
+/// Effective doctor policy and the configuration source of each selection.
+pub struct DoctorPolicy {
+    /// Numeric budgets supplying non-memory limits and the default memory ceiling.
+    pub limits: wisp_abi::config::Limits,
+    /// Flag, manifest location, or default that selected the limits.
+    pub limits_from: String,
+    /// Independent memory ceiling, if configured.
+    pub guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
+    /// Flag or manifest location supplying memory, or `limits` for its default.
+    pub guest_memory_from: String,
+}
+
+/// Resolve one application manifest, then apply an independent memory override.
+pub fn resolve_doctor_policy(
+    memory_flag: Option<wisp_abi::config::GuestMemoryBytes>,
     module: &std::path::Path,
-) -> anyhow::Result<(wisp_abi::config::Limits, String)> {
+) -> anyhow::Result<DoctorPolicy> {
+    let manifest = doctor_manifest(module)?;
+    let (limits, limits_from) = match &manifest {
+        Some((manifest, source)) => match manifest.limits {
+            Some(limits) => (limits, format!("limits in {}", source.display())),
+            None => (
+                wisp_abi::config::Limits::default(),
+                format!(
+                    "{} declares no `limits`; using the default",
+                    source.display()
+                ),
+            ),
+        },
+        None => (
+            wisp_abi::config::Limits::default(),
+            "no wisp.toml found; using the default".into(),
+        ),
+    };
+    let (guest_memory_bytes, guest_memory_from) = if let Some(memory) = memory_flag {
+        (Some(memory), "--guest-memory-bytes".into())
+    } else if let Some((manifest, source)) = &manifest {
+        match manifest.guest_memory_bytes {
+            Some(memory) => (
+                Some(memory),
+                format!("guest_memory_bytes in {}", source.display()),
+            ),
+            None => (None, "limits".into()),
+        }
+    } else {
+        (None, "limits".into())
+    };
+    Ok(DoctorPolicy {
+        limits,
+        limits_from,
+        guest_memory_bytes,
+        guest_memory_from,
+    })
+}
+
+fn doctor_manifest(
+    module: &std::path::Path,
+) -> anyhow::Result<Option<(CliManifest, std::path::PathBuf)>> {
     let from_module = module
         .canonicalize()
         .ok()
-        .and_then(|module| module.parent().map(std::path::Path::to_path_buf));
-    let mut selected = None;
+        .and_then(|module| module.parent().map(|directory| directory.to_path_buf()));
     for start in [from_module, std::env::current_dir().ok()]
         .into_iter()
         .flatten()
     {
-        let mut directory = Some(start.as_path());
-        while let Some(path) = directory {
-            if let Some((manifest, source)) = CliManifest::load(path)? {
-                selected = Some(match manifest.limits {
-                    Some(limits) => (limits, format!("limits in {}", source.display())),
-                    None => (
-                        wisp_abi::config::Limits::default(),
-                        format!(
-                            "{} declares no `limits`; using the default",
-                            source.display()
-                        ),
-                    ),
-                });
-                break;
-            }
-            directory = path.parent();
-        }
-        if selected.is_some() {
-            break;
+        if let Some(found) = CliManifest::find(&start)? {
+            return Ok(Some(found));
         }
     }
-    let (mut limits, source) = selected.unwrap_or_else(|| {
-        (
-            wisp_abi::config::Limits::default(),
-            "no wisp.toml found; using the default".into(),
-        )
-    });
-    if let Some(memory) = memory_flag {
-        limits.instance_memory_max = memory;
-        return Ok((
-            limits,
-            format!("--guest-memory-bytes; other limits from {source}"),
-        ));
-    }
-    Ok((limits, source))
+    Ok(None)
 }
 
 /// `v-<epoch-secs>-<hash8>`: sortable, and anchored to the module bytes.

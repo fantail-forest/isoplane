@@ -7,7 +7,7 @@ use std::io::IsTerminal as _;
 
 use clap::Parser;
 use dev::{dev, DevOpts};
-use wisp_cli::app::resolve_limits;
+use wisp_cli::app::resolve_doctor_policy;
 use wisp_cli::cli::{Cli, Cmd};
 use wisp_cli::render::Style;
 use wisp_cli::{doctor, render};
@@ -37,8 +37,10 @@ async fn run() -> anyhow::Result<()> {
             let bytes = std::fs::read(&module)
                 .map_err(|error| anyhow::anyhow!("reading {}: {error}", module.display()))?;
             let report = doctor::analyse(&bytes)?;
-            let (limits, limits_from) =
-                resolve_limits(guest_memory_bytes.map(|bytes| bytes.get()), &module)?;
+            let policy = resolve_doctor_policy(guest_memory_bytes, &module)?;
+            let limits = policy.limits;
+            let limits_from = &policy.limits_from;
+            let guest_memory_bytes = policy.guest_memory_bytes;
             #[cfg(feature = "control")]
             let verdict =
                 wisp_runtime::validate_with_memory_limit(&bytes, limits, guest_memory_bytes);
@@ -53,14 +55,7 @@ async fn run() -> anyhow::Result<()> {
                 let violations: &[()] = &[];
                 println!(
                     "{}",
-                    render::doctor::doctor_json(
-                        &report,
-                        limits,
-                        &limits_from,
-                        guest_memory_bytes,
-                        rejected,
-                        violations
-                    )?
+                    render::doctor::doctor_json(&report, &policy, rejected, violations)?
                 );
             } else {
                 print!(
@@ -69,11 +64,7 @@ async fn run() -> anyhow::Result<()> {
                 );
                 let memory_bytes =
                     guest_memory_bytes.map_or(limits.instance_memory_max, |bytes| bytes.get());
-                let memory_from = if guest_memory_bytes.is_some() {
-                    "--guest-memory-bytes"
-                } else {
-                    "limits"
-                };
+                let memory_from = policy.guest_memory_from.as_str();
                 println!(
                     "    {}",
                     st.dim(&format!("numeric limits from {limits_from}"))

@@ -588,3 +588,143 @@ fn invalid_doctor_memory_budgets_name_the_supported_byte_constraints() {
         );
     }
 }
+
+#[cfg(feature = "control")]
+#[test]
+fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() {
+    let (directory, path) = write_module(
+        "large.wasm",
+        &module_with(
+            &[],
+            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            Some(8192),
+        ),
+    );
+    let manifest = directory.path().join("wisp.toml");
+    std::fs::write(
+        &manifest,
+        "name='large'\nlimits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=536870912\n",
+    )
+    .unwrap();
+    let out = run(&["--json", "doctor", path.to_str().unwrap()]);
+    assert_eq!(
+        out.code,
+        Some(0),
+        "a limits selection flag must not discard the manifest memory ceiling: {}",
+        out.stdout
+    );
+    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        verdict["limits"]["module_bytes_compressed"], 5242880,
+        "the limits flag must remain independent of manifest memory"
+    );
+    assert_eq!(
+        verdict["guest_memory_bytes"], 536870912_u64,
+        "doctor must apply manifest memory"
+    );
+    assert_eq!(
+        verdict["guest_memory_from"],
+        format!("guest_memory_bytes in {}", manifest.display()),
+        "the verdict must name the memory setting's actual manifest"
+    );
+    let text = run(&["--no-color", "doctor", path.to_str().unwrap()]);
+    assert_eq!(
+        text.code,
+        Some(0),
+        "the inherited policy must also pass text-mode validation"
+    );
+    assert!(
+        text.stdout.contains(&format!(
+            "guest memory ceiling: 536870912 bytes (guest_memory_bytes in {}",
+            manifest.display()
+        )),
+        "text output must identify the inherited memory ceiling: {}",
+        text.stdout
+    );
+}
+
+#[cfg(feature = "control")]
+#[test]
+fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
+    let (directory, path) = write_module(
+        "large.wasm",
+        &module_with(
+            &[],
+            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            Some(8192),
+        ),
+    );
+    std::fs::write(
+        directory.path().join("wisp.toml"),
+        "name='large'\nlimits = { module_bytes_compressed = 20971520, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\nguest_memory_bytes=536870912\n",
+    )
+    .unwrap();
+    let out = run(&[
+        "--json",
+        "doctor",
+        path.to_str().unwrap(),
+        "--guest-memory-bytes",
+        "134217728",
+    ]);
+    assert_eq!(
+        out.code,
+        Some(2),
+        "the smaller flag must override the otherwise admitting manifest"
+    );
+    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        verdict["guest_memory_bytes"], 134217728,
+        "the effective ceiling must come from the flag"
+    );
+    assert_eq!(
+        verdict["guest_memory_from"], "--guest-memory-bytes",
+        "the memory source must identify the winning flag"
+    );
+    assert_eq!(
+        verdict["limits"]["module_bytes_compressed"], 20971520,
+        "a memory flag must not change the manifest limits"
+    );
+}
+
+#[cfg(feature = "control")]
+#[test]
+fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("wisp.toml"),
+        "name='outer'\nguest_memory_bytes=536870912\n",
+    )
+    .unwrap();
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::write(
+        nested.join("wisp.toml"),
+        "name='inner'\nlimits = { module_bytes_compressed = 20971520, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\n",
+    )
+    .unwrap();
+    let path = nested.join("large.wasm");
+    std::fs::write(
+        &path,
+        module_with(
+            &[],
+            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            Some(8192),
+        ),
+    )
+    .unwrap();
+    let out = run(&["--json", "doctor", path.to_str().unwrap()]);
+    assert_eq!(
+        out.code,
+        Some(2),
+        "an outer application's ceiling cannot authorize the inner module"
+    );
+    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        verdict["guest_memory_from"], "limits",
+        "an absent setting must use the selected configured ceiling"
+    );
+    assert_eq!(
+        verdict["guest_memory_bytes"], 134217728,
+        "the inner app must retain its default memory ceiling"
+    );
+}
