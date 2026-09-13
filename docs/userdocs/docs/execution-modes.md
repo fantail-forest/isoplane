@@ -17,6 +17,12 @@ what `dotnet build`, `dotnet run` and the integration test fixture execute.
 
 ## Compatibility differs
 
+Interpreted builds retain application metadata by default so libraries can
+discover types and members at runtime. Retaining those assemblies uses more
+memory. You can opt into trimming with `PublishTrimmed=true` when your
+application and its dependencies support it; test reflection-dependent paths
+with that setting enabled.
+
 Ahead-of-time compilation needs to determine reachable code before the request
 runs. Reflection and dynamic-code assumptions in an application or its libraries
 can therefore expose trimming warnings or compilation failures that an
