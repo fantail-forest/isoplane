@@ -77,6 +77,7 @@ def verify_feed(feed, current_root=None):
         ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'WispGuestRuntimePack'),
         ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'WispGuestWasiSdkPack'),
         ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotPack'),
+        ('Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotSdkPack'),
     )
     for package, prefix in packages:
         version = field(prefix + 'Version')

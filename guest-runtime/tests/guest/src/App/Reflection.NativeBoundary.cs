@@ -34,6 +34,13 @@ internal sealed partial class Reflection
         return before + "/" + Wisp.Abi.NativeLibraryProbe.Invoke();
     }
 
+    private static async Task<string> NativeSymbolAfterPark(string operation)
+    {
+        string before = Wisp.Abi.NativeLibraryProbe.Invoke(operation);
+        await Task.Delay(50).ConfigureAwait(false);
+        return before + "/" + Wisp.Abi.NativeLibraryProbe.Invoke(operation);
+    }
+
 #if WISP_MONO
     private static async Task<string> NativePayloadAfterPark(string operation)
     {

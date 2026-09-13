@@ -1,4 +1,45 @@
 <Project>
+  <Import Project="Wisp.NativeExports.targets" Condition="'$(WispGuestRuntime)' != 'Mono'" />
+  <Target Name="WispNativeAotExportBindings" BeforeTargets="WriteIlcRspFileForCompilation"
+          DependsOnTargets="WispNativeAotVerifyCommonPack;SetupOSSpecificProps;WispNativeAotLinkShims;WispCompilePal;SelectNativeLibrariesForWasmLink"
+          Condition="'$(WispContainerBuild)' != 'true'">
+    <PropertyGroup>
+      <_WispAotExports>$(NativeIntermediateOutputPath)native-exports.txt</_WispAotExports>
+      <_WispAotDirect>$(NativeIntermediateOutputPath)direct-pinvokes.txt</_WispAotDirect>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WispAotNativeExportInput Include="@(NativeLibrary)" Condition="'%(Extension)' == '.a' OR '%(Extension)' == '.o'">
+        <Library Condition="'%(NativeLibrary.Library)' == ''">%(NativeLibrary.Filename)</Library>
+      </_WispAotNativeExportInput>
+    </ItemGroup>
+    <Wisp.Conformance.NativeExports Tool="$(_NativeWasmSdkBinPath)llvm-nm$(_HostToolExeExt)"
+        Inputs="@(_WispAotNativeExportInput)" SymbolsFile="$(_WispAotExports)" DirectPInvokeFile="$(_WispAotDirect)"
+        Compiler="$(_NativeWasmSdkBinPath)clang$(_HostToolExeExt)" TargetTriple="$(IlcLlvmTarget)"
+        SystemLibraries="libc.a" IncludeCompilerBuiltins="true">
+      <Output TaskParameter="ResolvedLibraries" ItemName="NativeLibrary" />
+    </Wisp.Conformance.NativeExports>
+    <ItemGroup>
+      <DirectPInvoke Remove="@(DirectPInvoke)" />
+      <DirectPInvokeList Include="$(_WispAotDirect)" />
+      <LinkerArg Include="-Wl,--error-unresolved-symbols" />
+      <FileWrites Include="$(_WispAotExports);$(_WispAotDirect)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="WispNativeAotVerifyCommonPack" BeforeTargets="IlcCompile" Condition="'$(WispContainerBuild)' != 'true'">
+    <Error Condition="'$(ILCompilerVersion)' != '$(WispGuestNativeAotSdkPackVersion)'"
+           Text="The NativeAOT targets version must match the supplied toolchain. Remove the ILCompilerVersion override." />
+    <PropertyGroup>
+      <_WispCommonPackDirectory>$([MSBuild]::NormalizeDirectory('$(NuGetPackageRoot)', 'microsoft.dotnet.ilcompiler.llvm', '$(WispGuestNativeAotSdkPackVersion)'))</_WispCommonPackDirectory>
+      <_WispCommonPackDigestFile>$(_WispCommonPackDirectory)microsoft.dotnet.ilcompiler.llvm.$(WispGuestNativeAotSdkPackVersion.ToLowerInvariant()).nupkg.sha512</_WispCommonPackDigestFile>
+    </PropertyGroup>
+    <Error Condition="'$(WispGuestNativeAotSdkPackVersion)' == '' OR !Exists('$(_WispCommonPackDigestFile)')"
+           Text="The source-built NativeAOT targets package is missing. Run isoplane setup with the matching toolchain and restore the project." />
+    <ReadLinesFromFile File="$(_WispCommonPackDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_WispCommonPackDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_WispCommonPackDigest)' != '$(WispGuestNativeAotSdkPackSha512)'"
+           Text="The NativeAOT targets package differs from the supplied toolchain. Restore the matching package before building." />
+  </Target>
   <!-- Teach the SDK which compiler handles WASI; its bundled compiler does not. -->
   <Target Name="WispSelectLlvmCompiler" BeforeTargets="ProcessFrameworkReferences" Condition="'$(PublishAot)' == 'true'">
     <ItemGroup>
@@ -19,12 +60,6 @@
       <PackageDownload Remove="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM;runtime.$(NETCoreSdkPortableRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM;runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" />
     </ItemGroup>
   </Target>
-  <ItemGroup>
-    <!-- The framework pack's cryptography shim is linked statically like
-         System.Native, so ilc binds its P/Invokes directly. -->
-    <DirectPInvoke Include="libSystem.Security.Cryptography.Native.OpenSsl" />
-    <DirectPInvoke Include="libSystem.IO.Compression.Native" />
-  </ItemGroup>
   <!-- The pack the compile draws on must be the pack the feed offers: NuGet
        keeps one extraction per version, so a stale copy could shadow a
        republished pack. The compiler's targets name the directory they

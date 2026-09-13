@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify the pinned NativeAOT compiler with WISP's native ABI backend."""
+"""Build and verify the pinned NativeAOT compiler and native ABI backend from source."""
 import argparse
 import base64
 import hashlib
@@ -76,15 +76,26 @@ def verify(output, current):
     with zipfile.ZipFile(package) as archive:
         if hashlib.sha256(archive.read(BACKEND)).hexdigest() != receipt['backend_sha256']:
             raise ValueError('compiler backend does not match its receipt')
+    with zipfile.ZipFile(package) as archive:
+        for name, expected_hash in receipt['compiler_files'].items():
+            if hashlib.sha256(archive.read(name)).hexdigest() != expected_hash:
+                raise ValueError(f'compiler file does not match its receipt: {name}')
     return receipt
 
 
-def compose(upstream, backend, output):
+def compose(upstream, backend, managed, output):
     spec = manifest()
     if digest(upstream) != spec['sha256']:
         raise ValueError('upstream compiler package hash mismatch')
     backend_hash = digest(backend)
-    version = f"10.0.0-wisp.{identity()[:12]}.{backend_hash[:12]}"
+    files = {f'tools/{path.name}': path for path in sorted(managed.iterdir()) if path.is_file() and path.suffix != '.pdb'}
+    if 'tools/ilc' not in files:
+        raise ValueError('source-built compiler executable is missing')
+    if BACKEND not in files or digest(files[BACKEND]) != backend_hash:
+        raise ValueError('source-built compiler uses a different native backend')
+    compiler_files = {name: digest(path) for name, path in files.items()}
+    payload_hash = hashlib.sha256(json.dumps(compiler_files, sort_keys=True).encode()).hexdigest()
+    version = f"10.0.0-wisp.{identity()[:12]}.{payload_hash[:12]}"
     if output.exists():
         raise ValueError(f'output already exists: {output}; choose a new compiler output directory')
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -98,8 +109,8 @@ def compose(upstream, backend, output):
                 if entry.filename == '.signature.p7s':
                     continue
                 data = original.read(entry)
-                if entry.filename == BACKEND:
-                    data = backend.read_bytes()
+                if entry.filename in files:
+                    data = files[entry.filename].read_bytes()
                 elif entry.filename.endswith('.nuspec'):
                     root = ET.fromstring(data)
                     ns = {'n': root.tag.split('}')[0][1:]}
@@ -110,14 +121,19 @@ def compose(upstream, backend, output):
                     root.find('./n:metadata/n:version', ns).text = version
                     data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
                 result.writestr(entry, data)
-            result.writestr(zipfile.ZipInfo('WISP-COMPILER-NOTICE.txt'), 'The Microsoft compiler executable is unchanged. WISP rebuilds the LLVM backend from the same source commit with the accompanying native ABI patches. Upstream license notices remain included.\n')
+            for name, path in files.items():
+                if name not in original.namelist():
+                    entry = zipfile.ZipInfo(name)
+                    entry.external_attr = (0o100755 if path.name == 'ilc' else 0o100644) << 16
+                    result.writestr(entry, path.read_bytes())
+            result.writestr(zipfile.ZipInfo('WISP-COMPILER-NOTICE.txt'), 'WISP builds the managed compiler and LLVM backend from the pinned runtime source with the accompanying patches. Upstream license notices remain included.\n')
             for patch in sorted((HERE / 'patches').glob('*.patch')):
                 result.writestr(zipfile.ZipInfo('wisp-patches/' + patch.name), patch.read_bytes())
         with package.open('rb') as stream:
             sha512 = base64.b64encode(hashlib.file_digest(stream, 'sha512').digest()).decode()
         receipt = {'inputs_sha256': identity(), 'version': version, 'package': package.name,
                    'package_sha256': digest(package), 'package_sha512': sha512,
-                   'backend_sha256': backend_hash, 'upstream': spec}
+                   'backend_sha256': backend_hash, 'compiler_files': compiler_files, 'upstream': spec}
         shutil.copyfile(backend, stage / 'backend')
         (stage / 'compiler.json').write_text(json.dumps(receipt, indent=2) + '\n')
         (stage / 'Wisp.GuestCompiler.props').write_bytes(props_bytes(version, sha512, identity(), spec['runtime_identifier']))
@@ -143,13 +159,20 @@ def build(args):
     command = ['./src/coreclr/build-runtime.sh', '-x64', '-release', '-os', 'linux', '-ninja', '-component', 'llvmjit', '-cmakeargs', '-DFEATURE_EVENTSOURCE_XPLAT=0']
     with (args.work / 'build.log').open('w') as log:
         subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
-    upstream = args.work / 'upstream.nupkg'
-    with urllib.request.urlopen(spec['source']) as response:
-        index = json.load(response)
-    base = next(resource['@id'] for resource in index['resources'] if resource['@type'].startswith('PackageBaseAddress/'))
-    name = spec['package'].lower()
-    fetch(f"{base}{name}/{spec['version']}/{name}.{spec['version']}.nupkg", upstream, spec['sha256'])
-    return compose(upstream, tree / 'artifacts/bin/coreclr/linux.x64.Release/libclrjit_universal_llvm32_x64.so', args.output)
+    with tempfile.TemporaryDirectory(prefix='managed-publish-', dir=args.work) as published:
+        command = ['./dotnet.sh', 'publish', 'src/coreclr/tools/aot/ILCompiler/ILCompiler_publish.csproj', '-c', 'Release',
+                   '-p:TargetArchitecture=x64', '-p:TargetOS=linux', '-p:UseNativeAotForComponents=false', '-p:UseBootstrap=false', f'-p:PublishDir={published}/']
+        with (args.work / 'managed-build.log').open('w') as log:
+            subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
+        upstream = args.work / 'upstream.nupkg'
+        with urllib.request.urlopen(spec['source']) as response:
+            index = json.load(response)
+        base = next(resource['@id'] for resource in index['resources'] if resource['@type'].startswith('PackageBaseAddress/'))
+        name = spec['package'].lower()
+        fetch(f"{base}{name}/{spec['version']}/{name}.{spec['version']}.nupkg", upstream, spec['sha256'])
+        return compose(upstream, tree / 'artifacts/bin/coreclr/linux.x64.Release/libclrjit_universal_llvm32_x64.so',
+                       Path(published), args.output)
+
 
 
 def main():

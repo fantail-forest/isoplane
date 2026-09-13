@@ -31,6 +31,7 @@ class FeedTests(unittest.TestCase):
             ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'WispGuestRuntimePack'),
             ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'WispGuestWasiSdkPack'),
             ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotPack'),
+            ('Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotSdkPack'),
         ]:
             content = package.encode()
             path = self.feed / f'{package}.1.nupkg'

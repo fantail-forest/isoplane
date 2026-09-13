@@ -46,3 +46,6 @@
 ../runtime/030-wasi-task-backed-socket-apm.patch
 ../runtime/031-wasi-vectored-stream-io.patch
 ../runtime/032-wasi-native-library-load-errors.patch
+
+007-wasi-native-link-input-selection.patch
+# omit ../runtime/033-wasi-native-symbol-inventory.patch -- Mono table generation is not used by the NativeAOT framework pack.

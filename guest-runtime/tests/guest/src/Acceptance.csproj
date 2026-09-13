@@ -27,8 +27,7 @@
     <Compile Remove="App/**/*.cs" />
     <Compile Include="../compiler/Handler.cs" />
     <Compile Include="../../../../guest-sdks/dotnet/Abi/Tests/NativeCompilerProbe.cs" />
-    <DirectPInvoke Include="wisp_compiler_probe" />
-    <NativeLibrary Include="$(WispCompilerProbeObject)" />
+    <NativeLibrary Include="$(WispCompilerProbeObject)" Library="wisp_compiler_probe" />
   </ItemGroup>
 
   <ItemGroup>

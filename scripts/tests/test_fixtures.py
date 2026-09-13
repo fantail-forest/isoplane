@@ -56,6 +56,13 @@ class FixtureTests(unittest.TestCase):
                 "import sys\nfrom pathlib import Path\n"
                 "assert sys.argv[1] == 'verify-current'\n"
                 "Path(sys.argv[2], 'verified').write_text(sys.argv[3])\n")
+            compiler = runtime / "compiler"
+            compiler.mkdir()
+            (compiler / "build.py").write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "assert sys.argv[1:3] == ['verify-current', '--output']\n"
+                "output = Path(sys.argv[3])\noutput.mkdir(parents=True)\n"
+                "(output / 'compiler.json').write_text('{}')\n")
             builder = project / "build.sh"
             builder.write_text('#!/bin/sh\nmkdir -p "$WISP_OUT_DIR"\nprintf fixture > "$WISP_OUT_DIR/$WISP_OUT.wasm"\nprintf test@sha512:digest > "$WISP_OUT_DIR/$WISP_OUT.wasm.runtime"\n')
             builder.chmod(0o755)
@@ -74,6 +81,8 @@ class FixtureTests(unittest.TestCase):
                              "fixture selection must not build or reuse another variant")
             self.assertEqual(Path((runtime / "verified").read_text()).resolve(), feed.resolve(),
                              "default fixture selection must verify the current feed before building")
+            self.assertTrue((runtime / "out/compiler/compiler.json").is_file(),
+                            "NativeAOT fixture selection must verify its compiler inputs before building")
 
     def test_the_compiler_image_recipe_invalidates_cached_fixtures(self):
         with tempfile.TemporaryDirectory() as scratch:

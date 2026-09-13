@@ -22,6 +22,7 @@ internal sealed partial class Reflection
     {
         "events-after-park" => EventsAfterPark(),
         "native-declaration-after-park" => NativeDeclarationAfterPark(),
+        "native-symbol-after-park" => NativeSymbolAfterPark(path[1]),
         "native-library-after-park" => NativeLibraryAfterPark(path[1]),
 #if WISP_MONO
         "assembly-after-park" => LoadedAssemblyAfterPark(),

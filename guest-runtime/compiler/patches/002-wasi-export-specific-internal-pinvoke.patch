@@ -1,0 +1,16 @@
+diff --git a/src/coreclr/tools/aot/ILCompiler/ConfigurablePInvokePolicy.cs b/src/coreclr/tools/aot/ILCompiler/ConfigurablePInvokePolicy.cs
+index 75ca1dd..bdea864 100644
+--- a/src/coreclr/tools/aot/ILCompiler/ConfigurablePInvokePolicy.cs
++++ b/src/coreclr/tools/aot/ILCompiler/ConfigurablePInvokePolicy.cs
+@@ -20,8 +20,9 @@ public ConfigurablePInvokePolicy(TargetDetails target, IReadOnlyList<string> dir
+         {
+             _directPInvokes = new Dictionary<string, HashSet<string>>(target.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+ 
+-            // * is always a direct call
+-            _directPInvokes.Add("*", null);
++            // WASI resolves only exports present in its selected native inputs.
++            if (target.OperatingSystem != TargetOS.Wasi)
++                _directPInvokes.Add("*", null);
+ 
+             foreach (var file in directPInvokeLists)
+             {

@@ -24,7 +24,7 @@
          The framework it compiles against is the pack guest-runtime/build.sh
          builds from the same runtimelab commit (guest-runtime/manifest.env)
          under the WISP patch series, named by the feed. -->
-    <ILCompilerVersion Condition="'$(ILCompilerVersion)' == ''">10.0.0-rc.1.26357.1</ILCompilerVersion>
+    <ILCompilerVersion>$(WispGuestNativeAotSdkPackVersion)</ILCompilerVersion>
     <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
     <!-- A reactor with named exports, not a command. -->
     <OutputType>library</OutputType>

@@ -25,6 +25,10 @@ class CompilerPackageTests(unittest.TestCase):
             archive.writestr('LICENSE.TXT', b'original license')
         self.backend = self.root / 'backend.so'
         self.backend.write_bytes(b'corrected backend')
+        self.managed = self.root / 'managed'
+        self.managed.mkdir()
+        (self.managed / 'ilc').write_bytes(b'source-built compiler')
+        (self.managed / Path(compiler.BACKEND).name).write_bytes(self.backend.read_bytes())
         self.manifest = {'package': 'runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM',
                          'sha256': compiler.digest(self.upstream), 'RUNTIMELAB_COMMIT': 'source',
                          'runtime_identifier': 'linux-x64'}
@@ -34,16 +38,27 @@ class CompilerPackageTests(unittest.TestCase):
 
     def compose(self):
         output = self.root / 'compiler'
-        receipt = compiler.compose(self.upstream, self.backend, output)
+        receipt = compiler.compose(self.upstream, self.backend, self.managed, output)
         return output, receipt
 
-    def test_package_preserves_managed_compiler_and_licenses_under_a_new_version(self):
+    def test_package_ships_source_built_compiler_and_preserves_licenses(self):
         output, receipt = self.compose()
         with zipfile.ZipFile(output / receipt['package']) as archive:
-            self.assertEqual(archive.read('tools/ilc'), b'pinned compiler executable', 'the compiler executable must remain the verified upstream artifact')
+            self.assertEqual(archive.read('tools/ilc'), b'source-built compiler', 'the compiler executable must contain the source-built WASI policy')
             self.assertEqual(archive.read('LICENSE.TXT'), b'original license', 'upstream license notices must survive composition')
             self.assertEqual(archive.read(compiler.BACKEND), self.backend.read_bytes(), 'the composed package must use the corrected backend')
             self.assertIn(receipt['version'].encode(), archive.read('compiler.nuspec'), 'NuGet must resolve the distinct version')
+
+    def test_changed_managed_compiler_bytes_get_a_distinct_version(self):
+        _, first = self.compose()
+        (self.managed / 'ilc').write_bytes(b'different compiled output')
+        second = compiler.compose(self.upstream, self.backend, self.managed, self.root / 'changed')
+        self.assertNotEqual(first['version'], second['version'], 'different managed compiler bytes must never reuse a NuGet version')
+
+    def test_a_managed_publish_with_a_different_backend_is_refused(self):
+        (self.managed / Path(compiler.BACKEND).name).write_bytes(b'wrong backend')
+        with self.assertRaisesRegex(ValueError, 'different native backend'):
+            self.compose()
 
     def test_corrupt_package_is_refused(self):
         output, receipt = self.compose()
@@ -80,7 +95,7 @@ class CompilerPackageTests(unittest.TestCase):
     def test_recomposition_preserves_package_bytes_for_the_same_version(self):
         output, receipt = self.compose()
         second = self.root / 'second'
-        other = compiler.compose(self.upstream, self.backend, second)
+        other = compiler.compose(self.upstream, self.backend, self.managed, second)
         self.assertEqual(receipt['version'], other['version'], 'identical compiler inputs must keep their package version')
         self.assertEqual((output / receipt['package']).read_bytes(), (second / other['package']).read_bytes(), 'a package version must always identify the same bytes')
 

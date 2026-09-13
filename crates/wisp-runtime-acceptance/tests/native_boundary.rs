@@ -132,3 +132,43 @@ in_both_runtimes! {
         assert!(matches!(result.as_str(), "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a reached unsupported native declaration must be refused consistently: {result}");
     }
 }
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn a_static_declaration_for_an_absent_prelinked_symbol_is_refused_when_called(runtime: GuestRuntime) {
+        let result = after_restore(runtime, "/reflection/native-symbol-after-park/symbol").await;
+        assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a missing prelinked entry point must be a managed refusal before and after Store restoration: {result}");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn an_absent_internal_symbol_is_refused_when_called(runtime: GuestRuntime) {
+        let result = after_restore(runtime, "/reflection/native-symbol-after-park/internal").await;
+        assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "an internal declaration must not bind an absent symbol: {result}");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn a_supported_static_native_export_remains_callable_across_store_restoration(runtime: GuestRuntime) {
+        let result = after_restore(runtime, "/reflection/native-symbol-after-park/timestamp").await;
+        assert_eq!(result, "prelinked-call-returned/prelinked-call-returned", "available exports must retain strong archive extraction and correct binding");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn an_absent_star_module_symbol_is_a_managed_refusal(runtime: GuestRuntime) {
+        let result = after_restore(runtime, "/reflection/native-symbol-after-park/star").await;
+        assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a missing star-module symbol must refuse with a catchable managed exception rather than trap: {result}");
+    }
+}
+
+in_both_runtimes! {
+    #[tokio::test(start_paused = true)]
+    async fn a_supported_star_module_export_remains_callable(runtime: GuestRuntime) {
+        let result = after_restore(runtime, "/reflection/native-symbol-after-park/star-timestamp").await;
+        assert_eq!(result, "prelinked-call-returned/prelinked-call-returned", "the star module must preserve direct binding to actual selected native exports");
+    }
+}

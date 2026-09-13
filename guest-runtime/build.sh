@@ -301,7 +301,7 @@ stage_nativeaot() {
   complete_pack_build "$build_inputs" "$WORK/nativeaot-build-inputs" nativeaot_source
   local version
   version="$(cat "$nativeaot_version_file")"
-  sha256sum "$nativeaot_version_file" "$RUNTIMELAB/artifacts/packages/Release/Shipping/runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM.$version.nupkg" > "$WORK/nativeaot-pack-artifacts"
+  sha256sum "$nativeaot_version_file" "$RUNTIMELAB/artifacts/packages/Release/Shipping/runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM.$version.nupkg" "$RUNTIMELAB/artifacts/packages/Release/Shipping/Microsoft.DotNet.ILCompiler.LLVM.$version.nupkg" > "$WORK/nativeaot-pack-artifacts"
 }
 
 # Both packs at once: the two trees, logs and version files are disjoint, and
@@ -359,12 +359,15 @@ stage_feed() {
   local nativeaot_shipping="$RUNTIMELAB/artifacts/packages/Release/Shipping"
   local nativeaot_pack="$nativeaot_shipping/runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM.$nativeaot_version.nupkg"
   [ -f "$nativeaot_pack" ] || { echo "the nativeaot stage produced no $nativeaot_pack:" >&2; ls "$nativeaot_shipping" >&2; exit 1; }
+  local nativeaot_sdk="$nativeaot_shipping/Microsoft.DotNet.ILCompiler.LLVM.$nativeaot_version.nupkg"
+  [ -f "$nativeaot_sdk" ] || { echo "the nativeaot stage produced no common targets pack at $nativeaot_sdk" >&2; exit 1; }
   rm -f "$feed"/*.nupkg
-  cp "$pack" "$sdkpack" "$nativeaot_pack" "$feed/"
+  cp "$pack" "$sdkpack" "$nativeaot_pack" "$nativeaot_sdk" "$feed/"
   rm -rf "$OUT/packs"
   unpack "$pack" "$OUT/packs/runtime"
   unpack "$sdkpack" "$OUT/packs/wasi-sdk"
   unpack "$nativeaot_pack" "$OUT/packs/nativeaot"
+  unpack "$nativeaot_sdk" "$OUT/packs/nativeaot-sdk"
   # The SDK's profiles import this to select their packs by version and to
   # check the pack a build resolves against the feed's digest.
   cat > "$feed/Wisp.GuestRuntime.props" <<EOF
@@ -377,6 +380,9 @@ stage_feed() {
     <WispGuestRuntimePackSha512>$(pack_digest "$pack")</WispGuestRuntimePackSha512>
     <WispGuestRuntimePackDirectory>\$(MSBuildThisFileDirectory)../packs/runtime/</WispGuestRuntimePackDirectory>
     <WispGuestWasiSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/wasi-sdk/</WispGuestWasiSdkPackDirectory>
+    <WispGuestNativeAotSdkPackVersion>$nativeaot_version</WispGuestNativeAotSdkPackVersion>
+    <WispGuestNativeAotSdkPackSha512>$(pack_digest "$nativeaot_sdk")</WispGuestNativeAotSdkPackSha512>
+    <WispGuestNativeAotSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot-sdk/</WispGuestNativeAotSdkPackDirectory>
     <WispGuestNativeAotPackVersion>$nativeaot_version</WispGuestNativeAotPackVersion>
     <WispGuestNativeAotPackSha512>$(pack_digest "$nativeaot_pack")</WispGuestNativeAotPackSha512>
     <WispGuestNativeAotPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot/</WispGuestNativeAotPackDirectory>
