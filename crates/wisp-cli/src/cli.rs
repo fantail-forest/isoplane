@@ -92,11 +92,11 @@ pub enum Cmd {
     /// it, judged against the app's limits. Needs no node. Exits 2 if the
     /// module would be rejected.
     Doctor {
+        /// Override only the guest memory ceiling in bytes.
+        #[arg(long)]
+        guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
         /// The `.wasm` to inspect.
         module: PathBuf,
-        /// Override the application memory ceiling in bytes.
-        #[arg(long)]
-        guest_memory_bytes: Option<u64>,
     },
 }
 

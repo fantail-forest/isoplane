@@ -43,7 +43,7 @@ impl Prepared {
         };
         let engine = Arc::new(wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
             pooling: false,
-            max_memory_bytes: manifest.limits.instance_memory_max,
+            max_memory_bytes: manifest.memory_max_bytes(),
             platform_files: project.platform_files.clone(),
             ..Default::default()
         })?);
@@ -64,7 +64,7 @@ impl Prepared {
         let version = blake3::hash(wasm).to_hex().to_string();
         let engine = Arc::new(wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
             pooling: false,
-            max_memory_bytes: manifest.limits.instance_memory_max,
+            max_memory_bytes: manifest.memory_max_bytes(),
             platform_files: project.platform_files.clone(),
             ..Default::default()
         })?);
@@ -84,6 +84,7 @@ impl Prepared {
 
 fn preinitialize(project: &Project, wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(wisp_prepare::PreInitializer::new()
+        .with_memory_limit(wisp_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
         .with_pal(project.init_sandbox)
         .with_platform_files(project.platform_files.clone())
         .run(wasm, &wisp_prepare::PreInitRequest {
@@ -101,9 +102,9 @@ fn validate(
 ) -> anyhow::Result<wisp_runtime::ValidationReport> {
     let manifest = &project.manifest;
     let admission = if local_debug {
-        wisp_runtime::validate_local_debug(wasm, manifest.limits)
+        wisp_runtime::validate_local_debug(wasm, manifest.limits, manifest.guest_memory_bytes)
     } else {
-        wisp_runtime::validate(wasm, manifest.limits)
+        wisp_runtime::validate_with_memory_limit(wasm, manifest.limits, manifest.guest_memory_bytes)
     };
     let report = admission.map_err(|violations| {
         anyhow::anyhow!(

@@ -169,10 +169,12 @@ impl AsViolationJson for wisp_runtime::Violation {
     }
 }
 
+/// Render the validation verdict and its effective limits and memory ceiling as JSON.
 pub fn doctor_json<V: AsViolationJson>(
     r: &crate::doctor::Report,
     limits: wisp_abi::config::Limits,
     limits_from: &str,
+    guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
     rejected: bool,
     violations: &[V],
 ) -> anyhow::Result<String> {
@@ -180,8 +182,9 @@ pub fn doctor_json<V: AsViolationJson>(
         "bytes": r.bytes,
         "blake3": r.blake3,
         "limits": limits,
-    "guest_memory_bytes": limits.instance_memory_max,
         "limits_from": limits_from,
+        "guest_memory_bytes": guest_memory_bytes.map_or(limits.instance_memory_max, |bytes| bytes.get()),
+        "guest_memory_from": if guest_memory_bytes.is_some() { "--guest-memory-bytes" } else { "limits" },
         "validator": cfg!(feature = "control"),
         "violations": violations.iter().map(AsViolationJson::as_json).collect::<Vec<_>>(),
         "rejected": rejected,

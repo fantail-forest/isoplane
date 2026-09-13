@@ -190,6 +190,7 @@ pub(super) mod cell_tests {
 
     pub(in crate::cell) fn manifest(name: &str) -> AppManifest {
         AppManifest {
+            guest_memory_bytes: None,
             name: name.into(),
             handlers: HandlerConfig {
                 lifecycle: HandlerLifecycle::Reuse,

@@ -78,20 +78,31 @@ pub fn validate(
     wasm: &[u8],
     budgets: Limits,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(wasm, budgets, false)
+    validate_with_memory_limit(wasm, budgets, None)
 }
 
 /// Validates an explicitly marked local debugger artifact with all sandbox checks retained.
 pub fn validate_local_debug(
     wasm: &[u8],
     budgets: Limits,
+    memory: Option<wisp_abi::config::GuestMemoryBytes>,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(wasm, budgets, true)
+    validate_for_execution(wasm, budgets, memory, true)
+}
+
+/// Validate with an independently authorized memory ceiling and unchanged application budgets.
+pub fn validate_with_memory_limit(
+    wasm: &[u8],
+    budgets: Limits,
+    memory: Option<wisp_abi::config::GuestMemoryBytes>,
+) -> std::result::Result<ValidationReport, Vec<Violation>> {
+    validate_for_execution(wasm, budgets, memory, false)
 }
 
 fn validate_for_execution(
     wasm: &[u8],
     budgets: Limits,
+    memory: Option<wisp_abi::config::GuestMemoryBytes>,
     local_debug: bool,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
     let mut v = Vec::new();
@@ -123,7 +134,16 @@ fn validate_for_execution(
 
             check_imports(&scan, &mut report, &mut v);
             check_exports(&scan, &mut report, &mut v);
-            check_memory(&scan, budgets, &mut report, &mut v);
+            check_memory(
+                &scan,
+                memory.map_or(
+                    budgets.instance_memory_max,
+                    wisp_abi::config::GuestMemoryBytes::get,
+                ),
+                memory.is_some(),
+                &mut report,
+                &mut v,
+            );
             check_bombs(&scan, &mut report, &mut v);
         }
         Err(e) => {

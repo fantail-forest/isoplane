@@ -146,7 +146,13 @@ fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdent
         *blake3::hash(wasm).as_bytes() == request.input_hash,
         "preparation input identity mismatch"
     );
-    wisp_runtime::validate(wasm, request.limits)
+    anyhow::ensure!(
+        request
+            .guest_memory_bytes
+            .is_none_or(|limit| limit.get() <= request.engine.max_memory_bytes),
+        "guest memory budget exceeds the selected worker engine capacity"
+    );
+    wisp_runtime::validate_with_memory_limit(wasm, request.limits, request.guest_memory_bytes)
         .map_err(|violations| anyhow::anyhow!("portable input rejected: {violations:?}"))?;
     Ok(request.identity()?)
 }

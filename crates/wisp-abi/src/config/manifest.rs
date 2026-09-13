@@ -13,6 +13,9 @@ pub struct AppManifest {
     pub bindings: Bindings,
     #[serde(default)]
     pub limits: Limits,
+    /// Operator-selected memory ceiling; other numeric budgets remain unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_memory_bytes: Option<super::GuestMemoryBytes>,
     /// Non-secret variables handed to the init sandbox as a data blob.
     #[serde(default)]
     pub init_visible_vars: Vec<(String, String)>,
@@ -69,3 +72,13 @@ pub struct Bindings {
 
 
 
+
+impl AppManifest {
+    /// Memory ceiling after applying the independent operator override.
+    pub fn memory_max_bytes(&self) -> u64 {
+        self.guest_memory_bytes.map_or(
+            self.limits.instance_memory_max,
+            super::GuestMemoryBytes::get,
+        )
+    }
+}

@@ -23,6 +23,7 @@ struct Cache {
     path: PathBuf,
     key: blake3::Hash,
     budgets: wisp_abi::config::Limits,
+    guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
 }
 
 impl Cache {
@@ -49,6 +50,7 @@ impl Cache {
             path: project.state_dir().join("preinitialized.wasm-cache"),
             key: key.finalize(),
             budgets: project.manifest.limits,
+            guest_memory_bytes: project.manifest.guest_memory_bytes,
         })
     }
 
@@ -57,7 +59,11 @@ impl Cache {
         prepare: impl FnOnce() -> anyhow::Result<Vec<u8>>,
     ) -> anyhow::Result<Vec<u8>> {
         if let Some(wasm) = self.read()? {
-            match wisp_runtime::validate(&wasm, self.budgets) {
+            match wisp_runtime::validate_with_memory_limit(
+                &wasm,
+                self.budgets,
+                self.guest_memory_bytes,
+            ) {
                 Ok(report) if !report.has_initialize() => {
                     tracing::info!(path = %self.path.display(), "reusing local pre-initialized WASM");
                     return Ok(wasm);
@@ -201,6 +207,47 @@ mod tests {
             template.hash,
             wisp_engine::ModuleHash::of(&first),
             "the ordinary engine must load the cached sandbox bytecode"
+        );
+    }
+
+    #[test]
+    fn an_independent_memory_override_is_retained_when_reusing_local_preparation() {
+        let mut fixture = Fixture::new();
+        fixture.project.manifest.guest_memory_bytes =
+            Some(wisp_abi::config::GuestMemoryBytes::new(512 << 20).unwrap());
+        fixture.wasm = wat::parse_str(
+            r#"(module
+                (memory (export "memory") 1 8192)
+                (func (export "wisp_initialize"))
+                (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+                (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
+                (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
+        )
+        .unwrap();
+        super::super::validate(&fixture.project, &fixture.wasm, false).unwrap();
+        let first = fixture
+            .cache()
+            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm))
+            .unwrap();
+        let cached = fixture
+            .cache()
+            .get_or_prepare(|| panic!("the same memory authorization must reuse initialization"))
+            .unwrap();
+        assert_eq!(
+            cached, first,
+            "cached preparation must preserve the authorized memory ceiling"
+        );
+        assert_eq!(
+            fixture.project.manifest.limits,
+            wisp_abi::config::Limits {
+                module_bytes_compressed: 20971520,
+                instance_memory_max: 134217728,
+                cpu_ms_per_http_dispatch: 30000,
+                subrequests_per_dispatch: 200,
+                delta_storage_bytes: 10737418240,
+                pending_futures_per_dispatch: 64
+            },
+            "reusing a large memory template must not require an larger limits selection"
         );
     }
 

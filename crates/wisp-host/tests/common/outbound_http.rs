@@ -229,6 +229,7 @@ pub fn cell(
         "tenant",
         activator,
         wisp_abi::config::AppManifest {
+            guest_memory_bytes: None,
             name: module.app.clone(),
             handlers: wisp_abi::config::HandlerConfig {
                 lifecycle: HandlerLifecycle::Reuse,

@@ -2,7 +2,7 @@
 
 use crate::{BuildRequest, Initialization, PrepareError, RuntimeProfile};
 use wisp_abi::{
-    config::{InitSandbox, Limits},
+    config::{GuestMemoryBytes, InitSandbox, Limits},
     imports,
 };
 use wisp_engine::{EngineConfig, ModuleHash, PlatformFiles, WispEngine};
@@ -21,6 +21,7 @@ pub const DEFAULT_INITIALIZATION_LOG_BYTES: usize = 64 * 1024;
 pub struct PreInitializer {
     pal: InitSandbox,
     platform_files: PlatformFiles,
+    memory_limit: Option<GuestMemoryBytes>,
 }
 
 /// Immutable inputs to one local template build.
@@ -88,7 +89,7 @@ pub enum PreInitError {
     /// Initialization exceeded its replay limit.
     #[error("pre-init did not converge in {0} passes")]
     NoConvergence(u32),
-    /// The declared memory exceeds the initialization memory ceiling.
+    /// The declared memory exceeds the selected initialization capacity.
     #[error("declared init memory of {bytes} bytes exceeds the init limit of {limit} bytes")]
     MemoryLimit { bytes: u64, limit: u64 },
     /// A guest `abort`, an `unreachable`, an out-of-memory: not a sealed
@@ -101,6 +102,11 @@ impl PreInitializer {
     /// Select sealed initialization with no platform files.
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Match initialization to the consuming engine's linear-memory capacity.
+    pub fn with_memory_limit(mut self, memory_limit: GuestMemoryBytes) -> Self {
+        self.memory_limit = Some(memory_limit);
+        self
     }
     /// Select the caller's initialization capability policy.
     pub fn with_pal(mut self, pal: InitSandbox) -> Self {
@@ -123,7 +129,7 @@ impl PreInitializer {
         if !has_initializer {
             return Err(PreInitError::NoInitFunc(imports::exports::INITIALIZE));
         }
-        let limit = 536870912;
+        let limit = self.memory_limit.map_or(536870912, GuestMemoryBytes::get);
         if bytes > limit {
             return Err(PreInitError::MemoryLimit { bytes, limit });
         }
@@ -149,6 +155,7 @@ impl PreInitializer {
             };
             let output = crate::initialize(&engine, wasm, &request).map_err(map_error)?;
             let digest = BuildRequest {
+                guest_memory_bytes: self.memory_limit,
                 engine: configuration,
                 application_files: PlatformFiles::default(),
                 runtime: RuntimeProfile::RawWasm,
@@ -229,6 +236,61 @@ fn module_shape(wasm: &[u8]) -> anyhow::Result<(bool, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn memory_module(memory: &str, initialize: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"(module
+            (memory (export "memory") {memory})
+            (func (export "wisp_initialize") {initialize})
+            (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+            (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
+            (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#
+        ))
+        .unwrap()
+    }
+
+    fn request(wasm: &[u8]) -> PreInitRequest {
+        PreInitRequest {
+            module_hash: ModuleHash::of(wasm),
+            init_blob: vec![],
+        }
+    }
+
+    #[test]
+    fn local_initialization_accepts_the_explicit_engine_capacity_above_its_default() {
+        let wasm = memory_module("1 16384", "");
+        assert!(
+            matches!(
+                PreInitializer::new().run(&wasm, &request(&wasm)),
+                Err(PreInitError::MemoryLimit { .. })
+            ),
+            "the existing default must retain its initialization memory ceiling"
+        );
+        let output = PreInitializer::new()
+            .with_memory_limit(GuestMemoryBytes::new(1 << 30).unwrap())
+            .run(&wasm, &request(&wasm))
+            .unwrap();
+        assert_eq!(
+            output.passes, 1,
+            "a configured larger engine must initialize a bounded module above the default ceiling"
+        );
+    }
+
+    #[test]
+    fn local_initialization_enforces_the_consuming_engine_capacity_during_growth() {
+        let wasm = memory_module(
+            "1",
+            "(if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))",
+        );
+        let output = PreInitializer::new()
+            .with_memory_limit(GuestMemoryBytes::new(65536).unwrap())
+            .run(&wasm, &request(&wasm))
+            .unwrap();
+        assert_eq!(
+            output.passes, 1,
+            "initialization must deny growth beyond its configured engine capacity"
+        );
+    }
 
     #[test]
     fn initialization_refuses_a_request_bound_to_another_source() {

@@ -434,10 +434,94 @@ fn a_garbage_module_is_an_error_not_a_panic() {
 
 #[cfg(feature = "control")]
 #[test]
-fn a_numeric_memory_override_keeps_other_admission_limits_and_capability_checks() {
-    let (_directory, path) = write_module(
-        "bounded-large.wasm",
-        &module_with(&[], wisp_abi::imports::exports::REQUIRED, Some(8192)),
+fn doctor_reports_and_enforces_the_default_memory_ceiling() {
+    let (_dir, path) = write_module(
+        "large.wasm",
+        &module_with(
+            &[],
+            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            Some(8192),
+        ),
+    );
+    let out = run(&["--json", "doctor", path.to_str().unwrap()]);
+    assert_eq!(
+        out.code,
+        Some(2),
+        "the default must reject a 512 MiB memory declaration"
+    );
+    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        verdict["limits"]["module_bytes_compressed"], 20971520,
+        "the default plan must remain Standard"
+    );
+    assert_eq!(
+        verdict["guest_memory_bytes"], 134217728,
+        "JSON must report the effective default memory ceiling"
+    );
+    assert_eq!(
+        verdict["guest_memory_from"], "limits",
+        "JSON must distinguish the configured ceiling from an override"
+    );
+}
+
+#[cfg(feature = "control")]
+#[test]
+fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
+    let (_dir, path) = write_module(
+        "large.wasm",
+        &module_with(
+            &[],
+            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            Some(8192),
+        ),
+    );
+    for format in ["--json", "--no-color"] {
+        let out = run(&[
+            format,
+            "doctor",
+            path.to_str().unwrap(),
+            "--guest-memory-bytes",
+            "536870912",
+        ]);
+        assert_eq!(
+            out.code,
+            Some(0),
+            "the explicit ceiling must admit the bounded module: {}",
+            out.stdout
+        );
+        if format == "--json" {
+            let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+            assert_eq!(
+                verdict["limits"]["module_bytes_compressed"], 20971520,
+                "the memory override cannot select Enterprise"
+            );
+            assert_eq!(
+                verdict["guest_memory_bytes"], 536870912_u64,
+                "JSON must report the applied byte ceiling"
+            );
+            assert_eq!(
+                verdict["guest_memory_from"], "--guest-memory-bytes",
+                "JSON must identify the override source"
+            );
+        } else {
+            assert!(
+                out.stdout.contains("numeric limits from")
+                    && out
+                        .stdout
+                        .contains("guest memory ceiling: 536870912 bytes (--guest-memory-bytes)"),
+                "text output must explain the independent memory ceiling: {}",
+                out.stdout
+            );
+        }
+    }
+}
+
+#[cfg(feature = "control")]
+#[test]
+fn a_doctor_memory_override_requires_a_declared_module_maximum() {
+    let (_dir, path) = write_module(
+        "unbounded.wasm",
+        &module(&[], &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"]),
     );
     let out = run(&[
         "--json",
@@ -448,22 +532,24 @@ fn a_numeric_memory_override_keeps_other_admission_limits_and_capability_checks(
     ]);
     assert_eq!(
         out.code,
-        Some(0),
-        "a bounded explicit memory override must pass: {} {}",
-        out.stdout,
-        out.stderr
+        Some(2),
+        "an override cannot admit unbounded guest memory"
     );
-    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(verdict["guest_memory_bytes"], 536870912_u64);
-    assert_eq!(
-        verdict["limits"]["module_bytes_compressed"], 20971520_u64,
-        "a memory flag must preserve the application size allowance"
+    assert!(
+        out.stdout.contains("V3MemoryShape"),
+        "the rejection must name the memory rule: {}",
+        out.stdout
     );
-    let (_directory, path) = write_module(
-        "hostile-large.wasm",
+}
+
+#[cfg(feature = "control")]
+#[test]
+fn a_doctor_memory_override_does_not_admit_hostile_imports() {
+    let (_dir, path) = write_module(
+        "hostile.wasm",
         &module_with(
-            &[("outside", "io")],
-            wisp_abi::imports::exports::REQUIRED,
+            &[("env", "pthread_create")],
+            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
             Some(8192),
         ),
     );
@@ -477,13 +563,28 @@ fn a_numeric_memory_override_keeps_other_admission_limits_and_capability_checks(
     assert_eq!(
         out.code,
         Some(2),
-        "a memory flag cannot grant another capability: {} {}",
-        out.stdout,
-        out.stderr
+        "a larger memory ceiling cannot grant an undeclared capability"
     );
     assert!(
-        out.stdout.contains("V1UndeclaredImport"),
-        "the actual validator must explain the rejection: {}",
+        out.stdout.contains("V1UndeclaredImport") && out.stdout.contains("pthread_create"),
+        "the hostile import must remain visible in the validator rejection: {}",
         out.stdout
     );
+}
+
+#[test]
+fn invalid_doctor_memory_budgets_name_the_supported_byte_constraints() {
+    for bytes in ["0", "1", "134217729", "4295032832", "invalid"] {
+        let out = run(&["doctor", "unused.wasm", "--guest-memory-bytes", bytes]);
+        assert_eq!(
+            out.code,
+            Some(2),
+            "invalid memory policy must fail argument parsing"
+        );
+        assert!(
+            out.stderr.contains("65536") && out.stderr.contains("4294967296"),
+            "an invalid ceiling must name its required alignment and maximum: {}",
+            out.stderr
+        );
+    }
 }

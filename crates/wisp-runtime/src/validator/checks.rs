@@ -3,7 +3,6 @@
 use std::collections::BTreeSet;
 
 use wasmparser::{ExternalKind, TypeRef};
-use wisp_abi::config::Limits;
 use wisp_abi::imports;
 use wisp_abi::pal::{self, Disposition, PalDef};
 
@@ -253,11 +252,11 @@ pub(super) fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec
 
 pub(super) fn check_memory(
     s: &Scan,
-    budgets: Limits,
+    ceiling_bytes: u64,
+    require_maximum: bool,
     report: &mut ValidationReport,
     v: &mut Vec<Violation>,
 ) {
-    let ceiling_bytes = budgets.instance_memory_max;
     let ceiling_pages = ceiling_bytes / wisp_abi::WASM_PAGE_SIZE as u64;
 
     if s.memories.len() != 1 {
@@ -287,10 +286,14 @@ pub(super) fn check_memory(
             ));
         }
         match m.maximum {
+            None if require_maximum => v.push(Violation::new(
+                ViolationCode::V3MemoryShape,
+                "an explicit guest memory budget requires a declared WebAssembly memory maximum",
+            )),
             Some(max) if max > ceiling_pages => v.push(Violation::new(
                 ViolationCode::V3MemoryShape,
                 format!(
-                    "declared memory maximum {} pages ({} MiB) exceeds the application memory \
+                    "declared memory maximum {} pages ({} MiB) exceeds the configured \
                      ceiling of {} pages ({} MiB)",
                     max,
                     (max * 65_536) >> 20,
@@ -304,7 +307,7 @@ pub(super) fn check_memory(
             v.push(Violation::new(
                 ViolationCode::V3MemoryShape,
                 format!(
-                    "declared memory minimum {} pages exceeds the application memory ceiling of {} \
+                    "declared memory minimum {} pages exceeds the configured ceiling of {} \
                      pages — the module could never be instantiated",
                     m.initial, ceiling_pages
                 ),

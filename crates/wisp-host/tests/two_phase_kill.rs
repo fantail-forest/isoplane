@@ -48,6 +48,7 @@ fn services() -> Arc<Services> {
 
 fn manifest(name: &str, lifecycle: HandlerLifecycle) -> AppManifest {
     AppManifest {
+        guest_memory_bytes: None,
         name: name.into(),
         handlers: HandlerConfig { lifecycle },
         bindings: Bindings::default(),

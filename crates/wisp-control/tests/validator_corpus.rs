@@ -509,7 +509,7 @@ fn a_local_debug_artifact_is_rejected_by_normal_admission() {
         "normal deployment must refuse a local debugger artifact"
     );
     assert!(
-        validator::validate_local_debug(&wasm, Limits::default()).is_ok(),
+        validator::validate_local_debug(&wasm, Limits::default(), None).is_ok(),
         "explicit local debug admission must accept an otherwise valid marked module"
     );
 }
@@ -519,7 +519,7 @@ fn explicit_debug_validation_still_rejects_forbidden_imports() {
     let wasm = debug_wasm(&format!(
         "(module (import \"evil\" \"escape\" (func)) {REQUIRED_EXPORTS})"
     ));
-    let errors = validator::validate_local_debug(&wasm, Limits::default())
+    let errors = validator::validate_local_debug(&wasm, Limits::default(), None)
         .expect_err("debug mode cannot bypass sandbox admission");
     assert!(
         errors
@@ -531,12 +531,78 @@ fn explicit_debug_validation_still_rejects_forbidden_imports() {
 
 #[test]
 fn explicit_debug_validation_requires_a_marked_artifact() {
-    let errors = validator::validate_local_debug(&parse(&clean_wat()), Limits::default())
+    let errors = validator::validate_local_debug(&parse(&clean_wat()), Limits::default(), None)
         .expect_err("normal publication cannot accidentally select debug execution");
     assert!(
         errors
             .iter()
             .any(|error| error.code == V::LocalDebugArtifact),
         "an unmarked artifact must fail the explicit debug gate"
+    );
+}
+
+#[test]
+fn a_memory_override_accepts_a_larger_bounded_module_without_relaxing_capabilities() {
+    let budget = wisp_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid memory budget");
+    let source = clean_wat().replace("17 2048", "17 8192");
+    assert!(
+        validator::validate(&parse(&source), Limits::default()).is_err(),
+        "the standard default must continue to refuse a 512 MiB maximum"
+    );
+    assert!(
+        validator::validate_with_memory_limit(&parse(&source), Limits::default(), Some(budget))
+            .is_ok(),
+        "an explicit memory-only budget must admit the bounded larger module"
+    );
+    let hostile = source.replace("\"clock_now_coarse\"", "\"undeclared_clock\"");
+    let failures =
+        validator::validate_with_memory_limit(&parse(&hostile), Limits::default(), Some(budget))
+            .expect_err("memory authorization cannot grant host capabilities");
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.code == V::V1UndeclaredImport),
+        "an independent capability violation must remain rejected"
+    );
+}
+
+#[test]
+fn an_explicit_memory_budget_refuses_unbounded_or_larger_memory() {
+    let budget = wisp_abi::config::GuestMemoryBytes::new(128 << 20).expect("valid budget");
+    for memory in ["17", "17 2049", "2049 2049"] {
+        let source = clean_wat().replace("17 2048", memory);
+        let failures =
+            validator::validate_with_memory_limit(&parse(&source), Limits::default(), Some(budget))
+                .expect_err("memory shape must enforce the explicit ceiling");
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.code == V::V3MemoryShape),
+            "memory shape {memory} must fail the authorized ceiling"
+        );
+    }
+}
+
+#[test]
+fn local_debug_validation_applies_only_the_authorized_memory_override() {
+    let budget = wisp_abi::config::GuestMemoryBytes::new(512 << 20).unwrap();
+    let source = clean_wat().replace("17 2048", "17 8192");
+    let wasm = debug_wasm(&source);
+    assert!(
+        validator::validate_local_debug(&wasm, Limits::default(), None).is_err(),
+        "local debugging must retain the default plan ceiling without an override"
+    );
+    assert!(
+        validator::validate_local_debug(&wasm, Limits::default(), Some(budget)).is_ok(),
+        "the explicit local debug ceiling must admit a larger bounded module"
+    );
+    let hostile = debug_wasm(&source.replace("clock_now_coarse", "undeclared_clock"));
+    let errors =
+        validator::validate_local_debug(&hostile, Limits::default(), Some(budget)).unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.code == V::V1UndeclaredImport),
+        "debug memory authorization must not grant an undeclared capability"
     );
 }

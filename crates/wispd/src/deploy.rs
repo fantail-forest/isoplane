@@ -142,6 +142,7 @@ impl Deployer {
             log_bytes: context.log_bytes,
         };
         let request = wisp_prepare::BuildRequest {
+            guest_memory_bytes: manifest.guest_memory_bytes,
             application_files: context.application_files.clone(),
             engine: context.engine.configuration(),
             runtime: context.runtime.clone(),

@@ -4,7 +4,10 @@
 
 pub mod validator;
 
-pub use validator::{validate, validate_local_debug, ValidationReport, Violation, ViolationCode};
+pub use validator::{
+    validate, validate_local_debug, validate_with_memory_limit, ValidationReport, Violation,
+    ViolationCode,
+};
 
 pub mod network;
 #[cfg(feature = "local")]

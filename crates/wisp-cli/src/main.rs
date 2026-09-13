@@ -37,9 +37,11 @@ async fn run() -> anyhow::Result<()> {
             let bytes = std::fs::read(&module)
                 .map_err(|error| anyhow::anyhow!("reading {}: {error}", module.display()))?;
             let report = doctor::analyse(&bytes)?;
-            let (limits, limits_from) = resolve_limits(guest_memory_bytes, &module)?;
+            let (limits, limits_from) =
+                resolve_limits(guest_memory_bytes.map(|bytes| bytes.get()), &module)?;
             #[cfg(feature = "control")]
-            let verdict = wisp_runtime::validate(&bytes, limits);
+            let verdict =
+                wisp_runtime::validate_with_memory_limit(&bytes, limits, guest_memory_bytes);
             #[cfg(feature = "control")]
             let rejected = verdict.is_err();
             #[cfg(not(feature = "control"))]
@@ -55,6 +57,7 @@ async fn run() -> anyhow::Result<()> {
                         &report,
                         limits,
                         &limits_from,
+                        guest_memory_bytes,
                         rejected,
                         violations
                     )?
@@ -64,8 +67,13 @@ async fn run() -> anyhow::Result<()> {
                     "{}",
                     render::doctor(&st, &module.display().to_string(), &report)
                 );
-                let memory_bytes = limits.instance_memory_max;
-                let memory_from = limits_from.as_str();
+                let memory_bytes =
+                    guest_memory_bytes.map_or(limits.instance_memory_max, |bytes| bytes.get());
+                let memory_from = if guest_memory_bytes.is_some() {
+                    "--guest-memory-bytes"
+                } else {
+                    "limits"
+                };
                 println!(
                     "    {}",
                     st.dim(&format!("numeric limits from {limits_from}"))

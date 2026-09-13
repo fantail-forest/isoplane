@@ -28,6 +28,7 @@ fn wasm(value: u32) -> Vec<u8> {
 }
 fn request(wasm: &[u8]) -> BuildRequest {
     BuildRequest {
+        guest_memory_bytes: None,
         application_files: wisp_engine::PlatformFiles::default(),
         engine: common::engine().configuration(),
         runtime: RuntimeProfile::raw_wasm(),
@@ -200,5 +201,38 @@ async fn malformed_cache_metadata_is_refused_without_recompilation() {
         std::fs::read(&metadata).expect("refused entry"),
         b"invalid",
         "refusal must not silently replace a corrupted cache entry"
+    );
+}
+
+#[test]
+fn preparation_identity_binds_the_independent_memory_authorization() {
+    let wasm = wasm(42);
+    let mut input = request(&wasm);
+    let before = input.identity().expect("original identity");
+    input.guest_memory_bytes =
+        Some(wisp_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid budget"));
+    assert_ne!(
+        before,
+        input.identity().expect("new identity"),
+        "different memory authorizations must not reuse the same prepared identity"
+    );
+    assert_eq!(
+        input.limits,
+        wisp_abi::config::Limits::default(),
+        "memory authorization must not change CPU or resource plans"
+    );
+}
+
+#[test]
+fn preparation_rejects_memory_authorization_above_worker_capacity() {
+    let wasm = wasm(42);
+    let mut input = request(&wasm);
+    input.engine.max_memory_bytes = 128 << 20;
+    input.guest_memory_bytes =
+        Some(wisp_abi::config::GuestMemoryBytes::new(512 << 20).expect("valid budget"));
+    let result = wisp_prepare::prepare_in_current_process(&wasm, &input);
+    assert!(
+        matches!(result, Err(ref failure) if failure.stage == wisp_prepare::BuildStage::Input),
+        "an incompatible worker must refuse preparation before executing the guest"
     );
 }
