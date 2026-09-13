@@ -252,9 +252,11 @@ public sealed class RuntimePublicationTests : MsbuildTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(2)]
-    public async Task a_container_publication_mounts_the_feed_and_requires_host_validation(int verdict)
+    [InlineData(0, false)]
+    [InlineData(2, false)]
+    [InlineData(0, true)]
+    [InlineData(2, true)]
+    public async Task a_container_publication_mounts_the_feed_and_requires_host_validation(int verdict, bool overrideMemory)
     {
         var tools = Path.Combine(directory, "tools");
         var feed = Path.Combine(directory, "external-feed");
@@ -287,7 +289,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
             pathlib.Path(os.environ['WISP_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
             sys.exit(int(os.environ['WISP_TEST_VERDICT']))
             """);
-        var project = ContainerProject(app, feed, wasiSdk, validator, publish);
+        var project = ContainerProject(app, feed, wasiSdk, validator, publish, overrideMemory ? "536870912" : "");
         var start = Msbuild(project, "-t:Exercise");
         start.Environment["PATH"] = tools + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
         start.Environment["WISP_TEST_CONTAINER_ARGS"] = argsFile;
@@ -303,6 +305,12 @@ public sealed class RuntimePublicationTests : MsbuildTests
         Assert.True(!args.Contains("-p:WispValidate=false"), "Container publication must not depend on the obsolete public validation bypass.");
         var validation = JsonSerializer.Deserialize<string[]>(File.ReadAllText(validatorLog))!;
         Assert.True(validation[0] == "doctor" && validation[1].EndsWith("test.wasm", StringComparison.Ordinal), "The host CLI must judge the actual linked artifact.");
+        Assert.True(validation.Contains("--guest-memory-bytes") == overrideMemory &&
+            args.Contains("-p:WispGuestMemoryBytes=536870912") == overrideMemory &&
+            args.Contains("-p:WispMemoryMaxBytes=536870912") == overrideMemory,
+            "An explicit memory policy must reach inner linking and host admission without inferring permission from a declaration.");
+        if (overrideMemory) Assert.True(validation.Contains("536870912") && validation.Contains("standard"),
+            "The explicit memory override must retain Standard non-memory limits.");
         Assert.True(File.Exists(Path.Combine(publish, "test.wasm")) == (verdict == 0), "Rejected intermediate artifacts must not be published.");
         if (verdict == 0) Assert.True(File.ReadAllText(Path.Combine(publish, "test.wasm.runtime")) == "test-runtime-identity", "Publication must preserve the linked runtime identity.");
     }
@@ -329,6 +337,34 @@ public sealed class RuntimePublicationTests : MsbuildTests
         var result = await Run(start);
         Assert.True(result.Exit != 0 && result.Output.Contains("unpacked WASI SDK is missing", StringComparison.Ordinal), "An incomplete runtime feed must name its missing WASI SDK: " + result.Output);
         Assert.True(!File.Exists(marker), "Missing build inputs must fail before acquiring container resources.");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("536870912")]
+    public async Task native_validation_uses_only_the_explicit_admission_memory_override(string memoryBytes)
+    {
+        var module = Path.Combine(directory, "test.wasm");
+        File.WriteAllText(module, "fixture");
+        var validator = Path.Combine(directory, "validator");
+        var log = Path.Combine(directory, "validator.json");
+        WriteExecutable(validator, """
+            #!/usr/bin/env python3
+            import json, os, pathlib, sys
+            pathlib.Path(os.environ['WISP_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
+            """);
+        var project = WriteProject(new XElement("PropertyGroup", new XElement("NativeBinary", module),
+                new XElement("WispCli", validator), new XElement("WispPlan", "standard"),
+                new XElement("WispMemoryMaxBytes", "536870912"), new XElement("WispGuestMemoryBytes", memoryBytes)),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Validation.targets"))));
+        var start = Msbuild(project, "-t:WispValidateModule");
+        start.Environment["WISP_TEST_VALIDATOR_LOG"] = log;
+        var result = await Run(start);
+        Assert.True(result.Exit == 0, "The SDK validation target must run successfully: " + result.Output);
+        var arguments = JsonSerializer.Deserialize<string[]>(File.ReadAllText(log))!;
+        Assert.True(arguments.Contains("--guest-memory-bytes") == (memoryBytes.Length != 0) && arguments.Contains("standard"),
+            "A large linker declaration cannot grant an admission override; an explicit override preserves all other Standard limits.");
+        if (memoryBytes.Length != 0) Assert.True(arguments.Contains(memoryBytes), "The admission override must preserve its exact byte value.");
     }
 
     [Fact]
@@ -364,7 +400,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
             "The run command must launch the sandbox CLI even when dotnet watch invokes it.");
     }
 
-    private string ContainerProject(string app, string feed, string wasiSdk, string validator, string publish)
+    private string ContainerProject(string app, string feed, string wasiSdk, string validator, string publish, string memoryBytes = "")
     {
         return WriteProject(
             new XElement("UsingTask", new XAttribute("TaskName", "WispContainerPublish"), new XAttribute("TaskFactory", "RoslynCodeTaskFactory"),
@@ -376,6 +412,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
                     new XAttribute("SourceRoot", app), new XAttribute("SdkDirectory", SdkDirectory()),
                     new XAttribute("GuestRuntimeFeed", feed), new XAttribute("WasiSdkPackDirectory", wasiSdk), new XAttribute("Validator", validator),
                     new XAttribute("PublishDirectory", publish), new XAttribute("Configuration", "Release"),
+                    new XAttribute("GuestMemoryBytes", memoryBytes), new XAttribute("MemoryMaxBytes", memoryBytes), 
                     new XAttribute("CacheDirectory", Path.Combine(directory, "cache")), new XAttribute("CommandTimeoutSeconds", "30"))));
     }
 

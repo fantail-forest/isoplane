@@ -25,6 +25,10 @@ public sealed class WispContainerPublish : Task, ICancelableTask
     /// <summary>The host-native CLI that validates the linked artifact before publication.</summary>
     [Required] public string Validator { get; set; }
 
+    /// <summary>Explicit admission memory ceiling in bytes, independent of other plan limits.</summary>
+    public string GuestMemoryBytes { get; set; }
+    /// <summary>The declared linker memory maximum in bytes.</summary>
+    public string MemoryMaxBytes { get; set; }
     /// <summary>The local publish directory.</summary>
     [Required] public string PublishDirectory { get; set; }
     /// <summary>The selected build configuration.</summary>
@@ -146,6 +150,9 @@ public sealed class WispContainerPublish : Task, ICancelableTask
             "-p:PublishDir=/build/publish/", "-p:NuGetAudit=false",
             "-p:UseSharedCompilation=false", "-nodeReuse:false",
         });
+        if (!string.IsNullOrEmpty(MemoryMaxBytes)) args.Add("-p:WispMemoryMaxBytes=" + MemoryMaxBytes);
+        if (!string.IsNullOrEmpty(GuestMemoryBytes)) args.Add("-p:WispGuestMemoryBytes=" + GuestMemoryBytes);
+
         if (Offline)
         {
             Directory.CreateDirectory(Path.Combine(scratch, "empty-feed"));
@@ -162,6 +169,7 @@ public sealed class WispContainerPublish : Task, ICancelableTask
             throw new InvalidOperationException("the compiler did not publish exactly one WASM module.");
         var validation = new List<string> { "doctor", modules[0], "--no-color" };
 
+        if (!string.IsNullOrEmpty(GuestMemoryBytes)) validation.AddRange(new[] { "--guest-memory-bytes", GuestMemoryBytes });
         Require(Run(Validator, validation, true), "validating the linked module before publication");
         string identity = modules[0] + ".runtime";
         if (!File.Exists(identity))

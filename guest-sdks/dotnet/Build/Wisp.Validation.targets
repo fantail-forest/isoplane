@@ -31,6 +31,7 @@
       <!-- Absolute, so the paths in the messages can be pasted back. -->
       <_WispModule>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(NativeBinary)'))))</_WispModule>
       <_WispDoctor>&quot;$(WispCli)&quot; doctor &quot;$(_WispModule)&quot; --no-color</_WispDoctor>
+      <_WispDoctor Condition="'$(WispGuestMemoryBytes)' != ''">$(_WispDoctor) --guest-memory-bytes $(WispGuestMemoryBytes)</_WispDoctor>
     </PropertyGroup>
 
     <!-- The exit code is the result: 0 accepted, 2 rejected, 127 or 9009 no

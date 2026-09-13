@@ -17,6 +17,7 @@
     <WispContainerPublish ProjectPath="$(MSBuildProjectFullPath)" SourceRoot="$(WispBuildRoot)"
                           SdkDirectory="$(_WispSdkDirectory)" PublishDirectory="$(PublishDir)"
                           GuestRuntimeFeed="$(WispGuestRuntimeFeed)" WasiSdkPackDirectory="$(WispGuestWasiSdkPackDirectory)" Validator="$(WispCli)"
+                          GuestMemoryBytes="$(WispGuestMemoryBytes)" MemoryMaxBytes="$(WispMemoryMaxBytes)"
                           Configuration="$(Configuration)" Offline="$(WispOffline)"
                           CacheDirectory="$(WispCompilerCache)"
                           CommandTimeoutSeconds="$(WispContainerCommandTimeoutSeconds)">
