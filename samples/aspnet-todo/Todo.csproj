@@ -17,7 +17,7 @@
   </ItemGroup>
   <Target Name="IncludeCompiledDatabaseModel" BeforeTargets="CoreCompile" DependsOnTargets="ResolveProjectReferences">
     <ItemGroup>
-      <Compile Include="obj/database/*.cs" />
+      <Compile Include="obj/$(Configuration)/$(TargetFramework)/database/*.cs" />
     </ItemGroup>
   </Target>
 </Project>
