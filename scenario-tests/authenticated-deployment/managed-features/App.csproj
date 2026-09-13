@@ -1,0 +1,11 @@
+<Project Sdk="Wisp.AspNetCore/0.1.0">
+  <PropertyGroup>
+    <PublishAot>false</PublishAot>
+    <PublishAot Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</PublishAot>
+    <WispApplicationFactory>ManagedFeatures.App.Create</WispApplicationFactory>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+  </ItemGroup>
+</Project>
