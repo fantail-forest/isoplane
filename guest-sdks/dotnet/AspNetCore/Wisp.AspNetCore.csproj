@@ -14,6 +14,9 @@
     <InternalsVisibleTo Include="Wisp.AspNetCore.Tests" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Wisp.Sdk.csproj" />
+    <ProjectReference Include="../Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
+    <None Include="../Conformance/bin/$(Configuration)/net10.0/Isoplane.Conformance.dll" Pack="true" PackagePath="tools/Conformance/" />
     <None Update="README.md" Pack="true" PackagePath="/" />
     <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
     <None Include="../Wisp.Guest.props;../Wisp.Guest.targets;../Wisp.NativeAot.props" Pack="true" PackagePath="tools/" />

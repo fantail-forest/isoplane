@@ -1,12 +1,16 @@
 <Project>
-  <Target Name="WispManagedBundle" DependsOnTargets="Build">
-    <Error Condition="'$(WispManagedBundleBuild)' != 'true'" Text="Use isoplane bundle to build managed deployment input." />
-    <Error Condition="'$(WispApplicationFactory)' == ''" Text="Set WispApplicationFactory to the application's public static factory method." />
+  <Target Name="WispResolveManagedPlatform">
     <ItemGroup>
       <_WispBundleAspNetReference Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(WispAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" Condition="'$(WispAspNetCoreRuntimeVersion)' != ''" />
       <WispBundlePlatformReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' != '' OR '%(ReferencePath.NuGetPackageId)' == 'Wisp.Sdk' OR '%(ReferencePath.NuGetPackageId)' == 'Wisp.AspNetCore'" />
       <WispBundlePlatformReference Remove="@(_WispBundleAspNetReference)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
       <WispBundlePlatformReference Include="@(_WispBundleAspNetReference)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="WispManagedBundle" DependsOnTargets="Build;WispResolveManagedPlatform">
+    <Error Condition="'$(WispManagedBundleBuild)' != 'true'" Text="Use isoplane bundle to build managed deployment input." />
+    <Error Condition="'$(WispApplicationFactory)' == ''" Text="Set WispApplicationFactory to the application's public static factory method." />
+    <ItemGroup>
       <WispBundleAssembly Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Wisp.Sdk' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Wisp.AspNetCore'" />
       <WispBundleAssembly Remove="@(WispBundlePlatformReference)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
       <WispBundleAssembly Remove="@(RuntimePackAsset)" />

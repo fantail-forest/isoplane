@@ -27,7 +27,14 @@ internal sealed record ManagedIdentity(string Name, Version Version, string Cult
     public override string ToString() => $"{Name}, Version={Version}, Culture={(Culture.Length == 0 ? "neutral" : Culture)}, PublicKeyToken={(PublicKeyToken.Length == 0 ? "null" : PublicKeyToken)}";
 }
 
-internal sealed record InspectedAssembly(string Origin, ManagedIdentity Identity, ManagedIdentity[] References, bool IlOnly);
+internal sealed record NativeImport(string Member, string Library, string EntryPoint);
+internal sealed record ReferencedMethod(string Type, string Name);
+internal sealed record ConformanceDiagnostic(string Code, string Message)
+{
+    public override string ToString() => $"warning {Code}: {Message}";
+}
+internal sealed record InspectedAssembly(string Origin, ManagedIdentity Identity, ManagedIdentity[] References, bool IlOnly,
+    NativeImport[] NativeImports, ReferencedMethod[] Methods);
 
 internal static class AssemblyClosure
 {
@@ -68,9 +75,61 @@ internal static class AssemblyClosure
                 else target.SetPublicKeyToken(metadata.GetBlobBytes(reference.PublicKeyOrToken));
                 return ManagedIdentity.From(target);
             }).ToArray();
-            return new(origin, identity, references, header.Flags.HasFlag(CorFlags.ILOnly));
+            var imports = metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
+                .Where(method => method.Attributes.HasFlag(MethodAttributes.PinvokeImpl))
+                .Select(method =>
+                {
+                    var import = method.GetImport();
+                    return new NativeImport(TypeName(metadata, method.GetDeclaringType()) + "." + metadata.GetString(method.Name),
+                        metadata.GetString(metadata.GetModuleReference(import.Module).Name), metadata.GetString(import.Name));
+                }).ToArray();
+            var methods = metadata.MemberReferences.Select(metadata.GetMemberReference)
+                .Where(member => member.GetKind() == MemberReferenceKind.Method && member.Parent.Kind == HandleKind.TypeReference)
+                .Select(member =>
+                {
+                    var type = metadata.GetTypeReference((TypeReferenceHandle)member.Parent);
+                    return new ReferencedMethod(metadata.GetString(type.Namespace) + "." + metadata.GetString(type.Name), metadata.GetString(member.Name));
+                }).Distinct().ToArray();
+            return new(origin, identity, references, header.Flags.HasFlag(CorFlags.ILOnly), imports, methods);
         }
         catch (BadImageFormatException) { throw Invalid(origin, "is not a valid managed assembly"); }
+    }
+
+    private static string TypeName(MetadataReader metadata, TypeDefinitionHandle handle)
+    {
+        var names = new Stack<string>();
+        var visited = new HashSet<TypeDefinitionHandle>();
+        while (!handle.IsNil)
+        {
+            if (!visited.Add(handle)) throw new BadImageFormatException("Cyclic nested type metadata.");
+            var type = metadata.GetTypeDefinition(handle);
+            names.Push(metadata.GetString(type.Name));
+            handle = type.GetDeclaringType();
+            if (handle.IsNil && !type.Namespace.IsNil) names.Push(metadata.GetString(type.Namespace));
+        }
+        return string.Join(".", names.Where(name => name.Length != 0));
+    }
+
+    internal static IEnumerable<ConformanceDiagnostic> Diagnostics(IEnumerable<InspectedAssembly> assemblies)
+    {
+        foreach (var assembly in assemblies.OrderBy(item => item.Identity.Key, StringComparer.Ordinal))
+        {
+            foreach (var import in assembly.NativeImports.OrderBy(item => item.Member, StringComparer.Ordinal))
+                yield return new("WISP1001", $"Assembly '{assembly.Identity.Name}', member '{import.Member}' declares native import '{import.Library}!{import.EntryPoint}'. " +
+                    "The declaration is permitted; an unsupported native call fails if reached. Use managed .NET APIs for platform services. Conformance rules: 1.");
+            foreach (var method in assembly.Methods.OrderBy(method => method.Type, StringComparer.Ordinal).ThenBy(method => method.Name, StringComparer.Ordinal))
+            {
+                if (method is { Type: "System.Threading.Thread", Name: "Start" })
+                    yield return new("WISP1002", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}'. " +
+                        "Guest applications cannot start operating-system threads. Use asynchronous .NET APIs for concurrent I/O. Conformance rules: 1.");
+                else if (method is { Type: "System.Threading.Thread", Name: "Sleep" or "Join" }
+                    or { Type: "System.Threading.Monitor", Name: "Wait" }
+                    or { Type: "System.Threading.Tasks.Task", Name: "Wait" or "WaitAll" or "WaitAny" }
+                    or { Type: "System.Threading.SemaphoreSlim", Name: "Wait" })
+                    yield return new("WISP1003", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}', which can wait synchronously. " +
+                        "A guest cannot block waiting for unfinished work; use await and asynchronous wait APIs. Already-completed operations are not rejected by this diagnostic. Conformance rules: 1.");
+            }
+        }
     }
 
     internal static IReadOnlyDictionary<string, InspectedAssembly> Application(IEnumerable<InspectedAssembly> inputs)

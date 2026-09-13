@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -16,12 +17,79 @@ public sealed class AssemblyClosureTests : IDisposable
     private static IReadOnlyDictionary<string, InspectedAssembly> Platform => AssemblyClosure.Platform([AssemblyClosure.InspectFile(CoreLibrary)]);
 
     [Fact]
+    public void Cyclic_nested_type_metadata_is_refused_without_recursing_on_the_host_stack()
+    {
+        var metadata = new MetadataBuilder();
+        metadata.AddModule(0, metadata.GetOrAddString("Malformed.dll"), metadata.GetOrAddGuid(Guid.NewGuid()), default, default);
+        metadata.AddAssembly(metadata.GetOrAddString("Malformed"), new Version(1, 0), default, default, 0, AssemblyHashAlgorithm.None);
+        metadata.AddTypeDefinition(TypeAttributes.NotPublic, default, metadata.GetOrAddString("<Module>"), default,
+            MetadataTokens.FieldDefinitionHandle(1), MetadataTokens.MethodDefinitionHandle(1));
+        var nested = metadata.AddTypeDefinition(TypeAttributes.NestedPrivate, default, metadata.GetOrAddString("Native"), default,
+            MetadataTokens.FieldDefinitionHandle(1), MetadataTokens.MethodDefinitionHandle(1));
+        metadata.AddNestedType(nested, nested);
+        var method = metadata.AddMethodDefinition(MethodAttributes.Static | MethodAttributes.PinvokeImpl, MethodImplAttributes.PreserveSig,
+            metadata.GetOrAddString("Read"), metadata.GetOrAddBlob(new byte[] { 0, 0, 8 }), 0, MetadataTokens.ParameterHandle(1));
+        metadata.AddMethodImport(method, MethodImportAttributes.None, metadata.GetOrAddString("read"),
+            metadata.AddModuleReference(metadata.GetOrAddString("native")));
+        var bytes = new BlobBuilder();
+        new ManagedPEBuilder(new PEHeaderBuilder(), new MetadataRootBuilder(metadata), new BlobBuilder()).Serialize(bytes);
+        using var input = new MemoryStream(bytes.ToArray());
+        var error = Assert.Throws<AssemblyInputException>(() => AssemblyClosure.Inspect(input, "malformed.dll"));
+        Assert.True(error.Problem == AssemblyInputProblem.InvalidAssembly,
+            "Malformed customer metadata must produce a contained input error instead of exhausting the host stack.");
+    }
+
+    [Fact]
     public void A_complete_application_dependency_closure_is_accepted_without_executing_it()
     {
         var dependency = Compile("Dependency", "public static class Dependency { public static object Value() => throw new System.Exception(\"Do not execute\"); }");
         var application = Compile("Customer", "public static class Factory { public static object Create() => Dependency.Value(); }", [dependency]);
         AssemblyClosure.Validate(AssemblyClosure.Application([AssemblyClosure.InspectFile(application), AssemblyClosure.InspectFile(dependency)]), Platform);
         Assert.True(AssemblyClosure.InspectFile(application).References.Any(reference => reference.Name == "Dependency"), "The fixture must require its application dependency rather than accidentally testing a standalone assembly.");
+    }
+
+    [Fact]
+    public void An_unused_native_declaration_in_a_dependency_is_diagnosed_without_rejecting_the_assembly()
+    {
+        var dependency = Compile("PortableDependency", """
+            namespace Portable;
+            public static class Library
+            {
+                public static object Value() => null;
+                private static class Native
+                {
+                    [System.Runtime.InteropServices.DllImport("platform-only", EntryPoint = "native_value")]
+                    internal static extern int Read();
+                }
+            }
+            """);
+        var application = Compile("Customer", "public static class Factory { public static object Create() => Portable.Library.Value(); }", [dependency]);
+        var inputs = AssemblyClosure.Application([AssemblyClosure.InspectFile(application), AssemblyClosure.InspectFile(dependency)]);
+        AssemblyClosure.Validate(inputs, Platform);
+        var diagnostics = AssemblyClosure.Diagnostics(inputs.Values).Select(item => item.ToString()).ToArray();
+        Assert.True(diagnostics.Length == 1 && diagnostics[0].Contains("WISP1001", StringComparison.Ordinal)
+            && diagnostics[0].Contains("PortableDependency", StringComparison.Ordinal)
+            && diagnostics[0].Contains("Portable.Library.Native.Read", StringComparison.Ordinal)
+            && diagnostics[0].Contains("platform-only!native_value", StringComparison.Ordinal),
+            "The shared local/backend diagnostic must identify a transitive native declaration without executing or rejecting the library.");
+    }
+
+    [Fact]
+    public void Thread_creation_and_synchronous_waits_in_dependencies_have_advisory_diagnostics()
+    {
+        var dependency = Compile("ThreadedDependency", """
+            public static class Work
+            {
+                public static void Start(System.Threading.Thread thread) => thread.Start();
+                public static void Wait(System.Threading.Tasks.Task task) => task.Wait();
+            }
+            """);
+        var assembly = AssemblyClosure.InspectFile(dependency);
+        AssemblyClosure.Validate(AssemblyClosure.Application([assembly]), Platform);
+        var diagnostics = AssemblyClosure.Diagnostics([assembly]).ToArray();
+        Assert.True(diagnostics.Any(item => item.Code == "WISP1002" && item.Message.Contains("System.Threading.Thread.Start", StringComparison.Ordinal))
+            && diagnostics.Any(item => item.Code == "WISP1003" && item.Message.Contains("System.Threading.Tasks.Task.Wait", StringComparison.Ordinal)),
+            "Dependency metadata must identify thread creation and potentially blocking calls without blacklisting the containing assembly.");
     }
 
     [Fact]

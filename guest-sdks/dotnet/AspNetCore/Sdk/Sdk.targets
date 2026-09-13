@@ -18,4 +18,5 @@
   <Import Project="../tools/Wisp.Guest.targets" />
   <Import Project="../tools/Build/Wisp.Run.targets" />
   <Import Project="../tools/Build/Wisp.ManagedBundle.targets" />
+  <Import Project="../tools/Build/Wisp.Conformance.targets" />
 </Project>
