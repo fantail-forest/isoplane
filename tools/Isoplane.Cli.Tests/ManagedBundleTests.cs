@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Formats.Tar;
 using System.Text.Json;
 using Xunit;
+using Wisp.Build;
 
 namespace Wisp.Cli.Tests;
 
@@ -40,7 +41,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", includeDependency: false), output, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", includeDependency: false), output, CancellationToken.None));
         Assert.True(error.Message.Contains("missing dependency 'Dependency'", StringComparison.Ordinal), "The error must identify the missing transitive dependency.");
         Assert.True(!File.Exists(output), "Invalid dependency closures must not produce an uploadable archive.");
     }
@@ -59,7 +60,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var directory = new BundleDirectory();
         var duplicate = Path.Combine(directory.Path, "duplicate.dll");
         File.Copy(fixture.Dependency, duplicate);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", additionalAssembly: duplicate), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", additionalAssembly: duplicate), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
         Assert.True(error.Message.Contains("Conflicting inputs define assembly 'Dependency'", StringComparison.Ordinal), "Two files claiming the same dependency identity must not be arbitrarily selected.");
     }
 
@@ -87,7 +88,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         var invalid = input == "assembly" ? application : Path.ChangeExtension(application, ".pdb");
         await File.WriteAllTextAsync(invalid, "not managed metadata");
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", applicationPath: application), output, CancellationToken.None));
+        var error = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", applicationPath: application), output, CancellationToken.None));
         Assert.True(error.Message.Contains(input == "assembly" ? "not a valid managed assembly" : "portable PDB", StringComparison.Ordinal),
             "Malformed managed inputs must name the unsupported input format.");
         Assert.True(!File.Exists(output) && Directory.GetFiles(directory.Path, "*.tmp").Length == 0, "Malformed inputs must leave no complete or partial upload archive.");

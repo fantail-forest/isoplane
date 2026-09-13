@@ -14,6 +14,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
+    <Compile Include="../BuildProtocol/AssemblyClosure.cs" Link="AssemblyClosure.cs" />
     <Compile Include="../ProcessOwnership/OwnedProcess.cs" Link="OwnedProcess.cs" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />

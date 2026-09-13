@@ -1,7 +1,5 @@
 using System.Formats.Tar;
-using System.Reflection;
 using System.Reflection.Metadata;
-using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using Wisp.Build;
 
@@ -61,9 +59,9 @@ internal static class ManagedBundle
         if (assets.Length != 0)
             throw new InvalidOperationException("Managed deployment cannot yet carry external assets: " + string.Join(", ", assets.Select(Path.GetFileName)) + ". Embed application resources in the assembly or wait for deployment asset support.");
         var assemblies = ReadAssemblies(Paths(items, "WispBundleAssembly"));
-        var platform = ReadAssemblies(Paths(items, "WispBundlePlatformReference"));
+        var platform = ReadAssemblies(Paths(items, "WispBundlePlatformReference"), platform: true);
         var symbols = Paths(items, "WispBundleSymbol").ToHashSet(StringComparer.Ordinal);
-        ValidateReferences(assemblies, platform);
+        AssemblyClosure.Validate(assemblies, platform);
         var entry = properties.GetProperty("AssemblyName").GetString();
         if (!assemblies.ContainsKey(entry ?? "")) throw new InvalidOperationException("The bundle has no application entry assembly.");
         var execution = properties.GetProperty("WispGuestRuntime").GetString() switch
@@ -85,8 +83,8 @@ internal static class ManagedBundle
                 await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json") { DataStream = content }, cancellation);
                 foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Name, StringComparer.Ordinal))
                 {
-                    await tar.WriteEntryAsync(assembly.Path, "assemblies/" + assembly.Identity.Name + ".dll", cancellation);
-                    var pdbPath = Path.ChangeExtension(assembly.Path, ".pdb");
+                    await tar.WriteEntryAsync(assembly.Origin, "assemblies/" + assembly.Identity.Name + ".dll", cancellation);
+                    var pdbPath = Path.ChangeExtension(assembly.Origin, ".pdb");
                     if (symbols.Contains(pdbPath))
                     {
                         ValidateSymbols(pdbPath);
@@ -98,8 +96,6 @@ internal static class ManagedBundle
         }
         finally { File.Delete(partial); }
     }
-
-    private sealed record AssemblyInput(string Path, AssemblyName Identity);
 
     private static void ValidateSymbols(string path)
     {
@@ -126,50 +122,10 @@ internal static class ManagedBundle
         .Select(item => Path.GetFullPath(item.GetProperty("FullPath").GetString() ?? throw new InvalidOperationException("The SDK returned an empty build input path.")))
         .Distinct(StringComparer.Ordinal).ToArray();
 
-    private static Dictionary<string, AssemblyInput> ReadAssemblies(string[] paths)
+    private static IReadOnlyDictionary<string, InspectedAssembly> ReadAssemblies(string[] paths, bool platform = false)
     {
-        var result = new Dictionary<string, AssemblyInput>(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in paths)
-        {
-            RequireRegularFile(path);
-            AssemblyName identity;
-            try { identity = AssemblyName.GetAssemblyName(path); }
-            catch (BadImageFormatException error)
-            {
-                throw new InvalidOperationException($"Bundle input '{path}' is not a valid managed assembly.", error);
-            }
-            var name = identity.Name ?? throw new InvalidOperationException($"Assembly '{path}' has no identity.");
-            if (!string.IsNullOrEmpty(identity.CultureName)) throw new InvalidOperationException($"Satellite assembly '{name}' requires deployment asset support.");
-            if (name.IndexOfAny(['/', '\\']) >= 0) throw new InvalidOperationException($"Assembly '{path}' has an invalid identity.");
-            if (!result.TryAdd(name, new(path, identity)) && result[name].Path != path)
-                throw new InvalidOperationException($"Conflicting inputs define assembly '{name}': '{result[name].Path}' and '{path}'.");
-        }
-        return result;
-    }
-
-    private static void ValidateReferences(Dictionary<string, AssemblyInput> assemblies, Dictionary<string, AssemblyInput> platform)
-    {
-        foreach (var assembly in assemblies.Values)
-        {
-            if (platform.ContainsKey(assembly.Identity.Name!)) throw new InvalidOperationException($"Application input attempts to replace platform assembly '{assembly.Identity.Name}'.");
-            using var file = File.OpenRead(assembly.Path);
-            using var pe = new PEReader(file);
-            if (pe.PEHeaders.CorHeader is not { } header || !header.Flags.HasFlag(CorFlags.ILOnly))
-                throw new InvalidOperationException($"Application input '{assembly.Path}' must contain managed IL only.");
-            var reader = pe.GetMetadataReader();
-            foreach (var handle in reader.AssemblyReferences)
-            {
-                var reference = reader.GetAssemblyReference(handle);
-                var name = reader.GetString(reference.Name);
-                if (!assemblies.TryGetValue(name, out var resolved) && !platform.TryGetValue(name, out resolved))
-                    throw new InvalidOperationException($"Assembly '{assembly.Identity.Name}' requires missing dependency '{name}' {reference.Version}.");
-                var expected = new AssemblyName { Name = name, Version = reference.Version, CultureName = reader.GetString(reference.Culture) };
-                if (reference.Flags.HasFlag(AssemblyFlags.PublicKey)) expected.SetPublicKey(reader.GetBlobBytes(reference.PublicKeyOrToken));
-                else expected.SetPublicKeyToken(reader.GetBlobBytes(reference.PublicKeyOrToken));
-                if (resolved.Identity.Version < expected.Version || !string.Equals(resolved.Identity.CultureName, expected.CultureName, StringComparison.OrdinalIgnoreCase) ||
-                    !(resolved.Identity.GetPublicKeyToken() ?? []).SequenceEqual(expected.GetPublicKeyToken() ?? []))
-                    throw new InvalidOperationException($"Assembly '{assembly.Identity.Name}' requires '{expected.FullName}', but the build resolved '{resolved.Identity.FullName}'.");
-            }
-        }
+        foreach (var path in paths) RequireRegularFile(path);
+        var metadata = paths.Select(AssemblyClosure.InspectFile);
+        return platform ? AssemblyClosure.Platform(metadata) : AssemblyClosure.Application(metadata);
     }
 }
