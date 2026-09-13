@@ -24,7 +24,7 @@
     </WispContainerPublish>
   </Target>
 
-  <Target Name="WispCompilePal" BeforeTargets="LinkNativeLlvm"
+  <Target Name="WispPalInputs"
           Condition="'$(WispContainerBuild)' != 'true'">
     <PropertyGroup>
       <WASI_SDK_PATH Condition="'$(WASI_SDK_PATH)' == ''">/opt/wasi-sdk</WASI_SDK_PATH>
@@ -34,15 +34,20 @@
     <Error Condition="!Exists('$(WASI_SDK_PATH)/bin/clang')"
            Text="wisp: missing wasi-sdk clang at $(WASI_SDK_PATH)/bin/clang; run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
     <MakeDir Directories="$(IntermediateOutputPath)" />
-    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispPalObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_pal.c&quot;" />
-    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispClockObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_clock.c&quot;" />
     <ItemGroup>
-      <LinkerArg Include="&quot;$(WispPalObject)&quot;" />
-      <LinkerArg Include="&quot;$(WispClockObject)&quot;" />
+      <NativeLibrary Include="$(WispPalObject);$(WispClockObject)" />
+      <_WispPalInputs Include="$(_WispSdkDirectory)native/wisp_pal.c;$(_WispSdkDirectory)native/wisp_clock.c;$(_WispSdkDirectory)native/**/*.h;$(MSBuildAllProjects);$(WASI_SDK_PATH)/bin/clang;$(WASI_SDK_PATH)/share/wasi-sysroot/include/**/*.h;$(WASI_SDK_PATH)/lib/clang/**/include/**/*.h" />
       <LinkerArg Include="@(WispWrappedSymbol->'-Wl,--wrap=%(Identity)')" />
     </ItemGroup>
-    <!-- NativeAOT's incremental link inputs do not include LinkerArg. -->
-    <Delete Files="$(NativeBinary)" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)wisp-pal.inputs"
+                      Lines="@(_WispPalInputs);@(NativeObjects);@(NativeLibrary);@(LinkerArg);$(WispGuestNativeAotPackVersion);$(WispGuestNativeAotPackSha512);$(WispGuestCompilerVersion);$(WispGuestCompilerSha512)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+  <Target Name="WispCompilePal" BeforeTargets="LinkNativeLlvm" DependsOnTargets="WispPalInputs"
+          Condition="'$(WispContainerBuild)' != 'true'"
+          Inputs="@(_WispPalInputs);$(IntermediateOutputPath)wisp-pal.inputs"
+          Outputs="$(WispPalObject);$(WispClockObject)">
+    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispPalObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_pal.c&quot;" />
+    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(WispClockObject)&quot; &quot;$(_WispSdkDirectory)native/wisp_clock.c&quot;" />
   </Target>
 
   <!-- PublishDir may be outside OutDir, where MSBuild's FileWrites cleanup stops. -->

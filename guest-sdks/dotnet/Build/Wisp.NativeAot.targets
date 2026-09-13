@@ -29,7 +29,7 @@
        keeps one extraction per version, so a stale copy could shadow a
        republished pack. The compiler's targets name the directory they
        resolved. -->
-  <Target Name="WispNativeAotVerifyFrameworkPack" DependsOnTargets="SetupProperties" BeforeTargets="IlcCompile"
+  <Target Name="WispNativeAotVerifyFrameworkPack" DependsOnTargets="WispResolveNativeAotPackages" BeforeTargets="IlcCompile"
           Condition="'$(WispContainerBuild)' != 'true'">
     <Error Condition="'$(RuntimePackagePath)' == ''"
            Text="wisp: the compiler resolved no framework pack; expected the feed's runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM $(WispGuestNativeAotPackVersion)." />
@@ -45,7 +45,7 @@
     <Error Condition="'$(_WispNativeAotPackDigest)' != '$(WispGuestNativeAotPackSha512)'"
            Text="wisp: the framework pack at $(_WispNativeAotPackDirectory) is not the pack the feed offers (digest $(_WispNativeAotPackDigest) vs $(WispGuestNativeAotPackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
   </Target>
-  <Target Name="WispNativeAotVerifyCompiler" DependsOnTargets="SetupProperties;WispRequireGuestCompiler" BeforeTargets="IlcCompile"
+  <Target Name="WispNativeAotVerifyCompiler" DependsOnTargets="WispResolveNativeAotPackages;WispRequireGuestCompiler" BeforeTargets="IlcCompile"
           Condition="'$(WispContainerBuild)' != 'true'">
     <PropertyGroup>
       <_WispCompilerDigestFile>$([MSBuild]::NormalizeDirectory('$(IlcHostPackagePath)'))runtime.$(NETCoreSdkRuntimeIdentifier).microsoft.dotnet.ilcompiler.llvm.$(WispGuestCompilerVersion.ToLowerInvariant()).nupkg.sha512</_WispCompilerDigestFile>
@@ -58,7 +58,7 @@
   </Target>
   <!-- The native shims from the pack, each after the shim that calls it:
        OpenSSL behind the cryptography shim, zlib behind the compression one. -->
-  <Target Name="WispNativeAotLinkShims" DependsOnTargets="SetupProperties" BeforeTargets="LinkNativeLlvm"
+  <Target Name="WispNativeAotLinkShims" DependsOnTargets="SetupProperties" BeforeTargets="WispPalInputs;LinkNativeLlvm"
           Condition="'$(WispContainerBuild)' != 'true'">
     <ItemGroup>
       <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.Security.Cryptography.Native.OpenSsl.a" />

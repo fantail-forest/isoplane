@@ -1,13 +1,221 @@
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Xml.Linq;
 using Xunit;
 
-public sealed class RuntimePublicationTests : IDisposable
+public sealed class RuntimePublicationTests : MsbuildTests
 {
-    private readonly string directory = Directory.CreateTempSubdirectory("wisp-publication-test-").FullName;
-    private static string SdkDirectory([CallerFilePath] string source = "") => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, ".."));
+    [Fact]
+    public async Task an_unchanged_pal_build_preserves_objects_and_registers_them_for_linking()
+    {
+        var project = PalProject();
+        await BuildPal(project);
+        var objects = Directory.GetFiles(Path.Combine(directory, "obj"), "*.o")
+            .ToDictionary(path => path, path => (Bytes: File.ReadAllBytes(path), Modified: File.GetLastWriteTimeUtc(path)));
+        await BuildPal(project);
+        Assert.True(File.ReadAllLines(Path.Combine(directory, "compiler.log")).Length == 2,
+            "An unchanged publication must reuse both PAL object compilations.");
+        foreach (var (path, previous) in objects)
+        {
+            Assert.True(File.ReadAllBytes(path).SequenceEqual(previous.Bytes) && File.GetLastWriteTimeUtc(path) == previous.Modified,
+                "Reused PAL objects must retain their bytes and filesystem timestamps.");
+            Assert.True(File.ReadAllLines(Path.Combine(directory, "link-inputs")).Contains(path),
+                "Every publication must register each PAL object with the native linker, including a skipped compile.");
+        }
+        Assert.True(File.ReadAllLines(Path.Combine(directory, "link-args")).Contains("-Wl,--wrap=wrapped_symbol"),
+            "A skipped PAL compilation must preserve the host capability wrapper arguments.");
+    }
+
+    [Theory]
+    [InlineData("source")]
+    [InlineData("header")]
+    [InlineData("removed-header")]
+    [InlineData("toolchain-header")]
+    [InlineData("compiler")]
+    [InlineData("configuration")]
+    [InlineData("missing-object")]
+    public async Task changed_pal_inputs_rebuild_the_native_objects(string change)
+    {
+        var project = PalProject();
+        await BuildPal(project);
+        var path = change switch
+        {
+            "source" => Path.Combine(directory, "sdk/native/wisp_pal.c"),
+            "header" or "removed-header" => Path.Combine(directory, "sdk/native/pal.h"),
+            "toolchain-header" => Path.Combine(directory, "toolchain/share/wasi-sysroot/include/system.h"),
+            "compiler" => Path.Combine(directory, "toolchain/bin/clang"),
+            "configuration" => project,
+            "missing-object" => Path.Combine(directory, "obj/wisp_pal.o"),
+            _ => throw new ArgumentOutOfRangeException(nameof(change))
+        };
+        if (change is "removed-header" or "missing-object") File.Delete(path);
+        else if (change == "configuration")
+        {
+            var document = XDocument.Load(project);
+            document.Descendants("LinkerArg").First().SetAttributeValue("Include", "-Wl,--max-memory=33554432");
+            document.Save(project);
+        }
+        else
+        {
+            File.AppendAllText(path, "\n");
+            File.SetLastWriteTimeUtc(path, new DateTime(2100, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        }
+        await BuildPal(project);
+        Assert.True(File.ReadAllLines(Path.Combine(directory, "compiler.log")).Length == 4,
+            "Changing a PAL source, header, compiler or configuration, or losing an object, must rebuild both native objects: " + change);
+    }
+
+    [Fact]
+    public async Task a_deleted_pal_source_fails_instead_of_reusing_an_old_object()
+    {
+        var project = PalProject();
+        await BuildPal(project);
+        File.Delete(Path.Combine(directory, "sdk/native/wisp_pal.c"));
+        var result = await Run(Msbuild(project, "-t:Exercise"));
+        Assert.True(result.Exit != 0 && result.Output.Contains("wisp_pal.c", StringComparison.Ordinal),
+            "A deleted required source must fail compilation instead of silently reusing an old PAL: " + result.Output);
+    }
+
+    private async Task BuildPal(string project)
+    {
+        var result = await Run(Msbuild(project, "-t:Exercise"));
+        Assert.True(result.Exit == 0, "The PAL build target must complete: " + result.Output);
+    }
+
+    private string PalProject()
+    {
+        var sdk = Directory.CreateDirectory(Path.Combine(directory, "sdk/native")).Parent!.FullName;
+        var toolchain = Directory.CreateDirectory(Path.Combine(directory, "toolchain/bin")).Parent!.FullName;
+        foreach (var name in new[] { "wisp_pal.c", "wisp_clock.c", "pal.h" })
+            File.WriteAllText(Path.Combine(sdk, "native", name), "fixture " + name);
+        var headers = Directory.CreateDirectory(Path.Combine(toolchain, "share/wasi-sysroot/include"));
+        File.WriteAllText(Path.Combine(headers.FullName, "system.h"), "fixture system header");
+        WriteExecutable(Path.Combine(toolchain, "bin/clang"), """
+            #!/usr/bin/env python3
+            import pathlib, sys
+            args = sys.argv[1:]
+            source = pathlib.Path(args[-1])
+            data = source.read_bytes()
+            output = pathlib.Path(args[args.index('-o') + 1])
+            output.write_bytes(data)
+            with (output.parent.parent / 'compiler.log').open('a') as log:
+                log.write(str(source) + '\n')
+            """);
+        return WriteProject(
+            new XElement("PropertyGroup",
+                new XElement("_WispSdkDirectory", sdk + Path.DirectorySeparatorChar),
+                new XElement("WASI_SDK_PATH", toolchain),
+                new XElement("IntermediateOutputPath", Path.Combine(directory, "obj") + Path.DirectorySeparatorChar)),
+            new XElement("ItemGroup",
+                new XElement("LinkerArg", new XAttribute("Include", "-Wl,--max-memory=16777216")),
+                new XElement("WispWrappedSymbol", new XAttribute("Include", "wrapped_symbol"))),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Publish.targets"))),
+            new XElement("Target", new XAttribute("Name", "SetupProperties")),
+            new XElement("Target", new XAttribute("Name", "Exercise"), new XAttribute("DependsOnTargets", "WispCompilePal"),
+                new XElement("WriteLinesToFile", new XAttribute("File", Path.Combine(directory, "link-inputs")),
+                    new XAttribute("Lines", "@(NativeLibrary)"), new XAttribute("Overwrite", "true")),
+                new XElement("WriteLinesToFile", new XAttribute("File", Path.Combine(directory, "link-args")),
+                    new XAttribute("Lines", "@(LinkerArg)"), new XAttribute("Overwrite", "true"))));
+    }
+
+    [Theory]
+    [InlineData("NativeLibrary")]
+    [InlineData("NativeObjects")]
+    [InlineData("LinkerArg")]
+    [InlineData("framework-shims")]
+    public async Task selecting_an_older_native_input_still_invalidates_the_link(string input)
+    {
+        var project = PalProject();
+        var original = Path.Combine(directory, "original.a");
+        var replacement = Path.Combine(directory, "replacement.a");
+        foreach (var path in new[] { original, replacement })
+        {
+            File.WriteAllText(path, path);
+            File.SetLastWriteTimeUtc(path, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        }
+        var document = XDocument.Load(project);
+        if (input == "framework-shims")
+            document.Root!.Element("PropertyGroup")!.Add(new XElement("IlcFrameworkNativePath", "$(SelectedNativeInput)/"));
+        else
+            document.Root!.Element("ItemGroup")!.Add(new XElement(input, new XAttribute("Include", "$(SelectedNativeInput)")));
+        document.Save(project);
+        foreach (var selected in new[] { original, replacement })
+        {
+            var start = Msbuild(project, "-t:Exercise");
+            start.ArgumentList.Add("-p:SelectedNativeInput=" + selected);
+            var result = await Run(start);
+            Assert.True(result.Exit == 0, "Resolving a native input must complete: " + result.Output);
+        }
+        Assert.True(File.ReadAllLines(Path.Combine(directory, "compiler.log")).Length == 4,
+            "Changing a native input path must rebuild a linker input even when the replacement has an older timestamp: " + input);
+    }
+
+    [Theory]
+    [InlineData("host", "missing", "no verified package identity")]
+    [InlineData("host", "different", "differs from the supplied toolchain")]
+    [InlineData("target", "missing", "records no package digest")]
+    [InlineData("target", "different", "is not the pack the feed offers")]
+    public async Task compiler_setup_rejects_an_unverified_member_of_the_toolchain_pair(string member, string change, string diagnostic)
+    {
+        var project = NativeAotResolutionProject();
+        var digest = Directory.GetFiles(Path.Combine(directory, member), "*.sha512").Single();
+        if (change == "missing") File.Delete(digest);
+        else File.WriteAllText(digest, "unapproved package");
+        var result = await Run(Msbuild(project, "-t:ImportRuntimeIlcPackageTarget"));
+        Assert.True(result.Exit != 0 && result.Output.Contains(diagnostic, StringComparison.Ordinal),
+            "Compiler setup must reject an unverified toolchain member before compilation, including an incremental build: " + result.Output);
+    }
+
+    [Fact]
+    public async Task compiler_setup_rejects_missing_restore_metadata()
+    {
+        var project = NativeAotResolutionProject();
+        var document = XDocument.Load(project);
+        document.Root!.Element("ItemGroup")!.Remove();
+        document.Save(project);
+        var result = await Run(Msbuild(project, "-t:ImportRuntimeIlcPackageTarget"));
+        Assert.True(result.Exit != 0 && result.Output.Contains("requires restored package definitions", StringComparison.Ordinal),
+            "Compiler setup must diagnose missing restore metadata before selecting toolchain packages: " + result.Output);
+    }
+
+    [Fact]
+    public async Task compiler_setup_accepts_independently_versioned_members_of_the_verified_toolchain_pair()
+    {
+        var project = NativeAotResolutionProject();
+        var start = Msbuild(project, "-t:ImportRuntimeIlcPackageTarget");
+        start.ArgumentList.Add("-warnAsError");
+        var result = await Run(start);
+        Assert.True(result.Exit == 0,
+            "The verified host and framework packages must resolve without a version mismatch warning: " + result.Output);
+    }
+
+    private string NativeAotResolutionProject()
+    {
+        const string host = "runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM";
+        const string target = "runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM";
+        var hostDirectory = Directory.CreateDirectory(Path.Combine(directory, "host")).FullName;
+        var targetDirectory = Directory.CreateDirectory(Path.Combine(directory, "target")).FullName;
+        File.WriteAllText(Path.Combine(hostDirectory, host.ToLowerInvariant() + ".1.0.0-host.nupkg.sha512"), "host digest");
+        File.WriteAllText(Path.Combine(targetDirectory, target.ToLowerInvariant() + ".2.0.0-target.nupkg.sha512"), "target digest");
+        return WriteProject(
+            new XElement("PropertyGroup",
+                new XElement("WispGuestRuntime", "NativeAOT"),
+                new XElement("_targetArchitecture", "wasm"),
+                new XElement("_hostPackageName", host),
+                new XElement("_targetPackageName", target),
+                new XElement("NETCoreSdkRuntimeIdentifier", "linux-x64"),
+                new XElement("WispGuestCompilerVersion", "1.0.0-host"),
+                new XElement("WispGuestCompilerSha512", "host digest"),
+                new XElement("WispGuestNativeAotPackVersion", "2.0.0-target"),
+                new XElement("WispGuestNativeAotPackSha512", "target digest")),
+            new XElement("ItemGroup",
+                new XElement("PackageDefinitions", new XAttribute("Include", host),
+                    new XElement("Name", host), new XElement("Version", "1.0.0-host"), new XElement("ResolvedPath", hostDirectory)),
+                new XElement("PackageDefinitions", new XAttribute("Include", target),
+                    new XElement("Name", target), new XElement("Version", "2.0.0-target"), new XElement("ResolvedPath", targetDirectory))),
+            new XElement("Target", new XAttribute("Name", "WispRequireGuestCompiler")),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.NativeAot.targets"))),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Wisp.Guest.targets"))));
+    }
 
     [Theory]
     [InlineData("", "linux-x64", "compiler is missing")]
@@ -171,44 +379,4 @@ public sealed class RuntimePublicationTests : IDisposable
                     new XAttribute("CacheDirectory", Path.Combine(directory, "cache")), new XAttribute("CommandTimeoutSeconds", "30"))));
     }
 
-    private string WriteProject(params XElement[] elements)
-    {
-        var project = Path.Combine(directory, "test.proj");
-        new XDocument(new XElement("Project", elements)).Save(project);
-        return project;
-    }
-
-    private static ProcessStartInfo Msbuild(string project, string argument)
-    {
-        var start = new ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetDirectoryName(project)!, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "msbuild", project, "-nologo", "-nodeReuse:false", argument }) start.ArgumentList.Add(arg);
-        start.Environment.Remove("WISP_GUEST_RUNTIME_FEED");
-        return start;
-    }
-
-    private static async Task<(int Exit, string Output)> Run(ProcessStartInfo start)
-    {
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-            return (process.ExitCode, await output + await error);
-        }
-        finally
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
-        }
-    }
-
-    private static void WriteExecutable(string path, string text)
-    {
-        File.WriteAllText(path, text + "\n");
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-    }
-
-    public void Dispose() => Directory.Delete(directory, recursive: true);
 }

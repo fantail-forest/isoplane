@@ -1,4 +1,5 @@
 <Project>
+  <Import Project="Wisp.Mono.Bundle.targets" />
   <Target Name="WispMonoSelectRuntimePack" BeforeTargets="ProcessFrameworkReferences">
     <ItemGroup>
       <FrameworkReference Update="Microsoft.NETCore.App" RuntimeFrameworkVersion="$(WispGuestRuntimePackVersion)" />
@@ -27,7 +28,7 @@
   </Target>
   <Target Name="WispMonoNativeEntry" BeforeTargets="_PrepareForWasiBuildNative" DependsOnTargets="WispMonoPaths">
     <WriteLinesToFile File="$(_WispMonoDir)mono_assembly.h" Lines="#define WISP_MONO_ASSEMBLY &quot;$(AssemblyName)&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <Copy SourceFiles="$(_WispSdkDirectory)native/mono_entry.c" DestinationFiles="$(_WispMonoDir)mono_entry.c" />
+    <Copy SourceFiles="$(_WispSdkDirectory)native/mono_entry.c" DestinationFiles="$(_WispMonoDir)mono_entry.c" SkipUnchangedFiles="true" />
     <ItemGroup>
       <NativeFileReference Include="$(_WispMonoDir)mono_entry.c;$(_WispSdkDirectory)native/wisp_clock.c" />
       <NativeFileReference Include="$(_WispSdkDirectory)native/wisp_pal.c" Condition="'$(WispLocalDebug)' != 'true'" />
@@ -54,10 +55,10 @@
   </Target>
   <Target Name="WispMonoPublishCore" AfterTargets="_WasiLinkDotNet" DependsOnTargets="WispMonoVerifyRuntimePack">
     <PropertyGroup><NativeBinary>$(PublishDir)$(AssemblyName).wasm</NativeBinary></PropertyGroup>
-    <Copy SourceFiles="$(_WasiOutputFileName)" DestinationFiles="$(NativeBinary)" />
+    <Copy SourceFiles="$(_WasiOutputFileName)" DestinationFiles="$(NativeBinary)" SkipUnchangedFiles="true" />
     <!-- The identity of the runtime the module links, beside it, so a test
          result is attributable to those bytes. -->
-    <WriteLinesToFile File="$(NativeBinary).runtime" Lines="$(WispGuestRuntimePackVersion)@sha512:$(WispGuestRuntimePackSha512)" Overwrite="true" />
+    <WriteLinesToFile File="$(NativeBinary).runtime" Lines="$(WispGuestRuntimePackVersion)@sha512:$(WispGuestRuntimePackSha512)" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ItemGroup><FileWrites Include="$(NativeBinary);$(NativeBinary).runtime" /></ItemGroup>
   </Target>
   <Import Project="Wisp.Mono.Debug.targets" Condition="'$(WispLocalDebug)' == 'true'" />

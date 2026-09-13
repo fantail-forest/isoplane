@@ -5,6 +5,7 @@
   file completes the pipeline it selected.
 -->
 <Project>
+  <Import Project="Build/Wisp.NativeAot.PackageResolution.targets" Condition="'$(WispGuestRuntime)' == 'NativeAOT'" />
   <!-- The Mono pipeline is the source-built Wasi SDK pack the feed names,
        between the workload's Mono targets, in the order the workload itself
        would import them. -->
