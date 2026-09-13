@@ -136,7 +136,7 @@ pub(crate) struct StoreState {
     pub limits: Limits,
     /// Reused across import calls so the copy-out path does not allocate.
     pub scratch: Vec<u8>,
-    /// The engine's declared read-only files, served by the PAL filesystem.
+    /// This Store's host platform files and immutable application content.
     pub platform_files: PlatformFiles,
 }
 

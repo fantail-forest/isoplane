@@ -53,6 +53,28 @@ public sealed class AssemblyClosureTests : IDisposable
         Assert.True(error.Problem == AssemblyInputProblem.IdentityMismatch && error.Message.Contains("PublicKeyToken", StringComparison.Ordinal), "Dependency resolution must not discard the referenced signing identity.");
     }
 
+    [Fact]
+    public void Satellite_assemblies_preserve_distinct_cultures_of_the_same_resource_identity()
+    {
+        var french = Compile("Customer.resources", "[assembly: System.Reflection.AssemblyCulture(\"fr\")]", subdirectory: "fr");
+        var german = Compile("Customer.resources", "[assembly: System.Reflection.AssemblyCulture(\"de\")]", subdirectory: "de");
+        var assemblies = AssemblyClosure.Application([AssemblyClosure.InspectFile(french), AssemblyClosure.InspectFile(german)]);
+        AssemblyClosure.Validate(assemblies, Platform);
+        Assert.True(assemblies.ContainsKey("fr/Customer.resources") && assemblies.ContainsKey("de/Customer.resources"),
+            "Different satellite cultures must coexist without losing their assembly identity.");
+    }
+
+    [Fact]
+    public void A_customer_cannot_replace_platform_satellite_resources()
+    {
+        var platform = Compile("Framework", "public class Framework { }");
+        var satellite = Compile("Framework.resources", "[assembly: System.Reflection.AssemblyCulture(\"fr\")]", subdirectory: "fr");
+        var error = Assert.Throws<AssemblyInputException>(() => AssemblyClosure.Validate(
+            AssemblyClosure.Application([AssemblyClosure.InspectFile(satellite)]), AssemblyClosure.Platform([AssemblyClosure.InspectFile(platform)])));
+        Assert.True(error.Problem == AssemblyInputProblem.PlatformSubstitution,
+            "A culture-specific resource cannot replace the platform-owned framework's resources.");
+    }
+
     internal string Compile(string name, string source, string[]? references = null, bool signed = false, string subdirectory = "")
     {
         var output = Directory.CreateDirectory(Path.Combine(directory, subdirectory));

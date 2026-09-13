@@ -27,6 +27,8 @@ pub struct PreparationContext<'a> {
     pub provider: &'a dyn wisp_prepare::Preparation,
     /// Runtime provenance established by the host, never inferred from guest metadata.
     pub runtime: wisp_prepare::RuntimeProfile,
+    /// Immutable application content served within this template only.
+    pub application_files: wisp_engine::PlatformFiles,
     /// Initialization CPU backstop across all replay passes.
     pub cpu_ms: u32,
     /// Initialization wall backstop per call.
@@ -140,6 +142,7 @@ impl Deployer {
             log_bytes: context.log_bytes,
         };
         let request = wisp_prepare::BuildRequest {
+            application_files: context.application_files.clone(),
             engine: context.engine.configuration(),
             runtime: context.runtime.clone(),
             plan: manifest.limits,

@@ -230,3 +230,29 @@ fn receipt_restoration_rejects_a_different_runtime_profile() {
         "the selected runtime must match the compiled prepared state"
     );
 }
+
+#[test]
+fn builder_output_cannot_replace_host_platform_files() {
+    let producer = test_engine();
+    let wasm = guest(4, "", "", DONE, DONE);
+    let declared = wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
+        path: "/etc/ssl/certs/ca-certificates.crt".into(),
+        bytes: b"roots".as_slice().into(),
+        modified_ns: 42,
+    }])
+    .expect("declared files");
+    let prepared = producer
+        .prepare_template_with_files(&wasm, identity(&wasm), declared.clone())
+        .expect("producer without reserved paths");
+    let receiver = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        platform_files: declared,
+        ..small_engine_config()
+    })
+    .expect("host with reserved trust path");
+    let bytes = prepared.encode_builder_output().expect("trusted output");
+    // SAFETY: the trusted engine above produced this serialized native code.
+    assert!(
+        unsafe { receiver.decode_builder_output(&bytes, identity(&wasm)) }.is_err(),
+        "builder output cannot replace host-managed trust material before publication"
+    );
+}

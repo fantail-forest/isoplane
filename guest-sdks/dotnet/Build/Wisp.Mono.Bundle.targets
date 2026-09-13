@@ -14,6 +14,9 @@
       <_WispBundleManifest>$(_WasmIntermediateOutputPath)wisp-bundle.outputs</_WispBundleManifest>
     </PropertyGroup>
     <ItemGroup>
+      <_WasmBundleItem Remove="@(_WasmSatelliteAssemblies)" />
+      <_WasmBundleItem Include="@(_WasmSatelliteAssemblies)" Culture="%(_WasmSatelliteAssemblies.CultureName)"
+                       BundleRegistrationFunctionName="mono_register_assemblies_bundle" BundleFile="wasi_bundled_assemblies.o" />
       <_WispBundleInputs Include="@(_WasmBundleItem);@(_WasmBundleItem->'%(SymbolFile)');$(WasmClang);$(MonoTargetsTasksAssemblyPath);$(MSBuildThisFileFullPath);$([System.IO.Path]::GetDirectoryName('$(WasmClang)'))/*.cfg;$(WASI_SDK_PATH)/share/wasi-sysroot/include/**/*.h;$(WASI_SDK_PATH)/lib/clang/**/include/**/*.h" />
     </ItemGroup>
     <WriteLinesToFile File="$(_WispBundleInventory)" Overwrite="true" WriteOnlyWhenDifferent="true"

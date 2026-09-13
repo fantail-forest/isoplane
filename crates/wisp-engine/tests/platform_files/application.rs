@@ -1,0 +1,296 @@
+use super::{common, filesystem};
+
+use common::{activate, small_engine_config};
+use filesystem::{call, dispatch, ROOT};
+use wisp_abi::filesystem::Operation;
+use wisp_engine::prepared::{PreparedIdentity, PreparedStorage};
+use wisp_engine::{
+    Completion, CpuBudget, EngineConfig, Instance, InstanceOps, PlatformFile, PlatformFiles,
+    Template, WispEngine,
+};
+
+fn files(entries: &[(&str, &[u8])]) -> PlatformFiles {
+    PlatformFiles::new(
+        entries
+            .iter()
+            .map(|(path, bytes)| PlatformFile {
+                path: (*path).into(),
+                bytes: (*bytes).into(),
+                modified_ns: 42,
+            })
+            .collect(),
+    )
+    .expect("declared immutable files")
+}
+
+fn guest(paths: &[&str]) -> Vec<u8> {
+    let strings: Vec<_> = paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (8000 + index as u32 * 128, *path))
+        .collect();
+    let mut body = String::new();
+    for (index, path) in paths.iter().enumerate() {
+        let output = 1200 + index as u32 * 200;
+        body.push_str(&call(
+            Operation::OpenAt,
+            &[
+                ROOT,
+                "(i32.const 0)",
+                &format!(
+                    "(i32.const {}) (i32.const {})",
+                    strings[index].0,
+                    path.len()
+                ),
+                "(i32.const 0)",
+                "(i32.const 0)",
+                &format!("(i32.const {output})"),
+            ],
+        ));
+        body.push_str(&call(
+            Operation::Read,
+            &[
+                &format!("(i32.load (i32.const {}))", output + 4),
+                "(i64.const 128)",
+                "(i64.const 0)",
+                &format!("(i32.const {})", output + 100),
+            ],
+        ));
+    }
+    filesystem::module(&body, &strings)
+}
+
+fn result(instance: &mut Instance, index: usize) -> Vec<u8> {
+    assert_eq!(
+        instance.dispatch(&dispatch(), CpuBudget::http()).completion,
+        Completion::Done,
+        "reading immutable application files must complete without external I/O"
+    );
+    let memory = instance.memory();
+    let at = 1300 + index * 200;
+    assert_eq!(memory[at], 0, "declared application file must be readable");
+    let start = u32::from_le_bytes(memory[at + 4..at + 8].try_into().expect("pointer")) as usize;
+    let length = u32::from_le_bytes(memory[at + 8..at + 12].try_into().expect("length")) as usize;
+    memory[start..start + length].to_vec()
+}
+
+fn template(engine: &WispEngine, wasm: &[u8], content: &[u8]) -> Template {
+    engine
+        .load_template(wasm)
+        .expect("portable template")
+        .with_application_files(files(&[("/config.json", content)]))
+        .expect("bind application content")
+}
+
+#[test]
+fn applications_on_one_engine_read_only_their_own_content() {
+    let engine = WispEngine::new(small_engine_config()).expect("engine");
+    let wasm = guest(&["config.json"]);
+    let first = template(&engine, &wasm, b"first");
+    let second = template(&engine, &wasm, b"second");
+    assert_ne!(
+        first.hash, second.hash,
+        "different content must have different snapshot identities"
+    );
+    assert_eq!(
+        result(&mut activate(&engine, &first), 0),
+        b"first",
+        "first application's file must remain isolated"
+    );
+    assert_eq!(
+        result(&mut activate(&engine, &second), 0),
+        b"second",
+        "second application's file must remain isolated"
+    );
+    assert!(
+        engine.configuration().platform_files.files().is_empty(),
+        "application content must never enter engine-global configuration"
+    );
+}
+
+#[test]
+fn application_content_survives_store_recreation_and_mutable_state_restore() {
+    let engine = WispEngine::new(small_engine_config()).expect("engine");
+    let template = template(&engine, &guest(&["config.json"]), b"retained");
+    let mut original = activate(&engine, &template);
+    assert_eq!(
+        result(&mut original, 0),
+        b"retained",
+        "initial application read"
+    );
+    let state = original
+        .capture_mutable_state()
+        .expect("capture explicit state");
+    let memory = original.memory().to_vec();
+    drop(original);
+    let mut restored = activate(&engine, &template);
+    restored.memory().copy_from_slice(&memory);
+    restored
+        .restore_mutable_state(&state)
+        .expect("restore explicit state");
+    assert_eq!(
+        result(&mut restored, 0),
+        b"retained",
+        "restored instance must retain its application namespace"
+    );
+    restored.reset().expect("reset Store");
+    assert_eq!(
+        result(&mut restored, 0),
+        b"retained",
+        "Store reset must rebuild the same application namespace"
+    );
+}
+
+#[test]
+fn published_application_content_restores_with_the_current_host_trust_file() {
+    let wasm = guest(&["config.json", "etc/ssl/certs/ca-certificates.crt"]);
+    let engine = WispEngine::new(EngineConfig {
+        platform_files: files(&[("/etc/ssl/certs/ca-certificates.crt", b"old-roots")]),
+        ..small_engine_config()
+    })
+    .expect("producer engine");
+    let identity = PreparedIdentity {
+        input_hash: *blake3::hash(&wasm).as_bytes(),
+        runtime_profile: [2; 32],
+        initialization_hash: [3; 32],
+    };
+    let root = tempfile::tempdir().expect("artifact registry");
+    let directory = root.path().join("version");
+    engine
+        .prepare_template_with_files(&wasm, identity, files(&[("/config.json", b"persisted")]))
+        .expect("prepare with files")
+        .publish(&directory, PreparedStorage::VerifiedCopy)
+        .expect("local publication");
+    drop(engine);
+    let replacement = WispEngine::new(EngineConfig {
+        platform_files: files(&[("/etc/ssl/certs/ca-certificates.crt", b"new-roots")]),
+        ..small_engine_config()
+    })
+    .expect("replacement engine");
+    let template = replacement
+        .load_prepared(&directory, identity)
+        .expect("restore published artifact");
+    std::fs::remove_dir_all(&directory).expect("remove backing artifact");
+    let mut instance = activate(&replacement, &template);
+    assert_eq!(
+        result(&mut instance, 0),
+        b"persisted",
+        "application content comes from retained local state"
+    );
+    assert_eq!(
+        result(&mut instance, 1),
+        b"new-roots",
+        "host trust authority must not be frozen in application assets"
+    );
+}
+
+#[test]
+fn application_files_cannot_replace_or_shadow_host_trust_paths() {
+    let engine = WispEngine::new(EngineConfig {
+        platform_files: files(&[("/etc/ssl/certs/ca-certificates.crt", b"roots")]),
+        ..small_engine_config()
+    })
+    .expect("engine");
+    let wasm = guest(&["config.json"]);
+    for path in [
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc",
+        "/etc/ssl/certs/ca-certificates.crt/child",
+    ] {
+        assert!(
+            engine
+                .load_template(&wasm)
+                .expect("template")
+                .with_application_files(files(&[(path, b"override")]))
+                .is_err(),
+            "asset must not shadow host path {path}"
+        );
+    }
+}
+
+#[test]
+fn changed_application_bytes_are_rejected_before_loading() {
+    let engine = WispEngine::new(small_engine_config()).expect("engine");
+    let wasm = guest(&["config.json"]);
+    let identity = PreparedIdentity {
+        input_hash: *blake3::hash(&wasm).as_bytes(),
+        runtime_profile: [2; 32],
+        initialization_hash: [3; 32],
+    };
+    let root = tempfile::tempdir().expect("registry");
+    let path = root.path().join("version");
+    let content = b"unique authenticated application content";
+    engine
+        .prepare_template_with_files(&wasm, identity, files(&[("/config.json", content)]))
+        .expect("prepare")
+        .publish(&path, PreparedStorage::VerifiedCopy)
+        .expect("publish");
+    let state_path = path.join("state.bin");
+    let mut bytes = std::fs::read(&state_path).expect("state payload");
+    let position = bytes
+        .windows(content.len())
+        .position(|window| window == content)
+        .expect("asset bytes must be in retained state");
+    bytes[position] ^= 1;
+    std::fs::write(state_path, bytes).expect("simulate modified backing content");
+    assert!(
+        engine.load_prepared(&path, identity).is_err(),
+        "changed content must be refused before an application becomes executable"
+    );
+}
+
+#[test]
+fn files_cannot_be_rebound_after_template_sharing_or_initial_binding() {
+    let engine = WispEngine::new(small_engine_config()).expect("engine");
+    let wasm = guest(&["config.json"]);
+    let shared = engine.load_template(&wasm).expect("template");
+    let _instance = activate(&engine, &shared);
+    assert!(
+        shared
+            .with_application_files(files(&[("/config.json", b"late")]))
+            .is_err(),
+        "an active template's file namespace cannot change beneath an instance"
+    );
+    let bound = template(&engine, &wasm, b"first");
+    assert!(
+        bound
+            .with_application_files(files(&[("/config.json", b"replacement")]))
+            .is_err(),
+        "an immutable template cannot silently replace its bound content"
+    );
+}
+
+#[test]
+fn restored_artifacts_cannot_claim_a_path_reserved_by_the_receiving_host() {
+    let producer = WispEngine::new(small_engine_config()).expect("producer");
+    let wasm = guest(&["etc/ssl/certs/ca-certificates.crt"]);
+    let identity = PreparedIdentity {
+        input_hash: *blake3::hash(&wasm).as_bytes(),
+        runtime_profile: [2; 32],
+        initialization_hash: [3; 32],
+    };
+    let prepared = producer
+        .prepare_template_with_files(
+            &wasm,
+            identity,
+            files(&[(
+                "/etc/ssl/certs/ca-certificates.crt",
+                b"application claims roots",
+            )]),
+        )
+        .expect("producer with no reserved paths");
+    let root = tempfile::tempdir().expect("registry");
+    let path = root.path().join("version");
+    prepared
+        .publish(&path, PreparedStorage::VerifiedCopy)
+        .expect("published artifact");
+    let receiver = WispEngine::new(EngineConfig {
+        platform_files: files(&[("/etc/ssl/certs/ca-certificates.crt", b"host roots")]),
+        ..small_engine_config()
+    })
+    .expect("receiving host");
+    assert!(
+        receiver.load_prepared(&path, identity).is_err(),
+        "application files cannot replace paths reserved by the receiving host"
+    );
+}

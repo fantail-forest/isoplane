@@ -315,6 +315,8 @@ impl WispEngine {
             hash,
             abi_rev: wisp_abi::ABI_REV,
             inner: Arc::new(TemplateInner {
+                application_files: crate::PlatformFiles::default(),
+                filesystem_files: self.inner.cfg.platform_files.clone(),
                 module,
                 pal_linker,
                 pal_composed,

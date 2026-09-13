@@ -115,13 +115,23 @@ fn prepare(
     let engine = WispEngine::new(request.engine.clone())
         .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
     let start = Instant::now();
-    let initialized =
-        crate::initialize::initialize_with_cache(&engine, wasm, &request.initialization, cache)
-            .map_err(|error| WorkerFailure::new(BuildStage::Initialization, error.into()))?;
+    let initialized = crate::initialize::initialize_with_cache(
+        &engine,
+        wasm,
+        &request.initialization,
+        cache,
+        &request.application_files,
+    )
+    .map_err(|error| WorkerFailure::new(BuildStage::Initialization, error.into()))?;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
-    let prepared = encode(&engine, &initialized.wasm, identity)
-        .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?;
+    let prepared = encode(
+        &engine,
+        &initialized.wasm,
+        identity,
+        request.application_files.clone(),
+    )
+    .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?;
     let compile_ms = start.elapsed().as_secs_f64() * 1000.0;
     Ok(BuildProduct {
         initialized,
@@ -141,8 +151,13 @@ fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdent
     Ok(request.identity()?)
 }
 
-fn encode(engine: &WispEngine, wasm: &[u8], identity: PreparedIdentity) -> anyhow::Result<Vec<u8>> {
+fn encode(
+    engine: &WispEngine,
+    wasm: &[u8],
+    identity: PreparedIdentity,
+    files: wisp_engine::PlatformFiles,
+) -> anyhow::Result<Vec<u8>> {
     Ok(engine
-        .prepare_template(wasm, identity)?
+        .prepare_template_with_files(wasm, identity, files)?
         .encode_builder_output()?)
 }

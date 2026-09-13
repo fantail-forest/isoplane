@@ -73,7 +73,13 @@ pub fn initialize(
     wasm: &[u8],
     request: &Initialization,
 ) -> Result<Initialized, PrepareError> {
-    initialize_with_cache(engine, wasm, request, None)
+    initialize_with_cache(
+        engine,
+        wasm,
+        request,
+        None,
+        &wisp_engine::PlatformFiles::default(),
+    )
 }
 
 pub(crate) fn initialize_with_cache(
@@ -81,6 +87,7 @@ pub(crate) fn initialize_with_cache(
     wasm: &[u8],
     request: &Initialization,
     cache: Option<&wisp_engine::CompilationCache>,
+    application_files: &wisp_engine::PlatformFiles,
 ) -> Result<Initialized, PrepareError> {
     if request.cpu_ms == 0 || request.wall_ms == 0 || request.max_passes == 0 {
         return Err(PrepareError::InvalidRequest(
@@ -97,6 +104,7 @@ pub(crate) fn initialize_with_cache(
             .map(|(template, _compiled)| template),
         None => engine.load_template(&instrumented.wasm),
     }
+    .and_then(|template| template.with_application_files(application_files.clone()))
     .map_err(PrepareError::State)?;
     let mut deferred = BTreeSet::new();
     let mut cpu_ns = 0;
@@ -162,7 +170,10 @@ pub(crate) fn initialize_with_cache(
         let output = bake::bake(&instrumented.wasm, instance.memory(), &globals, &deferred)
             .map_err(PrepareError::State)?;
         // Reinstantiation is the preparation oracle; it is never part of a worker cache miss.
-        let baked = engine.load_template(&output).map_err(PrepareError::State)?;
+        let baked = engine
+            .load_template(&output)
+            .and_then(|template| template.with_application_files(application_files.clone()))
+            .map_err(PrepareError::State)?;
         let mut restored = engine
             .activate_initialization(&baked, Box::new(Bindings(state.clone())))
             .map_err(PrepareError::State)?;

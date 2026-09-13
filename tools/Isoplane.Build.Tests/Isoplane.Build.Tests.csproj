@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../BuildProtocol/AssemblyClosure.cs" Link="AssemblyClosure.cs" />
+    <Compile Include="../BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />

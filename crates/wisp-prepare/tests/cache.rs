@@ -28,6 +28,7 @@ fn wasm(value: u32) -> Vec<u8> {
 }
 fn request(wasm: &[u8]) -> BuildRequest {
     BuildRequest {
+        application_files: wisp_engine::PlatformFiles::default(),
         engine: common::engine().configuration(),
         runtime: RuntimeProfile::raw_wasm(),
         limits: wisp_abi::config::Limits::default(),

@@ -1,0 +1,11 @@
+<Project Sdk="Wisp.AspNetCore/0.1.0">
+  <PropertyGroup>
+    <PublishAot>false</PublishAot>
+    <PublishAot Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</PublishAot>
+    <WispApplicationFactory>Example.App.Create</WispApplicationFactory>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Update="greeting.txt" CopyToOutputDirectory="PreserveNewest" TargetPath="data/greeting.txt" />
+  </ItemGroup>
+</Project>

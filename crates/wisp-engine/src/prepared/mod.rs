@@ -11,7 +11,7 @@ use crate::{Template, WispEngine};
 
 pub use files::{PreparedPayload, PreparedStorage, ReadAhead};
 
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 3;
 const MAGIC: [u8; 8] = *b"WISPPREP";
 const NATIVE: &str = "template.cwasm";
 const BASELINE: &str = "baseline.bin";
@@ -86,6 +86,21 @@ impl WispEngine {
         template_wasm: &[u8],
         identity: PreparedIdentity,
     ) -> Result<PreparedTemplate> {
+        self.prepare_template_with_files(template_wasm, identity, crate::PlatformFiles::default())
+    }
+
+    /// Prepare native state with immutable application files recorded in the artifact.
+    pub fn prepare_template_with_files(
+        &self,
+        template_wasm: &[u8],
+        identity: PreparedIdentity,
+        application_files: crate::PlatformFiles,
+    ) -> Result<PreparedTemplate> {
+        self.inner
+            .cfg
+            .platform_files
+            .merge(&application_files)
+            .map_err(|error| PreparedError::Engine(error.into()))?;
         for payload in wasmparser::Parser::new(0).parse_all(template_wasm) {
             if matches!(
                 payload.map_err(|error| PreparedError::Engine(error.into()))?,
@@ -98,6 +113,7 @@ impl WispEngine {
         }
         let template = self
             .load_template(template_wasm)
+            .and_then(|template| template.with_application_files(application_files))
             .map_err(PreparedError::Engine)?;
         let native = template
             .inner
@@ -151,6 +167,7 @@ impl WispEngine {
         .map_err(PreparedError::Invalid)?;
         let state: state::State = postcard::from_bytes(&prepared.payloads[2])?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
+        state.filesystem(&self.inner.cfg.platform_files)?;
         Ok(prepared)
     }
 

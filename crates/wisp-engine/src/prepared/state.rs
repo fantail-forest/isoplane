@@ -10,6 +10,7 @@ use crate::{MemoryImage, ModuleHash, Template, WispEngine};
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct State {
+    application_files: crate::PlatformFiles,
     memory_pages: u32,
     deferred: Vec<u32>,
     mut_globals: Vec<(String, GlobalValue)>,
@@ -23,6 +24,7 @@ impl State {
     pub(super) fn capture(template: &Template) -> Self {
         let inner = &template.inner;
         Self {
+            application_files: inner.application_files.clone(),
             memory_pages: inner.memory_pages,
             deferred: inner.deferred.clone(),
             mut_globals: inner.mut_globals.clone(),
@@ -31,6 +33,15 @@ impl State {
             has_gc_hint: inner.has_gc_hint,
             has_initialize: inner.has_initialize,
         }
+    }
+
+    pub(super) fn filesystem(
+        &self,
+        platform: &crate::PlatformFiles,
+    ) -> Result<crate::PlatformFiles> {
+        platform
+            .merge(&self.application_files)
+            .map_err(|error| PreparedError::Engine(error.into()))
     }
 
     pub(super) fn validate(&self, image: &MemoryImage, max_memory_bytes: u64) -> Result<()> {
@@ -73,6 +84,7 @@ impl WispEngine {
         state: State,
         image: MemoryImage,
     ) -> Result<Template> {
+        let filesystem_files = state.filesystem(&self.inner.cfg.platform_files)?;
         let (pal_linker, pal_composed) = self
             .template_linker(&module)
             .map_err(PreparedError::Engine)?;
@@ -80,6 +92,8 @@ impl WispEngine {
             hash: ModuleHash(manifest.module_hash),
             abi_rev: manifest.abi_rev,
             inner: Arc::new(TemplateInner {
+                application_files: state.application_files,
+                filesystem_files,
                 module,
                 pal_linker,
                 pal_composed,

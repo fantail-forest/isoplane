@@ -37,6 +37,42 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     }
 
     [Fact]
+    public async Task satellites_with_the_same_name_preserve_their_culture_directories()
+    {
+        using var directory = new BundleDirectory();
+        var output = Path.Combine(directory.Path, "application.tar");
+        await ManagedBundle.WriteAsync(fixture.Metadata("Mono", includeSatellites: true), output, default);
+        using var input = File.OpenRead(output);
+        using var reader = new TarReader(input);
+        var satellites = new Dictionary<string, byte[]>();
+        while (reader.GetNextEntry() is { } entry)
+            if (entry.Name.EndsWith(".resources.dll", StringComparison.Ordinal))
+            {
+                using var bytes = new MemoryStream();
+                entry.DataStream!.CopyTo(bytes);
+                satellites.Add(entry.Name, bytes.ToArray());
+            }
+        Assert.True(satellites.Count == 2 && satellites["assemblies/fr/Application.resources.dll"].SequenceEqual(File.ReadAllBytes(fixture.Satellite("fr"))) &&
+            satellites["assemblies/fr-CA/Application.resources.dll"].SequenceEqual(File.ReadAllBytes(fixture.Satellite("fr-CA"))),
+            "ResourceManager satellite assemblies must keep their culture identity and bytes instead of colliding by simple name.");
+    }
+
+    [Fact]
+    public async Task the_sdk_discovers_assets_and_satellites_for_the_bundle_reader()
+    {
+        using var directory = new BundleDirectory();
+        var output = Path.Combine(directory.Path, "sdk.tar");
+        await ManagedBundle.WriteAsync(fixture.SdkMetadata, output, default);
+        using var input = File.OpenRead(output);
+        using var reader = new TarReader(input);
+        var names = new HashSet<string>();
+        while (reader.GetNextEntry() is { } entry) names.Add(entry.Name);
+        Assert.True(names.Contains("assets/data/greeting.txt") && names.Contains("assemblies/fr/Application.resources.dll") &&
+            names.Contains("assemblies/fr-CA/Application.resources.dll"),
+            "The real SDK target must discover copied assets and generated satellites, preserving their output paths for bundling.");
+    }
+
+    [Fact]
     public async Task a_missing_application_dependency_is_reported_before_archive_creation()
     {
         using var directory = new BundleDirectory();
@@ -47,11 +83,36 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     }
 
     [Fact]
-    public async Task external_assets_are_reported_instead_of_silently_omitted()
+    public async Task external_assets_preserve_their_output_paths_and_contents()
     {
         using var directory = new BundleDirectory();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: "required-data.json"), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
-        Assert.True(error.Message.Contains("required-data.json", StringComparison.Ordinal), "The diagnostic must identify the asset that the deployment cannot yet carry.");
+        var asset = Path.Combine(directory.Path, "required-data.json");
+        await File.WriteAllTextAsync(asset, "application data");
+        var output = Path.Combine(directory.Path, "application.tar");
+        await ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: asset, assetTarget: "config/data.json"), output, default);
+        using var stream = File.OpenRead(output);
+        using var archive = new TarReader(stream);
+        var found = false;
+        while (archive.GetNextEntry() is { } entry)
+            if (entry.Name == "assets/config/data.json")
+            {
+                using var reader = new StreamReader(entry.DataStream!);
+                found = await reader.ReadToEndAsync() == "application data";
+            }
+        Assert.True(found, "Application assets must be uploaded at their declared output path without changing their bytes.");
+    }
+
+    [Theory]
+    [InlineData("../escape")]
+    [InlineData("/absolute")]
+    [InlineData("a\\b")]
+    public async Task asset_output_paths_cannot_escape_the_guest_root(string target)
+    {
+        using var directory = new BundleDirectory();
+        var asset = Path.Combine(directory.Path, "data.txt");
+        await File.WriteAllTextAsync(asset, "data");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: asset, assetTarget: target),
+            Path.Combine(directory.Path, "application.tar"), default));
     }
 
     [Fact]
@@ -109,7 +170,9 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
 {
     private readonly BundleDirectory directory = new();
     private string[] platform = [];
+    public JsonElement SdkMetadata { get; private set; }
     public string Application => Path.Combine(directory.Path, "Application/bin/Debug/net10.0/Application.dll");
+    public string Satellite(string culture) => Path.Combine(directory.Path, "Application/bin/Debug/net10.0", culture, "Application.resources.dll");
     public string Dependency => Path.Combine(directory.Path, "Dependency/bin/Debug/net10.0/Dependency.dll");
 
     public async Task InitializeAsync()
@@ -122,9 +185,22 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         await File.WriteAllTextAsync(Path.Combine(application.FullName, "Application.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><ProjectReference Include=\"../Dependency/Dependency.csproj\"/><EmbeddedResource Include=\"data.txt\"/></ItemGroup></Project>");
         await File.WriteAllTextAsync(Path.Combine(application.FullName, "Code.cs"), "public static class Application { public static string Create() => Dependency.Value; }");
         await File.WriteAllTextAsync(Path.Combine(application.FullName, "data.txt"), "embedded data");
+        foreach (var culture in new[] { "fr", "fr-CA" })
+            await File.WriteAllTextAsync(Path.Combine(application.FullName, "Messages." + culture + ".resx"),
+                "<root><data name=\"Greeting\" xml:space=\"preserve\"><value>" + culture + " greeting</value></data></root>");
+        var project = System.Xml.Linq.XDocument.Load(Path.Combine(application.FullName, "Application.csproj"));
+        project.Root!.Add(new System.Xml.Linq.XElement("PropertyGroup",
+            new System.Xml.Linq.XElement("WispManagedBundleBuild", "true"),
+            new System.Xml.Linq.XElement("WispApplicationFactory", "Application.Create"),
+            new System.Xml.Linq.XElement("WispGuestRuntime", "Mono")));
+        project.Root.Add(new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("None",
+            new System.Xml.Linq.XAttribute("Update", "data.txt"), new System.Xml.Linq.XElement("CopyToOutputDirectory", "PreserveNewest"),
+            new System.Xml.Linq.XElement("TargetPath", "data/greeting.txt"))));
+        project.Root.Add(new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(AppContext.BaseDirectory, "Wisp.ManagedBundle.targets"))));
+        project.Save(Path.Combine(application.FullName, "Application.csproj"));
         var resultPath = Path.Combine(directory.Path, "result.json");
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory.Path };
-        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:Build", "-getItem:ReferencePath", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:WispManagedBundle", "-getProperty:AssemblyName,WispApplicationFactory,WispGuestRuntime", "-getItem:ReferencePath,WispBundleAssembly,WispBundleSymbol,WispBundleAsset,WispBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not build managed bundle fixture.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -139,14 +215,16 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
             if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
         }
         using var result = JsonDocument.Parse(await File.ReadAllBytesAsync(resultPath));
+        SdkMetadata = result.RootElement.Clone();
         platform = result.RootElement.GetProperty("Items").GetProperty("ReferencePath").EnumerateArray()
             .Select(item => item.GetProperty("FullPath").GetString()!).Where(path => Path.GetFileName(path) != "Dependency.dll").ToArray();
     }
 
-    public JsonElement Metadata(string runtime, bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null)
+    public JsonElement Metadata(string runtime, bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false)
     {
         var assemblies = new List<string> { applicationPath ?? Application };
         if (includeDependency) assemblies.Add(Dependency);
+        if (includeSatellites) assemblies.AddRange(new[] { Satellite("fr"), Satellite("fr-CA") });
         if (additionalAssembly is not null) assemblies.Add(additionalAssembly);
         return JsonSerializer.SerializeToElement(new
         {
@@ -154,9 +232,9 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
             Items = new
             {
                 WispBundleAssembly = assemblies.Select(path => new { FullPath = path }),
-                WispBundleSymbol = assemblies.Select(path => new { FullPath = Path.ChangeExtension(path, ".pdb") }),
+                WispBundleSymbol = assemblies.Where(path => !path.EndsWith(".resources.dll", StringComparison.Ordinal)).Select(path => new { FullPath = Path.ChangeExtension(path, ".pdb") }),
                 WispBundlePlatformReference = platform.Select(path => new { FullPath = path }),
-                WispBundleAsset = (asset is null ? Array.Empty<string>() : [asset]).Select(path => new { FullPath = Path.Combine(directory.Path, path) })
+                WispBundleAsset = (asset is null ? Array.Empty<string>() : [asset]).Select(path => new { FullPath = Path.Combine(directory.Path, path), TargetPath = assetTarget ?? Path.GetFileName(path) })
             }
         });
     }

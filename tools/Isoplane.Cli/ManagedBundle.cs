@@ -55,9 +55,7 @@ internal static class ManagedBundle
     {
         var properties = metadata.GetProperty("Properties");
         var items = metadata.GetProperty("Items");
-        var assets = Paths(items, "WispBundleAsset");
-        if (assets.Length != 0)
-            throw new InvalidOperationException("Managed deployment cannot yet carry external assets: " + string.Join(", ", assets.Select(Path.GetFileName)) + ". Embed application resources in the assembly or wait for deployment asset support.");
+        var assets = ReadAssets(items);
         var assemblies = ReadAssemblies(Paths(items, "WispBundleAssembly"));
         var platform = ReadAssemblies(Paths(items, "WispBundlePlatformReference"), platform: true);
         var symbols = Paths(items, "WispBundleSymbol").ToHashSet(StringComparer.Ordinal);
@@ -81,20 +79,45 @@ internal static class ManagedBundle
             {
                 using var content = new MemoryStream(manifest, writable: false);
                 await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json") { DataStream = content }, cancellation);
-                foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Name, StringComparer.Ordinal))
+                foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Key, StringComparer.Ordinal))
                 {
-                    await tar.WriteEntryAsync(assembly.Origin, "assemblies/" + assembly.Identity.Name + ".dll", cancellation);
+                    await tar.WriteEntryAsync(assembly.Origin, "assemblies/" + assembly.Identity.RelativePath, cancellation);
                     var pdbPath = Path.ChangeExtension(assembly.Origin, ".pdb");
                     if (symbols.Contains(pdbPath))
                     {
                         ValidateSymbols(pdbPath);
-                        await tar.WriteEntryAsync(pdbPath, "assemblies/" + assembly.Identity.Name + ".pdb", cancellation);
+                        await tar.WriteEntryAsync(pdbPath, "assemblies/" + Path.ChangeExtension(assembly.Identity.RelativePath, ".pdb"), cancellation);
                     }
                 }
+                foreach (var asset in assets)
+                    await tar.WriteEntryAsync(asset.Source, "assets/" + asset.Target, cancellation);
             }
             File.Move(partial, output, overwrite: true);
         }
         finally { File.Delete(partial); }
+    }
+
+    private static (string Source, string Target)[] ReadAssets(JsonElement items)
+    {
+        var result = new List<(string Source, string Target)>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in items.GetProperty("WispBundleAsset").EnumerateArray())
+        {
+            var source = Path.GetFullPath(item.GetProperty("FullPath").GetString() ?? throw new InvalidOperationException("The SDK returned an empty asset source."));
+            RequireRegularFile(source);
+            var target = item.TryGetProperty("TargetPath", out var targetPath) ? targetPath.GetString() : null;
+            if (string.IsNullOrEmpty(target)) target = item.TryGetProperty("DestinationSubPath", out var destination) ? destination.GetString() : null;
+            if (string.IsNullOrEmpty(target))
+            {
+                var subdirectory = item.TryGetProperty("DestinationSubDirectory", out var sub) ? sub.GetString() : "";
+                target = subdirectory + Path.GetFileName(source);
+            }
+            target = target.Replace(Path.DirectorySeparatorChar, '/');
+            if (!AssetPaths.TryAdd(names, target))
+                throw new InvalidOperationException($"Bundle asset '{target}' is not a unique relative file path.");
+            result.Add((source, target));
+        }
+        return result.OrderBy(asset => asset.Target, StringComparer.Ordinal).ToArray();
     }
 
     private static void ValidateSymbols(string path)

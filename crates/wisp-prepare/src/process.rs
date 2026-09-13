@@ -10,6 +10,8 @@ use crate::{Initialization, RuntimeProfile};
 pub struct BuildRequest {
     /// Engine settings supplied by the consuming engine.
     pub engine: EngineConfig,
+    /// Immutable application files, separate from node-owned platform files.
+    pub application_files: wisp_engine::PlatformFiles,
     /// Provenance established by the trusted publisher.
     pub runtime: RuntimeProfile,
     /// Numeric application budgets enforced by portable WASM validation.
@@ -27,6 +29,7 @@ impl BuildRequest {
         hash.update(b"wisp.prepared-initialization.v1\0");
         hash.update(&self.initialization.digest(self.input_hash)?);
         hash.update(&postcard::to_allocvec(&self.engine.platform_files)?);
+        hash.update(&postcard::to_allocvec(&self.application_files)?);
         Ok(wisp_engine::prepared::PreparedIdentity {
             input_hash: self.input_hash,
             runtime_profile: self.runtime.digest()?,

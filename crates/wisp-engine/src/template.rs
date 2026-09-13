@@ -8,7 +8,7 @@ use wasmtime::Module;
 
 use crate::snapshot::GlobalValue;
 
-/// Content address of the tenant's uploaded module.
+/// Identity of a module and its immutable application content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModuleHash(pub [u8; 32]);
 
@@ -44,6 +44,8 @@ pub struct Template {
 }
 
 pub(crate) struct TemplateInner {
+    pub application_files: crate::PlatformFiles,
+    pub filesystem_files: crate::PlatformFiles,
     pub module: Module,
     /// A linker carrying this module's WASI PAL adapter, or `None` when the
     /// module imports only `wisp`. Per template because a trap stub is typed
@@ -69,6 +71,29 @@ pub(crate) struct TemplateInner {
 }
 
 impl Template {
+    /// Bind immutable application files to an inactive template and its snapshot identity.
+    /// Fails on host-path collisions or if the template is already shared or has application files.
+    pub fn with_application_files(mut self, files: crate::PlatformFiles) -> Result<Self> {
+        if files.files().is_empty() {
+            return Ok(self);
+        }
+        let inner = Arc::get_mut(&mut self.inner)
+            .ok_or_else(|| anyhow::anyhow!("cannot change files on a shared template"))?;
+        anyhow::ensure!(
+            inner.application_files.files().is_empty(),
+            "template application files are already bound"
+        );
+        let combined = inner.filesystem_files.merge(&files)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"wisp.application-template.v1\0");
+        hash.update(&self.hash.0);
+        hash.update(&postcard::to_allocvec(&files)?);
+        self.hash = ModuleHash(*hash.finalize().as_bytes());
+        inner.application_files = files;
+        inner.filesystem_files = combined;
+        Ok(self)
+    }
+
     /// Whether the compiled module declares this import, including mapped artifacts.
     pub fn imports(&self, module: &str, name: &str) -> bool {
         self.inner

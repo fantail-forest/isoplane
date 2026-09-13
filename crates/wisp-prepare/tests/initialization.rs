@@ -291,6 +291,7 @@ fn preparation_transport_rejects_unvalidated_platform_file_paths() {
 fn initialization_identity_changes_with_the_declared_trust_snapshot() {
     let wasm = guest("", "");
     let mut request = wisp_prepare::BuildRequest {
+        application_files: wisp_engine::PlatformFiles::default(),
         engine: engine().configuration(),
         runtime: wisp_prepare::RuntimeProfile::RawWasm,
         limits: wisp_abi::config::Limits::default(),
@@ -313,5 +314,34 @@ fn initialization_identity_changes_with_the_declared_trust_snapshot() {
     assert_eq!(
         old.runtime_profile, new.runtime_profile,
         "trust rotation must not change the runtime compatibility profile"
+    );
+}
+
+#[test]
+fn initialization_identity_binds_application_content_independently_of_the_runtime() {
+    let wasm = guest("", "");
+    let mut request = wisp_prepare::BuildRequest {
+        application_files: wisp_engine::PlatformFiles::default(),
+        engine: engine().configuration(),
+        runtime: wisp_prepare::RuntimeProfile::RawWasm,
+        limits: wisp_abi::config::Limits::default(),
+        initialization: request(),
+        input_hash: *blake3::hash(&wasm).as_bytes(),
+    };
+    let before = request.identity().expect("original identity");
+    request.application_files = wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
+        path: "/config.json".into(),
+        bytes: b"content".as_slice().into(),
+        modified_ns: 42,
+    }])
+    .expect("application files");
+    let after = request.identity().expect("content identity");
+    assert_ne!(
+        before.initialization_hash, after.initialization_hash,
+        "application file changes must invalidate prepared initialization state"
+    );
+    assert_eq!(
+        before.runtime_profile, after.runtime_profile,
+        "application content must not alter runtime provenance"
     );
 }

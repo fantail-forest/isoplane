@@ -988,3 +988,6 @@ fn metadata_hashes_are_stable_across_engines_serving_the_same_set() {
         "a node's identity is a function of its path alone"
     );
 }
+
+#[path = "platform_files/application.rs"]
+mod application;

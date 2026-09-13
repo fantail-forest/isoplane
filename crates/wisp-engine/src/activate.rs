@@ -49,8 +49,9 @@ impl WispEngine {
 pub(crate) fn instantiate(
     engine: &Arc<EngineInner>,
     t: &Arc<TemplateInner>,
-    data: StoreState,
+    mut data: StoreState,
 ) -> Result<Live> {
+    data.platform_files = t.filesystem_files.clone();
     let mut store = Store::new(&engine.wasmtime, data);
     store.limiter(|d| &mut d.limits);
 

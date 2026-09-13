@@ -1,7 +1,6 @@
-//! The host-declared set of platform-managed files a guest can read through
-//! the PAL filesystem. The set is small and fixed for an engine's lifetime;
-//! the directories its paths imply exist implicitly, and nothing outside it
-//! exists at all.
+//! Immutable files served through the PAL filesystem. Host platform files and
+//! application content form separate sets until a Store combines them. Their
+//! paths imply directories; nothing outside the declared namespace exists.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -138,6 +137,17 @@ impl<'de> serde::Deserialize<'de> for PlatformFiles {
 }
 
 impl PlatformFiles {
+    /// Combine disjoint read-only namespaces, refusing duplicate paths and directory conflicts.
+    pub fn merge(&self, other: &Self) -> Result<Self, PlatformFilesError> {
+        if other.files().is_empty() {
+            return Ok(self.clone());
+        }
+        if self.files().is_empty() {
+            return Ok(other.clone());
+        }
+        Self::new(self.files().iter().chain(other.files()).cloned().collect())
+    }
+
     /// Validate and index the set. Fails on a relative path, an empty, `.`
     /// or `..` component, a path declared twice, or a file whose path is a
     /// directory on the way to another file.

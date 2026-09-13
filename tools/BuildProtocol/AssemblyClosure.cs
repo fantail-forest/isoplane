@@ -8,7 +8,6 @@ internal enum AssemblyInputProblem
 {
     InvalidAssembly,
     DuplicateIdentity,
-    UnsupportedCulture,
     PlatformSubstitution,
     MissingDependency,
     IdentityMismatch
@@ -21,6 +20,8 @@ internal sealed class AssemblyInputException(AssemblyInputProblem problem, strin
 
 internal sealed record ManagedIdentity(string Name, Version Version, string Culture, string PublicKeyToken)
 {
+    internal string Key => Culture.Length == 0 ? Name : Culture + "/" + Name;
+    internal string RelativePath => Key + ".dll";
     internal static ManagedIdentity From(AssemblyName name) => new(name.Name ?? "", name.Version ?? new Version(0, 0, 0, 0),
         name.CultureName ?? "", Convert.ToHexStringLower(name.GetPublicKeyToken() ?? []));
     public override string ToString() => $"{Name}, Version={Version}, Culture={(Culture.Length == 0 ? "neutral" : Culture)}, PublicKeyToken={(PublicKeyToken.Length == 0 ? "null" : PublicKeyToken)}";
@@ -53,7 +54,7 @@ internal static class AssemblyClosure
             };
             name.SetPublicKey(metadata.GetBlobBytes(definition.PublicKey));
             var identity = ManagedIdentity.From(name);
-            if (identity.Name.Length == 0 || identity.Name.IndexOfAny(['/', '\\']) >= 0)
+            if (identity.Name.Length == 0 || identity.Name.IndexOfAny(['/', '\\']) >= 0 || !AssetPaths.IsRelativeFile(identity.RelativePath))
                 throw Invalid(origin, "has an invalid assembly name");
             var references = metadata.AssemblyReferences.Select(handle =>
             {
@@ -84,11 +85,9 @@ internal static class AssemblyClosure
         foreach (var assembly in inputs)
         {
             if (application && !assembly.IlOnly) throw Invalid(assembly.Origin, "must contain managed IL only");
-            if (assembly.Identity.Culture.Length != 0)
-                throw new AssemblyInputException(AssemblyInputProblem.UnsupportedCulture, $"Satellite assembly '{assembly.Identity.Name}' requires deployment asset support.");
-            if (!assemblies.TryAdd(assembly.Identity.Name, assembly))
+            if (!assemblies.TryAdd(assembly.Identity.Key, assembly))
                 throw new AssemblyInputException(AssemblyInputProblem.DuplicateIdentity,
-                    $"Conflicting inputs define assembly '{assembly.Identity.Name}': '{assemblies[assembly.Identity.Name].Origin}' and '{assembly.Origin}'.");
+                    $"Conflicting inputs define assembly '{assembly.Identity.Key}': '{assemblies[assembly.Identity.Key].Origin}' and '{assembly.Origin}'.");
         }
         return assemblies;
     }
@@ -98,12 +97,14 @@ internal static class AssemblyClosure
     {
         foreach (var assembly in application.Values)
         {
-            if (platform.ContainsKey(assembly.Identity.Name))
+            var neutralName = assembly.Identity.Culture.Length != 0 && assembly.Identity.Name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase)
+                ? assembly.Identity.Name[..^".resources".Length] : assembly.Identity.Name;
+            if (platform.ContainsKey(assembly.Identity.Key) || platform.ContainsKey(neutralName))
                 throw new AssemblyInputException(AssemblyInputProblem.PlatformSubstitution,
                     $"Application input attempts to replace platform assembly '{assembly.Identity.Name}'. Remove it from the bundle; the selected runtime supplies it.");
             foreach (var reference in assembly.References)
             {
-                if (!application.TryGetValue(reference.Name, out var resolved) && !platform.TryGetValue(reference.Name, out resolved))
+                if (!application.TryGetValue(reference.Key, out var resolved) && !platform.TryGetValue(reference.Key, out resolved))
                     throw new AssemblyInputException(AssemblyInputProblem.MissingDependency,
                         $"Assembly '{assembly.Identity.Name}' requires missing dependency '{reference.Name}' {reference.Version}.");
                 if (resolved.Identity.Version < reference.Version ||
