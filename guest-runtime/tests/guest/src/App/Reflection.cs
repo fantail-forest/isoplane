@@ -21,8 +21,12 @@ internal sealed partial class Reflection
     public Task<string> RunAsync(string[] path) => path[0] switch
     {
         "events-after-park" => EventsAfterPark(),
+        "native-declaration-after-park" => NativeDeclarationAfterPark(),
+        "native-library-after-park" => NativeLibraryAfterPark(path[1]),
 #if WISP_MONO
         "assembly-after-park" => LoadedAssemblyAfterPark(),
+        "native-payload-after-park" => NativePayloadAfterPark(path[1]),
+        "trusted-identity-after-park" => TrustedIdentityAfterPark(path[1]),
         "dynamic-after-park" => DynamicBindingAfterPark(path[1]),
 #endif
         "expression-after-park" => ExpressionAfterPark(preferInterpretation: true),

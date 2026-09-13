@@ -73,8 +73,23 @@ def write_receipt(receipt, inputs, outputs):
             temporary.unlink(missing_ok=True)
 
 
+def published_guest(directory):
+    candidates = [path for path in Path(directory).glob("*.wasm")
+                  if path.is_file() and Path(str(path) + ".runtime").is_file()
+                  and Path(str(path) + ".runtime").read_text().strip()]
+    if len(candidates) != 1:
+        raise ValueError(f"Expected one SDK guest with runtime provenance in {directory}; found {len(candidates)}")
+    return candidates[0]
+
+
 def main():
     action, *args = sys.argv[1:]
+    if action == "published-guest":
+        try:
+            print(published_guest(args[0]))
+        except ValueError as error:
+            sys.exit(str(error))
+        return 0
     if action == "fingerprint":
         print(fingerprint(args))
         return 0

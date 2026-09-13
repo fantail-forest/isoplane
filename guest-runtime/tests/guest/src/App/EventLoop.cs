@@ -23,6 +23,11 @@ internal sealed class EventLoop
         _requests++;
         switch (path[0])
         {
+            case "custom-context":
+            case "custom-scheduler":
+            case "custom-awaiter":
+            case "async-void":
+                return await Scheduling.RunAsync(path[0]);
             case "delay":
                 await Task.Delay(Milliseconds(path[1])).ConfigureAwait(false);
                 return "resumed";

@@ -3,4 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Wisp.Acceptance.DynamicPayload</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../../../guest-sdks/dotnet/Abi/Tests/NativeResolutionProbe.cs" Link="NativeResolutionProbe.cs" />
+  </ItemGroup>
 </Project>

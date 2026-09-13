@@ -45,3 +45,4 @@
 ../runtime/028-wasi-networking-platform-metadata.patch
 ../runtime/030-wasi-task-backed-socket-apm.patch
 ../runtime/031-wasi-vectored-stream-io.patch
+../runtime/032-wasi-native-library-load-errors.patch

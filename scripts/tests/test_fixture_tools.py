@@ -28,6 +28,22 @@ class FixtureReceipts(unittest.TestCase):
         self.outputs = [self.output, self.sidecar]
         tools.write_receipt(self.receipt, self.inputs, self.outputs)
 
+    def test_runtime_module_does_not_replace_the_sdk_guest_output(self):
+        (self.root / "dotnet.wasm").write_bytes(b"runtime template")
+        self.assertEqual(tools.published_guest(self.root), self.output,
+                         "only the SDK output with runtime provenance is the guest")
+
+    def test_multiple_identified_guest_outputs_are_refused(self):
+        (self.root / "another.wasm").write_bytes(b"other guest")
+        (self.root / "another.wasm.runtime").write_text("pack-two@sha512:digest")
+        with self.assertRaises(ValueError, msg="ambiguous guest outputs must not be guessed"):
+            tools.published_guest(self.root)
+
+    def test_an_output_without_runtime_provenance_is_refused(self):
+        self.sidecar.unlink()
+        with self.assertRaises(ValueError, msg="unattributed runtime output must not become a fixture"):
+            tools.published_guest(self.root)
+
     def fresh(self):
         return tools.is_fresh(self.receipt, tools.fingerprint([self.source]), self.outputs)
 

@@ -14,6 +14,8 @@
     <RootNamespace>Acceptance</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <EventSourceSupport>true</EventSourceSupport>
+    <!-- The multi-family fixture exceeds WASI's 50 MiB static-image default. -->
+    <WasmInitialHeapSize>67108864</WasmInitialHeapSize>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(WispCompilerProbe)' == 'true'">
@@ -31,6 +33,7 @@
 
   <ItemGroup>
     <Compile Remove="Payload/**/*.cs" />
+    <Compile Include="../../../../guest-sdks/dotnet/Abi/Tests/NativeLibraryProbe.cs" />
     <ProjectReference Include="../../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
   </ItemGroup>
 

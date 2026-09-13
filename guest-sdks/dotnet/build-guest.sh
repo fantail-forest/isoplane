@@ -35,12 +35,7 @@ trap 'rm -rf "$PUBLISH"; if [ -n "$PENDING" ]; then rm -f "$PENDING"; fi' EXIT
 dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "-p:WispCli=$WISP_CLI" "$@"
 
 mkdir -p "$OUT"
-PUBLISHED=$(find "$PUBLISH" -maxdepth 1 -name '*.wasm' | sort)
-if [ "$(printf '%s' "$PUBLISHED" | grep -c .)" != 1 ]; then
-  echo "FAIL: expected exactly one published .wasm, found:" >&2
-  echo "$PUBLISHED" >&2
-  exit 1
-fi
+PUBLISHED=$(python3 "$ROOT/scripts/fixture-tools.py" published-guest "$PUBLISH")
 : "${NAME:=$(basename "$PUBLISHED" .wasm)}"
 # A publish records the pack it linked beside the module; the sidecar
 # travels with the module so a test can attribute its result.
