@@ -51,8 +51,9 @@ Use ASP.NET's `ILogger` through dependency injection or `app.Logger`, with the
 `Microsoft.Extensions.Logging` extension methods. Emit messages while handling
 a request. Do not log credentials or connection strings.
 
-`Console.WriteLine` is not a supported guest logging API. Use `ILogger` for
-application logs rather than adding a console logging provider.
+`Console.WriteLine` and `Console.Error.WriteLine` also write application logs.
+Use `ILogger` when you need structured fields and log levels; the ASP.NET
+integration registers its logging provider automatically.
 
 ## A database certificate is rejected
 

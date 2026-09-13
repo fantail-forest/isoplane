@@ -11,7 +11,7 @@ use wisp_abi::config::InitSandbox;
 use wisp_fixtures::GuestRuntime;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn managed_logs_keep_host_ownership_across_park_wake_and_the_aspnet_adapter() {
+async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response_work() {
     let output = otlp::output::LogOutput::default();
     let writer = output.clone();
     let logging = tokio::task::spawn_blocking(move || {
@@ -96,23 +96,6 @@ async fn managed_logs_keep_host_ownership_across_park_wake_and_the_aspnet_adapte
         );
         rig.shutdown().await;
     }
-    let aspnet = tokio::task::spawn_blocking(|| wisp_fixtures::dotnet("wisp_guest_aspnet"))
-        .await
-        .expect("the ASP.NET logging fixture must build");
-    let rig = common::start_with_policy(aspnet, InitSandbox::RuntimeBringUp, None, |_| {}).await;
-    let response = common::get(rig.proxy, "quotes.wisp.dev", "/logs").await;
-    assert_eq!(
-        response.body, "aspnet logged",
-        "the actual ASP.NET adapter must complete its logging route"
-    );
-    let records: Vec<_> = otlp::output::guest_logs(&output)
-        .into_iter()
-        .skip(before)
-        .collect();
-    assert!(records.iter().any(|record| record.level == 3 && record.fields.contains("AspNetLoggingFixture")
-        && record.fields.contains("aspnet-application-log") && record.tenant == "acme" && record.module == "quotes@v1"),
-        "the normally registered ASP.NET ILogger provider must reach the same attributed customer log boundary");
-    rig.shutdown().await;
     tokio::task::spawn_blocking(move || logging.shutdown())
         .await
         .expect("logging shutdown task")

@@ -60,17 +60,22 @@ def main():
         # (`<id>.<version>.nupkg`, the version being the first dotted segment
         # that starts with a digit).
         feed = Path(os.environ.get("WISP_GUEST_RUNTIME_FEED", str(ROOT / "guest-runtime/out/feed")))
-        feed_ids = sorted({re.match(r"^(.*?)\.\d[^/]*\.nupkg$", name.name).group(1)
-                           for name in feed.glob("*.nupkg")})
+        local_feeds = {"wisp-guest-runtime": feed}
+        compiler = feed.parent / "compiler"
+        if compiler.is_dir():
+            local_feeds["wisp-guest-compiler"] = compiler
         config = ET.parse(ROOT / "nuget.config")
         ET.SubElement(config.getroot().find("packageSources"), "add",
                       key="fixture-packages", value=str(packages))
-        ET.SubElement(config.getroot().find("packageSources"), "add",
-                      key="wisp-guest-runtime", value=str(feed))
+        for key, directory in local_feeds.items():
+            ET.SubElement(config.getroot().find("packageSources"), "add",
+                          key=key, value=str(directory))
         mapping = ET.SubElement(config.getroot(), "packageSourceMapping")
         for entry in config.getroot().find("packageSources").findall("add"):
             package_source = ET.SubElement(mapping, "packageSource", key=entry.attrib["key"])
-            if entry.attrib["key"] == "wisp-guest-runtime":
+            if entry.attrib["key"] in local_feeds:
+                feed_ids = sorted({re.match(r"^(.*?)\.\d[^/]*\.nupkg$", name.name).group(1)
+                                   for name in local_feeds[entry.attrib["key"]].glob("*.nupkg")})
                 for feed_id in feed_ids:
                     ET.SubElement(package_source, "package", pattern=feed_id)
             else:
