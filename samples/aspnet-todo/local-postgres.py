@@ -25,15 +25,17 @@ def run(arguments, *, data=None):
 
 
 def remove(state):
-    found = subprocess.run(['docker', 'inspect', '--format', '{{json .Config.Labels}}', state['container']],
-                           text=True, capture_output=True, timeout=30)
-    if found.returncode == 0:
-        labels = json.loads(found.stdout)
+    containers = run(['docker', 'container', 'ls', '--all', '--no-trunc',
+                      '--filter', 'name=' + state['container'], '--format', '{{json .}}'])
+    for line in containers.splitlines():
+        container = json.loads(line)
+        if container['Names'] != state['container']:
+            continue
+        labels = json.loads(run(['docker', 'inspect', '--format', '{{json .Config.Labels}}',
+                                 container['ID']])) or {}
         if labels.get(LABEL) != state['owner']:
             raise RuntimeError('Container ownership differs; refusing to remove it.')
-        run(['docker', 'rm', '--force', '--volumes', state['container']])
-    elif 'No such object' not in found.stderr and 'No such container' not in found.stderr:
-        raise RuntimeError(f'Docker could not inspect the sample container: {found.stderr.strip()}')
+        run(['docker', 'rm', '--force', '--volumes', container['ID']])
     directory = Path(state['directory'])
     if directory.name != 'isoplane-postgres-' + state['owner'] or directory.is_symlink():
         raise RuntimeError('The recorded sample directory is invalid; refusing to remove it.')

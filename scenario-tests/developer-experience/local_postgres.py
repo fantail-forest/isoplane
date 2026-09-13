@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,8 @@ class Sample:
     def assert_removed(self, state):
         assert not Path(state['directory']).exists(), 'temporary credentials must be removed'
         assert not self.state_path.exists(), 'cleanup must remove the recorded state'
-        assert self.run(['docker', 'inspect', state['container']], success=False).returncode != 0, \
+        containers = self.run(['docker', 'container', 'ls', '--all', '--format', '{{.Names}}']).stdout.splitlines()
+        assert state['container'] not in containers, \
             'cleanup must remove the owned database container'
 
 
@@ -96,6 +98,61 @@ def failed_setup_cleans_resources(sample, directory):
     sample.assert_removed(json.loads(receipt.read_text()))
 
 
+def failed_container_creation_allows_stop_and_retry(sample, directory):
+    tools = directory / 'failed-container-tools'
+    tools.mkdir()
+    receipt = directory / 'failed-container-state.json'
+    docker = shutil.which('docker')
+    assert docker, 'Docker is required to exercise failed container creation'
+    executable = tools / 'docker'
+    executable.write_text(
+        '#!/bin/sh\n'
+        'if [ "$1" = run ]; then\n'
+        '  cp .local-postgres.json "$FAILURE_RECEIPT"\n'
+        f'  exec {shlex.quote(docker)} run --pull=never "invalid image reference"\n'
+        'fi\n'
+        'if [ "$1" = inspect ]; then\n'
+        '  echo "error: no such object" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        f'exec {shlex.quote(docker)} "$@"\n')
+    executable.chmod(0o700)
+    env = dict(sample.env, PATH=str(tools) + os.pathsep + sample.env['PATH'], FAILURE_RECEIPT=str(receipt))
+    result = sample.helper('start', env=env, success=False)
+    assert result.returncode != 0, 'Docker must reject the invalid image before creating a container'
+    assert 'cleanup also failed' not in result.stderr, 'absent containers must not block failed-start cleanup'
+    state = json.loads(receipt.read_text())
+    sample.assert_removed(state)
+    sample.helper('stop')
+
+    # A previous failed cleanup can leave only ownership and certificates behind.
+    sample.state_path.write_text(json.dumps(state))
+    Path(state['directory']).mkdir()
+    sample.helper('stop')
+    sample.assert_removed(state)
+    sample.helper('stop')
+    sample.helper('start')
+    restarted = json.loads(sample.state_path.read_text())
+    sample.helper('stop')
+    sample.assert_removed(restarted)
+    sample.run(['dotnet', 'user-secrets', 'remove', 'ConnectionStrings:Todo'])
+
+
+def unavailable_docker_preserves_cleanup_state(sample, directory):
+    sample.helper('start')
+    state = json.loads(sample.state_path.read_text())
+    env = dict(sample.env, DOCKER_HOST='unix://' + str(directory / 'absent-docker.sock'))
+    env.pop('DOCKER_CONTEXT', None)
+    result = sample.helper('stop', env=env, success=False)
+    assert result.returncode != 0, 'Docker connection failures must fail cleanup'
+    assert sample.state_path.exists(), 'failed cleanup must preserve ownership for a later stop'
+    assert Path(state['directory']).exists(), 'failed cleanup must preserve the running database certificates'
+    sample.run(['docker', 'inspect', state['container']])
+    sample.helper('stop')
+    sample.assert_removed(state)
+    sample.run(['dotnet', 'user-secrets', 'remove', 'ConnectionStrings:Todo'])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release', required=True, type=Path)
@@ -106,10 +163,12 @@ def main():
         try:
             verifies_tls_and_cleanup(sample)
             failed_setup_cleans_resources(sample, directory)
+            failed_container_creation_allows_stop_and_retry(sample, directory)
+            unavailable_docker_preserves_cleanup_state(sample, directory)
         finally:
             if sample.state_path.exists():
                 sample.helper('stop')
-    print('PASS: packaged helper TLS, schema, authentication, loopback binding, ownership and cleanup')
+    print('PASS: packaged helper TLS, schema, authentication, loopback binding, ownership, cleanup and failure recovery')
 
 
 if __name__ == '__main__':
