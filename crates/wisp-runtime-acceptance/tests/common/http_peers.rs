@@ -222,6 +222,10 @@ async fn bind_on(address: IpAddr) -> (TcpListener, HttpPeer) {
     let listener = TcpListener::bind((address, 0))
         .await
         .expect("the test peer must bind");
+    bound_peer(listener)
+}
+
+fn bound_peer(listener: TcpListener) -> (TcpListener, HttpPeer) {
     let address = listener.local_addr().expect("the test peer has an address");
     let peer = HttpPeer {
         address,
@@ -255,6 +259,21 @@ async fn serve(tls: Option<TlsAcceptor>, protocols: Protocols) -> HttpPeer {
 
 async fn serve_on(tls: Option<TlsAcceptor>, protocols: Protocols, address: IpAddr) -> HttpPeer {
     let (listener, peer) = bind_on(address).await;
+    serve_bound(listener, peer, tls, protocols)
+}
+
+/// Starts a plaintext peer using an already reserved listener.
+pub fn http_peer_on_listener(listener: TcpListener) -> HttpPeer {
+    let (listener, peer) = bound_peer(listener);
+    serve_bound(listener, peer, None, Protocols::Http1And2)
+}
+
+fn serve_bound(
+    listener: TcpListener,
+    peer: HttpPeer,
+    tls: Option<TlsAcceptor>,
+    protocols: Protocols,
+) -> HttpPeer {
     let alpn = peer.alpn.clone();
     accept_loop(listener, peer.accepted.clone(), move |stream| {
         let tls = tls.clone();

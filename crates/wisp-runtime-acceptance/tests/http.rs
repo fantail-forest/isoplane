@@ -30,8 +30,8 @@ use admitted::released;
 use common::{guest, GuestRuntime};
 use fixed_dns::FixedDns;
 use http_peers::{
-    goaway_peer, h2_https_peer, http_peer, http_peer_on, https_peer, https_peer_on,
-    reactor_for_http, stale_peer, Certificate,
+    goaway_peer, h2_https_peer, http_peer, http_peer_on, http_peer_on_listener, https_peer,
+    https_peer_on, reactor_for_http, stale_peer, Certificate,
 };
 use refusing::refusing_endpoint;
 use resolvers::{reactor_for_dns, FailingDns, PendingDns};
@@ -628,8 +628,15 @@ in_both_runtimes! {
     #[tokio::test]
     async fn an_ipv4_connection_failure_falls_back_to_the_dns_ipv6_address(runtime: GuestRuntime) {
         let ipv6 = std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
-        let peer = http_peer_on(ipv6).await;
-        let unavailable = std::net::SocketAddr::new(LOCALHOST, peer.address.port());
+        let (_reservation, unavailable, listener) = loop {
+            let (reservation, unavailable) = refusing_endpoint();
+            match tokio::net::TcpListener::bind((ipv6, unavailable.port())).await {
+                Ok(listener) => break (reservation, unavailable, listener),
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                Err(error) => panic!("the IPv6 fallback peer must bind: {error}"),
+            }
+        };
+        let peer = http_peer_on_listener(listener);
         let reactor = reactor_for_http(84, vec![unavailable, peer.address], Box::new(FixedDns(vec![LOCALHOST, ipv6])));
         reactor.context.begin_slice(CLOCK_2030_MS, 1);
         let mut guest = guest(&reactor, runtime);
