@@ -42,8 +42,12 @@ async fn run() -> anyhow::Result<()> {
             let limits_from = &policy.limits_from;
             let guest_memory_bytes = policy.guest_memory_bytes;
             #[cfg(feature = "control")]
-            let verdict =
-                wisp_runtime::validate_with_memory_limit(&bytes, limits, guest_memory_bytes);
+            let verdict = wisp_runtime::validate_with_limits(
+                &bytes,
+                limits,
+                guest_memory_bytes,
+                &policy.validation_limits,
+            );
             #[cfg(feature = "control")]
             let rejected = verdict.is_err();
             #[cfg(not(feature = "control"))]

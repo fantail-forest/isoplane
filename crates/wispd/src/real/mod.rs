@@ -33,8 +33,14 @@ pub fn engine_config(
 ) -> Result<wisp_engine::EngineConfig, wisp_engine::PlatformFilesError> {
     Ok(wisp_engine::EngineConfig {
         max_instances: cfg.engine.max_instances,
+        total_tables: cfg.engine.total_tables,
         max_memory_bytes: cfg.engine.max_memory_mib << 20,
         guard_size_bytes: cfg.engine.guard_mib << 20,
+        max_core_instance_size_bytes: cfg.engine.max_core_instance_size_bytes,
+        table_elements: cfg.engine.table_elements,
+        max_tables_per_module: cfg.engine.max_tables_per_module,
+        compiler_stack_bytes: cfg.engine.compiler_stack_bytes,
+        max_wasm_stack_bytes: cfg.engine.max_wasm_stack_bytes,
         platform_files: platform_files(trust)?,
         ..wisp_engine::EngineConfig::default()
     })
@@ -150,3 +156,44 @@ impl Dispatcher for RealCells {
 
 #[cfg(test)]
 mod identity_tests;
+
+#[cfg(test)]
+mod engine_policy_tests {
+    #[test]
+    fn configured_engine_resource_limits_reach_the_execution_engine() {
+        let mut config = crate::config::NodeConfig::dev_default();
+        config.engine = toml::from_str(
+            "max_core_instance_size_bytes=8388608\ntable_elements=262144\nmax_tables_per_module=8\ncompiler_stack_bytes=16777216\nmax_wasm_stack_bytes=1048576\ntotal_tables=20",
+        ).expect("operator engine limits must deserialize");
+        let trust = config.trust_bundle().expect("the bundled roots must load");
+        let engine = super::engine_config(&config, &trust).expect("platform files must be valid");
+        assert_eq!(
+            engine.total_tables,
+            Some(20),
+            "aggregate table slots must reach the engine"
+        );
+        assert_eq!(
+            engine.max_wasm_stack_bytes,
+            1 << 20,
+            "guest stack limit must reach the engine"
+        );
+        assert_eq!(
+            engine.max_core_instance_size_bytes,
+            8 << 20,
+            "node metadata limit must reach the engine"
+        );
+        assert_eq!(
+            engine.table_elements, 262144,
+            "node table size must reach the engine"
+        );
+        assert_eq!(
+            engine.max_tables_per_module, 8,
+            "node table count must reach the engine"
+        );
+        assert_eq!(
+            engine.compiler_stack_bytes,
+            16 << 20,
+            "node compiler stack must reach the engine"
+        );
+    }
+}

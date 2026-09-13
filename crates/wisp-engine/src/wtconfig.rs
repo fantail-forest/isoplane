@@ -17,15 +17,16 @@ pub(crate) fn dense_image_bytes(cfg: &EngineConfig) -> u64 {
     DENSE_IMAGE_FLOOR.max(cfg.max_memory_bytes)
 }
 
-/// Metadata byte limit for each pooled core instance.
-/// Managed guests with more runtime functions need a larger allowance;
-/// instantiation fails when a module exceeds this limit.
-pub(crate) const MAX_CORE_INSTANCE_SIZE: usize = 4 * 1024 * 1024;
-
-/// Element limit for each pooled table.
-pub(crate) const TABLE_ELEMENTS: usize = 131072;
-
 pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
+    if cfg.total_tables == Some(0)
+        || cfg.max_wasm_stack_bytes == 0
+        || cfg.compiler_stack_bytes == 0
+        || cfg.max_core_instance_size_bytes == 0
+        || cfg.table_elements == 0
+        || cfg.max_tables_per_module == 0
+    {
+        bail!("engine compiler stack, core-instance bytes, table elements and tables per module must be nonzero");
+    }
     let mut c = Config::new();
 
     // Disable these proposals explicitly even when Cargo features enable their implementations.
@@ -52,6 +53,7 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     c.wasm_custom_page_sizes(false);
     c.wasm_wide_arithmetic(false);
 
+    c.max_wasm_stack(cfg.max_wasm_stack_bytes);
     c.epoch_interruption(true);
     // Fuel would be a second compute meter.
     c.consume_fuel(false);
@@ -103,12 +105,12 @@ fn pooling(cfg: &EngineConfig) -> PoolingAllocationConfig {
     let mut p = PoolingAllocationConfig::new();
     p.total_core_instances(cfg.max_instances);
     p.total_memories(cfg.max_instances);
-    p.total_tables(cfg.max_instances);
+    p.total_tables(cfg.total_tables.unwrap_or(cfg.max_instances));
     p.max_memory_size(cfg.max_memory_bytes as usize);
     p.max_memories_per_module(1);
-    p.max_tables_per_module(4);
-    p.table_elements(TABLE_ELEMENTS);
-    p.max_core_instance_size(MAX_CORE_INSTANCE_SIZE);
+    p.max_tables_per_module(cfg.max_tables_per_module);
+    p.table_elements(cfg.table_elements);
+    p.max_core_instance_size(cfg.max_core_instance_size_bytes);
     p
 }
 
@@ -154,6 +156,11 @@ pub(crate) fn engine_fingerprint(engine: &Engine, cfg: &EngineConfig) -> String 
     cfg.guard_size_bytes.hash(&mut h);
     cfg.max_memory_bytes.hash(&mut h);
     cfg.pooling.hash(&mut h);
+    cfg.total_tables.unwrap_or(cfg.max_instances).hash(&mut h);
+    cfg.max_wasm_stack_bytes.hash(&mut h);
+    cfg.max_core_instance_size_bytes.hash(&mut h);
+    cfg.table_elements.hash(&mut h);
+    cfg.max_tables_per_module.hash(&mut h);
     dense_image_bytes(cfg).hash(&mut h);
     format!("{:016x}", h.finish())
 }
@@ -228,5 +235,207 @@ mod tests {
         })
         .expect("the engine builds");
         assert_feature_set(&engine).expect("the configured engine rejects threads and atomics");
+    }
+}
+
+#[cfg(test)]
+mod resource_policy_tests {
+    use super::*;
+
+    fn small() -> EngineConfig {
+        EngineConfig {
+            max_instances: 2,
+            max_memory_bytes: 65536,
+            ..Default::default()
+        }
+    }
+
+    fn instantiates(config: EngineConfig, wat: &str) -> bool {
+        let engine = build_engine(&config).expect("the configured pool must build");
+        let wasm = wat::parse_str(wat).expect("the fixture must assemble");
+        let Ok(module) = wasmtime::Module::new(&engine, wasm) else {
+            return false;
+        };
+        wasmtime::Instance::new(&mut wasmtime::Store::new(&engine, ()), &module, &[]).is_ok()
+    }
+
+    #[test]
+    fn pool_table_elements_follow_the_configured_boundary() {
+        let mut config = small();
+        config.table_elements = 2;
+        assert!(
+            instantiates(config.clone(), "(module (table 2 funcref))"),
+            "a table at the configured boundary must instantiate"
+        );
+        config.table_elements = 1;
+        assert!(
+            !instantiates(config, "(module (table 2 funcref))"),
+            "a table over the configured boundary must be refused"
+        );
+    }
+
+    #[test]
+    fn pool_table_count_follows_the_configured_boundary() {
+        let mut config = small();
+        config.max_tables_per_module = 2;
+        let module = "(module (table 1 funcref) (table 1 funcref))";
+        assert!(
+            instantiates(config.clone(), module),
+            "the configured table count must instantiate"
+        );
+        config.max_tables_per_module = 1;
+        assert!(
+            !instantiates(config, module),
+            "a module over the table count must be refused"
+        );
+    }
+
+    #[test]
+    fn pool_core_metadata_follows_the_configured_boundary() {
+        let config = small();
+        assert!(
+            instantiates(config.clone(), "(module (func))"),
+            "the default metadata budget must accommodate a function"
+        );
+        assert!(
+            !instantiates(
+                EngineConfig {
+                    max_core_instance_size_bytes: 1,
+                    ..config
+                },
+                "(module (func))"
+            ),
+            "a one-byte metadata budget must refuse the module"
+        );
+    }
+
+    #[test]
+    fn each_pool_policy_change_changes_the_artifact_fingerprint() {
+        let config = small();
+        let engine = build_engine(&config).expect("the default pool must build");
+        let original = engine_fingerprint(&engine, &config);
+        for changed in [
+            EngineConfig {
+                total_tables: Some(config.max_instances + 1),
+                ..config.clone()
+            },
+            EngineConfig {
+                max_wasm_stack_bytes: config.max_wasm_stack_bytes + 1,
+                ..config.clone()
+            },
+            EngineConfig {
+                table_elements: config.table_elements + 1,
+                ..config.clone()
+            },
+            EngineConfig {
+                max_tables_per_module: config.max_tables_per_module + 1,
+                ..config.clone()
+            },
+            EngineConfig {
+                max_core_instance_size_bytes: config.max_core_instance_size_bytes + 1,
+                ..config.clone()
+            },
+        ] {
+            let engine = build_engine(&changed).expect("the changed pool must build");
+            assert_ne!(
+                original,
+                engine_fingerprint(&engine, &changed),
+                "prepared artifacts must bind the selected pool policy"
+            );
+        }
+    }
+
+    #[test]
+    fn guest_stack_budget_is_enforced_and_can_be_raised() {
+        let wasm = wat::parse_str("(module (func $recurse (export \"run\") (param i32) (result i32) local.get 0 i32.eqz if (result i32) i32.const 0 else local.get 0 i32.const 1 i32.sub call $recurse i32.const 1 i32.add end))").expect("recursive fixture must assemble");
+        for (bytes, succeeds) in [(1024, false), (512 << 10, true)] {
+            let config = EngineConfig {
+                max_wasm_stack_bytes: bytes,
+                ..small()
+            };
+            let engine = build_engine(&config).expect("stack budget must configure");
+            let module =
+                wasmtime::Module::new(&engine, &wasm).expect("recursive fixture must compile");
+            let mut store = wasmtime::Store::new(&engine, ());
+            store.set_epoch_deadline(u64::MAX);
+            let instance = wasmtime::Instance::new(&mut store, &module, &[])
+                .expect("recursive fixture must instantiate");
+            let run = instance
+                .get_typed_func::<i32, i32>(&mut store, "run")
+                .expect("fixture exports run");
+            let result = run.call(&mut store, 128);
+            if succeeds {
+                assert_eq!(
+                    result.expect("raised stack budget must run the bounded recursion"),
+                    128,
+                    "recursion must preserve its result"
+                );
+            } else {
+                let error = result.expect_err("small stack budget must refuse the recursion");
+                assert_eq!(
+                    error.downcast_ref::<wasmtime::Trap>(),
+                    Some(&wasmtime::Trap::StackOverflow),
+                    "the refusal must be the configured stack guard"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn aggregate_table_slots_follow_the_configured_capacity() {
+        let wasm =
+            wat::parse_str("(module (table 1 funcref))").expect("table fixture must assemble");
+        for (capacity, accepted) in [(Some(2), 2), (Some(3), 3), (None, 3)] {
+            let config = EngineConfig {
+                max_instances: 3,
+                total_tables: capacity,
+                ..small()
+            };
+            let engine = build_engine(&config).expect("aggregate capacity must configure");
+            let module = wasmtime::Module::new(&engine, &wasm).expect("single table must compile");
+            let mut stores = Vec::new();
+            for index in 0..3 {
+                let mut store = wasmtime::Store::new(&engine, ());
+                let result = wasmtime::Instance::new(&mut store, &module, &[]);
+                assert_eq!(result.is_ok(), index < accepted, "aggregate table slots must bound concurrent instances independently of core-instance slots");
+                stores.push(store);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_is_not_a_resource_policy() {
+        let config = small();
+        for invalid in [
+            EngineConfig {
+                total_tables: Some(0),
+                ..config.clone()
+            },
+            EngineConfig {
+                table_elements: 0,
+                ..config.clone()
+            },
+            EngineConfig {
+                max_tables_per_module: 0,
+                ..config.clone()
+            },
+            EngineConfig {
+                max_core_instance_size_bytes: 0,
+                ..config.clone()
+            },
+            EngineConfig {
+                max_wasm_stack_bytes: 0,
+                ..config.clone()
+            },
+            EngineConfig {
+                compiler_stack_bytes: 0,
+                ..config
+            },
+        ] {
+            assert!(
+                build_engine(&invalid).is_err(),
+                "zero engine resource limits must fail before constructing the pool"
+            );
+        }
     }
 }

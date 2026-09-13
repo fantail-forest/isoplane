@@ -1,6 +1,8 @@
 //! Network binding limits shared by the daemon and local guest execution.
 
 /// Limits used when constructing the host's egress policy and HTTP fetcher.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct NetworkLimits {
     /// Maximum simultaneous outbound connections.
     pub connections: u64,

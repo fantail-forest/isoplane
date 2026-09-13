@@ -27,7 +27,8 @@ pub enum BreakerState {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct BreakerConfig {
     /// Consecutive budget kills before the breaker opens.
     pub kill_threshold: u32,

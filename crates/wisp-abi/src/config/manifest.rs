@@ -16,6 +16,12 @@ pub struct AppManifest {
     /// Operator-selected memory ceiling; other numeric budgets remain unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest_memory_bytes: Option<super::GuestMemoryBytes>,
+    /// Operator-selected resource budgets applied to the numeric defaults.
+    #[serde(default)]
+    pub resource_limits: super::ResourceLimitOverrides,
+    /// Structural module bounds enforced before preparation.
+    #[serde(default)]
+    pub validation_limits: super::ValidationLimits,
     /// Non-secret variables handed to the init sandbox as a data blob.
     #[serde(default)]
     pub init_visible_vars: Vec<(String, String)>,
@@ -74,6 +80,13 @@ pub struct Bindings {
 
 
 impl AppManifest {
+    /// Resource ceilings after applying operator overrides.
+    pub fn effective_limits(&self) -> super::Limits {
+        let mut limits = self.resource_limits.resolve(self.limits);
+        limits.instance_memory_max = self.memory_max_bytes();
+        limits
+    }
+
     /// Memory ceiling after applying the independent operator override.
     pub fn memory_max_bytes(&self) -> u64 {
         self.guest_memory_bytes.map_or(

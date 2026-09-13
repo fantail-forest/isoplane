@@ -209,7 +209,6 @@ async fn the_subrequest_cap_is_per_dispatch() {
             instance_memory_max: 67108864,
             cpu_ms_per_http_dispatch: 10,
             subrequests_per_dispatch: 20,
-            delta_storage_bytes: 104857600,
             pending_futures_per_dispatch: 6
         }
         .pending_futures_per_dispatch,

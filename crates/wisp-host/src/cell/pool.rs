@@ -191,6 +191,8 @@ pub(super) mod cell_tests {
     pub(in crate::cell) fn manifest(name: &str) -> AppManifest {
         AppManifest {
             guest_memory_bytes: None,
+            resource_limits: Default::default(),
+            validation_limits: Default::default(),
             name: name.into(),
             handlers: HandlerConfig {
                 lifecycle: HandlerLifecycle::Reuse,

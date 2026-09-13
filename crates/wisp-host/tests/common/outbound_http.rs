@@ -230,6 +230,8 @@ pub fn cell(
         activator,
         wisp_abi::config::AppManifest {
             guest_memory_bytes: None,
+            resource_limits: Default::default(),
+            validation_limits: Default::default(),
             name: module.app.clone(),
             handlers: wisp_abi::config::HandlerConfig {
                 lifecycle: HandlerLifecycle::Reuse,

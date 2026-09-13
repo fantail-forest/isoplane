@@ -38,6 +38,8 @@ pub fn rig_resolving(cfg: CellConfig, addr: &str) -> (Arc<Cell>, Arc<FakeFetcher
 pub fn manifest(name: &str, lifecycle: HandlerLifecycle, limits: Limits) -> AppManifest {
     AppManifest {
         guest_memory_bytes: None,
+        resource_limits: Default::default(),
+        validation_limits: Default::default(),
         name: name.into(),
         handlers: HandlerConfig { lifecycle },
         bindings: Bindings::default(),

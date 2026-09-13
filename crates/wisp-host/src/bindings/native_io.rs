@@ -43,6 +43,35 @@ struct ReactorWork {
 mod tests {
     use super::*;
 
+    #[test]
+    fn configured_native_handle_budget_is_enforced_by_instance_resources() {
+        for limit in [0, 2] {
+            let mut context = super::super::tests::ctx();
+            Arc::get_mut(&mut context)
+                .expect("new context has no other owner")
+                .configure_resources(super::super::GuestResourceLimits {
+                    native_handles: limit,
+                    ..Default::default()
+                });
+            let bindings = CellBindings::new(context.clone());
+            let mut resources = context.native_io.lock();
+            for _ in 0..limit {
+                assert!(
+                    resources
+                        .call(Request::CreateTcp(AddressFamily::V4), &bindings)
+                        .is_ok(),
+                    "configured native slots must be available"
+                );
+            }
+            assert!(
+                resources
+                    .call(Request::CreateTcp(AddressFamily::V4), &bindings)
+                    .is_err(),
+                "the next native handle must be refused"
+            );
+        }
+    }
+
     fn resources(handles: usize) -> (Resources, CellBindings) {
         (
             Resources::new(ResourceLimits {
@@ -304,7 +333,7 @@ pub(crate) struct ResourceLimits {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            handles: ResourceCount(1024),
+            handles: ResourceCount(super::GuestResourceLimits::default().native_handles),
         }
     }
 }

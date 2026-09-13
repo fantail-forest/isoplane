@@ -263,3 +263,47 @@ fn entering_grace_wakes_the_dispatch_cancellation_future() {
         "entering grace must preserve and complete the dispatch cancellation future"
     );
 }
+
+#[test]
+fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
+    let r = rig(CellConfig::for_test("operator-budgets"));
+    let act = Arc::new(FakeActivator::named(
+        ModuleId::new("bounded", "v1"),
+        FakeBehaviour::program([Step::Park {
+            imports: vec![("clock_deadline_in", PARK_MS); 3],
+        }]),
+    ));
+    let module = act.module().clone();
+    let mut app = manifest("bounded", HandlerLifecycle::Reuse, Limits::default());
+    app.resource_limits.pending_futures_per_dispatch = Some(2);
+    app.resource_limits.cpu_ms_per_http_dispatch = Some(1234);
+    r.cell
+        .register_module("acme", act, app)
+        .expect("configured module registers");
+    let rec = http(&r.cell, &module, "/bounded");
+    assert_eq!(
+        rec.cpu_budget_ms, 1234,
+        "dispatch must carry the configured CPU budget"
+    );
+    let out = r
+        .cell
+        .dispatch_blocking(
+            &module,
+            Target::Handler {
+                route: "/bounded".into(),
+            },
+            rec,
+            T,
+        )
+        .expect("the cell contains the resource refusal");
+    assert_eq!(
+        out.completion,
+        Completion::Trapped,
+        "the third pending future must trip the operator cap"
+    );
+    assert_eq!(
+        r.cell.metrics().pending_cap_rejections,
+        1,
+        "the configured cap refusal must be observable"
+    );
+}

@@ -299,6 +299,7 @@ fn initialization_identity_changes_with_the_declared_trust_snapshot() {
     let wasm = guest("", "");
     let mut request = wisp_prepare::BuildRequest {
         guest_memory_bytes: None,
+        validation_limits: Default::default(),
         application_files: wisp_engine::PlatformFiles::default(),
         engine: engine().configuration(),
         runtime: wisp_prepare::RuntimeProfile::RawWasm,
@@ -330,6 +331,7 @@ fn initialization_identity_binds_application_content_independently_of_the_runtim
     let wasm = guest("", "");
     let mut request = wisp_prepare::BuildRequest {
         guest_memory_bytes: None,
+        validation_limits: Default::default(),
         application_files: wisp_engine::PlatformFiles::default(),
         engine: engine().configuration(),
         runtime: wisp_prepare::RuntimeProfile::RawWasm,

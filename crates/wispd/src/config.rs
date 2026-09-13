@@ -26,6 +26,17 @@ pub struct NodeConfig {
     pub data_dir: std::path::PathBuf,
     #[serde(default)]
     pub engine: EngineLimits,
+    /// Host execution, queue, lifecycle and per-instance resource budgets.
+    #[cfg(feature = "real-backends")]
+    #[serde(default)]
+    pub host: wisp_host::CellConfig,
+    /// Shared outbound connection and byte budgets for this node.
+    #[cfg(feature = "real-backends")]
+    #[serde(default)]
+    pub network: wisp_runtime::network::NetworkLimits,
+    /// Structural admission bounds for newly prepared modules.
+    #[serde(default)]
+    pub validation_limits: wisp_abi::config::ValidationLimits,
     /// High-water mark for each real cell's queued HTTP response bytes.
     #[serde(default = "default_response_queue_bytes")]
     pub response_queue_bytes: usize,
@@ -55,6 +66,9 @@ pub struct EngineLimits {
     /// Ceiling on concurrently resident instances per engine.
     #[serde(default = "default_max_instances")]
     pub max_instances: u32,
+    /// Aggregate pooled table slots; omission follows the instance count.
+    #[serde(default)]
+    pub total_tables: Option<u32>,
     /// Per-instance linear-memory ceiling.
     #[serde(default = "default_max_memory_mib")]
     pub max_memory_mib: u64,
@@ -62,8 +76,38 @@ pub struct EngineLimits {
     /// bounds checks. Address space, not memory.
     #[serde(default = "default_guard_mib")]
     pub guard_mib: u64,
+    /// Maximum metadata bytes retained by one pooled core instance.
+    #[serde(default = "default_core_instance_bytes")]
+    pub max_core_instance_size_bytes: usize,
+    /// Maximum elements in each guest function table.
+    #[serde(default = "default_table_elements")]
+    pub table_elements: usize,
+    /// Maximum function tables declared by one guest module.
+    #[serde(default = "default_tables_per_module")]
+    pub max_tables_per_module: u32,
+    /// Native stack bytes reserved per compiler worker.
+    #[serde(default = "default_compiler_stack_bytes")]
+    pub compiler_stack_bytes: usize,
+    /// Maximum native stack bytes consumed by a guest invocation.
+    #[serde(default = "default_wasm_stack_bytes")]
+    pub max_wasm_stack_bytes: usize,
 }
 
+fn default_wasm_stack_bytes() -> usize {
+    wisp_abi::config::DEFAULT_WASM_STACK_BYTES
+}
+fn default_compiler_stack_bytes() -> usize {
+    wisp_abi::config::DEFAULT_COMPILER_STACK_BYTES
+}
+fn default_core_instance_bytes() -> usize {
+    wisp_abi::config::DEFAULT_CORE_INSTANCE_SIZE_BYTES
+}
+fn default_table_elements() -> usize {
+    wisp_abi::config::DEFAULT_TABLE_ELEMENTS
+}
+fn default_tables_per_module() -> u32 {
+    wisp_abi::config::DEFAULT_TABLES_PER_MODULE
+}
 fn default_max_instances() -> u32 {
     10_000
 }
@@ -74,12 +118,45 @@ fn default_guard_mib() -> u64 {
     32
 }
 
+impl EngineLimits {
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.max_instances == 0
+            || self.max_wasm_stack_bytes == 0
+            || self.total_tables == Some(0)
+            || self.compiler_stack_bytes == 0
+            || self.table_elements == 0
+            || self.max_tables_per_module == 0
+            || self.max_core_instance_size_bytes == 0
+        {
+            return Err(ConfigError::InvalidEngine(
+                "instance, compiler stack and pooling capacities must be positive".into(),
+            ));
+        }
+        let memory = self
+            .max_memory_mib
+            .checked_mul(1 << 20)
+            .ok_or_else(|| ConfigError::InvalidEngine("max_memory_mib overflows bytes".into()))?;
+        wisp_abi::config::GuestMemoryBytes::new(memory)
+            .map_err(|error| ConfigError::InvalidEngine(error.to_string()))?;
+        self.guard_mib
+            .checked_mul(1 << 20)
+            .ok_or_else(|| ConfigError::InvalidEngine("guard_mib overflows bytes".into()))?;
+        Ok(())
+    }
+}
+
 impl Default for EngineLimits {
     fn default() -> Self {
         EngineLimits {
             max_instances: default_max_instances(),
+            total_tables: None,
             max_memory_mib: default_max_memory_mib(),
             guard_mib: default_guard_mib(),
+            max_core_instance_size_bytes: default_core_instance_bytes(),
+            table_elements: default_table_elements(),
+            max_tables_per_module: default_tables_per_module(),
+            compiler_stack_bytes: default_compiler_stack_bytes(),
+            max_wasm_stack_bytes: default_wasm_stack_bytes(),
         }
     }
 }
@@ -183,6 +260,8 @@ pub struct VersionConfig {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("invalid engine configuration: {0}")]
+    InvalidEngine(String),
     #[error("invalid preparation configuration: {0}")]
     Preparation(String),
     #[error("no cells configured: a node needs at least one")]
@@ -199,6 +278,8 @@ pub enum ConfigError {
     ZeroInFlight(usize),
     #[error("response_queue_bytes must be positive")]
     ZeroResponseQueue,
+    #[error("invalid host settings: {0}")]
+    InvalidHost(String),
     #[error(transparent)]
     Trust(#[from] crate::trust::TrustError),
 }
@@ -212,6 +293,10 @@ impl NodeConfig {
     pub fn dev_default() -> Self {
         NodeConfig {
             node: "wisp-dev".into(),
+            #[cfg(feature = "real-backends")]
+            host: Default::default(),
+            #[cfg(feature = "real-backends")]
+            network: Default::default(),
             proxy: ProxyListen::default(),
             response_queue_bytes: default_response_queue_bytes(),
             otlp_logs_endpoint: None,
@@ -245,6 +330,7 @@ impl NodeConfig {
             }],
             data_dir: default_data_dir(),
             engine: EngineLimits::default(),
+            validation_limits: Default::default(),
             trust: crate::trust::TrustConfig::default(),
             #[cfg(feature = "real-backends")]
             preparation: None,
@@ -254,6 +340,7 @@ impl NodeConfig {
     /// The startup gate: a refusal, never a warning. Placement rules first,
     /// then the trust bundle, which is the one check that reads a file.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.engine.validate()?;
         #[cfg(feature = "real-backends")]
         if let Some(preparation) = &self.preparation {
             preparation
@@ -271,6 +358,10 @@ impl NodeConfig {
     }
 
     fn validate_placement(&self) -> Result<(), ConfigError> {
+        #[cfg(feature = "real-backends")]
+        self.host
+            .validate()
+            .map_err(|error| ConfigError::InvalidHost(error.to_string()))?;
         if self.cells.is_empty() {
             return Err(ConfigError::NoCells);
         }
@@ -334,6 +425,66 @@ name = "cell-0"
 name = "cell-1"
 "#;
 
+    #[cfg(feature = "real-backends")]
+    #[test]
+    fn host_limits_survive_the_worker_configuration_round_trip() {
+        let mut config = NodeConfig::dev_default();
+        config.host.guest_resources.native_handles = 2;
+        config.host.guest_resources.log_bytes_per_dispatch = 7;
+        config.host.queue_depth_per_worker = 3;
+        config.network.connections = 2;
+        config.network.egress_bytes = 19;
+        config.host.wall_ms_cap = 60_000;
+        let encoded = toml::to_string(&config).expect("node serializes for application workers");
+        let restored = NodeConfig::from_toml(&encoded).expect("worker reads its configuration");
+        assert_eq!(
+            restored.host.guest_resources.native_handles, 2,
+            "worker must preserve handle budget"
+        );
+        assert_eq!(
+            restored.host.guest_resources.log_bytes_per_dispatch, 7,
+            "worker must preserve log budget"
+        );
+        assert_eq!(
+            restored.host.queue_depth_per_worker, 3,
+            "worker must preserve queue budget"
+        );
+        assert_eq!(
+            restored.network.connections, 2,
+            "worker must preserve connection budget"
+        );
+        assert_eq!(
+            restored.network.egress_bytes, 19,
+            "worker must preserve egress budget"
+        );
+        assert_eq!(
+            restored.host.wall_ms_cap, 60_000,
+            "worker must preserve the dispatch wall limit"
+        );
+    }
+
+    #[cfg(feature = "real-backends")]
+    #[test]
+    fn host_worker_and_queue_settings_are_validated_before_startup() {
+        for setting in [
+            "exec_threads",
+            "reactor_threads",
+            "queue_depth_per_worker",
+            "sweep_interval_ms",
+        ] {
+            let mut config = NodeConfig::dev_default();
+            config.host =
+                toml::from_str(&format!("{setting} = 0")).expect("zero is a valid integer");
+            assert!(
+                matches!(
+                    config.validate_placement(),
+                    Err(ConfigError::InvalidHost(_))
+                ),
+                "zero {setting} must fail startup validation"
+            );
+        }
+    }
+
     #[test]
     fn a_zero_response_queue_is_rejected_before_startup() {
         let mut configuration = NodeConfig::dev_default();
@@ -359,7 +510,7 @@ name = "cell-1"
 [[apps]]
 name = "a"
 tenant = "t1"
-limits.module_bytes_compressed = 20971520
+limits.module_bytes_compressed = 52428800
 limits.instance_memory_max = 134217728
 limits.cpu_ms_per_http_dispatch = 30000
 limits.subrequests_per_dispatch = 200
@@ -370,7 +521,7 @@ versions = [{{ id = "v1" }}]
 [[apps]]
 name = "b"
 tenant = "t2"
-limits.module_bytes_compressed = 20971520
+limits.module_bytes_compressed = 52428800
 limits.instance_memory_max = 134217728
 limits.cpu_ms_per_http_dispatch = 30000
 limits.subrequests_per_dispatch = 200
@@ -420,7 +571,7 @@ versions = [{ id = "v1" }]
 [[apps]]
 name = "a"
 tenant = "t"
-limits.module_bytes_compressed = 20971520
+limits.module_bytes_compressed = 52428800
 limits.instance_memory_max = 134217728
 limits.cpu_ms_per_http_dispatch = 30000
 limits.subrequests_per_dispatch = 200
@@ -464,7 +615,7 @@ name = "c"
 [[apps]]
 name = "a"
 tenant = "t"
-limits.module_bytes_compressed = 20971520
+limits.module_bytes_compressed = 52428800
 limits.instance_memory_max = 134217728
 limits.cpu_ms_per_http_dispatch = 30000
 limits.subrequests_per_dispatch = 200

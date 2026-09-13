@@ -58,6 +58,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
     let engine = common::engine();
     let request = BuildRequest {
         guest_memory_bytes: None,
+        validation_limits: Default::default(),
         application_files: wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
             path: "/config.json".into(),
             bytes: b"application asset".as_slice().into(),

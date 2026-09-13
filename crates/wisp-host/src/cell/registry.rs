@@ -146,7 +146,7 @@ impl Cell {
     }
 
     pub(super) fn make_ctx(&self, entry: &Arc<ModuleEntry>, id: InstanceId) -> Arc<InstanceCtx> {
-        Arc::new(InstanceCtx::new(
+        let mut context = InstanceCtx::new(
             id,
             Tenancy {
                 module: entry.activator.module().clone(),
@@ -157,7 +157,10 @@ impl Cell {
             },
             entry.meters.clone(),
             Some(self.rt.clone()),
-        ))
+        );
+        context.limits = entry.manifest.effective_limits();
+        context.configure_resources(self.cfg.guest_resources);
+        Arc::new(context)
     }
 
     pub(super) fn acquire_handler(

@@ -18,6 +18,8 @@ pub struct BuildRequest {
     pub limits: wisp_abi::config::Limits,
     /// Independently authorized guest memory ceiling.
     pub guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
+    /// Structural module bounds supplied by the consuming operator.
+    pub validation_limits: wisp_abi::config::ValidationLimits,
     /// Non-secret initialization inputs and budgets.
     pub initialization: Initialization,
     /// Digest of the submitted portable module.
@@ -31,6 +33,7 @@ impl BuildRequest {
         hash.update(b"wisp.prepared-initialization.v1\0");
         hash.update(&self.initialization.digest(self.input_hash)?);
         hash.update(&postcard::to_allocvec(&self.guest_memory_bytes)?);
+        hash.update(&postcard::to_allocvec(&self.validation_limits)?);
         hash.update(&postcard::to_allocvec(&self.engine.platform_files)?);
         hash.update(&postcard::to_allocvec(&self.application_files)?);
         Ok(wisp_engine::prepared::PreparedIdentity {

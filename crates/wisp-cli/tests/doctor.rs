@@ -451,7 +451,7 @@ fn doctor_reports_and_enforces_the_default_memory_ceiling() {
     );
     let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(
-        verdict["limits"]["module_bytes_compressed"], 20971520,
+        verdict["limits"]["module_bytes_compressed"], 52428800,
         "the default plan must remain Standard"
     );
     assert_eq!(
@@ -492,7 +492,7 @@ fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
         if format == "--json" {
             let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
             assert_eq!(
-                verdict["limits"]["module_bytes_compressed"], 20971520,
+                verdict["limits"]["module_bytes_compressed"], 52428800,
                 "the memory override cannot select Enterprise"
             );
             assert_eq!(
@@ -656,7 +656,7 @@ fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
     );
     std::fs::write(
         directory.path().join("wisp.toml"),
-        "name='large'\nlimits = { module_bytes_compressed = 20971520, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\nguest_memory_bytes=536870912\n",
+        "name='large'\nlimits = { module_bytes_compressed = 52428800, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\nguest_memory_bytes=536870912\n",
     )
     .unwrap();
     let out = run(&[
@@ -681,7 +681,7 @@ fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
         "the memory source must identify the winning flag"
     );
     assert_eq!(
-        verdict["limits"]["module_bytes_compressed"], 20971520,
+        verdict["limits"]["module_bytes_compressed"], 52428800,
         "a memory flag must not change the manifest limits"
     );
 }
@@ -699,7 +699,7 @@ fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() 
     std::fs::create_dir(&nested).unwrap();
     std::fs::write(
         nested.join("wisp.toml"),
-        "name='inner'\nlimits = { module_bytes_compressed = 20971520, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\n",
+        "name='inner'\nlimits = { module_bytes_compressed = 52428800, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\n",
     )
     .unwrap();
     let path = nested.join("large.wasm");

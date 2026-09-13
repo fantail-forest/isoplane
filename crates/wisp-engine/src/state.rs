@@ -68,7 +68,20 @@ impl Default for Meter {
 
 pub(crate) struct Limits {
     pub max_memory_bytes: usize,
+    pub max_tables: usize,
+    pub max_table_elements: usize,
     pub oom: bool,
+}
+
+impl Limits {
+    fn new(cfg: &EngineConfig) -> Self {
+        Self {
+            max_memory_bytes: cfg.max_memory_bytes as usize,
+            max_tables: cfg.max_tables_per_module as usize,
+            max_table_elements: cfg.table_elements,
+            oom: false,
+        }
+    }
 }
 
 impl ResourceLimiter for Limits {
@@ -90,17 +103,17 @@ impl ResourceLimiter for Limits {
     fn table_growing(
         &mut self,
         _current: usize,
-        _desired: usize,
+        desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        Ok(true)
+        Ok(desired <= self.max_table_elements)
     }
 
     fn memories(&self) -> usize {
         1
     }
     fn tables(&self) -> usize {
-        16
+        self.max_tables
     }
     fn instances(&self) -> usize {
         1
@@ -146,6 +159,14 @@ impl StoreState {
     }
 
     pub(crate) fn with_bindings(bindings: Bindings, cfg: &EngineConfig) -> Self {
+        let memory_limit = match &bindings {
+            Bindings::Runtime(runtime) => {
+                runtime.memory_limit_bytes().unwrap_or(cfg.max_memory_bytes)
+            }
+            Bindings::Initialization(_) => cfg.max_memory_bytes,
+        };
+        let mut limits = Limits::new(cfg);
+        limits.max_memory_bytes = memory_limit.min(cfg.max_memory_bytes) as usize;
         Self {
             bindings: Some(bindings),
             init_pal_calls: std::collections::BTreeMap::new(),
@@ -159,10 +180,7 @@ impl StoreState {
             grace_deferrals: 0,
             violation: None,
             abort_msg: None,
-            limits: Limits {
-                max_memory_bytes: cfg.max_memory_bytes as usize,
-                oom: false,
-            },
+            limits,
             scratch: Vec::new(),
             platform_files: cfg.platform_files.clone(),
         }
@@ -251,4 +269,43 @@ pub(crate) struct AllocFailed {
 #[error("reentrant call into an instance with {depth} wasm frames already on the stack")]
 pub(crate) struct Reentrancy {
     pub depth: i32,
+}
+
+#[cfg(test)]
+mod resource_limit_tests {
+    use super::*;
+
+    #[test]
+    fn table_growth_obeys_the_same_limit_in_both_allocator_modes() {
+        let wasm = wat::parse_str("(module (table 2 funcref) (func (export \"grow\") (result i32) ref.null func i32.const 1 table.grow))").expect("table growth fixture must assemble");
+        for pooling in [false, true] {
+            for (table_elements, expected) in [(2, -1), (3, 2)] {
+                let config = EngineConfig {
+                    pooling,
+                    table_elements,
+                    max_instances: 2,
+                    max_memory_bytes: 65536,
+                    ..Default::default()
+                };
+                let engine =
+                    crate::wtconfig::build_engine(&config).expect("table policy must configure");
+                let module =
+                    wasmtime::Module::new(&engine, &wasm).expect("table fixture must compile");
+                let mut store = wasmtime::Store::new(&engine, Limits::new(&config));
+                store.limiter(|limits| limits);
+                store.set_epoch_deadline(u64::MAX);
+                let instance = wasmtime::Instance::new(&mut store, &module, &[])
+                    .expect("initial table must fit");
+                let grow = instance
+                    .get_typed_func::<(), i32>(&mut store, "grow")
+                    .expect("fixture exports growth");
+                assert_eq!(
+                    grow.call(&mut store, ())
+                        .expect("growth refusal returns minus one"),
+                    expected,
+                    "configured table growth must be enforced with pooling={pooling}"
+                );
+            }
+        }
+    }
 }

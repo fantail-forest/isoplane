@@ -23,6 +23,7 @@ struct Cache {
     path: PathBuf,
     key: blake3::Hash,
     budgets: wisp_abi::config::Limits,
+    validation_limits: wisp_abi::config::ValidationLimits,
     guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
 }
 
@@ -50,6 +51,7 @@ impl Cache {
             path: project.state_dir().join("preinitialized.wasm-cache"),
             key: key.finalize(),
             budgets: project.manifest.limits,
+            validation_limits: project.manifest.validation_limits,
             guest_memory_bytes: project.manifest.guest_memory_bytes,
         })
     }
@@ -59,10 +61,11 @@ impl Cache {
         prepare: impl FnOnce() -> anyhow::Result<Vec<u8>>,
     ) -> anyhow::Result<Vec<u8>> {
         if let Some(wasm) = self.read()? {
-            match wisp_runtime::validate_with_memory_limit(
+            match wisp_runtime::validate_with_limits(
                 &wasm,
                 self.budgets,
                 self.guest_memory_bytes,
+                &self.validation_limits,
             ) {
                 Ok(report) if !report.has_initialize() => {
                     tracing::info!(path = %self.path.display(), "reusing local pre-initialized WASM");
@@ -240,11 +243,10 @@ mod tests {
         assert_eq!(
             fixture.project.manifest.limits,
             wisp_abi::config::Limits {
-                module_bytes_compressed: 20971520,
+                module_bytes_compressed: 52428800,
                 instance_memory_max: 134217728,
                 cpu_ms_per_http_dispatch: 30000,
                 subrequests_per_dispatch: 200,
-                delta_storage_bytes: 10737418240,
                 pending_futures_per_dispatch: 64
             },
             "reusing a large memory template must not require an larger limits selection"

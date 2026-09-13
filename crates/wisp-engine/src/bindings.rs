@@ -19,6 +19,12 @@ pub struct ImportCall<'a> {
 /// Implemented by `wisp-host`. Every capability the platform offers arrives
 /// here or does not exist.
 pub trait HostBindings: Send + 'static {
+    /// Per-instance linear-memory ceiling, bounded by the engine capacity.
+    /// None uses the engine capacity.
+    fn memory_limit_bytes(&self) -> Option<u64> {
+        None
+    }
+
     /// Perform a nonblocking native resource operation for this instance.
     /// Hosts without native readiness support refuse the operation explicitly.
     fn native_io(

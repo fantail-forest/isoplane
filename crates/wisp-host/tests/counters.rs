@@ -52,6 +52,8 @@ fn rig(cfg: CellConfig) -> Rig {
 fn manifest(name: &str, lifecycle: HandlerLifecycle) -> AppManifest {
     AppManifest {
         guest_memory_bytes: None,
+        resource_limits: Default::default(),
+        validation_limits: Default::default(),
         name: name.into(),
         handlers: HandlerConfig { lifecycle },
         bindings: Bindings::default(),

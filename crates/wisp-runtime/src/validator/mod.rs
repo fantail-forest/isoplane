@@ -87,7 +87,13 @@ pub fn validate_local_debug(
     budgets: Limits,
     memory: Option<wisp_abi::config::GuestMemoryBytes>,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(wasm, budgets, memory, true)
+    validate_for_execution(
+        wasm,
+        budgets,
+        memory,
+        true,
+        &wisp_abi::config::ValidationLimits::default(),
+    )
 }
 
 /// Validate with an independently authorized memory ceiling and unchanged application budgets.
@@ -96,7 +102,32 @@ pub fn validate_with_memory_limit(
     budgets: Limits,
     memory: Option<wisp_abi::config::GuestMemoryBytes>,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
-    validate_for_execution(wasm, budgets, memory, false)
+    validate_with_limits(
+        wasm,
+        budgets,
+        memory,
+        &wisp_abi::config::ValidationLimits::default(),
+    )
+}
+
+/// Validates with operator-selected structural and memory limits.
+pub fn validate_with_limits(
+    wasm: &[u8],
+    budgets: Limits,
+    memory: Option<wisp_abi::config::GuestMemoryBytes>,
+    limits: &wisp_abi::config::ValidationLimits,
+) -> std::result::Result<ValidationReport, Vec<Violation>> {
+    validate_for_execution(wasm, budgets, memory, false, limits)
+}
+
+/// Validates a local debugger artifact with operator-selected limits.
+pub fn validate_local_debug_with_limits(
+    wasm: &[u8],
+    budgets: Limits,
+    memory: Option<wisp_abi::config::GuestMemoryBytes>,
+    limits: &wisp_abi::config::ValidationLimits,
+) -> std::result::Result<ValidationReport, Vec<Violation>> {
+    validate_for_execution(wasm, budgets, memory, true, limits)
 }
 
 fn validate_for_execution(
@@ -104,6 +135,7 @@ fn validate_for_execution(
     budgets: Limits,
     memory: Option<wisp_abi::config::GuestMemoryBytes>,
     local_debug: bool,
+    limits: &wisp_abi::config::ValidationLimits,
 ) -> std::result::Result<ValidationReport, Vec<Violation>> {
     let mut v = Vec::new();
     let mut report = ValidationReport {
@@ -132,8 +164,8 @@ fn validate_for_execution(
                     }));
             }
 
-            check_imports(&scan, &mut report, &mut v);
-            check_exports(&scan, &mut report, &mut v);
+            check_imports(&scan, &mut report, &mut v, limits);
+            check_exports(&scan, &mut report, &mut v, limits);
             check_memory(
                 &scan,
                 memory.map_or(
@@ -144,7 +176,7 @@ fn validate_for_execution(
                 &mut report,
                 &mut v,
             );
-            check_bombs(&scan, &mut report, &mut v);
+            check_bombs(&scan, &mut report, &mut v, limits);
         }
         Err(e) => {
             v.push(Violation::new(

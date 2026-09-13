@@ -3,15 +3,20 @@
 use std::collections::BTreeSet;
 
 use wasmparser::{ExternalKind, TypeRef};
-use wisp_abi::imports;
 use wisp_abi::pal::{self, Disposition, PalDef};
+use wisp_abi::{config::ValidationLimits, imports};
 
 use super::report::{ValidationReport, Violation, ViolationCode};
 use super::scan::{
     func_type_index, kind_label, kind_matches, render_sig, render_want, sig_matches, Scan,
 };
 
-pub(super) fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>) {
+pub(super) fn check_imports(
+    s: &Scan,
+    report: &mut ValidationReport,
+    v: &mut Vec<Violation>,
+    policy: &ValidationLimits,
+) {
     if s.nested {
         v.push(Violation::new(
             ViolationCode::V1UndeclaredImport,
@@ -19,13 +24,13 @@ pub(super) fn check_imports(s: &Scan, report: &mut ValidationReport, v: &mut Vec
              core module and nested instantiation is a linking escape hatch (V1)",
         ));
     }
-    if s.imports.len() as u32 > limits::MAX_IMPORTS {
+    if s.imports.len() as u32 > policy.max_imports {
         v.push(Violation::new(
             ViolationCode::V4ResourceBomb,
             format!(
                 "{} imports exceeds MAX_IMPORTS={}",
                 s.imports.len(),
-                limits::MAX_IMPORTS
+                policy.max_imports
             ),
         ));
     }
@@ -179,7 +184,12 @@ fn check_pal_import(
     report.pal.push(p);
 }
 
-pub(super) fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>) {
+pub(super) fn check_exports(
+    s: &Scan,
+    report: &mut ValidationReport,
+    v: &mut Vec<Violation>,
+    policy: &ValidationLimits,
+) {
     for required in imports::exports::REQUIRED {
         let want_kind = if *required == imports::exports::MEMORY {
             ExternalKind::Memory
@@ -238,13 +248,13 @@ pub(super) fn check_exports(s: &Scan, report: &mut ValidationReport, v: &mut Vec
         })
         .collect();
 
-    if s.exports.len() as u32 > limits::MAX_EXPORTS {
+    if s.exports.len() as u32 > policy.max_exports {
         v.push(Violation::new(
             ViolationCode::V4ResourceBomb,
             format!(
                 "{} exports exceeds MAX_EXPORTS={}",
                 s.exports.len(),
-                limits::MAX_EXPORTS
+                policy.max_exports
             ),
         ));
     }
@@ -321,7 +331,12 @@ pub(super) fn check_memory(
     }
 }
 
-pub(super) fn check_bombs(s: &Scan, report: &mut ValidationReport, v: &mut Vec<Violation>) {
+pub(super) fn check_bombs(
+    s: &Scan,
+    report: &mut ValidationReport,
+    v: &mut Vec<Violation>,
+    policy: &ValidationLimits,
+) {
     report.function_count = s.imported_funcs.saturating_add(s.defined_funcs);
     report.custom_section_bytes = s.custom_section_bytes;
 
@@ -331,77 +346,75 @@ pub(super) fn check_bombs(s: &Scan, report: &mut ValidationReport, v: &mut Vec<V
         }
     };
     bomb(
-        report.function_count > limits::MAX_FUNCTIONS,
+        report.function_count > policy.max_functions,
         format!(
             "{} functions exceeds MAX_FUNCTIONS={} — AOT compile time is superlinear in \
              function count and compile bombs are a real attack",
-            report.function_count,
-            limits::MAX_FUNCTIONS
+            report.function_count, policy.max_functions
         ),
     );
     bomb(
-        s.max_locals > limits::MAX_LOCALS_PER_FUNCTION,
+        s.max_locals > policy.max_locals_per_function,
         format!(
             "function #{} declares {} locals, exceeding MAX_LOCALS_PER_FUNCTION={}",
-            s.max_locals_fn,
-            s.max_locals,
-            limits::MAX_LOCALS_PER_FUNCTION
+            s.max_locals_fn, s.max_locals, policy.max_locals_per_function
         ),
     );
     bomb(
-        s.table_elements > limits::MAX_TABLE_ELEMENTS as u64,
+        s.table_elements > policy.max_table_elements as u64,
         format!(
             "table space of {} elements exceeds MAX_TABLE_ELEMENTS={}",
-            s.table_elements,
-            limits::MAX_TABLE_ELEMENTS
+            s.table_elements, policy.max_table_elements
         ),
     );
     bomb(
-        s.custom_section_bytes > limits::MAX_CUSTOM_SECTION_BYTES,
+        s.custom_section_bytes > policy.max_custom_section_bytes,
         format!(
             "{} bytes of custom sections exceeds MAX_CUSTOM_SECTION_BYTES={} (largest: `{}`, \
              {} bytes)",
             s.custom_section_bytes,
-            limits::MAX_CUSTOM_SECTION_BYTES,
+            policy.max_custom_section_bytes,
             s.largest_custom.0,
             s.largest_custom.1
         ),
     );
     bomb(
-        s.type_count > limits::MAX_TYPES,
+        s.type_count > policy.max_types,
         format!(
             "{} types exceeds MAX_TYPES={}",
-            s.type_count,
-            limits::MAX_TYPES
+            s.type_count, policy.max_types
         ),
     );
     bomb(
-        s.element_segments > limits::MAX_ELEMENT_SEGMENTS,
+        s.element_segments > policy.max_element_segments,
         format!(
             "{} element segments exceeds MAX_ELEMENT_SEGMENTS={}",
-            s.element_segments,
-            limits::MAX_ELEMENT_SEGMENTS
+            s.element_segments, policy.max_element_segments
         ),
     );
     bomb(
-        s.data_segments > limits::MAX_DATA_SEGMENTS,
+        s.data_segments > policy.max_data_segments,
         format!(
             "{} data segments exceeds MAX_DATA_SEGMENTS={}",
-            s.data_segments,
-            limits::MAX_DATA_SEGMENTS
+            s.data_segments, policy.max_data_segments
         ),
     );
 }
 
 /// The V4 limits, published so tenants can design against them.
 pub mod limits {
-    pub const MAX_FUNCTIONS: u32 = 200_000;
-    pub const MAX_LOCALS_PER_FUNCTION: u32 = 50_000;
-    pub const MAX_TABLE_ELEMENTS: u32 = 1_000_000;
-    pub const MAX_CUSTOM_SECTION_BYTES: u64 = 16 << 20;
-    pub const MAX_IMPORTS: u32 = 512;
-    pub const MAX_EXPORTS: u32 = 512;
-    pub const MAX_TYPES: u32 = 100_000;
-    pub const MAX_ELEMENT_SEGMENTS: u32 = 100_000;
-    pub const MAX_DATA_SEGMENTS: u32 = 100_000;
+    pub const MAX_FUNCTIONS: u32 = wisp_abi::config::ValidationLimits::DEFAULT.max_functions;
+    pub const MAX_LOCALS_PER_FUNCTION: u32 =
+        wisp_abi::config::ValidationLimits::DEFAULT.max_locals_per_function;
+    pub const MAX_TABLE_ELEMENTS: u32 =
+        wisp_abi::config::ValidationLimits::DEFAULT.max_table_elements;
+    pub const MAX_CUSTOM_SECTION_BYTES: u64 =
+        wisp_abi::config::ValidationLimits::DEFAULT.max_custom_section_bytes;
+    pub const MAX_IMPORTS: u32 = wisp_abi::config::ValidationLimits::DEFAULT.max_imports;
+    pub const MAX_EXPORTS: u32 = wisp_abi::config::ValidationLimits::DEFAULT.max_exports;
+    pub const MAX_TYPES: u32 = wisp_abi::config::ValidationLimits::DEFAULT.max_types;
+    pub const MAX_ELEMENT_SEGMENTS: u32 =
+        wisp_abi::config::ValidationLimits::DEFAULT.max_element_segments;
+    pub const MAX_DATA_SEGMENTS: u32 =
+        wisp_abi::config::ValidationLimits::DEFAULT.max_data_segments;
 }

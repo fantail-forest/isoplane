@@ -22,6 +22,7 @@ pub struct PreInitializer {
     pal: InitSandbox,
     platform_files: PlatformFiles,
     memory_limit: Option<GuestMemoryBytes>,
+    engine: EngineConfig,
 }
 
 /// Immutable inputs to one local template build.
@@ -103,6 +104,11 @@ impl PreInitializer {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Use the consuming engine's allocation and compiler settings.
+    pub fn with_engine_config(mut self, engine: EngineConfig) -> Self {
+        self.engine = engine;
+        self
+    }
     /// Match initialization to the consuming engine's linear-memory capacity.
     pub fn with_memory_limit(mut self, memory_limit: GuestMemoryBytes) -> Self {
         self.memory_limit = Some(memory_limit);
@@ -135,14 +141,14 @@ impl PreInitializer {
         }
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
-            .stack_size(wisp_engine::COMPILER_STACK_BYTES)
+            .stack_size(self.engine.compiler_stack_bytes)
             .build()?;
         pool.install(|| {
             let configuration = EngineConfig {
                 pooling: false,
                 max_memory_bytes: limit,
                 platform_files: self.platform_files.clone(),
-                ..EngineConfig::default()
+                ..self.engine.clone()
             };
             let engine = WispEngine::new(configuration.clone()).map_err(PreInitError::Trapped)?;
             let request = Initialization {
@@ -156,6 +162,7 @@ impl PreInitializer {
             let output = crate::initialize(&engine, wasm, &request).map_err(map_error)?;
             let digest = BuildRequest {
                 guest_memory_bytes: self.memory_limit,
+                validation_limits: Default::default(),
                 engine: configuration,
                 application_files: PlatformFiles::default(),
                 runtime: RuntimeProfile::RawWasm,

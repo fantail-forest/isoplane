@@ -32,6 +32,7 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
         max_instances: 16,
         max_memory_mib: 128,
         guard_mib: 64,
+        ..Default::default()
     };
     cfg.cells = vec![CellConfig {
         name: "cell-1".into(),

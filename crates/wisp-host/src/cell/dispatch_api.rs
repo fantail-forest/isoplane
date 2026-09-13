@@ -275,10 +275,15 @@ impl Cell {
         self.rt.settle_future(id, result);
     }
 
+    pub(crate) fn cpu_budget_ms(&self, module: &ModuleId) -> u32 {
+        self.modules.read().get(module).map_or(30000, |m| {
+            m.debug_cpu_ms
+                .unwrap_or(m.manifest.effective_limits().cpu_ms_per_http_dispatch)
+        })
+    }
+
     pub fn http_record(&self, module: &ModuleId, req: wisp_abi::HttpRequest) -> DispatchRecord {
-        let cpu_budget_ms = self.modules.read().get(module).map_or(30000, |m| {
-            m.debug_cpu_ms.unwrap_or(m.limits.cpu_ms_per_http_dispatch)
-        });
+        let cpu_budget_ms = self.cpu_budget_ms(module);
         DispatchRecord {
             dispatch_id: self.next_dispatch.fetch_add(1, Ordering::Relaxed),
             kind: DispatchKind::Http(req),

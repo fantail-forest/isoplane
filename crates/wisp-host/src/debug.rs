@@ -77,6 +77,10 @@ impl Activator for DebugActivator {
 
 struct DebugBindings(Box<dyn HostBindings>);
 impl HostBindings for DebugBindings {
+    fn memory_limit_bytes(&self) -> Option<u64> {
+        self.0.memory_limit_bytes()
+    }
+
     fn native_io(&mut self, request: Request) -> Result<Response, Error> {
         let Request::Poll(handles) = request else {
             return self.0.native_io(request);
@@ -359,6 +363,27 @@ mod tests {
         assert!(
             matches!(activator(None), Err(DebugError::MissingInitialize)),
             "a prepared artifact cannot stand in for raw debug initialization"
+        );
+    }
+
+    #[test]
+    fn debug_bindings_preserve_the_application_memory_ceiling() {
+        let context = Arc::new(crate::bindings::InstanceCtx::for_test(
+            crate::InstanceId(1),
+            wisp_abi::config::HandlerLifecycle::Reuse,
+            wisp_abi::config::Limits {
+                module_bytes_compressed: 5242880,
+                instance_memory_max: 67108864,
+                cpu_ms_per_http_dispatch: 10,
+                subrequests_per_dispatch: 20,
+                pending_futures_per_dispatch: 6,
+            },
+        ));
+        let bindings = DebugBindings(Box::new(crate::bindings::CellBindings::new(context)));
+        assert_eq!(
+            bindings.memory_limit_bytes(),
+            Some(67108864),
+            "debugging must retain the application's memory limit"
         );
     }
 

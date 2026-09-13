@@ -143,6 +143,7 @@ impl Deployer {
         };
         let request = wisp_prepare::BuildRequest {
             guest_memory_bytes: manifest.guest_memory_bytes,
+            validation_limits: manifest.validation_limits,
             application_files: context.application_files.clone(),
             engine: context.engine.configuration(),
             runtime: context.runtime.clone(),
@@ -244,7 +245,13 @@ fn admit_local(
     manifest: &AppManifest,
     wasm: &[u8],
 ) -> anyhow::Result<wisp_control::validator::ValidationReport> {
-    let report = wisp_control::validate(wasm, manifest.limits).map_err(|violations| {
+    let report = wisp_control::validator::validate_with_limits(
+        wasm,
+        manifest.limits,
+        manifest.guest_memory_bytes,
+        &manifest.validation_limits,
+    )
+    .map_err(|violations| {
         anyhow::anyhow!(
             "module rejected:\n{}",
             violations

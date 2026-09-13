@@ -31,7 +31,7 @@ versions = [{ id = "v1" }]
 [[apps]]
 name = "paying"
 tenant = "bigco"
-limits.module_bytes_compressed = 20971520
+limits.module_bytes_compressed = 52428800
 limits.instance_memory_max = 134217728
 limits.cpu_ms_per_http_dispatch = 30000
 limits.subrequests_per_dispatch = 200

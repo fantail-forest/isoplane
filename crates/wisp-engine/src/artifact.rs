@@ -19,9 +19,13 @@ impl WispEngine {
     /// the resource-capped validator sandbox.
     pub fn load_template(&self, template_wasm: &[u8]) -> Result<Template> {
         template::structural_check(template_wasm)?;
-        let module = crate::compiler::compile(&self.inner.wasmtime, template_wasm)
-            .map_err(anyhow::Error::from)
-            .context("compiling template module")?;
+        let module = crate::compiler::compile(
+            &self.inner.wasmtime,
+            template_wasm,
+            self.inner.cfg.compiler_stack_bytes,
+        )
+        .map_err(anyhow::Error::from)
+        .context("compiling template module")?;
         let deferred = template::read_deferred_units(template_wasm)?;
         let mut_names = template::exported_mutable_globals(template_wasm)?;
         let table_names = template::exported_tables(template_wasm)?;

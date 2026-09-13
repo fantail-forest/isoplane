@@ -12,7 +12,7 @@ mod runtime;
 mod runtime_configuration;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
-pub use instance::{InstanceCtx, Tenancy};
+pub use instance::{GuestResourceLimits, InstanceCtx, Tenancy};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 pub use runtime_configuration::{
     RuntimeConfiguration, RuntimeConfigurationError, RuntimeConfigurations,
@@ -158,6 +158,10 @@ macro_rules! spawn {
 pub(super) use spawn;
 
 impl HostBindings for CellBindings {
+    fn memory_limit_bytes(&self) -> Option<u64> {
+        Some(self.ctx.limits.instance_memory_max)
+    }
+
     fn native_io(
         &mut self,
         request: wisp_abi::native_io::Request,

@@ -254,6 +254,8 @@ mod queue_tests {
             limits: Limits::default(),
             manifest: wisp_abi::config::AppManifest {
                 guest_memory_bytes: None,
+                resource_limits: Default::default(),
+                validation_limits: Default::default(),
                 name: "queue-test".into(),
                 handlers: wisp_abi::config::HandlerConfig {
                     lifecycle: HandlerLifecycle::Reuse,

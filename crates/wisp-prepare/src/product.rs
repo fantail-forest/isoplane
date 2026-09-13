@@ -152,8 +152,13 @@ fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdent
             .is_none_or(|limit| limit.get() <= request.engine.max_memory_bytes),
         "guest memory budget exceeds the selected worker engine capacity"
     );
-    wisp_runtime::validate_with_memory_limit(wasm, request.limits, request.guest_memory_bytes)
-        .map_err(|violations| anyhow::anyhow!("portable input rejected: {violations:?}"))?;
+    wisp_runtime::validate_with_limits(
+        wasm,
+        request.limits,
+        request.guest_memory_bytes,
+        &request.validation_limits,
+    )
+    .map_err(|violations| anyhow::anyhow!("portable input rejected: {violations:?}"))?;
     Ok(request.identity()?)
 }
 

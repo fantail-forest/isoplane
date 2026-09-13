@@ -50,8 +50,10 @@ use queue::{DispatchJob, Job, WakeItem, WorkQueue};
 use registry::{ActiveRequest, ModuleEntry, Resident};
 use wake::CellWake;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct CellConfig {
+    #[serde(skip)]
     pub name: String,
     /// The bound on concurrently Hot dispatches. Defaults to four times the
     /// logical cpus.
@@ -64,9 +66,12 @@ pub struct CellConfig {
     pub max_idle_per_module: usize,
     /// High-water mark for queued HTTP response bytes; writes wait for readers.
     /// This does not limit the total size of a response.
+    #[serde(skip)]
     pub response_queue_bytes: usize,
     /// Wall-clock backstop for a dispatch; reported separately from active execution time.
     pub wall_ms_cap: u32,
+    /// Host resources retained on behalf of each guest instance.
+    pub guest_resources: crate::bindings::GuestResourceLimits,
     pub breaker: BreakerConfig,
     pub sweep_interval_ms: u64,
 }
@@ -82,6 +87,7 @@ impl Default for CellConfig {
             max_idle_per_module: 64,
             response_queue_bytes: wisp_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
             wall_ms_cap: 30_000,
+            guest_resources: Default::default(),
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
         }
@@ -89,6 +95,21 @@ impl Default for CellConfig {
 }
 
 impl CellConfig {
+    /// Validates settings for a cell driven by its own execution workers.
+    pub fn validate(&self) -> crate::Result<()> {
+        anyhow::ensure!(self.exec_threads > 0, "exec_threads must be positive");
+        anyhow::ensure!(self.reactor_threads > 0, "reactor_threads must be positive");
+        anyhow::ensure!(
+            self.queue_depth_per_worker > 0,
+            "queue_depth_per_worker must be positive"
+        );
+        anyhow::ensure!(
+            self.sweep_interval_ms > 0,
+            "sweep_interval_ms must be positive"
+        );
+        Ok(())
+    }
+
     /// A small deterministic cell for tests.
     pub fn for_test(name: &str) -> Self {
         Self {

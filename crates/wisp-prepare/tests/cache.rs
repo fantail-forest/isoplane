@@ -29,6 +29,7 @@ fn wasm(value: u32) -> Vec<u8> {
 fn request(wasm: &[u8]) -> BuildRequest {
     BuildRequest {
         guest_memory_bytes: None,
+        validation_limits: Default::default(),
         application_files: wisp_engine::PlatformFiles::default(),
         engine: common::engine().configuration(),
         runtime: RuntimeProfile::raw_wasm(),
@@ -235,4 +236,20 @@ fn preparation_rejects_memory_authorization_above_worker_capacity() {
         matches!(result, Err(ref failure) if failure.stage == wisp_prepare::BuildStage::Input),
         "an incompatible worker must refuse preparation before executing the guest"
     );
+}
+
+#[test]
+fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
+    let wasm = wasm(42);
+    let mut input = request(&wasm);
+    let before = input.identity().expect("original identity");
+    input.validation_limits.max_functions = 0;
+    assert_ne!(
+        before,
+        input.identity().expect("restricted identity"),
+        "changing structural admission policy must invalidate prepared cache identity"
+    );
+    let result = wisp_prepare::prepare_in_current_process(&wasm, &input);
+    assert!(matches!(result, Err(ref failure) if failure.stage == wisp_prepare::BuildStage::Input),
+        "the preparation worker must reject functions forbidden by the supplied policy before initialization");
 }

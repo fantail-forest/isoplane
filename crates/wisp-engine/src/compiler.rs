@@ -1,14 +1,15 @@
 //! Native compiler workers, separate from guest execution workers.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 
 /// Native stack reserved for each Cranelift worker, including pre-initialisation.
 /// This is compiler workspace; it does not enlarge a guest's execution stack.
-pub const COMPILER_STACK_BYTES: usize = 8 * 1024 * 1024;
+pub const COMPILER_STACK_BYTES: usize = wisp_abi::config::DEFAULT_COMPILER_STACK_BYTES;
 
-static POOL: Mutex<Option<Arc<rayon::ThreadPool>>> = Mutex::new(None);
+static POOLS: Mutex<BTreeMap<usize, Arc<rayon::ThreadPool>>> = Mutex::new(BTreeMap::new());
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CompileError {
@@ -21,13 +22,14 @@ pub(crate) enum CompileError {
 pub(crate) fn compile(
     engine: &wasmtime::Engine,
     wasm: &[u8],
+    stack_bytes: usize,
 ) -> Result<wasmtime::Module, CompileError> {
     // Compiling the .NET TLS acceptance module in parallel exhausted default
     // 2 MiB compiler stacks in debug builds; 8 MiB stacks completed that workload.
     // install also scopes Wasmtime's internal parallel iterator to this pool.
-    let pool = workers(&POOL, || {
+    let pool = workers(&POOLS, stack_bytes, || {
         rayon::ThreadPoolBuilder::new()
-            .stack_size(COMPILER_STACK_BYTES)
+            .stack_size(stack_bytes)
             .thread_name(|index| format!("wisp-compiler-{index}"))
             .build()
     })
@@ -37,15 +39,16 @@ pub(crate) fn compile(
 }
 
 fn workers(
-    slot: &Mutex<Option<Arc<rayon::ThreadPool>>>,
+    slot: &Mutex<BTreeMap<usize, Arc<rayon::ThreadPool>>>,
+    stack_bytes: usize,
     build: impl FnOnce() -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError>,
 ) -> Result<Arc<rayon::ThreadPool>, rayon::ThreadPoolBuildError> {
     let mut cached = slot.lock();
-    if let Some(pool) = cached.as_ref() {
+    if let Some(pool) = cached.get(&stack_bytes) {
         return Ok(Arc::clone(pool));
     }
     let pool = Arc::new(build()?);
-    *cached = Some(Arc::clone(&pool));
+    cached.insert(stack_bytes, Arc::clone(&pool));
     Ok(pool)
 }
 
@@ -54,13 +57,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn different_stack_budgets_use_different_worker_pools() {
+        let slot = Mutex::new(BTreeMap::new());
+        let small = workers(&slot, COMPILER_STACK_BYTES, || {
+            rayon::ThreadPoolBuilder::new().num_threads(1).build()
+        })
+        .expect("first pool starts");
+        let large = workers(&slot, COMPILER_STACK_BYTES * 2, || {
+            rayon::ThreadPoolBuilder::new().num_threads(1).build()
+        })
+        .expect("second budget starts its own pool");
+        assert!(
+            !Arc::ptr_eq(&small, &large),
+            "a prior engine must not choose another engine's compiler stack budget"
+        );
+    }
+
+    #[test]
     fn a_working_compiler_pool_does_not_need_another_worker_start() {
-        let slot = Mutex::new(None);
-        workers(&slot, || {
+        let slot = Mutex::new(BTreeMap::new());
+        workers(&slot, COMPILER_STACK_BYTES, || {
             rayon::ThreadPoolBuilder::new().num_threads(1).build()
         })
         .expect("the first compiler pool must start");
-        let reused = workers(&slot, || {
+        let reused = workers(&slot, COMPILER_STACK_BYTES, || {
             rayon::ThreadPoolBuilder::new()
                 .num_threads(1)
                 .spawn_handler(|_| Err(std::io::Error::other("no additional workers available")))
@@ -74,8 +94,8 @@ mod tests {
 
     #[test]
     fn a_failed_compiler_worker_start_can_be_retried() {
-        let slot = Mutex::new(None);
-        let first = workers(&slot, || {
+        let slot = Mutex::new(BTreeMap::new());
+        let first = workers(&slot, COMPILER_STACK_BYTES, || {
             rayon::ThreadPoolBuilder::new()
                 .num_threads(1)
                 .spawn_handler(|_| Err(std::io::Error::other("temporary worker start failure")))
@@ -85,7 +105,7 @@ mod tests {
             first.is_err(),
             "a failed worker start must report its error"
         );
-        let retry = workers(&slot, || {
+        let retry = workers(&slot, COMPILER_STACK_BYTES, || {
             rayon::ThreadPoolBuilder::new().num_threads(1).build()
         });
         assert!(

@@ -28,6 +28,25 @@ pub struct Tenancy {
     pub allowlist: Option<Vec<String>>,
 }
 
+/// Host-side budgets for each guest instance. Zero denies the corresponding resource.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GuestResourceLimits {
+    /// Simultaneously retained native socket, timer and stream handles.
+    pub native_handles: usize,
+    /// Maximum incoming guest log payload bytes accepted per dispatch.
+    pub log_bytes_per_dispatch: u32,
+}
+
+impl Default for GuestResourceLimits {
+    fn default() -> Self {
+        Self {
+            native_handles: 1024,
+            log_bytes_per_dispatch: 256 * 1024,
+        }
+    }
+}
+
 /// The per-instance half of the vtable's state, shared between the slot and
 /// the [`CellBindings`] moved into the engine at activation, so the cell can
 /// freeze the clock, read the trap latch and collect the response for an
@@ -37,6 +56,7 @@ pub struct InstanceCtx {
     pub module: ModuleId,
     pub tenant: String,
     pub limits: Limits,
+    pub(super) guest_resources: GuestResourceLimits,
     pub lifecycle: HandlerLifecycle,
     pub allowlist: Option<Vec<String>>,
     pub meters: Arc<Meters>,
@@ -75,6 +95,15 @@ pub struct InstanceCtx {
 }
 
 impl InstanceCtx {
+    pub(crate) fn configure_resources(&mut self, limits: GuestResourceLimits) {
+        self.guest_resources = limits;
+        self.native_io = Mutex::new(super::native_io::Resources::new(
+            super::native_io::ResourceLimits {
+                handles: super::native_io::ResourceCount(limits.native_handles),
+            },
+        ));
+    }
+
     pub(crate) fn release_native_resources(&self) {
         self.native_io.lock().clear();
         self.end_http_dispatch();
@@ -102,6 +131,7 @@ impl InstanceCtx {
             module: tenancy.module,
             tenant: tenancy.tenant,
             limits: tenancy.limits,
+            guest_resources: GuestResourceLimits::default(),
             lifecycle: tenancy.lifecycle,
             allowlist: tenancy.allowlist,
             meters,

@@ -50,11 +50,24 @@ pub type Result<T> = anyhow::Result<T>;
 
 /// Engine-wide configuration.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct EngineConfig {
     /// Ceiling on concurrently resident instances in this cell.
     pub max_instances: u32,
+    /// Aggregate pooled table slots; omission follows the instance count.
+    pub total_tables: Option<u32>,
     /// Per-instance linear-memory ceiling.
     pub max_memory_bytes: u64,
+    /// Maximum metadata bytes retained by one pooled core instance.
+    pub max_core_instance_size_bytes: usize,
+    /// Maximum elements in each guest function table.
+    pub table_elements: usize,
+    /// Maximum function tables declared by one guest module.
+    pub max_tables_per_module: u32,
+    /// Native stack bytes reserved per Cranelift compiler worker.
+    pub compiler_stack_bytes: usize,
+    /// Maximum native stack bytes consumed by a guest invocation.
+    pub max_wasm_stack_bytes: usize,
     /// Period of the epoch watchdog. Grace is delivered by epoch ticks, so
     /// [`WispEngine::new`] refuses a tick too coarse to fit
     /// [`budget::MIN_GRACE_TICKS`] inside [`budget::GRACE_FLOOR_NS`].
@@ -81,7 +94,13 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             max_instances: 10_000,
+            total_tables: None,
             max_memory_bytes: 128 << 20,
+            max_core_instance_size_bytes: wisp_abi::config::DEFAULT_CORE_INSTANCE_SIZE_BYTES,
+            table_elements: wisp_abi::config::DEFAULT_TABLE_ELEMENTS,
+            max_tables_per_module: wisp_abi::config::DEFAULT_TABLES_PER_MODULE,
+            compiler_stack_bytes: wisp_abi::config::DEFAULT_COMPILER_STACK_BYTES,
+            max_wasm_stack_bytes: wisp_abi::config::DEFAULT_WASM_STACK_BYTES,
             epoch_tick_us: 200,
             pooling: true,
             spectre_mitigations: true,

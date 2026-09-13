@@ -22,6 +22,9 @@ pub struct CliManifest {
     /// Optional local memory ceiling, independent of the selected limits.
     #[serde(default)]
     pub guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
+    /// Structural admission budgets from the local manifest.
+    #[serde(default)]
+    pub validation_limits: wisp_abi::config::ValidationLimits,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -66,6 +69,8 @@ impl CliManifest {
 pub struct DoctorPolicy {
     /// Numeric budgets supplying non-memory limits and the default memory ceiling.
     pub limits: wisp_abi::config::Limits,
+    /// Effective structural admission budgets.
+    pub validation_limits: wisp_abi::config::ValidationLimits,
     /// Flag, manifest location, or default that selected the limits.
     pub limits_from: String,
     /// Independent memory ceiling, if configured.
@@ -110,6 +115,10 @@ pub fn resolve_doctor_policy(
         (None, "limits".into())
     };
     Ok(DoctorPolicy {
+        validation_limits: manifest
+            .as_ref()
+            .map(|(m, _)| m.validation_limits)
+            .unwrap_or_default(),
         limits,
         limits_from,
         guest_memory_bytes,

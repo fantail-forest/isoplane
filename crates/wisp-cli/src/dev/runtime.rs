@@ -85,6 +85,7 @@ impl Prepared {
 fn preinitialize(project: &Project, wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(wisp_prepare::PreInitializer::new()
         .with_memory_limit(wisp_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
+        .with_engine_config(wisp_engine::EngineConfig { pooling: false, max_memory_bytes: project.manifest.memory_max_bytes(), platform_files: project.platform_files.clone(), ..Default::default() })
         .with_pal(project.init_sandbox)
         .with_platform_files(project.platform_files.clone())
         .run(wasm, &wisp_prepare::PreInitRequest {
@@ -102,9 +103,19 @@ fn validate(
 ) -> anyhow::Result<wisp_runtime::ValidationReport> {
     let manifest = &project.manifest;
     let admission = if local_debug {
-        wisp_runtime::validate_local_debug(wasm, manifest.limits, manifest.guest_memory_bytes)
+        wisp_runtime::validate_local_debug_with_limits(
+            wasm,
+            manifest.limits,
+            manifest.guest_memory_bytes,
+            &manifest.validation_limits,
+        )
     } else {
-        wisp_runtime::validate_with_memory_limit(wasm, manifest.limits, manifest.guest_memory_bytes)
+        wisp_runtime::validate_with_limits(
+            wasm,
+            manifest.limits,
+            manifest.guest_memory_bytes,
+            &manifest.validation_limits,
+        )
     };
     let report = admission.map_err(|violations| {
         anyhow::anyhow!(
@@ -117,7 +128,7 @@ fn validate(
         )
     })?;
     let compressed_bytes = zstd::encode_all(wasm, 19)?.len() as u64;
-    let limit = manifest.limits.module_bytes_compressed;
+    let limit = manifest.effective_limits().module_bytes_compressed;
     anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
     Ok(report)
 }

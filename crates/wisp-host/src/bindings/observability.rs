@@ -6,8 +6,6 @@ use crate::meters::CpuInterval;
 
 use super::CellBindings;
 
-pub(super) const MAX_LOG_BYTES_PER_DISPATCH: u32 = 256 * 1024;
-
 impl CellBindings {
     /// Log CPU is already on the dispatch's meter; the interval makes the
     /// share visible and the byte cap bounds volume.
@@ -18,15 +16,17 @@ impl CellBindings {
             return 0;
         };
         let n = u32::try_from(payload.len()).unwrap_or(u32::MAX);
-        let used = self
+        let previous = self
             .ctx
             .log_bytes
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 Some(used.saturating_add(n))
             })
-            .expect("the update closure above always returns Some")
-            .saturating_add(n);
-        if used > MAX_LOG_BYTES_PER_DISPATCH {
+            .expect("the update closure always returns Some");
+        if previous
+            .checked_add(n)
+            .is_none_or(|used| used > self.ctx.guest_resources.log_bytes_per_dispatch)
+        {
             return 0;
         }
         let fields = String::from_utf8_lossy(payload).to_string();
@@ -69,7 +69,56 @@ impl CellBindings {
 mod tests {
     use super::super::tests::{call, ctx};
     use super::*;
+    use std::sync::Arc;
     use wisp_engine::HostBindings;
+
+    #[test]
+    fn the_largest_configured_log_budget_cannot_wrap() {
+        let output = TestLogCapture::default();
+        let subscriber = output.dispatch();
+        let _subscriber = tracing::dispatcher::set_default(&subscriber);
+        let mut context = ctx();
+        Arc::get_mut(&mut context)
+            .expect("new context has no other owner")
+            .configure_resources(super::super::GuestResourceLimits {
+                log_bytes_per_dispatch: u32::MAX,
+                ..Default::default()
+            });
+        context.log_bytes.store(u32::MAX - 1, Ordering::Relaxed);
+        let mut bindings = CellBindings::new(context.clone());
+        bindings.call_sync(call("log_emit", b"a", [2, 0, 0]));
+        bindings.call_sync(call("log_emit", b"b", [2, 0, 0]));
+        assert_eq!(
+            output.records().len(),
+            1,
+            "the largest configured allowance must reject bytes beyond its boundary"
+        );
+    }
+
+    #[test]
+    fn configured_log_byte_limits_are_enforced() {
+        for (bytes, expected) in [(3, 1), (100, 2), (0, 0)] {
+            let output = TestLogCapture::default();
+            let subscriber = output.dispatch();
+            let _subscriber = tracing::dispatcher::set_default(&subscriber);
+            let mut context = ctx();
+            Arc::get_mut(&mut context)
+                .expect("new context has no other owner")
+                .configure_resources(super::super::GuestResourceLimits {
+                    log_bytes_per_dispatch: bytes,
+                    ..Default::default()
+                });
+            context.begin_dispatch(1, 1);
+            let mut bindings = CellBindings::new(context.clone());
+            bindings.call_sync(call("log_emit", b"abc", [2, 0, 0]));
+            bindings.call_sync(call("log_emit", b"d", [2, 0, 0]));
+            assert_eq!(
+                output.records().len(),
+                expected,
+                "configured log allowances must be enforced"
+            );
+        }
+    }
 
     #[test]
     fn log_levels_outside_the_canonical_range_latch_a_protocol_trap() {
@@ -103,7 +152,7 @@ mod tests {
         let mut bindings = CellBindings::new(context.clone());
         bindings.call_sync(call(
             "log_emit",
-            &vec![b'x'; MAX_LOG_BYTES_PER_DISPATCH as usize],
+            &vec![b'x'; context.guest_resources.log_bytes_per_dispatch as usize],
             [2, 0, 0],
         ));
         bindings.call_sync(call("log_emit", b"one byte over", [2, 0, 0]));
