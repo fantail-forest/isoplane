@@ -1,4 +1,4 @@
-# Local Isoplane CLI
+# Isoplane CLI
 
 The .NET tool owns publication and source watching; its bundled native runtime
 validates, prepares and executes WASM. This package currently targets the Linux
@@ -7,7 +7,7 @@ host used to build it. macOS and Windows packages are not validated.
 From the repository root, build and pack into a local feed:
 
 ```sh
-cargo build -p wisp-cli --bins
+cargo build --target-dir target -p wisp-cli --bins
 dotnet pack tools/Isoplane.Cli -p:WispRuntimePath="$PWD/target/debug/wisp" -p:WispProcessPath="$PWD/target/debug/wisp-process" -o /tmp/wisp-preview-feed
 dotnet tool install Isoplane.Cli --version 0.1.0 --tool-path /tmp/isoplane-tools --add-source /tmp/wisp-preview-feed
 /tmp/isoplane-tools/isoplane --version
@@ -43,3 +43,4 @@ active child processes. `isoplane doctor path/to/module.wasm` runs the native
 validator.
 
 For process-owning test tools, `dev --json` writes JSON ready/reloaded records with the actual bound `url`; build and runtime diagnostics go to stderr. `--port 0` requests an available port. Opt-in `--shutdown-on-stdin-close` ends the session when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior.
+
