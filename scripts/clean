@@ -4,6 +4,13 @@
 #   scripts/clean            # caches and intermediates only, no rebuild
 #   scripts/clean --all      # everything, including compiled output
 set -euo pipefail
+usage() { printf 'Usage: scripts/clean [--all]\nReclaim build intermediates; --all also removes compiled output.\n'; }
+if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
+case "${1:-}" in
+  ""|--all) ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 

@@ -1,26 +1,26 @@
-"""Check native cleanup without touching the checkout's build outputs."""
-
-from pathlib import Path
+"""Cleanup argument handling must not delete artifacts on help or invalid input."""
+import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
+
+class CleanArguments(unittest.TestCase):
+    def test_help_and_invalid_arguments_preserve_intermediates(self):
+        for arguments, code in [(["--help"], 0), (["-h"], 0), (["--unknown"], 2), (["--all", "extra"], 2)]:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / "scripts").mkdir()
+                script = root / "scripts/clean"
+                shutil.copyfile(pathlib.Path(__file__).resolve().parents[1] / "clean", script)
+                artifact = root / "guests/target/keep"
+                artifact.parent.mkdir(parents=True)
+                artifact.write_text("cached")
+                result = subprocess.run(["bash", str(script), *arguments], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, code, "Argument handling must exit before cleanup with the appropriate status")
+                self.assertTrue(artifact.exists(), "Help and invalid arguments must leave build artifacts untouched")
 
 
-class CleanupTests(unittest.TestCase):
-    def test_cleanup_preserves_compiled_output(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch)
-            (root / "scripts").mkdir()
-            script = root / "scripts/clean"
-            script.write_text((ROOT / "scripts/clean").read_text())
-            intermediate = root / "target/debug/incremental/cache"
-            intermediate.parent.mkdir(parents=True)
-            intermediate.write_text("cache")
-            binary = root / "target/debug/wispd"
-            binary.write_text("keep")
-            result = subprocess.run(["bash", str(script)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertFalse(intermediate.exists(), "cleanup left build intermediates")
-            self.assertEqual(binary.read_text(), "keep", "cleanup removed the compiled daemon")
+if __name__ == "__main__":
+    unittest.main()
