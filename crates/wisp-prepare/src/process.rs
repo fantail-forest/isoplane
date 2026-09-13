@@ -32,6 +32,7 @@ impl BuildRequest {
         let mut hash = blake3::Hasher::new();
         hash.update(b"wisp.prepared-initialization.v1\0");
         hash.update(&self.initialization.digest(self.input_hash)?);
+        hash.update(&postcard::to_allocvec(&self.limits)?);
         hash.update(&postcard::to_allocvec(&self.guest_memory_bytes)?);
         hash.update(&postcard::to_allocvec(&self.validation_limits)?);
         hash.update(&postcard::to_allocvec(&self.engine.platform_files)?);

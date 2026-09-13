@@ -79,6 +79,7 @@ pub fn initialize(
         request,
         None,
         &wisp_engine::PlatformFiles::default(),
+        None,
     )
 }
 
@@ -88,6 +89,7 @@ pub(crate) fn initialize_with_cache(
     request: &Initialization,
     cache: Option<&wisp_engine::CompilationCache>,
     application_files: &wisp_engine::PlatformFiles,
+    memory_limit_bytes: Option<u64>,
 ) -> Result<Initialized, PrepareError> {
     if request.cpu_ms == 0 || request.wall_ms == 0 || request.max_passes == 0 {
         return Err(PrepareError::InvalidRequest(
@@ -111,7 +113,13 @@ pub(crate) fn initialize_with_cache(
     for pass in 1..=request.max_passes {
         let state = Arc::new(Mutex::new(Sandbox::new(request, deferred.clone())));
         let mut instance = engine
-            .activate_initialization(&template, Box::new(Bindings(state.clone())))
+            .activate_initialization(
+                &template,
+                Box::new(Bindings {
+                    state: state.clone(),
+                    memory_limit_bytes,
+                }),
+            )
             .map_err(PrepareError::State)?;
         if template.has_initialize() {
             let outcome = instance.run_initialize(CpuBudget {
@@ -183,7 +191,13 @@ pub(crate) fn initialize_with_cache(
             .and_then(|template| template.with_application_files(application_files.clone()))
             .map_err(PrepareError::State)?;
         let mut restored = engine
-            .activate_initialization(&baked, Box::new(Bindings(state.clone())))
+            .activate_initialization(
+                &baked,
+                Box::new(Bindings {
+                    state: state.clone(),
+                    memory_limit_bytes,
+                }),
+            )
             .map_err(PrepareError::State)?;
         if restored.memory() != instance.memory() {
             return Err(PrepareError::InvalidRequest(
@@ -281,21 +295,28 @@ impl Sandbox {
         }
     }
 }
-struct Bindings(Arc<Mutex<Sandbox>>);
+struct Bindings {
+    state: Arc<Mutex<Sandbox>>,
+    memory_limit_bytes: Option<u64>,
+}
 impl wisp_engine::bindings::InitializationBindings for Bindings {
     fn permits_entropy(&self) -> bool {
         true
     }
 
+    fn memory_limit_bytes(&self) -> Option<u64> {
+        self.memory_limit_bytes
+    }
+
     fn runtime_bringup(&self) -> bool {
-        let state = self.0.lock();
+        let state = self.state.lock();
         state.bringup && state.unit.is_none() && state.last_deferred.is_none()
     }
     fn call_sync(
         &mut self,
         call: ImportCall<'_>,
     ) -> Result<i64, wisp_engine::bindings::BindingError> {
-        let mut state = self.0.lock();
+        let mut state = self.state.lock();
         match call.import {
             "init_unit_begin" => {
                 let unit = call.scalars[0] as u32;
@@ -332,7 +353,7 @@ impl wisp_engine::bindings::InitializationBindings for Bindings {
         call: ImportCall<'_>,
         output: &mut [u8],
     ) -> Result<i64, wisp_engine::bindings::BindingError> {
-        let mut state = self.0.lock();
+        let mut state = self.state.lock();
         match call.import {
             "init_hash_seed" => {
                 if output.len() != 16 {

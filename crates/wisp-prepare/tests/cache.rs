@@ -253,3 +253,47 @@ fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
     assert!(matches!(result, Err(ref failure) if failure.stage == wisp_prepare::BuildStage::Input),
         "the preparation worker must reject functions forbidden by the supplied policy before initialization");
 }
+
+#[test]
+fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1)
+        (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 0)
+        (func (export "wisp_handle") (param i32 i32) (result i64) i64.const 0)
+        (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0)
+        (func (export "wisp_initialize")
+            (if (i32.ne (memory.grow (i32.const 1024)) (i32.const -1)) (then unreachable))))"#,
+    )
+    .expect("bounded initialization fixture assembles");
+    let mut input = request(&wasm);
+    input.engine.max_memory_bytes = 128 << 20;
+    input.limits = wisp_abi::config::Limits {
+        module_bytes_compressed: 5242880,
+        instance_memory_max: 67108864,
+        cpu_ms_per_http_dispatch: 10,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    };
+    assert!(wisp_prepare::prepare_in_current_process(&wasm, &input).is_ok(),
+        "initialization must refuse growth above the 64MiB application budget even on a 128MiB engine");
+}
+
+#[test]
+fn preparation_identity_binds_the_plan_memory_default() {
+    let wasm = wasm(42);
+    let mut input = request(&wasm);
+    let standard = input.identity().expect("standard identity");
+    input.limits = wisp_abi::config::Limits {
+        module_bytes_compressed: 5242880,
+        instance_memory_max: 67108864,
+        cpu_ms_per_http_dispatch: 10,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    };
+    assert_ne!(
+        standard,
+        input.identity().expect("free identity"),
+        "different implicit memory budgets must not share preparation identity"
+    );
+}

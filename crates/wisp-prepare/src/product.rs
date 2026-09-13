@@ -121,6 +121,10 @@ fn prepare(
         &request.initialization,
         cache,
         &request.application_files,
+        Some(request.guest_memory_bytes.map_or(
+            request.limits.instance_memory_max,
+            wisp_abi::config::GuestMemoryBytes::get,
+        )),
     )
     .map_err(|error| WorkerFailure::new(BuildStage::Initialization, error.into()))?;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;

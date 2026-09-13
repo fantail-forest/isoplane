@@ -88,6 +88,11 @@ pub trait InitializationBindings: Send + 'static {
         false
     }
 
+    /// Application memory ceiling during initialization; None uses engine capacity.
+    fn memory_limit_bytes(&self) -> Option<u64> {
+        None
+    }
+
     /// Answer an init-visible scalar operation or return a typed refusal.
     fn call_sync(&mut self, call: ImportCall<'_>) -> Result<i64, BindingError>;
     /// Fill an init-visible output buffer, returning its full logical length.

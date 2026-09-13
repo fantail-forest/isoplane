@@ -163,7 +163,9 @@ impl StoreState {
             Bindings::Runtime(runtime) => {
                 runtime.memory_limit_bytes().unwrap_or(cfg.max_memory_bytes)
             }
-            Bindings::Initialization(_) => cfg.max_memory_bytes,
+            Bindings::Initialization(bindings) => bindings
+                .memory_limit_bytes()
+                .unwrap_or(cfg.max_memory_bytes),
         };
         let mut limits = Limits::new(cfg);
         limits.max_memory_bytes = memory_limit.min(cfg.max_memory_bytes) as usize;
