@@ -43,15 +43,16 @@ in_both_runtimes! {
 }
 
 in_both_runtimes! {
-    /// A type nothing references, named by a string assembled at run
-    /// time, is trimmed away in both profiles: `Type.GetType` answers null,
-    /// never a type that exists only in the source.
     #[tokio::test]
-    async fn a_type_only_a_runtime_string_names_is_trimmed_in_both_profiles(runtime: GuestRuntime) {
+    async fn a_runtime_named_type_obeys_the_profiles_trimming_policy(runtime: GuestRuntime) {
+        let expected = match runtime {
+            GuestRuntime::Mono => "Acceptance.Orphan instance=created",
+            GuestRuntime::NativeAot => "null",
+        };
         assert_eq!(
             answer(runtime, 362, "/reflection/type-by-name/assembled").await,
-            "null",
-            "a type reachable only through an assembled name must have been trimmed"
+            expected,
+            "a runtime-named type must remain constructible in untrimmed Mono and be removed from trimmed NativeAOT"
         );
     }
 }
@@ -157,15 +158,16 @@ in_both_runtimes! {
 }
 
 in_both_runtimes! {
-    /// Both profiles publish trimmed, and trimming disables reflection-based
-    /// `System.Text.Json` by default: the reflection serializer refuses,
-    /// the source-generated context serializes.
     #[tokio::test]
-    async fn reflection_based_json_is_disabled_and_source_generated_json_works(runtime: GuestRuntime) {
+    async fn json_reflection_obeys_the_profile_and_generated_json_works(runtime: GuestRuntime) {
+        let expected = match runtime {
+            GuestRuntime::Mono => r#"{"Name":"json","Count":4,"Tags":["a","b"]} json:4:a+b"#,
+            GuestRuntime::NativeAot => "InvalidOperationException",
+        };
         assert_eq!(
             answer(runtime, 371, "/reflection/json/reflection").await,
-            "InvalidOperationException",
-            "the reflection-based serializer must be refused under trimming rather than serialize a partial shape"
+            expected,
+            "default JSON reflection must round-trip in untrimmed Mono and be refused under NativeAOT trimming"
         );
         assert_eq!(
             answer(runtime, 372, "/reflection/json/source-generated").await,

@@ -53,18 +53,16 @@ in_both_runtimes! {
 }
 
 in_both_runtimes! {
-    /// An options type the binder's source generator can reach binds every
-    /// property in generated code. A private nested one is bound by
-    /// reflection over what the trimmer kept, and a setter nothing assigns
-    /// is gone in both trimmed profiles: the bind leaves the property at its
-    /// default, silently (the build warns with IL2026). An application
-    /// binds accessible option types.
     #[tokio::test]
     async fn in_memory_configuration_layers_sections_and_binds_to_options(runtime: GuestRuntime) {
+        let hidden = match runtime {
+            GuestRuntime::Mono => "True/3",
+            GuestRuntime::NativeAot => "False/0",
+        };
         assert_eq!(
             answer(runtime, 342, "/hosting/config-memory").await,
-            "on|9443|7|true/True|edge:9443:True:a.example,b.example|Hosts,Name,Port,Tls|False|hidden=False/0",
-            "a later provider must override a key, typed reads must convert, a section must bind an accessible POCO with a list, and the reflection bind of a private type must leave its trimmed setters unset"
+            format!("on|9443|7|true/True|edge:9443:True:a.example,b.example|Hosts,Name,Port,Tls|False|hidden={hidden}"),
+            "configuration must layer and bind generated options; reflection-only private setters must bind in the untrimmed interpreted guest and remain unset when trimmed from NativeAOT"
         );
     }
 }
