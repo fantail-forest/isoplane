@@ -168,7 +168,7 @@ internal static class Toolchain
         }
     }
 
-    private static ToolchainManifest ReadManifest(byte[] bytes)
+    internal static ToolchainManifest ReadManifest(byte[] bytes)
     {
         var manifest = JsonSerializer.Deserialize<ToolchainManifest>(bytes, Json)
             ?? throw new InvalidOperationException("The toolchain bundle has no manifest.");
