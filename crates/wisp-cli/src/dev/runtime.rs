@@ -1,5 +1,7 @@
 //! One project's guest execution and local bindings, with no node control plane.
 
+mod preparation_cache;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -35,15 +37,7 @@ impl Prepared {
         let report = validate(project, wasm, false)?;
         let version = blake3::hash(wasm).to_hex().to_string();
         let template = if report.has_initialize() {
-            wisp_runtime::PreInitializer::new()
-                .with_pal(project.init_sandbox)
-                .with_platform_files(project.platform_files.clone())
-                .run(wasm, &wisp_runtime::PreInitRequest {
-                    module_hash: wisp_engine::ModuleHash::of(wasm),
-                    init_blob: serde_json::to_vec(&manifest.init_visible_vars)?,
-                })
-                .map_err(|e| anyhow::anyhow!("pre-initializing {} with {}: {e}; managed guests may require --init-sandbox runtime-bringup", manifest.name, project.init_sandbox.as_str()))?
-                .template_wasm
+            preparation_cache::template(project, wasm, || preinitialize(project, wasm))?
         } else {
             wasm.to_vec()
         };
@@ -86,6 +80,18 @@ impl Prepared {
             allow_endpoints: project.allow_endpoints.clone(),
         })
     }
+}
+
+fn preinitialize(project: &Project, wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
+    Ok(wisp_runtime::PreInitializer::new()
+        .with_pal(project.init_sandbox)
+        .with_platform_files(project.platform_files.clone())
+        .run(wasm, &wisp_runtime::PreInitRequest {
+            module_hash: wisp_engine::ModuleHash::of(wasm),
+            init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
+        })
+        .map_err(|e| anyhow::anyhow!("pre-initializing {} with {}: {e}; managed guests may require --init-sandbox runtime-bringup", project.manifest.name, project.init_sandbox.as_str()))?
+        .template_wasm)
 }
 
 fn validate(
