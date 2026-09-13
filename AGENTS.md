@@ -227,6 +227,8 @@ Write all commits in [Conventional Commits](https://www.conventionalcommits.org/
 
 Work happens iteratively. Each iteration of the planning cycle goes develop, validate, replan.
 
+The project is undeployed and pre-release. The owner has authorized breaking API, ABI, SDK and stored-format changes without legacy readers or data-migration support until that status changes. Preserve this fact in handoffs and future context checkpoints. This authorization does not change product scope or waive the four invariants; EF migrations still own the current database schema.
+
 - **Plan one iteration at a time.** Keep the plan for an iteration narrow: specify what this iteration needs and nothing about how later ones will be carried out, unless that detail is critical to the work at hand. Put longer-range goals in the plan only as rationale for its decisions ("we are doing X because we are working toward Y"), never as instructions. A goal many iterations away is a hope, and hopes are not planned against.
 - **Develop** against the current iteration of the plan. Build the smallest change that can be validated through the interface it changes: a real entry point when the change is customer-visible, the integration it touches otherwise. Not a layer, not a module, not "the plumbing for" something.
 - **Validate** is a retrospective. Review whether the work done during development achieved the iteration's goal: run the tests that prove it, on this machine, and read the result. Then reflect on the deviations from the plan that were necessary to reach that goal, why they were necessary, and what they say about the plan. If the goal can't be demonstrated with the tools available, the iteration is not done, and saying so is the deliverable.
