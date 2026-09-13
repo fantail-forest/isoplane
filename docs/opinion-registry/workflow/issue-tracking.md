@@ -18,7 +18,7 @@ Use exactly one checkbox per linked issue, grouped under functional subheadings.
 
 ## Keep milestone scope explicit
 
-A milestone tracker contains required work, completed or pending, and clearly labeled optional work under consideration for that milestone. Keep deferred work and unrelated issue references outside its body; preserve them in the broader backlog or comments. For a mixed-scope issue, name the milestone's required portion and split it if a single completion state becomes misleading.
+A milestone tracker contains required work, completed or pending, and clearly labeled optional work under consideration for that milestone. Keep deferred work and unrelated issue references outside its body; preserve them in the broader backlog or comments. Split mixed-scope issues before starting milestone work. Give the milestone independently closable implementation issues; retain the remaining scope in separate issues or an explicit tracker. Do not schedule or report completion of a portion of an implementation issue.
 
 **Not this:** Listing post-MVP migration as an unchecked MVP requirement, or deleting optional experiments merely because they are not launch gates.
 
