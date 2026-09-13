@@ -40,6 +40,7 @@ internal static class ManagedBundle
         {
             var metadata = Path.Combine(temporary.FullName, "inputs.json");
             var exit = await Processes.RunAsync("dotnet", ["msbuild", projects[0], "-restore", "-target:WispManagedBundle",
+                "-nodeReuse:false", "-property:UseSharedCompilation=false",
                 "-property:WispManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
                 "-getProperty:AssemblyName,WispApplicationFactory,WispGuestRuntime",
                 "-getItem:WispBundleAssembly,WispBundleSymbol,WispBundleAsset,WispBundlePlatformReference",
