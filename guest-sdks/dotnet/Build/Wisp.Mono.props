@@ -3,10 +3,12 @@
     <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">wasi-wasm</RuntimeIdentifier>
     <OutputType>Exe</OutputType>
-    <PublishTrimmed>true</PublishTrimmed>
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">false</PublishTrimmed>
     <SelfContained>true</SelfContained>
     <WasmSingleFileBundle>true</WasmSingleFileBundle>
     <WasmBuildNative>true</WasmBuildNative>
+    <!-- Zero lets the linker size initial memory from the retained data and stack. -->
+    <WasmInitialHeapSize Condition="'$(WasmInitialHeapSize)' == ''">0</WasmInitialHeapSize>
     <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">false</InvariantGlobalization>
     <WasmIncludeFullIcuData Condition="'$(WasmIncludeFullIcuData)' == ''">true</WasmIncludeFullIcuData>
     <WasmEnableExceptionHandling>false</WasmEnableExceptionHandling>
