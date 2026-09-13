@@ -11,7 +11,7 @@ try
         Console.WriteLine($"isoplane {version}");
         return 0;
     }
-    if (args.Length == 0 || args is ["--help"] or ["-h"])
+    if (args.Length == 0 || args is ["--help"] or ["-h"] or [_, "--help" or "-h"])
     {
         Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request with an external Mono debugger.\nisoplane setup --source DIRECTORY\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
         Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
