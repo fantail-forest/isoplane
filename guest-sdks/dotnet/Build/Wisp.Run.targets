@@ -3,7 +3,7 @@
   <ItemGroup><Watch Include="$(MSBuildProjectDirectory)/wisp.toml" /></ItemGroup>
   <!-- Publish the sandbox artifact before watch regards a rebuild as successful. -->
   <Target Name="WispBuildRunnableModule" AfterTargets="Build"
-          Condition="'$(_IsPublishing)' != 'true' AND '$(NoBuild)' != 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
+          Condition="'$(WispManagedBundleBuild)' != 'true' AND '$(_IsPublishing)' != 'true' AND '$(NoBuild)' != 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
     <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish"
              Properties="NoBuild=true;_IsPublishing=true" BuildInParallel="false" />
   </Target>

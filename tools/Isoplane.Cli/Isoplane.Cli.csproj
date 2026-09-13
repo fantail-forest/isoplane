@@ -13,6 +13,7 @@
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
     <Compile Include="../ProcessOwnership/OwnedProcess.cs" Link="OwnedProcess.cs" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />

@@ -14,6 +14,7 @@ try
     if (args.Length == 0 || args is ["--help"] or ["-h"])
     {
         Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request with an external Mono debugger.\nisoplane setup --source DIRECTORY\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
+        Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
         return 0;
     }
     if (args is ["process-owner-path"])
@@ -62,6 +63,13 @@ try
         throw new InvalidOperationException("The CLI package is missing its shared runtime; reinstall a complete local package.");
     if (!OperatingSystem.IsWindows())
         File.SetUnixFileMode(runtime, File.GetUnixFileMode(runtime) | UnixFileMode.UserExecute);
+    if (args[0] == "bundle")
+    {
+        var options = BundleOptions.Parse(args[1..]);
+        await ManagedBundle.CreateAsync(options, runtime, cancellation.Token);
+        Console.WriteLine(options.Output);
+        return 0;
+    }
     return args[0] switch
     {
         "dev" => await Development.RunAsync(DevelopmentOptions.Parse(args[1..]), runtime, cancellation.Token),
@@ -71,7 +79,7 @@ try
 }
 catch (OperationCanceledException error) when (error.CancellationToken.IsCancellationRequested)
 {
-    return 0;
+    return args.Length > 0 && args[0] is "bundle" ? 130 : 0;
 }
 catch (Exception error) when (error is System.Text.Json.JsonException or ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
 {

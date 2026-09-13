@@ -8,7 +8,7 @@
     <Error Condition="'@(_WispAspNetCoreAssembly)' == ''" Code="WISP0078"
            Text="Restore the pinned ASP.NET managed runtime pack before publishing this WISP application." />
   </Target>
-  <Target Name="WispGenerateAspNetCoreEntrypoint" BeforeTargets="CoreCompile">
+  <Target Name="WispGenerateAspNetCoreEntrypoint" BeforeTargets="CoreCompile" Condition="'$(WispManagedBundleBuild)' != 'true'">
     <Error Condition="'$(WispApplicationFactory)' == ''" Code="WISP0079"
            Text="Set WispApplicationFactory to the fully qualified static method that builds and returns your WebApplication, for example MyApp.Application.Create." />
     <PropertyGroup>

@@ -5,6 +5,7 @@
     <WispGuestRuntime Condition="'$(WispGuestRuntime)' == '' AND '$(PublishAot)' == 'false'">Mono</WispGuestRuntime>
   </PropertyGroup>
   <Import Project="../tools/Wisp.Guest.props" />
+  <Import Project="../tools/Build/Wisp.ManagedBundle.props" />
   <PropertyGroup>
     <WasmBuildOnlyAfterPublish Condition="'$(WispGuestRuntime)' == 'Mono'">true</WasmBuildOnlyAfterPublish>
     <SupportsHotReload>false</SupportsHotReload>
@@ -16,4 +17,5 @@
   </ItemGroup>
   <Import Project="../tools/Wisp.Guest.targets" />
   <Import Project="../tools/Build/Wisp.Run.targets" />
+  <Import Project="../tools/Build/Wisp.ManagedBundle.targets" />
 </Project>
