@@ -203,6 +203,28 @@ impl WispEngine {
         manifest_sha256: [u8; 32],
         runtime_profile: [u8; 32],
     ) -> Result<Template> {
+        let manifest = self.catalog_manifest(directory, manifest_sha256, runtime_profile)?;
+        self.load_prepared_owned(directory, manifest)
+    }
+
+    /// Checks a selection receipt without reading native code or baseline payloads.
+    pub fn check_prepared_receipt(
+        &self,
+        directory: &Path,
+        manifest_sha256: [u8; 32],
+        runtime_profile: [u8; 32],
+    ) -> Result<PreparedIdentity> {
+        Ok(self
+            .catalog_manifest(directory, manifest_sha256, runtime_profile)?
+            .identity)
+    }
+
+    fn catalog_manifest(
+        &self,
+        directory: &Path,
+        manifest_sha256: [u8; 32],
+        runtime_profile: [u8; 32],
+    ) -> Result<Manifest> {
         let (manifest, digest) = files::read_manifest_receipt(directory)?;
         if digest != manifest_sha256 {
             return Err(PreparedError::Incompatible("prepared manifest digest"));
@@ -211,7 +233,7 @@ impl WispEngine {
             return Err(PreparedError::Incompatible("prepared runtime profile"));
         }
         self.check_prepared(&manifest, manifest.identity)?;
-        self.load_prepared_owned(directory, manifest)
+        Ok(manifest)
     }
 
     fn load_prepared_owned(&self, directory: &Path, manifest: Manifest) -> Result<Template> {

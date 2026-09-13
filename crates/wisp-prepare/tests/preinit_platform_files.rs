@@ -1,4 +1,3 @@
-#![cfg(feature = "preinit")]
 #![forbid(unsafe_code)]
 //! A declared platform file is visible inside the sealed init sandbox: a
 //! static initialiser that reads it bakes its bytes into the template,
@@ -6,11 +5,11 @@
 
 use std::sync::Arc;
 
+use wasmtime as wt;
 use wisp_abi::filesystem::{Operation, IMPORTS};
 use wisp_abi::imports::Ty;
 use wisp_engine::{ModuleHash, PlatformFile, PlatformFiles};
-use wisp_runtime::{PreInitRequest, PreInitializer};
-use wizer::wasmtime as wt;
+use wisp_prepare::{PreInitRequest, PreInitializer};
 
 const BUNDLE: &[u8] = b"-----BEGIN CERTIFICATE-----\nMIIBinit\n-----END CERTIFICATE-----\n";
 const PATH: &str = "etc/ssl/certs/ca-certificates.crt";
@@ -96,7 +95,6 @@ fn guest() -> Vec<u8> {
 fn request(wasm: &[u8]) -> PreInitRequest {
     PreInitRequest {
         module_hash: ModuleHash::of(wasm),
-        hash_seed: [7; 16],
         init_blob: Vec::new(),
     }
 }
@@ -115,7 +113,7 @@ fn template_memory(template: &[u8]) -> Vec<u8> {
         let name = format!("{}::{}", import.module(), import.name());
         linker
             .func_new(import.module(), import.name(), ty, move |_, _, _| {
-                anyhow::bail!("the template must not call `{name}` while instantiating")
+                wt::bail!("the template must not call `{name}` while instantiating")
             })
             .expect("a trap stub links");
     }
@@ -166,5 +164,22 @@ fn without_a_declared_set_the_same_path_is_no_entry_during_pre_init() {
         (memory[OPEN_AT], memory[OPEN_AT + 4]),
         (1, 20),
         "an undeclared path is no-entry inside the init sandbox"
+    );
+}
+
+#[test]
+fn the_local_template_identity_binds_its_declared_files() {
+    let wasm = guest();
+    let request = request(&wasm);
+    let declared = PreInitializer::new()
+        .with_platform_files(declared())
+        .run(&wasm, &request)
+        .expect("declared-file initialization");
+    let empty = PreInitializer::new()
+        .run(&wasm, &request)
+        .expect("empty-file initialization");
+    assert_ne!(
+        declared.reproducible_digest, empty.reproducible_digest,
+        "templates initialized from different declared file sets need different identities"
     );
 }

@@ -34,6 +34,13 @@ pub enum PrepareError {
         completion: wisp_engine::Completion,
         detail: String,
     },
+    /// A forbidden capability was reached outside any deferrable initialization unit.
+    #[error("initialization reached {import} outside any unit: {detail}")]
+    Unattributable {
+        import: String,
+        detail: String,
+        completion: wisp_engine::Completion,
+    },
     /// A guest reran a unit that the sandbox told it to defer.
     #[error("initialization unit {unit} ignored deferral and called {import}")]
     DeferralIgnored { unit: u32, import: String },
@@ -54,3 +61,6 @@ pub use failure::{BuildStage, WorkerFailure};
 
 mod product;
 pub use product::{prepare_in_current_process, BuildProduct, LocalPreparation, Preparation};
+
+pub mod preinit;
+pub use preinit::{PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};

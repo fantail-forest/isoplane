@@ -6,6 +6,7 @@ mod common;
 #[path = "real_node/egress.rs"]
 mod egress;
 
+use common::preparation::LocalDeployment;
 use common::{config, get, manifest, serve, start_with, Rig};
 use wisp_abi::config::InitSandbox;
 use wisp_abi::dispatch::ResponseHead;
@@ -399,7 +400,7 @@ async fn csharp_deployment_variables_are_captured_before_requests_run() {
     node.real
         .as_ref()
         .expect("the node must use real backends")
-        .deploy_version(
+        .deploy_locally(
             "quotes",
             "v1",
             "acme",

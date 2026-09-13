@@ -18,6 +18,8 @@ fn artifact(name: &str) -> Vec<u8> {
 /// The adapter is composed over these modules, never run.
 struct Host;
 impl PalSource for Host {
+    fn record_initialization_call(&mut self, _module: &'static str) {}
+
     fn slice_clock_ms(&mut self) -> u64 {
         0
     }

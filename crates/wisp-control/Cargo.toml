@@ -15,6 +15,8 @@ wisp-abi = { workspace = true, features = ["host"] }
 wisp-engine = { workspace = true }
 async-trait = { workspace = true }
 wisp-runtime = { workspace = true }
+wisp-prepare.workspace = true
+tokio-util.workspace = true
 wasmtime = { workspace = true, features = ["default", "winch"] }
 blake3 = { workspace = true }
 hex = { workspace = true }
@@ -37,4 +39,4 @@ wisp-host = { workspace = true }
 [features]
 # Deploy preparation includes guest initialization.
 default = ["preinit"]
-preinit = ["wisp-runtime/preinit"]
+preinit = []

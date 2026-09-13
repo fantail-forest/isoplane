@@ -36,7 +36,8 @@ blake3 = { workspace = true }
 wasmparser = { workspace = true }
 reqwest = { workspace = true }
 
-wisp-runtime = { workspace = true, features = ["preinit", "local"] }
+wisp-runtime = { workspace = true, features = ["local"] }
+wisp-prepare.workspace = true
 wisp-host = { workspace = true }
 wisp-engine = { workspace = true }
 wisp-hibernate = { workspace = true }

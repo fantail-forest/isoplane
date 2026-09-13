@@ -44,7 +44,7 @@ cargo metadata --no-deps --format-version 1 \
 | Tool                     | Configured in                                               | Notes                                                                                                                                            |
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile pins the build toolchain. Nightly is never required for build, test, lint, or docs.                                                                                |
-| **wasmtime**             | `Cargo.toml`                                            | Policy: one version across the workspace. See the known toolchain debt below.                                                |
+| **wasmtime**             | `Cargo.toml`                                            | One version across the workspace, shared by preparation and execution.                                                |
 | **.NET SDK**             | `global.json`, consumed by `Dockerfile`                         | Policy: pin one SDK version. The image installs the version declared in `global.json`.                                                                                                           |
 | **ILCompiler.LLVM**      | `guest-sdks/dotnet/Wisp.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
@@ -57,11 +57,6 @@ cargo metadata --no-deps --format-version 1 \
 | **Logging**              | `tracing` + `tracing-subscriber` (JSON)                 |                                                                                                                                                  |
 | **Docs site**            | Docusaurus 3 (`docs/userdocs`)                          |                                                                                                                                                  |
 | **Container**            | `scripts/dev --container`, `Dockerfile`                             | A convenience that carries the whole toolchain. Never make crates, tests, scripts, or docs require, detect, or gate on it.                    |
-
-`wisp-control` links Wizer with its own Wasmtime, a known departure from
-single-Wasmtime policy, not a pattern to copy. Resolve it in a focused toolchain
-change with guest fixtures and integration tests validated; do not fold that
-migration into unrelated work.
 
 ## Common Operations
 

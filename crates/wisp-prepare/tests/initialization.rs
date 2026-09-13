@@ -45,8 +45,15 @@ fn a_sealed_initializer_clock_attempt_fails_before_a_host_effect() {
         .err()
         .expect("sealed clock access must fail");
     assert!(
-        matches!(error, PrepareError::Initialization { .. }),
+        matches!(error, PrepareError::Unattributable { ref import, .. } if import == "clock_now_coarse"),
         "forbidden capabilities must terminate initialization"
+    );
+    let failure =
+        wisp_prepare::WorkerFailure::new(wisp_prepare::BuildStage::Initialization, error.into());
+    assert_eq!(
+        failure.completion,
+        Some(wisp_engine::Completion::Trapped),
+        "capability refusals must retain the guest completion in the isolated worker report"
     );
 }
 
@@ -343,5 +350,29 @@ fn initialization_identity_binds_application_content_independently_of_the_runtim
     assert_eq!(
         before.runtime_profile, after.runtime_profile,
         "application content must not alter runtime provenance"
+    );
+}
+
+#[test]
+fn a_module_without_initialization_retains_its_runtime_table_operations() {
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1 1)
+        (table (export "table") 1 funcref)
+        (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+        (func (export "wisp_handle") (param i32 i32) (result i64)
+            (table.set (i32.const 0) (ref.null func)) (i64.const 0))
+        (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
+    )
+    .expect("valid runtime table mutation");
+    let result = initialize(&engine(), &wasm, &request())
+        .expect("a module without initialization must retain supported runtime capabilities");
+    assert_eq!(
+        result.wasm, wasm,
+        "no initializer means no portable module rewrite"
+    );
+    assert_eq!(
+        result.passes, 0,
+        "a module without an initializer cannot execute preparation passes"
     );
 }

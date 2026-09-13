@@ -61,6 +61,8 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
 /// answers its first call without waiting on anything.
 struct Host;
 impl PalSource for Host {
+    fn record_initialization_call(&mut self, _module: &'static str) {}
+
     fn slice_clock_ms(&mut self) -> u64 {
         0
     }

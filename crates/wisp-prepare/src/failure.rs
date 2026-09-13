@@ -29,7 +29,10 @@ impl WorkerFailure {
     /// Classify an operation failure without parsing its diagnostic text.
     pub fn new(stage: BuildStage, error: anyhow::Error) -> Self {
         let completion = match error.downcast_ref::<crate::PrepareError>() {
-            Some(crate::PrepareError::Initialization { completion, .. }) => Some(*completion),
+            Some(
+                crate::PrepareError::Initialization { completion, .. }
+                | crate::PrepareError::Unattributable { completion, .. },
+            ) => Some(*completion),
             // Other preparation failures have no guest completion outcome.
             _ => None,
         };

@@ -35,6 +35,12 @@ pub(crate) fn is_foreign_module(name: &str) -> bool {
 /// `entropy_fill` binding through the same `call_fill` path every host-to-guest
 /// byte takes.
 impl PalSource for StoreState {
+    fn record_initialization_call(&mut self, module: &'static str) {
+        if self.is_init_sandbox() {
+            *self.init_pal_calls.entry(module).or_default() += 1;
+        }
+    }
+
     fn check_capability(&mut self, import: &'static str) -> wasmtime::Result<()> {
         if self.is_init_sandbox() && !self.init_runtime_capability(import) {
             self.violation = Some(import);
@@ -102,6 +108,9 @@ impl PalSource for StoreState {
 /// Host capabilities available to composed native runtime imports.
 /// Sealed initialization provides clock and entropy but refuses readiness resources.
 pub trait PalSource: Send + 'static {
+    /// Record a delegated PAL module call in the initialization ledger, when active.
+    fn record_initialization_call(&mut self, module: &'static str);
+
     /// Apply context-specific policy before a delegated clock or entropy call.
     fn check_capability(&mut self, _import: &'static str) -> wasmtime::Result<()> {
         Ok(())
@@ -269,6 +278,7 @@ fn define_delegate<T: PalSource>(
                 def.func,
                 |mut c: wasmtime::Caller<'_, T>| -> wasmtime::Result<i64> {
                     c.data_mut().check_capability("clock_now_coarse")?;
+                    c.data_mut().record_initialization_call(MONOTONIC);
                     let ms = c.data_mut().slice_clock_ms();
                     // Saturating: a clock that stops is a better answer than
                     // one that runs backwards.
@@ -295,6 +305,7 @@ fn define_delegate<T: PalSource>(
                 def.module,
                 def.func,
                 |mut c: wasmtime::Caller<'_, T>, retptr: i32| -> wasmtime::Result<()> {
+                    c.data_mut().record_initialization_call(CLI_ENV);
                     let mem = memory_of(&mut c)?;
                     mem.write(&mut c, retptr as usize, &[0u8; 8])?;
                     Ok(())
@@ -310,6 +321,7 @@ fn define_delegate<T: PalSource>(
                 def.func,
                 |mut c: wasmtime::Caller<'_, T>, len: i64, retptr: i32| -> wasmtime::Result<()> {
                     c.data_mut().check_capability("entropy_fill")?;
+                    c.data_mut().record_initialization_call(RANDOM);
                     let n = if len < 0 { 0u64 } else { len as u64 };
                     if n > MAX_ENTROPY_BYTES {
                         return Err(wasmtime::Error::msg(format!(

@@ -1,5 +1,9 @@
 #![cfg(feature = "real-backends")]
 
+#[path = "common/preparation.rs"]
+mod preparation;
+use preparation::LocalDeployment;
+
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, StatusCode};
@@ -53,7 +57,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     node.real
         .as_ref()
         .unwrap()
-        .deploy_version(
+        .deploy_locally(
             "quotes",
             "v1",
             "acme",

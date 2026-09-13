@@ -256,3 +256,36 @@ fn builder_output_cannot_replace_host_platform_files() {
         "builder output cannot replace host-managed trust material before publication"
     );
 }
+
+#[test]
+fn receipt_checks_do_not_read_native_or_baseline_payloads() {
+    let engine = test_engine();
+    let wasm = guest(4, "", "", DONE, DONE);
+    let identity = identity(&wasm);
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("prepared");
+    engine
+        .prepare_template(&wasm, identity)
+        .expect("prepare")
+        .publish(&path, PreparedStorage::VerifiedCopy)
+        .expect("publish");
+    let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
+    for name in ["template.cwasm", "baseline.bin", "state.bin"] {
+        std::fs::remove_file(path.join(name)).expect("remove payload");
+    }
+    assert_eq!(
+        engine
+            .check_prepared_receipt(&path, digest, identity.runtime_profile)
+            .expect("manifest-only receipt check"),
+        identity,
+        "receipt checks must not materialize native code or baseline pages"
+    );
+    assert!(
+        unsafe {
+            // SAFETY: this test compiled the artifact into its own private fixture storage.
+            engine.restore_prepared(&path, digest, identity.runtime_profile)
+        }
+        .is_err(),
+        "a manifest receipt alone must not qualify missing executable payloads"
+    );
+}

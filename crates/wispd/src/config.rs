@@ -260,6 +260,7 @@ impl NodeConfig {
                 .validate()
                 .map_err(|error| ConfigError::Preparation(error.to_string()))?;
         }
+        #[cfg(feature = "real-backends")]
         self.validate_placement()?;
         self.trust_bundle().map(drop)
     }

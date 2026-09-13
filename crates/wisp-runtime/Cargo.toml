@@ -4,22 +4,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "Shared guest admission, preparation and host bindings, without deployment or node administration"
+description = "Shared guest admission and host bindings, without deployment or node administration"
 
 [dependencies]
-rand = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
-wisp-engine = { workspace = true, optional = true }
 wasmparser = { workspace = true }
-blake3 = { workspace = true, optional = true }
 parking_lot = { workspace = true }
-wizer = { workspace = true, optional = true }
-cpu-time = { workspace = true, optional = true }
-rayon = { workspace = true, optional = true }
 
 async-trait = { workspace = true }
 serde_json = { workspace = true }
@@ -30,7 +24,6 @@ wisp-proxy = { workspace = true, optional = true }
 [features]
 default = []
 local = ["dep:tokio", "dep:wisp-host", "dep:wisp-proxy"]
-preinit = ["dep:wisp-engine", "dep:blake3", "dep:wizer", "dep:cpu-time", "dep:rayon"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

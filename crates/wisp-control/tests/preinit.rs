@@ -159,7 +159,11 @@ fn impure_units_are_deferred_and_pre_init_converges() {
         "one pass per discovered impure unit, plus one clean pass"
     );
     assert_eq!(out.deferred_units, vec![2]);
-    assert_eq!(out.deferred_reasons, vec![(2, "clock_now_coarse")]);
+    assert_eq!(
+        out.deferred_reasons,
+        vec![(2, "clock_now_coarse".into())],
+        "each deferred unit must retain the capability that caused its refusal"
+    );
     assert_eq!(out.capability_refusals, 1);
 
     // Allowed state and entropy are captured; the refused clock assignment is not.
@@ -307,9 +311,9 @@ fn unattributable_traps_fail_the_deploy() {
         matches!(
             err,
             PreInitError::Unattributable {
-                import: "clock_now_coarse",
+                ref import,
                 ..
-            }
+            } if import == "clock_now_coarse"
         ),
         "a trap outside any unit names the capability and fails the deploy: {err}"
     );
@@ -385,8 +389,8 @@ fn runtime_bringup_defers_unit_clocks_and_captures_entropy() {
         .expect("pre-init must converge");
 
     assert_eq!(out.deferred_units, vec![2]);
-    assert_eq!(out.deferred_reasons, vec![(2, "clock_now_coarse")]);
-    assert_eq!(out.pal_calls, vec![("entropy_fill", 1)]);
+    assert_eq!(out.deferred_reasons, vec![(2, "clock_now_coarse".into())]);
+    assert_eq!(out.pal_calls, vec![("entropy_fill".into(), 1)]);
 
     let mut t = Template::load(&out.template_wasm);
     assert_eq!(
@@ -431,7 +435,11 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
     println!("PAL calls: {:?}", out.pal_calls);
     assert_eq!(
         out.pal_calls,
-        vec![("clock_now_coarse", 1), ("entropy_fill", 1)]
+        vec![
+            ("clock_now_coarse".to_string(), 1),
+            ("entropy_fill".to_string(), 1)
+        ],
+        "runtime bring-up must record the clock and entropy answers it consumed"
     );
 
     let mut t = Template::load(&out.template_wasm);
@@ -466,7 +474,7 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
     let wasm = wat::parse_str(wat).unwrap();
     let out = PreInitializer::new().run(&wasm, &req(&wasm)).unwrap();
     assert_eq!(out.deferred_units, vec![9]);
-    assert_eq!(out.deferred_reasons, vec![(9, "clock_deadline_in")]);
+    assert_eq!(out.deferred_reasons, vec![(9, "clock_deadline_in".into())]);
     // The refused capability defers unit 9 before it can assign the global.
     assert_eq!(Template::load(&out.template_wasm).i64("get_g"), 0);
 }
@@ -683,6 +691,11 @@ fn sealed_initialization_receives_an_empty_launch_argument_list() {
     assert_eq!(
         output.passes, 1,
         "empty launch arguments must not defer initialization"
+    );
+    assert_eq!(
+        output.pal_calls,
+        vec![(wisp_abi::pal::CLI_ENV.to_owned(), 1)],
+        "the initialization ledger must record the delegated launch argument call"
     );
 }
 

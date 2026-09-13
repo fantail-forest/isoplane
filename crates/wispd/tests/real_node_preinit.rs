@@ -4,6 +4,10 @@
 
 #![cfg(feature = "real-backends")]
 
+#[path = "common/preparation.rs"]
+mod preparation;
+use preparation::LocalDeployment;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -109,23 +113,26 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
 
     let dir = tempfile::tempdir().expect("a temporary directory");
     let mut cfg = config(dir.path());
-    cfg.apps[0].versions[0].wasm = Some(path);
+    let wasm = std::fs::read(path).expect("the guest fixture is built");
     cfg.apps[0].init_visible_vars = [("REGION".to_string(), "nz-akl".to_string())]
         .into_iter()
         .collect();
 
+    let mut manifest: wisp_abi::config::AppManifest =
+        toml::from_str("name = 'quotes'").expect("valid manifest");
+    manifest.init_visible_vars = cfg.apps[0]
+        .init_visible_vars
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     let node = Node::build(cfg).expect("a real node must assemble");
-
     let rec = node
-        .deploys
-        .lock()
-        .first()
-        .cloned()
-        .expect("startup deploys are recorded");
-    assert!(
-        rec.pipeline_ran,
-        "the daemon must run the pipeline, not register raw"
-    );
+        .real
+        .as_ref()
+        .expect("real cells")
+        .deploy_locally("quotes", "v1", "acme", manifest, &wasm, Default::default())
+        .await
+        .expect("explicit local preparation");
     assert!(
         rec.from_template,
         "a guest that exports wisp_initialize must yield a template"
@@ -136,22 +143,20 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
         rec.stages
     );
     let pre = rec
+        .inner
         .preinit
         .as_ref()
         .expect("a template implies a pre-init summary");
-    let reasons: Vec<String> = pre["deferred_reasons"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|d| d[1].as_str().unwrap().to_string())
-        .collect();
     assert_eq!(
-        reasons,
-        vec!["clock_now_coarse".to_string()],
+        pre.deferred_reasons
+            .iter()
+            .map(|(_, reason)| reason.as_str())
+            .collect::<Vec<_>>(),
+        vec!["clock_now_coarse"],
         "exactly the clock-reading initializer defers"
     );
     assert_eq!(
-        pre["init_pal"], "sealed",
+        pre.init_pal, "sealed",
         "a Rust SDK guest needs no runtime PAL"
     );
 

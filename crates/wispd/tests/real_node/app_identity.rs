@@ -1,9 +1,9 @@
-use base64::Engine as _;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::Request;
 
 use super::{common, guest, head};
+use common::preparation::LocalDeployment;
 
 async fn two_apps(first_version: &str, second_version: &str) -> common::Rig {
     let directory = tempfile::tempdir().expect("a unique node directory");
@@ -18,6 +18,25 @@ async fn two_apps(first_version: &str, second_version: &str) -> common::Rig {
     let node =
         wispd::node::Node::build(config).expect("distinct app identities must form a valid node");
     let rig = common::serve(node, directory).await;
+    for (app, tenant, version, status) in [
+        ("quotes", "acme", first_version, 201),
+        ("quotes@team", "another-tenant", second_version, 202),
+    ] {
+        rig.node
+            .real
+            .as_ref()
+            .expect("real cells")
+            .deploy_locally(
+                app,
+                version,
+                tenant,
+                common::manifest(app),
+                &guest(&head(status, app)),
+                Default::default(),
+            )
+            .await
+            .expect("explicit test preparation");
+    }
     rig
 }
 

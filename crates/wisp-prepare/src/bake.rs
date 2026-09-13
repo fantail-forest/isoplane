@@ -16,6 +16,12 @@ pub(crate) struct Instrumented {
 }
 
 pub(crate) fn instrument(wasm: &[u8]) -> anyhow::Result<Instrumented> {
+    if !has_initializer(wasm)? {
+        return Ok(Instrumented {
+            wasm: wasm.to_vec(),
+            globals: Vec::new(),
+        });
+    }
     let mut globals = Vec::new();
     let mut tables = 0;
     for payload in Parser::new(0).parse_all(wasm) {
@@ -44,9 +50,6 @@ pub(crate) fn instrument(wasm: &[u8]) -> anyhow::Result<Instrumented> {
                     );
                 }
             }
-            Payload::StartSection { .. } => bail!(
-                "preparation requires an explicit wisp_initialize export, not a start section"
-            ),
             Payload::CodeSectionEntry(body) => {
                 let mut reader = body.get_operators_reader()?;
                 while !reader.eof() {
@@ -100,6 +103,26 @@ pub(crate) fn instrument(wasm: &[u8]) -> anyhow::Result<Instrumented> {
         wasm: output.finish(),
         globals,
     })
+}
+
+fn has_initializer(wasm: &[u8]) -> anyhow::Result<bool> {
+    let mut found = false;
+    for payload in Parser::new(0).parse_all(wasm) {
+        match payload? {
+            Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export?;
+                    found |= export.name == wisp_abi::imports::exports::INITIALIZE
+                        && export.kind == ExternalKind::Func;
+                }
+            }
+            Payload::StartSection { .. } => bail!(
+                "preparation requires an explicit wisp_initialize export, not a start section"
+            ),
+            _ => {}
+        }
+    }
+    Ok(found)
 }
 
 pub(crate) fn bake(

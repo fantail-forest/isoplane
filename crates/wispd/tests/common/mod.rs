@@ -1,6 +1,9 @@
 //! A real node under test: real engine, cells, guest wasm and proxy, on
 //! ephemeral ports, with one app `quotes@v1` deployed through the pipeline.
 
+pub mod preparation;
+use preparation::LocalDeployment;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -74,6 +77,7 @@ impl Rig {
 
     /// Join cell workers without blocking the test's async executor.
     pub async fn shutdown(mut self) {
+        self.node.shutdown();
         for listener in self.listeners.drain(..) {
             listener.abort();
             match listener.await {
@@ -84,6 +88,10 @@ impl Rig {
                 ),
             }
         }
+        self.node
+            .wait_for_shutdown()
+            .await
+            .expect("application processes must be reaped");
         tokio::task::spawn_blocking(move || drop(self))
             .await
             .unwrap();
@@ -114,7 +122,7 @@ pub async fn start_with_policy(
         .real
         .clone()
         .expect("the node has its execution backend");
-    real.deploy_version("quotes", "v1", "acme", manifest("quotes"), &wasm, sandbox)
+    real.deploy_locally("quotes", "v1", "acme", manifest("quotes"), &wasm, sandbox)
         .await
         .expect("deploying the module");
     serve(node, dir).await
@@ -126,7 +134,7 @@ pub async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
     let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (proxy, admin) = (p.local_addr().unwrap(), a.local_addr().unwrap());
     let listeners = vec![
-        tokio::spawn(node.proxy.clone().serve(p)),
+        tokio::spawn(node.clone().serve(p)),
         tokio::spawn(wispd::http::serve(node.clone(), a)),
     ];
     Rig {

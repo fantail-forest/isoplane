@@ -83,10 +83,10 @@ impl Prepared {
 }
 
 fn preinitialize(project: &Project, wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
-    Ok(wisp_runtime::PreInitializer::new()
+    Ok(wisp_prepare::PreInitializer::new()
         .with_pal(project.init_sandbox)
         .with_platform_files(project.platform_files.clone())
-        .run(wasm, &wisp_runtime::PreInitRequest {
+        .run(wasm, &wisp_prepare::PreInitRequest {
             module_hash: wisp_engine::ModuleHash::of(wasm),
             init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
         })

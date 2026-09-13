@@ -137,6 +137,14 @@ pub(crate) fn initialize_with_cache(
                         deferred_reasons.push((unit, import.to_string()));
                         continue;
                     }
+                    return Err(PrepareError::Unattributable {
+                        completion: outcome.completion,
+                        import: import.to_string(),
+                        detail: outcome
+                            .trap
+                            .map(|trap| trap.message)
+                            .unwrap_or_else(|| "forbidden initialization capability".into()),
+                    });
                 }
                 return Err(PrepareError::Initialization {
                     completion: outcome.completion,

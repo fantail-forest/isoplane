@@ -1,3 +1,4 @@
+use crate::common::preparation::LocalDeployment;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -76,7 +77,7 @@ async fn node_for(destination: SocketAddr, policy: Option<Arc<dyn DestinationPol
     node.real
         .as_ref()
         .expect("the node must use real backends")
-        .deploy_version(
+        .deploy_locally(
             "quotes",
             "v1",
             "acme",
@@ -179,7 +180,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
     node.real
         .as_ref()
         .expect("the node must use real backends")
-        .deploy_version(
+        .deploy_locally(
             "quotes",
             "v1",
             "acme",

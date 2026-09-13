@@ -82,5 +82,10 @@ wat = { workspace = true }
 tempfile = { workspace = true }
 wisp-fixtures = { workspace = true }
 
+[[example]]
+name = "mapped-load"
+path = "examples/mapped_load/main.rs"
+required-features = ["real-backends"]
+
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true

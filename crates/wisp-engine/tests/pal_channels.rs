@@ -49,6 +49,8 @@ impl Host {
 }
 
 impl PalSource for Host {
+    fn record_initialization_call(&mut self, _module: &'static str) {}
+
     fn slice_clock_ms(&mut self) -> u64 {
         self.slice_ms
     }

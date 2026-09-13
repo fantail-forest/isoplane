@@ -47,7 +47,7 @@ serde_json  = "1"
 postcard    = { version = "1", features = ["alloc"] }
 toml        = "0.9"
 tokio       = { version = "1", features = ["full", "test-util"] }
-tokio-util  = { version = "0.7", features = ["rt"] }
+tokio-util  = { version = "0.7", features = ["rt", "codec"] }
 async-trait = "0.1"
 futures     = "0.3"
 socket2 = "0.6.5"
@@ -94,11 +94,7 @@ tempfile    = "3"
 memmap2 = "0.9"
 linux-raw-sys = { version = "0.12", features = ["ioctl"] }
 fd-lock     = "4"
-# Pre-init runs wizer's embedded wasmtime, which compiles through rayon. Named
-# here so guest preparation can bound that pool; must resolve to the same rayon
-# both wasmtime versions use, or `install` would scope a pool nobody consults.
 rayon       = "1"
-wizer       = "10"
 base64      = "0.22"
 reqwest     = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 sha1        = "0.10"

@@ -1,8 +1,10 @@
 //! Local module validation and preparation primitives.
 
+#![forbid(unsafe_code)]
+
 pub mod aot;
 #[cfg(feature = "preinit")]
-pub use wisp_runtime::preinit;
+pub use wisp_prepare::preinit;
 pub use wisp_runtime::validator;
 
 #[cfg(feature = "preinit")]

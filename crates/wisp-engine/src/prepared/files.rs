@@ -29,6 +29,15 @@ pub enum PreparedPayload {
 }
 
 impl PreparedPayload {
+    /// Canonical file name inside a published prepared-artifact directory.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::Native => super::NATIVE,
+            Self::Baseline => super::BASELINE,
+            Self::State => super::STATE,
+        }
+    }
+
     pub(super) fn index(self) -> usize {
         match self {
             Self::Native => 0,

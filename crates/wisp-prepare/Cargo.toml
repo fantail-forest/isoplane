@@ -28,4 +28,5 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+wasmtime.workspace = true
 wat.workspace = true
