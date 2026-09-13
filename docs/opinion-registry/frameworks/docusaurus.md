@@ -1,5 +1,7 @@
 # Docusaurus
 
+Choose what belongs in a maintained site using the [documentation lifecycle opinion](../workflow/documentation-lifecycle.md). Temporary research and reports belong in repository Discussions. Difficulty documenting a workflow should feed product improvement, not just more explanation.
+
 ## Organize documentation around Diátaxis needs
 
 Use [Diátaxis](https://diataxis.fr/) for both customer and internal documentation.

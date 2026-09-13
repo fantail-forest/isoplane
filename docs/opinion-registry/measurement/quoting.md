@@ -26,7 +26,7 @@ Most code needs no measurement to explain it. Quote one when a reader would othe
 
 ## Keep a measurement with the decision it informed
 
-The place to quote a result is the commit message or the comment on the constant it justified. Treat benchmark run records as build outputs and keep them out of the repository. A directory of results invites findings that outlive the decisions they supported and get read as documentation.
+Keep a lasting rationale in the commit message or beside the decision it explains. Put current-problem experiment reports and interpretation in repository Discussions, following the [documentation lifecycle opinion](../workflow/documentation-lifecycle.md). Treat raw benchmark run records as build outputs and keep them out of the repository. A directory of results invites findings that outlive the decisions they supported and get read as documentation.
 
 **Not this:** A checked-in tree of run reports; a measurement library that tests report through.
 

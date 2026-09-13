@@ -2,7 +2,7 @@
 
 ## Three layers, each proving different things
 
-Unit tests prove isolated logic (a page diff, a route matcher, a budget calculation). Integration tests in a crate's `tests/` prove that crate's components collaborate through real interfaces (a cell dispatching a real wasm guest, the store fencing a real SQLite row). Acceptance scenarios prove the platform delivers a behaviour through its real entry points: `wispd`'s listener, the `wisp` command, a guest export. Most bugs live at the interfaces between components, so integration tests catch more per test than units do.
+Unit tests prove isolated logic (a page diff, a route matcher, a budget calculation). Integration tests in a crate's `tests/` prove that crate's components collaborate through real interfaces (a cell dispatching a real wasm guest, the store fencing a real PostgreSQL row). Acceptance scenarios prove the platform delivers a behaviour through its real entry points: `wispd`'s listener, the `wisp` command, a guest export. Most bugs live at the interfaces between components, so integration tests catch more per test than units do.
 
 **Not this:** Hundreds of unit tests of engine internals wearing acceptance-scenario clothing, plus one end-to-end test.
 
