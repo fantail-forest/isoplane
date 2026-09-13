@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 zstd.workspace = true
+fs4.workspace = true
 wisp-trust = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -28,6 +29,7 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 url = { workspace = true }
+reqwest = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

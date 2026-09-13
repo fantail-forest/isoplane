@@ -160,3 +160,73 @@ fn prepared_portable_input_cannot_rerun_a_start_function_on_activation() {
         "preparation must bake and remove the start function before native serialization"
     );
 }
+
+fn compiled_artifact() -> (wisp_engine::WispEngine, tempfile::TempDir, PreparedIdentity) {
+    let engine = test_engine();
+    let wasm = guest(4, "", "", DONE, DONE);
+    let expected = identity(&wasm);
+    let directory = tempfile::tempdir().expect("compiled artifact");
+    engine
+        .prepare_template(&wasm, expected)
+        .expect("prepare")
+        .publish(
+            &directory.path().join("version"),
+            PreparedStorage::VerifiedCopy,
+        )
+        .expect("publish");
+    (engine, directory, expected)
+}
+
+#[test]
+fn receipt_restoration_checks_the_exact_manifest_and_runtime() {
+    let (engine, directory, expected) = compiled_artifact();
+    let path = directory.path().join("version");
+    let digest = engine
+        .prepared_manifest_sha256(&path)
+        .expect("content receipt");
+    let restored = unsafe {
+        // SAFETY: this test compiled the artifact into its own private fixture storage.
+        engine.restore_prepared(&path, digest, expected.runtime_profile)
+    }
+    .expect("the receipt must select compiled state without input hashes supplied separately");
+    assert!(
+        activate(&engine, &restored).memory().len() >= 4 * 65536,
+        "receipt restoration must produce an activatable template"
+    );
+}
+
+#[test]
+fn receipt_restoration_rejects_a_different_manifest_digest() {
+    let (engine, directory, expected) = compiled_artifact();
+    assert!(
+        matches!(
+            unsafe {
+                // SAFETY: this test compiled the artifact into its own private fixture storage.
+                engine.restore_prepared(
+                    &directory.path().join("version"),
+                    [0; 32],
+                    expected.runtime_profile,
+                )
+            },
+            Err(PreparedError::Incompatible("catalog manifest digest"))
+        ),
+        "an artifact selected by a different receipt must not execute"
+    );
+}
+
+#[test]
+fn receipt_restoration_rejects_a_different_runtime_profile() {
+    let (engine, directory, _) = compiled_artifact();
+    let path = directory.path().join("version");
+    let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
+    assert!(
+        matches!(
+            unsafe {
+                // SAFETY: this test compiled the artifact into its own private fixture storage.
+                engine.restore_prepared(&path, digest, [0; 32])
+            },
+            Err(PreparedError::Incompatible("catalog runtime profile"))
+        ),
+        "the selected runtime must match the compiled prepared state"
+    );
+}

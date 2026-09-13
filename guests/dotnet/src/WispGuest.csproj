@@ -84,6 +84,10 @@
     <DefineConstants>$(DefineConstants);WISP_TIMER_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(WispLogProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);WISP_LOG_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(WispAsyncProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);WISP_ASYNC_PROBE</DefineConstants>
   </PropertyGroup>

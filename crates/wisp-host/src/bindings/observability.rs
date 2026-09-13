@@ -13,19 +13,31 @@ impl CellBindings {
     /// share visible and the byte cap bounds volume.
     pub(super) fn log_emit(&self, payload: &[u8], scalars: [u64; 3]) -> i64 {
         let cpu = CpuInterval::start();
-        let level = scalars[0] as u8;
-        let n = payload.len() as u32;
-        let used = self.ctx.log_bytes.fetch_add(n, Ordering::Relaxed) + n;
+        let Ok(level @ 0..=4) = u8::try_from(scalars[0]) else {
+            self.ctx.latch_trap(wisp_abi::status::TrapCode::Protocol);
+            return 0;
+        };
+        let n = u32::try_from(payload.len()).unwrap_or(u32::MAX);
+        let used = self
+            .ctx
+            .log_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                Some(used.saturating_add(n))
+            })
+            .expect("the update closure above always returns Some")
+            .saturating_add(n);
         if used > MAX_LOG_BYTES_PER_DISPATCH {
             return 0;
         }
         let fields = String::from_utf8_lossy(payload).to_string();
         tracing::info!(
             tenant = %self.ctx.tenant,
+            app = %self.ctx.module.app,
+            version = %self.ctx.module.version,
+            at_ms = self.ctx.slice_clock_ms(),
             module = %self.ctx.module,
             instance = %self.ctx.instance,
             dispatch = self.ctx.dispatch_id(),
-            at_ms = self.ctx.slice_clock_ms(),
             level,
             %fields,
             "guest log"
@@ -58,6 +70,63 @@ mod tests {
     use super::super::tests::{call, ctx};
     use super::*;
     use wisp_engine::HostBindings;
+
+    #[test]
+    fn log_levels_outside_the_canonical_range_latch_a_protocol_trap() {
+        for level in [5, 256, u64::MAX] {
+            let output = TestLogCapture::default();
+            let subscriber = output.dispatch();
+            let _subscriber = tracing::dispatcher::set_default(&subscriber);
+            let context = ctx();
+            context.begin_dispatch(1, 1);
+            let mut bindings = CellBindings::new(context.clone());
+            bindings.call_sync(call("log_emit", b"invalid severity", [level, 0, 0]));
+            assert_eq!(
+                context.take_trap(),
+                Some(wisp_abi::status::TrapCode::Protocol),
+                "an invalid log severity cannot wrap into a supported level"
+            );
+            assert!(
+                output.records().is_empty(),
+                "malformed log calls cannot publish customer records"
+            );
+        }
+    }
+
+    #[test]
+    fn log_volume_accepts_the_boundary_and_cannot_wrap_back_into_a_fresh_allowance() {
+        let output = TestLogCapture::default();
+        let subscriber = output.dispatch();
+        let _subscriber = tracing::dispatcher::set_default(&subscriber);
+        let context = ctx();
+        context.begin_dispatch(1, 1);
+        let mut bindings = CellBindings::new(context.clone());
+        bindings.call_sync(call(
+            "log_emit",
+            &vec![b'x'; MAX_LOG_BYTES_PER_DISPATCH as usize],
+            [2, 0, 0],
+        ));
+        bindings.call_sync(call("log_emit", b"one byte over", [2, 0, 0]));
+        assert_eq!(
+            output.records().len(),
+            1,
+            "the exact log-byte boundary is accepted and subsequent bytes are refused"
+        );
+        context.log_bytes.store(u32::MAX, Ordering::Relaxed);
+        bindings.call_sync(call("log_emit", b"cannot wrap", [2, 0, 0]));
+        assert_eq!(
+            output.records().len(),
+            1,
+            "overflow cannot reset a dispatch's exhausted log allowance"
+        );
+        context.begin_dispatch(2, 2);
+        bindings.call_sync(call("log_emit", b"new dispatch", [2, 0, 0]));
+        assert_eq!(
+            output.records().len(),
+            2,
+            "a new dispatch obtains its own log allowance"
+        );
+    }
 
     #[test]
     fn logs_are_structured_charged_and_bounded() {

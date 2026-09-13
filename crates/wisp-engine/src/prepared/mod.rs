@@ -166,6 +166,38 @@ impl WispEngine {
     ) -> Result<Template> {
         let manifest = files::read_manifest(directory)?;
         self.check_prepared(&manifest, expected)?;
+        self.load_prepared_owned(directory, manifest)
+    }
+
+    /// Checks a local manifest and returns the exact content digest recorded by selection.
+    pub fn prepared_manifest_sha256(&self, directory: &Path) -> Result<[u8; 32]> {
+        let (manifest, digest) = files::read_manifest_receipt(directory)?;
+        self.check_prepared(&manifest, manifest.identity)?;
+        Ok(digest)
+    }
+
+    /// Restore the selected local artifact without compilation or initialization.
+    /// # Safety
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn restore_prepared(
+        &self,
+        directory: &Path,
+        manifest_sha256: [u8; 32],
+        runtime_profile: [u8; 32],
+    ) -> Result<Template> {
+        let (manifest, digest) = files::read_manifest_receipt(directory)?;
+        if digest != manifest_sha256 {
+            return Err(PreparedError::Incompatible("prepared manifest digest"));
+        }
+        if manifest.identity.runtime_profile != runtime_profile {
+            return Err(PreparedError::Incompatible("prepared runtime profile"));
+        }
+        self.check_prepared(&manifest, manifest.identity)?;
+        self.load_prepared_owned(directory, manifest)
+    }
+
+    fn load_prepared_owned(&self, directory: &Path, manifest: Manifest) -> Result<Template> {
         let payloads = files::read_payloads(directory, &manifest)?;
         let [native, baseline, state] = payloads;
         let state: state::State = postcard::from_bytes(&state)?;

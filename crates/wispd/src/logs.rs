@@ -98,12 +98,16 @@ where
                     .with_target("wisp_host::cell::completion", tracing::Level::INFO),
             )
     });
-    let subscriber =
-        tracing::Dispatch::new(tracing_subscriber::registry().with(text).with(events).with(
-            diagnostics::CollectorDiagnostics.with_filter(tracing_subscriber::filter::filter_fn(
-                |metadata| !diagnostics::contains_no_collector_payload(metadata),
+    let subscriber = tracing::Dispatch::new(
+        tracing_subscriber::registry()
+            .with(text)
+            .with(events)
+            .with(diagnostics::CollectorDiagnostics.with_filter(
+                tracing_subscriber::filter::filter_fn(|metadata| {
+                    !diagnostics::contains_no_collector_payload(metadata)
+                }),
             )),
-        ));
+    );
     Ok((Logging { provider }, subscriber))
 }
 

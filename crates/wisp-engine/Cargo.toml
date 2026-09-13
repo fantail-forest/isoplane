@@ -33,6 +33,7 @@ parking_lot = { workspace = true }
 rayon = { workspace = true }
 postcard = { workspace = true }
 blake3 = { workspace = true }
+sha2 = { workspace = true }
 
 memmap2 = { workspace = true }
 tempfile = { workspace = true }

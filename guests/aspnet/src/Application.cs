@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Wisp.AspNetCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace AdapterFixture;
 
@@ -26,6 +27,12 @@ public static class Application
             }
         });
         app.MapGet("/", () => "WISP ASP.NET");
+        app.MapGet("/logs", async context =>
+        {
+            context.RequestServices.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("AspNetLoggingFixture").LogWarning("aspnet-application-log");
+            await context.Response.WriteAsync("aspnet logged");
+        });
         app.MapPost("/echo", async context =>
         {
             context.Response.OnStarting(() =>

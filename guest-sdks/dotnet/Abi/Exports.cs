@@ -28,6 +28,7 @@ public static unsafe class Exports<TRouter>
     private static void Boot()
     {
         if (_booted) return;
+        GuestConsole.Install();
         SynchronizationContext.SetSynchronizationContext(WispSynchronizationContext.Instance);
         _router = new TRouter();
         _router.Boot();

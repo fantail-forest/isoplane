@@ -8,6 +8,7 @@ description = "WebAssembly initialization and prepared application production"
 
 [dependencies]
 rand = { workspace = true }
+fs4.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 rayon.workspace = true

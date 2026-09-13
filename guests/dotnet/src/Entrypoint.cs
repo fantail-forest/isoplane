@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 
-#if WISP_STREAMING_PROBE
+#if WISP_LOG_PROBE
+using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.LogProbe>>;
+#elif WISP_STREAMING_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamingProbe>>;
 #elif WISP_ACTIVATION_PROBE
 using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ActivationProbe>>;

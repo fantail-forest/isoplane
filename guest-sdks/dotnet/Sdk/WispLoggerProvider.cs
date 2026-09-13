@@ -55,7 +55,8 @@ public sealed class WispLoggerProvider : ILoggerProvider, ISupportExternalScope
                 writer.WriteEndArray();
                 writer.WriteEndObject();
             }
-            provider.emit((int)logLevel, Encoding.UTF8.GetString(buffer.GetBuffer(), 0, checked((int)buffer.Length)));
+            var hostLevel = logLevel == LogLevel.Critical ? LogLevel.Error : logLevel;
+            provider.emit((int)hostLevel, Encoding.UTF8.GetString(buffer.GetBuffer(), 0, checked((int)buffer.Length)));
         }
     }
 }

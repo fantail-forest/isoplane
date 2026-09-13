@@ -132,6 +132,13 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub(super) fn read_manifest(directory: &Path) -> Result<Manifest> {
+    read_manifest_receipt(directory).map(|(manifest, _)| manifest)
+}
+
+pub(super) fn read_manifest_receipt(
+    directory: &Path,
+) -> Result<(Manifest, [u8; 32])> {
+    use sha2::Digest;
     let path = directory.join(MANIFEST);
     let file = File::open(&path).map_err(|e| io("open manifest", &path, e))?;
     // The schema has three fixed records and one engine identity, never arbitrary payload bytes.
@@ -150,7 +157,10 @@ pub(super) fn read_manifest(directory: &Path) -> Result<Manifest> {
     if bytes.is_empty() || bytes.len() > 65536 {
         return Err(PreparedError::Invalid("manifest length"));
     }
-    Ok(postcard::from_bytes(&bytes)?)
+    Ok((
+        postcard::from_bytes(&bytes)?,
+        sha2::Sha256::digest(&bytes).into(),
+    ))
 }
 
 pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Vec<u8>; 3]> {

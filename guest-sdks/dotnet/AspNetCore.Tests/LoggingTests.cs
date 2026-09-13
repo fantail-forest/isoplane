@@ -7,6 +7,35 @@ namespace Wisp.AspNetCore.Tests;
 public sealed class LoggingTests
 {
     [Fact]
+    public void critical_logs_use_the_host_error_level_and_keep_the_framework_severity()
+    {
+        var records = new List<(int Level, string Fields)>();
+        using var provider = new WispLoggerProvider((level, fields) => records.Add((level, fields)));
+        provider.CreateLogger("CustomerApplication").LogCritical("cannot continue");
+        using var payload = JsonDocument.Parse(records.Single().Fields);
+        Assert.True(records[0].Level == (int)LogLevel.Error && payload.RootElement.GetProperty("severity").GetString() == "Critical",
+            "Critical events must use the supported host error severity without losing the framework's diagnostic level.");
+    }
+
+    [Fact]
+    public async Task console_writes_emit_during_the_call_without_retaining_post_response_work()
+    {
+        var records = new List<(int Level, string Fields)>();
+        using var writer = new Wisp.Runtime.GuestConsole((int)LogLevel.Information, (level, fields) => records.Add((level, fields)));
+        writer.Write("first");
+        var written = writer.WriteLineAsync("second");
+        Assert.True(written.IsCompletedSuccessfully && records.Select(record => record.Fields).SequenceEqual(new[] { "first", "second" }),
+            "Console writes must reach the logging boundary synchronously rather than schedule background output.");
+        await written;
+        await writer.FlushAsync();
+        Assert.True(records.Count == 2, "Flushing must not publish buffered output after the dispatch ends.");
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writer.WriteAsync("cancelled".AsMemory(), cancelled.Token));
+        Assert.True(records.Count == 2, "A cancelled Console write cannot emit a log record.");
+    }
+
+    [Fact]
     public void application_logs_preserve_category_message_exception_and_active_scopes()
     {
         var records = new List<(int Level, string Fields)>();

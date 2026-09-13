@@ -1165,6 +1165,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs4"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e72ed92b67c146290f88e9c89d60ca163ea417a446f61ffd7b72df3e7f1dfd5"
+dependencies = [
+ "rustix 1.1.4",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1616,6 +1626,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2771,16 +2782,21 @@ dependencies = [
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tower",
  "tower-http",
  "tower-service",
@@ -2788,6 +2804,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4728,6 +4745,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5206,6 +5232,7 @@ dependencies = [
  "postcard",
  "rayon",
  "serde",
+ "sha2",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
@@ -5300,6 +5327,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
+ "fs4",
  "parking_lot",
  "postcard",
  "rand 0.9.5",
@@ -5422,6 +5450,7 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "fs4",
  "futures",
  "hex",
  "http-body-util",
@@ -5436,6 +5465,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "rand 0.9.5",
+ "reqwest 0.12.28",
  "rustls",
  "rustls-pki-types",
  "serde",

@@ -55,6 +55,7 @@ FIXTURES=(
   "wisp_guest_dotnet_connect|$ROOT/dotnet/out/wisp_guest_dotnet_connect.wasm|$ROOT/dotnet|-p:WispConnectProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_cleanup|$ROOT/dotnet/out/wisp_guest_dotnet_cleanup.wasm|$ROOT/dotnet|-p:WispCleanupProbe=true -p:IlcResilient=false"
   "wisp_guest_dotnet_timer|$ROOT/dotnet/out/wisp_guest_dotnet_timer.wasm|$ROOT/dotnet|-p:WispTimerProbe=true"
+  "wisp_guest_dotnet_logs|$ROOT/dotnet/out/wisp_guest_dotnet_logs.wasm|$ROOT/dotnet|-p:WispLogProbe=true"
   "wisp_guest_dotnet_async|$ROOT/dotnet/out/wisp_guest_dotnet_async.wasm|$ROOT/dotnet|-p:WispAsyncProbe=true"
   "wisp_guest_dotnet_filesystem|$ROOT/dotnet/out/wisp_guest_dotnet_filesystem.wasm|$ROOT/dotnet|-p:WispFilesystemProbe=true"
   "wisp_guest_aspnet|$ROOT/dotnet/out/wisp_guest_aspnet.wasm|$ROOT/aspnet|"
@@ -82,6 +83,7 @@ MONO_FIXTURES=(
   wisp_guest_dotnet_connect
   wisp_guest_dotnet_cleanup
   wisp_guest_dotnet_timer
+  wisp_guest_dotnet_logs
   wisp_guest_dotnet_async
   wisp_guest_dotnet_filesystem
   wisp_guest_dotnet_compat

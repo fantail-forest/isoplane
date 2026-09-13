@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use wisp_abi::config::{AppManifest, InitSandbox};
+use wisp_abi::config::AppManifest;
 
 /// Local compiler output store and preparation entry point.
 pub struct Deployer {
@@ -41,46 +41,99 @@ pub struct PreparationContext<'a> {
     pub cancellation: &'a tokio_util::sync::CancellationToken,
 }
 
-/// Locally compiled output ready for an existing engine to check and load.
-pub struct PreparedDeployment {
-    /// Newly published immutable artifact directory.
-    directory: std::path::PathBuf,
-    /// Exact source, runtime and initialization identity expected by execution.
-    identity: wisp_engine::prepared::PreparedIdentity,
-    /// Actual initialization observations from the local provider.
-    pub initialized: wisp_prepare::Initialized,
-    /// Provider-reported initialization duration.
-    pub preinit_ms: f64,
-    /// Provider-reported native preparation duration.
-    pub compile_ms: f64,
-    /// Measured artifact publication duration.
-    pub publication_ms: f64,
+struct Publication {
+    publication: tempfile::TempDir,
+    _publication_lock: std::fs::File,
+    receipt: PreparedReceipt,
+}
+
+/// An opaque directory name beneath this node's private artifact root.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ArtifactKey(String);
+
+impl TryFrom<String> for ArtifactKey {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.is_empty()
+            || value.len() > 128
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+        {
+            return Err("artifact key must contain only letters, digits, hyphens or underscores");
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<ArtifactKey> for String {
+    fn from(value: ArtifactKey) -> Self {
+        value.0
+    }
+}
+
+/// Immutable local preparation output selected by its content receipt.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedReceipt {
+    /// Immutable deployment version.
+    pub version: String,
+    /// Node-local artifact identity; never an arbitrary filesystem path.
+    pub artifact_key: ArtifactKey,
+    /// SHA256 of the complete prepared manifest.
+    pub manifest_sha256: String,
+    /// Exact trusted producer provenance.
+    pub runtime_profile: wisp_prepare::RuntimeProfile,
+    /// Runtime policy and application registration data.
+    pub manifest: AppManifest,
 }
 
 impl Deployer {
-    pub(crate) fn load_prepared(
+    pub(crate) fn restore_prepared(
         &self,
         engine: &wisp_engine::WispEngine,
-        deployed: &PreparedDeployment,
+        receipt: &PreparedReceipt,
     ) -> anyhow::Result<wisp_engine::Template> {
+        let digest: [u8; 32] = hex::decode(&receipt.manifest_sha256)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("prepared manifest SHA256 must be 32 bytes"))?;
         Ok(unsafe {
             // SAFETY: this deployer publishes controlled compiler output under its checked private root; published payloads remain unchanged.
-            engine.load_prepared(&deployed.directory, deployed.identity)
+            engine.restore_prepared(
+                &self.root.join(&receipt.artifact_key.0).join("prepared"),
+                digest,
+                receipt.runtime_profile.digest()?,
+            )
         }?)
     }
 
-    /// Prepare and publish local compiler output with its actual producer observations.
-    pub async fn deploy_prepared(
+    /// Prepare and publish a local immutable artifact.
+    pub async fn prepare_local(
         &self,
         manifest: &AppManifest,
         wasm: &[u8],
-        init_sandbox: InitSandbox,
+        options: &DeployOptions,
         context: &PreparationContext<'_>,
-    ) -> anyhow::Result<PreparedDeployment> {
+    ) -> anyhow::Result<PreparedReceipt> {
+        let publication = self
+            .prepare_publication(manifest, wasm, options, context)
+            .await?;
+        let _directory = publication.publication.keep();
+        Ok(publication.receipt)
+    }
+
+    async fn prepare_publication(
+        &self,
+        manifest: &AppManifest,
+        wasm: &[u8],
+        opts: &DeployOptions,
+        context: &PreparationContext<'_>,
+    ) -> anyhow::Result<Publication> {
         admit_local(manifest, wasm)?;
         let initialization = wisp_prepare::Initialization {
             config: serde_json::to_vec(&manifest.init_visible_vars)?,
-            sandbox: init_sandbox,
+            sandbox: opts.init_sandbox,
             cpu_ms: context.cpu_ms,
             wall_ms: context.wall_ms,
             max_passes: context.max_passes,
@@ -105,21 +158,82 @@ impl Deployer {
                 .engine
                 .decode_builder_output(product.prepared_bytes(), identity)
         }?;
-        let publication = tempfile::tempdir_in(&self.root)?;
+        let publication = tempfile::Builder::new()
+            .prefix("artifact-")
+            .tempdir_in(&self.root)?;
+        let publication_lock = std::fs::File::create(publication.path().join("owner.lock"))?;
+        fs4::FileExt::lock(&publication_lock)?;
+        std::fs::write(publication.path().join("version"), &opts.version.0)?;
         let directory = publication.path().join("prepared");
         let clock = std::time::Instant::now();
         artifact.publish(&directory, context.storage)?;
+        let receipt = PreparedReceipt {
+            version: opts.version.0.clone(),
+            artifact_key: publication
+                .path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| anyhow::anyhow!("invalid generated artifact directory"))?
+                .to_owned()
+                .try_into()
+                .map_err(anyhow::Error::msg)?,
+            manifest_sha256: hex::encode(context.engine.prepared_manifest_sha256(&directory)?),
+            runtime_profile: context.runtime.clone(),
+            manifest: manifest.clone(),
+        };
         let publication_ms = clock.elapsed().as_secs_f64() * 1000.0;
-        let _published_directory = publication.keep();
-        Ok(PreparedDeployment {
-            directory,
-            identity,
-            initialized: product.initialized,
-            preinit_ms: product.preinit_ms,
-            compile_ms: product.compile_ms,
-            publication_ms,
+        tracing::info!(publication_ms, "local compiler artifact published");
+        Ok(Publication {
+            publication,
+            _publication_lock: publication_lock,
+            receipt,
         })
     }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::ArtifactKey;
+
+    #[test]
+    fn artifact_keys_cannot_escape_the_private_artifact_root() {
+        for key in [
+            "",
+            ".",
+            "..",
+            "../artifact",
+            "/etc/passwd",
+            "a/b",
+            "a\\b",
+            "a.b",
+        ] {
+            assert!(
+                ArtifactKey::try_from(key.to_owned()).is_err(),
+                "local artifact key must not name arbitrary paths: {key}"
+            );
+        }
+        assert!(
+            ArtifactKey::try_from("x".repeat(129)).is_err(),
+            "artifact key length must be bounded"
+        );
+        assert!(
+            ArtifactKey::try_from("artifact-abc_123".to_owned()).is_ok(),
+            "generated opaque artifact names must be accepted"
+        );
+    }
+}
+
+/// The application version selected by the local preparation caller.
+#[derive(Clone, Debug)]
+pub struct VersionId(pub String);
+
+/// Inputs used by local artifact publication and initialization.
+#[derive(Clone, Debug)]
+pub struct DeployOptions {
+    /// Version named by the resulting local receipt.
+    pub version: VersionId,
+    /// Local initialization import policy.
+    pub init_sandbox: wisp_abi::config::InitSandbox,
 }
 
 fn admit_local(
@@ -169,16 +283,5 @@ fn private_artifact_directory(root: &std::path::Path) -> anyhow::Result<()> {
     #[cfg(not(unix))]
     {
         anyhow::bail!("private prepared artifacts require Unix filesystem ownership and modes")
-    }
-}
-
-impl PreparedDeployment {
-    /// Immutable directory published by this preparation.
-    pub fn directory(&self) -> &std::path::Path {
-        &self.directory
-    }
-    /// Identity recorded by this preparation compiler.
-    pub fn identity(&self) -> wisp_engine::prepared::PreparedIdentity {
-        self.identity
     }
 }
