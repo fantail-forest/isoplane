@@ -62,8 +62,13 @@ struct Lane {
 #[derive(Default)]
 struct QueueInner {
     wakes: std::collections::VecDeque<WakeItem>,
-    dispatches: std::collections::VecDeque<Box<DispatchJob>>,
+    dispatches: std::collections::VecDeque<QueuedDispatch>,
     closed: bool,
+}
+
+struct QueuedDispatch {
+    job: Box<DispatchJob>,
+    _waiting: tracing::Span,
 }
 
 /// A per-thread xorshift. It runs on every dispatch, so it needs to be cheap
@@ -140,7 +145,13 @@ impl WorkQueue {
         if g.closed || g.dispatches.len() >= self.cap {
             return Err(j);
         }
-        g.dispatches.push_back(j);
+        let waiting = j
+            .completion
+            .in_scope(|| tracing::info_span!("dispatch_queue"));
+        g.dispatches.push_back(QueuedDispatch {
+            job: j,
+            _waiting: waiting,
+        });
         lane.load.fetch_add(1, Ordering::Relaxed);
         drop(g);
         lane.cv.notify_one();
@@ -172,7 +183,7 @@ impl WorkQueue {
                 return Some(Job::Wake(s));
             }
             if let Some(d) = g.dispatches.pop_front() {
-                return Some(Job::Dispatch(d));
+                return Some(Job::Dispatch(d.job));
             }
             if g.closed {
                 return None;
@@ -202,7 +213,7 @@ impl WorkQueue {
                 queue
                     .dispatches
                     .drain(..)
-                    .map(|job| *job)
+                    .map(|queued| *queued.job)
                     .collect::<Vec<_>>()
             })
             .collect()

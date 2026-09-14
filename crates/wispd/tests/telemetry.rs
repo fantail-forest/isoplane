@@ -238,7 +238,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         records[0].trace_id, dispatch.trace_id,
         "CPU completion and stage timings must correlate to the same request"
     );
-    for stage in ["acquire", "guest_slice"] {
+    for stage in ["dispatch_queue", "acquire", "guest_slice"] {
         assert!(
             spans.iter().any(|span| span.name == stage
                 && span.parent_span_id == dispatch.span_id
