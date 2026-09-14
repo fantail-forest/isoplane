@@ -3,7 +3,7 @@
 #[path = "common/dev.rs"]
 mod common;
 
-use common::{guest, manifest, Dev};
+use common::{guest, guest_with_log, manifest, Dev};
 
 #[test]
 fn dotnet_clean_removes_the_published_guest() {
@@ -270,6 +270,38 @@ async fn local_dev_builds_and_reloads_real_guest_code_and_keeps_a_good_build_on_
             .unwrap(),
         "repaired build",
         "a failing build command must also leave the working app available"
+    );
+    dev.stop();
+}
+
+#[tokio::test]
+async fn normal_local_development_shows_application_logs_without_runtime_json() {
+    let dir = tempfile::tempdir().unwrap();
+    manifest(dir.path(), "");
+    std::fs::write(
+        dir.path().join("app.wasm"),
+        guest_with_log("response", "hello from application"),
+    )
+    .unwrap();
+    let mut dev = Dev::start_human(dir.path(), &["--no-build", "--no-watch"]);
+    assert_eq!(
+        reqwest::get(&dev.url).await.unwrap().text().await.unwrap(),
+        "response",
+        "the logging fixture must complete its local request"
+    );
+    let line = dev.wait_for("hello from application");
+    assert_eq!(
+        line.trim_end(),
+        "  info   hello from application",
+        "the application message must be the readable terminal record"
+    );
+    assert!(
+        dev.observed().contains("preparing local-app for local use...")
+            && !dev.observed().contains("wisp_engine")
+            && !dev.observed().contains("\"guest log\"")
+            && !dev.observed().lines().any(|line| line.starts_with('{')),
+        "normal terminal output must show startup progress without structured runtime diagnostics: {}",
+        dev.observed()
     );
     dev.stop();
 }

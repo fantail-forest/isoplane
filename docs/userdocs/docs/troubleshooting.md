@@ -55,6 +55,19 @@ a request. Do not log credentials or connection strings.
 Use `ILogger` when you need structured fields and log levels; the ASP.NET
 integration registers its logging provider automatically.
 
+Local development prints application messages in a compact level, message and
+category format. Runtime diagnostics stay out of that view. To capture the full
+structured runtime record for a bug report, run:
+
+```bash
+RUST_LOG=debug isoplane dev --project . \
+  --configuration WispInterpretedDebug --json \
+  >isoplane-session.jsonl 2>isoplane-debug.jsonl
+```
+
+The session file contains machine-readable ready and reload events. The debug
+file contains the runtime diagnostics to attach to the report.
+
 ## A database certificate is rejected
 
 Keep hostname and chain validation enabled. Use the database provider's TLS

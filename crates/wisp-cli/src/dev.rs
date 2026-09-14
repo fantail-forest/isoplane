@@ -3,6 +3,7 @@
 mod build;
 pub mod debug;
 mod destinations;
+mod logs;
 mod project;
 mod runtime;
 
@@ -21,6 +22,10 @@ use wisp_cli::render::Style;
 
 use project::Project;
 use runtime::{LocalApp, Prepared};
+
+pub(crate) fn init_logging(json: bool, color: bool) -> anyhow::Result<()> {
+    logs::init(json, color)
+}
 
 /// Reads activation-only settings from a bounded private parent pipe.
 pub fn read_runtime_configuration(
@@ -80,7 +85,12 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     let mut observed = project.fingerprint(opts.watch_module_only)?;
     let prepared = {
         let cancellation = CancellationToken::new();
-        let preparation = prepare(&project, &cancellation, opts.runtime_configuration.clone());
+        let preparation = prepare(
+            &project,
+            &cancellation,
+            opts.runtime_configuration.clone(),
+            opts.json,
+        );
         tokio::pin!(preparation);
         tokio::select! {
             prepared = &mut preparation => prepared?,
@@ -134,12 +144,16 @@ async fn prepare(
     project: &Project,
     cancellation: &CancellationToken,
     configuration: wisp_host::bindings::RuntimeConfiguration,
+    json: bool,
 ) -> anyhow::Result<Option<Prepared>> {
     if let Some(command) = &project.build {
         eprintln!("  building {}", project.manifest.name);
         if !build::run(&project.root, command, cancellation).await? {
             return Ok(None);
         }
+    }
+    if !json {
+        eprintln!("  preparing {} for local use...", project.manifest.name);
     }
     let bytes = std::fs::read(&project.module).with_context(|| {
         format!(
@@ -207,8 +221,10 @@ async fn serve(
                     Ok(next_project) => {
                         let cancellation = cancellation.clone();
                         let configuration = opts.runtime_configuration.clone();
+                        let json = opts.json;
                         rebuild = Some(Box::pin(async move {
-                            let prepared = prepare(&next_project, &cancellation, configuration).await?;
+                            let prepared =
+                                prepare(&next_project, &cancellation, configuration, json).await?;
                             Ok(prepared.map(|prepared| (next_project, prepared)))
                         }));
                     }

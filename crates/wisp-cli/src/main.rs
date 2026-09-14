@@ -120,15 +120,7 @@ async fn run() -> anyhow::Result<()> {
             init_sandbox,
             poll_ms,
         } => {
-            let filter = tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .from_env()?;
-            tracing_subscriber::fmt()
-                .json()
-                .with_env_filter(filter)
-                .with_writer(std::io::stderr)
-                .try_init()
-                .map_err(|e| anyhow::anyhow!("initializing local runtime logging: {e}"))?;
+            dev::init_logging(cli.json, color)?;
             dev(
                 &st,
                 DevOpts {
@@ -153,15 +145,7 @@ async fn run() -> anyhow::Result<()> {
             debug_endpoint,
             port,
         } => {
-            let filter = tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .from_env()?;
-            tracing_subscriber::fmt()
-                .json()
-                .with_env_filter(filter)
-                .with_writer(std::io::stderr)
-                .try_init()
-                .map_err(|e| anyhow::anyhow!("initializing debug runtime logging: {e}"))?;
+            dev::init_logging(cli.json, color)?;
             dev::debug::run(&st, &project, &module, debug_endpoint, port, cli.json).await?;
         }
     }

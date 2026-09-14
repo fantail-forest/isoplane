@@ -42,7 +42,12 @@ builds leave the last working app serving. Ctrl+C stops the session and its
 active child processes. `isoplane doctor path/to/module.wasm` runs the native
 validator.
 
-For process-owning test tools, `dev --json` writes JSON ready/reloaded records with the actual bound `url`; build and runtime diagnostics go to stderr. `--port 0` requests an available port. Opt-in `--shutdown-on-stdin-close` ends the session when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior.
+Normal development output shows compact application logs and keeps runtime
+internals hidden. For process-owning test tools, `dev --json` writes JSON
+ready/reloaded records with the actual bound `url`; structured runtime
+diagnostics go to stderr. `RUST_LOG=debug` increases their detail. `--port 0`
+requests an available port. Opt-in `--shutdown-on-stdin-close` ends the session
+when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior.
 
 `isoplane bundle --project /path/to/app --configuration WispNativeAotRelease
 --output application.tar` compiles managed deployment input through the installed

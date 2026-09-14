@@ -14,6 +14,7 @@ pub struct Dev {
     pub url: String,
     pub debugger: Option<serde_json::Value>,
     output_timeout: Duration,
+    observed: String,
 }
 
 struct Terminal {
@@ -24,6 +25,15 @@ struct Terminal {
 impl Dev {
     pub fn start(project: &std::path::Path, args: &[&str]) -> Self {
         Self::start_with_timeout(project, args, Duration::from_secs(120))
+    }
+
+    pub fn start_human(project: &std::path::Path, args: &[&str]) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wisp"));
+        command
+            .args(["--no-color", "dev", "--port", "0", "--watch"])
+            .arg(project)
+            .args(args);
+        Self::spawn_inner(&mut command, Duration::from_secs(120), false, false)
     }
 
     pub fn start_with_timeout(
@@ -57,12 +67,23 @@ impl Dev {
     }
 
     pub fn spawn(command: &mut Command, output_timeout: Duration, structured_stdout: bool) -> Self {
+        Self::spawn_inner(command, output_timeout, structured_stdout, true)
+    }
+
+    fn spawn_inner(
+        command: &mut Command,
+        output_timeout: Duration,
+        structured_stdout: bool,
+        managed_toolchain: bool,
+    ) -> Self {
         command
-            .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"))
-            .env(
+            .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"));
+        if managed_toolchain {
+            command.env(
                 "WISP_GUEST_RUNTIME_FEED",
                 wisp_fixtures::guest_runtime_feed(),
             );
+        }
         let (child, terminal, streams) = if structured_stdout {
             #[cfg(unix)]
             command.process_group(0);
@@ -148,9 +169,23 @@ impl Dev {
             url: String::new(),
             debugger: None,
             output_timeout,
+            observed: String::new(),
         };
-        let ready = dev.wait_event("ready");
-        dev.url = ready["url"].as_str().unwrap().into();
+        let ready = dev.wait_matching("ready", |line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .is_ok_and(|record| record["event"] == "ready")
+                || line.contains(" ready ") && line.contains(" at http://")
+        });
+        dev.url = serde_json::from_str::<serde_json::Value>(&ready)
+            .ok()
+            .and_then(|record| record["url"].as_str().map(str::to_string))
+            .or_else(|| {
+                ready
+                    .split_once(" at ")
+                    .and_then(|(_, rest)| rest.split_whitespace().next())
+                    .map(str::to_string)
+            })
+            .expect("development ready output contains its local URL");
         dev
     }
 
@@ -183,6 +218,8 @@ impl Dev {
                     self.debugger = Some(record);
                 }
             }
+            self.observed.push_str(&line);
+            self.observed.push('\n');
             output.push_str(&line);
             output.push('\n');
             if matches(&line) {
@@ -213,6 +250,10 @@ impl Dev {
 
     pub fn diagnostics(&self) -> String {
         self.lines.try_iter().collect::<Vec<_>>().join("\n")
+    }
+
+    pub fn observed(&self) -> &str {
+        &self.observed
     }
 
     pub fn pid(&self) -> u32 {
@@ -290,6 +331,14 @@ pub fn manifest(dir: &std::path::Path, extra: &str) {
 }
 
 pub fn guest(body: &str) -> Vec<u8> {
+    guest_module(body, None)
+}
+
+pub fn guest_with_log(body: &str, message: &str) -> Vec<u8> {
+    guest_module(body, Some(message))
+}
+
+fn guest_module(body: &str, message: Option<&str>) -> Vec<u8> {
     let response = wisp_abi::dispatch::ResponseHead {
         status: 200,
         headers: vec![],
@@ -298,12 +347,28 @@ pub fn guest(body: &str) -> Vec<u8> {
     };
     let bytes = wisp_abi::encode(&response).unwrap();
     let escaped: String = bytes.iter().map(|b| format!("\\{b:02x}")).collect();
+    let log = message.map_or_else(String::new, |message| {
+        let bytes = message.as_bytes();
+        let escaped: String = bytes.iter().map(|byte| format!("\\{byte:02x}")).collect();
+        format!(
+            "(import \"wisp\" \"log_emit\" (func $log (param i32 i32 i32)))\n\
+             (data (i32.const 8192) \"{escaped}\")"
+        )
+    });
+    let emit = message.map_or_else(String::new, |message| {
+        format!(
+            "(call $log (i32.const 2) (i32.const 8192) (i32.const {}))",
+            message.len()
+        )
+    });
     wat::parse_str(format!(r#"(module
         (import "wisp" "resp_new" (func $response (param i32 i32) (result i32)))
+        {log}
         (memory (export "memory") 2 2)
         (data (i32.const 4096) "{escaped}")
         (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 16384))
         (func (export "wisp_handle") (param i32 i32) (result i64)
+            {emit}
             (i64.shl (i64.extend_i32_u (call $response (i32.const 4096) (i32.const {}))) (i64.const 32)))
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, bytes.len())).unwrap()
 }
