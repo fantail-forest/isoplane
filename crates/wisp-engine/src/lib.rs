@@ -52,7 +52,9 @@ pub type Result<T> = anyhow::Result<T>;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct EngineConfig {
-    /// Emit Linux perf jitdump records in the process working directory. Disabled by default.
+    /// Emit Linux perf jitdump records in this process's working directory.
+    /// Disabled by default and excluded from serialized preparation settings.
+    #[serde(skip)]
     pub perf_jitdump: bool,
     /// Ceiling on concurrently resident instances in this cell.
     pub max_instances: u32,

@@ -357,3 +357,22 @@ fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
         "loading existing native code must register its function symbols with perf"
     );
 }
+
+#[test]
+fn preparation_settings_do_not_enable_execution_process_profiling() {
+    let config = wisp_engine::EngineConfig {
+        perf_jitdump: true,
+        ..small_engine_config()
+    };
+    let bytes = postcard::to_allocvec(&config).expect("serialize preparation settings");
+    let restored: wisp_engine::EngineConfig =
+        postcard::from_bytes(&bytes).expect("deserialize preparation settings");
+    assert!(
+        !restored.perf_jitdump,
+        "execution profiling must not make preparation write diagnostic files"
+    );
+    assert_eq!(
+        restored.max_memory_bytes, config.max_memory_bytes,
+        "excluding process-local diagnostics must preserve preparation memory limits"
+    );
+}
