@@ -1,5 +1,18 @@
 # Observability
 
+## Prefer OpenTelemetry for service observability
+
+Use maintained OpenTelemetry integrations and OTLP export wherever they fit logs,
+metrics and traces. Preserve structured completion records and propagate context
+across service boundaries. Qualify adoption incrementally without replacing
+working instrumentation solely to standardize its transport.
+
+**Not this:** Separate proprietary telemetry plumbing for each service or treating
+sampled diagnostic telemetry as complete usage data.
+
+**Exception:** Native profiling tools and existing metric endpoints remain useful
+where they provide better evidence or an integration has not yet been qualified.
+
 ## Prefer wide events at operation boundaries
 
 A wide event brings the identifiers, operation, outcome, duration, resource use, and relevant failure context together in one structured completion, so an operator can investigate an operation without reconstructing it from scattered log lines. Apply the [dispatch completion contract and its limits](../../../AGENTS.md#observability) to dispatches; use the same approach for deploy, hibernate, wake, and migration operations, with the fields meaningful to each. Enrich context through the operation and finalize it at the owning boundary, using nested spans for stage detail rather than separate completion events for each hot interval.
