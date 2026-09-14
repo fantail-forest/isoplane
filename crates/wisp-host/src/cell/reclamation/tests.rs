@@ -406,6 +406,8 @@ fn a_snapshot_write_failure_keeps_the_source_guest_resident() {
 
 #[test]
 fn storage_pressure_evicts_an_idle_snapshot_before_admitting_another_handler() {
+    let journal = TransitionJournal::default();
+    let _journal = journal.install();
     let storage = Storage::new(1);
     let cell = test_cell(storage.clone(), 0);
     let cached = idle(&cell, "cached", 1);
@@ -434,10 +436,30 @@ fn storage_pressure_evicts_an_idle_snapshot_before_admitting_another_handler() {
         1,
         "the new handler must own the reclaimed capacity"
     );
+    let evictions = journal.evictions();
+    assert_eq!(
+        evictions.len(),
+        1,
+        "one successful idle eviction must emit one transition"
+    );
+    assert_eq!(
+        evictions[0]["target"], "wisp_host::cell::transition",
+        "evictions must use the exported lifecycle target"
+    );
+    assert_eq!(
+        evictions[0]["fields"],
+        serde_json::json!({
+            "event": "instance_transition", "tenant": "acme", "app": "cached", "version": "v1",
+            "instance": cached.id.0, "previous": "hibernated", "current": "discarded", "cause": "storage_pressure",
+        }),
+        "eviction must report the established owner, actual resulting tier and cause"
+    );
 }
 
 #[test]
 fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
+    let journal = TransitionJournal::default();
+    let _journal = journal.install();
     let storage = Storage::new(1);
     let cell = test_cell(storage.clone(), 0);
     let (active, response) = active(&cell, "protected", 1);
@@ -464,6 +486,10 @@ fn storage_pressure_cannot_evict_an_active_dispatch_snapshot() {
     assert!(
         cell.active.contains_key(&active.id),
         "storage pressure must preserve active ownership"
+    );
+    assert!(
+        journal.evictions().is_empty(),
+        "refusing to evict an active snapshot must not emit a discarded transition"
     );
     assert!(
         matches!(response.try_recv(), Err(TryRecvError::Empty)),
@@ -572,4 +598,48 @@ fn a_node_coordinator_exclusively_owns_handler_pressure_sampling() {
         LifecycleTier::Parked,
         "a coordinated cell must leave handler pressure decisions to its node owner"
     );
+}
+
+#[derive(Clone, Default)]
+struct TransitionJournal(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for TransitionJournal {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("journal lock")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl TransitionJournal {
+    fn install(&self) -> tracing::dispatcher::DefaultGuard {
+        let journal = self.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(move || journal.clone())
+            .finish();
+        tracing::dispatcher::set_default(&tracing::Dispatch::new(subscriber))
+    }
+
+    fn evictions(&self) -> Vec<serde_json::Value> {
+        self.0
+            .lock()
+            .expect("journal lock")
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                serde_json::from_slice::<serde_json::Value>(line).expect("structured journal")
+            })
+            .filter(|event| {
+                event["fields"]["event"] == "instance_transition"
+                    && event["fields"]["cause"] == "storage_pressure"
+            })
+            .collect()
+    }
 }

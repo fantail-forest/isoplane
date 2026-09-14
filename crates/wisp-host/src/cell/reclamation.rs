@@ -188,6 +188,11 @@ impl Cell {
             ReclaimKind::HibernatedIdle => {
                 slot.discard();
                 self.forget(&slot);
+                tracing::info!(target: "wisp_host::cell::transition",
+                    event = "instance_transition", tenant = %entry.tenant,
+                    app = %module.app, version = %module.version,
+                    instance = slot.id.0, previous = "hibernated", current = "discarded",
+                    cause = "storage_pressure");
             }
             ReclaimKind::Idle | ReclaimKind::Active => {
                 self.hibernate_now(&slot, &entry)
