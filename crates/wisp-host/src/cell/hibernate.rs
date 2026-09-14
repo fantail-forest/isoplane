@@ -114,6 +114,11 @@ impl Cell {
         self.metrics.capture_us.record(res.capture_us);
         self.metrics.gc_hint_us.record(res.gc_hint_us);
         self.metrics.dirty_pages.record(res.changed_pages as u64);
+        tracing::info!(target: "wisp_host::cell::transition",
+            event = "instance_transition", tenant = %entry.tenant,
+            app = %entry.activator.module().app, version = %entry.activator.module().version,
+            instance = slot.id.0, previous = "parked", current = "hibernated",
+            cause = "capture", snapshot_bytes = bytes);
         if bytes > self.cfg.hibernate.delta_advisory_bytes {
             tracing::warn!(
                 tenant = %entry.tenant, instance = %slot.id, delta_bytes = bytes,
@@ -163,6 +168,11 @@ impl Cell {
         }
         slot.rehydrate(instance);
 
+        tracing::info!(target: "wisp_host::cell::transition",
+            event = "instance_transition", tenant = %entry.tenant,
+            app = %entry.activator.module().app, version = %entry.activator.module().version,
+            instance = slot.id.0, previous = "hibernated", current = "parked",
+            cause = if fell_back { "template_fallback" } else { "restore" });
         Ok(())
     }
 

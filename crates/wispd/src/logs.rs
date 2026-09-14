@@ -144,7 +144,8 @@ where
         opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(provider)
             .with_filter(
                 tracing_subscriber::filter::Targets::new()
-                    .with_target("wisp_host::cell::completion", tracing::Level::INFO),
+                    .with_target("wisp_host::cell::completion", tracing::Level::INFO)
+                    .with_target("wisp_host::cell::transition", tracing::Level::INFO),
             )
     });
     let trace_provider = traces_endpoint

@@ -162,18 +162,75 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         .unwrap()
         .unwrap();
     let payload = collector.receive().await;
-    let records: Vec<_> = payload
+    let mut records: Vec<_> = payload
         .resource_logs
         .iter()
         .flat_map(|resource| &resource.scope_logs)
-        .flat_map(|scope| &scope.log_records)
+        .flat_map(|scope| scope.log_records.iter().cloned())
         .collect();
+    while records.len() < 3 {
+        let payload = collector.receive().await;
+        records.extend(
+            payload
+                .resource_logs
+                .into_iter()
+                .flat_map(|resource| resource.scope_logs)
+                .flat_map(|scope| scope.log_records),
+        );
+    }
     assert_eq!(
-        records.len(),
+        records
+            .iter()
+            .filter(|record| field(&record.attributes, "event")
+                == &Value::StringValue("dispatch_completed".into()))
+            .count(),
         1,
         "one real HTTP dispatch must export exactly one completion"
     );
-    let attributes = &records[0].attributes;
+    let completion = records
+        .iter()
+        .find(|record| {
+            field(&record.attributes, "event") == &Value::StringValue("dispatch_completed".into())
+        })
+        .expect("dispatch completion exported");
+    let attributes = &completion.attributes;
+    for (previous, current, cause) in [
+        ("parked", "hibernated", "capture"),
+        ("hibernated", "parked", "restore"),
+    ] {
+        let transitions: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                field(&record.attributes, "event")
+                    == &Value::StringValue("instance_transition".into())
+                    && field(&record.attributes, "current") == &Value::StringValue(current.into())
+            })
+            .collect();
+        assert_eq!(
+            transitions.len(),
+            1,
+            "each actual lifecycle transition must export once"
+        );
+        let fields = &transitions[0].attributes;
+        for (key, expected) in [
+            ("previous", previous),
+            ("cause", cause),
+            ("tenant", "acme"),
+            ("app", "quotes"),
+            ("version", "v1"),
+        ] {
+            assert_eq!(
+                field(fields, key),
+                &Value::StringValue(expected.into()),
+                "lifecycle export must preserve {key}"
+            );
+        }
+        assert_eq!(
+            field(fields, "instance"),
+            field(attributes, "instance"),
+            "transition and dispatch must identify the same guest"
+        );
+    }
     assert_eq!(
         field(attributes, "event"),
         &Value::StringValue("dispatch_completed".into()),
@@ -285,7 +342,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         );
     }
     assert_eq!(
-        records[0].trace_id, dispatch.trace_id,
+        completion.trace_id, dispatch.trace_id,
         "CPU completion and stage timings must correlate to the same request"
     );
     let activation = spans
