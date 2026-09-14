@@ -62,3 +62,6 @@ guest-sdks/dotnet/obj/
 /guests/dotnet/out/**/*.runtime
 *.wasm.fixture.json
 /guest-runtime/**/__pycache__/
+
+# ephemeral handoffs dir
+handoffs/
