@@ -7,12 +7,14 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use http_body_util::combinators::UnsyncBoxBody;
+use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, RETRY_AFTER};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tracing::Instrument;
 use wisp_abi::host::{Dispatcher, };
 
 use crate::metrics::ProxyMetrics;
@@ -24,6 +26,8 @@ pub type Body = UnsyncBoxBody<Bytes, anyhow::Error>;
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
+    /// Trust host correlation only on the private application-worker listener.
+    pub request_origin: crate::request_trace::RequestOrigin,
     pub listen: SocketAddr,
     pub shed: ShedConfig,
 }
@@ -31,6 +35,7 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         ProxyConfig {
+            request_origin: crate::request_trace::RequestOrigin::Public,
             listen: ([127, 0, 0, 1], 8787).into(),
             shed: ShedConfig::default(),
         }
@@ -42,6 +47,7 @@ pub struct Proxy {
     pub dispatcher: Arc<dyn Dispatcher>,
     pub metrics: Arc<ProxyMetrics>,
     admission: Arc<AdmissionControl>,
+    pub(crate) cfg: ProxyConfig,
     shutdown: tokio_util::sync::CancellationToken,
     pub(crate) transports: tokio_util::task::TaskTracker,
 }
@@ -69,6 +75,7 @@ impl Proxy {
             routes,
             dispatcher,
             metrics,
+            cfg,
             shutdown: tokio_util::sync::CancellationToken::new(),
             transports: tokio_util::task::TaskTracker::new(),
         })
@@ -135,15 +142,18 @@ impl Proxy {
 
     pub async fn handle(
         self: Arc<Self>,
-        req: Request<Incoming>,
+        mut req: Request<Incoming>,
         peer: SocketAddr,
     ) -> Result<Response<Body>, hyper::Error> {
+        let trace = crate::request_trace::RequestTrace::worker(&mut req, self.cfg.request_origin);
         if self.shutdown.is_cancelled() {
-            return Ok(text(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "proxy is stopping",
-                &[],
-            ));
+            return Ok(trace
+                .response(text(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "proxy is stopping",
+                    &[],
+                ))
+                .map(BodyExt::boxed_unsync));
         }
         let measurement = ResponseMeasurement {
             metrics: self.metrics.clone(),
@@ -154,8 +164,13 @@ impl Proxy {
             .route_generation
             .store(self.routes.generation(), Relaxed);
 
-        let resp = self.route_and_dispatch(req, peer).await;
-        Ok(resp.map(|body| crate::response::hold_until_body_end(body, measurement)))
+        let resp = self
+            .route_and_dispatch(req, peer)
+            .instrument(trace.span())
+            .await;
+        Ok(trace
+            .response(resp)
+            .map(|body| crate::response::hold_until_body_end(body.boxed_unsync(), measurement)))
     }
 
     async fn route_and_dispatch(

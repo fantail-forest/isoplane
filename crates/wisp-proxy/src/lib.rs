@@ -6,6 +6,7 @@ mod dispatch;
 mod headers;
 pub mod metrics;
 mod request;
+pub mod request_trace;
 mod response;
 pub mod routes;
 pub mod server;

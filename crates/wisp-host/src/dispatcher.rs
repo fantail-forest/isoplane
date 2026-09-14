@@ -33,19 +33,22 @@ impl Cell {
             crate::response_transport::ResponseTransport::new(self.cfg.response_queue_bytes);
         let output = transport.clone();
         let timeout = deadline(self);
+        let request_span = tracing::Span::current();
         self.reactor().spawn(async move {
             let stream = output.clone();
             let result = tokio::task::spawn_blocking(move || {
-                cell.dispatch_with_http(
-                    &module,
-                    Target::Handler { route },
-                    record,
-                    timeout,
-                    Some(crate::cell::HttpDispatch {
-                        response: stream,
-                        upload,
-                    }),
-                )
+                request_span.in_scope(|| {
+                    cell.dispatch_with_http(
+                        &module,
+                        Target::Handler { route },
+                        record,
+                        timeout,
+                        Some(crate::cell::HttpDispatch {
+                            response: stream,
+                            upload,
+                        }),
+                    )
+                })
             })
             .await;
             match result {
