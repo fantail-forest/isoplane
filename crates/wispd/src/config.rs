@@ -11,6 +11,10 @@ use wisp_abi::config::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
+    /// Per-application local development file references and exact worker endpoints.
+    #[cfg(feature = "real-backends")]
+    #[serde(default)]
+    pub development_applications: Vec<crate::development::ApplicationSettings>,
     #[serde(default = "default_node_name")]
     pub node: String,
     #[serde(default)]
@@ -270,6 +274,8 @@ pub struct VersionConfig {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("invalid development settings: {0}")]
+    Development(String),
     #[error("invalid engine configuration: {0}")]
     InvalidEngine(String),
     #[error("invalid preparation configuration: {0}")]
@@ -302,6 +308,8 @@ impl NodeConfig {
     /// Two cells and one app.
     pub fn dev_default() -> Self {
         NodeConfig {
+            #[cfg(feature = "real-backends")]
+            development_applications: Vec::new(),
             node: "wisp-dev".into(),
             #[cfg(feature = "real-backends")]
             host: Default::default(),
@@ -352,6 +360,9 @@ impl NodeConfig {
     /// The startup gate: a refusal, never a warning. Placement rules first,
     /// then the trust bundle, which is the one check that reads a file.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        #[cfg(feature = "real-backends")]
+        crate::development::validate(self)
+            .map_err(|error| ConfigError::Development(error.to_string()))?;
         self.engine.validate()?;
         #[cfg(feature = "real-backends")]
         if let Some(preparation) = &self.preparation {

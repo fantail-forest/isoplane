@@ -50,6 +50,7 @@ pub fn engine_config(
 /// The node's cells on one engine, and the placement that puts an app on
 /// one of them.
 pub struct RealCells {
+    runtime_settings: Arc<dyn crate::development::RuntimeSettingsSource>,
     engine: Arc<wisp_engine::WispEngine>,
     /// Compiled template artifacts, mapped rather than read, so a restart
     /// does not recompile.
@@ -109,7 +110,14 @@ impl RealCells {
         let cell = self.cell_for(app)?;
         let module = ModuleId::new(app, version);
         let activator = EngineActivator::new(self.engine.clone(), template, module.clone());
+        let settings = self
+            .runtime_settings
+            .settings(crate::development::SettingsOwner {
+                tenant,
+                application: app,
+            })?;
         cell.register_module(tenant, Arc::new(activator), manifest)?;
+        cell.set_runtime_configuration(tenant, &module, settings.configuration)?;
         self.tenants
             .write()
             .insert(app.to_owned(), tenant.to_owned());

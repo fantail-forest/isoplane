@@ -44,6 +44,11 @@ impl RuntimeConfiguration {
         Ok(Self(Arc::from(bytes)))
     }
 
+    /// Writes the validated JSON to an explicitly selected private transport.
+    pub fn write_json(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        writer.write_all(&self.0)
+    }
+
     pub(super) fn fill(&self, out: &mut [u8]) -> i64 {
         let copied = out.len().min(self.0.len());
         out[..copied].copy_from_slice(&self.0[..copied]);
