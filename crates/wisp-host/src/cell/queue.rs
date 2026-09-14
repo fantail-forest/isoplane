@@ -61,13 +61,18 @@ struct Lane {
 
 #[derive(Default)]
 struct QueueInner {
-    wakes: std::collections::VecDeque<WakeItem>,
+    wakes: std::collections::VecDeque<QueuedWake>,
     dispatches: std::collections::VecDeque<QueuedDispatch>,
     closed: bool,
 }
 
 struct QueuedDispatch {
     job: Box<DispatchJob>,
+    _waiting: tracing::Span,
+}
+
+struct QueuedWake {
+    item: WakeItem,
     _waiting: tracing::Span,
 }
 
@@ -165,7 +170,18 @@ impl WorkQueue {
         if g.closed {
             return;
         }
-        g.wakes.push_back(item);
+        let waiting = tracing::info_span!(
+            "wake_queue",
+            tenant = %item.slot.ctx.tenant,
+            app = %item.slot.ctx.module.app,
+            version = %item.slot.ctx.module.version,
+            instance = %item.slot.id,
+            dispatch_id = item.slot.ctx.dispatch_id(),
+        );
+        g.wakes.push_back(QueuedWake {
+            item,
+            _waiting: waiting,
+        });
         lane.load.fetch_add(1, Ordering::Relaxed);
         drop(g);
         lane.cv.notify_one();
@@ -180,7 +196,7 @@ impl WorkQueue {
         let mut g = lane.inner.lock();
         loop {
             if let Some(s) = g.wakes.pop_front() {
-                return Some(Job::Wake(s));
+                return Some(Job::Wake(s.item));
             }
             if let Some(d) = g.dispatches.pop_front() {
                 return Some(Job::Dispatch(d.job));

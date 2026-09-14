@@ -61,12 +61,15 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     let encoded: String = head.iter().map(|byte| format!("\\{byte:02x}")).collect();
     let guest = wat::parse_str(format!(r#"(module
         (import "wisp" "resp_new" (func $response (param i32 i32) (result i32)))
+        (import "wisp" "clock_deadline_in" (func $timer (param i64) (result i64)))
         (memory (export "memory") 2 2)
         (data (i32.const 1024) "{encoded}")
         (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 4096))
         (func (export "wisp_handle") (param i32 i32) (result i64)
+            (drop (call $timer (i64.const 0))) (i64.const 1))
+        (func (export "wisp_wake") (param i64 i32 i32) (result i64)
             (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32)))
-        (func (export "wisp_wake") (param i64 i32 i32) (result i64) unreachable))"#, head.len())).unwrap();
+        )"#, head.len())).unwrap();
     let manifest: AppManifest = toml::from_str("name = 'quotes'").unwrap();
     node.real
         .as_ref()
@@ -234,6 +237,17 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         .iter()
         .find(|span| span.name == "dispatch")
         .expect("actual request must produce a dispatch trace");
+    let wake = spans
+        .iter()
+        .find(|span| span.name == "wake_queue")
+        .expect("an actual timer completion must expose wake queue residency");
+    for attribute in ["tenant", "app", "version", "dispatch_id"] {
+        assert_eq!(
+            field(&wake.attributes, attribute),
+            field(&dispatch.attributes, attribute),
+            "wake queue work must correlate to its dispatch by {attribute}"
+        );
+    }
     assert_eq!(
         records[0].trace_id, dispatch.trace_id,
         "CPU completion and stage timings must correlate to the same request"
