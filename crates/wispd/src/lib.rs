@@ -12,6 +12,8 @@ pub mod node;
 pub mod preparation;
 #[cfg(feature = "real-backends")]
 pub mod real;
+#[cfg(feature = "real-backends")]
+mod reclamation;
 pub use wisp_trust as trust;
 
 pub use config::{ConfigError, NodeConfig};

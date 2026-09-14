@@ -107,6 +107,11 @@ impl Template {
         Arc::clone(&self.inner.image)
     }
 
+    /// Number of numeric mutable globals captured in every instance snapshot.
+    pub fn mutable_global_count(&self) -> usize {
+        self.inner.mut_globals.len()
+    }
+
     pub fn memory_pages(&self) -> u32 {
         self.inner.memory_pages
     }

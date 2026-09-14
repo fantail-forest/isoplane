@@ -167,9 +167,22 @@ impl Cell {
         self: &Arc<Self>,
         entry: &Arc<ModuleEntry>,
     ) -> crate::Result<(Arc<Slot>, AcquireSource)> {
-        let (slot, src) = entry
-            .pool
-            .acquire_with_cleanup(|id| self.make_ctx(entry, id), |slot| self.forget(slot))?;
+        let (slot, src) = entry.pool.acquire_reserved(
+            |id| {
+                let ctx = self.make_ctx(entry, id);
+                let maximum = entry
+                    .activator
+                    .snapshot_size_bound(ctx.limits.instance_memory_max)?;
+                let reservation =
+                    tracing::info_span!("snapshot_reservation", maximum_bytes = maximum).in_scope(
+                        || self.reserve_snapshot(wisp_hibernate::snapshot::SnapshotBytes(maximum)),
+                    )?;
+                *ctx.snapshot.lock() = Some(reservation);
+                Ok(ctx)
+            },
+            |slot| self.forget(slot),
+            |slot| self.wake(slot, entry),
+        )?;
         self.index.lock().insert(slot.id, Arc::downgrade(&slot));
         let mut residents = self.residents.lock();
         residents.entry(slot.id).or_insert_with(|| Resident {

@@ -1,4 +1,4 @@
-//! Snapshot identity and page-size primitives.
+//! Reserved local backing and snapshot identity primitives.
 
 #![forbid(unsafe_code)]
 
@@ -6,6 +6,8 @@
 pub type Result<T> = anyhow::Result<T>;
 
 pub mod delta;
+
+pub mod snapshot;
 
 pub use delta::{Binding, PAGE};
 

@@ -1,4 +1,4 @@
-//! Execution thread pools and panic containment at their boundary.
+//! The execution and idle-sweep thread pools, and panic containment at their boundary.
 
 use super::*;
 
@@ -21,6 +21,27 @@ impl Cell {
             );
         }
         *self.workers.lock() = handles;
+        Ok(())
+    }
+
+    pub(super) fn start_idle_sweeper(self: &Arc<Self>) -> crate::Result<()> {
+        let me = Arc::downgrade(self);
+        let interval = Duration::from_millis(self.cfg.sweep_interval_ms.max(1));
+        let stop = self.shutdown.clone();
+        let name = format!("{}-idle", self.cfg.name);
+        let h = std::thread::Builder::new().name(name).spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(interval);
+                let Some(cell) = me.upgrade() else { return };
+                // A failed capture must not stop memory-pressure reclamation.
+                let swept =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cell.sweep_idle()));
+                if swept.is_err() {
+                    cell.note_caught_panic("sweep");
+                }
+            }
+        })?;
+        self.workers.lock().push(h);
         Ok(())
     }
 
@@ -155,7 +176,7 @@ pub(super) mod cell_tests {
         }
     }
 
-    fn services() -> Arc<Services> {
+    pub(in crate::cell) fn services() -> Arc<Services> {
         Arc::new(Services {
             egress: Arc::new(crate::egress::HostEgressPolicy::new(
                 Box::new(NoResolver),
@@ -492,6 +513,12 @@ pub(super) mod cell_tests {
     }
 
     impl Activator for ResumingActivator {
+        fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
+            Ok(self
+                .initial
+                .snapshot_size_bound(max_memory_bytes)?
+                .max(self.resumed.snapshot_size_bound(max_memory_bytes)?))
+        }
         fn module(&self) -> &ModuleId {
             self.initial.module()
         }
@@ -681,7 +708,7 @@ pub(super) mod cell_tests {
             ..CellConfig::for_test("missing-checkpoint")
         });
         let (slot, response, future) = hibernated_request(&cell);
-        slot.ctx.local_snapshot.lock().take();
+        slot.ctx.snapshot.lock().take();
         cell.futures()
             .complete(future, wisp_abi::result::ResultRecord::Ok(vec![]));
         cell.run_wake(slot.clone());

@@ -19,6 +19,8 @@ pub trait Activator: Send + Sync + 'static {
     fn module(&self) -> &ModuleId;
     fn module_hash(&self) -> ModuleHash;
     fn abi_rev(&self) -> u32;
+    /// Maximum encoded local snapshot bytes under the effective memory limit.
+    fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64>;
     /// Whether the compiled guest declares a capability; scripted activators default to legacy delivery.
     fn imports(&self, _module: &str, _name: &str) -> bool {
         false
@@ -40,7 +42,7 @@ pub enum AcquireSource {
     WarmParked,
     /// A reset Handler instance from the pool.
     PooledFresh,
-    /// A durable instance woken from its hibernation delta.
+    /// An instance woken from its hibernation delta with retained state.
     HibernationWake,
     /// A cold activation from the template.
     Activated,
@@ -62,10 +64,50 @@ pub struct InstancePool {
     pub module: ModuleId,
     pub lifecycle: HandlerLifecycle,
     activator: Arc<dyn Activator>,
-    warm: Mutex<Vec<Arc<Slot>>>,
-    reset_candidates: Mutex<Vec<Arc<Slot>>>,
+    warm: Mutex<IdleList>,
+    reset_candidates: Mutex<IdleList>,
     max_idle: usize,
     live: AtomicU64,
+}
+
+#[derive(Default)]
+struct IdleList {
+    slots: Vec<Arc<Slot>>,
+    claimed: usize,
+    generation: Arc<()>,
+}
+
+/// Exclusive ownership of one idle pool entry during reclamation.
+/// Returning the claim preserves its list and lifecycle state; a discarded
+/// entry, or one claimed before a pool drain, leaves live accounting instead.
+pub(crate) struct IdleClaim<'a> {
+    list: &'a Mutex<IdleList>,
+    live: &'a AtomicU64,
+    slot: Arc<Slot>,
+    generation: Arc<()>,
+}
+
+impl IdleClaim<'_> {
+    /// The entry reserved from acquisition until this claim is dropped.
+    pub(crate) fn slot(&self) -> &Arc<Slot> {
+        &self.slot
+    }
+}
+
+impl Drop for IdleClaim<'_> {
+    fn drop(&mut self) {
+        let mut list = self.list.lock();
+        list.claimed -= 1;
+        if self.slot.state() == crate::LifecycleTier::Discarded
+            || !Arc::ptr_eq(&self.generation, &list.generation)
+        {
+            drop(list);
+            self.slot.discard();
+            self.live.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            list.slots.push(self.slot.clone());
+        }
+    }
 }
 
 impl InstancePool {
@@ -78,8 +120,8 @@ impl InstancePool {
             module: activator.module().clone(),
             lifecycle,
             activator,
-            warm: Mutex::new(Vec::new()),
-            reset_candidates: Mutex::new(Vec::new()),
+            warm: Mutex::new(IdleList::default()),
+            reset_candidates: Mutex::new(IdleList::default()),
             max_idle,
             live: AtomicU64::new(0),
         }
@@ -91,7 +133,28 @@ impl InstancePool {
 
     /// Idle instance counts as `(warm, awaiting reset)`.
     pub fn idle_counts(&self) -> (usize, usize) {
-        (self.warm.lock().len(), self.reset_candidates.lock().len())
+        (
+            self.warm.lock().slots.len(),
+            self.reset_candidates.lock().slots.len(),
+        )
+    }
+
+    /// Removes an idle entry from acquisition until its claim is returned.
+    pub(crate) fn claim_idle(&self, id: InstanceId) -> Option<IdleClaim<'_>> {
+        for list in [&self.warm, &self.reset_candidates] {
+            let mut entries = list.lock();
+            if let Some(index) = entries.slots.iter().position(|slot| slot.id == id) {
+                let slot = entries.slots.swap_remove(index);
+                entries.claimed += 1;
+                return Some(IdleClaim {
+                    list,
+                    live: &self.live,
+                    slot,
+                    generation: entries.generation.clone(),
+                });
+            }
+        }
+        None
     }
 
     /// Reuse a warm instance, reset a candidate for this acquisition, or activate.
@@ -114,16 +177,65 @@ impl InstancePool {
         F: FnOnce(InstanceId) -> Arc<InstanceCtx>,
         D: FnMut(&Arc<Slot>),
     {
+        self.acquire_reserved(
+            |id| Ok(make_ctx(id)),
+            &mut discard,
+            |_| anyhow::bail!("this pool acquisition has no snapshot restoration provider"),
+        )
+    }
+
+    pub(crate) fn acquire_reserved<F, D, R>(
+        &self,
+        make_ctx: F,
+        mut discard: D,
+        mut restore: R,
+    ) -> anyhow::Result<(Arc<Slot>, AcquireSource)>
+    where
+        F: FnOnce(InstanceId) -> anyhow::Result<Arc<InstanceCtx>>,
+        D: FnMut(&Arc<Slot>),
+        R: FnMut(&Arc<Slot>) -> anyhow::Result<()>,
+    {
         if self.lifecycle == HandlerLifecycle::Reuse {
-            if let Some(slot) = self.warm.lock().pop() {
-                return Ok((slot, AcquireSource::WarmParked));
+            loop {
+                let candidate = self.warm.lock().slots.pop();
+                let Some(slot) = candidate else { break };
+                let source = {
+                    let _execution = slot.lock_execution();
+                    match slot.state() {
+                        crate::LifecycleTier::Discarded => {
+                            self.live.fetch_sub(1, Ordering::Relaxed);
+                            discard(&slot);
+                            continue;
+                        }
+                        crate::LifecycleTier::Hibernated => {
+                            if let Err(error) = restore(&slot) {
+                                slot.discard();
+                                self.live.fetch_sub(1, Ordering::Relaxed);
+                                discard(&slot);
+                                return Err(error);
+                            }
+                            AcquireSource::HibernationWake
+                        }
+                        crate::LifecycleTier::Parked => AcquireSource::WarmParked,
+                        crate::LifecycleTier::Hot => AcquireSource::WarmParked,
+                    }
+                };
+                return Ok((slot, source));
             }
         }
         loop {
-            let candidate = self.reset_candidates.lock().pop();
+            let candidate = self.reset_candidates.lock().slots.pop();
             let Some(slot) = candidate else { break };
             {
                 let _execution = slot.lock_execution();
+                if slot.state() == crate::LifecycleTier::Hibernated {
+                    if let Err(error) = restore(&slot) {
+                        slot.discard();
+                        self.live.fetch_sub(1, Ordering::Relaxed);
+                        discard(&slot);
+                        return Err(error);
+                    }
+                }
                 if let Err(error) = slot.reset() {
                     tracing::warn!(module = %self.module, instance = %slot.id, %error,
                         "pooled instance reset failed; discarding candidate");
@@ -136,7 +248,7 @@ impl InstancePool {
             return Ok((slot, AcquireSource::PooledFresh));
         }
         let id = InstanceId::alloc();
-        let ctx = make_ctx(id);
+        let ctx = make_ctx(id)?;
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
         let inst = self.activator.activate(bindings)?;
         self.live.fetch_add(1, Ordering::Relaxed);
@@ -154,8 +266,8 @@ impl InstancePool {
                 }
                 slot.park(crate::now_ms());
                 let mut w = self.warm.lock();
-                if w.len() < self.max_idle {
-                    w.push(slot);
+                if w.slots.len() + w.claimed < self.max_idle {
+                    w.slots.push(slot);
                 } else {
                     drop(w);
                     slot.discard();
@@ -166,8 +278,8 @@ impl InstancePool {
                 slot.ctx.release_native_resources();
                 slot.park(crate::now_ms());
                 let mut candidates = self.reset_candidates.lock();
-                if candidates.len() < self.max_idle {
-                    candidates.push(slot);
+                if candidates.slots.len() + candidates.claimed < self.max_idle {
+                    candidates.slots.push(slot);
                 } else {
                     drop(candidates);
                     slot.discard();
@@ -181,17 +293,21 @@ impl InstancePool {
         }
     }
 
+    /// Discards available idle entries and invalidates outstanding idle claims.
+    /// Returns the number discarded synchronously; claims discard on return.
     pub fn drain_idle(&self) -> usize {
         let mut n = 0;
-        for s in self
-            .warm
-            .lock()
-            .drain(..)
-            .chain(self.reset_candidates.lock().drain(..))
-        {
-            s.discard();
-            self.live.fetch_sub(1, Ordering::Relaxed);
-            n += 1;
+        for list in [&self.warm, &self.reset_candidates] {
+            let slots = {
+                let mut list = list.lock();
+                list.generation = Arc::new(());
+                std::mem::take(&mut list.slots)
+            };
+            for slot in slots {
+                slot.discard();
+                self.live.fetch_sub(1, Ordering::Relaxed);
+                n += 1;
+            }
         }
         n
     }
@@ -199,6 +315,9 @@ impl InstancePool {
 
 #[cfg(test)]
 mod reset_tests;
+
+#[cfg(test)]
+mod claim_tests;
 
 #[cfg(test)]
 mod tests {

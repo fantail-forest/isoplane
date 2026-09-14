@@ -63,6 +63,9 @@ impl Activator for DebugActivator {
     fn template_image(&self) -> Arc<MemoryImage> {
         self.0.template_image()
     }
+    fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
+        self.0.snapshot_size_bound(max_memory_bytes)
+    }
     fn activate(
         &self,
         bindings: Box<dyn HostBindings>,

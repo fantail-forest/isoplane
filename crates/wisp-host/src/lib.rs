@@ -39,6 +39,7 @@ pub mod fetcher;
 pub mod futures;
 pub mod hibernate_capture;
 pub mod hibernate_policy;
+pub mod memory_pressure;
 pub mod meters;
 pub mod metrics;
 pub mod pool;
@@ -87,7 +88,9 @@ impl fmt::Display for ModuleId {
 
 /// Cell-local identity of a slot. A migrated instance gets a new one, because
 /// instances are portable memory, not portable identities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct InstanceId(pub u64);
 
 impl fmt::Display for InstanceId {

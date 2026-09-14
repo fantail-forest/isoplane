@@ -10,7 +10,9 @@ Use per-dispatch completion events and exported aggregates to assess resource us
 
 ## Reclaim cached instances before parked requests
 
-Retain instances while memory is available. Under memory pressure, hibernate idle
+Use available memory across the host or VM, respecting container memory limits,
+rather than separate per-cell budgets. Retain instances while memory is available.
+Under memory pressure, hibernate idle
 completed instances before parked in-flight instances, using least-recently-used
 order within each group and only capturing at an empty-stack boundary. Under
 storage pressure, discard idle hibernated instances in least-recently-used order;

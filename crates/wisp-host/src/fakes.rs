@@ -532,6 +532,14 @@ impl Activator for FakeActivator {
     fn template_image(&self) -> Arc<wisp_engine::MemoryImage> {
         Arc::new(wisp_engine::MemoryImage::from_dense(&self.template))
     }
+    fn snapshot_size_bound(&self, _max_memory_bytes: u64) -> anyhow::Result<u64> {
+        Ok(crate::hibernate_capture::snapshot_size_bound(
+            crate::hibernate_capture::SnapshotShape {
+                max_memory_bytes: self.behaviour.memory_bytes as u64,
+                mutable_globals: 0,
+            },
+        )?)
+    }
     fn activate(
         &self,
         bindings: Box<dyn HostBindings>,

@@ -81,7 +81,6 @@ impl CallGuard<'_> {
         self.inst = None;
         self.slot.tombstone();
         self.slot.set_state(LifecycleTier::Discarded);
-        self.slot.ctx.local_snapshot.lock().take();
     }
 }
 
@@ -95,6 +94,7 @@ impl Drop for CallGuard<'_> {
                 g.tombstoned = true;
                 g.state = LifecycleTier::Discarded;
                 g.resident = None;
+                self.slot.ctx.snapshot.lock().take();
             }
             Some(i) => {
                 g.resident = Some(i);
@@ -109,9 +109,6 @@ impl Drop for CallGuard<'_> {
                 g.resident = None;
                 g.state = LifecycleTier::Discarded;
             }
-        }
-        if g.state == LifecycleTier::Discarded {
-            self.slot.ctx.local_snapshot.lock().take();
         }
         self.slot.publish(&g);
     }
@@ -147,6 +144,7 @@ pub struct Slot {
     /// take a mutex per parked instance per tick.
     state_hint: AtomicU8,
     parked_since_hint: AtomicU64,
+    last_used_ms: AtomicU64,
 }
 
 impl Slot {
@@ -167,6 +165,7 @@ impl Slot {
             parked_ms_total: AtomicU64::new(0),
             state_hint: AtomicU8::new(tier_as_u8(LifecycleTier::Parked)),
             parked_since_hint: AtomicU64::new(0),
+            last_used_ms: AtomicU64::new(crate::now_ms()),
         }
     }
 
@@ -221,6 +220,11 @@ impl Slot {
         tier_from_u8(self.state_hint.load(Ordering::Relaxed))
     }
 
+    /// Most recent activity boundary, retained while the instance is hibernated.
+    pub fn last_used_ms(&self) -> u64 {
+        self.last_used_ms.load(Ordering::Relaxed)
+    }
+
     /// Capture is eligible only when Parked and never from a tombstone.
     pub fn is_capture_eligible(&self) -> bool {
         let g = self.inner.lock();
@@ -232,6 +236,7 @@ impl Slot {
         let mut g = self.inner.lock();
         g.tombstoned = true;
         self.ctx.end_http_dispatch();
+        self.ctx.snapshot.lock().take();
     }
 
     pub fn is_tombstoned(&self) -> bool {
@@ -260,6 +265,7 @@ impl Slot {
     }
 
     pub fn park(&self, now_ms: u64) {
+        self.last_used_ms.store(now_ms, Ordering::Relaxed);
         let mut g = self.inner.lock();
         debug_assert!(
             g.state.may_transition_to(LifecycleTier::Parked) || g.state == LifecycleTier::Parked,
@@ -317,7 +323,6 @@ impl Slot {
             i.reset()?;
         }
         self.ctx.release_native_resources();
-        self.ctx.local_snapshot.lock().take();
         g.dirty = false;
         g.parked_since_ms = None;
         g.state = LifecycleTier::Parked;
@@ -328,8 +333,8 @@ impl Slot {
     pub fn discard(&self) {
         let mut g = self.inner.lock();
         g.resident = None;
+        self.ctx.snapshot.lock().take();
         self.ctx.release_native_resources();
-        self.ctx.local_snapshot.lock().take();
         g.state = LifecycleTier::Discarded;
         g.parked_since_ms = None;
         self.publish(&g);

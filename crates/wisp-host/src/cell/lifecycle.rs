@@ -20,13 +20,17 @@ impl Cell {
         let (slot, src) = match acquired {
             Ok(v) => v,
             Err(e) => {
-                job.completion.acquisition_failed(&e);
+                let status = job.completion.acquisition_failed(&e);
                 job.completion.finish();
                 job.completion.answer(
                     &job.responder,
                     DispatchResult {
-                        status: 500,
-                        body: e.to_string().into_bytes(),
+                        status,
+                        body: if status == 503 {
+                            b"snapshot_capacity_unavailable".to_vec()
+                        } else {
+                            e.to_string().into_bytes()
+                        },
                         ..DispatchResult::shed(did)
                     },
                 );

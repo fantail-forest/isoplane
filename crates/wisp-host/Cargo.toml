@@ -8,7 +8,6 @@ description = "The cell: reactor threads, execution pool, future table, wake rou
 
 [dependencies]
 blake3 = { workspace = true }
-tempfile = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -34,6 +33,7 @@ scc = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 wat = { workspace = true }
 wisp-fixtures = { workspace = true }

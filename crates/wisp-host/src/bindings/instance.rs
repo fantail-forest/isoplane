@@ -52,6 +52,7 @@ impl Default for GuestResourceLimits {
 /// freeze the clock, read the trap latch and collect the response for an
 /// instance whose bindings it no longer owns.
 pub struct InstanceCtx {
+    pub(crate) snapshot: Mutex<Option<Box<dyn wisp_hibernate::snapshot::SnapshotReservation>>>,
     pub instance: InstanceId,
     pub module: ModuleId,
     pub tenant: String,
@@ -92,8 +93,6 @@ pub struct InstanceCtx {
     pub(super) http: Mutex<Arc<super::http_scope::HttpScope>>,
     pub(crate) request_body: Mutex<Option<Arc<super::request_body::RequestBodyScope>>>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
-    /// Anonymous checkpoint file owned by this instance context.
-    pub(crate) local_snapshot: Mutex<Option<crate::hibernate_capture::OwnedLocalSnapshot>>,
 }
 
 impl InstanceCtx {
@@ -129,6 +128,7 @@ impl InstanceCtx {
         rt: Option<Arc<CellRuntime>>,
     ) -> Self {
         Self {
+            snapshot: Mutex::new(None),
             instance,
             module: tenancy.module,
             tenant: tenancy.tenant,
@@ -157,7 +157,6 @@ impl InstanceCtx {
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
-            local_snapshot: Mutex::new(None),
         }
     }
 

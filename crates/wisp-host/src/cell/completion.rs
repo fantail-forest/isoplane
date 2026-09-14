@@ -33,6 +33,7 @@ pub(super) enum TerminalReason {
     RequestCancelled,
     TransportFailure,
     AcquisitionFailed,
+    SnapshotCapacityUnavailable,
     EntryRefused,
     RestoreFailed,
     CaptureFailed,
@@ -51,6 +52,7 @@ impl TerminalReason {
             Self::RequestCancelled => "request_cancelled",
             Self::TransportFailure => "transport_failure",
             Self::AcquisitionFailed => "acquisition_failed",
+            Self::SnapshotCapacityUnavailable => "snapshot_capacity_unavailable",
             Self::EntryRefused => "entry_refused",
             Self::RestoreFailed => "restore_failed",
             Self::CaptureFailed => "capture_failed",
@@ -253,9 +255,20 @@ impl DispatchCompletion {
         self.state.lock().guest_trap_code = Some(code);
     }
 
-    pub(super) fn acquisition_failed(&self, error: &anyhow::Error) {
+    pub(super) fn acquisition_failed(&self, error: &anyhow::Error) -> u16 {
         let mut state = self.state.lock();
-        state.outcome = Some((TerminalReason::AcquisitionFailed, 500));
+        let exhausted = error
+            .downcast_ref::<wisp_hibernate::snapshot::SnapshotError>()
+            .is_some_and(wisp_hibernate::snapshot::SnapshotError::is_capacity_exhausted);
+        let status = if exhausted { 503 } else { 500 };
+        state.outcome = Some((
+            if exhausted {
+                TerminalReason::SnapshotCapacityUnavailable
+            } else {
+                TerminalReason::AcquisitionFailed
+            },
+            status,
+        ));
         if let Some(error) = error
             .chain()
             .find_map(|cause| cause.downcast_ref::<std::io::Error>())
@@ -263,6 +276,7 @@ impl DispatchCompletion {
             state.io_kind = Some(error.kind());
             state.os_error = error.raw_os_error();
         }
+        status
     }
 
     pub(super) fn failure_result(&self, status: u16, code: &'static str) -> DispatchResult {
@@ -341,6 +355,7 @@ impl DispatchCompletion {
                 }
             }
             TerminalReason::CpuLimit
+            | TerminalReason::SnapshotCapacityUnavailable
             | TerminalReason::WallLimit
             | TerminalReason::RequestCancelled
             | TerminalReason::TransportFailure

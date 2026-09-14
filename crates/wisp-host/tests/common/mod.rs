@@ -21,6 +21,12 @@ impl Resolver for Fixed {
 
 /// A cell with a controlled fetcher and an egress resolver fixed to `addr`.
 pub fn rig_resolving(cfg: CellConfig, addr: &str) -> (Arc<Cell>, Arc<FakeFetcher>) {
+    let (svc, fetcher) = services_resolving(addr);
+    let cell = Cell::new(cfg, svc).expect("a cell starts");
+    (cell, fetcher)
+}
+
+pub fn services_resolving(addr: &str) -> (Arc<Services>, Arc<FakeFetcher>) {
     let fetcher = Arc::new(FakeFetcher::default());
     let egress = Arc::new(HostEgressPolicy::new(
         Box::new(Fixed(vec![addr.parse().expect("a literal address")])),
@@ -31,8 +37,7 @@ pub fn rig_resolving(cfg: CellConfig, addr: &str) -> (Arc<Cell>, Arc<FakeFetcher
         egress,
         fetcher: fetcher.clone(),
     });
-    let cell = Cell::new(cfg, svc).expect("a cell starts");
-    (cell, fetcher)
+    (svc, fetcher)
 }
 
 pub fn manifest(name: &str, lifecycle: HandlerLifecycle, limits: Limits) -> AppManifest {

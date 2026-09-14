@@ -3,6 +3,14 @@
 use super::*;
 
 impl Cell {
+    /// One pass of the idle trajectory. The first pass over every resident
+    /// reads only atomics and clones nothing, because the sweep runs several
+    /// times a second over a cell full of parked instances and a parked
+    /// instance is supposed to cost no CPU.
+    pub(super) fn sweep_idle(self: &Arc<Self>) {
+        self.sweep_handler_pressure();
+    }
+
     pub(super) fn capture_env<'a>(
         &'a self,
         entry: &'a Arc<ModuleEntry>,
@@ -98,13 +106,8 @@ impl Cell {
             }
         };
         let bytes = res.bytes;
-        *slot.ctx.local_snapshot.lock() = Some(res.snapshot);
-        if let Err(error) = slot.hibernate() {
-            slot.ctx.local_snapshot.lock().take();
-            return Err(hibernate_policy::CaptureRefused::Failed(format!(
-                "{error:?}"
-            )));
-        }
+        slot.hibernate()
+            .map_err(|error| hibernate_policy::CaptureRefused::Failed(format!("{error:?}")))?;
         entry.meters.record_capture(bytes);
         self.metrics.captures.fetch_add(1, Ordering::Relaxed);
         self.metrics.delta_bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -159,7 +162,6 @@ impl Cell {
             self.metrics.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
         }
         slot.rehydrate(instance);
-        slot.ctx.local_snapshot.lock().take();
 
         Ok(())
     }

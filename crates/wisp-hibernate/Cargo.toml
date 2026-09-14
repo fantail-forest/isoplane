@@ -14,7 +14,8 @@ tracing = { workspace = true }
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-engine = { workspace = true }
 postcard = { workspace = true }
+fs4 = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 libc = { workspace = true }
-tempfile = { workspace = true }

@@ -87,11 +87,71 @@ impl Activator for EngineActivator {
     fn template_image(&self) -> Arc<MemoryImage> {
         self.image.clone()
     }
+    fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
+        Ok(crate::hibernate_capture::snapshot_size_bound(
+            crate::hibernate_capture::SnapshotShape {
+                max_memory_bytes: max_memory_bytes
+                    .min(self.engine.configuration().max_memory_bytes),
+                mutable_globals: self.template.mutable_global_count(),
+            },
+        )?)
+    }
     fn activate(
         &self,
         bindings: Box<dyn HostBindings>,
     ) -> anyhow::Result<Box<dyn InstanceOps + Send>> {
         let inst: Instance = self.engine.activate(&self.template, bindings)?;
         Ok(Box::new(inst))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wisp_engine::EngineConfig;
+
+    #[test]
+    fn reservation_uses_the_engine_ceiling_and_the_templates_mutable_globals() {
+        let engine = Arc::new(
+            WispEngine::new(EngineConfig {
+                max_instances: 2,
+                max_memory_bytes: 2 << 20,
+                guard_size_bytes: 64 << 20,
+                ..EngineConfig::default()
+            })
+            .expect("engine must initialize"),
+        );
+        let module = wat::parse_str(
+            r#"(module
+            (memory (export "memory") 1)
+            (global (export "counter") (mut i64) (i64.const 0))
+            (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
+            (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
+            (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#,
+        )
+        .expect("guest must parse");
+        let activator = EngineActivator::load(engine, ModuleId::new("bound", "v1"), &module)
+            .expect("guest must load");
+        let expected = crate::hibernate_capture::snapshot_size_bound(
+            crate::hibernate_capture::SnapshotShape {
+                max_memory_bytes: 2 << 20,
+                mutable_globals: 1,
+            },
+        )
+        .expect("engine-limited snapshot must fit");
+        assert_eq!(
+            activator
+                .snapshot_size_bound(4 << 20)
+                .expect("reservation must fit"),
+            expected,
+            "reservation must include mutable globals and the engine's enforced memory ceiling"
+        );
+        let smaller = activator
+            .snapshot_size_bound(1 << 20)
+            .expect("smaller admission must fit");
+        assert!(
+            smaller < expected,
+            "a smaller per-instance memory ceiling must reduce the reservation"
+        );
     }
 }

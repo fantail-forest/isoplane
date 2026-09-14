@@ -44,8 +44,6 @@ pub(crate) struct LocalCapture {
     pub capture_us: u64,
     /// Guest GC hint elapsed microseconds.
     pub gc_hint_us: u64,
-    /// Anonymous file retained by this original instance context.
-    pub snapshot: OwnedLocalSnapshot,
 }
 
 /// Observes guest work invoked by capture on behalf of an unfinished dispatch.
@@ -78,11 +76,11 @@ pub(crate) fn capture_in_context(
             abi_rev: env.activator.abi_rev(),
             instance: slot.id,
         };
-        let storage_bytes = local_snapshot::size_bound(local_snapshot::SnapshotShape {
-            max_memory_bytes: slot.ctx.limits.instance_memory_max,
-            mutable_globals: image.globals.len(),
-        })
-        .map_err(|error| CaptureRefused::Failed(error.to_string()))?;
+        let mut reservation = slot.ctx.snapshot.lock();
+        let reservation = reservation
+            .as_mut()
+            .ok_or_else(|| CaptureRefused::Failed("instance has no snapshot reservation".into()))?;
+        let storage_bytes = reservation.reserved_bytes().0;
         let encoded = local_snapshot::encode(
             identity,
             local_snapshot::Bounds {
@@ -95,13 +93,13 @@ pub(crate) fn capture_in_context(
         )
         .map_err(|error| CaptureRefused::Failed(error.to_string()))?;
         let bytes = encoded.bytes.len() as u64;
-        let snapshot = OwnedLocalSnapshot::publish(&encoded.bytes)
+        reservation
+            .save(&encoded.bytes)
             .map_err(|error| CaptureRefused::SnapshotWrite(error.to_string()))?;
         Ok((
             bytes,
             encoded.changed_pages,
             started.elapsed().as_micros() as u64,
-            snapshot,
         ))
     })?;
     Ok(LocalCapture {
@@ -109,7 +107,6 @@ pub(crate) fn capture_in_context(
         changed_pages: captured.1,
         capture_us: captured.2,
         gc_hint_us,
-        snapshot: captured.3,
     })
 }
 
@@ -338,6 +335,12 @@ mod tests {
         fn template_image(&self) -> Arc<wisp_engine::MemoryImage> {
             Arc::new(wisp_engine::MemoryImage::from_dense(&self.template))
         }
+        fn snapshot_size_bound(&self, _max_memory_bytes: u64) -> anyhow::Result<u64> {
+            Ok(snapshot_size_bound(SnapshotShape {
+                max_memory_bytes: self.template.len() as u64,
+                mutable_globals: 0,
+            })?)
+        }
         fn activate(
             &self,
             _b: Box<dyn wisp_engine::HostBindings>,
@@ -400,6 +403,21 @@ mod tests {
                 ))
             })
             .expect("a slot");
+        let storage = tempfile::tempdir().expect("owned local fixture storage");
+        let storage = wisp_hibernate::snapshot::LocalSnapshotStorage::new(storage.path())
+            .expect("open real reservation storage");
+        let bytes = snapshot_size_bound(SnapshotShape {
+            max_memory_bytes: wisp_abi::PAGE_SIZE as u64,
+            mutable_globals: 0,
+        })
+        .expect("bound the fixture's actual sandbox");
+        *slot.ctx.snapshot.lock() = Some(
+            wisp_hibernate::snapshot::SnapshotStorage::reserve(
+                &storage,
+                wisp_hibernate::snapshot::SnapshotBytes(bytes),
+            )
+            .expect("reserve fixture capacity"),
+        );
         slot.park(0);
         assert!(
             slot.is_capture_eligible(),
@@ -626,8 +644,6 @@ mod tests {
     }
 }
 
-/// An anonymous file whose lifetime belongs to this instance context.
-pub(crate) use local_snapshot::FileSnapshot as OwnedLocalSnapshot;
 /// A checked snapshot for the original host context.
 pub(crate) use local_snapshot::Snapshot as LocalSnapshot;
 pub use local_snapshot::{
@@ -639,12 +655,12 @@ pub(crate) fn read_in_context(
     slot: &Arc<Slot>,
     activator: &Arc<dyn Activator>,
 ) -> anyhow::Result<LocalSnapshot> {
-    let mut snapshot = slot.ctx.local_snapshot.lock();
-    let snapshot = snapshot
+    let mut reservation = slot.ctx.snapshot.lock();
+    let reservation = reservation
         .as_mut()
-        .ok_or_else(|| anyhow::anyhow!("instance has no local snapshot"))?;
-    let bytes = snapshot.read()?;
-    let storage_bytes = bytes.len() as u64;
+        .ok_or_else(|| anyhow::anyhow!("instance has no snapshot reservation"))?;
+    let storage_bytes = reservation.reserved_bytes().0;
+    let bytes = reservation.load()?;
     Ok(local_snapshot::Snapshot::open(
         bytes,
         local_snapshot::Identity {
@@ -737,9 +753,6 @@ mod local_snapshot {
     /// Local snapshot encoding, corruption, identity or capacity failure.
     #[derive(Debug, thiserror::Error)]
     pub enum Error {
-        /// Creating, writing, syncing or reading the owned local file failed.
-        #[error("local snapshot file: {0}")]
-        Io(#[from] std::io::Error),
         /// The stored bytes, page layout or memory size are invalid.
         #[error("local snapshot is corrupt")]
         Corrupt,
@@ -1001,45 +1014,6 @@ mod local_snapshot {
                 }
             }
             Ok(())
-        }
-    }
-
-    /// An anonymous snapshot file owned by one original instance context.
-    pub(crate) struct FileSnapshot {
-        file: std::fs::File,
-        stored_bytes: u64,
-    }
-
-    impl FileSnapshot {
-        /// Publishes complete bytes before the caller releases resident state.
-        pub(super) fn publish(bytes: &[u8]) -> Result<Self, Error> {
-            let file = tempfile::tempfile()?;
-            Self::write(file, bytes)
-        }
-
-        fn write(mut file: std::fs::File, bytes: &[u8]) -> Result<Self, Error> {
-            use std::io::Write;
-
-            file.write_all(bytes)?;
-            file.sync_data()?;
-            Ok(Self {
-                file,
-                stored_bytes: bytes.len() as u64,
-            })
-        }
-
-        /// Reads only the exact complete length published by this owner.
-        pub(super) fn read(&mut self) -> Result<Vec<u8>, Error> {
-            use std::io::{Read, Seek};
-
-            if self.file.metadata()?.len() != self.stored_bytes {
-                return Err(Error::Corrupt);
-            }
-            let length = usize::try_from(self.stored_bytes).map_err(|_| Error::Overflow)?;
-            let mut bytes = vec![0; length];
-            self.file.rewind()?;
-            self.file.read_exact(&mut bytes)?;
-            Ok(bytes)
         }
     }
 }

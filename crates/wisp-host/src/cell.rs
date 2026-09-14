@@ -36,7 +36,9 @@ mod lifecycle;
 mod pool;
 mod queue;
 pub(crate) use queue::HttpDispatch;
+mod reclamation;
 mod registry;
+pub use reclamation::{ReclaimCandidate, ReclaimKind};
 mod tombstone;
 mod wake;
 
@@ -100,6 +102,7 @@ impl Default for CellConfig {
 impl CellConfig {
     /// Validates settings for a cell driven by its own execution workers.
     pub fn validate(&self) -> crate::Result<()> {
+        self.hibernate.validate()?;
         anyhow::ensure!(self.exec_threads > 0, "exec_threads must be positive");
         anyhow::ensure!(self.reactor_threads > 0, "reactor_threads must be positive");
         anyhow::ensure!(
@@ -129,6 +132,8 @@ impl CellConfig {
 /// not guaranteed to share one.
 const ACTIVE_SHARDS: usize = 256;
 
+type StorageReclaimer = dyn Fn() -> crate::Result<bool> + Send + Sync;
+
 pub struct Cell {
     pub cfg: CellConfig,
     /// Weak, like the exec threads' reference: a cell that keeps itself alive
@@ -148,6 +153,11 @@ pub struct Cell {
     residents: Mutex<HashMap<InstanceId, Resident>>,
     active: ShardedMap<InstanceId, ActiveRequest>,
     completion_clock: RwLock<completion::CompletionClock>,
+    snapshots: Arc<dyn wisp_hibernate::snapshot::SnapshotStorage>,
+    memory_pressure: RwLock<Arc<dyn crate::memory_pressure::MemoryPressureSource>>,
+    reclaiming: AtomicBool,
+    node_coordinated_reclamation: AtomicBool,
+    storage_reclaimer: RwLock<Option<Arc<StorageReclaimer>>>,
     breaker: HangBreaker,
     metrics: Arc<Metrics>,
     hot: AtomicUsize,
@@ -162,6 +172,33 @@ pub struct Cell {
 impl Cell {
     /// Fails if the reactor or a pool thread cannot be started.
     pub fn new(cfg: CellConfig, services: Arc<Services>) -> crate::Result<Arc<Self>> {
+        Self::with_snapshot_storage(
+            cfg,
+            services,
+            Arc::new(wisp_hibernate::snapshot::LocalSnapshotStorage::new(
+                std::env::temp_dir(),
+            )?),
+        )
+    }
+
+    /// Constructs a cell whose local snapshots consume the supplied storage reservations.
+    pub fn with_snapshot_storage(
+        cfg: CellConfig,
+        services: Arc<Services>,
+        snapshots: Arc<dyn wisp_hibernate::snapshot::SnapshotStorage>,
+    ) -> crate::Result<Arc<Self>> {
+        let cell = Self::build(cfg, services, snapshots)?;
+        cell.start_exec_pool()?;
+        cell.start_idle_sweeper()?;
+        Ok(cell)
+    }
+
+    fn build(
+        cfg: CellConfig,
+        services: Arc<Services>,
+        snapshots: Arc<dyn wisp_hibernate::snapshot::SnapshotStorage>,
+    ) -> crate::Result<Arc<Self>> {
+        cfg.hibernate.validate()?;
         anyhow::ensure!(
             cfg.response_queue_bytes > 0,
             "response_queue_bytes must be positive"
@@ -205,6 +242,11 @@ impl Cell {
             // names no socket.
             residents: Mutex::new(HashMap::new()),
             active: ShardedMap::new(ACTIVE_SHARDS),
+            snapshots,
+            memory_pressure: RwLock::new(Arc::new(crate::memory_pressure::SystemMemoryPressure)),
+            reclaiming: AtomicBool::new(false),
+            node_coordinated_reclamation: AtomicBool::new(false),
+            storage_reclaimer: RwLock::new(None),
             metrics,
             hot: AtomicUsize::new(0),
             next_dispatch: AtomicU64::new(1),
@@ -218,7 +260,6 @@ impl Cell {
         cell.me
             .set(Arc::downgrade(&cell))
             .expect("the self-reference is set once, here, on a fresh OnceLock");
-        cell.start_exec_pool()?;
         Ok(cell)
     }
 
