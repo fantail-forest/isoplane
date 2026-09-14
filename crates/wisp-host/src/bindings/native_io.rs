@@ -39,6 +39,12 @@ struct ReactorWork {
     task: tokio::task::AbortHandle,
 }
 
+impl ReactorWork {
+    fn is_pending(&self) -> bool {
+        self.table.is_pending(self.owner, self.future)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

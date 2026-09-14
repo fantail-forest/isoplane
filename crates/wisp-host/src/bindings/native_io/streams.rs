@@ -107,11 +107,7 @@ impl Input {
 
     /// Arms the wake for the stream becoming readable, unless one is armed.
     pub(super) fn arm(&mut self, bindings: &CellBindings) -> Result<(), Error> {
-        if self
-            .task
-            .as_ref()
-            .is_some_and(|work| !work.task.is_finished())
-        {
+        if self.task.as_ref().is_some_and(ReactorWork::is_pending) {
             return Ok(());
         }
         let stream = connection(&self.state)?;
@@ -169,11 +165,7 @@ impl Output {
 
     /// Arms the wake for the stream becoming writable, unless one is armed.
     pub(super) fn arm(&mut self, bindings: &CellBindings) -> Result<(), Error> {
-        if self
-            .task
-            .as_ref()
-            .is_some_and(|work| !work.task.is_finished())
-        {
+        if self.task.as_ref().is_some_and(ReactorWork::is_pending) {
             return Ok(());
         }
         let stream = connection(&self.state)?;
@@ -336,23 +328,7 @@ mod tests {
     async fn a_full_socket_parks_one_output_wake_and_preserves_partial_send_counts() {
         let (state, mut peer, bindings, wake) = connected(ByteCount(1 << 30)).await;
         let mut output = Output::new(state);
-        let bytes = vec![0x5a; 65536];
-        let mut sent = 0;
-        loop {
-            match output.send(&bytes, &bindings) {
-                Ok(Response::Capacity(count)) => {
-                    assert!(
-                        count.0 > 0 && count.0 <= bytes.len() as u64,
-                        "each send must report only bytes accepted by the real socket"
-                    );
-                    sent += count.0 as usize;
-                }
-                Err(Error::WouldBlock) => break,
-                result => panic!(
-                    "controlled output backpressure produced an unexpected result: {result:?}"
-                ),
-            }
-        }
+        let sent = fill_output(&mut output, &bindings);
         let runtime = bindings.rt().expect("the stream test must have a reactor");
         assert_eq!(
             runtime.futures.pending_total(bindings.ctx.instance),
@@ -385,6 +361,109 @@ mod tests {
             ),
             "a writable socket must accept the remaining byte"
         );
+    }
+
+    struct HeldWake {
+        signalled: tokio::sync::Notify,
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl WakeSink for HeldWake {
+        fn signal(&self, _: InstanceId) {
+            let release = self.release.lock().take();
+            self.signalled.notify_one();
+            if let Some(release) = release {
+                release
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .expect(
+                    "the test must explicitly release the settled watcher before the hang deadline",
+                );
+            }
+        }
+    }
+
+    fn hold_first_wake(
+        bindings: &mut CellBindings,
+    ) -> (Arc<HeldWake>, std::sync::mpsc::SyncSender<()>) {
+        let (release, receiver) = std::sync::mpsc::sync_channel(0);
+        let wake = Arc::new(HeldWake {
+            signalled: tokio::sync::Notify::new(),
+            release: Mutex::new(Some(receiver)),
+        });
+        let context = Arc::get_mut(&mut bindings.ctx)
+            .expect("the newly connected fixture owns its context exclusively");
+        let runtime = Arc::get_mut(context.rt.as_mut().expect("test runtime"))
+            .expect("the new context exclusively owns its runtime");
+        runtime.wake = wake.clone();
+        (wake, release)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_delivered_readiness_wake_can_rearm_before_its_old_task_returns() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (state, mut peer, mut bindings, _) = connected(ByteCount(1024)).await;
+            let (wake, release) = hold_first_wake(&mut bindings);
+            let mut input = Input::new(state);
+            assert!(matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes.is_empty()), "the first read must wait for the real peer");
+            let old = input.task.as_ref().expect("first watcher").task.clone();
+            peer.write_all(b"a").await.expect("first peer byte");
+            wake.signalled.notified().await;
+            let runtime = bindings.rt().expect("runtime");
+            assert!(runtime.futures.take_ready(bindings.ctx.instance).is_some(), "the first readiness result must already be deliverable");
+            assert!(!old.is_finished(), "the explicit wake barrier must keep the settled watcher running");
+            assert!(matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes == b"a"), "the first ready read must consume the peer byte");
+            assert!(matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes.is_empty()), "the drained stream must wait again");
+            assert_eq!(runtime.futures.pending_total(bindings.ctx.instance), 1, "a drained stream must acquire a new wake even while the delivered watcher is still returning");
+            peer.write_all(b"b").await.expect("second peer byte");
+            wake.signalled.notified().await;
+            assert!(runtime.futures.take_ready(bindings.ctx.instance).is_some(), "later input must wake the rearmed stream without a timer or retry");
+            assert!(matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes == b"b"), "the second wake must expose the second real peer byte");
+            release.send(()).expect("release old watcher");
+        }).await.expect("the rearm regression must not hang");
+    }
+
+    fn fill_output(output: &mut Output, bindings: &CellBindings) -> usize {
+        let bytes = vec![0x5a; 65536];
+        let mut sent = 0;
+        loop {
+            match output.send(&bytes, bindings) {
+                Ok(Response::Capacity(count)) => {
+                    assert!(
+                        count.0 > 0 && count.0 <= bytes.len() as u64,
+                        "a real partial send must report exactly accepted bytes"
+                    );
+                    sent += count.0 as usize;
+                }
+                Err(Error::WouldBlock) => return sent,
+                result => panic!(
+                    "controlled output backpressure produced an unexpected result: {result:?}"
+                ),
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_delivered_output_wake_can_rearm_before_its_old_task_returns() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (state, mut peer, mut bindings, _) = connected(ByteCount(1 << 30)).await;
+            let (wake, release) = hold_first_wake(&mut bindings);
+            let mut output = Output::new(state);
+            let first_bytes = fill_output(&mut output, &bindings);
+            let old = output.task.as_ref().expect("first output watcher").task.clone();
+            let mut received = vec![0; first_bytes];
+            peer.read_exact(&mut received).await.expect("drain first output");
+            wake.signalled.notified().await;
+            let runtime = bindings.rt().expect("runtime");
+            assert!(runtime.futures.take_ready(bindings.ctx.instance).is_some(), "the first writable result must already be deliverable");
+            assert!(!old.is_finished(), "the explicit wake barrier must keep the settled output watcher running");
+            let second_bytes = fill_output(&mut output, &bindings);
+            assert_eq!(runtime.futures.pending_total(bindings.ctx.instance), 1, "new backpressure must acquire a new wake before the delivered output watcher returns");
+            received.resize(second_bytes, 0);
+            peer.read_exact(&mut received).await.expect("drain rearmed output");
+            wake.signalled.notified().await;
+            assert!(runtime.futures.take_ready(bindings.ctx.instance).is_some(), "later peer drainage must wake the rearmed sender without a timer or retry");
+            release.send(()).expect("release old output watcher");
+        }).await.expect("the output rearm regression must not hang");
     }
 
     #[tokio::test]

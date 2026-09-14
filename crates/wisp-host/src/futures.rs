@@ -343,6 +343,12 @@ impl FutureTable {
             .map_or(0, |a| a.inner.lock().pending.len())
     }
 
+    /// Whether this owner's operation still needs a completion, independent of task cleanup.
+    pub(crate) fn is_pending(&self, owner: InstanceId, id: FutureId) -> bool {
+        self.existing(owner)
+            .is_some_and(|owned| owned.inner.lock().pending.contains(&id.0))
+    }
+
     /// Releases all dispatch-owned futures, whether
     /// still pending or completed and undelivered; a result left in `ready`
     /// would be served to the next request on this instance as a wake for a
