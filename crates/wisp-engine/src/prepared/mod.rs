@@ -173,6 +173,7 @@ impl WispEngine {
 
     /// Checks local prepared state and reads it into immutable owned allocations.
     /// Backing-file failures are returned before native execution; no file mapping survives admission.
+    #[tracing::instrument(name = "template_load", skip_all, fields(mode = "owned"))]
     /// # Safety
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
@@ -194,6 +195,7 @@ impl WispEngine {
     }
 
     /// Restore the selected local artifact without compilation or initialization.
+    #[tracing::instrument(name = "template_load", skip_all, fields(mode = "owned"))]
     /// # Safety
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
@@ -246,9 +248,11 @@ impl WispEngine {
         )
         .map_err(PreparedError::Invalid)?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
-        // SAFETY: the caller guarantees controlled local compiler origin; each owned
-        // payload was checked against its recorded digest and cannot change after verification.
-        let module = unsafe { wasmtime::Module::deserialize(&self.inner.wasmtime, &native) }
+        let module = tracing::info_span!("template_native_deserialize")
+            .in_scope(|| {
+                // SAFETY: the caller guarantees local compiler origin; verified owned payloads cannot change.
+                unsafe { wasmtime::Module::deserialize(&self.inner.wasmtime, &native) }
+            })
             .map_err(|e| PreparedError::Engine(e.into()))?;
         self.finish_prepared(module, manifest, state, image)
     }
@@ -259,6 +263,7 @@ impl WispEngine {
     /// The caller must run this engine and every use of the returned template in a supervised
     /// application worker process. Backing storage corruption can cause SIGBUS even after
     /// verification; the supervisor must contain worker death and fail affected requests.
+    #[tracing::instrument(name = "template_load", skip_all, fields(mode = "mapped"))]
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
     pub unsafe fn load_prepared_mapped(
@@ -292,11 +297,12 @@ impl WispEngine {
         )
         .map_err(PreparedError::Invalid)?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
-        // SAFETY: the caller guarantees local compiler origin; fs-verity checked this exact held inode,
-        // and Wasmtime takes ownership of that descriptor. The caller contains worker faults.
-        let module =
-            unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native) }
-                .map_err(|e| PreparedError::Engine(e.into()))?;
+        let module = tracing::info_span!("template_native_deserialize")
+            .in_scope(|| {
+                // SAFETY: the caller guarantees local compiler origin; the fs-verity inode is immutable.
+                unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native) }
+            })
+            .map_err(|e| PreparedError::Engine(e.into()))?;
         self.finish_prepared(module, manifest, state, image)
     }
 

@@ -209,6 +209,27 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         .flat_map(|resource| &resource.scope_spans)
         .flat_map(|scope| &scope.spans)
         .collect();
+    let load = spans
+        .iter()
+        .find(|span| span.name == "template_load")
+        .expect("local deployment must expose owned template loading");
+    assert_eq!(
+        field(&load.attributes, "mode"),
+        &Value::StringValue("owned".into()),
+        "local deployment must identify its owned-payload path"
+    );
+    for stage in [
+        "template_manifest_verify",
+        "template_payload_read_verify",
+        "template_native_deserialize",
+    ] {
+        assert!(
+            spans.iter().any(|span| span.name == stage
+                && span.trace_id == load.trace_id
+                && span.parent_span_id == load.span_id),
+            "actual {stage} must nest under owned template loading"
+        );
+    }
     let dispatch = spans
         .iter()
         .find(|span| span.name == "dispatch")

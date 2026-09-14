@@ -144,6 +144,7 @@ pub(super) fn read_manifest(directory: &Path) -> Result<Manifest> {
     read_manifest_receipt(directory).map(|(manifest, _)| manifest)
 }
 
+#[tracing::instrument(name = "template_manifest_verify", skip_all)]
 pub(super) fn read_manifest_receipt(
     directory: &Path,
 ) -> Result<(Manifest, [u8; 32])> {
@@ -175,6 +176,12 @@ pub(super) fn read_manifest_receipt(
 pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Vec<u8>; 3]> {
     let mut payloads = std::array::from_fn(|_| Vec::new());
     for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
+        let _payload = tracing::info_span!(
+            "template_payload_read_verify",
+            payload = *name,
+            bytes = manifest.files[index].bytes
+        )
+        .entered();
         let path = directory.join(name);
         let file = File::open(&path).map_err(|e| io("open payload", &path, e))?;
         let record = &manifest.files[index];
@@ -270,6 +277,12 @@ fn verity_digest(_file: &File, path: &Path) -> Result<Vec<u8>> {
 
 pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[File; 3]> {
     let open = |index: usize| {
+        let _payload = tracing::info_span!(
+            "template_payload_verify",
+            payload = PAYLOAD_NAMES[index],
+            bytes = manifest.files[index].bytes
+        )
+        .entered();
         let path = directory.join(PAYLOAD_NAMES[index]);
         let file = File::open(&path).map_err(|e| io("open immutable payload", &path, e))?;
         let record = &manifest.files[index];
@@ -292,6 +305,7 @@ pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[Fi
     Ok([open(0)?, open(1)?, open(2)?])
 }
 
+#[tracing::instrument(name = "template_read_ahead", skip_all, fields(ranges = ranges.len()))]
 pub(super) fn advise(files: &[File; 3], manifest: &Manifest, ranges: &[ReadAhead]) -> Result<()> {
     let mut ordered: Vec<_> = ranges.iter().collect();
     ordered.sort_by_key(|range| (range.payload, range.offset_bytes));
