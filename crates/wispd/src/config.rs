@@ -69,6 +69,9 @@ fn default_response_queue_bytes() -> usize {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EngineLimits {
+    /// Emit Linux perf jitdump records in the process working directory.
+    #[serde(default)]
+    pub perf_jitdump: bool,
     /// Ceiling on concurrently resident instances per engine.
     #[serde(default = "default_max_instances")]
     pub max_instances: u32,
@@ -154,6 +157,7 @@ impl EngineLimits {
 impl Default for EngineLimits {
     fn default() -> Self {
         EngineLimits {
+            perf_jitdump: false,
             max_instances: default_max_instances(),
             total_tables: None,
             max_memory_mib: default_max_memory_mib(),

@@ -28,6 +28,9 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
         bail!("engine compiler stack, core-instance bytes, table elements and tables per module must be nonzero");
     }
     let mut c = Config::new();
+    if cfg.perf_jitdump {
+        c.profiler(wasmtime::ProfilingStrategy::JitDump);
+    }
 
     // Disable these proposals explicitly even when Cargo features enable their implementations.
     c.wasm_features(

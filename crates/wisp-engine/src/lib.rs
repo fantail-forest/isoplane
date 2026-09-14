@@ -52,6 +52,8 @@ pub type Result<T> = anyhow::Result<T>;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct EngineConfig {
+    /// Emit Linux perf jitdump records in the process working directory. Disabled by default.
+    pub perf_jitdump: bool,
     /// Ceiling on concurrently resident instances in this cell.
     pub max_instances: u32,
     /// Aggregate pooled table slots; omission follows the instance count.
@@ -93,6 +95,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
+            perf_jitdump: false,
             max_instances: 10_000,
             total_tables: None,
             max_memory_bytes: 128 << 20,

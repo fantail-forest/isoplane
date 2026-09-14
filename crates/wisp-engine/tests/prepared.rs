@@ -289,3 +289,71 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
         "a manifest receipt alone must not qualify missing executable payloads"
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
+    const CHILD: &str = "WISP_PREPARED_PROFILE_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let directory = tempfile::tempdir().expect("owned profiler output directory");
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "profiling_an_existing_template_emits_native_symbols_without_rebuilding_it",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .current_dir(directory.path())
+            .output()
+            .expect("isolated profiler test");
+        assert!(
+            output.status.success(),
+            "profiling must work in an isolated process: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let engine = test_engine();
+    let wasm = guest(
+        4,
+        "",
+        "(func $profile_marker (export \"profile_marker\") (result i32) i32.const 47)",
+        DONE,
+        DONE,
+    );
+    let expected = identity(&wasm);
+    let directory = tempfile::tempdir().expect("prepared artifact");
+    let path = directory.path().join("version");
+    engine
+        .prepare_template(&wasm, expected)
+        .expect("prepare without profiling")
+        .publish(&path, PreparedStorage::VerifiedCopy)
+        .expect("publish");
+    let dump = std::path::PathBuf::from(format!("jit-{}.dump", std::process::id()));
+    assert!(
+        !dump.exists(),
+        "normal engine operation must not enable profiling output"
+    );
+    let profiled = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        perf_jitdump: true,
+        ..small_engine_config()
+    })
+    .expect("profiled engine");
+    let template = unsafe {
+        // SAFETY: this test compiled the artifact into its own private fixture storage.
+        profiled.load_prepared(&path, expected)
+    }
+    .expect("profiling must accept the existing unprofiled artifact identity");
+    assert_eq!(
+        activate(&profiled, &template).memory().len(),
+        4 * 65536,
+        "profiled loading must preserve activatable guest memory"
+    );
+    let bytes = std::fs::read(dump).expect("jitdump file");
+    let marker = b"profile_marker";
+    assert!(
+        bytes.windows(marker.len()).any(|window| window == marker),
+        "loading existing native code must register its function symbols with perf"
+    );
+}

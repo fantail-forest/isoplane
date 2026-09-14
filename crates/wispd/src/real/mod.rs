@@ -32,6 +32,7 @@ pub fn engine_config(
     trust: &crate::trust::TrustBundle,
 ) -> Result<wisp_engine::EngineConfig, wisp_engine::PlatformFilesError> {
     Ok(wisp_engine::EngineConfig {
+        perf_jitdump: cfg.engine.perf_jitdump,
         max_instances: cfg.engine.max_instances,
         total_tables: cfg.engine.total_tables,
         max_memory_bytes: cfg.engine.max_memory_mib << 20,
@@ -159,6 +160,26 @@ mod identity_tests;
 
 #[cfg(test)]
 mod engine_policy_tests {
+    #[test]
+    fn operator_profiling_configuration_reaches_the_engine() {
+        let mut config = crate::config::NodeConfig::dev_default();
+        let trust = config.trust_bundle().expect("the bundled roots must load");
+        assert!(
+            !super::engine_config(&config, &trust)
+                .expect("valid engine configuration")
+                .perf_jitdump,
+            "normal node operation must not write profiling artifacts"
+        );
+        config.engine = toml::from_str("perf_jitdump=true")
+            .expect("operator profiling configuration must deserialize");
+        assert!(
+            super::engine_config(&config, &trust)
+                .expect("valid engine configuration")
+                .perf_jitdump,
+            "an operator must be able to enable native guest symbols"
+        );
+    }
+
     #[test]
     fn configured_engine_resource_limits_reach_the_execution_engine() {
         let mut config = crate::config::NodeConfig::dev_default();
