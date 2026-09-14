@@ -72,15 +72,18 @@ pub(super) fn provider(
 pub(super) fn trace_provider(
     resource: Resource,
     endpoint: &OtlpEndpoint,
-) -> Result<opentelemetry_sdk::trace::SdkTracerProvider, opentelemetry_otlp::ExporterBuildError> {
-    let exporter = opentelemetry_otlp::SpanExporter::builder()
+    limits: super::TraceLimits,
+) -> Result<opentelemetry_sdk::trace::SdkTracerProvider, super::LogError> {
+    let mut exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .with_protocol(Protocol::HttpBinary)
         .with_endpoint(endpoint.0.as_str())
         .build()?;
+    opentelemetry_sdk::trace::SpanExporter::set_resource(&mut exporter, &resource);
+    let processor = super::complete_traces::CompleteTraces::new(exporter, limits)?;
     Ok(opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_resource(resource)
-        .with_batch_exporter(exporter)
+        .with_span_processor(processor)
         .build())
 }
 

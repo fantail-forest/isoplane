@@ -4,13 +4,17 @@ use opentelemetry::trace::TracerProvider as _;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::prelude::*;
 
+mod complete_traces;
 mod diagnostics;
 mod export;
+pub use complete_traces::TraceLimits;
 pub use export::{EndpointError, OtlpEndpoint};
 
 /// Logging setup or exporter shutdown failure.
 #[derive(Debug, thiserror::Error)]
 pub enum LogError {
+    #[error("could not start trace exporter thread: {0}")]
+    TraceThread(#[from] std::io::Error),
     #[error("could not construct OTLP exporter: {0}")]
     Exporter(#[from] opentelemetry_otlp::ExporterBuildError),
     #[error("could not install tracing subscriber: {0}")]
@@ -63,10 +67,40 @@ pub fn init<W>(
 where
     W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
 {
+    init_with_limits(
+        json,
+        writer,
+        node,
+        endpoint,
+        traces_endpoint,
+        TraceLimits::default(),
+    )
+}
+
+/// Installs telemetry with operator-supplied bounds on complete-trace buffering.
+pub fn init_with_limits<W>(
+    json: bool,
+    writer: W,
+    node: &str,
+    endpoint: Option<&OtlpEndpoint>,
+    traces_endpoint: Option<&OtlpEndpoint>,
+    limits: TraceLimits,
+) -> Result<Logging, LogError>
+where
+    W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
+{
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new("info,wispd=debug,wisp_proxy=debug")
     });
-    let (logging, subscriber) = build(json, writer, node, endpoint, traces_endpoint, filter)?;
+    let (logging, subscriber) = build_with_limits(
+        json,
+        writer,
+        node,
+        endpoint,
+        traces_endpoint,
+        filter,
+        limits,
+    )?;
     if let Err(error) = tracing::dispatcher::set_global_default(subscriber) {
         logging.shutdown()?;
         return Err(error.into());
@@ -74,13 +108,14 @@ where
     Ok(logging)
 }
 
-fn build<W>(
+fn build_with_limits<W>(
     json: bool,
     writer: W,
     node: &str,
     endpoint: Option<&OtlpEndpoint>,
     traces_endpoint: Option<&OtlpEndpoint>,
     filter: tracing_subscriber::EnvFilter,
+    limits: TraceLimits,
 ) -> Result<(Logging, tracing::Dispatch), LogError>
 where
     W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
@@ -113,7 +148,7 @@ where
             )
     });
     let trace_provider = traces_endpoint
-        .map(|endpoint| export::trace_provider(resource.clone(), endpoint))
+        .map(|endpoint| export::trace_provider(resource.clone(), endpoint, limits))
         .transpose()?;
     let traces = trace_provider.as_ref().map(|provider| {
         tracing_opentelemetry::layer()
@@ -145,3 +180,26 @@ where
 #[cfg(test)]
 #[path = "logs/export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+fn build<W>(
+    json: bool,
+    writer: W,
+    node: &str,
+    endpoint: Option<&OtlpEndpoint>,
+    traces_endpoint: Option<&OtlpEndpoint>,
+    filter: tracing_subscriber::EnvFilter,
+) -> Result<(Logging, tracing::Dispatch), LogError>
+where
+    W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
+{
+    build_with_limits(
+        json,
+        writer,
+        node,
+        endpoint,
+        traces_endpoint,
+        filter,
+        TraceLimits::default(),
+    )
+}

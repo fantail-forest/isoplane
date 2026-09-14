@@ -52,3 +52,18 @@ Produce every figure on a dashboard from an event or span that a test observes. 
 **Not this:** Dozens of counters of which several count faults of an instrument that no longer exists.
 
 **Exception:** None.
+
+## Export complete local traces or discard them
+
+Buffer a local trace until its root and all started spans finish, then admit it
+to export as one unit. Apply configurable bounds to both unfinished traces and
+the export queue. Discard the whole trace on overflow or termination; flushing
+must not release fragments of an unfinished trace. Keep the maintained OTLP
+transport and canonical completion logs independent of this diagnostic policy.
+
+**Not this:** Streaming ended child spans while their request is still live, or
+letting queue pressure drop individual spans from an otherwise exported trace.
+
+**Exception:** This does not promise atomic persistence at a remote collector or
+global completeness across multiple processes; transport and collector failures
+still require explicit handling.
