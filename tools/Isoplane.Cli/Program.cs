@@ -43,19 +43,24 @@ try
     }
     if (args is ["doctor"])
     {
+        Console.Error.WriteLine("Checking toolchain integrity...");
         var installed = await Toolchain.DiagnoseAsync(Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
-        Console.WriteLine($"Toolchain integrity verified: {installed}");
+        Console.Error.WriteLine("Checking NativeAOT compiler dependencies...");
         Toolchain.ProbeCompiler(installed);
-        Console.WriteLine("NativeAOT compiler dependencies verified.");
-        var probes = new[] { "dotnet/dotnet", "wasi-sdk/bin/clang", "bin/wasm-tools", "bin/wisp" };
+        var probes = new[]
+        {
+            (Name: ".NET SDK", Path: "dotnet/dotnet"),
+            (Name: "WebAssembly compiler", Path: "wasi-sdk/bin/clang"),
+            (Name: "WebAssembly tools", Path: "bin/wasm-tools"),
+            (Name: "Isoplane runtime", Path: "bin/wisp"),
+        };
         foreach (var probe in probes)
         {
-            Console.WriteLine($"Checking {probe}:");
-            var result = await Processes.RunAsync(Path.Combine(installed, probe), ["--version"], installed,
+            Console.Error.WriteLine($"Checking {probe.Name}...");
+            await Processes.CheckAsync(Path.Combine(installed, probe.Path), ["--version"], installed,
                 Path.Combine(installed, "bin", "wisp"), cancellation.Token);
-            if (result != 0)
-                throw new InvalidOperationException($"{probe} cannot run (exit {result}); check its reported native dependencies.");
         }
+        Console.WriteLine("Your Isoplane toolchain is ready.");
         return 0;
     }
     var runtime = Path.Combine(AppContext.BaseDirectory, "runtime", "wisp");

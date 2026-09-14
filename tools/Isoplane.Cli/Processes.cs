@@ -5,9 +5,9 @@ namespace Wisp.Cli;
 
 internal static class Processes
 {
-    internal static OwnedProcess Start(string executable, IEnumerable<string> arguments, string directory, string runtime, bool captureOutput = false)
+    internal static OwnedProcess Start(string executable, IEnumerable<string> arguments, string directory, string runtime, bool captureOutput = false, bool captureErrors = false)
     {
-        var start = new ProcessStartInfo(executable) { WorkingDirectory = directory, UseShellExecute = false, RedirectStandardOutput = captureOutput };
+        var start = new ProcessStartInfo(executable) { WorkingDirectory = directory, UseShellExecute = false, RedirectStandardOutput = captureOutput, RedirectStandardError = captureErrors };
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
         start.Environment["WISP_CLI"] = runtime;
@@ -41,6 +41,26 @@ internal static class Processes
             {
                 outputLifetime.Cancel();
             }
+        }
+    }
+
+    internal static async Task CheckAsync(string executable, IEnumerable<string> arguments, string directory, string runtime, CancellationToken cancellation)
+    {
+        using var process = Start(executable, arguments, directory, runtime, captureOutput: true, captureErrors: true);
+        var output = process.StandardOutput.ReadToEndAsync(cancellation);
+        var errors = process.StandardError.ReadToEndAsync(cancellation);
+        try
+        {
+            await process.WaitForExitAsync(cancellation);
+            var details = string.Join(Environment.NewLine, new[] { await output, await errors }
+                .Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()));
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException($"{Path.GetFileName(executable)} cannot run (exit {process.ExitCode}); check its reported native dependencies.{Environment.NewLine}{details}");
+        }
+        finally
+        {
+            await StopAsync(process);
+            await Task.WhenAll(output, errors);
         }
     }
 

@@ -6,6 +6,12 @@ internal static class OwnedChild
 {
     internal static async Task<int> Main(string[] arguments)
     {
+        if (arguments is ["--successful-doctor-probe"])
+        {
+            await Processes.CheckAsync("/bin/sh", ["-c", "echo tool-version; echo tool-details >&2"],
+                AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "runtime", "wisp"), CancellationToken.None);
+            return 0;
+        }
         if (arguments is ["--read-local-secrets", var secretsId])
         {
             Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(LocalSecrets.Read(secretsId)));
