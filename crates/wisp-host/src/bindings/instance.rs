@@ -92,6 +92,8 @@ pub struct InstanceCtx {
     pub(super) http: Mutex<Arc<super::http_scope::HttpScope>>,
     pub(crate) request_body: Mutex<Option<Arc<super::request_body::RequestBodyScope>>>,
     pub(super) native_io: Mutex<super::native_io::Resources>,
+    /// Anonymous checkpoint file owned by this instance context.
+    pub(crate) local_snapshot: Mutex<Option<crate::hibernate_capture::OwnedLocalSnapshot>>,
 }
 
 impl InstanceCtx {
@@ -155,6 +157,7 @@ impl InstanceCtx {
             native_io: Mutex::new(super::native_io::Resources::new(
                 super::native_io::ResourceLimits::default(),
             )),
+            local_snapshot: Mutex::new(None),
         }
     }
 

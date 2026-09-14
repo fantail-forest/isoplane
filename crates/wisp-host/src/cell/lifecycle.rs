@@ -220,6 +220,35 @@ impl Cell {
             return;
         }
 
+        if slot.state() == LifecycleTier::Hibernated {
+            let started = Instant::now();
+            if let Err(error) = self.wake(slot, &entry) {
+                let message = format!(
+                    "instance {} could not restore its pending dispatch: {error}",
+                    slot.id
+                );
+                owner.select(TerminalReason::RestoreFailed, 500);
+                let result = owner.result(
+                    slot.id,
+                    500,
+                    vec![],
+                    message.as_bytes().to_vec(),
+                    Completion::Trapped,
+                    Some(message),
+                );
+                self.respond(slot, result);
+                self.finish_and_release(slot, &entry, evict());
+                return;
+            }
+            self.metrics
+                .hibernation_wake_us
+                .record(started.elapsed().as_micros() as u64);
+            self.metrics
+                .hibernation_wakes
+                .fetch_add(1, Ordering::Relaxed);
+            entry.meters.record_hibernation_wake();
+        }
+
         loop {
             // The instance is entered before the result is taken out, so a
             // result is never pulled with nowhere to deliver it. A busy

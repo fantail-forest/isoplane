@@ -81,6 +81,7 @@ impl CallGuard<'_> {
         self.inst = None;
         self.slot.tombstone();
         self.slot.set_state(LifecycleTier::Discarded);
+        self.slot.ctx.local_snapshot.lock().take();
     }
 }
 
@@ -109,6 +110,9 @@ impl Drop for CallGuard<'_> {
                 g.state = LifecycleTier::Discarded;
             }
         }
+        if g.state == LifecycleTier::Discarded {
+            self.slot.ctx.local_snapshot.lock().take();
+        }
         self.slot.publish(&g);
     }
 }
@@ -123,10 +127,6 @@ struct SlotInner {
     resident: Option<Box<dyn InstanceOps + Send>>,
     in_call: bool,
     parked_since_ms: Option<u64>,
-    /// Key of this instance's delta in the hibernation store, when sleeping.
-    delta_key: Option<String>,
-    /// Ids shed at capture, owed to the guest as `FutureLost` on wake.
-    shed_on_capture: Vec<u64>,
     /// Set on entry or rehydration and cleared by reset.
     dirty: bool,
     /// Once set, [`Slot::enter`] refuses. [`CallGuard::destroy`] sets it while
@@ -160,8 +160,6 @@ impl Slot {
                 resident: Some(inst),
                 in_call: false,
                 parked_since_ms: None,
-                delta_key: None,
-                shed_on_capture: Vec::new(),
                 dirty: false,
                 tombstoned: false,
             }),
@@ -255,14 +253,6 @@ impl Slot {
         self.parked_ms_total.load(Ordering::Relaxed)
     }
 
-    pub fn delta_key(&self) -> Option<String> {
-        self.inner.lock().delta_key.clone()
-    }
-
-    pub fn take_shed_futures(&self) -> Vec<u64> {
-        std::mem::take(&mut self.inner.lock().shed_on_capture)
-    }
-
     pub(crate) fn set_state(&self, s: LifecycleTier) {
         let mut g = self.inner.lock();
         g.state = s;
@@ -281,9 +271,8 @@ impl Slot {
         self.publish(&g);
     }
 
-    /// Drop the resident instance and record its capture key and future IDs.
-    /// Refuse while a call is in flight, the slot is tombstoned, or it is not parked.
-    pub fn hibernate(&self, delta_key: String, shed: Vec<u64>) -> Result<(), HibernateRefused> {
+    /// Releases resident pages after the context publishes its local checkpoint.
+    pub fn hibernate(&self) -> Result<(), HibernateRefused> {
         let mut g = self.inner.lock();
         if g.tombstoned {
             return Err(HibernateRefused::Tombstoned);
@@ -296,8 +285,6 @@ impl Slot {
         }
         g.resident = None;
         g.state = LifecycleTier::Hibernated;
-        g.delta_key = Some(delta_key);
-        g.shed_on_capture = shed;
         g.parked_since_ms = None;
         self.publish(&g);
         Ok(())
@@ -306,11 +293,10 @@ impl Slot {
     /// Install the caller's restored instance and return the slot to parked.
     pub fn rehydrate(&self, inst: Box<dyn InstanceOps + Send>) {
         let mut g = self.inner.lock();
-        debug_assert!(!g.tombstoned, "a tombstone cannot be rehydrated");
+        debug_assert!(!g.tombstoned, "a destroyed instance cannot be rehydrated");
         debug_assert_eq!(g.state, LifecycleTier::Hibernated);
         g.resident = Some(inst);
         g.state = LifecycleTier::Parked;
-        g.delta_key = None;
         g.dirty = true;
         self.publish(&g);
     }
@@ -331,6 +317,7 @@ impl Slot {
             i.reset()?;
         }
         self.ctx.release_native_resources();
+        self.ctx.local_snapshot.lock().take();
         g.dirty = false;
         g.parked_since_ms = None;
         g.state = LifecycleTier::Parked;
@@ -342,8 +329,8 @@ impl Slot {
         let mut g = self.inner.lock();
         g.resident = None;
         self.ctx.release_native_resources();
+        self.ctx.local_snapshot.lock().take();
         g.state = LifecycleTier::Discarded;
-        g.delta_key = None;
         g.parked_since_ms = None;
         self.publish(&g);
     }
@@ -480,7 +467,7 @@ mod tests {
             .acquire(|id| ctx_for(id, HandlerLifecycle::Reuse))
             .expect("acquire");
         slot.park(0);
-        slot.hibernate("k".into(), vec![]).expect("hibernate");
+        slot.hibernate().expect("hibernate");
         assert_eq!(
             slot.enter().err(),
             Some(EnterError::NotResident(LifecycleTier::Hibernated)),
@@ -500,7 +487,7 @@ mod tests {
             "a slot with a call in flight is not capturable"
         );
         assert_eq!(
-            slot.hibernate("k".into(), vec![]),
+            slot.hibernate(),
             Err(HibernateRefused::Hot),
             "hibernating a Hot slot is refused"
         );
@@ -508,7 +495,7 @@ mod tests {
         slot.park(0);
         assert!(slot.is_capture_eligible(), "a parked slot is capturable");
         assert!(
-            slot.hibernate("k".into(), vec![]).is_ok(),
+            slot.hibernate().is_ok(),
             "hibernating a parked slot succeeds"
         );
     }

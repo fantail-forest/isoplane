@@ -130,6 +130,28 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     driver.await.unwrap().unwrap();
     server.await.unwrap();
     tokio::task::spawn_blocking(move || {
+        let cell = node
+            .real
+            .as_ref()
+            .unwrap()
+            .cells()
+            .iter()
+            .find(|cell| !cell.resident_ids().is_empty())
+            .expect("resident HTTP instance");
+        let instance = cell.resident_ids()[0];
+        cell.force_hibernate(instance)
+            .expect("capture idle HTTP instance");
+        assert_eq!(
+            cell.instance_state(instance),
+            Some(wisp_host::LifecycleTier::Hibernated),
+            "the trace must come from an actual hibernated instance"
+        );
+        cell.force_wake(instance).expect("restore HTTP instance");
+        assert_eq!(
+            cell.instance_state(instance),
+            Some(wisp_host::LifecycleTier::Parked),
+            "the trace must come from an actual restored instance"
+        );
         node.shutdown();
         drop(node);
     })
@@ -286,6 +308,32 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
                 && span.trace_id == activation.trace_id
                 && span.parent_span_id == activation.span_id),
             "actual {stage} must nest under the request's activation"
+        );
+    }
+    for operation in ["capture", "restore"] {
+        let span = spans
+            .iter()
+            .find(|span| span.name == operation)
+            .expect("idle lifecycle operation must remain observable without a live dispatch");
+        assert_eq!(
+            field(&span.attributes, "app"),
+            &Value::StringValue("quotes".into()),
+            "idle lifecycle work must retain application ownership"
+        );
+    }
+    for stage in [
+        "delta_capture",
+        "delta_diff",
+        "delta_compress",
+        "delta_store_write",
+        "delta_store_load",
+        "restore_activate",
+        "delta_restore",
+        "delta_apply",
+    ] {
+        assert!(
+            spans.iter().any(|span| span.name == stage),
+            "real lifecycle must expose {stage}"
         );
     }
     for stage in ["dispatch_queue", "acquire", "guest_slice"] {

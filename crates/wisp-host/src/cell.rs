@@ -22,6 +22,7 @@ pub use crate::bindings::{Fetcher, Services};
 use crate::breaker::{BreakerConfig, BreakerKey, HangBreaker};
 use crate::disposition::{decide, evict, RequestEnd};
 use crate::futures::FutureTable;
+use crate::hibernate_policy::{self, HibernateConfig};
 use crate::meters::Meters;
 use crate::metrics::{Metrics, MetricsSnapshot};
 use crate::pool::{AcquireSource, Activator, InstancePool};
@@ -72,6 +73,7 @@ pub struct CellConfig {
     pub wall_ms_cap: u32,
     /// Host resources retained on behalf of each guest instance.
     pub guest_resources: crate::bindings::GuestResourceLimits,
+    pub hibernate: HibernateConfig,
     pub breaker: BreakerConfig,
     pub sweep_interval_ms: u64,
 }
@@ -88,6 +90,7 @@ impl Default for CellConfig {
             response_queue_bytes: wisp_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
             wall_ms_cap: 30_000,
             guest_resources: Default::default(),
+            hibernate: HibernateConfig::default(),
             breaker: BreakerConfig::default(),
             sweep_interval_ms: 250,
         }
@@ -216,7 +219,6 @@ impl Cell {
             .set(Arc::downgrade(&cell))
             .expect("the self-reference is set once, here, on a fresh OnceLock");
         cell.start_exec_pool()?;
-        cell.start_idle_sweeper()?;
         Ok(cell)
     }
 

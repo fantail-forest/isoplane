@@ -76,6 +76,7 @@ pub struct FakeBehaviour {
     /// sets it if unset, and reports the value it observed in the body, so a
     /// test can see whether the instance carried residue.
     pub lazy_init_probe: bool,
+    /// Initial scripted memory bytes; zero selects one WebAssembly page.
     pub memory_bytes: usize,
     /// Prescribed CPU for each non-spinning slice in accounting tests.
     pub slice_cpu: Option<std::time::Duration>,
@@ -88,7 +89,7 @@ impl FakeBehaviour {
         Self {
             program: vec![],
             lazy_init_probe: false,
-            memory_bytes: 4 * PAGE_SIZE,
+            memory_bytes: wisp_abi::WASM_PAGE_SIZE,
             slice_cpu: None,
             response_streaming: false,
         }
@@ -97,7 +98,7 @@ impl FakeBehaviour {
         Self {
             program: steps.into_iter().collect(),
             lazy_init_probe: false,
-            memory_bytes: 4 * PAGE_SIZE,
+            memory_bytes: wisp_abi::WASM_PAGE_SIZE,
             slice_cpu: None,
             response_streaming: false,
         }
@@ -452,6 +453,20 @@ impl InstanceOps for FakeInstance {
         })
     }
     fn restore_mutable_state(&mut self, img: &InstanceImage) -> anyhow::Result<()> {
+        let memory_bytes = (img.memory_pages as usize)
+            .checked_mul(wisp_abi::WASM_PAGE_SIZE)
+            .ok_or_else(|| anyhow::anyhow!("scripted snapshot memory size overflow"))?;
+        anyhow::ensure!(
+            memory_bytes >= self.template.len(),
+            "snapshot memory is smaller than the template"
+        );
+        if let Some(limit_bytes) = self.bindings.memory_limit_bytes() {
+            anyhow::ensure!(
+                memory_bytes as u64 <= limit_bytes,
+                "snapshot memory exceeds the instance limit"
+            );
+        }
+        self.memory.resize(memory_bytes, 0);
         self.image = img.clone();
         Ok(())
     }
@@ -475,7 +490,7 @@ impl FakeActivator {
     }
     pub fn named(module: ModuleId, behaviour: FakeBehaviour) -> Self {
         let bytes = if behaviour.memory_bytes == 0 {
-            4 * PAGE_SIZE
+            wisp_abi::WASM_PAGE_SIZE
         } else {
             behaviour.memory_bytes
         };

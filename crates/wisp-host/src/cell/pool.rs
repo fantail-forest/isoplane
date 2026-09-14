@@ -1,4 +1,4 @@
-//! The execution and idle-sweep thread pools, and panic containment at their boundary.
+//! Execution thread pools and panic containment at their boundary.
 
 use super::*;
 
@@ -21,28 +21,6 @@ impl Cell {
             );
         }
         *self.workers.lock() = handles;
-        Ok(())
-    }
-
-    pub(super) fn start_idle_sweeper(self: &Arc<Self>) -> crate::Result<()> {
-        let me = Arc::downgrade(self);
-        let interval = Duration::from_millis(self.cfg.sweep_interval_ms.max(1));
-        let stop = self.shutdown.clone();
-        let name = format!("{}-idle", self.cfg.name);
-        let h = std::thread::Builder::new().name(name).spawn(move || {
-            while !stop.load(Ordering::Relaxed) {
-                std::thread::sleep(interval);
-                let Some(cell) = me.upgrade() else { return };
-                // Nothing restarts this thread, and its loss is silent:
-                // captures stop and every durable instance stays resident.
-                let swept =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cell.sweep_idle()));
-                if swept.is_err() {
-                    cell.note_caught_panic("sweep");
-                }
-            }
-        })?;
-        self.workers.lock().push(h);
         Ok(())
     }
 
@@ -506,6 +484,245 @@ pub(super) mod cell_tests {
         );
         drop(residents);
         cell.shutdown();
+    }
+
+    struct ResumingActivator {
+        initial: FakeActivator,
+        resumed: FakeActivator,
+    }
+
+    impl Activator for ResumingActivator {
+        fn module(&self) -> &ModuleId {
+            self.initial.module()
+        }
+        fn module_hash(&self) -> wisp_engine::ModuleHash {
+            self.initial.module_hash()
+        }
+        fn abi_rev(&self) -> u32 {
+            self.initial.abi_rev()
+        }
+        fn template_image(&self) -> Arc<wisp_engine::MemoryImage> {
+            self.initial.template_image()
+        }
+        fn activate(
+            &self,
+            bindings: Box<dyn wisp_engine::HostBindings>,
+        ) -> anyhow::Result<Box<dyn wisp_engine::InstanceOps + Send>> {
+            if self.initial.activations.load(Ordering::SeqCst) == 0 {
+                self.initial.activate(bindings)
+            } else {
+                self.resumed.activate(bindings)
+            }
+        }
+    }
+
+    fn hibernated_request(
+        cell: &Arc<Cell>,
+    ) -> (Arc<Slot>, std::sync::mpsc::Receiver<DispatchResult>, u64) {
+        let module = ModuleId::new("sleeping-io", "v1");
+        let activator = Arc::new(ResumingActivator {
+            initial: FakeActivator::named(
+                module.clone(),
+                FakeBehaviour::program([Step::Park {
+                    imports: vec![("clock_deadline_in", 600_000)],
+                }]),
+            ),
+            resumed: FakeActivator::named(
+                module.clone(),
+                FakeBehaviour::program([Step::Done {
+                    status: 201,
+                    body: b"restored".to_vec(),
+                }]),
+            ),
+        });
+        cell.register_module("acme", activator, manifest("sleeping-io"))
+            .expect("the controlled restoration guest must register");
+        let (responder, response) = std::sync::mpsc::sync_channel(1);
+        cell.run_dispatch(DispatchJob {
+            stream: None,
+            upload: None,
+            module: module.clone(),
+            target: Target::Handler { route: "/".into() },
+            rec: http(1),
+            responder,
+            completion: cell
+                .completion_owner(&module, &http(1))
+                .expect("registered dispatch owner"),
+        });
+        let owners = cell.resident_ids();
+        assert_eq!(
+            owners.len(),
+            1,
+            "the controlled dispatch must own exactly one slot"
+        );
+        let slot = cell
+            .slot(owners[0])
+            .expect("the parked request must remain resident");
+        cell.force_hibernate(slot.id)
+            .expect("the pending dispatch must capture");
+        let futures = cell.futures().live_guest_future_ids();
+        assert_eq!(
+            futures.len(),
+            1,
+            "the guest must retain exactly its controlled I/O future"
+        );
+        (slot, response, futures[0])
+    }
+
+    #[test]
+    fn an_in_flight_hibernated_handler_cannot_be_discarded() {
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("protected-continuation")
+        });
+        let (slot, response, future) = hibernated_request(&cell);
+        assert!(
+            cell.discard_instance(slot.id).is_err(),
+            "eviction must refuse an unfinished request even when it is hibernated"
+        );
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Hibernated,
+            "refused eviction must leave the continuation available for wake"
+        );
+        cell.futures()
+            .complete(future, wisp_abi::result::ResultRecord::Ok(vec![]));
+        cell.run_wake(slot.clone());
+        let result = response
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the protected request must finish after its I/O completes");
+        assert_eq!(
+            result.body, b"restored",
+            "the original continuation must finish"
+        );
+        cell.discard_instance(slot.id)
+            .expect("the completed handler must become evictable");
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Discarded,
+            "idle eviction must reclaim the instance"
+        );
+        cell.shutdown();
+    }
+
+    #[test]
+    fn concurrent_io_wakes_restore_a_hibernated_dispatch_once() {
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("restoring-io")
+        });
+        let events = super::super::completion::test_events::Events::default();
+        let clock = Arc::new(AtomicU64::new(100));
+        let observed = clock.clone();
+        *cell.completion_clock.write() = Arc::new(move || Some(observed.load(Ordering::Relaxed)));
+        let (slot, response, future) = events.scope(|| hibernated_request(&cell));
+        assert!(
+            events.records().is_empty(),
+            "capture must not complete a parked dispatch"
+        );
+        clock.store(900, Ordering::Relaxed);
+        cell.futures()
+            .complete(future, wisp_abi::result::ResultRecord::Ok(vec![]));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let cell = cell.clone();
+                let slot = slot.clone();
+                scope.spawn(move || cell.run_wake(slot));
+            }
+        });
+        let result = response
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the restored dispatch must answer");
+        assert_eq!(
+            result.status, 201,
+            "the pending continuation must resume rather than restart"
+        );
+        assert_eq!(
+            result.body, b"restored",
+            "restoration must deliver the captured continuation's result"
+        );
+        assert_eq!(
+            cell.metrics().hibernation_wakes,
+            1,
+            "concurrent notifications must coalesce into one restoration"
+        );
+        assert_eq!(
+            cell.futures().pending_total(slot.id),
+            0,
+            "completion must release every owned future"
+        );
+        let records = events.records();
+        assert_eq!(
+            records.len(),
+            1,
+            "concurrent restored wakes must finish one original owner"
+        );
+        assert_eq!(
+            records[0]["total_wall_ns"], 800,
+            "restoration must retain the original delivery clock"
+        );
+        assert_eq!(
+            records[0]["slices"], 2,
+            "capture must preserve both invocation intervals"
+        );
+        assert_eq!(
+            records[0]["capture_hints"], 1,
+            "capture hint usage must remain separate from invocations"
+        );
+        cell.shutdown();
+    }
+
+    #[test]
+    fn a_missing_checkpoint_ends_its_pending_dispatch_and_releases_owned_work() {
+        let events = Events::default();
+        let _trace = events.install();
+        let cell = cell(CellConfig {
+            exec_threads: 0,
+            ..CellConfig::for_test("missing-checkpoint")
+        });
+        let (slot, response, future) = hibernated_request(&cell);
+        slot.ctx.local_snapshot.lock().take();
+        cell.futures()
+            .complete(future, wisp_abi::result::ResultRecord::Ok(vec![]));
+        cell.run_wake(slot.clone());
+        let result = response
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a failed restoration must answer its caller");
+        assert_eq!(
+            result.status, 500,
+            "a missing continuation must fail the active request"
+        );
+        assert!(
+            result.trap.is_some(),
+            "the terminal response must carry its restoration diagnostic"
+        );
+        assert_eq!(
+            slot.state(),
+            LifecycleTier::Discarded,
+            "a failed restoration must discard its instance"
+        );
+        assert_eq!(
+            cell.futures().pending_total(slot.id),
+            0,
+            "a failed restoration must cancel all owned work"
+        );
+        assert!(
+            !cell.active.contains_key(&slot.id),
+            "a failed restoration must close its active dispatch record"
+        );
+        cell.shutdown();
+        let records = events.records();
+        assert_eq!(
+            records.len(),
+            1,
+            "each admitted dispatch must have exactly one final record"
+        );
+        assert!(
+            records
+                .iter()
+                .any(|event| event["outcome"] == "restore_failed"),
+            "the handled terminal refusal must be present in the canonical events"
+        );
     }
 
     /// Constructs the state the race produces, a live request on an instance

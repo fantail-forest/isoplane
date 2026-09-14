@@ -37,6 +37,8 @@ pub mod egress;
 pub mod fakes;
 pub mod fetcher;
 pub mod futures;
+pub mod hibernate_capture;
+pub mod hibernate_policy;
 pub mod meters;
 pub mod metrics;
 pub mod pool;
