@@ -5,7 +5,7 @@ use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::{logs::SdkLoggerProvider, Resource};
 use serde::{Deserialize, Serialize};
 
-/// A full HTTP/protobuf log endpoint without credentials, query strings or fragments.
+/// A full HTTP/protobuf telemetry endpoint without credentials, query strings or fragments.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct OtlpEndpoint(url::Url);
@@ -55,7 +55,7 @@ impl From<OtlpEndpoint> for String {
 }
 
 pub(super) fn provider(
-    node: &str,
+    resource: Resource,
     endpoint: &OtlpEndpoint,
 ) -> Result<SdkLoggerProvider, opentelemetry_otlp::ExporterBuildError> {
     let exporter = opentelemetry_otlp::LogExporter::builder()
@@ -63,7 +63,29 @@ pub(super) fn provider(
         .with_protocol(Protocol::HttpBinary)
         .with_endpoint(endpoint.0.as_str())
         .build()?;
-    let resource = Resource::builder_empty()
+    Ok(SdkLoggerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build())
+}
+
+pub(super) fn trace_provider(
+    resource: Resource,
+    endpoint: &OtlpEndpoint,
+) -> Result<opentelemetry_sdk::trace::SdkTracerProvider, opentelemetry_otlp::ExporterBuildError> {
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_protocol(Protocol::HttpBinary)
+        .with_endpoint(endpoint.0.as_str())
+        .build()?;
+    Ok(opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build())
+}
+
+pub(super) fn resource(node: &str) -> Resource {
+    Resource::builder_empty()
         .with_service_name("wispd")
         .with_attributes([
             KeyValue::new("wisp.node", node.to_owned()),
@@ -73,9 +95,5 @@ pub(super) fn provider(
                 format!("{:032x}", rand::random::<u128>()),
             ),
         ])
-        .build();
-    Ok(SdkLoggerProvider::builder()
-        .with_resource(resource)
-        .with_batch_exporter(exporter)
-        .build())
+        .build()
 }

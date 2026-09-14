@@ -43,6 +43,9 @@ pub struct NodeConfig {
     /// Full OTLP HTTP/protobuf endpoint for structured dispatch events. Unset disables export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub otlp_logs_endpoint: Option<crate::logs::OtlpEndpoint>,
+    /// Full OTLP HTTP/protobuf endpoint for lifecycle spans. Unset disables trace export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otlp_traces_endpoint: Option<crate::logs::OtlpEndpoint>,
     /// The public TLS root bundle guests read at
     /// `/etc/ssl/certs/ca-certificates.crt`.
     #[serde(default)]
@@ -300,6 +303,7 @@ impl NodeConfig {
             proxy: ProxyListen::default(),
             response_queue_bytes: default_response_queue_bytes(),
             otlp_logs_endpoint: None,
+            otlp_traces_endpoint: None,
             admin: AdminListen::default(),
             cells: vec![
                 CellConfig {

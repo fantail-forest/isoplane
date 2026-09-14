@@ -1,4 +1,5 @@
 #![cfg(feature = "real-backends")]
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 
 #[path = "common/preparation.rs"]
 mod preparation;
@@ -8,6 +9,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 #[path = "common/otlp.rs"]
 mod otlp;
@@ -18,13 +20,25 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     use wisp_abi::config::{AppManifest, InitSandbox};
     use wisp_abi::dispatch::ResponseHead;
 
-    let mut collector = Collector::start(StatusCode::OK).await;
+    let mut collector = Collector::<ExportLogsServiceRequest>::start(StatusCode::OK).await;
+    let mut traces = Collector::<ExportTraceServiceRequest>::start(StatusCode::OK).await;
+    let trace_endpoint = traces
+        .endpoint
+        .parse::<wispd::logs::OtlpEndpoint>()
+        .unwrap();
     let endpoint = collector
         .endpoint
         .parse::<wispd::logs::OtlpEndpoint>()
         .unwrap();
     let logging = tokio::task::spawn_blocking(move || {
-        wispd::logs::init(true, std::io::sink, "real-export-node", Some(&endpoint)).unwrap()
+        wispd::logs::init(
+            true,
+            std::io::sink,
+            "real-export-node",
+            Some(&endpoint),
+            Some(&trace_endpoint),
+        )
+        .unwrap()
     })
     .await
     .unwrap();
@@ -112,9 +126,12 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     );
     driver.await.unwrap().unwrap();
     server.await.unwrap();
-    tokio::task::spawn_blocking(move || drop(node))
-        .await
-        .unwrap();
+    tokio::task::spawn_blocking(move || {
+        node.shutdown();
+        drop(node);
+    })
+    .await
+    .unwrap();
     tokio::task::spawn_blocking(move || logging.shutdown())
         .await
         .unwrap()
@@ -166,4 +183,46 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         &Value::BoolValue(false),
         "the exporter must not broaden the scope of measured CPU"
     );
+    let trace_payload = traces.receive().await;
+    assert_eq!(
+        field(
+            &trace_payload.resource_spans[0]
+                .resource
+                .as_ref()
+                .unwrap()
+                .attributes,
+            "service.instance.id"
+        ),
+        field(
+            &payload.resource_logs[0]
+                .resource
+                .as_ref()
+                .unwrap()
+                .attributes,
+            "service.instance.id"
+        ),
+        "logs and traces must identify the same process resource"
+    );
+    let spans: Vec<_> = trace_payload
+        .resource_spans
+        .iter()
+        .flat_map(|resource| &resource.scope_spans)
+        .flat_map(|scope| &scope.spans)
+        .collect();
+    let dispatch = spans
+        .iter()
+        .find(|span| span.name == "dispatch")
+        .expect("actual request must produce a dispatch trace");
+    assert_eq!(
+        records[0].trace_id, dispatch.trace_id,
+        "CPU completion and stage timings must correlate to the same request"
+    );
+    for stage in ["acquire", "guest_slice"] {
+        assert!(
+            spans.iter().any(|span| span.name == stage
+                && span.parent_span_id == dispatch.span_id
+                && span.trace_id == dispatch.trace_id),
+            "real {stage} must nest under its dispatch across the execution boundary"
+        );
+    }
 }

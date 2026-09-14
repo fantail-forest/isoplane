@@ -1,4 +1,5 @@
 use hyper::StatusCode;
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 
 use super::{build, EndpointError, LogError, OtlpEndpoint};
@@ -8,8 +9,82 @@ mod otlp;
 use otlp::{field, Collector};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nested_stages_keep_their_dispatch_parent_across_worker_threads() {
+    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+    let mut collector = Collector::<ExportTraceServiceRequest>::start(StatusCode::OK).await;
+    let endpoint = collector.endpoint.parse::<OtlpEndpoint>().unwrap();
+    let (logging, dispatch) = tokio::task::spawn_blocking(move || {
+        build(
+            true,
+            std::io::sink,
+            "trace-node",
+            None,
+            Some(&endpoint),
+            "off".parse().unwrap(),
+        )
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    let owner = tracing::dispatcher::with_default(
+        &dispatch,
+        || tracing::info_span!(target: "wisp_host::cell::completion", "dispatch", app = "todo", instance = tracing::field::Empty),
+    );
+    std::thread::spawn(move || {
+        tracing::dispatcher::with_default(&dispatch, || {
+            owner.in_scope(|| {
+                let _stage =
+                    tracing::info_span!(target: "wisp_host::cell", "guest_slice").entered();
+                tracing::info!(target: "wisp_sdk", "guest payload must not become a trace event");
+            });
+            owner.record("instance", "instance-7");
+        });
+    })
+    .join()
+    .unwrap();
+    tokio::task::spawn_blocking(move || logging.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    let payload = collector.receive().await;
+    let spans: Vec<_> = payload
+        .resource_spans
+        .iter()
+        .flat_map(|resource| &resource.scope_spans)
+        .flat_map(|scope| &scope.spans)
+        .collect();
+    assert_eq!(
+        spans.len(),
+        2,
+        "the dispatch and its guest slice must both reach OTLP"
+    );
+    let parent = spans.iter().find(|span| span.name == "dispatch").unwrap();
+    let child = spans
+        .iter()
+        .find(|span| span.name == "guest_slice")
+        .unwrap();
+    assert_eq!(
+        child.parent_span_id, parent.span_id,
+        "a resumed stage must keep its dispatch parent"
+    );
+    assert_eq!(
+        child.trace_id, parent.trace_id,
+        "moving workers must not split the request trace"
+    );
+    assert_eq!(
+        field(&parent.attributes, "instance"),
+        &Value::StringValue("instance-7".into()),
+        "late instance attribution must be exported"
+    );
+    assert!(
+        spans.iter().all(|span| span.events.is_empty()),
+        "the span-only trace exporter must not include guest log events"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
-    let mut collector = Collector::start(StatusCode::OK).await;
+    let mut collector = Collector::<ExportLogsServiceRequest>::start(StatusCode::OK).await;
     let endpoint = collector.endpoint.parse::<OtlpEndpoint>().unwrap();
     let output = std::sync::Arc::new(tempfile::tempfile().unwrap());
     let writer = output.clone();
@@ -19,6 +94,7 @@ async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
             writer,
             "export-node",
             Some(&endpoint),
+            None,
             "off".parse().unwrap(),
         )
         .unwrap()
@@ -86,7 +162,7 @@ async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_refused_final_batch_is_reported_as_export_failure() {
-    let mut collector = Collector::start(StatusCode::BAD_REQUEST).await;
+    let mut collector = Collector::<ExportLogsServiceRequest>::start(StatusCode::BAD_REQUEST).await;
     let endpoint = collector.endpoint.parse::<OtlpEndpoint>().unwrap();
     let (logging, dispatch) = tokio::task::spawn_blocking(move || {
         build(
@@ -94,6 +170,7 @@ async fn a_refused_final_batch_is_reported_as_export_failure() {
             std::io::sink,
             "export-node",
             Some(&endpoint),
+            None,
             "off".parse().unwrap(),
         )
         .unwrap()

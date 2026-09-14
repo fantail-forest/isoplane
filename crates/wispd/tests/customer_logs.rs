@@ -15,7 +15,7 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
     let output = otlp::output::LogOutput::default();
     let writer = output.clone();
     let logging = tokio::task::spawn_blocking(move || {
-        wispd::logs::init(true, writer, "customer-log-test", None)
+        wispd::logs::init(true, writer, "customer-log-test", None, None)
     })
     .await
     .expect("logging setup task")

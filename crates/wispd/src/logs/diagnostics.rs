@@ -5,6 +5,7 @@ use tracing_subscriber::{layer::Context, Layer};
 enum CollectorDiagnostic {
     Status,
     PartialSuccess,
+    TracePartialSuccess,
 }
 
 impl CollectorDiagnostic {
@@ -15,6 +16,7 @@ impl CollectorDiagnostic {
         match metadata.name() {
             "HttpClient.StatusError" => Some(Self::Status),
             "HttpLogsClient.PartialSuccess" => Some(Self::PartialSuccess),
+            "HttpTraceClient.PartialSuccess" => Some(Self::TracePartialSuccess),
             _ => None,
         }
     }
@@ -30,6 +32,7 @@ pub(super) struct CollectorDiagnostics;
 struct SafeFields {
     status_code: Option<u64>,
     rejected_log_records: Option<i64>,
+    rejected_spans: Option<i64>,
 }
 
 impl Visit for SafeFields {
@@ -42,6 +45,9 @@ impl Visit for SafeFields {
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
         if field.name() == "rejected_log_records" {
             self.rejected_log_records = Some(value);
+        }
+        if field.name() == "rejected_spans" {
+            self.rejected_spans = Some(value);
         }
     }
 
@@ -67,6 +73,11 @@ impl<S: Subscriber> Layer<S> for CollectorDiagnostics {
                 event = "otlp_partial_success",
                 rejected_log_records = fields.rejected_log_records,
                 "OTLP collector reported partial success; collector message withheld"
+            ),
+            CollectorDiagnostic::TracePartialSuccess => tracing::warn!(
+                event = "otlp_partial_success",
+                rejected_spans = fields.rejected_spans,
+                "OTLP collector rejected spans; collector message withheld"
             ),
         }
     }

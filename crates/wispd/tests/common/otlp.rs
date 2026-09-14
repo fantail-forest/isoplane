@@ -2,69 +2,86 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsServiceRequest, ExportLogsServiceResponse,
-};
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value::Value, KeyValue};
 use prost::Message;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-pub struct Collector {
+pub struct Collector<M = ExportLogsServiceRequest> {
     pub endpoint: String,
-    received: mpsc::Receiver<ExportLogsServiceRequest>,
+    received: mpsc::UnboundedReceiver<M>,
     task: tokio::task::JoinHandle<()>,
 }
 
-impl Collector {
+/// Associates each OTLP request codec with its signal endpoint.
+pub trait Signal: Message + Default + Send + 'static {
+    const PATH: &'static str;
+}
+
+impl Signal for ExportLogsServiceRequest {
+    const PATH: &'static str = "/v1/logs";
+}
+
+impl Signal for ExportTraceServiceRequest {
+    const PATH: &'static str = "/v1/traces";
+}
+
+impl<M: Signal> Collector<M> {
     pub async fn start(status: StatusCode) -> Self {
-        Self::with_response(status, ExportLogsServiceResponse::default().encode_to_vec()).await
+        Self::with_response(status, vec![]).await
     }
 
     pub async fn with_response(status: StatusCode, response_body: Vec<u8>) -> Self {
+        let path = M::PATH;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}/v1/logs", listener.local_addr().unwrap());
-        let (sender, received) = mpsc::channel(1);
+        let endpoint = format!("http://{}{path}", listener.local_addr().unwrap());
+        let (sender, received) = mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let service =
-                hyper::service::service_fn(move |request: Request<hyper::body::Incoming>| {
-                    let sender = sender.clone();
-                    let response_body = response_body.clone();
-                    async move {
-                        assert_eq!(request.method(), "POST", "OTLP export must use POST");
-                        assert_eq!(
-                            request.uri().path(),
-                            "/v1/logs",
-                            "the supplied signal endpoint must be used exactly"
-                        );
-                        assert_eq!(
-                            request.headers()["content-type"],
-                            "application/x-protobuf",
-                            "the payload must declare the OTLP binary format"
-                        );
-                        let body = request.into_body().collect().await.unwrap().to_bytes();
-                        let decoded = ExportLogsServiceRequest::decode(body)
-                            .expect("the maintained OTLP codec must decode the exporter payload");
-                        sender
-                            .send(decoded)
-                            .await
-                            .expect("the test must retain its collector receiver");
-                        Ok::<_, Infallible>(
-                            Response::builder()
-                                .status(status)
-                                .header("connection", "close")
-                                .header("content-type", "application/x-protobuf")
-                                .body(Full::new(Bytes::from(response_body)))
-                                .unwrap(),
-                        )
-                    }
-                });
-            hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-                .unwrap();
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let sender = sender.clone();
+                let response_body = response_body.clone();
+                let service =
+                    hyper::service::service_fn(move |request: Request<hyper::body::Incoming>| {
+                        let sender = sender.clone();
+                        let response_body = response_body.clone();
+                        async move {
+                            assert_eq!(request.method(), "POST", "OTLP export must use POST");
+                            assert_eq!(
+                                request.uri().path(),
+                                path,
+                                "the supplied signal endpoint must be used exactly"
+                            );
+                            assert_eq!(
+                                request.headers()["content-type"],
+                                "application/x-protobuf",
+                                "the payload must declare the OTLP binary format"
+                            );
+                            let body = request.into_body().collect().await.unwrap().to_bytes();
+                            let decoded = M::decode(body).expect(
+                                "the maintained OTLP codec must decode the exporter payload",
+                            );
+                            sender
+                                .send(decoded)
+                                .expect("the test must retain its collector receiver");
+                            Ok::<_, Infallible>(
+                                Response::builder()
+                                    .status(status)
+                                    .header("connection", "close")
+                                    .header("content-type", "application/x-protobuf")
+                                    .body(Full::new(Bytes::from(response_body)))
+                                    .unwrap(),
+                            )
+                        }
+                    });
+                hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await
+                    .unwrap();
+            }
         });
         Self {
             endpoint,
@@ -73,15 +90,21 @@ impl Collector {
         }
     }
 
-    pub async fn receive(&mut self) -> ExportLogsServiceRequest {
-        tokio::time::timeout(Duration::from_secs(30), self.received.recv())
+    pub async fn receive(&mut self) -> M {
+        let mut payload = tokio::time::timeout(Duration::from_secs(30), self.received.recv())
             .await
             .expect("OTLP export must not hang")
-            .expect("the exporter must send its queued events")
+            .expect("the exporter must send its queued events");
+        while let Ok(batch) = self.received.try_recv() {
+            payload
+                .merge(batch.encode_to_vec().as_slice())
+                .expect("acknowledged OTLP resource batches must merge");
+        }
+        payload
     }
 }
 
-impl Drop for Collector {
+impl<M> Drop for Collector<M> {
     fn drop(&mut self) {
         self.task.abort();
     }

@@ -1,5 +1,6 @@
 //! Structured diagnostic output and optional OTLP export.
 
+use opentelemetry::trace::TracerProvider as _;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::prelude::*;
 
@@ -21,20 +22,30 @@ pub enum LogError {
 /// Owns shutdown of the optional batch exporters.
 pub struct Logging {
     provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
+    trace_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
 
 impl Logging {
     /// Flushes queued events and stops the exporter. Call outside an async reactor.
     pub fn shutdown(self) -> Result<(), LogError> {
+        let mut errors = Vec::new();
         if let Some(provider) = self.provider {
             // Force-flush preserves export errors; batch shutdown only acknowledges worker exit.
-            let errors: Vec<_> = [provider.force_flush(), provider.shutdown()]
-                .into_iter()
-                .filter_map(Result::err)
-                .collect();
-            if !errors.is_empty() {
-                return Err(LogError::Shutdown(errors));
-            }
+            errors.extend(
+                [provider.force_flush(), provider.shutdown()]
+                    .into_iter()
+                    .filter_map(Result::err),
+            );
+        }
+        if let Some(provider) = self.trace_provider {
+            errors.extend(
+                [provider.force_flush(), provider.shutdown()]
+                    .into_iter()
+                    .filter_map(Result::err),
+            );
+        }
+        if !errors.is_empty() {
+            return Err(LogError::Shutdown(errors));
         }
         Ok(())
     }
@@ -47,6 +58,7 @@ pub fn init<W>(
     writer: W,
     node: &str,
     endpoint: Option<&OtlpEndpoint>,
+    traces_endpoint: Option<&OtlpEndpoint>,
 ) -> Result<Logging, LogError>
 where
     W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
@@ -54,7 +66,7 @@ where
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new("info,wispd=debug,wisp_proxy=debug")
     });
-    let (logging, subscriber) = build(json, writer, node, endpoint, filter)?;
+    let (logging, subscriber) = build(json, writer, node, endpoint, traces_endpoint, filter)?;
     if let Err(error) = tracing::dispatcher::set_global_default(subscriber) {
         logging.shutdown()?;
         return Err(error.into());
@@ -67,6 +79,7 @@ fn build<W>(
     writer: W,
     node: &str,
     endpoint: Option<&OtlpEndpoint>,
+    traces_endpoint: Option<&OtlpEndpoint>,
     filter: tracing_subscriber::EnvFilter,
 ) -> Result<(Logging, tracing::Dispatch), LogError>
 where
@@ -88,8 +101,9 @@ where
             .with_filter(filter)
             .boxed()
     };
+    let resource = export::resource(node);
     let provider = endpoint
-        .map(|endpoint| export::provider(node, endpoint))
+        .map(|endpoint| export::provider(resource.clone(), endpoint))
         .transpose()?;
     let events = provider.as_ref().map(|provider| {
         opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(provider)
@@ -98,17 +112,34 @@ where
                     .with_target("wisp_host::cell::completion", tracing::Level::INFO),
             )
     });
+    let trace_provider = traces_endpoint
+        .map(|endpoint| export::trace_provider(resource.clone(), endpoint))
+        .transpose()?;
+    let traces = trace_provider.as_ref().map(|provider| {
+        tracing_opentelemetry::layer()
+            .with_tracer(provider.tracer("wispd"))
+            .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                metadata.is_span() && metadata.target().starts_with("wisp")
+            }))
+    });
     let subscriber = tracing::Dispatch::new(
         tracing_subscriber::registry()
             .with(text)
             .with(events)
+            .with(traces)
             .with(diagnostics::CollectorDiagnostics.with_filter(
                 tracing_subscriber::filter::filter_fn(|metadata| {
                     !diagnostics::contains_no_collector_payload(metadata)
                 }),
             )),
     );
-    Ok((Logging { provider }, subscriber))
+    Ok((
+        Logging {
+            provider,
+            trace_provider,
+        },
+        subscriber,
+    ))
 }
 
 #[cfg(test)]

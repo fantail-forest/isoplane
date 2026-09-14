@@ -1,6 +1,6 @@
 use hyper::StatusCode;
 use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsPartialSuccess, ExportLogsServiceResponse,
+    ExportLogsPartialSuccess, ExportLogsServiceRequest, ExportLogsServiceResponse,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
 use prost::Message;
@@ -23,7 +23,14 @@ fn collector_payloads_never_reach_diagnostics_even_with_verbose_logging() {
         return;
     }
     for level in ["debug", "trace"] {
-        for case in ["status", "partial", "healthy", "client_error"] {
+        for case in [
+            "status",
+            "partial",
+            "healthy",
+            "client_error",
+            "trace_partial",
+            "trace_error",
+        ] {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
@@ -49,11 +56,15 @@ fn collector_payloads_never_reach_diagnostics_even_with_verbose_logging() {
 }
 
 async fn exercise_collector(case: &str) {
+    if case.starts_with("trace_") {
+        exercise_trace_collector(case == "trace_partial").await;
+        return;
+    }
     let partial = case == "partial";
     let mut collector = if case == "healthy" {
-        otlp::Collector::start(StatusCode::OK).await
+        otlp::Collector::<ExportLogsServiceRequest>::start(StatusCode::OK).await
     } else if partial {
-        otlp::Collector::with_response(
+        otlp::Collector::<ExportLogsServiceRequest>::with_response(
             StatusCode::OK,
             ExportLogsServiceResponse {
                 partial_success: Some(ExportLogsPartialSuccess {
@@ -70,7 +81,11 @@ async fn exercise_collector(case: &str) {
         } else {
             StatusCode::FOUND
         };
-        otlp::Collector::with_response(status, SENTINEL.as_bytes().to_vec()).await
+        otlp::Collector::<ExportLogsServiceRequest>::with_response(
+            status,
+            SENTINEL.as_bytes().to_vec(),
+        )
+        .await
     };
     let endpoint = collector
         .endpoint
@@ -80,7 +95,7 @@ async fn exercise_collector(case: &str) {
     let writer =
         tracing_subscriber::fmt::writer::MakeWriterExt::and(output.clone(), std::io::stderr);
     let logging = tokio::task::spawn_blocking(move || {
-        wispd::logs::init(true, writer, "diagnostic-test", Some(&endpoint)).unwrap()
+        wispd::logs::init(true, writer, "diagnostic-test", Some(&endpoint), None).unwrap()
     })
     .await
     .unwrap();
@@ -145,4 +160,67 @@ async fn exercise_collector(case: &str) {
         );
     }
     println!("formatted_logs={}", serde_json::to_string(&lines).unwrap());
+}
+
+async fn exercise_trace_collector(partial: bool) {
+    use opentelemetry_proto::tonic::collector::trace::v1::{
+        ExportTracePartialSuccess, ExportTraceServiceRequest, ExportTraceServiceResponse,
+    };
+    let (status, response) = if partial {
+        (
+            StatusCode::OK,
+            ExportTraceServiceResponse {
+                partial_success: Some(ExportTracePartialSuccess {
+                    rejected_spans: 7,
+                    error_message: SENTINEL.into(),
+                }),
+            }
+            .encode_to_vec(),
+        )
+    } else {
+        (StatusCode::BAD_REQUEST, SENTINEL.as_bytes().to_vec())
+    };
+    let mut collector =
+        otlp::Collector::<ExportTraceServiceRequest>::with_response(status, response).await;
+    let endpoint = collector
+        .endpoint
+        .parse::<wispd::logs::OtlpEndpoint>()
+        .unwrap();
+    let output = otlp::output::LogOutput::default();
+    let writer =
+        tracing_subscriber::fmt::writer::MakeWriterExt::and(output.clone(), std::io::stderr);
+    let logging = tokio::task::spawn_blocking(move || {
+        wispd::logs::init(true, writer, "trace-diagnostic-test", None, Some(&endpoint)).unwrap()
+    })
+    .await
+    .unwrap();
+    tracing::info_span!(target: "wisp_host::cell", "guest_slice").in_scope(|| {});
+    let shutdown = tokio::task::spawn_blocking(move || logging.shutdown())
+        .await
+        .unwrap();
+    assert_eq!(
+        shutdown.is_ok(),
+        partial,
+        "a rejected trace batch must retain its flush failure"
+    );
+    let exported = collector.receive().await;
+    assert_eq!(
+        exported.resource_spans[0].scope_spans[0].spans[0].name, "guest_slice",
+        "the trace collector must receive the triggering span"
+    );
+    let lines: Vec<_> = output.text().lines().map(str::to_owned).collect();
+    assert!(
+        lines.iter().all(|line| !line.contains(SENTINEL)),
+        "trace collector response text must not enter the formatted diagnostic output"
+    );
+    if partial {
+        assert!(
+            lines.iter().any(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                record["fields"]["event"] == "otlp_partial_success"
+                    && record["fields"]["rejected_spans"] == 7
+            }),
+            "partial trace acceptance must report the rejected count without collector text"
+        );
+    }
 }
