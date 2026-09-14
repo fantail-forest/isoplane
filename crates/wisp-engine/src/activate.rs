@@ -51,8 +51,16 @@ pub(crate) fn instantiate(
     t: &Arc<TemplateInner>,
     mut data: StoreState,
 ) -> Result<Live> {
+    let activation = tracing::info_span!(
+        "activation",
+        linear_memory_bytes = tracing::field::Empty,
+        mutable_globals = t.mut_globals.len(),
+        tables = t.tables.len(),
+    );
+    let _activation = activation.enter();
     data.platform_files = t.filesystem_files.clone();
-    let mut store = Store::new(&engine.wasmtime, data);
+    let mut store =
+        tracing::info_span!("activation_store").in_scope(|| Store::new(&engine.wasmtime, data));
     store.limiter(|d| &mut d.limits);
 
     // The depth behind `is_parked` comes from wasmtime's own transition hook,
@@ -115,14 +123,16 @@ pub(crate) fn instantiate(
     // With epoch interruption on, a store starts with an expired deadline.
     store.set_epoch_deadline(u64::MAX / 2);
 
-    let inst = t
-        .pal_linker
-        .as_ref()
-        .unwrap_or(&engine.linker)
-        .instantiate(&mut store, &t.module)
-        .map_err(anyhow::Error::from)
-        .context("activating template")?;
+    let inst = tracing::info_span!("activation_instantiate").in_scope(|| {
+        t.pal_linker
+            .as_ref()
+            .unwrap_or(&engine.linker)
+            .instantiate(&mut store, &t.module)
+            .map_err(anyhow::Error::from)
+            .context("activating template")
+    })?;
 
+    let exports_stage = tracing::info_span!("activation_exports").entered();
     let mut memory = None;
     let mut f_alloc = None;
     let mut f_handle = None;
@@ -200,8 +210,11 @@ pub(crate) fn instantiate(
         );
     }
 
-    let table_baseline = crate::capture::TableBaseline::capture(&mut store, &tables)?;
+    drop(exports_stage);
+    let table_baseline = tracing::info_span!("activation_table_baseline")
+        .in_scope(|| crate::capture::TableBaseline::capture(&mut store, &tables))?;
     store.data_mut().memory = Some(memory);
+    activation.record("linear_memory_bytes", memory.data_size(&store));
 
     Ok(Live {
         store,

@@ -252,6 +252,28 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         records[0].trace_id, dispatch.trace_id,
         "CPU completion and stage timings must correlate to the same request"
     );
+    let activation = spans
+        .iter()
+        .find(|span| span.name == "activation" && span.trace_id == dispatch.trace_id)
+        .expect("first request must expose actual activation work");
+    assert_eq!(
+        field(&activation.attributes, "linear_memory_bytes"),
+        &Value::StringValue((2 * 65536).to_string()),
+        "activation must report the fixture's actual linear memory extent"
+    );
+    for stage in [
+        "activation_store",
+        "activation_instantiate",
+        "activation_exports",
+        "activation_table_baseline",
+    ] {
+        assert!(
+            spans.iter().any(|span| span.name == stage
+                && span.trace_id == activation.trace_id
+                && span.parent_span_id == activation.span_id),
+            "actual {stage} must nest under the request's activation"
+        );
+    }
     for stage in ["dispatch_queue", "acquire", "guest_slice"] {
         assert!(
             spans.iter().any(|span| span.name == stage
