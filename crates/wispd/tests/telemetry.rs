@@ -241,6 +241,20 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         .iter()
         .find(|span| span.name == "wake_queue")
         .expect("an actual timer completion must expose wake queue residency");
+    let waiting = spans
+        .iter()
+        .find(|span| span.name == "host_future_wait" && span.trace_id == dispatch.trace_id)
+        .expect("the actual host timer must expose its pending lifetime");
+    assert_eq!(
+        field(&waiting.attributes, "import"),
+        &Value::StringValue("clock_deadline_in".into()),
+        "the wait must identify the capability that created it"
+    );
+    assert_eq!(
+        field(&waiting.attributes, "outcome"),
+        &Value::StringValue("ready".into()),
+        "a completed timer must finish its wait before delivery"
+    );
     for attribute in ["tenant", "app", "version", "dispatch_id"] {
         assert_eq!(
             field(&wake.attributes, attribute),

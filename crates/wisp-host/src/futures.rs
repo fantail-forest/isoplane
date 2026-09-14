@@ -67,10 +67,30 @@ struct Entry {
     state: State,
     result: Option<ResultRecord>,
     task: Option<tokio::task::AbortHandle>,
+    waiting: Option<PendingWait>,
+}
+
+#[derive(Debug)]
+struct PendingWait {
+    span: tracing::Span,
+    outcome: &'static str,
+}
+
+impl Drop for PendingWait {
+    fn drop(&mut self) {
+        self.span.record("outcome", self.outcome);
+    }
 }
 
 impl Entry {
+    fn finish_wait(&mut self, outcome: &'static str) {
+        if let Some(mut waiting) = self.waiting.take() {
+            waiting.outcome = outcome;
+        }
+    }
+
     fn cancel_task(&mut self) {
+        self.finish_wait("cancelled");
         if let Some(task) = self.task.take() {
             task.abort();
         }
@@ -206,6 +226,17 @@ impl FutureTable {
                 state: State::Pending,
                 result: None,
                 task: None,
+                waiting: Some(PendingWait {
+                    span: tracing::info_span!(
+                        "host_future_wait",
+                        instance = %owner,
+                        dispatch_id = dispatch,
+                        future_id = id,
+                        import,
+                        outcome = tracing::field::Empty,
+                    ),
+                    outcome: "discarded",
+                }),
             },
         );
         Ok(id)
@@ -235,6 +266,7 @@ impl FutureTable {
                 state: State::Pending,
                 result: None,
                 task: None,
+                waiting: None,
             },
         );
         id
@@ -249,6 +281,7 @@ impl FutureTable {
             }
             e.state = State::Ready;
             e.result = result.take();
+            e.finish_wait("ready");
             Ok((e.owner.clone(), e.dispatch))
         });
         let (arc, dispatch) = match found {
