@@ -1,0 +1,8 @@
+name = "minimal-gallery"
+tenant = "local-development"
+module = "out/Gallery.wasm"
+limits = { module_bytes_compressed = 52428800, instance_memory_max = 536870912, cpu_ms_per_http_dispatch = 300000, subrequests_per_dispatch = 10000, pending_futures_per_dispatch = 4096 }
+
+[dev]
+init_sandbox = "runtime-bringup"
+allow_endpoints = ["127.0.0.1:5432", "127.0.0.1:3900", "[::ffff:127.0.0.1]:3900"]

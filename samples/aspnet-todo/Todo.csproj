@@ -6,6 +6,7 @@
     <Optimize Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</Optimize>
     <WispApplicationFactory>TodoApp.Application.Create</WispApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
+    <WispMemoryMaxBytes>536870912</WispMemoryMaxBytes>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces>
   </PropertyGroup>
   <ItemGroup>

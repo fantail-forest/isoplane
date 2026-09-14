@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces>
+    <EFOptimizeContext>false</EFOptimizeContext>
+    <EFScaffoldModelStage>publish</EFScaffoldModelStage>
+    <EFPrecompileQueriesStage>publish</EFPrecompileQueriesStage>
+    <EFTargetNamespace>GallerySchema.Generated</EFTargetNamespace>
+    <EFOutputDir>$(MSBuildProjectDirectory)/../obj/$(Configuration)/$(TargetFramework)/database</EFOutputDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../minimal-gallery/Design/GalleryDb.cs" Link="GalleryDb.cs" />
+    <Compile Include="../../minimal-gallery/Design/GalleryDesignFactory.cs" Link="GalleryDesignFactory.cs" />
+    <Compile Include="../../minimal-gallery/IGalleryCatalog.cs" Link="IGalleryCatalog.cs" />
+    <Compile Include="../../minimal-gallery/GalleryJson.cs" Link="GalleryJson.cs" />
+    <Compile Include="../EfGalleryCatalog.cs" Link="EfGalleryCatalog.cs" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tasks" Version="10.0.0" PrivateAssets="all" GeneratePathProperty="true" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" PrivateAssets="all" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" PrivateAssets="all" />
+  </ItemGroup>
+  <Target Name="ReadDatabaseGenerationState" BeforeTargets="BeforeBuild" Condition="'$(_EFGenerationStage)' == ''">
+    <ReadLinesFromFile File="$(EFGeneratedSourcesPublishFile)" Condition="Exists('$(EFGeneratedSourcesPublishFile)')">
+      <Output TaskParameter="Lines" ItemName="DatabaseGeneratedSource" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <MissingDatabaseGeneratedSource Include="@(DatabaseGeneratedSource)" Condition="!Exists('%(Identity)')" />
+      <DatabaseGenerationTool Include="$(PkgMicrosoft_EntityFrameworkCore_Tasks)/**/*" />
+    </ItemGroup>
+    <Delete Files="$(EFGeneratedSourcesPublishFile)" Condition="'@(MissingDatabaseGeneratedSource)' != ''" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)database-generation.inputs"
+                      Lines="$(Configuration);$(TargetFramework);$(RuntimeFrameworkVersion);$(MSBuildVersion);$(EFStartupAssembly);$(DbContextType);$(RootNamespace);$(EFRootNamespace);$(EFTargetNamespace);$(Language);$(Nullable);$(EFNullable);$(EFOutputDir);$(EFScaffoldModelStage);$(EFPrecompileQueriesStage);@(DatabaseGenerationTool)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+  <Target Name="GenerateDatabaseCode" AfterTargets="Build" Condition="'$(_EFGenerationStage)' == ''"
+          Inputs="$(TargetPath);$(EFStartupAssembly);@(ReferenceCopyLocalPaths);@(DatabaseGenerationTool);$(ProjectAssetsFile);$(MSBuildAllProjects);$(IntermediateOutputPath)database-generation.inputs"
+          Outputs="$(EFGeneratedSourcesPublishFile)">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="OptimizeDbContext"
+             Properties="Configuration=$(Configuration);_EFGenerationStage=publish" />
+    <!-- EF recompiles the design assembly after generation; record completion after that build. -->
+    <Touch Files="$(EFGeneratedSourcesPublishFile)" />
+  </Target>
+</Project>

@@ -1,0 +1,37 @@
+<Project Sdk="Wisp.AspNetCore/0.1.0">
+  <PropertyGroup>
+    <Configurations>Debug;Release;WispInterpretedDebug;WispNativeAotRelease</Configurations>
+    <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
+    <PublishAot Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</PublishAot>
+    <Optimize Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</Optimize>
+    <WispApplicationFactory>AspNetGallery.Application.Create</WispApplicationFactory>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <WispMemoryMaxBytes>536870912</WispMemoryMaxBytes>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Design/**/*.cs" />
+    <Compile Include="../minimal-gallery/Design/GalleryDb.cs" Link="GalleryDb.cs" />
+    <Compile Include="../minimal-gallery/IGalleryCatalog.cs" Link="Shared/IGalleryCatalog.cs" />
+    <Compile Include="../minimal-gallery/GalleryJson.cs" Link="Shared/GalleryJson.cs" />
+    <Compile Include="../minimal-gallery/GalleryObjects.cs" Link="Shared/GalleryObjects.cs" />
+    <Compile Include="../minimal-gallery/GalleryIngest.cs" Link="Shared/GalleryIngest.cs" />
+    <Compile Include="../minimal-gallery/GallerySettings.cs" Link="Shared/GallerySettings.cs" />
+    <Compile Include="../minimal-gallery/ImageProcessing.cs" Link="Shared/ImageProcessing.cs" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.103.2" />
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+    <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
+    <PackageReference Include="StbImageResizeSharp" Version="0.97.1" />
+    <PackageReference Include="MetadataExtractor" Version="2.9.3" />
+    <ProjectReference Include="Design/Design.csproj" ReferenceOutputAssembly="false" ExcludeAssets="all" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;PublishAot;WispGuestRuntime" />
+    <RuntimeHostConfigurationOption Include="Microsoft.EntityFrameworkCore.Issue31751" Value="true" />
+  </ItemGroup>
+  <Target Name="IncludeCompiledDatabaseModel" BeforeTargets="CoreCompile" DependsOnTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <Compile Include="obj/$(Configuration)/$(TargetFramework)/database/*.cs" />
+    </ItemGroup>
+  </Target>
+</Project>
