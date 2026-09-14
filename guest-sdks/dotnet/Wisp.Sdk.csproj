@@ -31,4 +31,20 @@
     <Compile Include="Sdk/**/*.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
+    <None Include="Conformance/bin/$(Configuration)/net10.0/Isoplane.Conformance.dll" Pack="true" PackagePath="tools/Conformance/" />
+    <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
+    <None Include="Wisp.Guest.props;Wisp.Guest.targets;Wisp.NativeAot.props" Pack="true" PackagePath="tools/" />
+    <None Include="Build/**" Exclude="Build/**/obj/**;Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
+    <None Include="native/**" Pack="true" PackagePath="tools/native/" />
+  </ItemGroup>
+  <Target Name="StampCoreSdkVersion" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup><_CoreSdkProps>$(IntermediateOutputPath)package/Sdk.props</_CoreSdkProps></PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <Copy SourceFiles="MSBuild/Sdk.props" DestinationFiles="$(_CoreSdkProps)" />
+    <XmlPoke XmlInputPath="$(_CoreSdkProps)" Query="/Project/ItemGroup/PackageReference[@Include='Wisp.Sdk']/@Version" Value="$(PackageVersion)" />
+    <ItemGroup><None Include="$(_CoreSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" /></ItemGroup>
+  </Target>
 </Project>

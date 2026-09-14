@@ -1,0 +1,19 @@
+<Project>
+  <Target Name="WispGenerateHandlerEntrypoint" BeforeTargets="CoreCompile" Condition="'$(WispManagedBundleBuild)' != 'true'">
+    <Error Condition="'$(WispApplicationFactory)' == ''" Text="Set WispApplicationFactory to a public static method returning Wisp.Durable.IWispHandler." />
+    <PropertyGroup>
+      <_WispHandlerPath>$(IntermediateOutputPath)Wisp.Handler.g.cs</_WispHandlerPath>
+      <_WispHandlerSource><![CDATA[
+#nullable enable
+internal sealed class WispGeneratedRouter : Wisp.Durable.IWispRouter {
+  private Wisp.Durable.IWispHandler? handler;
+  public void Boot() { handler = global::$(WispApplicationFactory)(); }
+  public System.Threading.Tasks.Task<Wisp.Response> Route(Wisp.Abi.DispatchRecord record, Wisp.Ctx context) =>
+    handler!.HandleAsync(Wisp.Request.FromDispatch(record), context);
+}
+]]></_WispHandlerSource>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_WispHandlerPath)" Lines="$([MSBuild]::Escape($(_WispHandlerSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup><Compile Include="$(_WispHandlerPath)" /></ItemGroup>
+  </Target>
+</Project>

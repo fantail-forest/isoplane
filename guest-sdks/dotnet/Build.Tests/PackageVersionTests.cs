@@ -14,8 +14,13 @@ public sealed class PackageVersionTests : IDisposable
     {
         foreach (var version in new[] { "0.1.0-package-test.1", "0.1.0-package-test.2" })
         {
+            await Pack("Wisp.Sdk.csproj", version);
             await Pack("AspNetCore/Wisp.AspNetCore.csproj", version);
             await Pack("Templates/Wisp.Templates.csproj", version);
+            using var core = ZipFile.OpenRead(Path.Combine(directory, "Wisp.Sdk." + version + ".nupkg"));
+            var coreProps = ReadXml(core, "Sdk/Sdk.props");
+            Assert.True(coreProps.Descendants("PackageReference").Single(element => (string?)element.Attribute("Include") == "Wisp.Sdk").Attribute("Version")?.Value == version,
+                "The core project SDK must pin its own runtime API package version.");
             using var sdk = ZipFile.OpenRead(Path.Combine(directory, "Wisp.AspNetCore." + version + ".nupkg"));
             var props = ReadXml(sdk, "Sdk/Sdk.props");
             Assert.True(props.Descendants("PackageReference").Single(element => (string?)element.Attribute("Include") == "Wisp.AspNetCore").Attribute("Version")?.Value == version,

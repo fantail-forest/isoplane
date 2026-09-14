@@ -26,32 +26,6 @@ internal sealed class WispGeneratedRouter : Wisp.Durable.IStreamingHttpRouter {
     return application!.HandleAsync(Wisp.Request.FromDispatch(record));
   }
 }
-internal static class WispGeneratedExports {
-#if WISP_MONO
-  [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods, typeof(WispGeneratedExports))]
-  public static void Main() { }
-#endif
-#if !WISP_MONO
-  [UnmanagedCallersOnly(EntryPoint="wisp_alloc")]
-#endif
-  public static int Alloc(int size, int align) => Guest.Alloc(size, align);
-#if !WISP_MONO
-  [UnmanagedCallersOnly(EntryPoint="wisp_handle")]
-#endif
-  public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
-#if !WISP_MONO
-  [UnmanagedCallersOnly(EntryPoint="wisp_wake")]
-#endif
-  public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
-#if !WISP_MONO
-  [UnmanagedCallersOnly(EntryPoint="wisp_initialize")]
-#endif
-  public static void Initialize() => Guest.Initialize();
-#if !WISP_MONO
-  [UnmanagedCallersOnly(EntryPoint="wisp_gc_hint")]
-#endif
-  public static void GcHint(int pressure) => Guest.GcHint(pressure);
-}
 ]]></_WispEntrypointSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_WispEntrypoint)" Lines="$([MSBuild]::Escape($(_WispEntrypointSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
@@ -73,4 +47,5 @@ internal static class WispGeneratedExports {
   <Target Name="WispMonoManagedTransitiveFramework" AfterTargets="AddTransitiveFrameworkReferences" Condition="'$(WispGuestRuntime)' == 'Mono'">
     <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
   </Target>
+  <Import Project="../tools/Build/Wisp.Exports.targets" Condition="'$(WispManagedBundleBuild)' != 'true'" />
 </Project>
