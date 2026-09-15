@@ -41,12 +41,23 @@ builder, with no environment or file configuration sources. Existing builders
 can register the transport with `builder.WebHost.UseWisp()`.
 
 The factory builds the service provider and route conventions during pre-init.
-Keep database connections, production secrets and request-specific work out of
-that factory. The .NET host and its hosted services start after activation, on
-the first request. Request scopes are created and disposed by ASP.NET's normal
+Keep request-specific state out of that factory. Use an initialization hook for
+asynchronous warmup. The .NET host and its hosted services start on the first
+request, or during an explicit initialization warmup. Request scopes are created and disposed by ASP.NET's normal
 request lifecycle. Ongoing `BackgroundService` work is rejected before startup:
 its lifetime cannot extend beyond a completed dispatch. Asynchronous bounded
 `IHostedService.StartAsync` work is supported.
+
+To warm a read endpoint through middleware, binding and serialization before capture:
+
+```csharp
+Wisp.Initialization.Initializing += () =>
+    new WispApplication(application).WarmupAsync("/todos");
+```
+
+The warmup consumes the response locally and fails for unsuccessful HTTP statuses.
+Choose endpoints whose execution is safe during preparation. Their scoped services
+are disposed normally before capture, and the started host is reused by real requests.
 
 Responses preserve status, binary bodies and repeated headers. `OnStarting`
 runs before headers become immutable. For requests that finish through the

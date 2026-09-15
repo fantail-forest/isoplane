@@ -51,12 +51,11 @@ public static class WispHosting
         });
 }
 
-/// <summary>Runs a built application; hosted services start only after activation.</summary>
+/// <summary>Runs a built application, starting hosted services on its first warmup or host request.</summary>
 public sealed class WispApplication
 {
     private readonly WebApplication application;
     private readonly WispServer server;
-    private Task? started;
 
     /// <summary>Retains stable application state without starting hosted services.</summary>
     public WispApplication(WebApplication application)
@@ -71,22 +70,37 @@ public sealed class WispApplication
     /// <summary>Starts the .NET host once, then processes a buffered host request.</summary>
     public async Task<Response> HandleAsync(Request request)
     {
-        await (started ??= StartAsync());
+        await server.StartApplicationAsync(application);
         return await server.SendAsync(request);
     }
 
     /// <summary>Starts the .NET host once, then processes an upload without first collecting its body.</summary>
     public async Task<Response> HandleStreamingAsync(StreamingRequest request)
     {
-        await (started ??= StartAsync());
+        await server.StartApplicationAsync(application);
         return await server.SendAsync(request, request.Body, request.CanHaveBody);
     }
 
-    private Task StartAsync()
+    /// <summary>Runs a GET through the application pipeline and discards its response body.</summary>
+    /// <param name="path">The application-relative path and optional query, beginning with a slash.</param>
+    /// <remarks>Use from an initialization hook for read endpoints. Hosted services start once and
+    /// remain started for subsequent requests. Middleware, handlers, serialization and completion
+    /// callbacks run normally; application I/O still follows the preparation policy.</remarks>
+    /// <exception cref="ArgumentException">The path is not application-relative.</exception>
+    /// <exception cref="HttpRequestException">The endpoint returns a status outside 200–299.</exception>
+    public async Task WarmupAsync(string path)
     {
-        if (application.Services.GetServices<IHostedService>().Any(service => service is BackgroundService))
-            throw new NotSupportedException("WISP ASP.NET does not support BackgroundService work between completed dispatches. Use hosted services for bounded startup work.");
-        return application.StartAsync();
+        if (string.IsNullOrEmpty(path) || !path.StartsWith('/') || path.StartsWith("//", StringComparison.Ordinal))
+            throw new ArgumentException("Use an application-relative path beginning with a slash.", nameof(path));
+        await server.StartApplicationAsync(application);
+        var query = path.IndexOf('?');
+        var request = Request.FromDispatch(new Wisp.Abi.DispatchRecord
+        {
+            Kind = Wisp.Abi.DispatchKind.Http,
+            Method = "GET",
+            Path = query < 0 ? path : path[..query],
+            Url = path
+        });
+        await server.SendAsync(request, new WarmupResponseTransport());
     }
-
 }

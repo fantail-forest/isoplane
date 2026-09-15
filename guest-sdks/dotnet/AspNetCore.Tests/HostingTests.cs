@@ -21,11 +21,11 @@ public sealed class HostingTests
     }
     private static Request Request(string path = "/") => Wisp.Request.FromDispatch(new DispatchRecord
     {
-        Kind = DispatchKind.Http, Method = "GET", Path = path, Url = path
+        Kind = DispatchKind.Http, Method = "GET", Path = path.Split('?')[0], Url = path
     });
 
     [Fact]
-    public async Task hosted_services_start_only_after_activation()
+    public async Task hosted_services_start_once_when_requests_begin()
     {
         var events = new List<string>();
         var builder = Builder();
@@ -294,6 +294,61 @@ public sealed class HostingTests
         Assert.True(routes && !scoped, "pre-initialization materializes routing while request scopes remain uncreated");
         await runtime.HandleAsync(Request());
         Assert.True(scoped, "the request creates its scoped dependencies after activation");
+    }
+
+    [Fact]
+    public async Task warmup_runs_the_pipeline_and_reuses_host_startup_for_real_requests()
+    {
+        var events = new List<string>();
+        var scopes = new List<Scope>();
+        var transports = 0;
+        var builder = Builder();
+        builder.Services.AddSingleton<IHostedService>(new Service(events));
+        builder.Services.AddScoped(_ => { var scope = new Scope(); scopes.Add(scope); return scope; });
+        builder.Services.AddSingleton<Func<ResponseTransport>>(() => { transports++; return new RecordingResponseTransport(); });
+        await using var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            events.Add("middleware");
+            context.Response.OnCompleted(() => { events.Add("completed"); return Task.CompletedTask; });
+            await next(context);
+        });
+        app.MapGet("/todos", (Scope scope, int page) => new { page });
+        var first = new WispApplication(app);
+        await first.WarmupAsync("/todos?page=1");
+        Assert.True(transports == 0, "warmup must not create a host response stream");
+        Assert.True(scopes.Count == 1 && scopes[0].Disposed, "warmup must dispose its request scope before capture");
+        Assert.True(events.SequenceEqual(["start", "middleware", "completed"]), "warmup must await host startup, middleware and completion callbacks");
+        await new WispApplication(app).HandleAsync(Request("/todos?page=2"));
+        Assert.True(transports == 1 && events.Count(e => e == "start") == 1,
+            "a separate adapter for the same app must reuse startup and send real responses to the host");
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(500)]
+    public async Task warmup_rejects_unsuccessful_responses_after_disposing_the_scope(int status)
+    {
+        var scope = new Scope();
+        var builder = Builder();
+        builder.Services.AddScoped(_ => scope);
+        await using var app = builder.Build();
+        app.MapGet("/", (Scope _) => Results.StatusCode(status));
+        var error = await Record.ExceptionAsync(() => new WispApplication(app).WarmupAsync("/"));
+        Assert.True(error is HttpRequestException { StatusCode: var code } && (int?)code == status,
+            "warmup must report the endpoint's unsuccessful HTTP status");
+        Assert.True(scope.Disposed, "failed warmup responses must still dispose scoped services");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://example.com/todos")]
+    [InlineData("//example.com/todos")]
+    public async Task warmup_requires_an_application_relative_path(string path)
+    {
+        await using var app = Builder().Build();
+        var error = await Record.ExceptionAsync(() => new WispApplication(app).WarmupAsync(path));
+        Assert.True(error is ArgumentException, "warmup must refuse paths that name an external host");
     }
 
     private sealed class Scope : IAsyncDisposable

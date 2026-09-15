@@ -5,7 +5,7 @@ mdx:
 
 # WispApplication class
 
-Runs a built application; hosted services start only after activation.
+Runs a built application, starting hosted services on its first warmup or host request.
 
 ```csharp
 public sealed class WispApplication
@@ -18,6 +18,7 @@ public sealed class WispApplication
 | [WispApplication](WispApplication/WispApplication.md)(…) | Retains stable application state without starting hosted services. |
 | [HandleAsync](WispApplication/HandleAsync.md)(…) | Starts the .NET host once, then processes a buffered host request. |
 | [HandleStreamingAsync](WispApplication/HandleStreamingAsync.md)(…) | Starts the .NET host once, then processes an upload without first collecting its body. |
+| [WarmupAsync](WispApplication/WarmupAsync.md)(…) | Runs a GET through the application pipeline and discards its response body. |
 
 ## See Also
 

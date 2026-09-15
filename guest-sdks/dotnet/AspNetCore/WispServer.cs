@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 
@@ -7,6 +10,16 @@ namespace Wisp.AspNetCore;
 internal sealed class WispServer(Func<ResponseTransport> createTransport) : IServer
 {
     private Func<IFeatureCollection, Task>? dispatch;
+    private Task? started;
+
+    internal Task StartApplicationAsync(WebApplication application) => started ??= StartApplicationCoreAsync(application);
+
+    private static Task StartApplicationCoreAsync(WebApplication application)
+    {
+        if (application.Services.GetServices<IHostedService>().Any(service => service is BackgroundService))
+            throw new NotSupportedException("WISP ASP.NET does not support BackgroundService work between completed dispatches. Use hosted services for bounded startup work.");
+        return application.StartAsync();
+    }
     public IFeatureCollection Features { get; } = new FeatureCollection();
 
     public Task StartAsync<TContext>(IHttpApplication<TContext> application, CancellationToken cancellationToken)
@@ -40,16 +53,21 @@ internal sealed class WispServer(Func<ResponseTransport> createTransport) : ISer
         return Task.CompletedTask;
     }
 
-    internal async Task<Response> SendAsync(Request request)
+    internal Task<Response> SendAsync(Request request) => SendAsync(request, createTransport());
+
+    internal async Task<Response> SendAsync(Request request, ResponseTransport transport)
     {
         using var input = new MemoryStream(request.Body.ToArray(), writable: false);
-        return await SendAsync(request, input, input.Length > 0);
+        return await SendAsync(request, input, input.Length > 0, transport);
     }
 
-    internal async Task<Response> SendAsync(RequestHead request, Stream input, bool canHaveBody)
+    internal Task<Response> SendAsync(RequestHead request, Stream input, bool canHaveBody) =>
+        SendAsync(request, input, canHaveBody, createTransport());
+
+    private async Task<Response> SendAsync(RequestHead request, Stream input, bool canHaveBody, ResponseTransport transport)
     {
         var handler = dispatch ?? throw new InvalidOperationException("The WISP server has not started.");
-        using var response = new StreamingResponse(createTransport());
+        using var response = new StreamingResponse(transport);
         using var lifetime = new RequestLifetime(request.Aborted);
         var headers = new HeaderDictionary();
         foreach (var header in request.Headers) headers.Append(header.Key, header.Value);
