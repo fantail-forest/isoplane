@@ -36,9 +36,5 @@ public static class Application
         options.UseModel(Generated.TodoDbModel.Instance).UseNpgsql(connection.ConnectionString);
     }
 
-    private static async Task Warmup(WebApplication application)
-    {
-        await new WispApplication(application).WarmupAsync("/todos");
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
-    }
+    private static Task Warmup(WebApplication application) => new WispApplication(application).WarmupAsync("/todos");
 }
