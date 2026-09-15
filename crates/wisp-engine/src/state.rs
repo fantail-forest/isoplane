@@ -217,7 +217,12 @@ impl StoreState {
                 .is_some_and(|bindings| bindings.permits_initialization_entropy());
         }
 
-        wisp_abi::imports::RUNTIME_INIT_CAPABILITIES.contains(&name)
+        (wisp_abi::imports::RUNTIME_INIT_CAPABILITIES.contains(&name)
+            || (matches!(name, "socket_call" | "poll_call")
+                && self
+                    .bindings
+                    .as_ref()
+                    .is_some_and(|bindings| bindings.permits_initialization_io())))
             && self
                 .bindings
                 .as_ref()

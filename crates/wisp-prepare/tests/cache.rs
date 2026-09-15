@@ -262,8 +262,8 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
         (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 0)
         (func (export "wisp_handle") (param i32 i32) (result i64) i64.const 0)
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0)
-        (func (export "wisp_initialize")
-            (if (i32.ne (memory.grow (i32.const 1024)) (i32.const -1)) (then unreachable))))"#,
+        (func (export "wisp_initialize") (result i64)
+            (if (i32.ne (memory.grow (i32.const 1024)) (i32.const -1)) (then unreachable)) i64.const 0))"#,
     )
     .expect("bounded initialization fixture assembles");
     let mut input = request(&wasm);

@@ -34,7 +34,7 @@ fn rig(park: bool) -> Rig {
         (memory (export "memory") 2 2)
         (global $initialized (mut i32) (i32.const 0))
         (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 4096)
-        (func (export "wisp_initialize") i32.const 42 global.set $initialized)
+        (func (export "wisp_initialize") (result i64) i32.const 42 global.set $initialized i64.const 0)
         (func (export "wisp_handle") (param i32 i32) (result i64)
             global.get $initialized i32.const 42 i32.ne if unreachable end {handler})
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0)
@@ -194,7 +194,7 @@ fn debug_registration_refuses_a_production_wall_backstop() {
         r#"(module
         (memory (export "memory") 1 1)
         (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 1024)
-        (func (export "wisp_initialize"))
+        (func (export "wisp_initialize") (result i64) i64.const 0)
         (func (export "wisp_handle") (param i32 i32) (result i64) i64.const 0)
         (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0))"#,
     )

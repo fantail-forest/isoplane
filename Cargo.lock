@@ -4279,6 +4279,7 @@ dependencies = [
  "wat",
  "wisp-abi",
  "wisp-engine",
+ "wisp-host",
  "wisp-runtime",
 ]
 

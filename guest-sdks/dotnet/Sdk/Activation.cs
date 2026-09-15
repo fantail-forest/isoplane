@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace Wisp;
 
@@ -7,23 +8,18 @@ namespace Wisp;
 /// Every activation is a copy of the memory pre-initialisation left, so a
 /// generator that seeded itself before the snapshot would replay the same
 /// output in each copy; subscribe here to reseed or recreate it. The event
-/// is raised once per activation, on the first dispatch or wake, and not
+/// is raised once per activation, before the first dispatch, and not
 /// again after a wake from hibernation, whose state is the instance's own.
 /// </summary>
 public static class Activation
 {
-    private static bool _activated;
+    private static readonly LifecycleHook Hook = new();
 
-    /// <summary>Raised once, before the first dispatch of an activation runs.</summary>
-    public static event Action? Activated;
+    /// <summary>Awaited once, in registration order, before the first dispatch of an activation runs.</summary>
+    public static event Func<Task>? Activated;
 
-    /// <summary>True from the first dispatch of this activation on.</summary>
-    public static bool IsActivated => _activated;
+    /// <summary>True after every activation callback has completed successfully.</summary>
+    public static bool IsActivated => Hook.IsCompleted;
 
-    internal static void Enter()
-    {
-        if (_activated) return;
-        _activated = true;
-        Activated?.Invoke();
-    }
+    internal static Task EnterAsync() => Hook.EnterAsync(Activated);
 }

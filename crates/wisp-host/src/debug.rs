@@ -229,7 +229,7 @@ mod tests {
 
     fn activator(initialize: Option<&str>) -> Result<DebugActivator, DebugError> {
         let initialize = initialize.map_or(String::new(), |body| {
-            format!("(func (export \"wisp_initialize\") {body})")
+            format!("(func (export \"wisp_initialize\") (result i64) {body} i64.const 0)")
         });
         let wasm = wat::parse_str(format!(
             r#"(module

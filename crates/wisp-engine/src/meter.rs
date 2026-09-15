@@ -128,7 +128,7 @@ mod tests {
               (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 1024)
               (func (export "wisp_handle") (param i32 i32) (result i64) i64.const 0)
               (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0)
-              (func (export "wisp_initialize") {initialize}))"#
+              (func (export "wisp_initialize") (result i64) {initialize} i64.const 0))"#
         ))
         .expect("the clock fixture must assemble");
         let template = engine.load_template(&wasm).expect("the fixture must load");

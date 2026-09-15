@@ -19,6 +19,27 @@ pub struct ImportCall<'a> {
 /// Implemented by `wisp-host`. Every capability the platform offers arrives
 /// here or does not exist.
 pub trait HostBindings: Send + 'static {
+    /// Restore template resource identities before guest code runs, preserving already-owned
+    /// resources when rebinding the same template after Store destruction.
+    fn restore_prepared_resources(
+        &mut self,
+        resources: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), BindingError> {
+        if resources == &wisp_abi::native_io::PreparedResources::default() {
+            Ok(())
+        } else {
+            Err(BindingError::Unsupported("prepared native resources"))
+        }
+    }
+
+    /// Discard request-owned resources and restore the template baseline for fresh reuse.
+    fn reset_prepared_resources(
+        &mut self,
+        resources: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), BindingError> {
+        self.restore_prepared_resources(resources)
+    }
+
     /// Per-instance linear-memory ceiling, bounded by the engine capacity.
     /// None uses the engine capacity.
     fn memory_limit_bytes(&self) -> Option<u64> {
@@ -88,6 +109,24 @@ pub trait InitializationBindings: Send + 'static {
         false
     }
 
+    /// Whether this context admits asynchronous native capabilities outside init units.
+    fn permits_io(&self) -> bool {
+        false
+    }
+    /// Execute a nonblocking native operation under preparation's outbound policy.
+    fn native_io(
+        &mut self,
+        _request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        Err(wisp_abi::native_io::Error::Denied(
+            "initialization I/O is disabled".into(),
+        ))
+    }
+    /// Frozen preparation clock advanced at each returned slice.
+    fn slice_clock_ms(&self) -> u64 {
+        0
+    }
+
     /// Application memory ceiling during initialization; None uses engine capacity.
     fn memory_limit_bytes(&self) -> Option<u64> {
         None
@@ -115,6 +154,32 @@ impl Bindings {
         }
     }
 
+    pub fn permits_initialization_io(&self) -> bool {
+        match self {
+            Self::Runtime(_) => false,
+            Self::Initialization(bindings) => bindings.permits_io(),
+        }
+    }
+    pub fn restore_prepared_resources(
+        &mut self,
+        resources: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), BindingError> {
+        match self {
+            Self::Runtime(bindings) => bindings.restore_prepared_resources(resources),
+            Self::Initialization(_) => Ok(()),
+        }
+    }
+
+    pub fn reset_prepared_resources(
+        &mut self,
+        resources: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), BindingError> {
+        match self {
+            Self::Runtime(bindings) => bindings.reset_prepared_resources(resources),
+            Self::Initialization(_) => Ok(()),
+        }
+    }
+
     pub fn is_init_sandbox(&self) -> bool {
         match self {
             Self::Runtime(bindings) => bindings.is_init_sandbox(),
@@ -130,7 +195,7 @@ impl Bindings {
     pub fn slice_clock_ms(&self) -> u64 {
         match self {
             Self::Runtime(bindings) => bindings.slice_clock_ms(),
-            Self::Initialization(_) => 0,
+            Self::Initialization(bindings) => bindings.slice_clock_ms(),
         }
     }
     pub fn enter_grace(&mut self) {
@@ -145,9 +210,7 @@ impl Bindings {
     ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
         match self {
             Self::Runtime(bindings) => bindings.native_io(request),
-            Self::Initialization(_) => Err(wisp_abi::native_io::Error::Denied(
-                "native I/O during initialization".into(),
-            )),
+            Self::Initialization(bindings) => bindings.native_io(request),
         }
     }
     pub fn call_future(&mut self, call: ImportCall<'_>) -> Result<u64, BindingError> {

@@ -5,10 +5,10 @@ mdx:
 
 # Activation.Activated event
 
-Raised once, before the first dispatch of an activation runs.
+Awaited once, in registration order, before the first dispatch of an activation runs.
 
 ```csharp
-public static event Action? Activated;
+public static event Func<Task>? Activated;
 ```
 
 ## See Also

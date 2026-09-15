@@ -6,7 +6,9 @@ pub mod network_error;
 use std::net::SocketAddr;
 
 /// An instance-local resource name, never an operating-system descriptor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct ResourceHandle(pub u32);
 
 /// A duration expressed in the canonical WASI clock unit.
@@ -259,3 +261,27 @@ pub enum DnsFailure {
     /// The resolver did not answer within its configured deadline.
     Timeout,
 }
+
+/// Benign native-resource identities retained by a prepared guest; no live I/O.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PreparedResources {
+    /// First unused handle; identities are never reused within an instance.
+    pub next_handle: u32,
+    /// Guest-cached network authority, rebound to the activating host's policy.
+    pub network: Option<ResourceHandle>,
+    /// Immediately ready pollables with no timer task or wake authority.
+    pub ready_pollables: Vec<ResourceHandle>,
+}
+
+impl Default for PreparedResources {
+    fn default() -> Self {
+        Self {
+            next_handle: 1,
+            network: None,
+            ready_pollables: Vec::new(),
+        }
+    }
+}
+
+/// Portable template section carrying preparation's closed native-resource state.
+pub const PREPARED_RESOURCES_SECTION: &str = "wisp.prepared-resources";

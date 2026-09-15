@@ -28,7 +28,7 @@ pub(crate) struct Live {
     pub(crate) f_handle: TypedFunc<(i32, i32), i64>,
     pub(crate) f_wake: TypedFunc<(i64, i32, i32), i64>,
     pub(crate) f_gc_hint: Option<TypedFunc<i32, ()>>,
-    pub(crate) f_initialize: Option<TypedFunc<(), ()>>,
+    pub(crate) f_initialize: Option<TypedFunc<(), i64>>,
     pub(crate) globals: Vec<Global>,
     pub(crate) tables: Vec<Table>,
     pub(crate) table_baseline: crate::capture::TableBaseline,
@@ -410,7 +410,13 @@ impl InstanceOps for Instance {
         data.limits.oom = false;
         data.scratch.clear();
 
-        match crate::activate::instantiate(&self.engine, &self.template, data) {
+        let reset = (|| {
+            if let Some(bindings) = data.bindings.as_mut() {
+                bindings.reset_prepared_resources(&self.template.prepared_resources)?;
+            }
+            crate::activate::instantiate(&self.engine, &self.template, data)
+        })();
+        match reset {
             Ok(live) => self.live = Some(live),
             Err(e) => {
                 self.tombstone = Some("the template could not be re-instantiated after a reset");

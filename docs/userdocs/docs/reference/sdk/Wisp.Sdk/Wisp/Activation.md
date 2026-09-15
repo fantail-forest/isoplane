@@ -5,7 +5,7 @@ mdx:
 
 # Activation class
 
-The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy; subscribe here to reseed or recreate it. The event is raised once per activation, on the first dispatch or wake, and not again after a wake from hibernation, whose state is the instance's own.
+The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy; subscribe here to reseed or recreate it. The event is raised once per activation, before the first dispatch, and not again after a wake from hibernation, whose state is the instance's own.
 
 ```csharp
 public static class Activation
@@ -15,8 +15,8 @@ public static class Activation
 
 | name | description |
 | --- | --- |
-| static [IsActivated](Activation/IsActivated.md) { get; } | True from the first dispatch of this activation on. |
-| static event [Activated](Activation/Activated.md) | Raised once, before the first dispatch of an activation runs. |
+| static [IsActivated](Activation/IsActivated.md) { get; } | True after every activation callback has completed successfully. |
+| static event [Activated](Activation/Activated.md) | Awaited once, in registration order, before the first dispatch of an activation runs. |
 
 ## See Also
 

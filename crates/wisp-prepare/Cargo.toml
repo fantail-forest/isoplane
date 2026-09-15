@@ -20,6 +20,7 @@ blake3.workspace = true
 parking_lot.workspace = true
 wisp-abi = { workspace = true, features = ["host"] }
 wisp-engine.workspace = true
+wisp-host.workspace = true
 wisp-runtime.workspace = true
 wasmparser.workspace = true
 wasm-encoder.workspace = true

@@ -34,12 +34,10 @@ pub(crate) fn call_entry(live: &mut Live, entry: Entry<'_>) -> wasmtime::Result<
             }
             Ok(PollStatus::Done { response: 0 }.encode())
         }
-        Entry::Initialize => {
-            if let Some(f) = live.f_initialize.clone() {
-                f.call(&mut live.store, ())?;
-            }
-            Ok(PollStatus::Done { response: 0 }.encode())
-        }
+        Entry::Initialize => match live.f_initialize.clone() {
+            Some(f) => Ok(f.call(&mut live.store, ())? as u64),
+            None => Ok(PollStatus::Done { response: 0 }.encode()),
+        },
     }
 }
 

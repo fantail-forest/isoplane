@@ -9,7 +9,7 @@ use wisp_engine::{EngineConfig, ModuleHash, PlatformFiles, WispEngine};
 
 /// Default local initialization CPU budget across replay passes.
 pub const DEFAULT_INITIALIZATION_CPU_MS: u32 = 30_000;
-/// Default local initialization wall backstop per invocation.
+/// Default local initialization wall backstop, including waits and replay passes.
 pub const DEFAULT_INITIALIZATION_WALL_MS: u32 = 60_000;
 /// Default local initialization replay limit.
 pub const DEFAULT_INITIALIZATION_PASSES: u32 = 16;
@@ -24,6 +24,7 @@ pub struct PreInitializer {
     memory_limit: Option<GuestMemoryBytes>,
     engine: EngineConfig,
     runtime_config: Option<Vec<u8>>,
+    network: Option<crate::InitializationNetwork>,
 }
 
 /// Immutable inputs to one local template build.
@@ -126,6 +127,12 @@ impl PreInitializer {
         self
     }
     /// Supplies the deployment settings used during local initialization.
+    /// Use the application's outbound policy during asynchronous initialization.
+    pub fn with_network(mut self, network: crate::InitializationNetwork) -> Self {
+        self.network = Some(network);
+        self
+    }
+
     pub fn with_runtime_configuration(mut self, configuration: Vec<u8>) -> Self {
         self.runtime_config = Some(configuration);
         self
@@ -158,6 +165,7 @@ impl PreInitializer {
             };
             let engine = WispEngine::new(configuration.clone()).map_err(PreInitError::Trapped)?;
             let request = Initialization {
+                network: self.network.clone(),
                 config: req.init_blob.clone(),
                 runtime_config: self
                     .runtime_config
@@ -258,7 +266,7 @@ mod tests {
         wat::parse_str(format!(
             r#"(module
             (memory (export "memory") {memory})
-            (func (export "wisp_initialize") {initialize})
+            (func (export "wisp_initialize") (result i64) {initialize} i64.const 0)
             (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
             (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
             (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#
@@ -312,7 +320,8 @@ mod tests {
     #[test]
     fn initialization_refuses_a_request_bound_to_another_source() {
         let wasm =
-            wat::parse_str("(module (func (export \"wisp_initialize\")))").expect("valid module");
+            wat::parse_str("(module (func (export \"wisp_initialize\") (result i64) i64.const 0))")
+                .expect("valid module");
         let request = PreInitRequest {
             module_hash: ModuleHash::of(b"another source"),
             init_blob: vec![],

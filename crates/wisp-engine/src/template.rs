@@ -59,6 +59,7 @@ pub(crate) struct TemplateInner {
     pub image: Arc<crate::image::MemoryImage>,
     pub memory_pages: u32,
     pub deferred: Vec<u32>,
+    pub prepared_resources: wisp_abi::native_io::PreparedResources,
     /// Exported mutable globals in module index order, with their template
     /// values, so capture and restore agree on an ordering without names in
     /// the delta.
@@ -295,9 +296,27 @@ pub(crate) struct ArtifactMeta {
     pub cwasm_hash: [u8; 32],
     pub memory_pages: u32,
     pub deferred: Vec<u32>,
+    pub prepared_resources: wisp_abi::native_io::PreparedResources,
     pub mut_global_names: Vec<String>,
     pub table_names: Vec<String>,
 }
 
 pub(crate) const ARTIFACT_MAGIC: [u8; 8] = *b"WISPTMPL";
-pub(crate) const ARTIFACT_FORMAT: u32 = 2;
+pub(crate) const ARTIFACT_FORMAT: u32 = 3;
+
+pub(crate) fn read_prepared_resources(
+    wasm: &[u8],
+) -> Result<wisp_abi::native_io::PreparedResources> {
+    let mut found = None;
+    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
+        if let wasmparser::Payload::CustomSection(section) = payload? {
+            if section.name() == wisp_abi::native_io::PREPARED_RESOURCES_SECTION {
+                if found.is_some() {
+                    bail!("duplicate prepared native resource state");
+                }
+                found = Some(postcard::from_bytes(section.data())?);
+            }
+        }
+    }
+    Ok(found.unwrap_or_default())
+}

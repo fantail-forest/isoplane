@@ -45,6 +45,7 @@ impl Cache {
             configuration,
             runtime.finalize().as_bytes(),
             &serde_json::to_vec(&project.manifest)?,
+            &serde_json::to_vec(&super::initialization_network(project))?,
             project.init_sandbox.as_str().as_bytes(),
         ] {
             hash_part(&mut key, bytes);
@@ -165,8 +166,8 @@ mod tests {
             let wasm = wat::parse_str(
                 r#"(module
                 (memory (export "memory") 1 1)
-                (func (export "wisp_initialize")
-                    (i32.store (i32.const 0) (i32.const 42)))
+                (func (export "wisp_initialize") (result i64)
+                    (i32.store (i32.const 0) (i32.const 42)) i64.const 0)
                 (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
                 (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
                 (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
@@ -254,7 +255,7 @@ mod tests {
         fixture.wasm = wat::parse_str(
             r#"(module
                 (memory (export "memory") 1 8192)
-                (func (export "wisp_initialize"))
+                (func (export "wisp_initialize") (result i64) i64.const 0)
                 (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
                 (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
                 (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
@@ -316,6 +317,24 @@ mod tests {
             &fixture.wasm,
             &fixture.executable,
             "changed initialization variables",
+        );
+        project = fixture.project.clone();
+        project.tenant = "another-owner".into();
+        assert_miss(
+            &project,
+            &fixture.wasm,
+            &fixture.executable,
+            "changed tenant",
+        );
+        project = fixture.project.clone();
+        project
+            .allow_endpoints
+            .push("127.0.0.1:5432".parse().unwrap());
+        assert_miss(
+            &project,
+            &fixture.wasm,
+            &fixture.executable,
+            "changed outbound authorization",
         );
         project = fixture.project.clone();
         project.init_sandbox = InitSandbox::RuntimeBringUp;

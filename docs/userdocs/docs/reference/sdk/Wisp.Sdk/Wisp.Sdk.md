@@ -9,7 +9,7 @@ mdx:
 
 | public type | description |
 | --- | --- |
-| static class [Activation](./Wisp/Activation.md) | The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy; subscribe here to reseed or recreate it. The event is raised once per activation, on the first dispatch or wake, and not again after a wake from hibernation, whose state is the instance's own. |
+| static class [Activation](./Wisp/Activation.md) | The moment an instance first runs after activation from its template. Every activation is a copy of the memory pre-initialisation left, so a generator that seeded itself before the snapshot would replay the same output in each copy; subscribe here to reseed or recreate it. The event is raised once per activation, before the first dispatch, and not again after a wake from hibernation, whose state is the instance's own. |
 | class [BindingException](./Wisp/BindingException.md) | A capability call the host refused or could not complete; [`WispError`](./Wisp/BindingException/WispError.md) says which. |
 | class [Ctx](./Wisp/Ctx.md) | The per-dispatch context. |
 | static class [DeploymentConfiguration](./Wisp/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |

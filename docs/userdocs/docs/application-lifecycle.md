@@ -35,10 +35,12 @@ is possible even when the previous request completed successfully.
 Application initialization can happen before an instance starts serving requests.
 Subscribe to [`Wisp.Initialization.Initializing`](reference/sdk/Wisp.Sdk/Wisp/Initialization/Initializing.md)
 during application construction to warm reusable state before the template is
-captured, such as serialization metadata or a compiled EF model. The callback
-runs synchronously and must finish before returning. Keep request-scoped services
-and background work out of this callback. An exception
-fails template preparation.
+captured, such as serialization metadata or a compiled EF model. Callbacks return
+a `Task` and are awaited in registration order before capture. Asynchronous
+network I/O follows the application's normal outbound policy. Await all I/O and
+dispose its connections, streams, and timers before the callback finishes; live
+host resources cannot be captured. Keep request-scoped services and background
+work out of these callbacks. An exception fails template preparation.
 
 Static state created during initialization can be copied into multiple instances.
 A request identifier, token or application-managed random seed stored in that

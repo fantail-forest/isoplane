@@ -33,6 +33,7 @@ impl WispEngine {
             module,
             ModuleHash::of(template_wasm),
             deferred,
+            template::read_prepared_resources(template_wasm)?,
             mut_names,
             table_names,
         )
@@ -60,6 +61,7 @@ impl WispEngine {
             cwasm_hash: *blake3::hash(&cwasm).as_bytes(),
             memory_pages: t.inner.memory_pages,
             deferred: t.inner.deferred.clone(),
+            prepared_resources: t.inner.prepared_resources.clone(),
             mut_global_names: t.inner.mut_globals.iter().map(|(n, _)| n.clone()).collect(),
             table_names: t.inner.tables.iter().map(|(n, _)| n.clone()).collect(),
         };
@@ -111,6 +113,7 @@ impl WispEngine {
             module,
             ModuleHash(meta.module_hash),
             meta.deferred,
+            meta.prepared_resources,
             meta.mut_global_names,
             meta.table_names,
         )
@@ -237,6 +240,7 @@ impl WispEngine {
         module: wasmtime::Module,
         hash: ModuleHash,
         deferred: Vec<u32>,
+        prepared_resources: wisp_abi::native_io::PreparedResources,
         mut_names: Vec<String>,
         table_names: Vec<String>,
     ) -> Result<Template> {
@@ -329,6 +333,7 @@ impl WispEngine {
                 image,
                 memory_pages,
                 deferred,
+                prepared_resources,
                 mut_globals,
                 tables,
                 table_nullness,

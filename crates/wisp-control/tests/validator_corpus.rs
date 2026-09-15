@@ -606,3 +606,58 @@ fn local_debug_validation_applies_only_the_authorized_memory_override() {
         "debug memory authorization must not grant an undeclared capability"
     );
 }
+
+#[test]
+fn optional_initialization_requires_the_canonical_poll_result_signature() {
+    for definition in [
+        r#"(func (export "wisp_initialize"))"#,
+        r#"(func (export "wisp_initialize") (param i32) (result i64) i64.const 0)"#,
+        r#"(func (export "wisp_initialize") (result i32) i32.const 0)"#,
+    ] {
+        let wasm = parse(&format!("(module {REQUIRED_EXPORTS} {definition})"));
+        let violations = validator::validate(&wasm, Limits::default())
+            .expect_err("malformed optional initialization signatures must fail admission");
+        assert_eq!(
+            violations.len(),
+            1,
+            "the fixture must fail only its initialization signature"
+        );
+        assert_eq!(
+            violations[0].code,
+            V::V1SignatureMismatch,
+            "initialization signature rejection must happen before engine activation"
+        );
+    }
+    let wasm = parse(&format!(
+        r#"(module {REQUIRED_EXPORTS}
+        (func (export "wisp_initialize") (result i64) i64.const 0))"#
+    ));
+    assert!(
+        validator::validate(&wasm, Limits::default())
+            .expect("canonical initializer")
+            .has_initialize(),
+        "a correctly typed asynchronous initializer must be reported as available"
+    );
+}
+
+#[test]
+fn optional_exports_cannot_disguise_nonfunction_objects_as_guest_entrypoints() {
+    for name in wisp_abi::exports::OPTIONAL {
+        let wasm = parse(&format!(
+            r#"(module {REQUIRED_EXPORTS}
+            (global (export "{name}") i32 (i32.const 0)))"#
+        ));
+        let violations = validator::validate(&wasm, Limits::default())
+            .expect_err("an optional entrypoint must be a function when present");
+        assert_eq!(
+            violations.len(),
+            1,
+            "the fixture must fail only its optional export kind"
+        );
+        assert_eq!(
+            violations[0].code,
+            V::V1MissingExport,
+            "a nonfunction object cannot fulfill an optional entrypoint contract"
+        );
+    }
+}

@@ -17,12 +17,12 @@ pub(super) struct Addresses {
 
 impl Addresses {
     pub(super) fn start(
-        bindings: &CellBindings,
+        bindings: &dyn Context,
         name: String,
         maximum: ResourceCount,
     ) -> Result<Self, Error> {
         let runtime = bindings
-            .rt()
+            .runtime()
             .ok_or(Error::Unsupported("DNS without reactor"))?
             .clone();
         let future = bindings
@@ -33,12 +33,11 @@ impl Addresses {
         let state = Arc::new(Mutex::new(State::Pending));
         let completion = runtime.clone();
         let answer = state.clone();
-        let allowlist = bindings.ctx.allowlist.clone();
-        let tenant = bindings.ctx.tenant.clone();
-        let instance = bindings.ctx.instance;
+        let allowlist = bindings.allowlist().map(<[String]>::to_vec);
+        let tenant = bindings.tenant().to_owned();
+        let instance = bindings.instance();
         let task = runtime.reactor.spawn(async move {
             let result = completion
-                .services
                 .egress
                 .resolve_name(&name, allowlist.as_deref())
                 .await
@@ -73,7 +72,7 @@ impl Addresses {
             state,
             _task: ReactorWork {
                 future: FutureId::from(future),
-                owner: bindings.ctx.instance,
+                owner: bindings.instance(),
                 table: runtime.futures.clone(),
                 task: task.abort_handle(),
             },

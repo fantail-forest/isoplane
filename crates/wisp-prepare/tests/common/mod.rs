@@ -13,6 +13,7 @@ pub fn engine() -> WispEngine {
 }
 pub fn request() -> Initialization {
     Initialization {
+        network: None,
         runtime_config: b"{}".to_vec(),
         config: b"{}".to_vec(),
         sandbox: InitSandbox::Sealed,
@@ -37,7 +38,7 @@ pub fn guest_with_handle(imports: &str, init: &str, handle: &str) -> Vec<u8> {
       (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 2048))
       (func (export "wisp_handle") (param i32 i32) (result i64) {handle})
       (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0))
-      (func (export "wisp_initialize") {init}))"#
+      (func (export "wisp_initialize") (result i64) {init} i64.const 0))"#
     ))
     .expect("the test guest must assemble")
 }

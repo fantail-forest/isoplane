@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use wisp_abi::dispatch::HttpRequest;
 use wisp_abi::host::{Dispatcher, HttpReply, RouteTarget};
 use wisp_host::ModuleId;
-use wisp_host::{Cell, EngineActivator};
+use wisp_host::{Cell, CellConfig, EngineActivator};
 
 pub use admin::RealNodeAdmin;
 
@@ -163,11 +163,76 @@ impl Dispatcher for RealCells {
     }
 }
 
+fn initialization_network(
+    tenant: &str,
+    manifest: &wisp_abi::config::AppManifest,
+    allowed_destinations: Vec<std::net::SocketAddr>,
+    limits: wisp_runtime::network::NetworkLimits,
+    host: &wisp_host::CellConfig,
+) -> wisp_prepare::InitializationNetwork {
+    wisp_prepare::InitializationNetwork {
+        tenant: tenant.to_owned(),
+        allowlist: manifest.bindings.fetch_allowlist.clone(),
+        allowed_destinations,
+        limits,
+        native_handles: host.guest_resources.native_handles,
+        pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
+    }
+}
+
 #[cfg(test)]
 mod identity_tests;
 
 #[cfg(test)]
 mod engine_policy_tests {
+    #[test]
+    fn preparation_uses_the_application_owner_and_execution_network_budgets() {
+        let mut config = crate::config::NodeConfig::dev_default();
+        config.network.connections = 3;
+        config.network.egress_bytes = 8192;
+        config.host.guest_resources.native_handles = 7;
+        let manifest: wisp_abi::config::AppManifest = toml::from_str(
+            "name='app'\n[bindings]\nfetch_allowlist=['db.example:5432']\n[resource_limits]\npending_futures_per_dispatch=2",
+        ).expect("application policy");
+        let endpoint = "127.0.0.1:5432".parse().expect("local database endpoint");
+        let policy = super::initialization_network(
+            "owner",
+            &manifest,
+            vec![endpoint],
+            config.network,
+            &config.host,
+        );
+        assert_eq!(
+            policy.tenant, "owner",
+            "initialization must retain the established owner"
+        );
+        assert_eq!(
+            policy.allowlist, manifest.bindings.fetch_allowlist,
+            "application egress restrictions must also apply before capture"
+        );
+        assert_eq!(
+            policy.allowed_destinations,
+            vec![endpoint],
+            "the explicit local database allowance must reach preparation"
+        );
+        assert_eq!(
+            policy.limits.connections, 3,
+            "initialization must obey the host connection limit"
+        );
+        assert_eq!(
+            policy.limits.egress_bytes, 8192,
+            "initialization must obey the host byte limit"
+        );
+        assert_eq!(
+            policy.native_handles, 7,
+            "initialization must obey the host native resource limit"
+        );
+        assert_eq!(
+            policy.pending_futures, 2,
+            "initialization must obey application resource overrides"
+        );
+    }
+
     #[test]
     fn operator_profiling_configuration_reaches_the_engine() {
         let mut config = crate::config::NodeConfig::dev_default();

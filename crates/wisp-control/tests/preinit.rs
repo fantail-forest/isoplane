@@ -49,7 +49,7 @@ fn guest_wat(impure: bool) -> String {
 
   (data (i32.const 2048) "pre-init ran")
 
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (local $i i32)
     ;; Read this attempt's initialization string-hash seed.
     (call $seed_in (i32.const 0) (i32.const 16))
@@ -78,7 +78,7 @@ fn guest_wat(impure: bool) -> String {
 {unit4}
 
     ;; Leave unit scope (NO_UNIT = -1): a trap here is nobody's cctor.
-    (call $unit_begin (i32.const -1)))
+    (call $unit_begin (i32.const -1)) i64.const 0)
 
   ;; ---- runtime exports ----
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
@@ -298,9 +298,9 @@ fn unattributable_traps_fail_the_deploy() {
   (import "wisp" "clock_now_coarse" (func $now (result i64)))
   (memory (export "memory") 1 16)
   (global $g (mut i64) (i64.const 0))
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (call $unit_begin (i32.const -1))   ;; explicitly outside any unit
-    (global.set $g (call $now)))
+    (global.set $g (call $now)) i64.const 0)
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))
@@ -333,10 +333,10 @@ fn sealed_imports_trap_rather_than_returning_zero() {
   (import "wisp" "clock_now_coarse"   (func $now (result i64)))
   (memory (export "memory") 1 16)
   (global $g (mut i64) (i64.const 0))
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (call $unit_begin (i32.const 7))
     (drop (call $unit_deferred (i32.const 7)))   ;; asks, then ignores the answer
-    (global.set $g (call $now)))
+    (global.set $g (call $now)) i64.const 0)
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))
@@ -411,9 +411,9 @@ fn the_runtime_pal_lets_a_runtime_come_up_outside_any_init_unit() {
   (global $t (mut i64) (i64.const -1))
   ;; No init_unit_begin at all: this is a runtime bringing itself up, which is
   ;; exactly what a .NET module does before any tenant cctor runs.
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (global.set $t (call $now))
-    (call $entropy (i32.const 0) (i32.const 32)))
+    (call $entropy (i32.const 0) (i32.const 32)) i64.const 0)
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))
@@ -461,11 +461,11 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
   (import "wisp" "clock_deadline_in" (func $deadline (param i64) (result i64)))
   (memory (export "memory") 1 16)
   (global $g (mut i64) (i64.const 0))
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (call $unit_begin (i32.const 9))
     (if (i32.eqz (call $unit_deferred (i32.const 9)))
       (then (global.set $g (call $deadline (i64.const 1)))))
-    (call $unit_begin (i32.const -1)))
+    (call $unit_begin (i32.const -1)) i64.const 0)
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1))
@@ -484,7 +484,7 @@ fn a_runtime_timer_defers_its_active_initialization_unit() {
 fn init_memory_limit_is_enforced() {
     let big = wat::parse_str(
         r#"(module (memory (export "memory") 16384 16384)
-             (func (export "wisp_initialize")))"#,
+             (func (export "wisp_initialize") (result i64) i64.const 0))"#,
     )
     .unwrap();
     let err = PreInitializer::new().run(&big, &req(&big)).unwrap_err();
@@ -625,12 +625,12 @@ fn the_sealed_initializer_preserves_both_filesystem_adapter_routes() {
         (local.set $p (global.get $heap))
         (global.set $heap (i32.add (global.get $heap) (i32.const 128)))
         (local.get $p))
-      (func (export "wisp_initialize")
+      (func (export "wisp_initialize") (result i64)
         (call $directories (i32.const 16))
         (call $stat (i32.load (i32.load (i32.const 16))) (i32.const 128))
         (i64.store (i32.const 512) (i64.extend_i32_u (i32.load (i32.load (i32.const 16)))))
         (i64.store (i32.const 520) (i64.const 256))
-        (call $filesystem (i32.const {}) (i32.const 512) (i32.const 2)))
+        (call $filesystem (i32.const {}) (i32.const 512) (i32.const 2)) i64.const 0)
       (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 2048))
       (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
       (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0))

@@ -45,6 +45,7 @@ public static class Application
             _ = GalleryJson.Default.GalleryImage;
             _ = GalleryJson.Default.GalleryImageArray;
             _ = GalleryJson.Default.ExifInfo;
+            return Task.CompletedTask;
         };
         return application;
     }

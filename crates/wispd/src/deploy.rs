@@ -21,6 +21,8 @@ impl Deployer {
 
 /// Host-selected preparation provider and its explicit resource policy.
 pub struct PreparationContext<'a> {
+    /// Application outbound policy and host resource limits used during initialization.
+    pub network: wisp_prepare::InitializationNetwork,
     /// Owner-selected settings bound to this preparation.
     pub runtime_configuration: wisp_host::bindings::RuntimeConfiguration,
     /// Engine configuration and decoder used by the consuming cells.
@@ -33,7 +35,7 @@ pub struct PreparationContext<'a> {
     pub application_files: wisp_engine::PlatformFiles,
     /// Initialization CPU backstop across all replay passes.
     pub cpu_ms: u32,
-    /// Initialization wall backstop per call.
+    /// Total initialization wall backstop, including waits and replay passes.
     pub wall_ms: u32,
     /// Maximum replay passes.
     pub max_passes: u32,
@@ -140,6 +142,7 @@ impl Deployer {
             .runtime_configuration
             .write_json(&mut runtime_config)?;
         let initialization = wisp_prepare::Initialization {
+            network: Some(context.network.clone()),
             runtime_config,
             config: serde_json::to_vec(&manifest.init_visible_vars)?,
             sandbox: opts.init_sandbox,

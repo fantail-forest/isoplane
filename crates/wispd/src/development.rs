@@ -1,13 +1,13 @@
 //! File-backed application settings, outside deployment artifacts and node diagnostics.
 
 use std::io::Read;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use wisp_host::bindings::{RuntimeConfiguration, RuntimeConfigurationError};
-use wisp_host::egress::{DenyReason, DestinationPolicy};
+pub(crate) use wisp_host::egress::AdditionalDestinations as WorkerDestinations;
 
 /// File references and endpoint exceptions for one established application owner.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,36 +145,10 @@ impl RuntimeSettingsSource for WorkerSettings {
     }
 }
 
-pub(crate) struct WorkerDestinations {
-    pub endpoints: Vec<SocketAddr>,
-    pub baseline: Arc<dyn DestinationPolicy>,
-}
-
-impl DestinationPolicy for WorkerDestinations {
-    fn authorize(&self, address: SocketAddr) -> Result<(), DenyReason> {
-        if self.endpoints.contains(&address) {
-            Ok(())
-        } else {
-            self.baseline.authorize(address)
-        }
-    }
-
-    fn authorize_resolution(&self, address: IpAddr) -> Result<(), DenyReason> {
-        if self
-            .endpoints
-            .iter()
-            .any(|endpoint| endpoint.ip() == address)
-        {
-            Ok(())
-        } else {
-            self.baseline.authorize_resolution(address)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wisp_host::egress::DestinationPolicy;
 
     fn configuration(path: PathBuf) -> crate::NodeConfig {
         let mut config = crate::NodeConfig::dev_default();

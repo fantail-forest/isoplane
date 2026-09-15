@@ -12,12 +12,18 @@ internal sealed class RuntimeConfigurationSource : IConfigurationSource
         {
             LoadSettings();
             if (!Activation.IsActivated)
-                Activation.Activated += LoadSettings;
+                Activation.Activated += ReloadAsync;
+        }
+
+        private Task ReloadAsync()
+        {
+            LoadSettings();
+            return Task.CompletedTask;
         }
 
         private void LoadSettings()
         {
-            Activation.Activated -= LoadSettings;
+            Activation.Activated -= ReloadAsync;
             Data = RuntimeConfiguration.ReadValues().ToDictionary(pair => pair.Key, pair => (string?)pair.Value,
                 StringComparer.OrdinalIgnoreCase);
             OnReload();

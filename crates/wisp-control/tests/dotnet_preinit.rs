@@ -44,7 +44,7 @@ fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
         .expect("the template instantiates");
     assert!(
         instance
-            .get_typed_func::<(), ()>(&mut store, "wisp_initialize")
+            .get_typed_func::<(), i64>(&mut store, "wisp_initialize")
             .is_err(),
         "wisp_initialize must be stripped from the template"
     );

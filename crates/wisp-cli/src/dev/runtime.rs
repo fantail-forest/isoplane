@@ -97,6 +97,7 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
     Ok(wisp_prepare::PreInitializer::new()
         .with_memory_limit(wisp_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
         .with_engine_config(wisp_engine::EngineConfig { pooling: false, max_memory_bytes: project.manifest.memory_max_bytes(), platform_files: project.platform_files.clone(), ..Default::default() })
+        .with_network(initialization_network(project))
         .with_pal(project.init_sandbox)
         .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(project.platform_files.clone())
@@ -106,6 +107,21 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
         })
         .map_err(|e| anyhow::anyhow!("pre-initializing {} with {}: {e}; managed guests may require --init-sandbox runtime-bringup", project.manifest.name, project.init_sandbox.as_str()))?
         .template_wasm)
+}
+
+fn initialization_network(project: &Project) -> wisp_prepare::InitializationNetwork {
+    let host = CellConfig::default();
+    wisp_prepare::InitializationNetwork {
+        tenant: project.tenant.clone(),
+        allowlist: project.manifest.bindings.fetch_allowlist.clone(),
+        allowed_destinations: project.allow_endpoints.clone(),
+        limits: wisp_runtime::network::NetworkLimits::default(),
+        native_handles: host.guest_resources.native_handles,
+        pending_futures: project
+            .manifest
+            .effective_limits()
+            .pending_futures_per_dispatch,
+    }
 }
 
 fn validate(
@@ -190,10 +206,10 @@ impl LocalApp {
         let egress =
             wisp_host::HostEgressPolicy::system(network.connections, network.egress_bytes)?;
         let egress =
-            egress.with_destinations(Arc::new(super::destinations::DevelopmentDestinations {
-                endpoints: prepared.allow_endpoints.clone(),
-                debugger: peer,
-            }));
+            egress.with_destinations(Arc::new(super::destinations::DevelopmentDestinations::new(
+                prepared.allow_endpoints.clone(),
+                peer,
+            )));
         let egress = Arc::new(egress);
         std::fs::create_dir_all(data)?;
         let scratch = tempfile::tempdir_in(data)?;

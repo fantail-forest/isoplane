@@ -59,11 +59,6 @@ impl PalSource for StoreState {
         &mut self,
         request: wisp_abi::native_io::Request,
     ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
-        if self.is_init_sandbox() {
-            return Err(wisp_abi::native_io::Error::Denied(
-                "native I/O during initialization".into(),
-            ));
-        }
         self.bindings
             .as_mut()
             .ok_or(wisp_abi::native_io::Error::Unsupported(

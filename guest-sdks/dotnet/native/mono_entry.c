@@ -85,9 +85,10 @@ int64_t wisp_wake(int64_t future, int32_t pointer, int32_t length)
     return *(int64_t *)mono_object_unbox(value);
 }
 
-void wisp_initialize(void)
+int64_t wisp_initialize(void)
 {
-    invoke("Initialize", 0, 0);
+    void *value = invoke("Initialize", 0, 0);
+    return *(int64_t *)mono_object_unbox(value);
 }
 
 void wisp_gc_hint(int32_t pressure)

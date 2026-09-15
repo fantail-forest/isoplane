@@ -8,12 +8,12 @@ mdx:
 Raised after application construction, before template capture.
 
 ```csharp
-public static event Action? Initializing;
+public static event Func<Task>? Initializing;
 ```
 
 ## Remarks
 
-Subscribe during application construction. Callbacks run synchronously under the preparation capability policy and must finish before returning. Do not create request-scoped state or start background work. State retained here is copied into each instance; use [`Activated`](../Activation/Activated.md) for per-instance initialization such as reseeding a random generator. Exceptions fail preparation.
+Subscribe during application construction. Callbacks are awaited in registration order before template capture. Asynchronous network I/O uses the application's normal outbound policy. Await all I/O and dispose its connections, streams, and timers before the callback finishes; live host resources cannot be captured. Do not create request-scoped state or start background work. State retained here is copied into each instance; use [`Activated`](../Activation/Activated.md) for per-instance initialization such as reseeding a random generator. Exceptions fail preparation.
 
 ## See Also
 

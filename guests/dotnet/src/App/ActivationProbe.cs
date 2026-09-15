@@ -20,13 +20,17 @@ internal sealed class ActivationProbe : IWispHandler
 
     static ActivationProbe()
     {
-        Initialization.Initializing += () =>
+        Initialization.Initializing += async () =>
         {
+            await Task.Yield();
             _initializations++;
             _preparedSetting = RuntimeConfiguration.ReadValues()["probe"];
         };
-        Activation.Activated += () =>
+        Activation.Activated += async () =>
         {
+            await Task.Yield();
+            if (RuntimeConfiguration.ReadValues().ContainsKey("activation-timer"))
+                await Task.Delay(1);
             _activations++;
             _seeded = Fresh();
         };

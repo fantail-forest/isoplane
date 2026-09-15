@@ -319,10 +319,17 @@ impl Slot {
         if g.in_call {
             anyhow::bail!("cannot reset an instance with a call in flight");
         }
-        if let Some(i) = g.resident.as_mut() {
-            i.reset()?;
-        }
         self.ctx.release_native_resources();
+        if let Some(i) = g.resident.as_mut() {
+            if let Err(error) = i.reset() {
+                g.resident = None;
+                g.tombstoned = true;
+                g.state = LifecycleTier::Discarded;
+                self.ctx.release_native_resources();
+                self.publish(&g);
+                return Err(error);
+            }
+        }
         g.dirty = false;
         g.parked_since_ms = None;
         g.state = LifecycleTier::Parked;
@@ -390,6 +397,141 @@ mod tests {
             Err(wisp_abi::native_io::Error::InvalidHandle(received)) if received == handle),
             "a released slot must not retain a previous native pollable handle"
         );
+    }
+
+    fn prepared_native_instance() -> (
+        wisp_engine::WispEngine,
+        wisp_engine::Template,
+        Arc<InstanceCtx>,
+        wisp_engine::Instance,
+    ) {
+        let prepared = wisp_abi::native_io::PreparedResources {
+            ready_pollables: vec![wisp_abi::native_io::ResourceHandle(4)],
+            network: Some(wisp_abi::native_io::ResourceHandle(3)),
+            next_handle: 5,
+        };
+        let bytes = postcard::to_allocvec(&prepared)
+            .unwrap()
+            .into_iter()
+            .map(|byte| format!("\\{byte:02x}"))
+            .collect::<String>();
+        let wasm = wat::parse_str(format!(r#"(module
+          (@custom "{}" "{bytes}")
+          (import "wasi:sockets/instance-network@0.2.0" "instance-network" (func $network (result i32)))
+          (memory (export "memory") 1 64)
+          (func (export "wisp_gc_hint") (param i32)
+            (i32.store (i32.const 64) (call $network))
+            (if (i32.ne (i32.load (i32.const 64)) (i32.const 3)) (then unreachable)))
+          (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 2048))
+          (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 0))
+          (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, wisp_abi::native_io::PREPARED_RESOURCES_SECTION)).unwrap();
+        let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+            max_instances: 4,
+            max_memory_bytes: 4 << 20,
+            guard_size_bytes: 2 << 20,
+            ..Default::default()
+        })
+        .unwrap();
+        let template = engine.load_template(&wasm).unwrap();
+        let ctx = ctx_for(InstanceId(1), HandlerLifecycle::Fresh);
+        let instance = engine
+            .activate(&template, crate::bindings::CellBindings::boxed(ctx.clone()))
+            .unwrap();
+        (engine, template, ctx, instance)
+    }
+
+    fn assert_prepared_native_baseline(slot: &Slot) {
+        use wisp_engine::HostBindings;
+        let outcome = slot.enter().unwrap().instance().gc_hint(0);
+        assert_eq!(
+            outcome.completion,
+            wisp_engine::Completion::Done,
+            "the fresh guest must resolve its captured network handle on its first entry"
+        );
+        let mut bindings = crate::bindings::CellBindings::new(slot.ctx.clone());
+        assert!(
+            matches!(
+                bindings.native_io(wisp_abi::native_io::Request::Network),
+                Ok(wisp_abi::native_io::Response::Handle(
+                    wisp_abi::native_io::ResourceHandle(3)
+                ))
+            ),
+            "fresh guest memory must retain its prepared network authority"
+        );
+        assert!(
+            matches!(
+                bindings.native_io(wisp_abi::native_io::Request::Ready(
+                    wisp_abi::native_io::ResourceHandle(4)
+                )),
+                Ok(wisp_abi::native_io::Response::Ready(true))
+            ),
+            "fresh reuse must restore the guest-cached inert pollable"
+        );
+        assert_eq!(
+            pollable(slot).0,
+            5,
+            "fresh reuse must restart allocation at the captured next handle"
+        );
+    }
+
+    #[test]
+    fn fresh_slot_reset_releases_old_resources_before_restoring_the_prepared_baseline() {
+        let (_engine, _template, ctx, instance) = prepared_native_instance();
+        let slot = Slot::new(ctx.instance, ctx, Box::new(instance));
+        assert_prepared_native_baseline(&slot);
+        let retired = pollable(&slot);
+        slot.reset()
+            .expect("fresh reuse must restore native authority before the first guest entry");
+        assert_pollable_released(&slot, retired);
+        assert_prepared_native_baseline(&slot);
+    }
+
+    #[test]
+    fn direct_engine_reset_restores_native_resources_without_slot_cleanup() {
+        let (_engine, _template, ctx, mut instance) = prepared_native_instance();
+        use wisp_engine::HostBindings;
+        let mut bindings = crate::bindings::CellBindings::new(ctx.clone());
+        bindings
+            .native_io(wisp_abi::native_io::Request::Timer(
+                wisp_abi::native_io::DurationNanos(0),
+            ))
+            .unwrap();
+        bindings
+            .native_io(wisp_abi::native_io::Request::Drop {
+                handle: wisp_abi::native_io::ResourceHandle(4),
+                kind: wisp_abi::native_io::ResourceKind::Pollable,
+            })
+            .unwrap();
+        instance.reset().expect(
+            "the engine reset must release host resources before restoring template authority",
+        );
+        let slot = Slot::new(ctx.instance, ctx, Box::new(instance));
+        assert_prepared_native_baseline(&slot);
+    }
+
+    #[test]
+    fn replacing_a_store_preserves_retained_native_resources_and_allocation_progress() {
+        let (engine, template, ctx, instance) = prepared_native_instance();
+        let slot = Slot::new(ctx.instance, ctx.clone(), Box::new(instance));
+        let retained = pollable(&slot);
+        let replacement = engine
+            .activate(&template, crate::bindings::CellBindings::boxed(ctx.clone()))
+            .expect("a hibernation wake must bind the already-owned native state");
+        use wisp_engine::HostBindings;
+        let mut bindings = crate::bindings::CellBindings::new(ctx);
+        assert!(
+            matches!(
+                bindings.native_io(wisp_abi::native_io::Request::Ready(retained)),
+                Ok(wisp_abi::native_io::Response::Ready(true))
+            ),
+            "replacing a Store must preserve the retained pollable"
+        );
+        assert_eq!(
+            pollable(&slot).0,
+            retained.0 + 1,
+            "a replacement Store must not rewind native handle allocation"
+        );
+        drop(replacement);
     }
 
     #[test]

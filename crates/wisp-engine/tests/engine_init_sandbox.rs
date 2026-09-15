@@ -46,9 +46,9 @@ fn the_init_sandbox_traps_on_a_forbidden_import_and_names_it() {
         4,
         &imports,
         r#"
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (call $init_unit_begin (i32.const 4))
-    (i64.store (i32.const 0) (call $clock_now_coarse)))"#,
+    (i64.store (i32.const 0) (call $clock_now_coarse)) i64.const 0)"#,
         DONE,
         DONE,
     );
@@ -104,12 +104,12 @@ fn the_init_sandbox_permits_exactly_the_init_visible_set() {
         4,
         &imports,
         r#"
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (if (i32.eqz (call $init_unit_deferred (i32.const 1)))
       (then
         (call $init_hash_seed (i32.const 512) (i32.const 16))
         (i32.store (i32.const 600) (call $init_config_get (i32.const 0) (i32.const 0)))
-        (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))))))"#,
+        (i32.store (i32.const 604) (call $init_config_get (i32.const 1024) (i32.const 8))))) i64.const 0)"#,
         DONE,
         DONE,
     );
@@ -169,7 +169,7 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
     let wasm = guest(
         4,
         &import("clock_now_coarse", "", "(result i64)"),
-        r#"(func (export "wisp_initialize") (i64.store (i32.const 0) (call $clock_now_coarse)))"#,
+        r#"(func (export "wisp_initialize") (result i64) (i64.store (i32.const 0) (call $clock_now_coarse)) i64.const 0)"#,
         DONE,
         DONE,
     );
@@ -195,7 +195,7 @@ fn runtime_configuration_reaches_the_preparation_binding() {
     let wasm = guest(
         4,
         &import("runtime_config_get", "(param i32 i32)", "(result i32)"),
-        r#"(func (export "wisp_initialize") (drop (call $runtime_config_get (i32.const 0) (i32.const 0))))"#,
+        r#"(func (export "wisp_initialize") (result i64) (drop (call $runtime_config_get (i32.const 0) (i32.const 0))) i64.const 0)"#,
         DONE,
         DONE,
     );
@@ -219,4 +219,146 @@ fn runtime_configuration_reaches_the_preparation_binding() {
         !recorder.calls.lock().is_empty(),
         "the preparation binding must receive the settings read"
     );
+}
+
+struct NativeInitialization {
+    bringup: bool,
+    in_unit: bool,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl wisp_engine::bindings::InitializationBindings for NativeInitialization {
+    fn permits_io(&self) -> bool {
+        true
+    }
+    fn runtime_bringup(&self) -> bool {
+        self.bringup && !self.in_unit
+    }
+    fn native_io(
+        &mut self,
+        _request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(wisp_abi::native_io::Response::Handle(
+            wisp_abi::native_io::ResourceHandle(1),
+        ))
+    }
+    fn call_sync(
+        &mut self,
+        call: wisp_engine::ImportCall<'_>,
+    ) -> Result<i64, wisp_engine::bindings::BindingError> {
+        if call.import == "init_unit_begin" {
+            self.in_unit = true;
+            Ok(0)
+        } else {
+            Err(wisp_engine::bindings::BindingError::Unsupported(
+                call.import,
+            ))
+        }
+    }
+    fn call_fill(
+        &mut self,
+        call: wisp_engine::ImportCall<'_>,
+        _out: &mut [u8],
+    ) -> Result<i64, wisp_engine::bindings::BindingError> {
+        Err(wisp_engine::bindings::BindingError::Unsupported(
+            call.import,
+        ))
+    }
+}
+
+fn check_raw_native_initialization(bringup: bool, unit: bool, permitted: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    for (module, function, parameters, argument, capability) in [
+        (
+            "wasi:sockets/instance-network@0.2.0",
+            "instance-network",
+            "",
+            "",
+            "socket_call",
+        ),
+        (
+            "wasi:clocks/monotonic-clock@0.2.0",
+            "subscribe-duration",
+            "(param i64)",
+            "(i64.const 0)",
+            "poll_call",
+        ),
+    ] {
+        let engine = test_engine();
+        let imports = format!(
+            r#"(import "{module}" "{function}" (func $native {parameters} (result i32)))
+            (import "wisp" "init_unit_begin" (func $unit (param i32)))"#
+        );
+        let enter_unit = if unit {
+            "(call $unit (i32.const 7))"
+        } else {
+            ""
+        };
+        let body = format!(
+            r#"(func (export "wisp_initialize") (result i64)
+            {enter_unit} (drop (call $native {argument})) i64.const 0)"#
+        );
+        let wasm = guest(4, &imports, &body, DONE, DONE);
+        let template = engine
+            .load_template(&wasm)
+            .expect("admitted raw native import");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut instance = engine
+            .activate_initialization(
+                &template,
+                Box::new(NativeInitialization {
+                    bringup,
+                    in_unit: false,
+                    calls: calls.clone(),
+                }),
+            )
+            .expect("initialization context");
+        let outcome = instance.run_initialize(budget(10_000));
+        if permitted {
+            assert_eq!(
+                outcome.completion,
+                Completion::Done,
+                "authorized raw native capability must complete: {:?}",
+                outcome.trap
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "authorized raw native capability must reach the host binding"
+            );
+        } else {
+            assert_eq!(
+                outcome.trap.expect("capability rejection").kind,
+                TrapKind::CapabilityViolation,
+                "raw native imports must obey initialization capability restrictions"
+            );
+            assert_eq!(
+                instance.last_capability_violation(),
+                Some(capability),
+                "raw native refusals must identify the capability for deferral"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "refused raw native capabilities must not reach a host binding"
+            );
+        }
+    }
+}
+
+#[test]
+fn sealed_initialization_refuses_raw_native_capabilities_even_with_network_authority() {
+    check_raw_native_initialization(false, false, false);
+}
+
+#[test]
+fn initialization_units_refuse_raw_native_capabilities_even_with_network_authority() {
+    check_raw_native_initialization(true, true, false);
+}
+
+#[test]
+fn authorized_runtime_bringup_permits_raw_native_capabilities_outside_units() {
+    check_raw_native_initialization(true, false, true);
 }

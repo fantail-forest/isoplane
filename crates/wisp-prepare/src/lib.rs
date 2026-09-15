@@ -4,6 +4,8 @@
 
 mod bake;
 mod initialize;
+mod network;
+pub use network::InitializationNetwork;
 
 pub use initialize::{initialize, Initialization, Initialized};
 

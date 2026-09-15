@@ -22,6 +22,7 @@ public static unsafe class Exports<TRouter>
     private static bool _booted;
     private static TRouter? _router;
     private static Task<Response>? _root;
+    private static Task? _initialization;
     private static Ctx? _ctx;
 
     /// <summary>Ensures guest scheduling and application state are initialized. Captured state may already contain initialized objects.</summary>
@@ -71,7 +72,6 @@ public static unsafe class Exports<TRouter>
         try
         {
             Boot();
-            Activation.Enter();
             byte[] bytes = TakeOwnership(ptr, len);
 
             DispatchRecord d;
@@ -118,7 +118,6 @@ public static unsafe class Exports<TRouter>
         try
         {
             Boot();
-            Activation.Enter();
             byte[] bytes = TakeOwnership(ptr, len);
 
             ResultRecord r;
@@ -135,7 +134,7 @@ public static unsafe class Exports<TRouter>
 
             FutureTable.Complete(future, r);
 
-            return Settle();
+            return _initialization is not null ? SettleInitialization() : Settle();
         }
         catch (TooManyFuturesException)
         {
@@ -148,7 +147,7 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>Initializes guest state for a preparation attempt. A failed attempt may be retried; prior external effects are not undone.</summary>
-    public static void Initialize()
+    public static long Initialize()
     {
         try
         {
@@ -157,14 +156,15 @@ public static unsafe class Exports<TRouter>
             warm.Varint(1);
             warm.Str("wisp");
             GC.KeepAlive(warm.Span.Length);
-            Wisp.Initialization.Enter();
+            _initialization ??= Wisp.Initialization.EnterAsync();
 #if WISP_ENTROPY_PROBE
             Wisp.App.EntropyProbe.WarmLikePreInit();
 #endif
+            return SettleInitialization();
         }
         catch (Exception error)
         {
-            Abort("pre-initialization", error);
+            return Panic(error);
         }
     }
 
@@ -216,6 +216,17 @@ public static unsafe class Exports<TRouter>
 
         Log(1, "done: status=" + resp.Status.ToString());
         return PollStatus.Done((uint)handle);
+    }
+
+    private static long SettleInitialization()
+    {
+        ManagedWork.Drain();
+        Task initialization = _initialization!;
+        if (!initialization.IsCompleted) return PollStatus.Pending();
+        if (initialization.IsFaulted || initialization.IsCanceled)
+            return initialization.Exception is { } error ? Panic(error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);
+        _initialization = null;
+        return PollStatus.Done(0);
     }
 
     private static void Abort(string operation, Exception error)

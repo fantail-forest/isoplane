@@ -37,7 +37,7 @@ pub const SIG_GC_HINT: Sig = Sig {
 };
 pub const SIG_INITIALIZE: Sig = Sig {
     params: &[],
-    results: &[],
+    results: &[I64],
 };
 
 pub const SIGNATURES: &[(&str, Sig)] = &[

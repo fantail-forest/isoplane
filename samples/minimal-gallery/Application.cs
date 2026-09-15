@@ -15,6 +15,7 @@ public sealed class Application : IWispHandler
             _ = GalleryJson.Default.GalleryImage;
             _ = GalleryJson.Default.GalleryImageArray;
             _ = GalleryJson.Default.ExifInfo;
+            return Task.CompletedTask;
         };
         return new Application();
     }

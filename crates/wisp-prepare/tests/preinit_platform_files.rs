@@ -64,7 +64,7 @@ fn guest() -> Vec<u8> {
       (i32.and (i32.add (i32.add (global.get $heap) (local.get $size)) (i32.const 15))
                (i32.const -16)))
     (local.get $p))
-  (func (export "wisp_initialize")
+  (func (export "wisp_initialize") (result i64)
     (call $fs{directories} (i32.const 1000))
     (i32.store (i32.const 1010) (i32.load (i32.load (i32.const 1000))))
     (call $fs{open_at_op} (i32.load (i32.const 1010)) (i32.const 0)
@@ -74,7 +74,7 @@ fn guest() -> Vec<u8> {
         (call $fs{read_op} (i32.load (i32.const {open_at_handle})) (i64.const 4096) (i64.const 0)
           (i32.const {read_at}))
         (memory.copy (i32.const {copy_at})
-          (i32.load (i32.const {read_pointer})) (i32.load (i32.const {read_length}))))))
+          (i32.load (i32.const {read_pointer})) (i32.load (i32.const {read_length}))))) i64.const 0)
   (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
   (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
   (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,

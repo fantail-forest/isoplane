@@ -5,8 +5,10 @@
 //! `SocketAddr` the connection uses, so DNS cannot move the target between
 //! the check and the connect.
 
+mod additional_destinations;
 mod connection;
 mod dns;
+pub use additional_destinations::AdditionalDestinations;
 pub use connection::{ConnectionError, ConnectionFactory, ConnectionOwner, LocalConnections};
 pub use dns::{DnsError, Resolver, SystemResolver};
 

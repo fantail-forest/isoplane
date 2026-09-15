@@ -246,7 +246,7 @@ pub const SDK_EXPORTS: &[SdkExport] = &[
         name: "wisp_initialize",
         sig: Sig {
             params: &[],
-            results: &[],
+            results: &[I64],
         },
     },
 ];

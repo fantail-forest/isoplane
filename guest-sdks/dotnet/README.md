@@ -89,7 +89,11 @@ Create that generator after activation, or recreate it on
 `Wisp.Activation.Activated`, raised on the first dispatch of each activation:
 
 ```csharp
-Wisp.Activation.Activated += () => _random = new Random(RandomNumberGenerator.GetInt32(int.MaxValue));
+Wisp.Activation.Activated += () =>
+{
+    _random = new Random(RandomNumberGenerator.GetInt32(int.MaxValue));
+    return Task.CompletedTask;
+};
 ```
 
 ## The other SDK

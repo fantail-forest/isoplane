@@ -7,6 +7,7 @@ internal static class RequestDispatch
 {
     internal static async Task<Response> RouteAsync(Wisp.Durable.IWispRouter router, DispatchRecord record, Ctx context)
     {
+        await Activation.EnterAsync();
         if (record.Kind != DispatchKind.Http) return await router.Route(record, context);
         bool hostCanHaveBody = H.ReqBodyCanHaveBody() != 0;
         bool canHaveBody = hostCanHaveBody || record.Body.Length != 0;

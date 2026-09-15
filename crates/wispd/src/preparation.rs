@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct PreparationConfig {
     /// Initialization CPU budget across replay attempts.
     pub initialization_cpu_ms: u32,
-    /// Initialization wall deadline per invocation.
+    /// Total initialization wall deadline, including waits and replay passes.
     pub initialization_wall_ms: u32,
     /// Maximum impurity-deferral replay attempts.
     pub initialization_passes: u32,

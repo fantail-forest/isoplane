@@ -5,7 +5,7 @@ mdx:
 
 # Activation.IsActivated property
 
-True from the first dispatch of this activation on.
+True after every activation callback has completed successfully.
 
 ```csharp
 public static bool IsActivated { get; }

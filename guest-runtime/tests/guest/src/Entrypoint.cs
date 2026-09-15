@@ -35,7 +35,7 @@ internal static class WispGeneratedExports
 #if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_initialize")]
 #endif
-    public static void Initialize() => Guest.Initialize();
+    public static long Initialize() => Guest.Initialize();
 
 #if !WISP_MONO
     [UnmanagedCallersOnly(EntryPoint = "wisp_gc_hint")]

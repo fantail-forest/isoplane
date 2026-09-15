@@ -36,6 +36,7 @@ public static class Application
             _ = TodoJson.Default.Todo;
             _ = TodoJson.Default.TodoArray;
             _ = TodoJson.Default.TodoInput;
+            return Task.CompletedTask;
         };
         return application;
     }

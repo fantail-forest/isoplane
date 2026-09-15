@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ use crate::{bake, PrepareError};
 /// Explicit deployment configuration and capability limits supplied by preparation.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Initialization {
+    /// Explicit outbound authority; absent contexts cannot create host I/O.
+    pub network: Option<crate::InitializationNetwork>,
     /// Serialized deployment configuration.
     pub config: Vec<u8>,
     /// Deployment-bound JSON settings, including secrets; never include in diagnostics.
@@ -21,7 +24,7 @@ pub struct Initialization {
     pub sandbox: InitSandbox,
     /// Total initialization CPU budget across replay passes.
     pub cpu_ms: u32,
-    /// Per-call wall backstop; the supervisor separately bounds the whole job.
+    /// Total initialization wall backstop, including asynchronous waits and replay passes.
     pub wall_ms: u32,
     /// Maximum replay passes before refusal.
     pub max_passes: u32,
@@ -39,6 +42,7 @@ impl Initialization {
             &self.config,
             &self.runtime_config,
             self.sandbox,
+            &self.network,
         ))?);
         Ok(*hash.finalize().as_bytes())
     }
@@ -118,26 +122,68 @@ pub(crate) fn initialize_with_cache(
     }
     .and_then(|template| template.with_application_files(application_files.clone()))
     .map_err(PrepareError::State)?;
+    let reactor = request
+        .network
+        .as_ref()
+        .map(|_| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+        })
+        .transpose()
+        .map_err(PrepareError::Io)?;
+    let initialization_start = Instant::now();
     let mut deferred = BTreeSet::new();
     let mut cpu_ns = 0;
     for pass in 1..=request.max_passes {
+        let io = match (&request.network, &reactor) {
+            (Some(network), Some(reactor)) => {
+                let _entered = reactor.enter();
+                Some(Arc::new(network.start(reactor.handle().clone())?))
+            }
+            _ => None,
+        };
         let state = Arc::new(Mutex::new(Sandbox::new(request, deferred.clone())));
         let mut instance = engine
             .activate_initialization(
                 &template,
                 Box::new(Bindings {
                     state: state.clone(),
+                    io: io.clone(),
                     memory_limit_bytes,
                 }),
             )
             .map_err(PrepareError::State)?;
         if template.has_initialize() {
-            let outcome = instance.run_initialize(CpuBudget {
-                cpu_ms: request.cpu_ms,
-                wall_ms_cap: request.wall_ms,
-                spent_ns: cpu_ns,
-            });
+            let mut outcome = instance.run_initialize(initialization_budget(
+                request,
+                cpu_ns,
+                initialization_start.elapsed(),
+            )?);
             cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+            while outcome.completion == Completion::Parked {
+                let (Some(io), Some(reactor)) = (&io, &reactor) else {
+                    return Err(PrepareError::InvalidRequest(
+                        "initializer is pending without an asynchronous host context",
+                    ));
+                };
+                let remaining = Duration::from_millis(u64::from(request.wall_ms))
+                    .checked_sub(initialization_start.elapsed())
+                    .ok_or(PrepareError::Limit("initialization wall time"))?;
+                let completion = reactor
+                    .block_on(async { tokio::time::timeout(remaining, io.next_completion()).await })
+                    .map_err(|_| PrepareError::Limit("initialization wall time"))?
+                    .ok_or(PrepareError::InvalidRequest(
+                        "initializer is pending without a host wake source",
+                    ))?;
+                outcome = instance.wake(
+                    completion.0,
+                    &completion.1,
+                    initialization_budget(request, cpu_ns, initialization_start.elapsed())?,
+                );
+                cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+            }
+            initialization_budget(request, cpu_ns, initialization_start.elapsed())?;
             if outcome.completion != Completion::Done {
                 if let Some(import) = instance.last_capability_violation() {
                     capability_refusals += 1;
@@ -188,13 +234,32 @@ pub(crate) fn initialize_with_cache(
                 logs: Vec::new(),
             });
         }
+        let prepared_resources = io
+            .as_ref()
+            .map(|io| io.finish())
+            .transpose()
+            .map_err(|error| {
+                PrepareError::State(anyhow::anyhow!(
+                    "initialization retained native state: {error}"
+                ))
+            })?
+            .unwrap_or_default();
         let captured = instance
             .capture_mutable_state()
             .map_err(PrepareError::State)?;
         let globals = captured_globals(&instrumented, &captured.globals)?;
         let deferred: Vec<_> = deferred.into_iter().collect();
-        let output = bake::bake(&instrumented.wasm, instance.memory(), &globals, &deferred)
+        let mut output = bake::bake(&instrumented.wasm, instance.memory(), &globals, &deferred)
             .map_err(PrepareError::State)?;
+        let resources =
+            postcard::to_allocvec(&prepared_resources).map_err(PrepareError::Encoding)?;
+        wasm_encoder::Section::append_to(
+            &wasm_encoder::CustomSection {
+                name: wisp_abi::native_io::PREPARED_RESOURCES_SECTION.into(),
+                data: resources.into(),
+            },
+            &mut output,
+        );
         // Reinstantiation is the preparation oracle; it is never part of a worker cache miss.
         let baked = engine
             .load_template(&output)
@@ -205,6 +270,7 @@ pub(crate) fn initialize_with_cache(
                 &baked,
                 Box::new(Bindings {
                     state: state.clone(),
+                    io: io.clone(),
                     memory_limit_bytes,
                 }),
             )
@@ -308,12 +374,37 @@ impl Sandbox {
     }
 }
 struct Bindings {
+    io: Option<Arc<wisp_host::bindings::PreparationIo>>,
     state: Arc<Mutex<Sandbox>>,
     memory_limit_bytes: Option<u64>,
 }
 impl wisp_engine::bindings::InitializationBindings for Bindings {
     fn permits_entropy(&self) -> bool {
         true
+    }
+
+    fn permits_io(&self) -> bool {
+        self.io.is_some() && self.runtime_bringup()
+    }
+    fn native_io(
+        &mut self,
+        request: wisp_abi::native_io::Request,
+    ) -> Result<wisp_abi::native_io::Response, wisp_abi::native_io::Error> {
+        self.io
+            .as_ref()
+            .ok_or_else(|| {
+                wisp_abi::native_io::Error::Denied("initialization I/O is disabled".into())
+            })?
+            .call(request)
+    }
+    fn slice_clock_ms(&self) -> u64 {
+        if self.io.is_some() {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_millis() as u64)
+        } else {
+            0
+        }
     }
 
     fn memory_limit_bytes(&self) -> Option<u64> {
@@ -409,4 +500,88 @@ fn preparation_cpu() -> Result<u64, PrepareError> {
     wisp_engine::try_thread_cpu_nanos().ok_or(PrepareError::InvalidRequest(
         "preparation thread CPU clock is unavailable",
     ))
+}
+
+fn initialization_budget(
+    request: &Initialization,
+    spent_ns: u64,
+    elapsed: Duration,
+) -> Result<CpuBudget, PrepareError> {
+    let remaining = Duration::from_millis(u64::from(request.wall_ms))
+        .checked_sub(elapsed)
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(PrepareError::Limit("initialization wall time"))?;
+    Ok(CpuBudget {
+        cpu_ms: request.cpu_ms,
+        wall_ms_cap: u32::try_from(
+            remaining
+                .as_nanos()
+                .div_ceil(Duration::from_millis(1).as_nanos()),
+        )
+        .unwrap_or(u32::MAX),
+        spent_ns,
+    })
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    fn request() -> Initialization {
+        Initialization {
+            network: None,
+            config: Vec::new(),
+            runtime_config: b"{}".to_vec(),
+            sandbox: InitSandbox::Sealed,
+            cpu_ms: 50,
+            wall_ms: 100,
+            max_passes: 2,
+            log_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn wakes_and_replays_receive_only_the_remaining_initialization_budget() {
+        let request = request();
+        let initial = initialization_budget(&request, 0, Duration::ZERO).unwrap();
+        let wake = initialization_budget(&request, 7_000_000, Duration::from_millis(75)).unwrap();
+        assert_eq!(
+            initial.wall_ms_cap, 100,
+            "the initial slice must not extend its deadline"
+        );
+        assert_eq!(
+            wake.wall_ms_cap, 25,
+            "host waits and earlier passes must reduce the next wall budget"
+        );
+        assert_eq!(
+            wake.spent_ns, 7_000_000,
+            "CPU consumed before a wait must remain charged"
+        );
+        assert_eq!(
+            wake.cpu_ms, initial.cpu_ms,
+            "waking must retain the original total CPU budget"
+        );
+    }
+
+    #[test]
+    fn completion_at_or_after_the_initialization_deadline_is_refused() {
+        for elapsed in [Duration::from_millis(100), Duration::from_millis(101)] {
+            assert!(
+                matches!(
+                    initialization_budget(&request(), 0, elapsed),
+                    Err(PrepareError::Limit("initialization wall time"))
+                ),
+                "a wake or final completion cannot extend the initialization deadline"
+            );
+        }
+    }
+
+    #[test]
+    fn submillisecond_remainder_is_rounded_up_only_for_the_engine_slice() {
+        let budget = initialization_budget(&request(), 0, Duration::from_micros(99_500)).unwrap();
+        assert_eq!(
+            budget.wall_ms_cap, 1,
+            "the engine must receive a positive cap for a fractional remaining millisecond"
+        );
+    }
 }

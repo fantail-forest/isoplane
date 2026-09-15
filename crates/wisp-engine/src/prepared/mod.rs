@@ -13,7 +13,7 @@ use crate::{Template, WispEngine};
 
 pub use files::{PreparedPayload, PreparedStorage, ReadAhead};
 
-const FORMAT: u32 = 3;
+const FORMAT: u32 = 4;
 const MAGIC: [u8; 8] = *b"WISPPREP";
 const NATIVE: &str = "template.cwasm";
 const BASELINE: &str = "baseline.bin";

@@ -15,14 +15,17 @@ use tokio::net::TcpStream;
 use wisp_abi::native_io::{AddressFamily, Error, Request, ResourceHandle, ResourceKind, Response};
 use wisp_abi::result::ResultRecord;
 
+#[cfg(test)]
 use super::CellBindings;
+mod context;
 use crate::egress::ConnectionPermit;
 use crate::futures::{FutureId, FutureTable};
 use crate::InstanceId;
+pub(crate) use context::{Context, Runtime};
 
-fn report_failure(bindings: &CellBindings, error: &Error) {
+fn report_failure(bindings: &dyn Context, error: &Error) {
     if matches!(error, Error::Denied(_)) {
-        if let Some(runtime) = bindings.rt() {
+        if let Some(runtime) = bindings.runtime() {
             runtime
                 .metrics
                 .egress_denials
@@ -389,6 +392,7 @@ struct StreamFailure {
 /// Retained by InstanceCtx across Store destruction and released with its owner.
 pub(crate) struct Resources {
     next: u32,
+    prepared: Option<wisp_abi::native_io::PreparedResources>,
     limits: ResourceLimits,
     entries: BTreeMap<ResourceHandle, Resource>,
     network: Option<ResourceHandle>,
@@ -398,6 +402,8 @@ pub(crate) struct Resources {
 impl Resources {
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.next = 1;
+        self.prepared = None;
         self.network = None;
         self.resolved.clear();
     }
@@ -405,11 +411,114 @@ impl Resources {
     pub(crate) fn new(limits: ResourceLimits) -> Self {
         Self {
             next: 1,
+            prepared: None,
             limits,
             entries: BTreeMap::new(),
             network: None,
             resolved: BTreeSet::new(),
         }
+    }
+
+    pub(crate) fn prepared(&self) -> Result<wisp_abi::native_io::PreparedResources, Error> {
+        let mut retained = BTreeMap::<&'static str, usize>::new();
+        let mut ready_pollables = Vec::new();
+        for (&handle, resource) in &self.entries {
+            let kind = match resource {
+                Resource::Network => continue,
+                Resource::Timer(timer)
+                    if timer._task.is_none() && timer.ready.load(Ordering::Acquire) =>
+                {
+                    ready_pollables.push(handle);
+                    continue;
+                }
+                Resource::Addresses(_) => {
+                    "initialization retains a DNS result; dispose it before capture"
+                }
+                Resource::Socket(_) => {
+                    "initialization retains a TCP socket; dispose it before capture"
+                }
+                Resource::Input(_) => {
+                    "initialization retains an input stream; dispose it before capture"
+                }
+                Resource::Output(_) => {
+                    "initialization retains an output stream; dispose it before capture"
+                }
+                Resource::Error(_) => {
+                    "initialization retains a stream error; dispose it before capture"
+                }
+                Resource::Subscription(_) => {
+                    "initialization retains a readiness subscription; dispose it before capture"
+                }
+                Resource::Timer(_) => "initialization retains a timer; dispose it before capture",
+            };
+            *retained.entry(kind).or_default() += 1;
+        }
+        if let Some((&kind, _)) = retained.first_key_value() {
+            tracing::warn!(
+                ?retained,
+                "initialization capture refused retained native resources"
+            );
+            return Err(Error::InvalidState(kind));
+        }
+        Ok(wisp_abi::native_io::PreparedResources {
+            next_handle: self.next,
+            network: self.network,
+            ready_pollables,
+        })
+    }
+
+    pub(crate) fn restore_prepared(
+        &mut self,
+        prepared: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), Error> {
+        if let Some(previous) = &self.prepared {
+            return if previous == prepared {
+                Ok(())
+            } else {
+                Err(Error::InvalidState(
+                    "retained native resources belong to a different template",
+                ))
+            };
+        }
+        if !self.entries.is_empty() || self.next != 1 {
+            return Err(Error::InvalidState(
+                "native resources must be restored before use",
+            ));
+        }
+        let handles: BTreeSet<_> = prepared
+            .network
+            .iter()
+            .chain(&prepared.ready_pollables)
+            .copied()
+            .collect();
+        let count = prepared.ready_pollables.len() + usize::from(prepared.network.is_some());
+        if prepared.next_handle == 0
+            || handles.len() != count
+            || handles
+                .iter()
+                .any(|handle| handle.0 == 0 || handle.0 >= prepared.next_handle)
+        {
+            return Err(Error::InvalidState(
+                "invalid prepared native handle sequence",
+            ));
+        }
+        self.reserve(ResourceCount(count))?;
+        if let Some(handle) = prepared.network {
+            self.entries.insert(handle, Resource::Network);
+        }
+        for &handle in &prepared.ready_pollables {
+            self.entries.insert(
+                handle,
+                Resource::Timer(Timer {
+                    ready: Arc::new(AtomicBool::new(true)),
+                    _task: None,
+                }),
+            );
+        }
+        self.next = prepared.next_handle;
+        self.network = prepared.network;
+        self.prepared = Some(prepared.clone());
+        Ok(())
     }
 
     fn reserve(&self, count: ResourceCount) -> Result<(), Error> {
@@ -460,7 +569,7 @@ impl Resources {
     pub(crate) fn call(
         &mut self,
         request: Request,
-        bindings: &CellBindings,
+        bindings: &dyn Context,
     ) -> Result<Response, Error> {
         let operation = match &request {
             Request::Network => "network",
@@ -477,7 +586,7 @@ impl Resources {
             Request::NoDelay { .. } => "no_delay",
             Request::Shutdown { .. } => "shutdown",
             Request::Subscribe(_) => "subscribe",
-            Request::Timer(_) => "timer",
+            Request::Timer(_) => "initialization retains a timer; dispose it before capture",
             Request::Ready(_) => "ready",
             Request::Poll(_) => "poll",
             Request::Drop { .. } => "drop",
@@ -486,7 +595,7 @@ impl Resources {
             &request,
             Request::NextAddress(_) | Request::FinishConnect(_)
         );
-        let span = tracing::info_span!("native_io", tenant = %bindings.ctx.tenant, instance = %bindings.ctx.instance, operation);
+        let span = tracing::info_span!("native_io", tenant = %bindings.tenant(), instance = %bindings.instance(), operation);
         let _entered = span.enter();
         let result = self.execute(request, bindings);
         if let Err(error) = &result {
@@ -502,7 +611,7 @@ impl Resources {
         result
     }
 
-    fn execute(&mut self, request: Request, bindings: &CellBindings) -> Result<Response, Error> {
+    fn execute(&mut self, request: Request, bindings: &dyn Context) -> Result<Response, Error> {
         match request {
             Request::NoDelay { socket, enabled } => {
                 self.no_delay(socket, enabled).map(Response::NoDelay)
@@ -669,7 +778,7 @@ impl Resources {
                     None
                 } else {
                     let runtime = bindings
-                        .rt()
+                        .runtime()
                         .ok_or(Error::Unsupported("native timer without reactor"))?
                         .clone();
                     let future = bindings
@@ -689,7 +798,7 @@ impl Resources {
                     runtime.futures.attach_task(future, task.abort_handle());
                     Some(ReactorWork {
                         future: FutureId::from(future),
-                        owner: bindings.ctx.instance,
+                        owner: bindings.instance(),
                         table: runtime.futures.clone(),
                         task: task.abort_handle(),
                     })
@@ -748,7 +857,7 @@ impl Resources {
     /// checks readiness instead of attempting the operation (a zero-byte
     /// read, `Socket.Poll`) has a wake to park on. Every other pollable's
     /// wake exists from the operation that created it.
-    fn arm(&mut self, handle: ResourceHandle, bindings: &CellBindings) -> Result<(), Error> {
+    fn arm(&mut self, handle: ResourceHandle, bindings: &dyn Context) -> Result<(), Error> {
         let Some(Resource::Subscription(target)) = self.entries.get(&handle) else {
             return Ok(());
         };
@@ -855,7 +964,7 @@ impl Resources {
 
     fn connect(
         &mut self,
-        bindings: &CellBindings,
+        bindings: &dyn Context,
         handle: ResourceHandle,
         network: ResourceHandle,
         destination: std::net::SocketAddr,
@@ -886,12 +995,12 @@ impl Resources {
             }
         }
         let runtime = bindings
-            .rt()
+            .runtime()
             .ok_or(Error::Unsupported("outbound connect without reactor"))?
             .clone();
-        let policy = runtime.services.egress.clone();
+        let policy = runtime.egress.clone();
         let owner =
-            crate::egress::ConnectionOwner::new(bindings.ctx.tenant.clone(), bindings.ctx.instance)
+            crate::egress::ConnectionOwner::new(bindings.tenant().to_owned(), bindings.instance())
                 .map_err(Error::from)?;
         let permit = policy
             .check_socket(
@@ -899,7 +1008,7 @@ impl Resources {
                 if self.has_resolved_address(destination.ip()) {
                     None
                 } else {
-                    bindings.ctx.allowlist.as_deref()
+                    bindings.allowlist()
                 },
             )
             .map_err(|reason| Error::Denied(reason.to_string()))?;
@@ -909,8 +1018,8 @@ impl Resources {
         *state.lock() = SocketState::Connecting;
 
         let completion = runtime.clone();
-        let tenant = bindings.ctx.tenant.clone();
-        let instance = bindings.ctx.instance;
+        let tenant = bindings.tenant().to_owned();
+        let instance = bindings.instance();
         let task = runtime.reactor.spawn(async move {
             let result = async {
                 let stream = policy.connect(&owner, destination).await.map_err(Error::from)?;
@@ -948,7 +1057,7 @@ impl Resources {
         if let Some(Resource::Socket(socket)) = self.entries.get_mut(&handle) {
             socket.task = Some(ReactorWork {
                 future: FutureId::from(future),
-                owner: bindings.ctx.instance,
+                owner: bindings.instance(),
                 table: runtime.futures.clone(),
                 task: task.abort_handle(),
             });

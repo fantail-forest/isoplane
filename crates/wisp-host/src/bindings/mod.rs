@@ -7,12 +7,14 @@ mod http_scope;
 mod instance;
 mod native_io;
 mod observability;
+mod preparation;
 pub(crate) mod request_body;
 mod runtime;
 mod runtime_configuration;
 
 pub use http_scope::{OutboundBody, OutboundResponse, ResponseBody};
 pub use instance::{GuestResourceLimits, InstanceCtx, Tenancy};
+pub use preparation::{PreparationIo, PreparationIoConfig};
 pub use runtime::{CellRuntime, Fetcher, Services, WakeSink};
 pub use runtime_configuration::{
     RuntimeConfiguration, RuntimeConfigurationError, RuntimeConfigurations,
@@ -158,6 +160,24 @@ macro_rules! spawn {
 pub(super) use spawn;
 
 impl HostBindings for CellBindings {
+    fn restore_prepared_resources(
+        &mut self,
+        prepared: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), wisp_engine::bindings::BindingError> {
+        self.ctx.native_io.lock().restore_prepared(prepared).map_err(|error| {
+            tracing::warn!(tenant = %self.ctx.tenant, instance = %self.ctx.instance, %error, "prepared native resources refused");
+            wisp_engine::bindings::BindingError::InvalidRequest("invalid prepared native resources")
+        })
+    }
+
+    fn reset_prepared_resources(
+        &mut self,
+        prepared: &wisp_abi::native_io::PreparedResources,
+    ) -> Result<(), wisp_engine::bindings::BindingError> {
+        self.ctx.release_native_resources();
+        self.restore_prepared_resources(prepared)
+    }
+
     fn memory_limit_bytes(&self) -> Option<u64> {
         Some(self.ctx.limits.instance_memory_max)
     }

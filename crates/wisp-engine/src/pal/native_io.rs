@@ -49,6 +49,10 @@ pub fn call<T: PalSource>(
     definition: &Definition,
     arguments: &[u64],
 ) -> Result<u64> {
+    caller
+        .data_mut()
+        .check_capability(definition.capability)
+        .map_err(anyhow::Error::from)?;
     let scalar = |index: usize| {
         arguments
             .get(index)

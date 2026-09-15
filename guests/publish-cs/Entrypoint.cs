@@ -17,7 +17,7 @@ internal static class Entrypoint
 
     /// <summary>Initializes the managed runtime.</summary>
     [UnmanagedCallersOnly(EntryPoint = "wisp_initialize")]
-    public static void Initialize() => Guest.Initialize();
+    public static long Initialize() => Guest.Initialize();
 
     /// <summary>Relays memory pressure to the SDK.</summary>
     [UnmanagedCallersOnly(EntryPoint = "wisp_gc_hint")]

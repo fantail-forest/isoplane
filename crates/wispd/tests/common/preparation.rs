@@ -26,6 +26,7 @@ impl LocalDeployment for RealCells {
         let provider = self.local_preparation()?;
         let cancellation = tokio_util::sync::CancellationToken::new();
         let context = wispd::deploy::PreparationContext {
+            network: network(tenant, &manifest),
             runtime_configuration: Default::default(),
             application_files: wisp_engine::PlatformFiles::default(),
             engine: self.engine(),
@@ -50,5 +51,18 @@ impl LocalDeployment for RealCells {
             &context,
         )
         .await
+    }
+}
+
+/// The same default resource policy as local execution, with the fixture's owner.
+pub fn network(tenant: &str, manifest: &AppManifest) -> wisp_prepare::InitializationNetwork {
+    let host = wisp_host::CellConfig::default();
+    wisp_prepare::InitializationNetwork {
+        tenant: tenant.to_owned(),
+        allowlist: manifest.bindings.fetch_allowlist.clone(),
+        allowed_destinations: Vec::new(),
+        limits: Default::default(),
+        native_handles: host.guest_resources.native_handles,
+        pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
     }
 }

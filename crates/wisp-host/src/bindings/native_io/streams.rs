@@ -28,18 +28,18 @@ pub(super) fn connection(state: &Mutex<SocketState>) -> Result<Arc<Connection>, 
 /// it when the operation completes: the wake source for one stream's
 /// readiness.
 fn watch(
-    bindings: &CellBindings,
+    bindings: &dyn Context,
     operation: impl Future<Output = ()> + Send + 'static,
 ) -> Result<ReactorWork, Error> {
     let runtime = bindings
-        .rt()
+        .runtime()
         .ok_or(Error::Unsupported("stream operation without reactor"))?
         .clone();
     let future = bindings
         .alloc(wisp_abi::native_io::canonical::SOCKET_IMPORT)
         .ok_or(Error::ResourceLimit)?;
     let completion = runtime.clone();
-    let span = tracing::info_span!("native_readiness", tenant = %bindings.ctx.tenant, instance = %bindings.ctx.instance);
+    let span = tracing::info_span!("native_readiness", tenant = %bindings.tenant(), instance = %bindings.instance());
     let task = runtime.reactor.spawn(tracing::Instrument::instrument(
         async move {
             operation.await;
@@ -50,7 +50,7 @@ fn watch(
     runtime.futures.attach_task(future, task.abort_handle());
     Ok(ReactorWork {
         future: FutureId::from(future),
-        owner: bindings.ctx.instance,
+        owner: bindings.instance(),
         table: runtime.futures.clone(),
         task: task.abort_handle(),
     })
@@ -76,7 +76,7 @@ impl Input {
     pub(super) fn read(
         &mut self,
         length: ByteCount,
-        bindings: &CellBindings,
+        bindings: &dyn Context,
     ) -> Result<Response, Error> {
         let length = usize::try_from(length.0)
             .unwrap_or(usize::MAX)
@@ -106,7 +106,7 @@ impl Input {
     }
 
     /// Arms the wake for the stream becoming readable, unless one is armed.
-    pub(super) fn arm(&mut self, bindings: &CellBindings) -> Result<(), Error> {
+    pub(super) fn arm(&mut self, bindings: &dyn Context) -> Result<(), Error> {
         if self.task.as_ref().is_some_and(ReactorWork::is_pending) {
             return Ok(());
         }
@@ -137,11 +137,7 @@ impl Output {
         }
     }
 
-    pub(super) fn send(
-        &mut self,
-        bytes: &[u8],
-        bindings: &CellBindings,
-    ) -> Result<Response, Error> {
+    pub(super) fn send(&mut self, bytes: &[u8], bindings: &dyn Context) -> Result<Response, Error> {
         let stream = connection(&self.state)?;
         let reservation = stream
             .permit
@@ -164,7 +160,7 @@ impl Output {
     }
 
     /// Arms the wake for the stream becoming writable, unless one is armed.
-    pub(super) fn arm(&mut self, bindings: &CellBindings) -> Result<(), Error> {
+    pub(super) fn arm(&mut self, bindings: &dyn Context) -> Result<(), Error> {
         if self.task.as_ref().is_some_and(ReactorWork::is_pending) {
             return Ok(());
         }

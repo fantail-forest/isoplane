@@ -34,7 +34,8 @@ impl WispEngine {
         self.activate_with(t, Bindings::Initialization(b))
     }
 
-    fn activate_with(&self, t: &Template, bindings: Bindings) -> Result<Instance> {
+    fn activate_with(&self, t: &Template, mut bindings: Bindings) -> Result<Instance> {
+        bindings.restore_prepared_resources(&t.inner.prepared_resources)?;
         let data = StoreState::with_bindings(bindings, &self.inner.cfg);
         let live = instantiate(&self.inner, &t.inner, data)?;
         Ok(Instance {
@@ -192,9 +193,9 @@ pub(crate) fn instantiate(
     };
     let f_initialize = match f_initialize {
         Some(f) => Some(
-            f.typed::<(), ()>(&store)
+            f.typed::<(), i64>(&store)
                 .map_err(anyhow::Error::from)
-                .with_context(|| format!("`{}` must be ()->()", guest_exports::INITIALIZE))?,
+                .with_context(|| format!("`{}` must be ()->i64", guest_exports::INITIALIZE))?,
         ),
         None => None,
     };

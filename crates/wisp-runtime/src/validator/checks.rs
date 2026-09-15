@@ -190,16 +190,19 @@ pub(super) fn check_exports(
     v: &mut Vec<Violation>,
     policy: &ValidationLimits,
 ) {
-    for required in imports::exports::REQUIRED {
-        let want_kind = if *required == imports::exports::MEMORY {
+    for name in imports::exports::REQUIRED
+        .iter()
+        .chain(imports::exports::OPTIONAL)
+    {
+        let want_kind = if *name == imports::exports::MEMORY {
             ExternalKind::Memory
         } else {
             ExternalKind::Func
         };
-        match s.exports.iter().find(|(n, _, _)| n == required) {
+        match s.exports.iter().find(|(n, _, _)| n == name) {
             Some((_, k, idx)) if kind_matches(*k, want_kind) => {
                 if want_kind == ExternalKind::Func {
-                    if let Some(want) = imports::exports::signature(required) {
+                    if let Some(want) = imports::exports::signature(name) {
                         match s
                             .func_type_of
                             .get(*idx as usize)
@@ -209,16 +212,16 @@ pub(super) fn check_exports(
                                 if sig_matches(&want, params, results) => {}
                             Some(Some((params, results))) => v.push(Violation::about(
                                 ViolationCode::V1SignatureMismatch,
-                                *required,
+                                *name,
                                 format!(
-                                    "export `{required}` has signature {}, world declares {}",
+                                    "export `{name}` has signature {}, world declares {}",
                                     render_sig(params, results),
                                     render_want(&want)
                                 ),
                             )),
                             _ => v.push(Violation::new(
                                 ViolationCode::V1SignatureMismatch,
-                                format!("export `{required}` does not resolve to a function type"),
+                                format!("export `{name}` does not resolve to a function type"),
                             )),
                         }
                     }
@@ -226,13 +229,14 @@ pub(super) fn check_exports(
             }
             Some((_, k, _)) => v.push(Violation::new(
                 ViolationCode::V1MissingExport,
-                format!("export `{required}` is a {k:?}, expected {want_kind:?}"),
+                format!("export `{name}` is a {k:?}, expected {want_kind:?}"),
             )),
+            None if imports::exports::OPTIONAL.contains(name) => {}
             None => v.push(Violation::about(
                 ViolationCode::V1MissingExport,
-                *required,
+                *name,
                 format!(
-                    "required guest export `{required}` is missing — the host has no way to \
+                    "required guest export `{name}` is missing — the host has no way to \
                      enter this module"
                 ),
             )),

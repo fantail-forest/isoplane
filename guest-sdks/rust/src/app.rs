@@ -153,8 +153,9 @@ macro_rules! __wisp_common_exports {
 
         /// Pre-initialization, run once in the sealed init sandbox.
         #[no_mangle]
-        pub extern "C" fn wisp_initialize() {
+        pub extern "C" fn wisp_initialize() -> u64 {
             $crate::init::run_init_units($units);
+            0
         }
     };
 }
