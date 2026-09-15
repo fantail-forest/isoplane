@@ -92,6 +92,8 @@ impl WispEngine {
             hash: ModuleHash(manifest.module_hash),
             abi_rev: manifest.abi_rev,
             inner: Arc::new(TemplateInner {
+                #[cfg(feature = "eager-template-read-experiment")]
+                activation_prefetch: None,
                 application_files: state.application_files,
                 filesystem_files,
                 module,

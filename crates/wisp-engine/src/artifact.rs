@@ -319,6 +319,8 @@ impl WispEngine {
             hash,
             abi_rev: wisp_abi::ABI_REV,
             inner: Arc::new(TemplateInner {
+                #[cfg(feature = "eager-template-read-experiment")]
+                activation_prefetch: None,
                 application_files: crate::PlatformFiles::default(),
                 filesystem_files: self.inner.cfg.platform_files.clone(),
                 module,

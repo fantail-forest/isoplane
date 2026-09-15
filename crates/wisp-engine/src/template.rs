@@ -44,6 +44,8 @@ pub struct Template {
 }
 
 pub(crate) struct TemplateInner {
+    #[cfg(feature = "eager-template-read-experiment")]
+    pub activation_prefetch: Option<crate::prepared::prefetch::Payloads>,
     pub application_files: crate::PlatformFiles,
     pub filesystem_files: crate::PlatformFiles,
     pub module: Module,

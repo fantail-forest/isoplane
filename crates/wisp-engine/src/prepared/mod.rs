@@ -1,6 +1,8 @@
 //! Locally compiled prepared templates, independent of artifact acquisition and build orchestration.
 
 mod files;
+#[cfg(feature = "eager-template-read-experiment")]
+pub(crate) mod prefetch;
 mod state;
 
 use std::path::Path;
@@ -276,6 +278,8 @@ impl WispEngine {
         self.check_prepared(&manifest, expected)?;
         let files = files::open_verified(directory, &manifest)?;
         files::advise(&files, &manifest, prefetch)?;
+        #[cfg(feature = "eager-template-read-experiment")]
+        let activation_prefetch = prefetch::Payloads::new(&files, directory)?;
         let [native, baseline, state] = files;
         // SAFETY: fs-verity makes the held inode immutable; the caller contains mapped I/O faults.
         let baseline =
@@ -303,7 +307,16 @@ impl WispEngine {
                 unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native) }
             })
             .map_err(|e| PreparedError::Engine(e.into()))?;
-        self.finish_prepared(module, manifest, state, image)
+        let template = self.finish_prepared(module, manifest, state, image)?;
+        #[cfg(feature = "eager-template-read-experiment")]
+        let template = {
+            let mut template = template;
+            let inner = std::sync::Arc::get_mut(&mut template.inner)
+                .ok_or(PreparedError::Invalid("new template is already shared"))?;
+            inner.activation_prefetch = Some(activation_prefetch);
+            template
+        };
+        Ok(template)
     }
 
     fn check_prepared(&self, manifest: &Manifest, expected: PreparedIdentity) -> Result<()> {

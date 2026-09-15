@@ -18,6 +18,10 @@ impl WispEngine {
     /// Map the template copy-on-write and bind `b` as this instance's import
     /// vtable.
     pub fn activate(&self, t: &Template, b: Box<dyn HostBindings>) -> Result<Instance> {
+        #[cfg(feature = "eager-template-read-experiment")]
+        if let Some(payloads) = &t.inner.activation_prefetch {
+            payloads.read_all()?;
+        }
         self.activate_with(t, Bindings::Runtime(b))
     }
 
