@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -8,11 +8,11 @@ use super::{
     Manifest, PreparedError, PreparedTemplate, Result, MANIFEST, PAYLOAD_NAMES,
 };
 
-/// Integrity policy chosen explicitly when publishing prepared artifacts.
+/// Storage policy chosen explicitly when publishing prepared artifacts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreparedStorage {
-    /// Linux fs-verity; unsupported filesystems fail publication.
-    FsVerity,
+    /// Read-only published files, verified before mapping from operator-controlled storage.
+    Mapped,
     /// Locally compiled files, read into owned memory before execution.
     VerifiedCopy,
 }
@@ -62,7 +62,6 @@ pub struct ReadAhead {
 pub(super) struct FileRecord {
     pub(super) bytes: u64,
     pub(super) hash: [u8; 32],
-    pub(super) verity: Option<Vec<u8>>,
 }
 
 impl FileRecord {
@@ -70,7 +69,6 @@ impl FileRecord {
         Self {
             bytes: bytes.len() as u64,
             hash: *blake3::hash(bytes).as_bytes(),
-            verity: None,
         }
     }
 }
@@ -101,25 +99,19 @@ impl PreparedTemplate {
         }
         let temporary =
             tempfile::tempdir_in(parent).map_err(|e| io("create staging directory", parent, e))?;
-        let mut manifest = Manifest {
-            magic: self.manifest.magic,
-            format: self.manifest.format,
-            abi_rev: self.manifest.abi_rev,
-            engine: self.manifest.engine.clone(),
-            identity: self.manifest.identity,
-            module_hash: self.manifest.module_hash,
-            files: self.manifest.files.clone(),
-        };
         for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
             let path = temporary.path().join(name);
             write_new(&path, &self.payloads[index])?;
-            if storage == PreparedStorage::FsVerity {
-                enable_verity(&path)?;
-                let file = File::open(&path).map_err(|e| io("open sealed payload", &path, e))?;
-                manifest.files[index].verity = Some(verity_digest(&file, &path)?);
+            if storage == PreparedStorage::Mapped {
+                let mut permissions = std::fs::metadata(&path)
+                    .map_err(|e| io("stat published payload", &path, e))?
+                    .permissions();
+                permissions.set_readonly(true);
+                std::fs::set_permissions(&path, permissions)
+                    .map_err(|e| io("make published payload read-only", &path, e))?;
             }
         }
-        let metadata = postcard::to_allocvec(&manifest)?;
+        let metadata = postcard::to_allocvec(&self.manifest)?;
         write_new(&temporary.path().join(MANIFEST), &metadata)?;
         File::open(temporary.path())
             .and_then(|f| f.sync_all())
@@ -195,13 +187,6 @@ pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Ve
                 "payload length differs from manifest",
             ));
         }
-        if let Some(expected) = &record.verity {
-            if &verity_digest(&file, &path)? != expected {
-                return Err(PreparedError::Invalid(
-                    "fs-verity digest differs from manifest",
-                ));
-            }
-        }
         file.take(
             record
                 .bytes
@@ -221,60 +206,6 @@ pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Ve
     Ok(payloads)
 }
 
-#[cfg(target_os = "linux")]
-fn enable_verity(path: &Path) -> Result<()> {
-    let output = std::process::Command::new("fsverity")
-        .arg("enable")
-        .arg(path)
-        .output()
-        .map_err(|e| io("enable fs-verity", path, e))?;
-    if !output.status.success() {
-        return Err(PreparedError::VerityUnavailable(path.to_owned()));
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn enable_verity(path: &Path) -> Result<()> {
-    Err(PreparedError::VerityUnavailable(path.to_owned()))
-}
-
-#[cfg(target_os = "linux")]
-fn verity_digest(file: &File, path: &Path) -> Result<Vec<u8>> {
-    use std::os::fd::AsRawFd;
-    let mut buffer = [0u8; 68];
-    buffer[2..4].copy_from_slice(&64u16.to_ne_bytes());
-    // SAFETY: the held file descriptor is live and the buffer holds the UAPI header and
-    // its advertised writable digest capacity. No pointers escape the ioctl.
-    let result = unsafe {
-        libc::ioctl(
-            file.as_raw_fd(),
-            linux_raw_sys::ioctl::FS_IOC_MEASURE_VERITY as libc::c_ulong,
-            buffer.as_mut_ptr(),
-        )
-    };
-    if result != 0 {
-        return Err(io(
-            "measure fs-verity",
-            path,
-            std::io::Error::last_os_error(),
-        ));
-    }
-    let algorithm = u16::from_ne_bytes([buffer[0], buffer[1]]);
-    let length = u16::from_ne_bytes([buffer[2], buffer[3]]) as usize;
-    if algorithm != 1 || length != 32 {
-        return Err(PreparedError::Invalid(
-            "unsupported fs-verity digest algorithm",
-        ));
-    }
-    Ok(buffer[4..36].to_vec())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn verity_digest(_file: &File, path: &Path) -> Result<Vec<u8>> {
-    Err(PreparedError::VerityUnavailable(path.to_owned()))
-}
-
 pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[File; 3]> {
     let open = |index: usize| {
         let _payload = tracing::info_span!(
@@ -284,22 +215,32 @@ pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[Fi
         )
         .entered();
         let path = directory.join(PAYLOAD_NAMES[index]);
-        let file = File::open(&path).map_err(|e| io("open immutable payload", &path, e))?;
+        let mut file = File::open(&path).map_err(|e| io("open payload", &path, e))?;
         let record = &manifest.files[index];
-        let expected = record.verity.as_ref().ok_or(PreparedError::Invalid(
-            "lazy mapping requires recorded fs-verity digests",
-        ))?;
         if file
             .metadata()
             .map_err(|e| io("stat immutable payload", &path, e))?
             .len()
             != record.bytes
-            || &verity_digest(&file, &path)? != expected
         {
             return Err(PreparedError::Invalid(
                 "immutable payload differs from manifest",
             ));
         }
+        let mut hash = blake3::Hasher::new();
+        let limit = record
+            .bytes
+            .checked_add(1)
+            .ok_or(PreparedError::Invalid("payload length overflow"))?;
+        let bytes = std::io::copy(&mut (&mut file).take(limit), &mut hash)
+            .map_err(|e| io("verify payload", &path, e))?;
+        if bytes != record.bytes || hash.finalize().as_bytes() != &record.hash {
+            return Err(PreparedError::Invalid(
+                "payload differs from manifest",
+            ));
+        }
+        file.rewind()
+            .map_err(|e| io("rewind verified payload", &path, e))?;
         Ok(file)
     };
     Ok([open(0)?, open(1)?, open(2)?])
@@ -363,8 +304,8 @@ fn advise_file(file: &File, range: &ReadAhead) -> Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 fn advise_file(_file: &File, _range: &ReadAhead) -> Result<()> {
-    Err(PreparedError::VerityUnavailable(
-        Path::new("read-ahead").to_owned(),
+    Err(PreparedError::Invalid(
+        "read-ahead is unsupported on this platform",
     ))
 }
 
@@ -377,9 +318,7 @@ mod tests {
         super::super::PreparedIdentity,
         crate::WispEngine,
     ) {
-        let root = std::env::var_os("WISP_VERITY_TEST_ROOT")
-            .expect("set WISP_VERITY_TEST_ROOT to an owned writable fs-verity filesystem");
-        let directory = tempfile::tempdir_in(root).expect("fixture directory");
+        let directory = tempfile::tempdir().expect("fixture directory");
         let engine = crate::WispEngine::new(crate::EngineConfig {
             max_instances: 4,
             ..Default::default()
@@ -399,9 +338,9 @@ mod tests {
             .expect("prepare")
             .publish(
                 &directory.path().join("version"),
-                PreparedStorage::FsVerity,
+                PreparedStorage::Mapped,
             )
-            .expect("fs-verity publication");
+            .expect("mapped publication");
         (directory, identity, engine)
     }
 
@@ -434,22 +373,40 @@ mod tests {
     }
 
     #[test]
-    fn immutable_payloads_refuse_write_and_truncation() {
+    fn mapped_publication_marks_payloads_read_only() {
         let (directory, _, _) = fixture();
         for name in PAYLOAD_NAMES {
             let path = directory.path().join("version").join(name);
             assert!(
-                std::fs::OpenOptions::new().write(true).open(&path).is_err(),
-                "sealed {name} must refuse write access"
+                std::fs::metadata(path)
+                    .expect("metadata")
+                    .permissions()
+                    .readonly(),
+                "mapped {name} must discourage accidental writes"
             );
+        }
+    }
+
+    #[test]
+    fn mapping_rejects_same_length_payload_tampering() {
+        let (directory, _, _) = fixture();
+        let path = directory.path().join("version");
+        let manifest = read_manifest(&path).expect("manifest");
+        for name in PAYLOAD_NAMES {
+            let payload = path.join(name);
+            let original = std::fs::read(&payload).expect("read payload");
+            let mut changed = original.clone();
+            changed[0] ^= 1;
+            std::fs::remove_file(&payload).expect("remove payload");
+            std::fs::write(&payload, changed).expect("replace payload");
             assert!(
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(&path)
-                    .is_err(),
-                "sealed {name} must refuse truncation"
+                matches!(
+                    open_verified(&path, &manifest),
+                    Err(PreparedError::Invalid(_))
+                ),
+                "mapping must reject same-length tampering in {name}"
             );
+            std::fs::write(&payload, original).expect("restore payload");
         }
     }
 

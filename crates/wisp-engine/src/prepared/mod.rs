@@ -13,7 +13,7 @@ use crate::{Template, WispEngine};
 
 pub use files::{PreparedPayload, PreparedStorage, ReadAhead};
 
-const FORMAT: u32 = 4;
+const FORMAT: u32 = 5;
 const MAGIC: [u8; 8] = *b"WISPPREP";
 const NATIVE: &str = "template.cwasm";
 const BASELINE: &str = "baseline.bin";
@@ -52,9 +52,6 @@ pub enum PreparedError {
     /// A payload or explicit state violates its recorded representation.
     #[error("invalid prepared artifact: {0}")]
     Invalid(&'static str),
-    /// The requested integrity mechanism is unavailable; no weaker mode is selected.
-    #[error("fs-verity is unavailable for prepared artifact {0}")]
-    VerityUnavailable(std::path::PathBuf),
     /// The compiler or native deserializer refused the prepared module.
     #[error("prepared template engine operation: {0:#}")]
     Engine(#[source] anyhow::Error),
@@ -157,7 +154,6 @@ impl WispEngine {
         for (record, payload) in prepared.manifest.files.iter().zip(&prepared.payloads) {
             if record.bytes != payload.len() as u64
                 || &record.hash != blake3::hash(payload).as_bytes()
-                || record.verity.is_some()
             {
                 return Err(PreparedError::Invalid("builder payload digest or length"));
             }
@@ -259,9 +255,11 @@ impl WispEngine {
         self.finish_prepared(module, manifest, state, image)
     }
 
-    /// Loads locally compiled fs-verity payloads without reading or hashing all native/baseline bytes.
+    /// Verifies local payload hashes, then maps the same open files.
     ///
     /// # Safety
+    /// The caller must prevent changes to the backing file contents for the lifetime of every
+    /// returned template and instance; publication read-only permissions are not an isolation boundary.
     /// The caller must run this engine and every use of the returned template in a supervised
     /// application worker process. Backing storage corruption can cause SIGBUS even after
     /// verification; the supervisor must contain worker death and fail affected requests.
@@ -281,14 +279,14 @@ impl WispEngine {
         #[cfg(feature = "eager-template-read-experiment")]
         let activation_prefetch = prefetch::Payloads::new(&files, directory)?;
         let [native, baseline, state] = files;
-        // SAFETY: fs-verity makes the held inode immutable; the caller contains mapped I/O faults.
+        // SAFETY: the caller guarantees unchanged contents of this verified held inode and contains I/O faults.
         let baseline =
             unsafe { memmap2::Mmap::map(&baseline) }.map_err(|source| PreparedError::Io {
                 operation: "map baseline",
                 path: directory.join(BASELINE),
                 source,
             })?;
-        // SAFETY: the same verified inode is retained; the caller contains mapped I/O faults.
+        // SAFETY: this is the verified held inode; the caller guarantees unchanged contents and contains I/O faults.
         let state = unsafe { memmap2::Mmap::map(&state) }.map_err(|source| PreparedError::Io {
             operation: "map state",
             path: directory.join(STATE),
@@ -303,7 +301,8 @@ impl WispEngine {
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
         let module = tracing::info_span!("template_native_deserialize")
             .in_scope(|| {
-                // SAFETY: the caller guarantees local compiler origin; the fs-verity inode is immutable.
+                // SAFETY: the caller guarantees local compiler origin for this verified held file and
+                // unchanged contents for the module lifetime and contains I/O faults.
                 unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native) }
             })
             .map_err(|e| PreparedError::Engine(e.into()))?;

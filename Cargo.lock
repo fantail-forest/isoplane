@@ -4157,7 +4157,6 @@ dependencies = [
  "blake3",
  "cpu-time",
  "libc",
- "linux-raw-sys",
  "memmap2",
  "parking_lot",
  "postcard",

@@ -39,7 +39,10 @@ Take secrets and keys through an interface with a production implementation. Kee
 
 ## Verify before you map
 
-Establish an artifact's controlled compiler origin and compatibility before the engine maps it, and have the code path that maps it state those preconditions in its `SAFETY` comment and enforce them in its caller. Keep mapped backing files unchanged while their templates use them.
+Establish an artifact's controlled compiler origin and compatibility before the engine maps it, and have the code path that maps it state those preconditions in its `SAFETY` comment and enforce it in its caller. Reject truncated or tampered artifacts at admission. Keep published backing files
+under operator control and unchanged for the lifetime of their mappings. Contain
+later mapped-storage faults in the supervised worker process. Filesystem-specific
+integrity features are not a prerequisite for artifact storage.
 
 **Not this:** An unsafe load whose caller cannot establish compiler origin or preserve its backing files.
 

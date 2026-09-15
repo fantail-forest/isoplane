@@ -64,6 +64,37 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
 }
 
 #[test]
+fn mapped_prepared_state_activates_from_compiled_files() {
+    let engine = test_engine();
+    let wasm = guest(
+        4,
+        "",
+        r#"(data (i32.const 9000) "mapped memory")"#,
+        DONE,
+        DONE,
+    );
+    let expected = engine.load_template(&wasm).expect("portable template");
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("version");
+    engine
+        .prepare_template(&wasm, identity(&wasm))
+        .expect("prepare")
+        .publish(&path, PreparedStorage::Mapped)
+        .expect("publish");
+    // SAFETY: this test owns the trusted files and leaves their contents unchanged until
+    // the mappings are dropped; any mapping fault terminates only this test process.
+    let loaded = unsafe { engine.load_prepared_mapped(&path, identity(&wasm), &[]) }
+        .expect("map locally compiled template");
+    let mut instance = activate(&engine, &loaded);
+    let mut original = activate(&engine, &expected);
+    assert_eq!(
+        instance.memory(),
+        original.memory(),
+        "mapped activation must preserve the captured initial memory"
+    );
+}
+
+#[test]
 fn changed_payloads_are_rejected_when_the_manifest_is_unchanged() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
