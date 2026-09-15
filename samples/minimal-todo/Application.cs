@@ -50,8 +50,11 @@ public sealed class Application : IWispHandler
         return new NpgsqlConnection(connectionString.ConnectionString);
     }
 
-    private static async Task Warmup() =>
+    private static async Task Warmup()
+    {
         _ = await HandleAsync("GET", "/todos", ReadOnlyMemory<byte>.Empty, CancellationToken.None);
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+    }
 
     private static TodoInput Input(ReadOnlyMemory<byte> body) => JsonSerializer.Deserialize(body.Span, TodoJson.Default.TodoInput)
         ?? throw new JsonException("A TODO body is required.");
