@@ -9,7 +9,7 @@ namespace MinimalTodo;
 /// <summary>A PostgreSQL TODO handler without ASP.NET or EF Core.</summary>
 public sealed class Application : IWispHandler
 {
-    /// <summary>Warms JSON and PostgreSQL paths with read-only queries before template capture.</summary>
+    /// <summary>Warms the read endpoint before template capture.</summary>
     public static IWispHandler Create()
     {
         Initialization.Initializing += Warmup;
@@ -17,23 +17,26 @@ public sealed class Application : IWispHandler
     }
 
     /// <summary>Handles TODO CRUD with verified TLS and request-owned database connections.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    public Task<Response> HandleAsync(Request request, Ctx context) =>
+        HandleAsync(request.Method, request.Path, request.Body, request.Aborted);
+
+    private static async Task<Response> HandleAsync(string method, string path, ReadOnlyMemory<byte> body, CancellationToken cancellation)
     {
-        var collection = request.Path == "/todos";
+        var collection = path == "/todos";
         var id = 0;
-        if (!collection && !(request.Path.StartsWith("/todos/", StringComparison.Ordinal)
-            && int.TryParse(request.Path.AsSpan(7), NumberStyles.None, CultureInfo.InvariantCulture, out id)))
+        if (!collection && !(path.StartsWith("/todos/", StringComparison.Ordinal)
+            && int.TryParse(path.AsSpan(7), NumberStyles.None, CultureInfo.InvariantCulture, out id)))
             return Response.Text("Not found", 404);
-        if (!(collection && request.Method is "GET" or "POST") && !(!collection && request.Method is "PUT" or "DELETE"))
+        if (!(collection && method is "GET" or "POST") && !(!collection && method is "PUT" or "DELETE"))
             return Response.Text("Method not allowed", 405);
         await using var connection = CreateConnection();
-        await connection.OpenAsync(request.Aborted);
-        return request.Method switch
+        await connection.OpenAsync(cancellation);
+        return method switch
         {
-            "GET" => await Read(connection, request.Aborted),
-            "POST" => await Create(connection, Input(request), request.Aborted),
-            "PUT" => await Update(connection, id, Input(request), request.Aborted),
-            "DELETE" => await Delete(connection, id, request.Aborted),
+            "GET" => await Read(connection, cancellation),
+            "POST" => await Create(connection, Input(body), cancellation),
+            "PUT" => await Update(connection, id, Input(body), cancellation),
+            "DELETE" => await Delete(connection, id, cancellation),
             _ => throw new InvalidOperationException("The route admitted an unsupported method.")
         };
     }
@@ -47,29 +50,10 @@ public sealed class Application : IWispHandler
         return new NpgsqlConnection(connectionString.ConnectionString);
     }
 
-    private static async Task Warmup()
-    {
-        // Execute dependency paths: referencing JSON metadata alone does not run its converters.
-        var todo = new Todo(1, "Initialization", false);
-        _ = Response.Json(JsonSerializer.Serialize(new[] { todo }, TodoJson.Default.TodoArray));
-        _ = Response.Json(JsonSerializer.Serialize(todo, TodoJson.Default.Todo));
-        _ = JsonSerializer.SerializeToUtf8Bytes(todo, TodoJson.Default.Todo);
-        _ = JsonSerializer.Deserialize("{\"title\":\"Initialization\",\"done\":false}", TodoJson.Default.TodoInput);
-        await using var connection = CreateConnection();
-        using var read = ReadCommand(connection);
-        using var create = CreateCommand(connection, new(todo.Title, todo.Done));
-        using var update = UpdateCommand(connection, todo.Id, new(todo.Title, todo.Done));
-        using var delete = DeleteCommand(connection, todo.Id);
-        await connection.OpenAsync();
-        await using var transaction = await connection.BeginTransactionAsync();
-        await using (var readOnly = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, transaction))
-            await readOnly.ExecuteNonQueryAsync();
-        await read.PrepareAsync();
-        _ = await Read(connection, CancellationToken.None);
-        await transaction.RollbackAsync();
-    }
+    private static async Task Warmup() =>
+        _ = await HandleAsync("GET", "/todos", ReadOnlyMemory<byte>.Empty, CancellationToken.None);
 
-    private static TodoInput Input(Request request) => JsonSerializer.Deserialize(request.Body.Span, TodoJson.Default.TodoInput)
+    private static TodoInput Input(ReadOnlyMemory<byte> body) => JsonSerializer.Deserialize(body.Span, TodoJson.Default.TodoInput)
         ?? throw new JsonException("A TODO body is required.");
 
     private static async Task<Response> Read(NpgsqlConnection connection, CancellationToken cancellation)
