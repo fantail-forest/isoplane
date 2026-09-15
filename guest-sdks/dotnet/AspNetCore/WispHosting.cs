@@ -18,10 +18,13 @@ public static class WispHosting
     /// <returns>A builder configured to receive requests from WISP without opening a listener.</returns>
     /// <remarks>
     /// The environment name is Production. Configuration files and environment variables are not loaded.
-    /// Runtime configuration, including local User Secrets, becomes available after activation;
-    /// resolve request-dependent settings through dependency injection rather than capturing them during preparation.
+    /// Configuration, including local User Secrets, is available during template initialization
+    /// and activation. Captured settings belong to the deployment that prepared the template.
     /// </remarks>
-    public static WebApplicationBuilder CreateBuilder(string applicationName)
+    public static WebApplicationBuilder CreateBuilder(string applicationName) =>
+        CreateBuilder(applicationName, new RuntimeConfigurationSource());
+
+    internal static WebApplicationBuilder CreateBuilder(string applicationName, IConfigurationSource configuration)
     {
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions
         {
@@ -30,7 +33,7 @@ public static class WispHosting
             ContentRootPath = "/",
             Args = []
         });
-        ((IConfigurationBuilder)builder.Configuration).Add(new RuntimeConfigurationSource());
+        ((IConfigurationBuilder)builder.Configuration).Add(configuration);
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(new WispLoggerProvider());
         builder.Services.AddRouting();

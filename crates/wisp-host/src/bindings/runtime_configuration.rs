@@ -8,7 +8,7 @@ use wisp_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES;
 
 use crate::ModuleId;
 
-/// Validated UTF-8 JSON configuration. Values never enter prepared artifacts.
+/// Validated UTF-8 JSON configuration. Values may be captured in prepared artifacts.
 #[derive(Clone)]
 pub struct RuntimeConfiguration(Arc<[u8]>);
 

@@ -20,7 +20,7 @@ pub struct BuildRequest {
     pub guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
     /// Structural module bounds supplied by the consuming operator.
     pub validation_limits: wisp_abi::config::ValidationLimits,
-    /// Non-secret initialization inputs and budgets.
+    /// Private initialization inputs and budgets, including deployment secrets.
     pub initialization: Initialization,
     /// Digest of the submitted portable module.
     pub input_hash: [u8; 32],

@@ -13,10 +13,11 @@ use super::Project;
 pub(super) fn template(
     project: &Project,
     wasm: &[u8],
+    configuration: &[u8],
     prepare: impl FnOnce() -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
     let executable = std::env::current_exe().context("locating the local runtime executable")?;
-    Cache::new(project, wasm, &executable)?.get_or_prepare(prepare)
+    Cache::new(project, wasm, &executable, configuration)?.get_or_prepare(prepare)
 }
 
 struct Cache {
@@ -28,7 +29,12 @@ struct Cache {
 }
 
 impl Cache {
-    fn new(project: &Project, wasm: &[u8], executable: &Path) -> anyhow::Result<Self> {
+    fn new(
+        project: &Project,
+        wasm: &[u8],
+        executable: &Path,
+        configuration: &[u8],
+    ) -> anyhow::Result<Self> {
         let mut runtime = blake3::Hasher::new();
         runtime
             .update_reader(File::open(executable)?)
@@ -36,6 +42,7 @@ impl Cache {
         let mut key = blake3::Hasher::new_derive_key("wisp local preinitialization cache v1");
         for bytes in [
             wasm,
+            configuration,
             runtime.finalize().as_bytes(),
             &serde_json::to_vec(&project.manifest)?,
             project.init_sandbox.as_str().as_bytes(),
@@ -174,8 +181,34 @@ mod tests {
         }
 
         fn cache(&self) -> Cache {
-            Cache::new(&self.project, &self.wasm, &self.executable).unwrap()
+            Cache::new(&self.project, &self.wasm, &self.executable, b"{}").unwrap()
         }
+    }
+
+    #[test]
+    fn changed_settings_rebuild_the_local_template() {
+        let fixture = Fixture::new();
+        let first = fixture.cache();
+        let initial = first
+            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}"))
+            .unwrap();
+        let next = Cache::new(
+            &fixture.project,
+            &fixture.wasm,
+            &fixture.executable,
+            br#"{"key":"new"}"#,
+        )
+        .unwrap();
+        let mut rebuilt = false;
+        next.get_or_prepare(|| {
+            rebuilt = true;
+            Ok(initial)
+        })
+        .unwrap();
+        assert!(
+            rebuilt,
+            "changed settings must not reuse the previous local template"
+        );
     }
 
     #[test]
@@ -184,7 +217,7 @@ mod tests {
         super::super::validate(&fixture.project, &fixture.wasm, false).unwrap();
         let first = fixture
             .cache()
-            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm))
+            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}"))
             .unwrap();
         let cached = fixture
             .cache()
@@ -230,7 +263,7 @@ mod tests {
         super::super::validate(&fixture.project, &fixture.wasm, false).unwrap();
         let first = fixture
             .cache()
-            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm))
+            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}"))
             .unwrap();
         let cached = fixture
             .cache()
@@ -259,7 +292,7 @@ mod tests {
         let original = fixture.cache();
         original.publish(b"cached template").unwrap();
         let assert_miss = |project: &Project, wasm: &[u8], executable: &Path, reason: &str| {
-            let cache = Cache::new(project, wasm, executable).unwrap();
+            let cache = Cache::new(project, wasm, executable, b"{}").unwrap();
             assert!(
                 cache.read().unwrap().is_none(),
                 "{reason} must invalidate local preparation"
@@ -446,7 +479,7 @@ mod tests {
             "cache recovery must exercise the forbidden capability guard"
         );
         cache.publish(&hostile).unwrap();
-        let expected = super::super::preinitialize(&fixture.project, &fixture.wasm).unwrap();
+        let expected = super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}").unwrap();
         let rebuilt = cache.get_or_prepare(|| Ok(expected.clone())).unwrap();
         assert_eq!(
             rebuilt, expected,
@@ -464,7 +497,7 @@ mod tests {
         let fixture = Fixture::new();
         let cache = fixture.cache();
         cache.publish(&fixture.wasm).unwrap();
-        let expected = super::super::preinitialize(&fixture.project, &fixture.wasm).unwrap();
+        let expected = super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}").unwrap();
         let rebuilt = cache.get_or_prepare(|| Ok(expected.clone())).unwrap();
         assert_eq!(
             rebuilt, expected,

@@ -116,7 +116,7 @@ public sealed class StreamingTests
 
     private static WebApplicationBuilder Builder(RecordingResponseTransport transport)
     {
-        var builder = WispHosting.CreateBuilder(typeof(StreamingTests).Assembly.GetName().Name!);
+        var builder = WispHosting.CreateBuilder(typeof(StreamingTests).Assembly.GetName().Name!, new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource());
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => transport);
         return builder;

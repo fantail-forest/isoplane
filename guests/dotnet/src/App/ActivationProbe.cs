@@ -15,9 +15,16 @@ internal sealed class ActivationProbe : IWispHandler
 {
     private static Random _seeded = Fresh();
     private static int _activations;
+    private static int _initializations;
+    private static string _preparedSetting = "";
 
     static ActivationProbe()
     {
+        Initialization.Initializing += () =>
+        {
+            _initializations++;
+            _preparedSetting = RuntimeConfiguration.ReadValues()["probe"];
+        };
         Activation.Activated += () =>
         {
             _activations++;
@@ -33,6 +40,10 @@ internal sealed class ActivationProbe : IWispHandler
         {
             case "/draw":
                 return Task.FromResult(Response.Text(_seeded.Next().ToString("X8")));
+            case "/prepared-setting":
+                return Task.FromResult(Response.Text(_preparedSetting));
+            case "/initializations":
+                return Task.FromResult(Response.Text(_initializations.ToString()));
             case "/activations":
                 return Task.FromResult(Response.Text(_activations.ToString()));
             default:

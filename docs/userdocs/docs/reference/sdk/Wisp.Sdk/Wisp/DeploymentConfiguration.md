@@ -15,7 +15,7 @@ public static class DeploymentConfiguration
 
 | name | description |
 | --- | --- |
-| static [ReadVariables](DeploymentConfiguration/ReadVariables.md)() | Reads the manifest's `init_visible_vars`, preserving order and duplicate keys. Call during pre-initialization and retain the result for request handling; the host refuses this import after activation. These values become part of the template and must not contain runtime secrets. |
+| static [ReadVariables](DeploymentConfiguration/ReadVariables.md)() | Reads the manifest's `init_visible_vars`, preserving order and duplicate keys. Call during pre-initialization and retain the result for request handling; the host refuses this import after activation. These values become part of the template. Use RuntimeConfiguration for host-supplied settings and secrets. |
 
 ## See Also
 

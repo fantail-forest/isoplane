@@ -21,7 +21,7 @@ A builder configured to receive requests from WISP without opening a listener.
 
 ## Remarks
 
-The environment name is Production. Configuration files and environment variables are not loaded. Runtime configuration, including local User Secrets, becomes available after activation; resolve request-dependent settings through dependency injection rather than capturing them during preparation.
+The environment name is Production. Configuration files and environment variables are not loaded. Configuration, including local User Secrets, is available during template initialization and activation. Captured settings belong to the deployment that prepared the template.
 
 ## See Also
 

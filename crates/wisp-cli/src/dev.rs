@@ -80,7 +80,7 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     let mut observed = project.fingerprint(opts.watch_module_only)?;
     let prepared = {
         let cancellation = CancellationToken::new();
-        let preparation = prepare(&project, &cancellation);
+        let preparation = prepare(&project, &cancellation, opts.runtime_configuration.clone());
         tokio::pin!(preparation);
         tokio::select! {
             prepared = &mut preparation => prepared?,
@@ -133,6 +133,7 @@ fn load(opts: &DevOpts) -> anyhow::Result<Project> {
 async fn prepare(
     project: &Project,
     cancellation: &CancellationToken,
+    configuration: wisp_host::bindings::RuntimeConfiguration,
 ) -> anyhow::Result<Option<Prepared>> {
     if let Some(command) = &project.build {
         eprintln!("  building {}", project.manifest.name);
@@ -147,7 +148,7 @@ async fn prepare(
         )
     })?;
     let project = project.clone();
-    tokio::task::spawn_blocking(move || Prepared::build(&project, &bytes))
+    tokio::task::spawn_blocking(move || Prepared::build(&project, &bytes, &configuration))
         .await?
         .map(Some)
 }
@@ -205,8 +206,9 @@ async fn serve(
                 match load(opts) {
                     Ok(next_project) => {
                         let cancellation = cancellation.clone();
+                        let configuration = opts.runtime_configuration.clone();
                         rebuild = Some(Box::pin(async move {
-                            let prepared = prepare(&next_project, &cancellation).await?;
+                            let prepared = prepare(&next_project, &cancellation, configuration).await?;
                             Ok(prepared.map(|prepared| (next_project, prepared)))
                         }));
                     }

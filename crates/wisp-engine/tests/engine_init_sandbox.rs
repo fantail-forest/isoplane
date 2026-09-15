@@ -190,7 +190,7 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
 }
 
 #[test]
-fn runtime_configuration_is_refused_before_the_preparation_binding_runs() {
+fn runtime_configuration_reaches_the_preparation_binding() {
     let engine = test_engine();
     let wasm = guest(
         4,
@@ -211,15 +211,12 @@ fn runtime_configuration_is_refused_before_the_preparation_binding_runs() {
         .expect("activation");
     let outcome = instance.run_initialize(budget(10_000));
     assert_eq!(
-        outcome
-            .trap
-            .expect("runtime configuration must trap during preparation")
-            .kind,
-        TrapKind::CapabilityViolation,
-        "preparation must not receive runtime secrets"
+        outcome.completion,
+        Completion::Done,
+        "initialization must admit deployment settings"
     );
     assert!(
-        recorder.calls.lock().is_empty(),
-        "runtime secrets must be refused before calling the host binding"
+        !recorder.calls.lock().is_empty(),
+        "the preparation binding must receive the settings read"
     );
 }

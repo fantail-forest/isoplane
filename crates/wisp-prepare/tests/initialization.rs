@@ -380,3 +380,58 @@ fn a_module_without_initialization_retains_its_runtime_table_operations() {
         "a module without an initializer cannot execute preparation passes"
     );
 }
+
+#[test]
+fn preparation_captures_its_settings_and_changes_identity_when_they_change() {
+    let wasm = guest(
+        r#"(import "wisp" "runtime_config_get" (func $settings (param i32 i32) (result i32)))"#,
+        "(drop (call $settings (i32.const 128) (i32.const 64)))",
+    );
+    let mut inputs = request();
+    let mut identities = Vec::new();
+    for settings in [
+        br#"{"token":"first"}"#.as_slice(),
+        br#"{"token":"second"}"#.as_slice(),
+        b"{}".as_slice(),
+    ] {
+        inputs.runtime_config = settings.to_vec();
+        identities.push(
+            inputs
+                .digest(*blake3::hash(&wasm).as_bytes())
+                .expect("settings identity"),
+        );
+        let output = initialize(&engine(), &wasm, &inputs)
+            .expect("settings must be readable during preparation");
+        let template = engine()
+            .load_template(&output.wasm)
+            .expect("captured settings template");
+        assert_eq!(
+            &template.memory_image_arc().to_dense()[128..128 + settings.len()],
+            settings,
+            "each template must retain its own configuration revision"
+        );
+    }
+    assert!(
+        identities.windows(2).all(|pair| pair[0] != pair[1]),
+        "replacement and deletion must invalidate captured state even with unchanged code"
+    );
+}
+
+#[test]
+fn invalid_preparation_settings_are_refused_without_exposing_values() {
+    let wasm = guest("", "");
+    for settings in [
+        b"private-value".to_vec(),
+        vec![b' '; wisp_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES + 1],
+    ] {
+        let mut inputs = request();
+        inputs.runtime_config = settings;
+        assert!(
+            matches!(
+                initialize(&engine(), &wasm, &inputs),
+                Err(PrepareError::InvalidRequest(_))
+            ),
+            "invalid or oversized settings must fail before guest execution"
+        );
+    }
+}

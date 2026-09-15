@@ -22,6 +22,7 @@ fn request(instance: &mut Instance, recorder: &Recorder, path: &str) -> Vec<u8> 
 fn cloned_instances(runtime: GuestRuntime) -> Vec<(Instance, Recorder)> {
     let fixture = activation(runtime);
     let (mut original, recorder) = fixture.activate_with_entropy(0x21);
+    *recorder.runtime_configuration.lock() = Some(br#"{"probe":"captured"}"#.to_vec());
     let initialized = original.run_initialize(budget());
     assert_eq!(
         initialized.completion,
@@ -51,6 +52,28 @@ fn cloned_instances(runtime: GuestRuntime) -> Vec<(Instance, Recorder)> {
 }
 
 in_both_runtimes! {
+    fn initialization_can_capture_settings_before_activation(runtime: GuestRuntime) {
+        for (mut instance, recorder) in cloned_instances(runtime) {
+            assert_eq!(request(&mut instance, &recorder, "/prepared-setting"), b"captured",
+                "the SDK must allow initialization-time settings and retain them in each clone");
+        }
+    }
+
+    fn initialization_hook_state_is_captured_before_instances_are_cloned(runtime: GuestRuntime) {
+        for (mut instance, recorder) in cloned_instances(runtime) {
+            assert_eq!(
+                request(&mut instance, &recorder, "/initializations"),
+                b"1",
+                "each clone must inherit the completed initialization hook"
+            );
+            assert_eq!(
+                request(&mut instance, &recorder, "/initializations"),
+                b"1",
+                "request handling must not rerun template initialization"
+            );
+        }
+    }
+
     fn a_generator_seeded_before_the_snapshot_is_reseeded_from_each_activations_host(runtime: GuestRuntime) {
         let mut draws = Vec::new();
         for (mut instance, recorder) in cloned_instances(runtime) {

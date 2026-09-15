@@ -5,7 +5,7 @@ mdx:
 
 # RuntimeConfiguration class
 
-Application settings supplied by the host after template activation.
+Deployment-bound application settings supplied during preparation and activation.
 
 ```csharp
 public static class RuntimeConfiguration
@@ -15,7 +15,7 @@ public static class RuntimeConfiguration
 
 | name | description |
 | --- | --- |
-| static [ReadValues](RuntimeConfiguration/ReadValues.md)() | Reads settings for this application. Refuses access during preparation so secrets cannot enter its template. |
+| static [ReadValues](RuntimeConfiguration/ReadValues.md)() | Reads settings for this deployment, including during template initialization. |
 
 ## See Also
 

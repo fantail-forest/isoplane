@@ -32,12 +32,23 @@ pub struct Prepared {
 
 impl Prepared {
     /// Validates and pre-initializes an ordinary local application.
-    pub fn build(project: &Project, wasm: &[u8]) -> anyhow::Result<Self> {
+    pub fn build(
+        project: &Project,
+        wasm: &[u8],
+        configuration: &wisp_host::bindings::RuntimeConfiguration,
+    ) -> anyhow::Result<Self> {
         let manifest = project.manifest.clone();
         let report = validate(project, wasm, false)?;
-        let version = blake3::hash(wasm).to_hex().to_string();
+        let mut settings = Vec::new();
+        configuration.write_json(&mut settings)?;
+        let mut identity = blake3::Hasher::new();
+        identity.update(blake3::hash(wasm).as_bytes());
+        identity.update(&settings);
+        let version = identity.finalize().to_hex().to_string();
         let template = if report.has_initialize() {
-            preparation_cache::template(project, wasm, || preinitialize(project, wasm))?
+            preparation_cache::template(project, wasm, &settings, || {
+                preinitialize(project, wasm, &settings)
+            })?
         } else {
             wasm.to_vec()
         };
@@ -82,11 +93,12 @@ impl Prepared {
     }
 }
 
-fn preinitialize(project: &Project, wasm: &[u8]) -> anyhow::Result<Vec<u8>> {
+fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(wisp_prepare::PreInitializer::new()
         .with_memory_limit(wisp_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
         .with_engine_config(wisp_engine::EngineConfig { pooling: false, max_memory_bytes: project.manifest.memory_max_bytes(), platform_files: project.platform_files.clone(), ..Default::default() })
         .with_pal(project.init_sandbox)
+        .with_runtime_configuration(configuration.to_vec())
         .with_platform_files(project.platform_files.clone())
         .run(wasm, &wisp_prepare::PreInitRequest {
             module_hash: wisp_engine::ModuleHash::of(wasm),

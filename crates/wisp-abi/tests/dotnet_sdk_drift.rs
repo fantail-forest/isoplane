@@ -210,7 +210,12 @@ fn trap_code_in_poll_status_cs_mirrors_the_rust_enum() {
 
 #[test]
 fn generated_aspnet_entrypoints_match_the_host_export_contract() {
-    let source = sdk_file("../AspNetCore/buildTransitive/Wisp.AspNetCore.targets");
+    let adapter = sdk_file("../AspNetCore/buildTransitive/Wisp.AspNetCore.targets");
+    assert!(
+        adapter.contains("Wisp.Exports.targets"),
+        "the ASP.NET adapter must consume the shared export generator"
+    );
+    let source = sdk_file("../Build/Wisp.Exports.targets");
     let mut found = BTreeMap::new();
     // The attribute is conditional on the runtime profile, so the export it
     // names is the next declaration after it, not on its own line.

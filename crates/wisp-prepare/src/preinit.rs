@@ -23,6 +23,7 @@ pub struct PreInitializer {
     platform_files: PlatformFiles,
     memory_limit: Option<GuestMemoryBytes>,
     engine: EngineConfig,
+    runtime_config: Option<Vec<u8>>,
 }
 
 /// Immutable inputs to one local template build.
@@ -124,6 +125,11 @@ impl PreInitializer {
         self.platform_files = files;
         self
     }
+    /// Supplies the deployment settings used during local initialization.
+    pub fn with_runtime_configuration(mut self, configuration: Vec<u8>) -> Self {
+        self.runtime_config = Some(configuration);
+        self
+    }
     /// Initialize locally using the shared execution engine and portable state baker.
     pub fn run(&self, wasm: &[u8], req: &PreInitRequest) -> Result<PreInitOutcome, PreInitError> {
         if req.module_hash != ModuleHash::of(wasm) {
@@ -153,6 +159,10 @@ impl PreInitializer {
             let engine = WispEngine::new(configuration.clone()).map_err(PreInitError::Trapped)?;
             let request = Initialization {
                 config: req.init_blob.clone(),
+                runtime_config: self
+                    .runtime_config
+                    .clone()
+                    .unwrap_or_else(|| b"{}".to_vec()),
                 sandbox: self.pal,
                 cpu_ms: DEFAULT_INITIALIZATION_CPU_MS,
                 wall_ms: DEFAULT_INITIALIZATION_WALL_MS,

@@ -157,6 +157,7 @@ public static unsafe class Exports<TRouter>
             warm.Varint(1);
             warm.Str("wisp");
             GC.KeepAlive(warm.Span.Length);
+            Wisp.Initialization.Enter();
 #if WISP_ENTROPY_PROBE
             Wisp.App.EntropyProbe.WarmLikePreInit();
 #endif

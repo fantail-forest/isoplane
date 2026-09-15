@@ -13,12 +13,13 @@ mdx:
 | class [BindingException](./Wisp/BindingException.md) | A capability call the host refused or could not complete; [`WispError`](./Wisp/BindingException/WispError.md) says which. |
 | class [Ctx](./Wisp/Ctx.md) | The per-dispatch context. |
 | static class [DeploymentConfiguration](./Wisp/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |
+| static class [Initialization](./Wisp/Initialization.md) | Initializes reusable application state before its deployment template is captured. |
 | class [Kv](./Wisp/Kv.md) | Reads values from a host-provided key-value namespace. |
 | class [Request](./Wisp/Request.md) | An HTTP request delivered by the host, for any HTTP method. |
 | class [RequestHead](./Wisp/RequestHead.md) | HTTP request metadata, independent of whether the body is buffered or streamed. |
 | class [Response](./Wisp/Response.md) | A buffered or completed streaming response. |
 | class [ResponseStream](./Wisp/ResponseStream.md) | A response whose headers are published immediately and whose writes await host acceptance. |
-| static class [RuntimeConfiguration](./Wisp/RuntimeConfiguration.md) | Application settings supplied by the host after template activation. |
+| static class [RuntimeConfiguration](./Wisp/RuntimeConfiguration.md) | Deployment-bound application settings supplied during preparation and activation. |
 | class [StreamingRequest](./Wisp/StreamingRequest.md) | A request whose upload can arrive while its handler is running. |
 | class [WispLoggerProvider](./Wisp/WispLoggerProvider.md) | Writes .NET application logs through the sandbox's bounded host logging capability. |
 

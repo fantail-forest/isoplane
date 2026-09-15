@@ -10,7 +10,16 @@ namespace MinimalTodo;
 public sealed class Application : IWispHandler
 {
     /// <summary>Constructs the handler without reading secrets or opening connections during preparation.</summary>
-    public static IWispHandler Create() => new Application();
+    public static IWispHandler Create()
+    {
+        Initialization.Initializing += () =>
+        {
+            _ = TodoJson.Default.Todo;
+            _ = TodoJson.Default.TodoArray;
+            _ = TodoJson.Default.TodoInput;
+        };
+        return new Application();
+    }
 
     /// <summary>Handles TODO CRUD with verified TLS and request-owned database connections.</summary>
     public async Task<Response> HandleAsync(Request request, Ctx context)

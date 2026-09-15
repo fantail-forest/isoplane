@@ -8,7 +8,16 @@ namespace MinimalGallery;
 public sealed class Application : IWispHandler
 {
     /// <summary>Constructs the handler without reading credentials during preparation.</summary>
-    public static IWispHandler Create() => new Application();
+    public static IWispHandler Create()
+    {
+        Initialization.Initializing += () =>
+        {
+            _ = GalleryJson.Default.GalleryImage;
+            _ = GalleryJson.Default.GalleryImageArray;
+            _ = GalleryJson.Default.ExifInfo;
+        };
+        return new Application();
+    }
 
     /// <summary>Ingests original images and thumbnails, lists metadata, and retrieves stored image bytes.</summary>
     public async Task<Response> HandleAsync(Request request, Ctx context)

@@ -9,6 +9,7 @@ use wisp_engine::{HostBindings, ImportCall};
 #[derive(Clone, Default)]
 pub struct Recorder {
     pub calls: Arc<parking_lot::Mutex<Vec<String>>>,
+    pub runtime_configuration: Arc<parking_lot::Mutex<Option<Vec<u8>>>>,
     pub responses: Arc<parking_lot::Mutex<Vec<wisp_abi::dispatch::ResponseHead>>>,
     pub response_writes: Arc<parking_lot::Mutex<std::collections::VecDeque<(u64, u32)>>>,
     pub reject_next_response: Arc<AtomicBool>,
@@ -96,6 +97,13 @@ impl HostBindings for TestBindings {
             || (call.import == "entropy_fill" && self.rec.deny_entropy.load(Ordering::Relaxed))
         {
             return -1;
+        }
+        if call.import == "runtime_config_get" {
+            let settings = self.rec.runtime_configuration.lock();
+            let bytes = settings.as_deref().unwrap_or(b"{}");
+            let length = bytes.len().min(out.len());
+            out[..length].copy_from_slice(&bytes[..length]);
+            return bytes.len() as i64;
         }
         // A fake CSPRNG that answered the same bytes every time could not tell
         // a per-call draw from a cached one.

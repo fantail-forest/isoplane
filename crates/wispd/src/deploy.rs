@@ -21,6 +21,8 @@ impl Deployer {
 
 /// Host-selected preparation provider and its explicit resource policy.
 pub struct PreparationContext<'a> {
+    /// Owner-selected settings bound to this preparation.
+    pub runtime_configuration: wisp_host::bindings::RuntimeConfiguration,
     /// Engine configuration and decoder used by the consuming cells.
     pub engine: &'a wisp_engine::WispEngine,
     /// Controlled local preparation compiler selected by host composition.
@@ -133,7 +135,12 @@ impl Deployer {
         context: &PreparationContext<'_>,
     ) -> anyhow::Result<Publication> {
         admit_local(manifest, wasm)?;
+        let mut runtime_config = Vec::new();
+        context
+            .runtime_configuration
+            .write_json(&mut runtime_config)?;
         let initialization = wisp_prepare::Initialization {
+            runtime_config,
             config: serde_json::to_vec(&manifest.init_visible_vars)?,
             sandbox: opts.init_sandbox,
             cpu_ms: context.cpu_ms,

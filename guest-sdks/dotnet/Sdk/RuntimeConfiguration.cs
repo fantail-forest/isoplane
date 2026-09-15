@@ -4,14 +4,12 @@ using System.Text.Json;
 
 namespace Wisp;
 
-/// <summary>Application settings supplied by the host after template activation.</summary>
+/// <summary>Deployment-bound application settings supplied during preparation and activation.</summary>
 public static class RuntimeConfiguration
 {
-    /// <summary>Reads settings for this application. Refuses access during preparation so secrets cannot enter its template.</summary>
+    /// <summary>Reads settings for this deployment, including during template initialization.</summary>
     public static IReadOnlyDictionary<string, string> ReadValues()
     {
-        if (!Activation.IsActivated)
-            throw new InvalidOperationException("Runtime configuration is available after activation; resolve settings when handling requests or starting hosted services.");
         return ParseValues(Abi.RuntimeConfigurationInterop.Read());
     }
 

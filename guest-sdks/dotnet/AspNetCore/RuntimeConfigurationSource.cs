@@ -10,15 +10,14 @@ internal sealed class RuntimeConfigurationSource : IConfigurationSource
     {
         public override void Load()
         {
-            if (Activation.IsActivated)
-                LoadActivated();
-            else
-                Activation.Activated += LoadActivated;
+            LoadSettings();
+            if (!Activation.IsActivated)
+                Activation.Activated += LoadSettings;
         }
 
-        private void LoadActivated()
+        private void LoadSettings()
         {
-            Activation.Activated -= LoadActivated;
+            Activation.Activated -= LoadSettings;
             Data = RuntimeConfiguration.ReadValues().ToDictionary(pair => pair.Key, pair => (string?)pair.Value,
                 StringComparer.OrdinalIgnoreCase);
             OnReload();

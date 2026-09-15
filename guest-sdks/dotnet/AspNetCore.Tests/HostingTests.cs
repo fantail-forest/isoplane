@@ -14,7 +14,7 @@ public sealed class HostingTests
 {
     private static WebApplicationBuilder Builder()
     {
-        var builder = WispHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!);
+        var builder = WispHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!, new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource());
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => new RecordingResponseTransport());
         return builder;

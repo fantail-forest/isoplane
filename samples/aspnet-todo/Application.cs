@@ -29,6 +29,14 @@ public static class Application
         });
         var application = builder.Build();
         TodoEndpoints.Map(application);
+        Wisp.Initialization.Initializing += () =>
+        {
+            _ = Generated.TodoDbModel.Instance.GetEntityTypes().ToArray();
+            _ = application.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value;
+            _ = TodoJson.Default.Todo;
+            _ = TodoJson.Default.TodoArray;
+            _ = TodoJson.Default.TodoInput;
+        };
         return application;
     }
 }

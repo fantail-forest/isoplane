@@ -26,6 +26,7 @@ impl LocalDeployment for RealCells {
         let provider = self.local_preparation()?;
         let cancellation = tokio_util::sync::CancellationToken::new();
         let context = wispd::deploy::PreparationContext {
+            runtime_configuration: Default::default(),
             application_files: wisp_engine::PlatformFiles::default(),
             engine: self.engine(),
             provider: &provider,

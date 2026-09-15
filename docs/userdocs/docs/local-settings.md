@@ -19,14 +19,16 @@ JSON through standard input.
 
 Start the application with `dotnet run`. The development tools read the project's
 User Secrets and make the settings available through ASP.NET's ordinary
-`IConfiguration` when the guest is activated. Restart the development session
-after changing a setting; secret changes are not live-reloaded.
+`IConfiguration` during preparation and activation. Restart the development session
+after changing a setting; the tools regenerate the template for the changed settings.
+Secret changes are not live-reloaded.
 
 ## Read settings when they are needed
 
-Do not read secret values while building the application in `Application.Create`.
-That happens during preparation, before runtime settings are available. Register
-a service factory that resolves the value when the application handles requests:
+Read settings during `Application.Create` or the initialization hook when they are
+needed to prepare reusable state. Values retained there become part of the template.
+For request-scoped services, register a factory that resolves configuration when the
+service is created:
 
 ```csharp
 builder.Services.AddDbContext<TodoDb>((services, options) =>

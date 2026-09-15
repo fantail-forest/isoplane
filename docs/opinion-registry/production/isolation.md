@@ -1,5 +1,26 @@
 # Isolation
 
+## Treat every template as potentially secret-bearing
+
+Applications choose whether to read configuration and secrets during initialization
+or activation. User code and external services can supply sensitive data, so the
+absence of platform secret reads does not establish that a template is public.
+Protect templates, snapshots and derived artifacts as potentially secret-bearing.
+
+Assume every guest-readable configuration value may have been captured during
+initialization. Changing or deleting configuration or secrets creates a redeployment
+even when code is unchanged: regenerate captured state before promoting the new
+deployment. Reuse unaffected compilation outputs. A future layered template can
+regenerate from the affected layer forward; layering is not a prerequisite.
+
+Initialization-time access still goes through bounded host capabilities. This policy
+does not permit bypassing the sandbox or capturing a live invocation stack.
+
+**Not this:** Refusing initialization-time secrets to claim templates cannot contain
+secrets, or changing settings beneath an instance that retains their previous values.
+
+**Exception:** None.
+
 ## Type tenant identity and carry it from the edge
 
 Establish the tenant by authentication at the proxy or the operator API and carry it as a typed value through routing, dispatch, storage, and metering. Never recover it by scanning a table, default it to a placeholder, or accept it from a request body.

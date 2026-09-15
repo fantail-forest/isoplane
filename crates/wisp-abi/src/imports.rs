@@ -145,9 +145,7 @@ pub const IMPORTS: &[ImportDef] = &[
             "A per-attempt string-hash seed, separate from host entropy requests.") }
     },
 
-    // Tenant-authored deploy input, fixed for the version: unlike the hash
-    // seed it carries no secret and no entropy, so baking a parse of it into
-    // the template shares nothing between instances.
+    // Tenant-authored deploy input, fixed for the version.
     ImportDef {
         init_visible: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("init_config_get", Core, BUF_TO_I32, SYNC,
@@ -158,9 +156,10 @@ pub const IMPORTS: &[ImportDef] = &[
 
     ImportDef {
         sensitive: true,
+        init_visible: true,
         ..ImportDef { buf: BufSpec::Out(0), ..imp!("runtime_config_get", Core, BUF_TO_I32, SYNC,
-            "activation-only JSON configuration from the registered module owner; returns the full \
-             byte length for a zero-length sizing probe; unavailable during preparation") }
+            "deployment-bound JSON configuration from the application owner; returns the full \
+             byte length for a zero-length sizing probe; available during preparation and activation") }
     },
 
     // ---- observability ----------------------------------------------------

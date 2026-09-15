@@ -38,6 +38,14 @@ public static class Application
         application.MapGet("/images", ListAsync);
         application.MapGet("/images/{id:guid}/original", OriginalAsync);
         application.MapGet("/images/{id:guid}/thumbnail", ThumbnailAsync);
+        Wisp.Initialization.Initializing += () =>
+        {
+            _ = GallerySchema.Generated.GalleryDbModel.Instance.GetEntityTypes().ToArray();
+            _ = application.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value;
+            _ = GalleryJson.Default.GalleryImage;
+            _ = GalleryJson.Default.GalleryImageArray;
+            _ = GalleryJson.Default.ExifInfo;
+        };
         return application;
     }
 

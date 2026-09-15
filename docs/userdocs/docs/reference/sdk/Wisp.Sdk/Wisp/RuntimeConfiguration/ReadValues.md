@@ -5,7 +5,7 @@ mdx:
 
 # RuntimeConfiguration.ReadValues method
 
-Reads settings for this application. Refuses access during preparation so secrets cannot enter its template.
+Reads settings for this deployment, including during template initialization.
 
 ```csharp
 public static IReadOnlyDictionary<string, string> ReadValues()

@@ -6,12 +6,6 @@ namespace Wisp.AspNetCore.Tests;
 
 public sealed class RuntimeConfigurationTests
 {
-    [Fact]
-    public void Runtime_settings_are_unavailable_during_preparation()
-    {
-        var error = Assert.Throws<InvalidOperationException>(() => RuntimeConfiguration.ReadValues());
-        Assert.Contains("after activation", error.Message);
-    }
     [Theory]
     [InlineData("{\"private-key\":\"secret1\",\"private-key\":\"secret2\"}")]
     [InlineData("{\"private-key\":\"secret1\",\"PRIVATE-KEY\":\"secret2\"}")]

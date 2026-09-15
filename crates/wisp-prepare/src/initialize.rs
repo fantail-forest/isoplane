@@ -13,8 +13,10 @@ use crate::{bake, PrepareError};
 /// Explicit deployment configuration and capability limits supplied by preparation.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Initialization {
-    /// Serialized non-secret deployment configuration.
+    /// Serialized deployment configuration.
     pub config: Vec<u8>,
+    /// Deployment-bound JSON settings, including secrets; never include in diagnostics.
+    pub runtime_config: Vec<u8>,
     /// Policy selected by the caller; it is never widened by preparation.
     pub sandbox: InitSandbox,
     /// Total initialization CPU budget across replay passes.
@@ -35,6 +37,7 @@ impl Initialization {
         hash.update(&postcard::to_allocvec(&(
             input_hash,
             &self.config,
+            &self.runtime_config,
             self.sandbox,
         ))?);
         Ok(*hash.finalize().as_bytes())
@@ -91,6 +94,13 @@ pub(crate) fn initialize_with_cache(
     application_files: &wisp_engine::PlatformFiles,
     memory_limit_bytes: Option<u64>,
 ) -> Result<Initialized, PrepareError> {
+    if request.runtime_config.len() > wisp_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES
+        || serde_json::from_slice::<BTreeMap<String, String>>(&request.runtime_config).is_err()
+    {
+        return Err(PrepareError::InvalidRequest(
+            "deployment settings must be a bounded JSON object of strings",
+        ));
+    }
     if request.cpu_ms == 0 || request.wall_ms == 0 || request.max_passes == 0 {
         return Err(PrepareError::InvalidRequest(
             "initialization limits must be positive",
@@ -269,6 +279,7 @@ fn captured_globals(
 struct Sandbox {
     seed: Option<[u8; 16]>,
     config: Vec<u8>,
+    runtime_config: Vec<u8>,
     deferred: BTreeSet<u32>,
     unit: Option<u32>,
     last_deferred: Option<u32>,
@@ -284,6 +295,7 @@ impl Sandbox {
         Self {
             seed: None,
             config: request.config.clone(),
+            runtime_config: request.runtime_config.clone(),
             deferred,
             unit: None,
             last_deferred: None,
@@ -370,6 +382,11 @@ impl wisp_engine::bindings::InitializationBindings for Bindings {
                 let seed = state.seed.get_or_insert_with(rand::random);
                 output.copy_from_slice(seed);
                 Ok(output.len() as i64)
+            }
+            "runtime_config_get" => {
+                let length = output.len().min(state.runtime_config.len());
+                output[..length].copy_from_slice(&state.runtime_config[..length]);
+                Ok(state.runtime_config.len() as i64)
             }
             "init_config_get" => {
                 let length = output.len().min(state.config.len());

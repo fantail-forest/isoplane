@@ -13,6 +13,7 @@ pub fn engine() -> WispEngine {
 }
 pub fn request() -> Initialization {
     Initialization {
+        runtime_config: b"{}".to_vec(),
         config: b"{}".to_vec(),
         sandbox: InitSandbox::Sealed,
         cpu_ms: 1000,

@@ -33,6 +33,13 @@ is possible even when the previous request completed successfully.
 ## Preparation and activation are different
 
 Application initialization can happen before an instance starts serving requests.
+Subscribe to [`Wisp.Initialization.Initializing`](reference/sdk/Wisp.Sdk/Wisp/Initialization/Initializing.md)
+during application construction to warm reusable state before the template is
+captured, such as serialization metadata or a compiled EF model. The callback
+runs synchronously and must finish before returning. Keep request-scoped services
+and background work out of this callback. An exception
+fails template preparation.
+
 Static state created during initialization can be copied into multiple instances.
 A request identifier, token or application-managed random seed stored in that
 initial state is consequently not guaranteed to be unique to each instance.

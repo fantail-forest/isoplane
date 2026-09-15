@@ -12,11 +12,11 @@ public static class DeploymentConfiguration
     /// Reads the manifest's <c>init_visible_vars</c>, preserving order and duplicate keys.
     /// Call during pre-initialization and retain the result for request handling;
     /// the host refuses this import after activation. These values become part of
-    /// the template and must not contain runtime secrets.
+    /// the template. Use RuntimeConfiguration for host-supplied settings and secrets.
     /// </summary>
     public static IReadOnlyList<KeyValuePair<string, string>> ReadVariables()
     {
-        byte[] data = Initialization.ReadConfiguration();
+        byte[] data = Abi.Initialization.ReadConfiguration();
         if (data.Length == 0)
             return Array.Empty<KeyValuePair<string, string>>();
         using JsonDocument document = JsonDocument.Parse(data);
