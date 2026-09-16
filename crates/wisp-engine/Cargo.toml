@@ -6,10 +6,6 @@ rust-version.workspace = true
 license-file.workspace = true
 description = "wasmtime embedding: template pre-init, instance slots, CoW activation, epoch budgets, thread-CPU metering"
 
-[features]
-# Controlled full-template read experiment; production keeps demand paging.
-eager-template-read-experiment = []
-
 [dependencies]
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -50,3 +46,6 @@ libc = { workspace = true }
 # engine bug.
 wat = { workspace = true }
 wisp-fixtures = { workspace = true }
+
+[build-dependencies]
+toml.workspace = true

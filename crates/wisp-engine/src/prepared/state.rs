@@ -10,21 +10,23 @@ use crate::{MemoryImage, ModuleHash, Template, WispEngine};
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct State {
-    application_files: crate::PlatformFiles,
-    memory_pages: u32,
-    deferred: Vec<u32>,
-    prepared_resources: wisp_abi::native_io::PreparedResources,
-    mut_globals: Vec<(String, GlobalValue)>,
-    tables: Vec<(String, u64)>,
-    table_nullness: Vec<Vec<bool>>,
-    has_gc_hint: bool,
-    has_initialize: bool,
+    pub(super) prefetch: Vec<super::ReadAhead>,
+    pub(super) application_files: crate::PlatformFiles,
+    pub(super) memory_pages: u32,
+    pub(super) deferred: Vec<u32>,
+    pub(super) prepared_resources: wisp_abi::native_io::PreparedResources,
+    pub(super) mut_globals: Vec<(String, GlobalValue)>,
+    pub(super) tables: Vec<(String, u64)>,
+    pub(super) table_nullness: Vec<Vec<bool>>,
+    pub(super) has_gc_hint: bool,
+    pub(super) has_initialize: bool,
 }
 
 impl State {
     pub(super) fn capture(template: &Template) -> Self {
         let inner = &template.inner;
         Self {
+            prefetch: Vec::new(),
             application_files: inner.application_files.clone(),
             memory_pages: inner.memory_pages,
             deferred: inner.deferred.clone(),
@@ -94,7 +96,8 @@ impl WispEngine {
             hash: ModuleHash(manifest.module_hash),
             abi_rev: manifest.abi_rev,
             inner: Arc::new(TemplateInner {
-                #[cfg(feature = "eager-template-read-experiment")]
+                #[cfg(target_os = "linux")]
+                initialization_layer: None,
                 activation_prefetch: None,
                 application_files: state.application_files,
                 filesystem_files,

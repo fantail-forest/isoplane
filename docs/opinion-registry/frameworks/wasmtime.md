@@ -23,3 +23,22 @@ After a hard kill, move the instance to a state in which every further call retu
 **Not this:** `panic!` on a call into a tombstoned instance, in a binary built to abort on panic.
 
 **Exception:** None.
+
+## Pin the private fork and qualify its memory patch
+
+The root manifest pins a full commit from `fantail-forest/wisp-wasmtime`, based
+on a stable upstream release. Builders need read access to that private repository.
+The engine derives Wasmtime's serialized-module version from this pin, so changing
+the fork revision invalidates prepared artifacts and compilation caches.
+
+Keep memory mapping, allocator reset and failure-path tests in the Wasmtime fork.
+Keep preparation, activation and hibernation integration tests in WISP. For a fork
+update, run `cargo test -p wasmtime --lib runtime::vm::cow` and
+`cargo test -p wasmtime --test cow_memory_image` in the fork, then the affected
+WISP suites against the new pin. Preserve upstream release history and keep WISP
+patches as separate commits.
+
+**Not this:** An untracked patch or path dependency outside the checkout, or a
+fork update that reuses artifacts identified only by the upstream version.
+
+**Exception:** None.

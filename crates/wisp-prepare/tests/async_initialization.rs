@@ -62,17 +62,51 @@ fn asynchronous_guest(imports: &str, init: &str, wake: &str) -> Vec<u8> {
     .unwrap()
 }
 
-#[test]
-fn initialization_resumes_after_host_timer_completion_before_capturing_memory() {
-    let engine = common::engine();
+fn timer_guest() -> Vec<u8> {
     let imports = format!(
         "{} {}",
         import("monotonic_clock_subscribe_duration", "timer"),
         import("poll_pollable_drop", "drop_timer")
     );
-    let wasm = asynchronous_guest(&imports,
+    asynchronous_guest(&imports,
         "(i32.store (i32.const 64) (call $timer (i64.const 1000000))) (i64.const 1)",
-        "(call $drop_timer (i32.load (i32.const 64))) (i32.store (i32.const 128) (i32.const 42)) (i64.const 0)");
+        "(call $drop_timer (i32.load (i32.const 64))) (i32.store (i32.const 128) (i32.const 42)) (i64.const 0)")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn layered_preparation_captures_the_completed_async_initializer() {
+    let engine = common::engine();
+    let wasm = timer_guest();
+    let build = wisp_prepare::BuildRequest {
+        guest_memory_bytes: Some(wisp_abi::config::GuestMemoryBytes::new(4 << 20).unwrap()),
+        validation_limits: Default::default(),
+        application_files: Default::default(),
+        engine: engine.configuration(),
+        runtime: wisp_prepare::RuntimeProfile::raw_wasm(),
+        limits: wisp_abi::config::Limits::default(),
+        initialization: request(),
+        input_hash: *blake3::hash(&wasm).as_bytes(),
+    };
+    let product = wisp_prepare::prepare_in_current_process(&wasm, &build).expect(
+        "layered capture and fresh-instance state verification must succeed after the timer wake",
+    );
+    assert_eq!(
+        product.initialized.passes, 1,
+        "asynchronous completion must not rerun the initializer"
+    );
+    let portable = engine.load_template(&product.initialized.wasm).unwrap();
+    assert_eq!(
+        portable.memory_image_arc().to_dense()[128],
+        42,
+        "both captured outputs must contain initialization work performed after the timer wake"
+    );
+}
+
+#[test]
+fn initialization_resumes_after_host_timer_completion_before_capturing_memory() {
+    let engine = common::engine();
+    let wasm = timer_guest();
     let initialized = initialize(&engine, &wasm, &request()).unwrap();
     let template = engine.load_template(&initialized.wasm).unwrap();
     assert_eq!(

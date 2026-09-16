@@ -8,6 +8,10 @@ const COALESCE_GAP: usize = 32;
 const MAGIC: &[u8; 8] = b"WISPSPR1";
 const HEADER_BYTES: usize = 32;
 const RUN_BYTES: usize = 24;
+#[cfg(target_os = "linux")]
+const LAYER_ALIGNMENT: usize = 65536;
+#[cfg(target_os = "linux")]
+const LAYER_MAGIC: &[u8; 8] = b"WISPPKD1";
 
 pub(crate) enum ImageStorage {
     Owned(Vec<u8>),
@@ -40,6 +44,100 @@ struct Run {
 }
 
 impl MemoryImage {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn from_layer(
+        dense: &[u8],
+        selected: &[std::ops::Range<u64>],
+    ) -> Result<Self, &'static str> {
+        let mut hot = Vec::new();
+        let mut cold = Vec::new();
+        let mut end = 0;
+        for range in selected {
+            let start =
+                usize::try_from(range.start).map_err(|_| "layer range exceeds address space")?;
+            let next =
+                usize::try_from(range.end).map_err(|_| "layer range exceeds address space")?;
+            if start < end
+                || next <= start
+                || next > dense.len()
+                || start % PAGE != 0
+                || next % PAGE != 0
+            {
+                return Err("invalid selected layer range");
+            }
+            if end < start {
+                cold.push(end..start);
+            }
+            hot.push(start..next);
+            end = next;
+        }
+        if end < dense.len() {
+            cold.push(end..dense.len());
+        }
+        let hot_bytes = hot.iter().map(|range| range.len()).sum::<usize>();
+        let mut runs = Vec::new();
+        let mut payload = Vec::with_capacity(dense.len());
+        for range in hot.into_iter().chain(cold) {
+            runs.push(Run {
+                off: range.start,
+                start: payload.len(),
+                len: range.len(),
+            });
+            payload.extend_from_slice(&dense[range]);
+        }
+        runs.sort_by_key(|run| run.off);
+        let header_bytes = HEADER_BYTES
+            .checked_add(
+                runs.len()
+                    .checked_mul(RUN_BYTES)
+                    .ok_or("layer index overflow")?,
+            )
+            .ok_or("layer index overflow")?;
+        let payload_offset = header_bytes
+            .checked_next_multiple_of(LAYER_ALIGNMENT)
+            .ok_or("layer header overflow")?;
+        let mut encoded = vec![0; payload_offset];
+        encoded[..8].copy_from_slice(LAYER_MAGIC);
+        for (offset, value) in [(8, dense.len()), (16, runs.len()), (24, hot_bytes)] {
+            encoded[offset..offset + 8].copy_from_slice(&(value as u64).to_le_bytes());
+        }
+        for (index, run) in runs.iter().enumerate() {
+            for (field, value) in [run.off, run.start, run.len].into_iter().enumerate() {
+                let offset = HEADER_BYTES + index * RUN_BYTES + field * 8;
+                encoded[offset..offset + 8].copy_from_slice(&(value as u64).to_le_bytes());
+            }
+        }
+        encoded.extend_from_slice(&payload);
+        Self::from_storage(ImageStorage::Owned(encoded), dense.len())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn layer_prefetch(&self) -> std::ops::Range<u64> {
+        let mut count = [0; 8];
+        count.copy_from_slice(&self.encoded()[24..32]);
+        let start = self.payload_offset as u64;
+        start..start + u64::from_le_bytes(count)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn layer_extents(&self) -> Vec<wasmtime::CowMemoryExtent> {
+        (0..self.run_count)
+            .map(|index| {
+                let run = self.run(index);
+                wasmtime::CowMemoryExtent {
+                    file_offset: (self.payload_offset + run.start) as u64,
+                    memory_offset: run.off,
+                    length: run.len,
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn is_layer(&self) -> bool {
+        self.encoded().get(..8) == Some(LAYER_MAGIC.as_slice())
+    }
+
     /// Iterates stored regions in logical address order, without expanding zero gaps.
     pub fn regions(&self) -> impl Iterator<Item = (usize, &[u8])> {
         (0..self.run_count).map(|index| {
@@ -115,6 +213,73 @@ impl MemoryImage {
         max_memory_bytes: usize,
     ) -> Result<Self, &'static str> {
         let bytes = storage.as_ref();
+        #[cfg(target_os = "linux")]
+        if bytes.get(..8) == Some(LAYER_MAGIC.as_slice()) {
+            let len = number(bytes, 8)?;
+            let run_count = number(bytes, 16)?;
+            let hot_bytes = number(bytes, 24)?;
+            let index_end = HEADER_BYTES
+                .checked_add(
+                    run_count
+                        .checked_mul(RUN_BYTES)
+                        .ok_or("layer index overflow")?,
+                )
+                .ok_or("layer index overflow")?;
+            let payload_offset = index_end
+                .checked_next_multiple_of(LAYER_ALIGNMENT)
+                .ok_or("layer header overflow")?;
+            if len == 0
+                || len > max_memory_bytes
+                || len % 65536 != 0
+                || hot_bytes > len
+                || hot_bytes % PAGE != 0
+                || payload_offset.checked_add(len) != Some(bytes.len())
+                || bytes
+                    .get(index_end..payload_offset)
+                    .is_none_or(|header| header.iter().any(|b| *b != 0))
+            {
+                return Err("invalid packed layer dimensions or header");
+            }
+            let mut logical_end = 0usize;
+            let mut physical = Vec::new();
+            for index in 0..run_count {
+                let position = HEADER_BYTES + index * RUN_BYTES;
+                let off = number(bytes, position)?;
+                let start = number(bytes, position + 8)?;
+                let size = number(bytes, position + 16)?;
+                if off != logical_end
+                    || off % PAGE != 0
+                    || start % PAGE != 0
+                    || size == 0
+                    || size % PAGE != 0
+                {
+                    return Err("invalid packed layer extent alignment or coverage");
+                }
+                logical_end = off.checked_add(size).ok_or("layer memory overflow")?;
+                let end = start.checked_add(size).ok_or("layer payload overflow")?;
+                if logical_end > len || end > len {
+                    return Err("packed layer extent exceeds bounds");
+                }
+                physical.push(start..end);
+            }
+            physical.sort_by_key(|range| range.start);
+            let mut physical_end = 0;
+            for range in physical {
+                if range.start != physical_end {
+                    return Err("packed layer payload overlaps or has gaps");
+                }
+                physical_end = range.end;
+            }
+            if logical_end != len || physical_end != len {
+                return Err("packed layer does not cover captured memory");
+            }
+            return Ok(Self {
+                len,
+                run_count,
+                payload_offset,
+                storage: Arc::new(storage),
+            });
+        }
         if bytes.get(..8) != Some(MAGIC.as_slice()) {
             return Err("invalid sparse baseline magic");
         }
@@ -270,6 +435,130 @@ impl std::fmt::Debug for MemoryImage {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn packed_layer_round_trips_and_serves_the_hibernation_baseline() {
+        let mut memory = vec![0; 65536];
+        memory[4097] = 31;
+        let image = super::MemoryImage::from_layer(&memory, &[]).expect("layer");
+        let restored = super::MemoryImage::from_storage(
+            super::ImageStorage::Owned(image.encoded().to_vec()),
+            memory.len(),
+        )
+        .expect("valid dense layer");
+        assert!(
+            restored.is_layer(),
+            "dense image must retain its mapping format"
+        );
+        assert_eq!(
+            restored.regions().next().expect("dense region").1,
+            memory,
+            "layer storage must preserve every initialized byte"
+        );
+        assert!(
+            restored.page_eq(1, &memory[4096..8192]),
+            "hibernation must compare against initialized layer bytes"
+        );
+        memory[4097] = 32;
+        assert!(
+            !restored.page_eq(1, &memory[4096..8192]),
+            "hibernation must notice request changes to initialized bytes"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn packed_layer_rejects_truncation_and_header_garbage() {
+        let image = super::MemoryImage::from_layer(&vec![0; 65536], &[]).expect("layer");
+        let mut bytes = image.encoded().to_vec();
+        bytes.pop();
+        assert!(
+            super::MemoryImage::from_storage(super::ImageStorage::Owned(bytes), 65536).is_err(),
+            "truncated layer must fail before mapping"
+        );
+        let mut bytes = image.encoded().to_vec();
+        bytes[128] = 1;
+        assert!(
+            super::MemoryImage::from_storage(super::ImageStorage::Owned(bytes), 65536).is_err(),
+            "unknown dense header data must be refused"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn selected_pages_are_contiguous_on_disk_without_changing_logical_memory() {
+        let mut memory = vec![0; 65536];
+        for (index, page) in memory.chunks_mut(4096).enumerate() {
+            page.fill(index as u8);
+        }
+        let image = super::MemoryImage::from_layer(&memory, &[4096..8192, 16384..20480])
+            .expect("packed layer");
+        let hot = image.layer_prefetch();
+        assert_eq!(
+            hot.end - hot.start,
+            8192,
+            "selected bytes must occupy one exact range"
+        );
+        let bytes = &image.encoded()[hot.start as usize..hot.end as usize];
+        assert_eq!(
+            &bytes[..4096],
+            &memory[4096..8192],
+            "first selected page must lead the payload"
+        );
+        assert_eq!(
+            &bytes[4096..],
+            &memory[16384..20480],
+            "next selected page must immediately follow"
+        );
+        assert_eq!(
+            image.to_dense(),
+            memory,
+            "all selected and unselected bytes must retain their guest addresses"
+        );
+        for page in 0..16 {
+            assert!(
+                image.page_eq(page, &memory[page * 4096..(page + 1) * 4096]),
+                "hibernation must resolve each packed page correctly"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn packed_layer_refuses_aliased_or_missing_payload_ranges() {
+        let image =
+            super::MemoryImage::from_layer(&vec![0; 65536], std::slice::from_ref(&(4096..8192)))
+                .expect("layer");
+        for offset in [
+            super::HEADER_BYTES,
+            super::HEADER_BYTES + super::RUN_BYTES + 8,
+        ] {
+            let mut bytes = image.encoded().to_vec();
+            bytes[offset..offset + 8].copy_from_slice(&4096u64.to_le_bytes());
+            assert!(
+                super::MemoryImage::from_storage(super::ImageStorage::Owned(bytes), 65536).is_err(),
+                "overlapping logical or physical extents must fail before mapping"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn selected_layer_ranges_must_be_ordered_aligned_and_bounded() {
+        for ranges in [
+            std::iter::once(1..4096).collect(),
+            std::iter::once(0..1).collect(),
+            std::iter::once(0..0).collect(),
+            std::iter::once(0..69632).collect(),
+            vec![4096..8192, 0..4096],
+            vec![0..8192, 4096..12288],
+        ] {
+            assert!(
+                super::MemoryImage::from_layer(&vec![0; 65536], &ranges).is_err(),
+                "invalid selected pages must fail before capture"
+            );
+        }
+    }
+
     use super::*;
 
     fn roundtrip(dense: &[u8]) {

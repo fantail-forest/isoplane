@@ -1,7 +1,5 @@
 //! Restricted application initialization, separate from execution and deployment coordination.
 
-#![forbid(unsafe_code)]
-
 mod bake;
 mod initialize;
 mod network;

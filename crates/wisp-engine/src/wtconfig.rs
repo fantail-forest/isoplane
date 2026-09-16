@@ -28,6 +28,9 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
         bail!("engine compiler stack, core-instance bytes, table elements and tables per module must be nonzero");
     }
     let mut c = Config::new();
+    c.module_version(wasmtime::ModuleVersionStrategy::Custom(
+        concat!("wisp-", env!("WISP_WASMTIME_REVISION")).to_owned(),
+    ))?;
     if cfg.perf_jitdump {
         c.profiler(wasmtime::ProfilingStrategy::JitDump);
     }

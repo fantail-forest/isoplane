@@ -15,7 +15,7 @@ pub struct BuildProduct {
     pub initialized: Initialized,
     /// Initialization, compilation and state-verification wall time.
     pub preinit_ms: f64,
-    /// Final native compilation and prepared-state encoding wall time.
+    /// Prepared-state encoding and, for portable output, final native compilation wall time.
     pub compile_ms: f64,
     prepared: Vec<u8>,
 }
@@ -115,7 +115,11 @@ fn prepare(
     let engine = WispEngine::new(request.engine.clone())
         .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
     let start = Instant::now();
-    let initialized = crate::initialize::initialize_with_cache(
+    #[cfg(target_os = "linux")]
+    let capture = crate::initialize::CaptureMode::Layered(identity);
+    #[cfg(not(target_os = "linux"))]
+    let capture = crate::initialize::CaptureMode::Portable;
+    let output = crate::initialize::initialize_with_cache(
         &engine,
         wasm,
         &request.initialization,
@@ -125,10 +129,24 @@ fn prepare(
             request.limits.instance_memory_max,
             wisp_abi::config::GuestMemoryBytes::get,
         )),
+        capture,
     )
     .map_err(|error| WorkerFailure::new(BuildStage::Initialization, error.into()))?;
+    let initialized = output.initialized;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
+    #[cfg(target_os = "linux")]
+    let prepared = output
+        .prepared
+        .ok_or_else(|| {
+            WorkerFailure::new(
+                BuildStage::Artifact,
+                anyhow::anyhow!("layered initialization did not capture a template"),
+            )
+        })?
+        .encode_builder_output()
+        .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?;
+    #[cfg(not(target_os = "linux"))]
     let prepared = encode(
         &engine,
         &initialized.wasm,
@@ -166,6 +184,7 @@ fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdent
     Ok(request.identity()?)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn encode(
     engine: &WispEngine,
     wasm: &[u8],

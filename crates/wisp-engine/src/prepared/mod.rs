@@ -1,8 +1,11 @@
 //! Locally compiled prepared templates, independent of artifact acquisition and build orchestration.
 
 mod files;
-#[cfg(feature = "eager-template-read-experiment")]
+#[cfg(target_os = "linux")]
+mod layer;
 pub(crate) mod prefetch;
+#[cfg(target_os = "linux")]
+mod residency;
 mod state;
 
 use std::path::Path;
@@ -13,7 +16,7 @@ use crate::{Template, WispEngine};
 
 pub use files::{PreparedPayload, PreparedStorage, ReadAhead};
 
-const FORMAT: u32 = 5;
+const FORMAT: u32 = 7;
 const MAGIC: [u8; 8] = *b"WISPPREP";
 const NATIVE: &str = "template.cwasm";
 const BASELINE: &str = "baseline.bin";
@@ -240,6 +243,8 @@ impl WispEngine {
         let payloads = files::read_payloads(directory, &manifest)?;
         let [native, baseline, state] = payloads;
         let state: state::State = postcard::from_bytes(&state)?;
+        #[cfg(target_os = "linux")]
+        let layer_bytes = baseline.clone();
         let image = crate::image::MemoryImage::from_storage(
             crate::image::ImageStorage::Owned(baseline),
             self.inner.cfg.max_memory_bytes as usize,
@@ -252,7 +257,22 @@ impl WispEngine {
                 unsafe { wasmtime::Module::deserialize(&self.inner.wasmtime, &native) }
             })
             .map_err(|e| PreparedError::Engine(e.into()))?;
-        self.finish_prepared(module, manifest, state, image)
+        #[cfg(target_os = "linux")]
+        let layer = if image.is_layer() {
+            Some(layer::from_owned(&layer_bytes, &image)?)
+        } else {
+            None
+        };
+        let template = self.finish_prepared(module, manifest, state, image)?;
+        #[cfg(target_os = "linux")]
+        let template = {
+            let mut template = template;
+            if let Some(layer) = layer {
+                layer::attach(&mut template, layer)?;
+            }
+            template
+        };
+        Ok(template)
     }
 
     /// Verifies local payload hashes, then maps the same open files.
@@ -276,9 +296,12 @@ impl WispEngine {
         self.check_prepared(&manifest, expected)?;
         let files = files::open_verified(directory, &manifest)?;
         files::advise(&files, &manifest, prefetch)?;
-        #[cfg(feature = "eager-template-read-experiment")]
         let activation_prefetch = prefetch::Payloads::new(&files, directory)?;
         let [native, baseline, state] = files;
+        #[cfg(target_os = "linux")]
+        let layer_file = baseline
+            .try_clone()
+            .map_err(|error| PreparedError::Engine(error.into()))?;
         // SAFETY: the caller guarantees unchanged contents of this verified held inode and contains I/O faults.
         let baseline =
             unsafe { memmap2::Mmap::map(&baseline) }.map_err(|source| PreparedError::Io {
@@ -306,8 +329,22 @@ impl WispEngine {
                 unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native) }
             })
             .map_err(|e| PreparedError::Engine(e.into()))?;
+        #[cfg(target_os = "linux")]
+        let layer = if image.is_layer() {
+            Some(layer::from_file(layer_file, &image)?)
+        } else {
+            None
+        };
+        let activation_prefetch = activation_prefetch.select(&state.prefetch)?;
         let template = self.finish_prepared(module, manifest, state, image)?;
-        #[cfg(feature = "eager-template-read-experiment")]
+        #[cfg(target_os = "linux")]
+        let template = {
+            let mut template = template;
+            if let Some(layer) = layer {
+                layer::attach(&mut template, layer)?;
+            }
+            template
+        };
         let template = {
             let mut template = template;
             let inner = std::sync::Arc::get_mut(&mut template.inner)

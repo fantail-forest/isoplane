@@ -235,7 +235,7 @@ impl WispEngine {
         Ok((pal_linker, pal_composed))
     }
 
-    fn finish_template(
+    pub(crate) fn finish_template(
         &self,
         module: wasmtime::Module,
         hash: ModuleHash,
@@ -323,7 +323,8 @@ impl WispEngine {
             hash,
             abi_rev: wisp_abi::ABI_REV,
             inner: Arc::new(TemplateInner {
-                #[cfg(feature = "eager-template-read-experiment")]
+                #[cfg(target_os = "linux")]
+                initialization_layer: None,
                 activation_prefetch: None,
                 application_files: crate::PlatformFiles::default(),
                 filesystem_files: self.inner.cfg.platform_files.clone(),

@@ -89,7 +89,7 @@ wasmparser  = "0.244"
 wasm-encoder = { version = "0.244", features = ["wasmparser"] }
 # Default features off: the defaults pull in `async` (fiber stack switching)
 # and `threads`. Each crate names the features it needs.
-wasmtime    = { version = "48", default-features = false, features = ["profiling"] }
+wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "c464403e03bb1639b1ae78a73fdf496b4c2a3026", default-features = false, features = ["profiling"] }
 wat         = "1"
 tempfile    = "3"
 memmap2 = "0.9"

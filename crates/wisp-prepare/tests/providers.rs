@@ -91,6 +91,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         b'a',
         "initialization must read immutable application files through the PAL"
     );
+    #[cfg(not(target_os = "linux"))]
     let expected_hash = template
         .with_application_files(request.application_files.clone())
         .expect("bind expected files")
@@ -107,9 +108,16 @@ async fn preserves_application_state(provider: &dyn Preparation) {
     let loaded = engine
         .load_prepared(&path, identity)
         .expect("load prepared output");
+    #[cfg(not(target_os = "linux"))]
     assert_eq!(
         loaded.hash, expected_hash,
         "prepared identity must include the exact application content"
+    );
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        loaded.memory_image_arc().to_dense(),
+        template.memory_image_arc().to_dense(),
+        "the initialized layer must preserve the same memory as portable preparation"
     );
     assert!(
         !loaded.has_initialize(),
@@ -124,4 +132,69 @@ async fn preserves_application_state(provider: &dyn Preparation) {
 #[tokio::test]
 async fn local_preparation_satisfies_the_shared_provider_contract() {
     preserves_application_state(&LocalPreparation::new().expect("portable provider")).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn layered_preparation_accepts_a_guest_without_an_initializer() {
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1 64)
+        (data (i32.const 64) "ready")
+        (func (export "wisp_alloc") (param i32 i32) (result i32) i32.const 2048)
+        (func (export "wisp_handle") (param i32 i32) (result i64) i64.const 0)
+        (func (export "wisp_wake") (param i64 i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("guest without initializer");
+    let engine = common::engine();
+    let files = wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
+        path: "/config.json".into(),
+        bytes: b"asset".as_slice().into(),
+        modified_ns: 42,
+    }])
+    .expect("application asset");
+    let request = BuildRequest {
+        guest_memory_bytes: None,
+        validation_limits: Default::default(),
+        application_files: files.clone(),
+        engine: engine.configuration(),
+        runtime: RuntimeProfile::raw_wasm(),
+        limits: wisp_abi::config::Limits::default(),
+        initialization: common::request(),
+        input_hash: *blake3::hash(&wasm).as_bytes(),
+    };
+    let product = LocalPreparation::new()
+        .expect("local provider")
+        .prepare(&wasm, &request, &CancellationToken::new())
+        .await
+        .expect("a guest without an initializer needs no initialized capture boundary");
+    assert_eq!(
+        product.initialized.passes, 0,
+        "no initializer must mean no initialization passes"
+    );
+    let identity = request.identity().expect("identity");
+    // SAFETY: the local trusted preparation provider produced these artifact bytes.
+    let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
+        .expect("decode prepared output");
+    let template = engine
+        .load_prepared_product(&prepared)
+        .expect("load prepared guest");
+    assert!(
+        !template.has_initialize(),
+        "ordinary activation must not acquire an initializer"
+    );
+    assert_eq!(
+        &template.memory_image_arc().to_dense()[64..69],
+        b"ready",
+        "the original guest memory must survive preparation"
+    );
+    let expected = engine
+        .load_template(&wasm)
+        .expect("original template")
+        .with_application_files(files)
+        .expect("bind application asset");
+    assert_eq!(
+        template.hash, expected.hash,
+        "the artifact must retain application files in its identity"
+    );
 }

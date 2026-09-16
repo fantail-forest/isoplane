@@ -44,7 +44,8 @@ pub struct Template {
 }
 
 pub(crate) struct TemplateInner {
-    #[cfg(feature = "eager-template-read-experiment")]
+    #[cfg(target_os = "linux")]
+    pub initialization_layer: Option<wasmtime::CowMemoryImage>,
     pub activation_prefetch: Option<crate::prepared::prefetch::Payloads>,
     pub application_files: crate::PlatformFiles,
     pub filesystem_files: crate::PlatformFiles,

@@ -18,7 +18,6 @@ impl WispEngine {
     /// Map the template copy-on-write and bind `b` as this instance's import
     /// vtable.
     pub fn activate(&self, t: &Template, b: Box<dyn HostBindings>) -> Result<Instance> {
-        #[cfg(feature = "eager-template-read-experiment")]
         if let Some(payloads) = &t.inner.activation_prefetch {
             payloads.read_all()?;
         }
@@ -215,6 +214,21 @@ pub(crate) fn instantiate(
         );
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(layer) = &t.initialization_layer {
+        let _restore = tracing::info_span!("activation_layer_restore").entered();
+        let pages = memory.size(&store);
+        if u64::from(t.memory_pages) > pages {
+            memory.grow(&mut store, u64::from(t.memory_pages) - pages)?;
+        }
+        // SAFETY: instantiation owns the idle Store, and the verified immutable image
+        // matches the captured memory size. No guest entry occurs before all globals restore.
+        unsafe { memory.restore_cow_image(&mut store, layer) }?;
+        for (global, (_, value)) in globals.iter().zip(&t.mut_globals) {
+            global.set(&mut store, wasmtime::Val::from(*value))?;
+        }
+    }
+    let f_initialize = if t.has_initialize { f_initialize } else { None };
     drop(exports_stage);
     let table_baseline = tracing::info_span!("activation_table_baseline")
         .in_scope(|| crate::capture::TableBaseline::capture(&mut store, &tables))?;

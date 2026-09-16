@@ -87,7 +87,22 @@ pub fn initialize(
         None,
         &wisp_engine::PlatformFiles::default(),
         None,
+        CaptureMode::Portable,
     )
+    .map(|output| output.initialized)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CaptureMode {
+    Portable,
+    #[cfg(target_os = "linux")]
+    Layered(wisp_engine::prepared::PreparedIdentity),
+}
+
+pub(crate) struct InitializationOutput {
+    pub initialized: Initialized,
+    #[cfg(target_os = "linux")]
+    pub prepared: Option<wisp_engine::prepared::PreparedTemplate>,
 }
 
 pub(crate) fn initialize_with_cache(
@@ -97,7 +112,8 @@ pub(crate) fn initialize_with_cache(
     cache: Option<&wisp_engine::CompilationCache>,
     application_files: &wisp_engine::PlatformFiles,
     memory_limit_bytes: Option<u64>,
-) -> Result<Initialized, PrepareError> {
+    capture: CaptureMode,
+) -> Result<InitializationOutput, PrepareError> {
     if request.runtime_config.len() > wisp_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES
         || serde_json::from_slice::<BTreeMap<String, String>>(&request.runtime_config).is_err()
     {
@@ -118,7 +134,11 @@ pub(crate) fn initialize_with_cache(
         Some(cache) => cache
             .load(engine, &instrumented.wasm)
             .map(|(template, _compiled)| template),
-        None => engine.load_template(&instrumented.wasm),
+        None => match capture {
+            CaptureMode::Portable => engine.load_template(&instrumented.wasm),
+            #[cfg(target_os = "linux")]
+            CaptureMode::Layered(_) => engine.load_layer_source(&instrumented.wasm),
+        },
     }
     .and_then(|template| template.with_application_files(application_files.clone()))
     .map_err(PrepareError::State)?;
@@ -219,19 +239,32 @@ pub(crate) fn initialize_with_cache(
                 });
             }
         } else {
-            return Ok(Initialized {
-                wasm: wasm.to_vec(),
-                deferred: Vec::new(),
-                cpu_ns,
-                preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
-                deferred_reasons,
-                capability_refusals,
-                pal_calls: instance
-                    .initialization_pal_calls()
-                    .map_err(PrepareError::State)?,
-                seed_reads: state.lock().seed_reads,
-                passes: 0,
-                logs: Vec::new(),
+            #[cfg(target_os = "linux")]
+            let prepared = match capture {
+                CaptureMode::Portable => None,
+                CaptureMode::Layered(identity) => Some(
+                    engine
+                        .prepare_template_with_files(wasm, identity, application_files.clone())
+                        .map_err(|error| PrepareError::State(error.into()))?,
+                ),
+            };
+            return Ok(InitializationOutput {
+                #[cfg(target_os = "linux")]
+                prepared,
+                initialized: Initialized {
+                    wasm: wasm.to_vec(),
+                    deferred: Vec::new(),
+                    cpu_ns,
+                    preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
+                    deferred_reasons,
+                    capability_refusals,
+                    pal_calls: instance
+                        .initialization_pal_calls()
+                        .map_err(PrepareError::State)?,
+                    seed_reads: state.lock().seed_reads,
+                    passes: 0,
+                    logs: Vec::new(),
+                },
             });
         }
         let prepared_resources = io
@@ -244,11 +277,26 @@ pub(crate) fn initialize_with_cache(
                 ))
             })?
             .unwrap_or_default();
+        let deferred: Vec<_> = deferred.into_iter().collect();
+        #[cfg(target_os = "linux")]
+        let prepared = match capture {
+            CaptureMode::Portable => None,
+            CaptureMode::Layered(identity) => Some(
+                engine
+                    .prepare_initialized_template(
+                        &template,
+                        &mut instance,
+                        identity,
+                        prepared_resources.clone(),
+                        deferred.clone(),
+                    )
+                    .map_err(|error| PrepareError::State(error.into()))?,
+            ),
+        };
         let captured = instance
             .capture_mutable_state()
             .map_err(PrepareError::State)?;
         let globals = captured_globals(&instrumented, &captured.globals)?;
-        let deferred: Vec<_> = deferred.into_iter().collect();
         let mut output = bake::bake(&instrumented.wasm, instance.memory(), &globals, &deferred)
             .map_err(PrepareError::State)?;
         let resources =
@@ -260,14 +308,26 @@ pub(crate) fn initialize_with_cache(
             },
             &mut output,
         );
-        // Reinstantiation is the preparation oracle; it is never part of a worker cache miss.
-        let baked = engine
-            .load_template(&output)
-            .and_then(|template| template.with_application_files(application_files.clone()))
-            .map_err(PrepareError::State)?;
+        // Reinstantiation verifies captured state without invoking the initializer again.
+        let restored_template = match capture {
+            CaptureMode::Portable => engine
+                .load_template(&output)
+                .and_then(|template| template.with_application_files(application_files.clone()))
+                .map_err(PrepareError::State)?,
+            #[cfg(target_os = "linux")]
+            CaptureMode::Layered(_) => unsafe {
+                // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
+                engine.load_prepared_product(
+                    prepared
+                        .as_ref()
+                        .ok_or(PrepareError::InvalidRequest("missing initialized layer"))?,
+                )
+            }
+            .map_err(|error| PrepareError::State(error.into()))?,
+        };
         let mut restored = engine
             .activate_initialization(
-                &baked,
+                &restored_template,
                 Box::new(Bindings {
                     state: state.clone(),
                     io: io.clone(),
@@ -277,7 +337,7 @@ pub(crate) fn initialize_with_cache(
             .map_err(PrepareError::State)?;
         if restored.memory() != instance.memory() {
             return Err(PrepareError::InvalidRequest(
-                "baked initial memory differs from initialized memory",
+                "captured initial memory differs from initialized memory",
             ));
         }
         let restored_state = restored
@@ -287,7 +347,7 @@ pub(crate) fn initialize_with_cache(
             != postcard::to_allocvec(&restored_state).map_err(PrepareError::Encoding)?
         {
             return Err(PrepareError::InvalidRequest(
-                "baked mutable state differs from initialized state",
+                "captured mutable state differs from initialized state",
             ));
         }
         let pal_calls = instance
@@ -295,17 +355,21 @@ pub(crate) fn initialize_with_cache(
             .map_err(PrepareError::State)?;
         let state = state.lock();
         let logs = state.logs.clone();
-        return Ok(Initialized {
-            wasm: output,
-            deferred,
-            cpu_ns,
-            preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
-            deferred_reasons,
-            capability_refusals,
-            pal_calls,
-            seed_reads: state.seed_reads,
-            passes: pass,
-            logs,
+        return Ok(InitializationOutput {
+            #[cfg(target_os = "linux")]
+            prepared,
+            initialized: Initialized {
+                wasm: output,
+                deferred,
+                cpu_ns,
+                preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
+                deferred_reasons,
+                capability_refusals,
+                pal_calls,
+                seed_reads: state.seed_reads,
+                passes: pass,
+                logs,
+            },
         });
     }
     Err(PrepareError::NoConvergence(request.max_passes))
