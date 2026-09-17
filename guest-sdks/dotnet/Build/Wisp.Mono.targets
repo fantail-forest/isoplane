@@ -1,7 +1,8 @@
 <Project>
   <Import Project="Wisp.NativeExports.targets" />
   <Import Project="Wisp.Mono.Bundle.targets" />
-  <Target Name="WispMonoNativeExports" BeforeTargets="_GenerateManagedToNative"
+  <Import Project="Wisp.Mono.ManagedToNative.targets" />
+  <Target Name="WispMonoNativeExports" BeforeTargets="WispMonoManagedToNativeInputs"
           DependsOnTargets="_WasiSelectNativeArchives;WispMonoPaths">
     <PropertyGroup>
       <WasmPInvokeSymbolInventoryFile>$(_WispMonoDir)native-exports.txt</WasmPInvokeSymbolInventoryFile>

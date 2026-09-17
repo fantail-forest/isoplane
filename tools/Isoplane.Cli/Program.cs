@@ -14,6 +14,7 @@ try
     if (args.Length == 0 || args is ["--help"] or ["-h"] or [_, "--help" or "-h"])
     {
         Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request with an external Mono debugger.\nisoplane setup --source DIRECTORY\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
+        Console.WriteLine("isoplane prepare --project DIRECTORY --configuration CONFIGURATION --module FILE [--json]\nPrepare a built application for local execution without starting it.");
         Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
         return 0;
     }
@@ -56,13 +57,14 @@ try
     }
     return args[0] switch
     {
+        "prepare" => await Development.PrepareAsync(args[1..], cancellation.Token),
         "dev" => await Development.RunAsync(DevelopmentOptions.Parse(args[1..]), cancellation.Token),
         _ => throw new ArgumentException($"Unknown command '{args[0]}'. Run isoplane --help.")
     };
 }
 catch (OperationCanceledException error) when (error.CancellationToken.IsCancellationRequested)
 {
-    return args.Length > 0 && args[0] is "bundle" ? 130 : 0;
+    return args.Length > 0 && args[0] is "bundle" or "prepare" ? 130 : 0;
 }
 catch (Exception error) when (error is System.Text.Json.JsonException or ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
 {

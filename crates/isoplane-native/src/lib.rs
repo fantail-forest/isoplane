@@ -103,6 +103,26 @@ fn boundary(operation: impl FnOnce() -> Result<Vec<u8>, validation::Error>) -> N
     }
 }
 
+/// Prepares and compiles a local application without starting its listener.
+/// The supplied options identify the same configuration and compiler-owned storage as execution.
+///
+/// # Safety
+/// Both buffers remain readable and pinned for this call, as in `isoplane_validate`.
+#[no_mangle]
+pub unsafe extern "C" fn isoplane_prepare_local(
+    wasm: *const u8,
+    wasm_length: usize,
+    options: *const u8,
+    options_length: usize,
+) -> NativeResult {
+    boundary(|| {
+        // SAFETY: the managed interop wrapper pins both buffers throughout the call.
+        let (wasm, options) =
+            unsafe { (input(wasm, wasm_length)?, input(options, options_length)?) };
+        session::prepare_local(wasm, options).map_err(validation::Error::Session)
+    })
+}
+
 unsafe fn input<'a>(data: *const u8, length: usize) -> Result<&'a [u8], validation::Error> {
     if length == 0 {
         return Ok(&[]);

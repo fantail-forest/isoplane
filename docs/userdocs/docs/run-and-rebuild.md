@@ -10,7 +10,7 @@ for the differences between them.
 
 ```bash
 dotnet build -c WispInterpretedDebug
-dotnet run -c WispInterpretedDebug
+dotnet run --no-build -c WispInterpretedDebug
 ```
 
 Stop the application with Ctrl+C before starting another session for that
@@ -18,12 +18,15 @@ project. To check ahead-of-time compilation:
 
 ```bash
 dotnet build -c WispNativeAotRelease
-dotnet run -c WispNativeAotRelease
+dotnet run --no-build -c WispNativeAotRelease
 ```
 
-A successful build includes WebAssembly publication and platform validation.
-Compilation failures and unsupported imports are build failures. Fix them before
-running the new application.
+A successful build publishes and validates WebAssembly, pre-initializes the
+application with its local settings, and compiles native code for local execution.
+Preparation failures are build failures. `--no-build` starts the prepared application;
+omit it when you want `dotnet run` to check for source changes and build first.
+Changed module bytes, settings, or runtime invalidate the corresponding cached
+preparation.
 
 Test the configuration you intend to use, even if you normally iterate with
 the interpreted configuration. See [execution modes](execution-modes.md) when a

@@ -6,6 +6,12 @@
           Condition="'$(WispManagedBundleBuild)' != 'true' AND '$(_IsPublishing)' != 'true' AND '$(NoBuild)' != 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
     <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish"
              Properties="NoBuild=true;_IsPublishing=true" BuildInParallel="false" />
+    <PropertyGroup>
+      <_WispPrepareCommand>&quot;$(WispCli)&quot;</_WispPrepareCommand>
+      <_WispPrepareCommand Condition="'$(IsoplaneCliAssembly)' != ''">dotnet &quot;$(IsoplaneCliAssembly)&quot;</_WispPrepareCommand>
+      <_WispPreparedModule>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(PublishDir)', '$(AssemblyName).wasm')), '$(MSBuildProjectDirectory)'))</_WispPreparedModule>
+    </PropertyGroup>
+    <Exec Command="$(_WispPrepareCommand) prepare --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --module &quot;$(_WispPreparedModule)&quot;" />
   </Target>
   <Target Name="ComputeRunArguments">
     <PropertyGroup>

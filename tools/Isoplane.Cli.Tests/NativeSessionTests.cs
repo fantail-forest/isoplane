@@ -1,4 +1,6 @@
 using Isoplane.Cli.Tests;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Wisp.Native;
 using Xunit;
 
@@ -72,6 +74,81 @@ public sealed class NativeSessionTests
         Assert.False(session.Completion.IsCompleted, "A newer publication must remain reloadable while the native host is busy.");
     }
 
+    [Fact]
+    public async Task a_prepared_application_starts_without_native_compilation()
+    {
+        using var directory = new SessionDirectory();
+        var preparation = LocalPreparation.Prepare(ModuleValidationTests.Module, directory.Options);
+        Assert.True(preparation["compiled"]!.GetValue<bool>(),
+            "The first preparation must compile the application's native artifact.");
+        var repeated = LocalPreparation.Prepare(ModuleValidationTests.Module, directory.Options);
+        Assert.False(repeated["compiled"]!.GetValue<bool>(),
+            "An unchanged build must reuse its native artifact.");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var compilation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var session = new LocalSession(ModuleValidationTests.Module, directory.Options, message =>
+        {
+            if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult();
+            if (message["fields"] is JsonObject fields && fields["compiled"] is JsonNode compiled)
+                compilation.TrySetResult(compiled.GetValue<bool>());
+        });
+        await ready.Task.WaitAsync(deadline.Token);
+        Assert.False(await compilation.Task.WaitAsync(deadline.Token),
+            "The first listener startup after preparation must load existing native code.");
+    }
+
+    [Fact]
+    public void changed_module_bytes_require_new_native_compilation()
+    {
+        using var directory = new SessionDirectory();
+        LocalPreparation.Prepare(ModuleValidationTests.Module, directory.Options);
+        byte[] changed = [.. ModuleValidationTests.Module, 0, 2, 1, (byte)'x'];
+        var result = LocalPreparation.Prepare(changed, directory.Options);
+        Assert.True(result["compiled"]!.GetValue<bool>(),
+            "A different portable module must never reuse the preceding application's native artifact.");
+    }
+
+    [Fact]
+    public void changed_runtime_identity_requires_new_native_compilation()
+    {
+        using var directory = new SessionDirectory();
+        LocalPreparation.Prepare(ModuleValidationTests.Module, directory.Options);
+        var options = JsonNode.Parse(directory.Options)!;
+        var runtime = Path.Combine(options["compilation_directory"]!.GetValue<string>(), "runtime-identity");
+        File.WriteAllText(runtime, "changed runtime build");
+        options["runtime_library"] = runtime;
+        var result = LocalPreparation.Prepare(ModuleValidationTests.Module, JsonSerializer.SerializeToUtf8Bytes(options));
+        Assert.True(result["compiled"]!.GetValue<bool>(),
+            "A changed native runtime must never load compilation from the preceding runtime build.");
+    }
+
+    [Fact]
+    public void relative_compiler_storage_is_rejected()
+    {
+        using var directory = new SessionDirectory();
+        var options = JsonNode.Parse(directory.Options)!;
+        options["compilation_directory"] = "relative-cache";
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            LocalPreparation.Prepare(ModuleValidationTests.Module, JsonSerializer.SerializeToUtf8Bytes(options)));
+        Assert.True(failure.Message.Contains("compiler storage must be absolute", StringComparison.Ordinal),
+            "Compiler storage must not resolve relative to an application checkout.");
+    }
+
+    [Theory]
+    [InlineData("--port", "0")]
+    [InlineData("--guest-runtime", "mono")]
+    [InlineData("--debug")]
+    [InlineData("--shutdown-on-stdin-close")]
+    [InlineData("--no-build")]
+    [InlineData("--no-watch")]
+    public void preparation_refuses_execution_only_options(params string[] arguments)
+    {
+        var failure = Assert.Throws<ArgumentException>(() => DevelopmentOptions.Parse(arguments, preparing: true));
+        Assert.True(failure.Message.Contains(arguments[0], StringComparison.Ordinal),
+            "Build preparation must reject execution controls instead of ignoring them.");
+    }
+
     private static LocalSession Start(SessionDirectory directory, TaskCompletionSource<string> ready) =>
         new(ModuleValidationTests.Module, directory.Options, message =>
         {
@@ -87,7 +164,9 @@ public sealed class NativeSessionTests
         internal SessionDirectory()
         {
             File.WriteAllText(Path.Combine(directory.FullName, "wisp.toml"), "name='session'\nmodule='app.wasm'\n");
-            Options = new LocalProject(directory.FullName).SessionOptions(0, []);
+            var options = JsonNode.Parse(new LocalProject(directory.FullName).SessionOptions(0, []))!;
+            options["compilation_directory"] = Path.Combine(directory.FullName, "compiler");
+            Options = JsonSerializer.SerializeToUtf8Bytes(options);
         }
 
         public void Dispose() => directory.Delete(recursive: true);

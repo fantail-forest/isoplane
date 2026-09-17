@@ -1,5 +1,6 @@
 //! One project's guest execution and local bindings, with no node control plane.
 
+mod compressed_module;
 mod preparation_cache;
 
 use std::collections::HashMap;
@@ -28,6 +29,7 @@ pub struct Prepared {
     tenant: String,
     version: String,
     allow_endpoints: Vec<std::net::SocketAddr>,
+    compiled: bool,
 }
 
 impl Prepared {
@@ -67,14 +69,32 @@ impl Prepared {
             ..Default::default()
         })?);
         let module = ModuleId::new(&manifest.name, &version);
-        let activator = Arc::new(EngineActivator::load(engine, module, &template)?);
+        let runtime_identity = blake3::hash(&std::fs::read(&project.runtime_library)?);
+        // SAFETY: LocalProject selects private per-user compiler storage outside the
+        // checkout. Only the engine's atomic compiler writes populate these entries;
+        // neither application manifests nor portable artifacts supply native code.
+        let cache = unsafe {
+            wisp_engine::CompilationCache::from_trusted_directory(
+                project
+                    .compilation_directory
+                    .join(runtime_identity.to_hex().as_str()),
+            )
+        }?;
+        let (template, compiled) = cache.load(&engine, &template)?;
+        tracing::info!(compiled, "local native compilation ready");
+        let activator = Arc::new(EngineActivator::new(engine, template, module));
         Ok(Self {
             activator: PreparedActivator::Ordinary(activator),
             manifest,
             tenant: project.tenant(),
             version,
             allow_endpoints: project.allow_endpoints.clone(),
+            compiled,
         })
+    }
+    /// Whether preparing this application required native compilation.
+    pub fn compiled(&self) -> bool {
+        self.compiled
     }
     /// Validates and compiles a marked debug module without pre-initialization.
     pub fn build_debug(project: &Project, wasm: &[u8]) -> Result<Self, super::Error> {
@@ -101,6 +121,7 @@ impl Prepared {
             tenant: project.tenant(),
             version,
             allow_endpoints: project.allow_endpoints.clone(),
+            compiled: true,
         })
     }
 }
@@ -167,7 +188,7 @@ fn validate(
                 .join("\n")
         )
     })?;
-    let compressed_bytes = zstd::encode_all(wasm, 19)?.len() as u64;
+    let compressed_bytes = compressed_module::size(&project.state_directory, wasm)?;
     let limit = manifest.effective_limits().module_bytes_compressed;
     anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
     Ok(report)

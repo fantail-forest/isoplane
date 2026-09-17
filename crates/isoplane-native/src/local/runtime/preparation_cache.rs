@@ -9,7 +9,7 @@ use anyhow::Context;
 use super::Project;
 
 /// Reuses a verified image for the current preparation inputs, or publishes a new one.
-/// Only sandbox bytecode is cached; native compilation and admission still run normally.
+/// Only sandbox bytecode is cached here; admission still checks each reused image.
 pub(super) fn template(
     project: &Project,
     wasm: &[u8],
@@ -162,6 +162,7 @@ mod tests {
                 manifest: serde_json::from_str(r#"{"name":"app"}"#).unwrap(),
                 state_directory: directory.path().join("state"),
                 runtime_library: directory.path().join("runtime"),
+                compilation_directory: directory.path().join("compilation"),
                 init_sandbox: InitSandbox::Sealed,
                 allow_endpoints: vec![],
                 platform_files: PlatformFiles::new(vec![PlatformFile {

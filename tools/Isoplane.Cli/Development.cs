@@ -5,6 +5,17 @@ namespace Wisp.Cli;
 
 internal static class Development
 {
+    internal static async Task<int> PrepareAsync(string[] arguments, CancellationToken cancellation)
+    {
+        var options = DevelopmentOptions.Parse(arguments, preparing: true);
+        var configuration = await LocalSecrets.ReadAsync(options, cancellation);
+        var project = new LocalProject(options.Directory);
+        var module = await File.ReadAllBytesAsync(options.Module ?? project.Module, cancellation);
+        var report = LocalPreparation.Prepare(module, project.SessionOptions(null, configuration));
+        if (options.Json) Console.WriteLine(report.ToJsonString());
+        return 0;
+    }
+
     internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         if (!options.ShutdownOnInputClose)

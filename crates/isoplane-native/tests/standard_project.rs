@@ -131,6 +131,90 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
     }
 }
 
+#[tokio::test]
+async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication() {
+    let directory = tempfile::tempdir().expect("isolate the incremental installed project journey");
+    let app = wisp_fixtures::aspnet_project(directory.path());
+    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let build = Command::new("dotnet")
+        .args([
+            "build",
+            "-c",
+            "WispInterpretedDebug",
+            "--disable-build-servers",
+        ])
+        .current_dir(&app)
+        .env("WISP_CLI", &cli)
+        .env(
+            "WISP_GUEST_RUNTIME_FEED",
+            wisp_fixtures::guest_runtime_feed(),
+        )
+        .env("XDG_DATA_HOME", directory.path().join("user-data"))
+        .output()
+        .expect("build and prepare the installed application");
+    assert!(
+        build.status.success(),
+        "build preparation must succeed: {}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut first = start_dotnet(&app, &cli, "WispInterpretedDebug", false);
+    assert!(
+        first.diagnostics().contains("\"compiled\":false"),
+        "the first run after dotnet build must reuse native compilation"
+    );
+    first.stop();
+    let native = app.join("obj/WispInterpretedDebug/net10.0/wasi-wasm/wasm/for-publish");
+    let artifacts: std::collections::BTreeMap<_, _> = std::fs::read_dir(&native)
+        .expect("an interpreted run produces native build artifacts")
+        .map(|entry| entry.expect("read a native artifact").path())
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("o" | "h" | "wasm" | "complete")
+            )
+        })
+        .map(|path| {
+            let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+            (path, modified)
+        })
+        .collect();
+    assert!(
+        artifacts.contains_key(&native.join("wisp-managed-to-native.complete")),
+        "successful analysis must record completion so later runs can reuse it"
+    );
+    assert!(
+        artifacts.keys().any(|path| path
+            .extension()
+            .is_some_and(|extension| extension == "wasm")),
+        "the reuse check must cover the linked sandbox module"
+    );
+    let mut second = start_dotnet(&app, &cli, "WispInterpretedDebug", false);
+    let response = reqwest::get(&second.url)
+        .await
+        .expect("request the reused application");
+    assert_eq!(
+        response.status(),
+        200,
+        "a reused interpreted publication must serve requests"
+    );
+    assert_eq!(
+        response
+            .text()
+            .await
+            .expect("read the reused application response"),
+        "Hello from Isoplane!",
+        "the reused publication must execute the generated application"
+    );
+    second.stop();
+    for (path, modified) in artifacts {
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(), modified,
+            "an unchanged dotnet run must preserve analysis completion, headers, objects and the linked module: {}", path.display()
+        );
+    }
+}
+
 fn start_dotnet(
     project: &std::path::Path,
     cli: &std::path::Path,
@@ -161,6 +245,13 @@ fn start_dotnet(
         ])
         .current_dir(project)
         .env("WISP_CLI", cli)
+        .env(
+            "XDG_DATA_HOME",
+            project
+                .parent()
+                .expect("fixture project has a root")
+                .join("user-data"),
+        )
         .env(
             "PATH",
             std::env::join_paths(paths).expect("tool paths contain no path separators"),

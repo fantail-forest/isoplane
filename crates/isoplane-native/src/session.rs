@@ -32,6 +32,7 @@ pub(crate) struct Options {
     manifest: wisp_abi::config::AppManifest,
     state_directory: PathBuf,
     runtime_library: PathBuf,
+    compilation_directory: PathBuf,
     #[serde(default)]
     init_sandbox: wisp_abi::config::InitSandbox,
     #[serde(default)]
@@ -56,6 +57,10 @@ impl Options {
             "local state directory must be absolute"
         );
         anyhow::ensure!(
+            self.compilation_directory.is_absolute(),
+            "local compiler storage must be absolute"
+        );
+        anyhow::ensure!(
             self.allow_endpoints
                 .iter()
                 .all(|address| address.port() != 0
@@ -73,11 +78,24 @@ impl Options {
             manifest: self.manifest.clone(),
             state_directory: self.state_directory.clone(),
             runtime_library: self.runtime_library.clone(),
+            compilation_directory: self.compilation_directory.clone(),
             init_sandbox: self.init_sandbox,
             allow_endpoints: self.allow_endpoints.clone(),
             platform_files,
         })
     }
+}
+
+pub(crate) fn prepare_local(wasm: &[u8], options: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let options: Options = serde_json::from_slice(options)?;
+    let inputs = options.inputs()?;
+    let configuration = wisp_host::bindings::RuntimeConfiguration::from_json(&serde_json::to_vec(
+        &options.configuration,
+    )?)?;
+    let prepared = Prepared::build(&inputs, wasm, &configuration)?;
+    Ok(serde_json::to_vec(
+        &serde_json::json!({"compiled": prepared.compiled()}),
+    )?)
 }
 
 impl Session {

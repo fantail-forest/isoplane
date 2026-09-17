@@ -4,14 +4,14 @@ internal enum GuestRuntimeProfile { NativeAot, Mono }
 
 internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, GuestRuntimeProfile? GuestRuntime, bool Debug, string Configuration = "Debug", bool NoBuild = false, string? Module = null)
 {
-    internal static DevelopmentOptions Parse(string[] arguments)
+    internal static DevelopmentOptions Parse(string[] arguments, bool preparing = false)
     {
         var configuration = "Debug";
-        var noBuild = false;
+        var noBuild = preparing;
         string? module = null;
         var directory = Environment.CurrentDirectory;
         ushort? port = null;
-        var watch = true;
+        var watch = !preparing;
         var json = false;
         var debug = false;
         var shutdownOnInputClose = false;
@@ -24,7 +24,7 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                 case "-c" when index + 1 < arguments.Length:
                     configuration = arguments[++index];
                     break;
-                case "--no-build":
+                case "--no-build" when !preparing:
                     noBuild = true;
                     break;
                 case "--module" when index + 1 < arguments.Length:
@@ -33,12 +33,12 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                 case "--project" when index + 1 < arguments.Length:
                     directory = Path.GetFullPath(arguments[++index]);
                     break;
-                case "--port" when index + 1 < arguments.Length:
+                case "--port" when !preparing && index + 1 < arguments.Length:
                     if (!ushort.TryParse(arguments[++index], out var parsedPort))
                         throw new ArgumentException("--port must be between 0 and 65535.");
                     port = parsedPort;
                     break;
-                case "--guest-runtime" when index + 1 < arguments.Length:
+                case "--guest-runtime" when !preparing && index + 1 < arguments.Length:
                     guestRuntime = arguments[++index] switch
                     {
                         "mono" => GuestRuntimeProfile.Mono,
@@ -46,16 +46,16 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                         _ => throw new ArgumentException("--guest-runtime must be mono or nativeaot.")
                     };
                     break;
-                case "--debug":
+                case "--debug" when !preparing:
                     debug = true;
                     break;
                 case "--json":
                     json = true;
                     break;
-                case "--shutdown-on-stdin-close":
+                case "--shutdown-on-stdin-close" when !preparing:
                     shutdownOnInputClose = true;
                     break;
-                case "--no-watch":
+                case "--no-watch" when !preparing:
                     watch = false;
                     break;
                 default:

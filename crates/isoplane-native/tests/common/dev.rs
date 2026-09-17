@@ -227,7 +227,11 @@ impl Dev {
     }
 
     pub fn diagnostics(&self) -> String {
-        self.lines.try_iter().collect::<Vec<_>>().join("\n")
+        format!(
+            "{}{}",
+            self.observed,
+            self.lines.try_iter().collect::<Vec<_>>().join("\n")
+        )
     }
 
     pub fn pid(&self) -> u32 {

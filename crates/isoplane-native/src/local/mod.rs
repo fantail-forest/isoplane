@@ -15,6 +15,8 @@ pub struct Inputs {
     pub state_directory: std::path::PathBuf,
     /// The loaded native implementation, included in the preparation identity.
     pub runtime_library: std::path::PathBuf,
+    /// Compiler-owned storage selected by the CLI outside application source control.
+    pub compilation_directory: std::path::PathBuf,
     /// Initialization capability policy supplied by the SDK.
     pub init_sandbox: wisp_abi::config::InitSandbox,
     /// Explicitly authorized local service destinations.

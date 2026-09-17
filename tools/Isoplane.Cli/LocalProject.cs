@@ -37,6 +37,7 @@ internal sealed class LocalProject
             ["manifest"] = manifest,
             ["state_directory"] = debugDirectory ?? Path.Combine(directory, ".wisp", "local", identity),
             ["runtime_library"] = NativeRuntime.LibraryPath,
+            ["compilation_directory"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Isoplane", "compiled"),
             ["configuration"] = configuration,
             ["port"] = port,
             ["log_filter"] = Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",
