@@ -1,6 +1,6 @@
 //! Native platform operations consumed by managed local development tooling.
 
-pub mod local;
+mod local;
 #[cfg(target_os = "linux")]
 mod process;
 mod session;

@@ -1,5 +1,4 @@
 name = "IsoplaneApp"
-tenant = "IsoplaneLocalTenant"
 module = "out/IsoplaneApp.wasm"
 
 [dev]

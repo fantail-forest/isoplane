@@ -3,8 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The lifecycle tiers an instance moves through. Defined here because the
-/// cell owns the transitions while `wispd` reports the counts and `wisp
-/// status` prints them.
+/// cell owns the transitions while the node status API reports their counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LifecycleTier {

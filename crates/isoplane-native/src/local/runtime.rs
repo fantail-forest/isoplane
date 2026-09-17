@@ -71,7 +71,7 @@ impl Prepared {
         Ok(Self {
             activator: PreparedActivator::Ordinary(activator),
             manifest,
-            tenant: project.tenant.clone(),
+            tenant: project.tenant(),
             version,
             allow_endpoints: project.allow_endpoints.clone(),
         })
@@ -98,7 +98,7 @@ impl Prepared {
         Ok(Self {
             activator: PreparedActivator::Debug(activator),
             manifest,
-            tenant: project.tenant.clone(),
+            tenant: project.tenant(),
             version,
             allow_endpoints: project.allow_endpoints.clone(),
         })
@@ -117,14 +117,14 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
             module_hash: wisp_engine::ModuleHash::of(wasm),
             init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,
         })
-        .map_err(|e| anyhow::anyhow!("pre-initializing {} with {}: {e}; managed guests may require --init-sandbox runtime-bringup", project.manifest.name, project.init_sandbox.as_str()))?
+        .map_err(|e| anyhow::anyhow!("pre-initializing {} with {}: {e}; managed guests may require dev.init_sandbox = 'runtime-bringup' in wisp.toml", project.manifest.name, project.init_sandbox.as_str()))?
         .template_wasm)
 }
 
 fn initialization_network(project: &Project) -> wisp_prepare::InitializationNetwork {
     let host = CellConfig::default();
     wisp_prepare::InitializationNetwork {
-        tenant: project.tenant.clone(),
+        tenant: project.tenant(),
         allowlist: project.manifest.bindings.fetch_allowlist.clone(),
         allowed_destinations: project.allow_endpoints.clone(),
         limits: wisp_runtime::network::NetworkLimits::default(),

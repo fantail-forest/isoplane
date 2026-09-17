@@ -80,8 +80,8 @@ scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*
 
 cargo run -p wispd -- --config wispd.toml          # Run a node
 cargo run -p wispd -- --config wispd.toml --check  # Validate a config without running
-cargo run -p wisp-cli -- deploy --app <name> --module <wasm> --host <hostname>
-cargo run -p wisp-cli -- doctor <wasm>             # Validate a module locally
+isoplane deploy --app <name> --project <directory> --team <name>
+isoplane doctor <wasm>             # Validate a module locally
 
 cd docs/userdocs && npm run start                  # Serve customer docs
 
@@ -186,7 +186,7 @@ Tests are not optional. Ship a change to behaviour with the test that would have
 
 ### Principles
 
-1. **A feature is proven at the level that proves it, in a suite that stays fast.** Validate critical integrations (the SDK against the host, wasmtime, pre-initialisation, the execution engine) with integration tests through their real interfaces. Validate behaviour a customer sees end to end through `wispd`'s listener or the `wisp` command when that runs in reasonable time, with a small number of such tests rather than one per change. A fast suite is a feature of the codebase: replace a slow end-to-end test whenever an integration test could cover it. Code reachable only from fakes or benchmarks is still not a feature.
+1. **A feature is proven at the level that proves it, in a suite that stays fast.** Validate critical integrations (the SDK against the host, wasmtime, pre-initialisation, the execution engine) with integration tests through their real interfaces. Validate behaviour a customer sees end to end through `wispd`'s listener or the `isoplane` command when that runs in reasonable time, with a small number of such tests rather than one per change. A fast suite is a feature of the codebase: replace a slow end-to-end test whenever an integration test could cover it. Code reachable only from fakes or benchmarks is still not a feature.
 2. **Tests are deterministic.** No elapsed-time assertions, no ratios of timings, no "A finished before B". Assert order with explicit sequencing; make time a clock the test controls.
 3. **Every guard fires in a test.** Ship every limit, rejection rule, and budget kill with a test that trips it. A check that has never failed is not a check.
 4. **Tests assert logic; benchmarks measure.** Tests may assert deterministic quantities and configured limits, including byte sizes, resource accounting, and deadlines advanced with a controlled clock. Machine-dependent performance thresholds belong in benchmarks outside `cargo test`. A benchmark reports measurements without a pass/fail verdict.

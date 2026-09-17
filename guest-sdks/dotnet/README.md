@@ -31,20 +31,20 @@ dotnet publish guests/dotnet/src/WispGuest.csproj -c Release
 links WASM against the source-built runtime pack the local feed offers the
 profile (`guest-runtime/build.sh` builds and publishes both packs),
 records that pack's identity beside the module, and judges the module with
-`wisp doctor`. A guest's `build.sh` uses this same MSBuild integration and
+`isoplane doctor`. A guest's `build.sh` uses this same MSBuild integration and
 copies the module and its identity into `out/`.
 
 On macOS, install the .NET 10 SDK and start Docker Desktop or a compatible
 local Docker runtime. Publishing provisions the Linux compiler image and
 NuGet cache on first use. It mounts source read-only, uses separate build
 intermediates per invocation, and returns developer-owned output. It removes
-its compiler container on completion or cancellation. `wisp dev` uses the
+its compiler container on completion or cancellation. `isoplane dev` uses the
 same publication path and executes the guest in the native runtime.
 
 After the first online publish, `dotnet publish -p:WispOffline=true` uses the
 cached image and packages with compiler networking disabled. Missing inputs
 are errors naming what needs provisioning. `WispOffline=true` in the
-environment applies the same policy to builds launched by `wisp dev`.
+environment applies the same policy to builds launched by `isoplane dev`.
 
 The cache defaults to the user's application-data directory under `Wisp`;
 `-p:WispCompilerCache=/path/to/cache` relocates it. Projects and references are

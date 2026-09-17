@@ -43,6 +43,7 @@ internal sealed class OwnedProcess : IDisposable
             directory = string.IsNullOrEmpty(child.WorkingDirectory) ? Environment.CurrentDirectory : child.WorkingDirectory,
             environment = child.Environment.Where(pair => pair.Value is not null).ToDictionary(pair => pair.Key, pair => pair.Value!),
             capture_output = child.RedirectStandardOutput, capture_errors = child.RedirectStandardError,
+            cleanup_grace_ms = checked((ulong)grace.TotalMilliseconds),
         });
         fixed (byte* data = settings)
         {

@@ -11,7 +11,6 @@ members = [
     "crates/wisp-trust",
     "crates/wisp-proxy",
     "crates/wispd",
-    "crates/wisp-cli",
     "crates/isoplane-native",
     "crates/wisp-fixtures",
     "crates/wisp-runtime-acceptance",
@@ -26,8 +25,6 @@ license-file = "LICENSE.txt"
 rust-version = "1.88"
 
 [workspace.dependencies]
-rustix = { version = "1.1.4", features = ["process"] }
-isoplane-native = { path = "crates/isoplane-native" }
 csbindgen = "=1.9.8"
 procfs = { version = "0.18", default-features = false }
 fs4 = "1.1.0"
@@ -99,6 +96,7 @@ tempfile    = "3"
 memmap2 = "0.9"
 linux-raw-sys = { version = "0.12", features = ["ioctl"] }
 fd-lock     = "4"
+rustix = { version = "1.1.4", features = ["process", "event"] }
 rayon       = "1"
 base64      = "0.22"
 reqwest     = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }

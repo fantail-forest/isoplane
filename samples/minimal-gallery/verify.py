@@ -269,7 +269,7 @@ with tempfile.TemporaryDirectory(prefix="run-", dir=root) as tmp:
         }
         module = args.module.resolve()
         (project / "wisp.toml").write_text(
-            f'name="{args.name}"\ntenant="local-development"\nmodule="{module}"\nlimits={limits_toml(args.limits_json)}\n[dev]\ninit_sandbox="runtime-bringup"\nallow_endpoints=["127.0.0.1:{port}","127.0.0.1:{s3port}","[::ffff:127.0.0.1]:{s3port}"]\n[dev.trust]\nbundle="{d}/ca.crt"\nsha256="{hashlib.sha256((d/'ca.crt').read_bytes()).hexdigest()}"\n'
+            f'name="{args.name}"\nmodule="{module}"\nlimits={limits_toml(args.limits_json)}\n[dev]\ninit_sandbox="runtime-bringup"\nallow_endpoints=["127.0.0.1:{port}","127.0.0.1:{s3port}","[::ffff:127.0.0.1]:{s3port}"]\n[dev.trust]\nbundle="{d}/ca.crt"\nsha256="{hashlib.sha256((d/'ca.crt').read_bytes()).hexdigest()}"\n'
         )
         logpath = root / f"{mode}-ingest.log"
         with logpath.open("w") as log:

@@ -10,14 +10,5 @@
   "tags": {
     "language": "C#",
     "type": "project"
-  },
-  "symbols": {
-    "tenant": {
-      "type": "parameter",
-      "datatype": "string",
-      "isRequired": true,
-      "description": "Explicit tenant identity for local development.",
-      "replaces": "IsoplaneLocalTenant"
-    }
   }
 }

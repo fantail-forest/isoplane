@@ -15,7 +15,7 @@ Change to a directory where you keep projects, outside the extracted release.
 Create the application and add its local package source:
 
 ```bash
-dotnet new isoplane-web --name MyApi --tenant local-development
+dotnet new isoplane-web --name MyApi
 cd MyApi
 dotnet nuget add source "$preview_release/packages" \
   --name isoplane-preview --configfile nuget.config
@@ -25,8 +25,7 @@ You now have `Application.cs`, a project file, and `wisp.toml`. Open
 `Application.cs` in your editor. Find the route that returns
 `Hello from Isoplane!`. Leave it unchanged for the first run.
 
-The tenant name identifies local development state; it is not a login or a
-credential.
+Local state is private to the project directory.
 
 ## See the first response
 

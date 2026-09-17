@@ -41,9 +41,15 @@ libc.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs.workspace = true
+rustix.workspace = true
 
 [build-dependencies]
 csbindgen.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
 wat.workspace = true
+wisp-fixtures.workspace = true
+reqwest.workspace = true
+portable-pty.workspace = true
+toml.workspace = true

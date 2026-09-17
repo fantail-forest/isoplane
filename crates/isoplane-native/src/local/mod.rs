@@ -11,8 +11,6 @@ pub use runtime::{LocalApp, Prepared};
 pub struct Inputs {
     /// Application capabilities and resource limits.
     pub manifest: wisp_abi::config::AppManifest,
-    /// Explicit identity for this local application's resources.
-    pub tenant: String,
     /// Private local persistent state and preparation cache.
     pub state_directory: std::path::PathBuf,
     /// The loaded native implementation, included in the preparation identity.
@@ -23,6 +21,13 @@ pub struct Inputs {
     pub allow_endpoints: Vec<std::net::SocketAddr>,
     /// Host-provided files visible to the sandbox.
     pub platform_files: wisp_engine::PlatformFiles,
+}
+
+impl Inputs {
+    fn tenant(&self) -> String {
+        let identity = blake3::hash(self.state_directory.as_os_str().as_encoded_bytes());
+        format!("local:{identity}")
+    }
 }
 
 /// Failure to prepare or start a local application.

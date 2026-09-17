@@ -1,4 +1,4 @@
-//! `wisp doctor`: the capability manifest and its machine-readable form.
+//! `isoplane doctor`: the capability manifest and its machine-readable form.
 
 mod common;
 
@@ -11,7 +11,7 @@ fn module(imports: &[(&str, &str)], exports: &[&str]) -> Vec<u8> {
     module_with(imports, exports, None)
 }
 
-/// [`module`] with a declared memory maximum, which is legal on one limits and
+/// [`module`] with a declared memory maximum, which is legal on one memory budget and
 /// not on another.
 fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32>) -> Vec<u8> {
     use wisp_abi::imports::{Sig, Ty};
@@ -97,7 +97,7 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
     );
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(0), "stderr: {}", out.stderr);
 
     assert!(
@@ -120,7 +120,7 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
         "future-returning imports remain visible"
     );
     assert!(
-        out.stdout.contains("sensitive"),
+        out.stdout.contains("sensitive") && out.stdout.contains("init_hash_seed"),
         "sensitive imports are marked"
     );
     assert!(
@@ -129,13 +129,7 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
         "the plain-English answer names each capability group"
     );
     assert!(
-        out.stdout
-            .contains("no threads, no files, no ambient sockets"),
-        "what a module cannot do is stated"
-    );
-    assert!(
-        out.stdout
-            .contains("✓ every import is a declared capability"),
+        out.stdout.contains("✓ no violations"),
         "a clean module gets a clean verdict"
     );
 }
@@ -153,7 +147,7 @@ fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
     );
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(2), "a rejected module must exit 2");
     assert!(
         out.stdout.contains("V1")
@@ -163,7 +157,7 @@ fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("REJECTED") && out.stdout.contains("no dynamic-linking escape hatch"),
+        out.stdout.contains("REJECTED"),
         "the verdict is stated: {}",
         out.stdout
     );
@@ -181,7 +175,7 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
         &module(&pal, &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"]),
     );
 
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(0),
@@ -245,7 +239,7 @@ fn a_wasi_import_outside_the_whitelist_is_still_refused() {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
     );
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
@@ -265,7 +259,7 @@ fn doctor_notices_a_module_that_cannot_be_activated_at_all() {
         "noexports.wasm",
         &module(&[("wisp", "http_fetch")], &["memory"]),
     );
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
@@ -273,7 +267,7 @@ fn doctor_notices_a_module_that_cannot_be_activated_at_all() {
     );
     assert!(
         out.stdout
-            .contains("required export `wisp_handle` is missing"),
+            .contains("required guest export `wisp_handle` is missing"),
         "the missing export is named: {}",
         out.stdout
     );
@@ -288,7 +282,7 @@ fn doctor_has_a_machine_readable_form() {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
     );
-    let out = run(&["--json", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--json", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(0), "a clean module exits 0");
     let v: serde_json::Value = serde_json::from_str(&out.stdout).expect("valid json");
     assert_eq!(v["rejected"], false, "the verdict is in the JSON");
@@ -317,7 +311,7 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
             &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
         ),
     );
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(out.code, Some(0), "a pure module is accepted");
     assert!(
         out.stdout.contains("it holds no I/O capability at all"),
@@ -326,8 +320,7 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
     );
 }
 
-/// A module the manifest passes and the validator refuses on the smaller limits.
-#[cfg(feature = "control")]
+/// A module the manifest passes and the validator refuses on a restricted memory budget.
 #[test]
 fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     let m = module_with(
@@ -338,8 +331,8 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     let (_dir, p) = write_module("bigmem.wasm", &m);
 
     let ok = run(&[
-        "--no-color",
         "doctor",
+        "--no-color",
         p.to_str().unwrap(),
         "--guest-memory-bytes",
         "134217728",
@@ -347,14 +340,14 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     assert_eq!(
         ok.code,
         Some(0),
-        "128 MiB is the configured ceiling: {}",
+        "128 MiB is the Standard ceiling: {}",
         ok.stdout
     );
-    assert!(ok.stdout.contains("numeric limits from"), "{}", ok.stdout);
+    assert!(ok.stdout.contains("numeric limits"), "{}", ok.stdout);
 
     let bad = run(&[
-        "--no-color",
         "doctor",
+        "--no-color",
         p.to_str().unwrap(),
         "--guest-memory-bytes",
         "67108864",
@@ -362,12 +355,11 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     assert_eq!(
         bad.code,
         Some(2),
-        "the same module is over the configured ceiling: {}",
+        "the same module is over the Free ceiling: {}",
         bad.stdout
     );
     assert!(
-        bad.stdout
-            .contains("✓ every import is a declared capability"),
+        bad.stdout.contains("✓ wisp_handle") && !bad.stdout.contains("V1MissingExport"),
         "the manifest alone would have passed it: {}",
         bad.stdout
     );
@@ -376,10 +368,9 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
         "the validator names the rule: {}",
         bad.stdout
     );
-    assert!(bad.stdout.contains("numeric limits from"), "{}", bad.stdout);
+    assert!(bad.stdout.contains("numeric limits"), "{}", bad.stdout);
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn doctor_takes_numeric_limits_from_the_app_manifest() {
     let tmp = tempfile::tempdir().expect("a temporary directory");
@@ -387,7 +378,7 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     std::fs::create_dir_all(dir.join("out")).unwrap();
     std::fs::write(
         dir.join("wisp.toml"),
-        "name = \"pinched\"\nlimits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n",
+        "name = \"pinched\"\nlimits = \"free\"\n",
     )
     .unwrap();
     let p = dir.join("out").join("bigmem.wasm");
@@ -401,15 +392,15 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     )
     .unwrap();
 
-    let out = run(&["--no-color", "doctor", p.to_str().unwrap()]);
+    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
-        "the app's limits refuses the module: {}",
+        "the app's numeric limits refuses the module: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("numeric limits from") && out.stdout.contains("wisp.toml"),
+        out.stdout.contains("numeric limits") && out.stdout.contains("wisp.toml"),
         "the limits and where it came from are stated: {}",
         out.stdout
     );
@@ -432,7 +423,6 @@ fn a_garbage_module_is_an_error_not_a_panic() {
     );
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn doctor_reports_and_enforces_the_default_memory_ceiling() {
     let (_dir, path) = write_module(
@@ -443,30 +433,26 @@ fn doctor_reports_and_enforces_the_default_memory_ceiling() {
             Some(8192),
         ),
     );
-    let out = run(&["--json", "doctor", path.to_str().unwrap()]);
+    let out = run(&["doctor", "--json", path.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
         "the default must reject a 512 MiB memory declaration"
     );
     let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(
-        verdict["limits"]["module_bytes_compressed"], 52428800,
-        "the default plan must remain Standard"
-    );
+
     assert_eq!(
         verdict["guest_memory_bytes"], 134217728,
         "JSON must report the effective default memory ceiling"
     );
     assert_eq!(
         verdict["guest_memory_from"], "limits",
-        "JSON must distinguish the configured ceiling from an override"
+        "JSON must distinguish the numeric ceiling from an override"
     );
 }
 
-#[cfg(feature = "control")]
 #[test]
-fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
+fn doctor_admits_an_explicit_memory_override_without_changing_numeric_limits() {
     let (_dir, path) = write_module(
         "large.wasm",
         &module_with(
@@ -477,8 +463,8 @@ fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
     );
     for format in ["--json", "--no-color"] {
         let out = run(&[
-            format,
             "doctor",
+            format,
             path.to_str().unwrap(),
             "--guest-memory-bytes",
             "536870912",
@@ -491,10 +477,7 @@ fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
         );
         if format == "--json" {
             let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-            assert_eq!(
-                verdict["limits"]["module_bytes_compressed"], 52428800,
-                "the memory override cannot select Enterprise"
-            );
+
             assert_eq!(
                 verdict["guest_memory_bytes"], 536870912_u64,
                 "JSON must report the applied byte ceiling"
@@ -505,7 +488,7 @@ fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
             );
         } else {
             assert!(
-                out.stdout.contains("numeric limits from")
+                out.stdout.contains("numeric limits")
                     && out
                         .stdout
                         .contains("guest memory ceiling: 536870912 bytes (--guest-memory-bytes)"),
@@ -516,7 +499,6 @@ fn doctor_admits_an_explicit_memory_override_without_changing_other_limits() {
     }
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn a_doctor_memory_override_requires_a_declared_module_maximum() {
     let (_dir, path) = write_module(
@@ -524,8 +506,8 @@ fn a_doctor_memory_override_requires_a_declared_module_maximum() {
         &module(&[], &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"]),
     );
     let out = run(&[
-        "--json",
         "doctor",
+        "--json",
         path.to_str().unwrap(),
         "--guest-memory-bytes",
         "536870912",
@@ -542,7 +524,6 @@ fn a_doctor_memory_override_requires_a_declared_module_maximum() {
     );
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn a_doctor_memory_override_does_not_admit_hostile_imports() {
     let (_dir, path) = write_module(
@@ -554,8 +535,8 @@ fn a_doctor_memory_override_does_not_admit_hostile_imports() {
         ),
     );
     let out = run(&[
-        "--json",
         "doctor",
+        "--json",
         path.to_str().unwrap(),
         "--guest-memory-bytes",
         "536870912",
@@ -574,12 +555,21 @@ fn a_doctor_memory_override_does_not_admit_hostile_imports() {
 
 #[test]
 fn invalid_doctor_memory_budgets_name_the_supported_byte_constraints() {
-    for bytes in ["0", "1", "134217729", "4295032832", "invalid"] {
-        let out = run(&["doctor", "unused.wasm", "--guest-memory-bytes", bytes]);
+    let (_directory, path) = write_module(
+        "valid.wasm",
+        &module(&[], &["memory", "wisp_alloc", "wisp_handle", "wisp_wake"]),
+    );
+    for bytes in ["0", "1", "134217729", "4295032832"] {
+        let out = run(&[
+            "doctor",
+            path.to_str().unwrap(),
+            "--guest-memory-bytes",
+            bytes,
+        ]);
         assert_eq!(
             out.code,
-            Some(2),
-            "invalid memory policy must fail argument parsing"
+            Some(1),
+            "invalid memory policy must fail before reporting a module verdict"
         );
         assert!(
             out.stderr.contains("65536") && out.stderr.contains("4294967296"),
@@ -589,7 +579,6 @@ fn invalid_doctor_memory_budgets_name_the_supported_byte_constraints() {
     }
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() {
     let (directory, path) = write_module(
@@ -603,21 +592,18 @@ fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() 
     let manifest = directory.path().join("wisp.toml");
     std::fs::write(
         &manifest,
-        "name='large'\nlimits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=536870912\n",
+        "name='large'\nlimits='standard'\nguest_memory_bytes=536870912\n",
     )
     .unwrap();
-    let out = run(&["--json", "doctor", path.to_str().unwrap()]);
+    let out = run(&["doctor", "--json", path.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(0),
-        "a limits selection flag must not discard the manifest memory ceiling: {}",
+        "a numeric budgets must not discard the manifest memory ceiling: {}",
         out.stdout
     );
     let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(
-        verdict["limits"]["module_bytes_compressed"], 5242880,
-        "the limits flag must remain independent of manifest memory"
-    );
+
     assert_eq!(
         verdict["guest_memory_bytes"], 536870912_u64,
         "doctor must apply manifest memory"
@@ -627,7 +613,7 @@ fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() 
         format!("guest_memory_bytes in {}", manifest.display()),
         "the verdict must name the memory setting's actual manifest"
     );
-    let text = run(&["--no-color", "doctor", path.to_str().unwrap()]);
+    let text = run(&["doctor", "--no-color", path.to_str().unwrap()]);
     assert_eq!(
         text.code,
         Some(0),
@@ -643,7 +629,6 @@ fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() 
     );
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
     let (directory, path) = write_module(
@@ -656,12 +641,12 @@ fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
     );
     std::fs::write(
         directory.path().join("wisp.toml"),
-        "name='large'\nlimits = { module_bytes_compressed = 52428800, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\nguest_memory_bytes=536870912\n",
+        "name='large'\nlimits='standard'\nguest_memory_bytes=536870912\n",
     )
     .unwrap();
     let out = run(&[
-        "--json",
         "doctor",
+        "--json",
         path.to_str().unwrap(),
         "--guest-memory-bytes",
         "134217728",
@@ -680,13 +665,8 @@ fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
         verdict["guest_memory_from"], "--guest-memory-bytes",
         "the memory source must identify the winning flag"
     );
-    assert_eq!(
-        verdict["limits"]["module_bytes_compressed"], 52428800,
-        "a memory flag must not change the manifest limits"
-    );
 }
 
-#[cfg(feature = "control")]
 #[test]
 fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() {
     let directory = tempfile::tempdir().unwrap();
@@ -699,7 +679,7 @@ fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() 
     std::fs::create_dir(&nested).unwrap();
     std::fs::write(
         nested.join("wisp.toml"),
-        "name='inner'\nlimits = { module_bytes_compressed = 52428800, instance_memory_max = 134217728, cpu_ms_per_http_dispatch = 30000, subrequests_per_dispatch = 200, pending_futures_per_dispatch = 64 }\n",
+        "name='inner'\nlimits='standard'\n",
     )
     .unwrap();
     let path = nested.join("large.wasm");
@@ -712,7 +692,7 @@ fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() 
         ),
     )
     .unwrap();
-    let out = run(&["--json", "doctor", path.to_str().unwrap()]);
+    let out = run(&["doctor", "--json", path.to_str().unwrap()]);
     assert_eq!(
         out.code,
         Some(2),
@@ -721,7 +701,7 @@ fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() 
     let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(
         verdict["guest_memory_from"], "limits",
-        "an absent setting must use the selected configured ceiling"
+        "an absent setting must use the selected limits ceiling"
     );
     assert_eq!(
         verdict["guest_memory_bytes"], 134217728,

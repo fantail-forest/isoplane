@@ -56,7 +56,7 @@ cargo metadata --no-deps --format-version 1 \
 
 | Path                  | What it is                                                                |
 | --------------------- | ------------------------------------------------------------------------- |
-| `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `wispd` and the `wisp` command. |
+| `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `wispd` and the native Isoplane support library. |
 | `guest-sdks/dotnet`    | The C# guest SDK. |
 | `guest-sdks/rust`      | Internal Rust helpers for guest test fixtures. |
 | `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |

@@ -127,26 +127,22 @@ def main():
             if result.returncode != 0:
                 sys.exit(f"building native Isoplane support failed; see {log}:\n{log.read_text()}")
         return 0
-    if action == "wisp-cli":
-        # The `wisp` CLI whose `doctor` verdict gates every guest build here:
-        # WISP_CLI when set, else this checkout's, built into its own target
-        # directory so a fixture build started by `cargo test` never waits
-        # on the lock that cargo holds.
-        cli = os.environ.get("WISP_CLI")
-        if not cli:
-            root = Path(args[0])
-            target = root / "target" / "fixture-tools"
-            result = subprocess.run(
-                ["cargo", "build", "--quiet", "--release", "-p", "wisp-cli", "--target-dir", str(target)],
-                cwd=root,
-                env=dict(os.environ, CARGO_BUILD_BUILD_DIR=str(target / "build")),
-            )
+    if action == "isoplane-cli":
+        root = Path(args[0]).resolve()
+        target = root / "target" / "managed-cli"
+        target.mkdir(parents=True, exist_ok=True)
+        with (target / "fixture.lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            log = target / "build.log"
+            with log.open("w") as output:
+                result = subprocess.run(
+                    ["dotnet", "build", str(root / "tools/Isoplane.Cli/Isoplane.Cli.csproj"),
+                     "--artifacts-path", str(target / "artifacts"), "--disable-build-servers"],
+                    cwd=root, stdout=output, stderr=subprocess.STDOUT,
+                )
             if result.returncode != 0:
-                sys.exit(f"building the wisp CLI failed (exit {result.returncode})")
-            cli = str(target / "release" / "wisp")
-        if not os.access(cli, os.X_OK):
-            sys.exit(f"no executable wisp CLI at {cli}")
-        print(cli)
+                sys.exit(f"building Isoplane CLI failed; see {log}:\n{log.read_text()}")
+        print(target / "artifacts/bin/Isoplane.Cli/debug/Isoplane.Cli.dll")
     elif action == "runtime-identity":
         # The identity of the pack a feed offers a runtime (mono or
         # nativeaot): its version and the digest NuGet records for the

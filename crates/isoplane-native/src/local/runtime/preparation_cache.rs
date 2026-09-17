@@ -160,7 +160,6 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let project = Project {
                 manifest: serde_json::from_str(r#"{"name":"app"}"#).unwrap(),
-                tenant: "owner".into(),
                 state_directory: directory.path().join("state"),
                 runtime_library: directory.path().join("runtime"),
                 init_sandbox: InitSandbox::Sealed,
@@ -195,6 +194,24 @@ mod tests {
         fn cache(&self) -> Cache {
             Cache::new(&self.project, &self.wasm, &self.executable, b"{}").unwrap()
         }
+    }
+
+    #[test]
+    fn local_identity_is_stable_and_private_to_the_state_directory() {
+        let fixture = Fixture::new();
+        let original = fixture.project.tenant();
+        assert_eq!(
+            original,
+            fixture.project.clone().tenant(),
+            "restarting a local project must retain its resource identity"
+        );
+        let mut cloned = fixture.project.clone();
+        cloned.state_directory = cloned.state_directory.join("clone");
+        assert_ne!(
+            original,
+            cloned.tenant(),
+            "another project directory must not share the original local resources"
+        );
     }
 
     #[test]
@@ -324,12 +341,12 @@ mod tests {
             "changed initialization variables",
         );
         project = fixture.project.clone();
-        project.tenant = "another-owner".into();
+        project.state_directory = project.state_directory.join("another-project");
         assert_miss(
             &project,
             &fixture.wasm,
             &fixture.executable,
-            "changed tenant",
+            "changed local project identity",
         );
         project = fixture.project.clone();
         project

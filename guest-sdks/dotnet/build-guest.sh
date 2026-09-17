@@ -22,17 +22,16 @@ fi
 OUT="${WISP_OUT_DIR:-$HERE/out}"
 NAME="${WISP_OUT:-}"
 
-# The SDK judges every linked module with `wisp doctor`; the guests in this
-# repository are judged by this checkout's CLI, built on demand.
+# Build the managed validator separately from any parent Cargo invocation.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WISP_CLI="$(python3 "$ROOT/scripts/fixture-tools.py" wisp-cli "$ROOT")"
+ISOPLANE_CLI_ASSEMBLY="$(python3 "$ROOT/scripts/fixture-tools.py" isoplane-cli "$ROOT")"
 
 echo "==> dotnet publish (C# -> wasm32 core module)"
 mkdir -p "$HERE/obj"
 PUBLISH=$(mktemp -d "$HERE/obj/publish.XXXXXX")
 PENDING=""
 trap 'rm -rf "$PUBLISH"; if [ -n "$PENDING" ]; then rm -f "$PENDING"; fi' EXIT
-dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "-p:WispCli=$WISP_CLI" "$@"
+dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "-p:IsoplaneCliAssembly=$ISOPLANE_CLI_ASSEMBLY" "$@"
 
 mkdir -p "$OUT"
 PUBLISHED=$(python3 "$ROOT/scripts/fixture-tools.py" published-guest "$PUBLISH")

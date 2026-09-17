@@ -30,14 +30,7 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         .arg(&hive));
     let app = destination.join("app");
     run(Command::new("dotnet")
-        .args([
-            "new",
-            "isoplane-web",
-            "--name",
-            "Template-App",
-            "--tenant",
-            "template-owner",
-        ])
+        .args(["new", "isoplane-web", "--name", "Template-App"])
         .arg("--output")
         .arg(&app)
         .arg("--debug:custom-hive")

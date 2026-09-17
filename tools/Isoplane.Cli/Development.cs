@@ -129,7 +129,10 @@ internal static class Development
                 }));
             var result = await Processes.RunAsync("dotnet", arguments, directory, cancellation, redirectOutput: options.Json);
             if (result != 0)
+            {
+                Console.Error.WriteLine($"isoplane: publication failed with exit code {result}.");
                 return result;
+            }
             var modules = Directory.GetFiles(staging, "*.wasm");
             if (modules.Length != 1)
                 throw new InvalidOperationException($"Publication must produce exactly one WASM module; found {modules.Length} in {staging}: {string.Join(", ", modules.Select(Path.GetFileName))}.");
@@ -162,7 +165,7 @@ internal static class Development
         if (Path.GetFullPath(source) == Path.GetFullPath(destination))
             return;
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var staging = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var staging = Path.Combine(Path.GetDirectoryName(destination)!, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
             File.Copy(source, staging);
@@ -230,13 +233,18 @@ internal sealed class SourceChanges : IDisposable
 
     private void Observe(string path)
     {
-        if (Path.GetFullPath(path) == Volatile.Read(ref output) || Directory.Exists(path))
-            return;
+        if (IsSourceFile(path))
+            changes.Writer.TryWrite(true);
+    }
+
+    internal bool IsSourceFile(string path)
+    {
+        var module = Volatile.Read(ref output);
+        var fullPath = Path.GetFullPath(path);
+        if (fullPath == module || fullPath == module + ".runtime" || Directory.Exists(path))
+            return false;
         var relative = Path.GetRelativePath(watcher.Path, path);
-        if (relative.Split(Path.DirectorySeparatorChar).Any(part => part.StartsWith('.') || part is "bin" or "obj" or "out" or "node_modules" or "target"))
-            return;
-        // Coalesce source events while a build is already running.
-        changes.Writer.TryWrite(true);
+        return !relative.Split(Path.DirectorySeparatorChar).Any(part => part.StartsWith('.') || part is "bin" or "obj" or "out" or "node_modules" or "target");
     }
 
     internal async Task WaitAsync(CancellationToken cancellation) => await changes.Reader.ReadAsync(cancellation);

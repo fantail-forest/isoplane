@@ -56,6 +56,36 @@ public sealed class ProcessLifetimeTests
     }
 
     [Fact]
+    public async Task a_successful_command_waits_for_its_children_to_finish_cleanup()
+    {
+        using var fixture = new ProcessFixture();
+        var start = new ProcessStartInfo("sh")
+        {
+            WorkingDirectory = fixture.Directory,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("exec 3<&0; sh -c 'echo ready; read release <&3' & echo $! > child.pid; exit 0");
+        using var process = Wisp.Processes.OwnedProcess.Start(start, TimeSpan.FromSeconds(30));
+        Assert.True(await process.StandardOutput.ReadLineAsync(fixture.Cancellation) == "ready",
+            "The child must hold its cleanup gate before its parent exits.");
+        var statPath = $"/proc/{process.Id}/stat";
+        while (true)
+        {
+            Assert.True(File.Exists(statPath), "The leader must remain unreaped while its child is finishing cleanup.");
+            var stat = await File.ReadAllTextAsync(statPath, fixture.Cancellation);
+            if (stat[(stat.LastIndexOf(')') + 2)..].StartsWith("Z ", StringComparison.Ordinal)) break;
+            await Task.Delay(10, fixture.Cancellation);
+        }
+        Assert.False(process.HasExited, "The command must await the live child's cleanup after the leader exits.");
+        await process.StandardInput.WriteLineAsync("finish".AsMemory(), fixture.Cancellation);
+        await process.WaitForExitAsync(fixture.Cancellation);
+        Assert.True(process.ExitCode == 0, "Children completing cleanup must preserve a successful command's exit code.");
+        await fixture.AssertChildStoppedAsync();
+    }
+
+    [Fact]
     public async Task cancelling_a_command_terminates_descendants_before_returning_to_its_caller()
     {
         using var fixture = new ProcessFixture();

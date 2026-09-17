@@ -103,7 +103,7 @@ local NuGet feed. Install that template package and generate an application:
 
 ```sh
 dotnet new install /path/to/feed/Wisp.Templates.0.1.0.nupkg
-dotnet new isoplane-web --name MyApp --tenant my-local-tenant
+dotnet new isoplane-web --name MyApp
 cd MyApp
 dotnet nuget add source /path/to/feed --name wisp-local --configfile nuget.config
 isoplane dev
@@ -114,5 +114,4 @@ configuration. Install the [.NET CLI](../../../tools/Isoplane.Cli/README.md)
 and put its tool directory on your PATH. `isoplane dev` publishes and validates
 the module, then serves it on localhost; source edits trigger a rebuild. This
 path currently uses the NativeAOT compiler and a bundled Rust runtime, with
-the Linux toolchain prerequisites above. The tenant argument explicitly scopes
-local state; it is not a hosted credential or an authorization claim.
+the Linux toolchain prerequisites above. Local state is private to the project directory.

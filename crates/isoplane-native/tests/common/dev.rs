@@ -23,32 +23,6 @@ struct Terminal {
 }
 
 impl Dev {
-    pub fn start(project: &std::path::Path, args: &[&str]) -> Self {
-        Self::start_with_timeout(project, args, Duration::from_secs(120))
-    }
-
-    pub fn start_human(project: &std::path::Path, args: &[&str]) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_wisp"));
-        command
-            .args(["--no-color", "dev", "--port", "0", "--watch"])
-            .arg(project)
-            .args(args);
-        Self::spawn_inner(&mut command, Duration::from_secs(120), false, false)
-    }
-
-    pub fn start_with_timeout(
-        project: &std::path::Path,
-        args: &[&str],
-        output_timeout: Duration,
-    ) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_wisp"));
-        command
-            .args(["--no-color", "--json", "dev", "--port", "0", "--watch"])
-            .arg(project)
-            .args(args);
-        Self::spawn(&mut command, output_timeout, true)
-    }
-
     pub fn start_managed(project: &std::path::Path, executable: &std::path::Path) -> Self {
         Self::start_managed_with_args(project, executable, &[])
     }
@@ -76,9 +50,7 @@ impl Dev {
         structured_stdout: bool,
         managed_toolchain: bool,
     ) -> Self {
-        if !command.get_envs().any(|(name, _)| name == "WISP_CLI") {
-            command.env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"));
-        }
+        command.env("WISP_ENDPOINT", "http://127.0.0.1:1");
         if managed_toolchain {
             command.env(
                 "WISP_GUEST_RUNTIME_FEED",
@@ -209,7 +181,12 @@ impl Dev {
             let line = self
                 .lines
                 .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                .unwrap_or_else(|e| panic!("local dev never reported {marker:?}: {e}\n{output}"));
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "local dev never reported {marker:?}: {e}; process status: {:?}\n{output}",
+                        self.child.try_wait()
+                    )
+                });
             assert!(
                 !line.starts_with("invalid machine output:"),
                 "dev --json must reserve stdout for structured records: {line}"
@@ -251,10 +228,6 @@ impl Dev {
 
     pub fn diagnostics(&self) -> String {
         self.lines.try_iter().collect::<Vec<_>>().join("\n")
-    }
-
-    pub fn observed(&self) -> &str {
-        &self.observed
     }
 
     pub fn pid(&self) -> u32 {
@@ -326,7 +299,7 @@ impl Drop for Dev {
 pub fn manifest(dir: &std::path::Path, extra: &str) {
     std::fs::write(
         dir.join("wisp.toml"),
-        format!("name='local-app'\ntenant='test-owner'\nmodule='app.wasm'\n{extra}"),
+        format!("name='local-app'\nmodule='app.wasm'\n{extra}"),
     )
     .unwrap();
 }

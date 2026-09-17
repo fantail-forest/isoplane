@@ -4,7 +4,7 @@ The package includes the managed CLI and `isoplane-native` support library.
 Native code validates modules and runs local dev/debug sessions through the host;
 project discovery, builds, watching and output are managed.
 Builds still launch .NET, the supplied LLVM/compiler tools and wasm-tools.
-The internal `wisp` operator CLI is maintained separately from this package.
+Node operators use the daemon's HTTP administration API.
 
 The .NET tool owns publication and source watching; its bundled native runtime
 validates, prepares and executes WASM. This package currently targets the Linux

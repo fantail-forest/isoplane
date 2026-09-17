@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
@@ -69,10 +69,8 @@ impl Options {
             bytes: trust.pem().into(),
             modified_ns: trust.modified_ns(),
         }])?;
-        let identity = blake3::hash(self.state_directory.as_os_str().as_encoded_bytes());
         Ok(Inputs {
             manifest: self.manifest.clone(),
-            tenant: format!("local:{identity}"),
             state_directory: self.state_directory.clone(),
             runtime_library: self.runtime_library.clone(),
             init_sandbox: self.init_sandbox,
@@ -153,6 +151,7 @@ impl Session {
         let address = listener.local_addr()?;
         let prepared = prepare(wasm.to_vec(), &options, inputs).await?;
         let mut app = prepared.start().await?;
+        let current_proxy = Arc::new(RwLock::new(app.proxy.clone()));
         let mut connections = JoinSet::new();
         let debug = options.debug_endpoint.is_some();
         let admitted = Arc::new(AtomicBool::new(false));
@@ -174,9 +173,9 @@ impl Session {
                         }.await;
                         match replacement {
                             Ok(next) => {
-                                stop_connections(&mut connections).await;
                                 shutdown(app.clone()).await?;
                                 app = next.start().await?;
+                                *current_proxy.write() = app.proxy.clone();
                                 events.emit(serde_json::json!({"event":"reloaded", "app":options.manifest.name, "url":format!("http://{address}")}));
                             }
                             Err(error) => events.emit(serde_json::json!({"event":"reload_failed", "detail":format!("{error:#}")})),
@@ -184,7 +183,7 @@ impl Session {
                     }
                     connection = listener.accept() => {
                         let (stream, peer) = connection?;
-                        connections.spawn(connection_task(stream, peer, app.clone(), debug, admitted.clone()));
+                        connections.spawn(connection_task(stream, peer, current_proxy.clone(), debug, admitted.clone()));
                     }
                     completed = connections.join_next(), if !connections.is_empty() => {
                         if let Some(completed) = completed {
@@ -217,9 +216,7 @@ impl PendingApp {
     async fn start(self) -> anyhow::Result<Arc<LocalApp>> {
         match self.debug {
             Some(peer) => Ok(LocalApp::start_debug(self.prepared, &self.directory, peer).await?),
-            None => Ok(
-                LocalApp::start(self.prepared, &self.directory, self.configuration).await?,
-            ),
+            None => Ok(LocalApp::start(self.prepared, &self.directory, self.configuration).await?),
         }
     }
 }
@@ -270,14 +267,14 @@ async fn stop_connections(connections: &mut JoinSet<bool>) {
 async fn connection_task(
     stream: tokio::net::TcpStream,
     peer: SocketAddr,
-    app: Arc<LocalApp>,
+    current_proxy: Arc<RwLock<Arc<wisp_proxy::Proxy>>>,
     debug: bool,
     admitted: Arc<AtomicBool>,
 ) -> bool {
     let handled = Arc::new(AtomicBool::new(false));
     let observed = handled.clone();
     let service = service_fn(move |request| {
-        let app = app.clone();
+        let proxy = current_proxy.read().clone();
         let admitted = admitted.clone();
         let handled = handled.clone();
         async move {
@@ -287,7 +284,7 @@ async fn connection_task(
                 return Ok(response);
             }
             handled.store(true, Ordering::Release);
-            app.proxy.clone().handle(request, peer).await
+            proxy.handle(request, peer).await
         }
     });
     if let Err(error) = hyper::server::conn::http1::Builder::new()

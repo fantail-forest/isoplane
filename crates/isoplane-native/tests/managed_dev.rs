@@ -130,3 +130,113 @@ async fn shutdown_cancels_a_publication_waiting_on_external_work() {
         "cancelled publication must remove its staging directory before reporting completion"
     );
 }
+
+#[tokio::test]
+async fn a_keep_alive_connection_serves_the_new_publication_after_reload() {
+    use http_body_util::{BodyExt, Empty};
+    use hyper::body::Bytes;
+
+    async fn request(sender: &mut hyper::client::conn::http1::SendRequest<Empty<Bytes>>) -> Bytes {
+        let request = hyper::Request::builder()
+            .uri("/")
+            .header("host", "localhost")
+            .body(Empty::new())
+            .unwrap();
+        sender
+            .send_request(request)
+            .await
+            .unwrap()
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let (app, cli) = project(directory.path());
+    let mut running = Dev::start_managed(&app, &cli);
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        let address = running.url.strip_prefix("http://").unwrap();
+        let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (mut sender, connection) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
+        assert_eq!(
+            request(&mut sender).await,
+            "working publication",
+            "the initial connection must serve the original publication"
+        );
+        let pending = app.join(".wisp/replacement.wasm");
+        std::fs::write(&pending, guest("replacement publication")).unwrap();
+        std::fs::rename(pending, app.join("fixture.wasm")).unwrap();
+        running.wait_event("reloaded");
+        assert_eq!(
+            request(&mut sender).await,
+            "replacement publication",
+            "the same TCP connection must serve the replacement publication after reload"
+        );
+        running.stop();
+        connection.await.unwrap().unwrap();
+    })
+    .await
+    .expect("the persistent HTTP connection must not hang across reload");
+}
+
+#[test]
+fn a_second_managed_process_cannot_share_the_projects_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let (app, cli) = project(directory.path());
+    let mut running = Dev::start_managed(&app, &cli);
+    let output = std::process::Command::new(&cli)
+        .args(["dev", "--no-build", "--no-watch", "--project"])
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "a second local process must not share live persisted state"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("another local development session"),
+        "the failed session must identify the project's existing owner: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    running.stop();
+}
+
+#[test]
+fn the_cutover_supervisor_starts_an_installed_managed_worker() {
+    let directory = tempfile::tempdir().unwrap();
+    let (app, cli) = project(directory.path());
+    std::fs::write(app.join("app.wasm"), guest("cutover worker")).unwrap();
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local/cutover.py");
+    let output = std::process::Command::new("python3")
+        .args(["-c", r#"
+import asyncio, importlib.util, sys, urllib.request
+from types import SimpleNamespace
+spec = importlib.util.spec_from_file_location("cutover", sys.argv[1])
+cutover = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cutover)
+async def run():
+    supervisor = cutover.Cutover(SimpleNamespace(cli=sys.argv[2], output=sys.argv[4], startup_timeout=30))
+    owner, url = await supervisor.worker("managed", sys.argv[3])
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            assert response.read() == b"cutover worker", "the managed worker must serve the real guest"
+    finally:
+        await owner.kill()
+asyncio.run(run())
+"#])
+        .arg(script).arg(cli).arg(app).arg(directory.path())
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "cutover must start and release an installed managed worker: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
