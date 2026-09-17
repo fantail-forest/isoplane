@@ -14,11 +14,8 @@ path = "src/lib.rs"
 name = "wisp"
 path = "src/main.rs"
 
-[[bin]]
-name = "wisp-process"
-path = "src/process/main.rs"
-
 [dependencies]
+isoplane-native.workspace = true
 wisp-trust = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }

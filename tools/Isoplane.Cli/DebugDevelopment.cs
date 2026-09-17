@@ -1,16 +1,17 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
+using Wisp.Native;
 
 namespace Wisp.Cli;
 
 internal static class DebugDevelopment
 {
-    internal static async Task<int> RunAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
-        if (await Development.RuntimeProfileAsync(options, runtime, cancellation) != GuestRuntimeProfile.Mono)
+        if (await Development.RuntimeProfileAsync(options, cancellation) != GuestRuntimeProfile.Mono)
             throw new ArgumentException("Debugging currently requires an explicitly selected interpreted project configuration; NativeAOT debugging is not supported.");
-        var ordinaryModule = await Development.ModuleAsync(options.Directory, runtime, cancellation);
+        var ordinaryModule = new LocalProject(options.Directory).Module;
         var session = Path.Combine(options.Directory, ".wisp", "debug", Guid.NewGuid().ToString("N"));
         try
         {
@@ -23,7 +24,7 @@ internal static class DebugDevelopment
             var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
             List<string> publication = ["publish", project, "-c", options.Configuration, "-o", session, "--disable-build-servers",
                 "-p:WispLocalDebug=true", "-p:WispDebugEndpoint=" + endpoint];
-            var result = await Processes.RunAsync("dotnet", publication, options.Directory, runtime, cancellation, redirectOutput: options.Json);
+            var result = await Processes.RunAsync("dotnet", publication, options.Directory, cancellation, redirectOutput: options.Json);
             if (result != 0)
                 return result;
             var artifacts = ReadArtifacts(session, endpoint);
@@ -33,12 +34,12 @@ internal static class DebugDevelopment
                 Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module = artifacts.Module, symbols = artifacts.Symbols }));
             else
                 Console.WriteLine($"Attach an external Mono debugger to {endpoint}; this session serves one HTTP request.");
-            List<string> arguments = ["debug", "--project", options.Directory, "--module", artifacts.Module, "--debug-endpoint", endpoint];
-            if (options.Port is { } port)
-                arguments.AddRange(["--port", port.ToString()]);
-            if (options.Json)
-                arguments.Add("--json");
-            return await RunHostAsync(runtime, arguments, options.Directory, relay, cancellation);
+            var projectInputs = new LocalProject(options.Directory);
+            await using var host = new LocalSession(await File.ReadAllBytesAsync(artifacts.Module, cancellation),
+                projectInputs.SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime")),
+                message => LocalEvents.Write(message, options.Json));
+            await RunHostAsync(host, relay, cancellation);
+            return 0;
         }
         finally
         {
@@ -54,24 +55,19 @@ internal static class DebugDevelopment
         }
     }
 
-    internal static async Task<int> RunHostAsync(string runtime, List<string> arguments, string directory, DebugRelay relay, CancellationToken cancellation)
+    internal static async Task RunHostAsync(LocalSession host, DebugRelay relay, CancellationToken cancellation)
     {
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var host = Processes.RunAsync(runtime, arguments, directory, runtime, lifetime.Token);
+        using var stop = cancellation.Register(host.Stop);
         try
         {
-            if (await Task.WhenAny(host, relay.Completion) == relay.Completion)
+            if (await Task.WhenAny(host.Completion, relay.Completion) == relay.Completion)
                 await relay.Completion;
-            return await host;
+            await host.Completion;
         }
         finally
         {
-            lifetime.Cancel();
-            try { await host; }
-            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
-            {
-                Console.Error.WriteLine("isoplane: debug runtime stopped.");
-            }
+            host.Stop();
+            await host.Completion;
         }
     }
 

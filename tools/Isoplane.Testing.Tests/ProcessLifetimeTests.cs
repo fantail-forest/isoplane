@@ -132,9 +132,9 @@ public sealed class ProcessLifetimeTests
     {
         using var fixture = new SessionFixture();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => ProcessOwnership.ResolveAsync(
-            Path.Combine(fixture.Directory, "absent-kill"), fixture.Options.ShutdownTimeout, deadline.Token));
-        Assert.True(failure.Message.Contains("install Isoplane.Cli", StringComparison.Ordinal), "The preflight must explain which cleanup tool is missing.");
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => IsoplaneApplication.StartAsync(fixture.Directory,
+            fixture.Options with { CliPath = Path.Combine(fixture.Directory, "absent-cli") }, deadline.Token));
+        Assert.True(failure.Message.Contains("install Isoplane.Cli", StringComparison.Ordinal), "Startup must identify the missing CLI and explain how to install it.");
     }
 
     private static async Task AssertStoppedAsync(int pid, CancellationToken cancellation)
@@ -171,8 +171,7 @@ public sealed class ProcessLifetimeTests
         {
             if (!OperatingSystem.IsLinux())
                 throw new PlatformNotSupportedException("Process ownership tests require the packaged runtime's Linux platform.");
-            var helper = Path.Combine(AppContext.BaseDirectory, "runtime", "wisp-process");
-            File.WriteAllText(Options.CliPath, "#!/bin/sh\nif [ \"$1\" = process-owner-path ]; then printf '%s\\n' '" + helper.Replace("'", "'\\''") + "'; exit 0; fi\n" + body);
+            File.WriteAllText(Options.CliPath, "#!/bin/sh\n" + body);
             File.SetUnixFileMode(Options.CliPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 

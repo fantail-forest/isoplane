@@ -15,7 +15,7 @@ public sealed class DebugConfigurationTests
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var options = new DevelopmentOptions(directory.FullName, null, false, false, false, null, true);
             var failure = await Assert.ThrowsAsync<ArgumentException>(() => DebugDevelopment.RunAsync(options,
-                Path.Combine(AppContext.BaseDirectory, "runtime", "wisp"), deadline.Token));
+                deadline.Token));
             Assert.True(failure.Message.Contains("explicitly selected interpreted", StringComparison.Ordinal),
                 "Debugging must explain that the project needs an interpreted configuration instead of silently substituting one.");
             Assert.False(Directory.Exists(Path.Combine(directory.FullName, ".wisp")),

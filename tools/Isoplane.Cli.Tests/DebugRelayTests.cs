@@ -1,5 +1,5 @@
-using System.Diagnostics;
-using System.IO.Pipes;
+using Wisp.Native;
+using Isoplane.Cli.Tests;
 using System.Net.Sockets;
 using Xunit;
 
@@ -14,7 +14,7 @@ public sealed class DebugRelayTests
         session.First.Client.LingerState = new LingerOption(true, 0);
         session.First.Client.Dispose();
         await Assert.ThrowsAsync<IOException>(() => session.Owner.WaitAsync(session.Cancellation));
-        Assert.True(session.Child.HasExited, "the runtime owner must reap its child when debugger transport fails");
+        Assert.True(session.Host.Completion.IsCompleted, "the runtime owner must stop its native session when debugger transport fails");
     }
 
     [Fact]
@@ -24,7 +24,7 @@ public sealed class DebugRelayTests
         session.First.Client.Shutdown(SocketShutdown.Send);
         await session.Relay.Completion.WaitAsync(session.Cancellation);
         Assert.False(session.Owner.IsCompleted, "orderly adapter EOF must remain distinct from a transport fault");
-        Assert.False(session.Child.HasExited, "orderly EOF must not silently translate detach into runtime termination");
+        Assert.False(session.Host.Completion.IsCompleted, "orderly EOF must not silently translate detach into runtime termination");
     }
 
     private sealed class RelaySession : IAsyncDisposable
@@ -33,17 +33,21 @@ public sealed class DebugRelayTests
         internal DebugRelay Relay { get; }
         internal TcpClient First { get; } = new();
         private TcpClient Second { get; } = new();
-        internal Task<int> Owner { get; }
-        internal Process Child { get; private set; } = null!;
+        internal Task Owner { get; }
+        internal LocalSession Host { get; }
         internal CancellationToken Cancellation => lifetime.Token;
-        private readonly NamedPipeServerStream ready;
+        private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly DirectoryInfo directory = Directory.CreateTempSubdirectory("isoplane-relay-");
 
         private RelaySession()
         {
-            var pipeName = "wisp-debug-child-" + Guid.NewGuid().ToString("N");
-            ready = new NamedPipeServerStream(pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            File.WriteAllText(Path.Combine(directory.FullName, "wisp.toml"), "name='relay-test'\nmodule='app.wasm'\n");
             Relay = new DebugRelay(Cancellation);
-            Owner = DebugDevelopment.RunHostAsync("dotnet", [typeof(OwnedChild).Assembly.Location, "--owned-child", pipeName], AppContext.BaseDirectory, Relay, Cancellation);
+            Host = new LocalSession(ModuleValidationTests.Module, new LocalProject(directory.FullName).SessionOptions(0, []), message =>
+            {
+                if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult();
+            });
+            Owner = DebugDevelopment.RunHostAsync(Host, Relay, Cancellation);
         }
 
         internal static async Task<RelaySession> StartAsync()
@@ -51,11 +55,9 @@ public sealed class DebugRelayTests
             var session = new RelaySession();
             try
             {
-                await session.ready.WaitForConnectionAsync(session.Cancellation);
-                using var reader = new StreamReader(session.ready, leaveOpen: true);
-                var processId = await reader.ReadLineAsync(session.Cancellation)
-                    ?? throw new InvalidOperationException("the owned runtime did not identify itself");
-                session.Child = Process.GetProcessById(int.Parse(processId));
+                if (await Task.WhenAny(session.ready.Task, session.Owner).WaitAsync(session.Cancellation) == session.Owner)
+                    await session.Owner;
+                await session.ready.Task.WaitAsync(session.Cancellation);
                 await session.First.ConnectAsync(session.Relay.Endpoint, session.Cancellation);
                 await session.Second.ConnectAsync(session.Relay.Endpoint, session.Cancellation);
                 await session.First.GetStream().WriteAsync(new byte[] { 42 }, session.Cancellation);
@@ -71,7 +73,7 @@ public sealed class DebugRelayTests
             }
         }
 
-        /// <summary>Stops the real child and closes both peers even when an assertion fails.</summary>
+        /// <summary>Stops the native session and closes both peers even when an assertion fails.</summary>
         public async ValueTask DisposeAsync()
         {
             lifetime.Cancel();
@@ -79,8 +81,8 @@ public sealed class DebugRelayTests
             await ObserveTerminationAsync(Relay.DisposeAsync().AsTask());
             First.Dispose();
             Second.Dispose();
-            Child?.Dispose();
-            ready.Dispose();
+            await Host.DisposeAsync();
+            directory.Delete(recursive: true);
             lifetime.Dispose();
         }
 

@@ -11,7 +11,7 @@
     <Description>Integration-test ownership of real Isoplane CLI development sessions.</Description>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../ProcessOwnership/OwnedProcess.cs" Link="OwnedProcess.cs" />
+    <ProjectReference Include="../Isoplane.Native/Isoplane.Native.csproj" />
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>

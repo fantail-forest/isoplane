@@ -107,17 +107,27 @@ def main():
             env = dict(os.environ, WISP_FIXTURE_LOCK=script)
             result = subprocess.run(["bash", script, *command_args], env=env)
             return result.returncode
-    if action == "wisp-process":
-        root = Path(args[0])
-        target = root / "target" / "fixture-tools"
-        result = subprocess.run(
-            ["cargo", "build", "--quiet", "--release", "-p", "wisp-cli", "--bin", "wisp-process", "--target-dir", str(target)],
-            cwd=root,
-        )
-        if result.returncode != 0:
-            sys.exit(f"building the process supervisor failed (exit {result.returncode})")
-        print(target / "release" / "wisp-process")
-    elif action == "wisp-cli":
+    if action == "isoplane-native":
+        root = Path(args[0]).resolve()
+        profile = args[1]
+        if profile not in ("debug", "release"):
+            sys.exit("native fixture profile must be debug or release")
+        target = root / "target" / "native-support"
+        target.mkdir(parents=True, exist_ok=True)
+        environment = dict(os.environ, CARGO_BUILD_BUILD_DIR=str(target / "build"))
+        with (target / "fixture.lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            log = target / "build.log"
+            with log.open("w") as output:
+                result = subprocess.run(
+                    ["cargo", "build", "--locked", "-p", "isoplane-native", "--target-dir", str(target)]
+                    + (["--release"] if profile == "release" else []),
+                    cwd=root, env=environment, stdout=output, stderr=subprocess.STDOUT,
+                )
+            if result.returncode != 0:
+                sys.exit(f"building native Isoplane support failed; see {log}:\n{log.read_text()}")
+        return 0
+    if action == "wisp-cli":
         # The `wisp` CLI whose `doctor` verdict gates every guest build here:
         # WISP_CLI when set, else this checkout's, built into its own target
         # directory so a fixture build started by `cargo test` never waits
@@ -129,6 +139,7 @@ def main():
             result = subprocess.run(
                 ["cargo", "build", "--quiet", "--release", "-p", "wisp-cli", "--target-dir", str(target)],
                 cwd=root,
+                env=dict(os.environ, CARGO_BUILD_BUILD_DIR=str(target / "build")),
             )
             if result.returncode != 0:
                 sys.exit(f"building the wisp CLI failed (exit {result.returncode})")

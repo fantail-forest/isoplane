@@ -1,19 +1,19 @@
 using System.Threading.Channels;
-using System.Text.Json;
+using Wisp.Native;
 
 namespace Wisp.Cli;
 
 internal static class Development
 {
-    internal static async Task<int> RunAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         if (!options.ShutdownOnInputClose)
-            return await RunOwnedAsync(options, runtime, cancellation);
+            return await RunOwnedAsync(options, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var inputCancellation = lifetime.Token;
         using var standardInput = Console.OpenStandardInput();
         var input = Task.Run(() => WaitForInputCloseAsync(standardInput, inputCancellation));
-        var session = RunOwnedAsync(options, runtime, lifetime.Token);
+        var session = RunOwnedAsync(options, lifetime.Token);
         try
         {
             if (await Task.WhenAny(session, input) == input)
@@ -36,18 +36,18 @@ internal static class Development
         while (await standardInput.ReadAsync(input.AsMemory(), cancellation) != 0) { }
     }
 
-    private static async Task<int> RunOwnedAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    private static async Task<int> RunOwnedAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         if (options.GuestRuntime is not null)
-            await RuntimeProfileAsync(options, runtime, cancellation);
+            await RuntimeProfileAsync(options, cancellation);
         if (options.Debug)
-            return await DebugDevelopment.RunAsync(options, runtime, cancellation);
+            return await DebugDevelopment.RunAsync(options, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
         var result = 0;
         if (options.NoBuild)
         {
-            var module = await ModuleAsync(options.Directory, runtime, lifetime.Token);
+            var module = new LocalProject(options.Directory).Module;
             changes.SetOutput(module);
             if (options.Module is { } published)
                 PublishModule(published, module);
@@ -55,27 +55,21 @@ internal static class Development
                 throw new InvalidOperationException($"No built module at {module}; run dotnet build first.");
         }
         else
-            result = await BuildAsync(options, runtime, changes, lifetime.Token);
+            result = await BuildAsync(options, changes, lifetime.Token);
         if (result != 0)
             return result;
-        var configuration = await LocalSecrets.ReadAsync(options, runtime, cancellation);
-        List<string> hostArguments = ["dev", "--runtime-config-stdin", "--watch", options.Directory, "--no-build", "--watch-module-only"];
-        if (options.Json)
-            hostArguments.Add("--json");
-        if (options.Port is { } port)
-            hostArguments.AddRange(["--port", port.ToString()]);
-        if (!options.Watch)
-            hostArguments.Add("--no-watch");
-        using var host = Processes.Start(runtime, hostArguments, options.Directory, runtime);
-        await host.StandardInput.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(configuration).AsMemory(), lifetime.Token);
-        await host.StandardInput.FlushAsync(lifetime.Token);
-        var exited = host.WaitForExitAsync(lifetime.Token);
+        var configuration = await LocalSecrets.ReadAsync(options, cancellation);
+        var project = new LocalProject(options.Directory);
+        await using var host = new LocalSession(await File.ReadAllBytesAsync(project.Module, lifetime.Token),
+            project.SessionOptions(options.Port, configuration), message => LocalEvents.Write(message, options.Json));
+        using var stopping = lifetime.Token.Register(host.Stop);
+        var exited = host.Completion;
         try
         {
             if (!options.Watch)
             {
                 await exited;
-                return host.ExitCode;
+                return 0;
             }
             while (true)
             {
@@ -83,11 +77,11 @@ internal static class Development
                 if (await Task.WhenAny(exited, changed) == exited)
                 {
                     await exited;
-                    return host.ExitCode;
+                    return 0;
                 }
                 await changed;
                 using var buildLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                var build = BuildAsync(options, runtime, changes, buildLifetime.Token);
+                var build = BuildAsync(options, changes, buildLifetime.Token);
                 if (await Task.WhenAny(build, exited) == exited)
                 {
                     buildLifetime.Cancel();
@@ -97,26 +91,31 @@ internal static class Development
                         Console.Error.WriteLine("isoplane: cancelled publication because the runtime exited.");
                     }
                     await exited;
-                    return host.ExitCode;
+                    return 0;
                 }
                 if (await build != 0)
                     Console.Error.WriteLine("isoplane: rebuild failed; keeping the last working application. Edit the source to retry.");
+                else
+                {
+                    project = new LocalProject(options.Directory);
+                    host.Reload(await File.ReadAllBytesAsync(project.Module, lifetime.Token), project.SessionOptions(options.Port, configuration));
+                }
             }
         }
         finally
         {
             lifetime.Cancel();
-            await Processes.StopAsync(host);
+            host.Stop();
         }
     }
 
-    private static async Task<int> BuildAsync(DevelopmentOptions options, string runtime, SourceChanges changes, CancellationToken cancellation)
+    private static async Task<int> BuildAsync(DevelopmentOptions options, SourceChanges changes, CancellationToken cancellation)
     {
         var directory = options.Directory;
         var staging = Path.Combine(directory, ".wisp", "publish", Guid.NewGuid().ToString("N"));
         try
         {
-            var module = await ModuleAsync(directory, runtime, cancellation);
+            var module = new LocalProject(directory).Module;
             changes.SetOutput(module);
             Directory.CreateDirectory(staging);
             var project = Directory.GetFiles(directory, "*.csproj").Single();
@@ -128,12 +127,12 @@ internal static class Development
                     GuestRuntimeProfile.NativeAot => "NativeAOT",
                     _ => throw new ArgumentOutOfRangeException(nameof(options.GuestRuntime))
                 }));
-            var result = await Processes.RunAsync("dotnet", arguments, directory, runtime, cancellation, redirectOutput: options.Json);
+            var result = await Processes.RunAsync("dotnet", arguments, directory, cancellation, redirectOutput: options.Json);
             if (result != 0)
                 return result;
             var modules = Directory.GetFiles(staging, "*.wasm");
             if (modules.Length != 1)
-                throw new InvalidOperationException("Publication must produce exactly one WASM module.");
+                throw new InvalidOperationException($"Publication must produce exactly one WASM module; found {modules.Length} in {staging}: {string.Join(", ", modules.Select(Path.GetFileName))}.");
             PublishModule(modules[0], module);
             return 0;
         }
@@ -177,10 +176,10 @@ internal static class Development
         }
     }
 
-    internal static async Task<GuestRuntimeProfile> RuntimeProfileAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    internal static async Task<GuestRuntimeProfile> RuntimeProfileAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
-        using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration, "-getProperty:WispGuestRuntime"], options.Directory, runtime, captureOutput: true);
+        using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration, "-getProperty:WispGuestRuntime"], options.Directory, captureOutput: true);
         try
         {
             var output = await process.StandardOutput.ReadToEndAsync(cancellation);
@@ -203,24 +202,7 @@ internal static class Development
         }
     }
 
-    internal static async Task<string> ModuleAsync(string directory, string runtime, CancellationToken cancellation)
-    {
-        using var process = Processes.Start(runtime, ["project", "--directory", directory], directory, runtime, captureOutput: true);
-        try
-        {
-            var output = await process.StandardOutput.ReadToEndAsync(cancellation);
-            await process.WaitForExitAsync(cancellation);
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException("The runtime could not resolve this project's wisp.toml.");
-            using var metadata = JsonDocument.Parse(output);
-            return metadata.RootElement.GetProperty("module").GetString()
-                ?? throw new InvalidOperationException("The runtime did not provide the project's module path.");
-        }
-        finally
-        {
-            await Processes.StopAsync(process);
-        }
-    }
+
 }
 
 internal sealed class SourceChanges : IDisposable

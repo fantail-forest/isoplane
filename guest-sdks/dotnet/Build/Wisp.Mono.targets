@@ -41,7 +41,7 @@
   <!-- The source-built runtime pack integrates scheduling, sockets, DNS and
        cryptography with the host in source, so no assembly is adapted; the
        pack's prebuilt runtime module gives way to the native link below. -->
-  <Target Name="WispMonoDropPrebuiltRuntime" BeforeTargets="_ComputeManagedAssemblyToLink">
+  <Target Name="WispMonoDropPrebuiltRuntime" AfterTargets="ComputeFilesToPublish">
     <ItemGroup>
       <_WispMonoPrebuilt Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'dotnet' AND '%(Extension)' == '.wasm'" />
       <ResolvedFileToPublish Remove="@(_WispMonoPrebuilt)" />
@@ -75,7 +75,7 @@
            Text="wisp: the runtime pack at $(_WispMonoRuntimePackDirectory) is not the pack the feed offers (digest $(_WispMonoRuntimePackDigest) vs $(WispGuestRuntimePackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
   </Target>
   <Target Name="WispMonoPublishCore" AfterTargets="_WasiLinkDotNet" DependsOnTargets="WispMonoVerifyRuntimePack">
-    <PropertyGroup><NativeBinary>$(PublishDir)$(AssemblyName).wasm</NativeBinary></PropertyGroup>
+    <PropertyGroup><NativeBinary>$([System.IO.Path]::Combine('$(PublishDir)', '$(AssemblyName).wasm'))</NativeBinary></PropertyGroup>
     <Copy SourceFiles="$(_WasiOutputFileName)" DestinationFiles="$(NativeBinary)" SkipUnchangedFiles="true" />
     <!-- The identity of the runtime the module links, beside it, so a test
          result is attributable to those bytes. -->

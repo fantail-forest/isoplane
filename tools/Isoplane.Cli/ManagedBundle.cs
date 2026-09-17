@@ -31,7 +31,7 @@ internal sealed record BundleOptions(string Directory, string Configuration, str
 
 internal static class ManagedBundle
 {
-    internal static async Task CreateAsync(BundleOptions options, string runtime, CancellationToken cancellation)
+    internal static async Task CreateAsync(BundleOptions options, CancellationToken cancellation)
     {
         var projects = Directory.GetFiles(options.Directory, "*.csproj");
         if (projects.Length != 1) throw new ArgumentException("Select a directory containing exactly one application project with --project.");
@@ -44,7 +44,7 @@ internal static class ManagedBundle
                 "-property:WispManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
                 "-getProperty:AssemblyName,WispApplicationFactory,WispGuestRuntime",
                 "-getItem:WispBundleAssembly,WispBundleSymbol,WispBundleAsset,WispBundlePlatformReference",
-                "-getResultOutputFile:" + metadata, "-nologo"], options.Directory, runtime, cancellation, redirectOutput: true);
+                "-getResultOutputFile:" + metadata, "-nologo"], options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(metadata, cancellation));
             await WriteAsync(document.RootElement, options.Output, cancellation);

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>0.1.0</Version>
+    <Description>Generated managed bindings and native local development support for Isoplane.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Linux'))">libisoplane_native.so</NativeLibraryName>
+    <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libisoplane_native.dylib</NativeLibraryName>
+    <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Windows'))">isoplane_native.dll</NativeLibraryName>
+    <NativeProfile Condition="'$(Configuration)' == 'Debug'">debug</NativeProfile>
+    <NativeProfile Condition="'$(NativeProfile)' == ''">release</NativeProfile>
+    <BuildNativeSupport Condition="'$(IsoplaneNativePath)' == ''">true</BuildNativeSupport>
+    <IsoplaneNativePath Condition="'$(IsoplaneNativePath)' == ''">$(MSBuildThisFileDirectory)../../target/native-support/$(NativeProfile)/$(NativeLibraryName)</IsoplaneNativePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(IsoplaneNativePath)" Link="runtime/$(NativeLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(IsoplaneNativePath)" Pack="true" PackagePath="runtimes/linux-x64/native/$(NativeLibraryName)" Visible="false" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Isoplane.Cli" />
+    <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
+    <InternalsVisibleTo Include="Isoplane.Testing" />
+    <InternalsVisibleTo Include="Isoplane.Testing.Tests" />
+  </ItemGroup>
+  <Target Name="RequireNativeLibrary" BeforeTargets="PrepareForBuild">
+    <Exec Condition="'$(BuildNativeSupport)' == 'true'" Command="python3 &quot;$(MSBuildThisFileDirectory)../../scripts/fixture-tools.py&quot; isoplane-native &quot;$(MSBuildThisFileDirectory)../..&quot; $(NativeProfile)" />
+    <Error Condition="!Exists('$(IsoplaneNativePath)')" Text="Build isoplane-native with cargo build -p isoplane-native, or set IsoplaneNativePath to its built library." />
+  </Target>
+</Project>

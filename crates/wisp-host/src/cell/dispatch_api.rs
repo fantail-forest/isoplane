@@ -265,8 +265,10 @@ impl Cell {
     ) -> crate::Result<DispatchResult> {
         let me = self.clone();
         let module = module.clone();
-        tokio::task::spawn_blocking(move || me.dispatch_blocking(&module, target, rec, timeout))
-            .await?
+        crate::dispatcher::spawn_blocking(move || {
+            me.dispatch_blocking(&module, target, rec, timeout)
+        })
+        .await?
     }
 
     /// The completion path for an alarm, a socket frame, a DI reply or a

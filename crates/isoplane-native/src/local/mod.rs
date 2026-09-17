@@ -1,0 +1,40 @@
+//! Local execution using the same preparation, host and proxy as the daemon.
+
+pub mod debug;
+mod destinations;
+mod runtime;
+
+pub use runtime::{LocalApp, Prepared};
+
+/// Resolved application inputs; callers own project discovery and publication.
+#[derive(Clone)]
+pub struct Inputs {
+    /// Application capabilities and resource limits.
+    pub manifest: wisp_abi::config::AppManifest,
+    /// Explicit identity for this local application's resources.
+    pub tenant: String,
+    /// Private local persistent state and preparation cache.
+    pub state_directory: std::path::PathBuf,
+    /// The loaded native implementation, included in the preparation identity.
+    pub runtime_library: std::path::PathBuf,
+    /// Initialization capability policy supplied by the SDK.
+    pub init_sandbox: wisp_abi::config::InitSandbox,
+    /// Explicitly authorized local service destinations.
+    pub allow_endpoints: Vec<std::net::SocketAddr>,
+    /// Host-provided files visible to the sandbox.
+    pub platform_files: wisp_engine::PlatformFiles,
+}
+
+/// Failure to prepare or start a local application.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// Native compilation, admission or initialization failed.
+    #[error("local preparation failed: {0:#}")]
+    Preparation(#[source] anyhow::Error),
+    /// Local host services could not be started.
+    #[error("local host startup failed: {0:#}")]
+    Startup(#[source] anyhow::Error),
+    /// A debugger peer did not identify a bound loopback endpoint.
+    #[error("the debugger endpoint must be the session-owned 127.0.0.1 address with a bound port")]
+    DebugEndpoint,
+}

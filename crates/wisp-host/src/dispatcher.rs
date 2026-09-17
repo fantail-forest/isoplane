@@ -3,11 +3,23 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use tracing::instrument::WithSubscriber;
 use wisp_abi::dispatch::{DispatchRecord, HttpRequest};
 use wisp_abi::host::{Dispatcher, HttpExchange, HttpReply, HttpUpload, RouteTarget};
 
 use crate::cell::{Cell, DispatchResult, Target};
 use crate::ModuleId;
+
+/// Runs blocking dispatch work with the caller's tracing context.
+pub(crate) fn spawn_blocking<T: Send + 'static>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> tokio::task::JoinHandle<T> {
+    let subscriber = tracing::dispatcher::get_default(Clone::clone);
+    let span = tracing::Span::current();
+    tokio::task::spawn_blocking(move || {
+        tracing::dispatcher::with_default(&subscriber, || span.in_scope(operation))
+    })
+}
 
 /// The wall cap plus a margin: the budget and the wall cap fire inside the
 /// cell, and this only keeps a caller from waiting forever on a cell bug.
@@ -34,9 +46,9 @@ impl Cell {
         let output = transport.clone();
         let timeout = deadline(self);
         let request_span = tracing::Span::current();
-        self.reactor().spawn(async move {
+        let exchange_task = async move {
             let stream = output.clone();
-            let result = tokio::task::spawn_blocking(move || {
+            let result = spawn_blocking(move || {
                 request_span.in_scope(|| {
                     cell.dispatch_with_http(
                         &module,
@@ -86,7 +98,9 @@ impl Cell {
                 output.acknowledge_settlement();
             }
             output.record_buffers(dispatch_id);
-        });
+        };
+        self.reactor()
+            .spawn(exchange_task.with_current_subscriber());
         transport.exchange().await
     }
 
@@ -122,8 +136,7 @@ impl Cell {
             .me()
             .ok_or_else(|| anyhow::anyhow!("cell `{}` is shutting down", self.cfg.name))?;
         let timeout = deadline(self);
-        tokio::task::spawn_blocking(move || me.dispatch_blocking(&module, target, rec, timeout))
-            .await?
+        spawn_blocking(move || me.dispatch_blocking(&module, target, rec, timeout)).await?
     }
 
 

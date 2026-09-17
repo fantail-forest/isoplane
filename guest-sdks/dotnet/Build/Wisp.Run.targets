@@ -10,7 +10,8 @@
   <Target Name="ComputeRunArguments">
     <PropertyGroup>
       <RunCommand>isoplane</RunCommand>
-      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-build --no-watch --module &quot;$([System.IO.Path]::GetFullPath('$(PublishDir)$(AssemblyName).wasm', '$(MSBuildProjectDirectory)'))&quot;</RunArguments>
+      <_WispRunModule>$([System.IO.Path]::Combine('$(PublishDir)', '$(AssemblyName).wasm'))</_WispRunModule>
+      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-build --no-watch --module &quot;$([System.IO.Path]::GetFullPath('$(_WispRunModule)', '$(MSBuildProjectDirectory)'))&quot;</RunArguments>
       <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
     </PropertyGroup>
   </Target>

@@ -3,7 +3,6 @@
 #[path = "common/dev.rs"]
 pub mod common;
 
-use std::path::Path;
 use std::process::Command;
 
 #[test]
@@ -62,7 +61,7 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
         &project,
         project_text.replace(
             "</Project>",
-            r#"<ItemGroup><ProjectReference Include="../CustomerLibrary/CustomerLibrary.csproj" /></ItemGroup></Project>"#,
+            r#"<PropertyGroup><RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion></PropertyGroup><ItemGroup><ProjectReference Include="../CustomerLibrary/CustomerLibrary.csproj" /></ItemGroup></Project>"#,
         ),
     )
     .expect("onboard existing code through a standard project reference");
@@ -77,11 +76,7 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
         format!("using Microsoft.Extensions.Logging;\n{route}"),
     )
     .expect("exercise ordinary application logging inside both guests");
-    let cli = wisp_fixtures::managed_cli(
-        directory.path(),
-        Path::new(env!("CARGO_BIN_EXE_wisp")),
-        &app,
-    );
+    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
     for (configuration, runtime, aot) in [
         ("WispInterpretedDebug", "Mono", "false"),
         ("WispNativeAotRelease", "NativeAOT", "true"),
@@ -165,6 +160,7 @@ fn start_dotnet(
             "0",
         ])
         .current_dir(project)
+        .env("WISP_CLI", cli)
         .env(
             "PATH",
             std::env::join_paths(paths).expect("tool paths contain no path separators"),
@@ -176,11 +172,7 @@ fn start_dotnet(
 async fn dotnet_watch_rebuilds_the_guest_after_a_compilation_error_is_repaired() {
     let directory = tempfile::tempdir().expect("isolate the installed watch workflow");
     let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(
-        directory.path(),
-        Path::new(env!("CARGO_BIN_EXE_wisp")),
-        &app,
-    );
+    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
     let mut running = start_dotnet(&app, &cli, "WispInterpretedDebug", true);
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).expect("read the generated application");

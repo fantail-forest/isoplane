@@ -17,8 +17,12 @@
     </ItemGroup>
   </Target>
   <Target Name="WispMonoDebugPublish" AfterTargets="WispMonoPublishCore">
-    <Copy SourceFiles="$(IntermediateOutputPath)linked/$(AssemblyName).pdb" DestinationFiles="$(PublishDir)$(AssemblyName).pdb" />
-    <WispMonoDebugManifest Module="$(NativeBinary)" Symbols="$(PublishDir)$(AssemblyName).pdb" Endpoint="$(WispDebugEndpoint)" Output="$(PublishDir)$(AssemblyName).debug.xml" />
-    <ItemGroup><FileWrites Include="$(PublishDir)$(AssemblyName).pdb;$(PublishDir)$(AssemblyName).debug.xml" /></ItemGroup>
+    <PropertyGroup>
+      <_WispPublishedSymbols>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.pdb'))</_WispPublishedSymbols>
+      <_WispPublishedDebugManifest>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.debug.xml'))</_WispPublishedDebugManifest>
+    </PropertyGroup>
+    <Copy SourceFiles="$(IntermediateOutputPath)linked/$(AssemblyName).pdb" DestinationFiles="$(_WispPublishedSymbols)" />
+    <WispMonoDebugManifest Module="$(NativeBinary)" Symbols="$(_WispPublishedSymbols)" Endpoint="$(WispDebugEndpoint)" Output="$(_WispPublishedDebugManifest)" />
+    <ItemGroup><FileWrites Include="$(_WispPublishedSymbols);$(_WispPublishedDebugManifest)" /></ItemGroup>
   </Target>
 </Project>

@@ -14,11 +14,12 @@ impl Cell {
             let me = Arc::downgrade(self);
             let queue = self.queue.clone();
             let name = format!("{}-exec-{i}", self.cfg.name);
-            handles.push(
-                std::thread::Builder::new()
-                    .name(name)
-                    .spawn(move || Cell::exec_loop(me, queue, i))?,
-            );
+            let subscriber = tracing::dispatcher::get_default(Clone::clone);
+            handles.push(std::thread::Builder::new().name(name).spawn(move || {
+                tracing::dispatcher::with_default(&subscriber, || {
+                    Cell::exec_loop(me, queue, i);
+                });
+            })?);
         }
         *self.workers.lock() = handles;
         Ok(())
@@ -29,7 +30,9 @@ impl Cell {
         let interval = Duration::from_millis(self.cfg.sweep_interval_ms.max(1));
         let stop = self.shutdown.clone();
         let name = format!("{}-idle", self.cfg.name);
+        let subscriber = tracing::dispatcher::get_default(Clone::clone);
         let h = std::thread::Builder::new().name(name).spawn(move || {
+            let _subscriber = tracing::dispatcher::set_default(&subscriber);
             while !stop.load(Ordering::Relaxed) {
                 std::thread::sleep(interval);
                 let Some(cell) = me.upgrade() else { return };

@@ -12,9 +12,7 @@
     <RunCommand Condition="'$(RunCommand)' == ''">isoplane</RunCommand>
   </PropertyGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
-  <ItemGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
-    <FrameworkReference Remove="Microsoft.AspNetCore.App" />
-  </ItemGroup>
+  <Import Project="../buildTransitive/Wisp.AspNetCore.targets" Condition="'$(_WispAspNetCoreTargetsImported)' != 'true'" />
   <Import Project="../tools/Wisp.Guest.targets" />
   <Import Project="../tools/Build/Wisp.Run.targets" />
   <Import Project="../tools/Build/Wisp.ManagedBundle.targets" />

@@ -1,5 +1,6 @@
 //! Local debugger activation using the cell's ordinary dispatch and cleanup.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +14,7 @@ use wisp_engine::{
 
 use crate::{Activator, EngineActivator, ModuleId};
 
-/// Guest execution backstop for local debugging; blocked host waits require explicit process stop.
+/// Guest execution backstop for local debugging.
 pub const DEBUG_BUDGET_MS: u32 = u32::MAX;
 const READINESS_INTERVAL: Duration = Duration::from_millis(1);
 
@@ -30,7 +31,10 @@ pub enum DebugError {
 
 /// Loads fresh raw instances; initialization executes inside the first accounted dispatch.
 /// Instances refuse reset and capture, including capture after an ordinary await.
-pub struct DebugActivator(EngineActivator);
+pub struct DebugActivator {
+    engine: EngineActivator,
+    stopped: Arc<AtomicBool>,
+}
 
 impl DebugActivator {
     /// Loads validated raw WASM without pre-initializing or cloning debugger session state.
@@ -43,34 +47,43 @@ impl DebugActivator {
         if !inner.template().has_initialize() {
             return Err(DebugError::MissingInitialize);
         }
-        Ok(Self(inner))
+        Ok(Self {
+            engine: inner,
+            stopped: Arc::new(AtomicBool::new(false)),
+        })
+    }
+    /// Ends debugger readiness waits so the local host can join its workers.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
     }
 }
 
 impl Activator for DebugActivator {
     fn module(&self) -> &ModuleId {
-        self.0.module()
+        self.engine.module()
     }
     fn module_hash(&self) -> ModuleHash {
-        self.0.module_hash()
+        self.engine.module_hash()
     }
     fn abi_rev(&self) -> u32 {
-        self.0.abi_rev()
+        self.engine.abi_rev()
     }
     fn imports(&self, module: &str, name: &str) -> bool {
-        self.0.imports(module, name)
+        self.engine.imports(module, name)
     }
     fn template_image(&self) -> Arc<MemoryImage> {
-        self.0.template_image()
+        self.engine.template_image()
     }
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
-        self.0.snapshot_size_bound(max_memory_bytes)
+        self.engine.snapshot_size_bound(max_memory_bytes)
     }
     fn activate(
         &self,
         bindings: Box<dyn HostBindings>,
     ) -> anyhow::Result<Box<dyn InstanceOps + Send>> {
-        let instance = self.0.activate_raw(Box::new(DebugBindings(bindings)))?;
+        let instance = self
+            .engine
+            .activate_raw(Box::new(DebugBindings(bindings, self.stopped.clone())))?;
         Ok(Box::new(DebugInstance {
             instance,
             initialized: false,
@@ -78,7 +91,7 @@ impl Activator for DebugActivator {
     }
 }
 
-struct DebugBindings(Box<dyn HostBindings>);
+struct DebugBindings(Box<dyn HostBindings>, Arc<AtomicBool>);
 impl HostBindings for DebugBindings {
     fn memory_limit_bytes(&self) -> Option<u64> {
         self.0.memory_limit_bytes()
@@ -94,6 +107,9 @@ impl HostBindings for DebugBindings {
             ));
         }
         loop {
+            if self.1.load(Ordering::Acquire) {
+                return Err(Error::Unsupported("local debugger session stopped"));
+            }
             let mut ready = Vec::new();
             for (index, handle) in handles.iter().enumerate() {
                 match self.0.native_io(Request::Ready(*handle))? {
@@ -382,7 +398,10 @@ mod tests {
                 pending_futures_per_dispatch: 6,
             },
         ));
-        let bindings = DebugBindings(Box::new(crate::bindings::CellBindings::new(context)));
+        let bindings = DebugBindings(
+            Box::new(crate::bindings::CellBindings::new(context)),
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(
             bindings.memory_limit_bytes(),
             Some(67108864),
@@ -419,10 +438,13 @@ mod tests {
 
     #[test]
     fn local_poll_waits_until_the_host_reports_readiness() {
-        let mut bindings = DebugBindings(Box::new(Readiness {
-            calls: 0,
-            malformed: false,
-        }));
+        let mut bindings = DebugBindings(
+            Box::new(Readiness {
+                calls: 0,
+                malformed: false,
+            }),
+            Arc::new(AtomicBool::new(false)),
+        );
         let result =
             bindings.native_io(Request::Poll(vec![wisp_abi::native_io::ResourceHandle(1)]));
         assert!(
@@ -432,11 +454,34 @@ mod tests {
     }
 
     #[test]
+    fn stopping_a_debug_session_ends_its_readiness_wait() {
+        let mut bindings = DebugBindings(
+            Box::new(Readiness {
+                calls: 0,
+                malformed: false,
+            }),
+            Arc::new(AtomicBool::new(true)),
+        );
+        let result =
+            bindings.native_io(Request::Poll(vec![wisp_abi::native_io::ResourceHandle(1)]));
+        assert!(
+            matches!(
+                result,
+                Err(Error::Unsupported("local debugger session stopped"))
+            ),
+            "a stopped debugger must release its native readiness wait"
+        );
+    }
+
+    #[test]
     fn an_empty_debug_poll_refuses_instead_of_waiting_forever() {
-        let mut bindings = DebugBindings(Box::new(Readiness {
-            calls: 0,
-            malformed: false,
-        }));
+        let mut bindings = DebugBindings(
+            Box::new(Readiness {
+                calls: 0,
+                malformed: false,
+            }),
+            Arc::new(AtomicBool::new(false)),
+        );
         assert!(
             matches!(
                 bindings.native_io(Request::Poll(vec![])),
@@ -448,10 +493,13 @@ mod tests {
 
     #[test]
     fn malformed_host_readiness_is_refused_instead_of_treated_as_ready() {
-        let mut bindings = DebugBindings(Box::new(Readiness {
-            calls: 0,
-            malformed: true,
-        }));
+        let mut bindings = DebugBindings(
+            Box::new(Readiness {
+                calls: 0,
+                malformed: true,
+            }),
+            Arc::new(AtomicBool::new(false)),
+        );
         assert!(
             matches!(
                 bindings.native_io(Request::Poll(vec![wisp_abi::native_io::ResourceHandle(1)])),

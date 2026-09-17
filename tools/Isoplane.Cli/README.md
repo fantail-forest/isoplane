@@ -1,5 +1,11 @@
 # Isoplane CLI
 
+The package includes the managed CLI and `isoplane-native` support library.
+Native code validates modules and runs local dev/debug sessions through the host;
+project discovery, builds, watching and output are managed.
+Builds still launch .NET, the supplied LLVM/compiler tools and wasm-tools.
+The internal `wisp` operator CLI is maintained separately from this package.
+
 The .NET tool owns publication and source watching; its bundled native runtime
 validates, prepares and executes WASM. This package currently targets the Linux
 host used to build it. macOS and Windows packages are not validated.
@@ -7,8 +13,7 @@ host used to build it. macOS and Windows packages are not validated.
 From the repository root, build and pack into a local feed:
 
 ```sh
-cargo build --target-dir target -p wisp-cli --bins
-dotnet pack tools/Isoplane.Cli -p:WispRuntimePath="$PWD/target/debug/wisp" -p:WispProcessPath="$PWD/target/debug/wisp-process" -o /tmp/wisp-preview-feed
+dotnet pack tools/Isoplane.Cli -o /tmp/wisp-preview-feed
 dotnet tool install Isoplane.Cli --version 0.1.0 --tool-path /tmp/isoplane-tools --add-source /tmp/wisp-preview-feed
 /tmp/isoplane-tools/isoplane --version
 ```
@@ -23,7 +28,7 @@ dependencies. `ISOPLANE_HOME` overrides the default `~/.isoplane` installation.
 Setup can be rerun to repair damaged files. Doctor does not repair them.
 
 The bundle is assembled by `scripts/package-toolchain.py --help` from verified
-runtime packs, wasi-sdk, wasm-tools, the native runtime and process supervisor,
+runtime packs, wasi-sdk, wasm-tools, the managed CLI and native support library,
 collected notices, and the official Microsoft Linux SDK matching `global.json`.
 Assembly provisions the WASI workload pinned by that SDK's shipped manifests.
 `scripts/toolchain-notices.py --help` collects dependency attribution from the

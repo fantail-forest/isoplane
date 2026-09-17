@@ -2,7 +2,6 @@
 
 mod build;
 pub mod debug;
-mod destinations;
 mod logs;
 mod project;
 mod runtime;
@@ -115,7 +114,7 @@ pub async fn dev(st: &Style, opts: DevOpts) -> anyhow::Result<()> {
     .await?;
     let result = serve(st, &opts, project, observed, &mut app).await;
     app.proxy.shutdown_sockets();
-    tokio::task::spawn_blocking(move || app.cell.shutdown()).await?;
+    tokio::task::spawn_blocking(move || app.shutdown()).await?;
     result
 }
 
@@ -162,9 +161,15 @@ async fn prepare(
         )
     })?;
     let project = project.clone();
-    tokio::task::spawn_blocking(move || Prepared::build(&project, &bytes, &configuration))
-        .await?
-        .map(Some)
+    tokio::task::spawn_blocking(move || -> anyhow::Result<Prepared> {
+        Ok(Prepared::build(
+            &project.native_inputs()?,
+            &bytes,
+            &configuration,
+        )?)
+    })
+    .await?
+    .map(Some)
 }
 
 type Rebuild = std::pin::Pin<
@@ -237,7 +242,7 @@ async fn serve(
                     Ok(Some((next_project, prepared))) => {
                         app.proxy.shutdown_sockets();
                         let old = app.clone();
-                        tokio::task::spawn_blocking(move || old.cell.shutdown()).await?;
+                        tokio::task::spawn_blocking(move || old.shutdown()).await?;
                         *app = LocalApp::start(prepared, &next_project.state_dir(), opts.runtime_configuration.clone()).await?;
                         *current_proxy.write() = app.proxy.clone();
                         project = next_project;

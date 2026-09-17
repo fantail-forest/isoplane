@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <WispGuestRuntimeFeed Condition="'$(WispGuestRuntimeFeed)' == '' AND '$(WISP_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(WISP_GUEST_RUNTIME_FEED)'))</WispGuestRuntimeFeed>
+    <IsoplaneCliAssembly Condition="'$(IsoplaneCliAssembly)' == '' AND '$(ISOPLANE_CLI_ASSEMBLY)' != ''">$(ISOPLANE_CLI_ASSEMBLY)</IsoplaneCliAssembly>
     <WispCli Condition="'$(WispCli)' == '' AND '$(WISP_CLI)' != ''">$(WISP_CLI)</WispCli>
     <_WispToolchainHome Condition="'$(ISOPLANE_HOME)' != ''">$(ISOPLANE_HOME)</_WispToolchainHome>
     <_WispToolchainHome Condition="'$(_WispToolchainHome)' == ''">$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.isoplane</_WispToolchainHome>

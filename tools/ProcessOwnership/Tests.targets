@@ -1,9 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <ProcessOwnerRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../..'))</ProcessOwnerRoot>
-  </PropertyGroup>
-  <Target Name="BuildProcessOwner" BeforeTargets="Build">
-    <Exec Command="cargo build --manifest-path &quot;$(ProcessOwnerRoot)/Cargo.toml&quot; -p wisp-cli --bin wisp-process --target-dir &quot;$(ProcessOwnerRoot)/target&quot;" />
-    <Copy SourceFiles="$(ProcessOwnerRoot)/target/debug/wisp-process" DestinationFolder="$(OutDir)runtime" />
-  </Target>
-</Project>

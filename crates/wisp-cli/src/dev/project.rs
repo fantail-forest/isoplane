@@ -44,6 +44,18 @@ struct Development {
 }
 
 impl Project {
+    pub fn native_inputs(&self) -> anyhow::Result<isoplane_native::local::Inputs> {
+        Ok(isoplane_native::local::Inputs {
+            manifest: self.manifest.clone(),
+            tenant: self.tenant.clone(),
+            state_directory: self.state_dir(),
+            runtime_library: std::env::current_exe()?,
+            init_sandbox: self.init_sandbox,
+            allow_endpoints: self.allow_endpoints.clone(),
+            platform_files: self.platform_files.clone(),
+        })
+    }
+
     pub fn load(
         root: &Path,
         build: Option<&str>,

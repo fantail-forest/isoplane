@@ -389,11 +389,7 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     let mut manifest: toml::Value = toml::from_str(&manifest_text).unwrap();
     manifest["module"] = toml::Value::String("dist/nested/customer.wasm".into());
     std::fs::write(&manifest_path, toml::to_string(&manifest).unwrap()).unwrap();
-    let cli = wisp_fixtures::managed_cli(
-        dir.path(),
-        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
-        &app,
-    );
+    let cli = wisp_fixtures::managed_cli(dir.path(), &app);
     let mut dev = Dev::start_managed(&app, &cli);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -451,11 +447,7 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
 async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_timers() {
     let directory = tempfile::tempdir().unwrap();
     let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(
-        directory.path(),
-        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
-        &app,
-    );
+    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
     let mut dev = Dev::start_managed_with_args(&app, &cli, &["--guest-runtime", "mono"]);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -530,11 +522,7 @@ fn installed_debug_acceptance(mode: &str) {
         ),
     )
     .unwrap();
-    let cli = wisp_fixtures::managed_cli(
-        directory.path(),
-        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
-        &app,
-    );
+    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
     let mut dev = Dev::start_managed_with_args(&app, &cli, &["--debug", "--no-watch"]);
     let metadata = dev
         .debugger
@@ -592,11 +580,7 @@ fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
 fn installed_debug_options_reject_watch_and_nativeaot_before_publication() {
     let directory = tempfile::tempdir().unwrap();
     let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(
-        directory.path(),
-        std::path::Path::new(env!("CARGO_BIN_EXE_wisp")),
-        &app,
-    );
+    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
     for (arguments, diagnostic) in [
         (vec!["--debug"], "--debug requires --no-watch"),
         (

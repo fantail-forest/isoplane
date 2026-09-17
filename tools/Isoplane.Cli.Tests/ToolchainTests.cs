@@ -105,7 +105,7 @@ public sealed class ToolchainTests
         using var fixture = new Bundle();
         var manifestPath = Path.Combine(fixture.Source, "toolchain.json");
         var manifest = JsonSerializer.Deserialize<ToolchainManifest>(await File.ReadAllTextAsync(manifestPath))!;
-        await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest with { Files = manifest.Files.Where(file => file.Path != "bin/wisp").ToArray() }));
+        await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest with { Files = manifest.Files.Where(file => file.Path != "cli/Isoplane.Cli.dll").ToArray() }));
         await Assert.ThrowsAsync<InvalidOperationException>(() => Toolchain.InstallAsync(fixture.Source, fixture.Home, CancellationToken.None));
         Assert.False(Directory.Exists(fixture.Home), "missing engine entries must be rejected before installation starts");
     }
@@ -138,7 +138,7 @@ public sealed class ToolchainTests
         using var fixture = new Bundle();
         var bundled = Path.Combine(fixture.Root, "runtime");
         Directory.CreateDirectory(bundled);
-        await File.WriteAllTextAsync(Path.Combine(bundled, "wisp"), "different engine");
+        await File.WriteAllTextAsync(Path.Combine(bundled, Wisp.Native.NativeRuntime.LibraryFilename), "different engine");
         await Assert.ThrowsAsync<InvalidOperationException>(() => Toolchain.InstallAsync(fixture.Source, fixture.Home, CancellationToken.None, bundled));
         Assert.False(Directory.Exists(fixture.Home), "mixed release components must not replace a working installation");
     }

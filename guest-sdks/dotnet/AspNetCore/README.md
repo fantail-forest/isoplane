@@ -79,10 +79,16 @@ draining. Streaming also does not yet impose a byte
 cap on pending write payloads; that resource limit remains unresolved.
 
 On Linux, use the repository's pinned .NET SDK, wasi-sdk and wasm-tools, then
-run `dotnet publish -c Release`. The build restores a pinned managed ASP.NET
-runtime closure from NuGet; it does not borrow assemblies from the installed
+run `dotnet publish -c Release`. The build restores the selected managed ASP.NET
+runtime and request-delegate generator from NuGet; it does not borrow assemblies from the installed
 shared framework. Unresolvable methods fail compilation. The PAL/import gate
-and `wisp doctor` then check the produced module.
+and `isoplane doctor` then check the produced module.
+
+Set `RuntimeFrameworkVersion` in the application project to select the ASP.NET
+patch version (for example, `10.0.12`). Without an explicit selection, it uses the latest
+patch listed by the .NET SDK. Ordinary `PackageReference` versions remain owned by
+the application. Deployment bundles carry those resolved implementations;
+the platform supplies its own WASM runtime and compiler.
 
 To build local packages, pack `Wisp.Sdk.csproj` and `Wisp.AspNetCore.csproj` into
 the same directory and configure that directory as a NuGet source. The fixture

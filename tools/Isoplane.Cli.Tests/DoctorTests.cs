@@ -83,10 +83,9 @@ public sealed class DoctorTests
     [Fact]
     public async Task A_failed_tool_check_retains_stdout_and_stderr_diagnostics()
     {
-        var runtime = Path.Combine(AppContext.BaseDirectory, "runtime", "wisp");
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Processes.CheckAsync(
             "/bin/sh", ["-c", "echo version-detail; echo missing-library >&2; exit 7"],
-            AppContext.BaseDirectory, runtime, CancellationToken.None));
+            AppContext.BaseDirectory, CancellationToken.None));
         Assert.True(error.Message.Contains("version-detail", StringComparison.Ordinal)
             && error.Message.Contains("missing-library", StringComparison.Ordinal)
             && error.Message.Contains("exit 7", StringComparison.Ordinal),

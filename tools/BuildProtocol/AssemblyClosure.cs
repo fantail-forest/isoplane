@@ -33,7 +33,7 @@ internal sealed record ConformanceDiagnostic(string Code, string Message)
 {
     public override string ToString() => $"warning {Code}: {Message}";
 }
-internal sealed record InspectedAssembly(string Origin, ManagedIdentity Identity, ManagedIdentity[] References, bool IlOnly,
+internal sealed record InspectedAssembly(string Origin, ManagedIdentity Identity, ManagedIdentity[] References, bool HasManagedIl,
     NativeImport[] NativeImports, ReferencedMethod[] Methods);
 
 internal static class AssemblyClosure
@@ -48,7 +48,7 @@ internal static class AssemblyClosure
     {
         try
         {
-            using var pe = new PEReader(input, PEStreamOptions.LeaveOpen | PEStreamOptions.PrefetchMetadata);
+            using var pe = new PEReader(input, PEStreamOptions.LeaveOpen);
             if (!pe.HasMetadata || pe.PEHeaders.CorHeader is not { } header)
                 throw Invalid(origin, "is not a valid managed assembly");
             var metadata = pe.GetMetadataReader();
@@ -90,9 +90,32 @@ internal static class AssemblyClosure
                     var type = metadata.GetTypeReference((TypeReferenceHandle)member.Parent);
                     return new ReferencedMethod(metadata.GetString(type.Namespace) + "." + metadata.GetString(type.Name), metadata.GetString(member.Name));
                 }).Distinct().ToArray();
-            return new(origin, identity, references, header.Flags.HasFlag(CorFlags.ILOnly), imports, methods);
+            return new(origin, identity, references, HasManagedIl(pe, metadata, header), imports, methods);
         }
         catch (BadImageFormatException) { throw Invalid(origin, "is not a valid managed assembly"); }
+    }
+
+    private static bool HasManagedIl(PEReader pe, MetadataReader metadata, CorHeader header)
+    {
+        if (header.Flags.HasFlag(CorFlags.ILOnly)) return true;
+        // ReadyToRun packages retain IL beside native code. Only that IL enters the WASM compiler.
+        var native = header.ManagedNativeHeaderDirectory;
+        if (!header.Flags.HasFlag(CorFlags.ILLibrary) || native.Size < 16) return false;
+        var signature = pe.GetSectionData(native.RelativeVirtualAddress).GetReader();
+        if (signature.ReadUInt32() != 0x00525452) return false;
+        var hasBody = false;
+        foreach (var handle in metadata.MethodDefinitions)
+        {
+            var method = metadata.GetMethodDefinition(handle);
+            var code = method.ImplAttributes & MethodImplAttributes.CodeTypeMask;
+            if (code is not (MethodImplAttributes.IL or MethodImplAttributes.Runtime)) return false;
+            if (method.RelativeVirtualAddress != 0)
+            {
+                pe.GetMethodBody(method.RelativeVirtualAddress);
+                hasBody = true;
+            }
+        }
+        return hasBody;
     }
 
     private static string TypeName(MetadataReader metadata, TypeDefinitionHandle handle)
@@ -143,7 +166,7 @@ internal static class AssemblyClosure
         var assemblies = new Dictionary<string, InspectedAssembly>(StringComparer.OrdinalIgnoreCase);
         foreach (var assembly in inputs)
         {
-            if (application && !assembly.IlOnly) throw Invalid(assembly.Origin, "must contain managed IL only");
+            if (application && !assembly.HasManagedIl) throw Invalid(assembly.Origin, "must contain portable managed IL");
             if (!assemblies.TryAdd(assembly.Identity.Key, assembly))
                 throw new AssemblyInputException(AssemblyInputProblem.DuplicateIdentity,
                     $"Conflicting inputs define assembly '{assembly.Identity.Key}': '{assemblies[assembly.Identity.Key].Origin}' and '{assembly.Origin}'.");

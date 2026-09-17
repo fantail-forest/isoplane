@@ -1,3 +1,4 @@
+using Wisp.Native;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -102,7 +103,7 @@ internal static class Toolchain
             start.FileName = Path.Combine(directory, "dotnet", "dotnet");
         start.Environment["WASI_SDK_PATH"] = Path.Combine(directory, "wasi-sdk");
         start.Environment["WISP_GUEST_RUNTIME_FEED"] = Path.Combine(directory, "feed");
-        start.Environment["WISP_CLI"] = Path.Combine(directory, "bin", "wisp");
+        start.Environment["ISOPLANE_CLI_ASSEMBLY"] = Path.Combine(directory, "cli", "Isoplane.Cli.dll");
         start.Environment["PATH"] = Path.Combine(directory, "bin") + Path.PathSeparator
             + Path.Combine(directory, "dotnet") + Path.PathSeparator + (start.Environment.TryGetValue("PATH", out var searchPath) ? searchPath : "");
     }
@@ -158,14 +159,12 @@ internal static class Toolchain
 
     private static async Task VerifyRuntimePairAsync(ToolchainManifest manifest, string bundledRuntime, CancellationToken cancellation)
     {
-        foreach (var binary in new[] { "wisp", "wisp-process" })
-        {
-            await using var stream = File.OpenRead(Path.Combine(bundledRuntime, binary));
-            var digest = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellation));
-            var expected = manifest.Files.Single(file => file.Path == "bin/" + binary).Sha256;
-            if (!string.Equals(digest, expected, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"The CLI and toolchain contain different {binary} binaries. Install the CLI and run setup from the same preview release.");
-        }
+        var filename = NativeRuntime.LibraryFilename;
+        await using var stream = File.OpenRead(Path.Combine(bundledRuntime, filename));
+        var digest = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellation));
+        var expected = manifest.Files.Single(file => file.Path == "cli/runtime/" + filename).Sha256;
+        if (!string.Equals(digest, expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The CLI and toolchain contain different native libraries. Install both from the same preview release.");
     }
 
     internal static ToolchainManifest ReadManifest(byte[] bytes)
@@ -189,7 +188,8 @@ internal static class Toolchain
     }
 
     internal static string[] RequiredFiles(string sdk, string workload, string rid) => [
-        "bin/wisp", "bin/wisp-process", "bin/wasm-tools", "wasi-sdk/bin/clang",
+        "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
+        "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools", "wasi-sdk/bin/clang",
         "dotnet/dotnet", $"dotnet/sdk/{sdk}/dotnet.dll", "feed/Wisp.GuestRuntime.props",
         "compiler/compiler.json", "compiler/Wisp.GuestCompiler.props", "compiler/backend",
         $"dotnet/packs/Microsoft.NET.Runtime.MonoTargets.Sdk/{workload}/Sdk/Sdk.props",
@@ -263,7 +263,7 @@ internal static class Toolchain
     private static string Properties(string directory) => new XDocument(new XElement("Project", new XElement("PropertyGroup",
         Property("WispGuestRuntimeFeed", Path.Combine(directory, "feed")),
         Property("WASI_SDK_PATH", Path.Combine(directory, "wasi-sdk")),
-        Property("WispCli", Path.Combine(directory, "bin", "wisp"))))).ToString();
+        Property("IsoplaneCliAssembly", Path.Combine(directory, "cli", "Isoplane.Cli.dll"))))).ToString();
 
     private static XElement Property(string name, string value) => new(name, new XAttribute("Condition", $"'$({name})' == ''"), value);
 

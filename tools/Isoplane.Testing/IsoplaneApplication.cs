@@ -55,7 +55,6 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsLinux())
             throw new PlatformNotSupportedException("The packaged local runtime and process owner are currently supported on Linux.");
-        var supervisor = await ProcessOwnership.ResolveAsync(options.CliPath, options.ShutdownTimeout, cancellationToken);
         var start = new ProcessStartInfo(options.CliPath)
         {
             WorkingDirectory = directory,
@@ -69,9 +68,9 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         OwnedProcess process;
         try
         {
-            process = OwnedProcess.Start(supervisor, start, options.ShutdownTimeout);
+            process = OwnedProcess.Start(start, options.ShutdownTimeout);
         }
-        catch (System.ComponentModel.Win32Exception error)
+        catch (IOException error)
         {
             throw new InvalidOperationException($"Could not start installed CLI '{options.CliPath}'; install Isoplane.Cli, or set ApplicationOptions.CliPath.", error);
         }

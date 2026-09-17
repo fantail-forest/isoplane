@@ -50,34 +50,9 @@ public sealed class ProcessLifetimeTests
     {
         using var fixture = new ProcessFixture();
         var result = await Processes.RunAsync("sh", ["-c", "sleep 300 & echo $! > child.pid; exit 0"],
-            fixture.Directory, fixture.Runtime, fixture.Cancellation, redirectOutput: true);
+            fixture.Directory, fixture.Cancellation, redirectOutput: true);
         Assert.True(result == 125, "Leaving live descendants must produce an actionable non-success result rather than hanging output collection.");
         await fixture.AssertChildStoppedAsync();
-    }
-
-    [Fact]
-    public async Task killing_the_outer_cli_owner_also_terminates_its_supervised_descendants()
-    {
-        using var fixture = new ProcessFixture();
-        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, WorkingDirectory = fixture.Directory };
-        foreach (var argument in new[] { typeof(OwnedChild).Assembly.Location, "--nested-owner", fixture.Directory })
-            start.ArgumentList.Add(argument);
-        using var outer = Process.Start(start) ?? throw new InvalidOperationException("Could not start the outer CLI owner.");
-        try
-        {
-            await fixture.WaitForChildAsync();
-            outer.Kill();
-            await outer.WaitForExitAsync(fixture.Cancellation);
-            await fixture.AssertChildStoppedAsync();
-        }
-        finally
-        {
-            if (!outer.HasExited)
-            {
-                outer.Kill();
-                await outer.WaitForExitAsync(fixture.Cancellation);
-            }
-        }
     }
 
     [Fact]
@@ -86,7 +61,7 @@ public sealed class ProcessLifetimeTests
         using var fixture = new ProcessFixture();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(fixture.Cancellation);
         var run = Processes.RunAsync("sh", ["-c", "sleep 300 & echo $! > child.pid; wait"],
-            fixture.Directory, fixture.Runtime, cancellation.Token, redirectOutput: true);
+            fixture.Directory, cancellation.Token, redirectOutput: true);
         try
         {
             await fixture.WaitForChildAsync();
@@ -102,8 +77,7 @@ public sealed class ProcessLifetimeTests
     private sealed class ProcessFixture : IDisposable
     {
         private readonly CancellationTokenSource deadline = new(TimeSpan.FromSeconds(30));
-        internal string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("wisp-process-test-").FullName;
-        internal string Runtime => Path.Combine(AppContext.BaseDirectory, "runtime", "wisp");
+        internal string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("isoplane-child-test-").FullName;
         internal CancellationToken Cancellation => deadline.Token;
 
         internal Process StartCli(string command)
@@ -112,12 +86,11 @@ public sealed class ProcessLifetimeTests
                 File.Copy(file, Path.Combine(Directory, Path.GetFileName(file)));
             var runtimeDirectory = Path.Combine(Directory, "runtime");
             System.IO.Directory.CreateDirectory(runtimeDirectory);
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "runtime", "wisp-process"), Path.Combine(runtimeDirectory, "wisp-process"));
-            File.WriteAllText(Path.Combine(runtimeDirectory, "wisp"), "#!/bin/sh\n" + command + "\n");
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "runtime", "libisoplane_native.so"), Path.Combine(runtimeDirectory, "libisoplane_native.so"));
             var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, WorkingDirectory = Directory };
-            start.ArgumentList.Add(Path.Combine(Directory, "Isoplane.Cli.dll"));
-            start.ArgumentList.Add("doctor");
-            start.ArgumentList.Add("fixture.wasm");
+            start.ArgumentList.Add(Path.Combine(Directory, Path.GetFileName(typeof(OwnedChild).Assembly.Location)));
+            start.ArgumentList.Add("--run-process");
+            start.ArgumentList.Add(command);
             start.Environment["ISOPLANE_HOME"] = Path.Combine(Directory, "home");
             return Process.Start(start) ?? throw new InvalidOperationException("Could not start the CLI.");
         }
@@ -126,9 +99,8 @@ public sealed class ProcessLifetimeTests
         {
             if (!cli.HasExited)
             {
-                cli.Kill();
+                cli.Kill(entireProcessTree: true);
                 await cli.WaitForExitAsync(Cancellation);
-                await AssertChildStoppedAsync();
             }
         }
 

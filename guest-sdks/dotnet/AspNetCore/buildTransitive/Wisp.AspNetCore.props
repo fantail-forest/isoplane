@@ -2,9 +2,5 @@
   <PropertyGroup>
     <_WispAspNetCorePropsImported>true</_WispAspNetCorePropsImported>
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
-    <WispAspNetCoreRuntimeVersion>10.0.11</WispAspNetCoreRuntimeVersion>
   </PropertyGroup>
-  <ItemGroup>
-    <PackageDownload Include="Microsoft.AspNetCore.App.Runtime.linux-x64" Version="[$(WispAspNetCoreRuntimeVersion)]" />
-  </ItemGroup>
 </Project>

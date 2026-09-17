@@ -4,11 +4,11 @@ namespace Wisp.Cli;
 
 internal static class LocalSecrets
 {
-    internal static async Task<Dictionary<string, string>> ReadAsync(DevelopmentOptions options, string runtime, CancellationToken cancellation)
+    internal static async Task<Dictionary<string, string>> ReadAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
         using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration,
-            "-getProperty:UserSecretsId"], options.Directory, runtime, captureOutput: true);
+            "-getProperty:UserSecretsId"], options.Directory, captureOutput: true);
         try
         {
             var id = (await process.StandardOutput.ReadToEndAsync(cancellation)).Trim();

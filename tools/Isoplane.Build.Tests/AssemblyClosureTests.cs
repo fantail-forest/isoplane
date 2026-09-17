@@ -17,6 +17,59 @@ public sealed class AssemblyClosureTests : IDisposable
     private static IReadOnlyDictionary<string, InspectedAssembly> Platform => AssemblyClosure.Platform([AssemblyClosure.InspectFile(CoreLibrary)]);
 
     [Fact]
+    public void ReadyToRun_libraries_with_retained_IL_are_valid_compiler_inputs()
+    {
+        var path = typeof(System.Text.Json.JsonSerializer).Assembly.Location;
+        using var pe = new PEReader(File.OpenRead(path));
+        Assert.True(pe.PEHeaders.CorHeader!.ManagedNativeHeaderDirectory.Size > 0,
+            "The test must exercise the installed framework's ReadyToRun implementation.");
+        var assembly = AssemblyClosure.InspectFile(path);
+        var application = AssemblyClosure.Application([assembly]);
+        Assert.True(application.ContainsKey(assembly.Identity.Key),
+            "A library's retained IL must remain usable when its package also includes ReadyToRun code.");
+    }
+
+    [Theory]
+    [InlineData("signature")]
+    [InlineData("short-header")]
+    [InlineData("native-method")]
+    [InlineData("missing-il")]
+    public void ReadyToRun_inputs_without_a_valid_managed_implementation_are_rejected(string damage)
+    {
+        var bytes = File.ReadAllBytes(typeof(System.Text.Json.JsonSerializer).Assembly.Location);
+        using (var pe = new PEReader(new MemoryStream(bytes)))
+        {
+            var header = pe.PEHeaders.CorHeader!;
+            Assert.True(pe.PEHeaders.TryGetDirectoryOffset(header.ManagedNativeHeaderDirectory, out var nativeOffset),
+                "The fixture must provide an addressable ReadyToRun header.");
+            if (damage == "signature") bytes[nativeOffset] = 0;
+            else if (damage == "short-header")
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(pe.PEHeaders.CorHeaderStartOffset + 68), 4);
+            else
+            {
+                var metadata = pe.GetMetadataReader();
+                var method = metadata.MethodDefinitions.First(handle => metadata.GetMethodDefinition(handle).RelativeVirtualAddress != 0);
+                var row = pe.PEHeaders.MetadataStartOffset + metadata.GetTableMetadataOffset(TableIndex.MethodDef)
+                    + (MetadataTokens.GetRowNumber(method) - 1) * metadata.GetTableRowSize(TableIndex.MethodDef);
+                if (damage == "native-method")
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(row + 4), (ushort)MethodImplAttributes.Native);
+                else
+                    foreach (var handle in metadata.MethodDefinitions)
+                    {
+                        var offset = pe.PEHeaders.MetadataStartOffset + metadata.GetTableMetadataOffset(TableIndex.MethodDef)
+                            + (MetadataTokens.GetRowNumber(handle) - 1) * metadata.GetTableRowSize(TableIndex.MethodDef);
+                        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(offset), 0);
+                    }
+            }
+        }
+        using var input = new MemoryStream(bytes);
+        var assembly = AssemblyClosure.Inspect(input, "damaged-readytorun.dll");
+        var error = Assert.Throws<AssemblyInputException>(() => AssemblyClosure.Application([assembly]));
+        Assert.True(error.Problem == AssemblyInputProblem.InvalidAssembly,
+            "Native methods, missing IL and unrecognized native headers must remain invalid compiler inputs.");
+    }
+
+    [Fact]
     public void Cyclic_nested_type_metadata_is_refused_without_recursing_on_the_host_stack()
     {
         var metadata = new MetadataBuilder();

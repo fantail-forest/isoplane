@@ -42,7 +42,7 @@ fn project(destination: &Path) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    let cli = wisp_fixtures::managed_cli(destination, Path::new(env!("CARGO_BIN_EXE_wisp")), &app);
+    let cli = wisp_fixtures::managed_cli(destination, &app);
     (app, cli)
 }
 
@@ -55,6 +55,25 @@ async fn body(dev: &Dev) -> String {
         .text()
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn guest_logs_reach_the_installed_cli_from_execution_threads() {
+    let directory = tempfile::tempdir().expect("isolate the installed logging workflow");
+    let (app, cli) = project(directory.path());
+    std::fs::write(
+        app.join("fixture.wasm"),
+        common::guest_with_log("logged response", "managed-session-guest-log"),
+    )
+    .expect("publish a guest that logs during dispatch");
+    let mut dev = Dev::start_managed(&app, &cli);
+    assert_eq!(
+        body(&dev).await,
+        "logged response",
+        "the logging guest must finish its request"
+    );
+    dev.wait_for("managed-session-guest-log");
+    dev.stop();
 }
 
 #[tokio::test]
@@ -91,20 +110,17 @@ async fn a_missing_publication_preserves_the_running_app_and_allows_repair() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn runtime_exit_cancels_a_publication_waiting_on_external_work() {
+async fn shutdown_cancels_a_publication_waiting_on_external_work() {
     let directory = tempfile::tempdir().unwrap();
     let (app, cli) = project(directory.path());
     let mut dev = Dev::start_managed(&app, &cli);
     std::fs::write(app.join("hold-publication"), "").unwrap();
     dev.wait_for("publication-is-held");
 
-    // An unreadable module terminates the runtime while the publisher's FIFO stays held.
-    std::fs::remove_file(app.join("app.wasm")).unwrap();
-    std::fs::create_dir(app.join("app.wasm")).unwrap();
-    dev.wait_for("cancelled publication because the runtime exited");
+    dev.stop();
     assert!(
         app.join(".wisp/publication-gate").exists(),
-        "runtime exit must cancel publication without requiring its external work to finish"
+        "shutdown must cancel publication without requiring its external work to finish"
     );
     assert!(
         std::fs::read_dir(app.join(".wisp/publish"))

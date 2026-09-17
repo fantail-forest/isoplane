@@ -13,15 +13,29 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
-def verify_native_pair(package_path, runtime, supervisor):
+def verify_native_pair(package_path, library):
     with zipfile.ZipFile(package_path) as package:
-        for name, path in [('wisp', runtime), ('wisp-process', supervisor)]:
-            entries = [entry for entry in package.namelist() if entry.endswith('/runtime/' + name)]
-            if len(entries) != 1:
-                raise ValueError(f'CLI package must contain exactly one runtime/{name}')
-            with package.open(entries[0]) as bundled, path.open('rb') as selected:
-                if hashlib.file_digest(bundled, 'sha256').digest() != hashlib.file_digest(selected, 'sha256').digest():
-                    raise ValueError(f'CLI package and selected {name} binary differ; rebuild the CLI package')
+        entries = [entry for entry in package.namelist() if entry.endswith('/runtime/' + library.name)]
+        if len(entries) != 1:
+            raise ValueError(f'CLI package must contain exactly one runtime/{library.name}')
+        with package.open(entries[0]) as bundled, library.open('rb') as selected:
+            if hashlib.file_digest(bundled, 'sha256').digest() != hashlib.file_digest(selected, 'sha256').digest():
+                raise ValueError('CLI package and selected native library differ; rebuild the CLI package')
+
+
+def extract_cli(package_path, destination):
+    prefix = 'tools/net10.0/any/'
+    with zipfile.ZipFile(package_path) as package:
+        for entry in package.infolist():
+            if not entry.filename.startswith(prefix) or entry.is_dir():
+                continue
+            relative = entry.filename[len(prefix):]
+            if not relative or any(part in ('', '.', '..') for part in relative.split('/')) or '\\' in relative:
+                raise ValueError(f'Unsafe CLI package path: {entry.filename}')
+            output = destination / relative
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with package.open(entry) as source, output.open('wb') as target:
+                shutil.copyfileobj(source, target)
 
 
 def main():
@@ -29,8 +43,8 @@ def main():
     parser.add_argument('--runtime-output', type=Path, required=True, help='guest-runtime/out containing feed and packs')
     parser.add_argument('--wasi-sdk', type=Path, required=True)
     parser.add_argument('--wasm-tools', type=Path, required=True)
-    parser.add_argument('--runtime', type=Path, help='explicit prebuilt wisp binary; otherwise build current release binaries')
-    parser.add_argument('--supervisor', type=Path, help='explicit prebuilt wisp-process, required with --runtime')
+    parser.add_argument('--native-library', type=Path, required=True, help='built isoplane-native library matching the CLI package')
+    parser.add_argument('--cli-package', type=Path, help='CLI package for a toolchain-only bundle')
     parser.add_argument('--dotnet-root', type=Path, required=True)
     parser.add_argument('--notices', type=Path, required=True, help='output from toolchain-notices.py')
     parser.add_argument('--packages', type=Path, help='include this SDK/CLI/template NuGet feed in a complete preview release')
@@ -38,25 +52,21 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    if bool(args.runtime) != bool(args.supervisor):
-        parser.error('--runtime and --supervisor must be supplied together')
-    if args.runtime is None:
-        subprocess.run(['cargo', 'build', '--release', '-p', 'wisp-cli', '--bins'], cwd=root, check=True)
-        metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--no-deps', '--format-version', '1'], cwd=root))
-        binaries = Path(metadata['target_directory']) / 'release'
-        args.runtime, args.supervisor = binaries / 'wisp', binaries / 'wisp-process'
     if args.packages and not args.package_version:
         parser.error('--packages requires --package-version')
     if not args.packages and args.package_version:
         parser.error('--package-version requires --packages')
     if args.packages:
-        for name in ['Isoplane.Cli', 'Isoplane.Testing', 'Wisp.Sdk', 'Wisp.AspNetCore', 'Wisp.Templates']:
+        for name in ['Isoplane.Cli', 'Isoplane.Native', 'Isoplane.Testing', 'Wisp.Sdk', 'Wisp.AspNetCore', 'Wisp.Templates']:
             if not (args.packages / f'{name}.{args.package_version}.nupkg').is_file():
                 parser.error(f'local feed is missing {name} {args.package_version}')
-        try:
-            verify_native_pair(args.packages / f'Isoplane.Cli.{args.package_version}.nupkg', args.runtime, args.supervisor)
-        except ValueError as error:
-            parser.error(str(error))
+        args.cli_package = args.packages / f'Isoplane.Cli.{args.package_version}.nupkg'
+    if not args.cli_package:
+        parser.error('supply --cli-package or a complete --packages feed')
+    try:
+        verify_native_pair(args.cli_package, args.native_library)
+    except ValueError as error:
+        parser.error(str(error))
     sdk = json.loads((root / 'global.json').read_text())['sdk']['version']
     runtime_version = re.search(r'^RUNTIME_TAG=v(.+)$', (root / 'guest-runtime/manifest.env').read_text(), re.MULTILINE).group(1)
     expected_wasi = re.search(r'^WASI_SDK_VERSION=(.+)$', (root / 'guest-runtime/manifest.env').read_text(), re.MULTILINE).group(1)
@@ -97,8 +107,8 @@ def main():
             if not (stage / 'dotnet/packs' / pack / runtime_version / 'Sdk/Sdk.props').is_file():
                 parser.error(f'pinned SDK did not provide expected WASI build pack {pack} {runtime_version}')
         (stage / 'bin').mkdir()
-        for source, name in [(args.wasm_tools, 'wasm-tools'), (args.runtime, 'wisp'), (args.supervisor, 'wisp-process')]:
-            shutil.copy2(source, stage / 'bin' / name)
+        shutil.copy2(args.wasm_tools, stage / 'bin/wasm-tools')
+        extract_cli(args.cli_package, stage / 'cli')
         entries = []
         for path in sorted(stage.rglob('*')):
             if path.is_file():

@@ -1,6 +1,6 @@
 using System.Reflection;
-using System.Runtime.InteropServices;
 using Wisp.Cli;
+using Wisp.Native;
 
 try
 {
@@ -17,23 +17,7 @@ try
         Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
         return 0;
     }
-    if (args is ["process-owner-path"])
-    {
-        var supervisor = Path.Combine(AppContext.BaseDirectory, "runtime", "wisp-process");
-        if (!File.Exists(supervisor))
-            throw new InvalidOperationException("The CLI package is missing its process supervisor; reinstall a complete package.");
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(supervisor, File.GetUnixFileMode(supervisor) | UnixFileMode.UserExecute);
-        Console.WriteLine(supervisor);
-        return 0;
-    }
-    using var cancellation = new CancellationTokenSource();
-    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
-    using var termination = OperatingSystem.IsWindows() ? null : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
-    {
-        context.Cancel = true;
-        cancellation.Cancel();
-    });
+    using var cancellation = new CommandCancellation();
     if (args is ["setup", "--source", var source])
     {
         var installed = await Toolchain.InstallAsync(source, Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
@@ -47,38 +31,32 @@ try
         var installed = await Toolchain.DiagnoseAsync(Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
         Console.Error.WriteLine("Checking NativeAOT compiler dependencies...");
         Toolchain.ProbeCompiler(installed);
+        NativeRuntime.EnsureLoaded();
         var probes = new[]
         {
             (Name: ".NET SDK", Path: "dotnet/dotnet"),
             (Name: "WebAssembly compiler", Path: "wasi-sdk/bin/clang"),
             (Name: "WebAssembly tools", Path: "bin/wasm-tools"),
-            (Name: "Isoplane runtime", Path: "bin/wisp"),
         };
         foreach (var probe in probes)
         {
             Console.Error.WriteLine($"Checking {probe.Name}...");
-            await Processes.CheckAsync(Path.Combine(installed, probe.Path), ["--version"], installed,
-                Path.Combine(installed, "bin", "wisp"), cancellation.Token);
+            await Processes.CheckAsync(Path.Combine(installed, probe.Path), ["--version"], installed, cancellation.Token);
         }
         Console.WriteLine("Your Isoplane toolchain is ready.");
         return 0;
     }
-    var runtime = Path.Combine(AppContext.BaseDirectory, "runtime", "wisp");
-    if (!File.Exists(runtime))
-        throw new InvalidOperationException("The CLI package is missing its shared runtime; reinstall a complete local package.");
-    if (!OperatingSystem.IsWindows())
-        File.SetUnixFileMode(runtime, File.GetUnixFileMode(runtime) | UnixFileMode.UserExecute);
+    if (args[0] == "doctor") return ModuleDoctor.Run(args);
     if (args[0] == "bundle")
     {
         var options = BundleOptions.Parse(args[1..]);
-        await ManagedBundle.CreateAsync(options, runtime, cancellation.Token);
+        await ManagedBundle.CreateAsync(options, cancellation.Token);
         Console.WriteLine(options.Output);
         return 0;
     }
     return args[0] switch
     {
-        "dev" => await Development.RunAsync(DevelopmentOptions.Parse(args[1..]), runtime, cancellation.Token),
-        "doctor" => await Processes.RunAsync(runtime, args, Environment.CurrentDirectory, runtime, cancellation.Token),
+        "dev" => await Development.RunAsync(DevelopmentOptions.Parse(args[1..]), cancellation.Token),
         _ => throw new ArgumentException($"Unknown command '{args[0]}'. Run isoplane --help.")
     };
 }

@@ -76,8 +76,9 @@ impl Dev {
         structured_stdout: bool,
         managed_toolchain: bool,
     ) -> Self {
-        command
-            .env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"));
+        if !command.get_envs().any(|(name, _)| name == "WISP_CLI") {
+            command.env("WISP_CLI", env!("CARGO_BIN_EXE_wisp"));
+        }
         if managed_toolchain {
             command.env(
                 "WISP_GUEST_RUNTIME_FEED",

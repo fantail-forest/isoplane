@@ -16,14 +16,14 @@ pub(super) fn template(
     configuration: &[u8],
     prepare: impl FnOnce() -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
-    let executable = std::env::current_exe().context("locating the local runtime executable")?;
-    Cache::new(project, wasm, &executable, configuration)?.get_or_prepare(prepare)
+    let executable = &project.runtime_library;
+    Cache::new(project, wasm, executable, configuration)?.get_or_prepare(prepare)
 }
 
 struct Cache {
     path: PathBuf,
     key: blake3::Hash,
-    budgets: wisp_abi::config::Limits,
+    limits: wisp_abi::config::Limits,
     validation_limits: wisp_abi::config::ValidationLimits,
     guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
 }
@@ -56,9 +56,12 @@ impl Cache {
             hash_part(&mut key, &file.modified_ns.to_le_bytes());
         }
         Ok(Self {
-            path: project.state_dir().join("preinitialized.wasm-cache"),
+            path: project
+                .state_directory
+                .clone()
+                .join("preinitialized.wasm-cache"),
             key: key.finalize(),
-            budgets: project.manifest.limits,
+            limits: project.manifest.limits,
             validation_limits: project.manifest.validation_limits,
             guest_memory_bytes: project.manifest.guest_memory_bytes,
         })
@@ -71,7 +74,7 @@ impl Cache {
         if let Some(wasm) = self.read()? {
             match wisp_runtime::validate_with_limits(
                 &wasm,
-                self.budgets,
+                self.limits,
                 self.guest_memory_bytes,
                 &self.validation_limits,
             ) {
@@ -155,12 +158,20 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let directory = tempfile::tempdir().unwrap();
-            std::fs::write(
-                directory.path().join("wisp.toml"),
-                "name='app'\ntenant='owner'\nmodule='app.wasm'",
-            )
-            .unwrap();
-            let project = Project::load(directory.path(), None, None, true).unwrap();
+            let project = Project {
+                manifest: serde_json::from_str(r#"{"name":"app"}"#).unwrap(),
+                tenant: "owner".into(),
+                state_directory: directory.path().join("state"),
+                runtime_library: directory.path().join("runtime"),
+                init_sandbox: InitSandbox::Sealed,
+                allow_endpoints: vec![],
+                platform_files: PlatformFiles::new(vec![PlatformFile {
+                    path: "/trust.pem".into(),
+                    bytes: (&b"roots"[..]).into(),
+                    modified_ns: 0,
+                }])
+                .unwrap(),
+            };
             let executable = directory.path().join("runtime");
             std::fs::write(&executable, b"runtime version one").unwrap();
             let wasm = wat::parse_str(
@@ -276,14 +287,8 @@ mod tests {
         );
         assert_eq!(
             fixture.project.manifest.limits,
-            wisp_abi::config::Limits {
-                module_bytes_compressed: 52428800,
-                instance_memory_max: 134217728,
-                cpu_ms_per_http_dispatch: 30000,
-                subrequests_per_dispatch: 200,
-                pending_futures_per_dispatch: 64
-            },
-            "reusing a large memory template must not require an larger limits selection"
+            Limits::default(),
+            "reusing a large memory template must not require a different application memory budget"
         );
     }
 
@@ -345,7 +350,7 @@ mod tests {
             "changed initialization sandbox",
         );
         project = fixture.project.clone();
-        project.manifest.limits = wisp_abi::config::Limits {
+        project.manifest.limits = Limits {
             module_bytes_compressed: 5242880,
             instance_memory_max: 67108864,
             cpu_ms_per_http_dispatch: 10,
