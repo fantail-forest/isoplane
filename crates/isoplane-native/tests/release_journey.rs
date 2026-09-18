@@ -21,7 +21,6 @@ struct Release {
 }
 
 struct Releases {
-    _scratch: tempfile::TempDir,
     directory: PathBuf,
     image: String,
     origin: Origin,
@@ -168,11 +167,27 @@ fn build_release(worktree: &Path, root: &Path, output: &Path) -> Release {
     }
 }
 
+/// The scratch tree for two releases lives under `.wisp-dev` and is rebuilt on every run, so a finished
+/// run leaves one copy behind rather than one per run in a temporary directory nobody removes.
+fn scratch_tree(root: &Path) -> PathBuf {
+    let scratch = root.join(".wisp-dev/release-journey");
+    if scratch.exists() {
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(scratch.join("worktree"))
+            .current_dir(root)
+            .output();
+        std::fs::remove_dir_all(&scratch).expect("remove the previous run's scratch tree");
+    }
+    std::fs::create_dir_all(&scratch).expect("create the scratch tree");
+    scratch
+}
+
 fn build_releases() -> Releases {
     let root = repo_root();
-    let scratch = tempfile::tempdir().expect("scratch space for two releases");
-    let commit = snapshot_working_tree(&root, &scratch.path().join("index"));
-    let worktree = scratch.path().join("worktree");
+    let scratch = scratch_tree(&root);
+    let commit = snapshot_working_tree(&root, &scratch.join("index"));
+    let worktree = scratch.join("worktree");
     succeed(
         Command::new("git")
             .args(["worktree", "add", "--detach"])
@@ -181,7 +196,7 @@ fn build_releases() -> Releases {
             .current_dir(&root),
         "checking out the snapshot",
     );
-    let output = scratch.path().join("releases");
+    let output = scratch.join("releases");
     let current = build_release(&worktree, &root, &output);
     let next_version = format!("{}.upgrade.1", current.version);
     succeed(
@@ -225,7 +240,6 @@ fn build_releases() -> Releases {
     let image = customer_image(&current);
     let origin = Origin::serve(output.clone());
     Releases {
-        _scratch: scratch,
         directory: output,
         image,
         origin,
