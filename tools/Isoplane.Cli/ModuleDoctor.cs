@@ -3,9 +3,9 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Tomlyn;
 using Tomlyn.Model;
-using Wisp.Native;
+using Isoplane.Native;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal static class ModuleDoctor
 {
@@ -55,7 +55,7 @@ internal static class ModuleDoctor
         var path = FindManifest(Path.GetDirectoryName(module)!) ?? FindManifest(Environment.CurrentDirectory);
         var manifest = path is null ? null : ReadManifest(path);
         Dictionary<string, object> settings = [];
-        var limitsFrom = "no wisp.toml found; using the default";
+        var limitsFrom = "no isoplane.toml found; using the default";
         if (manifest?.TryGetValue("limits", out var limit) == true)
         {
             if (limit is not TomlTable) throw new ArgumentException($"limits in {path} must be a numeric budget table.");
@@ -83,7 +83,7 @@ internal static class ModuleDoctor
     {
         for (var current = new DirectoryInfo(directory); current is not null; current = current.Parent)
         {
-            var path = Path.Combine(current.FullName, "wisp.toml");
+            var path = Path.Combine(current.FullName, "isoplane.toml");
             if (File.Exists(path)) return path;
         }
         return null;
@@ -115,7 +115,7 @@ internal static class ModuleDoctor
         if (report["pal"]!.AsArray().Count > 0) Console.WriteLine("\nWASI PAL ADAPTER");
         foreach (var entry in report["pal"]!.AsArray())
             Console.WriteLine($"  {entry!["name"]}: " + (entry["delegates_to"] is { } capability
-                ? $"delegates to wisp.{capability}"
+                ? $"delegates to isoplane.{capability}"
                 : entry["traps"]!.GetValue<bool>() ? "stub: traps when called" : "returns the empty value"));
         Console.WriteLine("\nSO: THIS CODE CAN");
         foreach (var effect in report["effects"]!.AsArray()) Console.WriteLine($"  • {effect}");
@@ -125,7 +125,7 @@ internal static class ModuleDoctor
             Console.WriteLine($"  {(present.Contains(export!.GetValue<string>()) ? "✓" : "✗")} {export}");
         foreach (var export in report["optional_exports"]!.AsArray())
             Console.WriteLine($"  {(present.Contains(export!.GetValue<string>()) ? "✓" : "·")} {export} (optional)");
-        Console.WriteLine($"\nVALIDATOR (wisp-runtime)\n  numeric limits: {report["limits"]} ({report["limits_from"]})");
+        Console.WriteLine($"\nVALIDATOR (isoplane-runtime)\n  numeric limits: {report["limits"]} ({report["limits_from"]})");
         Console.WriteLine($"  guest memory ceiling: {report["guest_memory_bytes"]} bytes ({report["guest_memory_from"]})");
         foreach (var violation in report["violations"]!.AsArray())
             Console.WriteLine($"  ✗ {violation!["code"]} {violation["subject"]} — {violation["detail"]}");

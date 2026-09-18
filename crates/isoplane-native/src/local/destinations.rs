@@ -1,10 +1,10 @@
 //! Explicit development services supplement the production public-egress policy.
 
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use wisp_host::egress::{
+use isoplane_host::egress::{
     AdditionalDestinations, DenyReason, DestinationPolicy, PublicDestinations,
 };
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 pub(super) struct DevelopmentDestinations(AdditionalDestinations);
 

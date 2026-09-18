@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <AssemblyName>Wisp.Acceptance.DynamicPayload</AssemblyName>
+    <AssemblyName>Isoplane.Acceptance.DynamicPayload</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../../../../guest-sdks/dotnet/Abi/Tests/NativeResolutionProbe.cs" Link="NativeResolutionProbe.cs" />

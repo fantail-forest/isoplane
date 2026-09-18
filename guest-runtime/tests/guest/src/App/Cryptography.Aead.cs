@@ -113,7 +113,7 @@ internal sealed partial class Cryptography
     private static AeadCipher AesGcmCipher()
     {
         var gcm = new AesGcm(Sequence(0x10, 16), 16);
-        return new AeadCipher(gcm, gcm.Encrypt, gcm.Decrypt, Sequence(0x20, 12), Encoding.ASCII.GetBytes("wisp"), Encoding.ASCII.GetBytes("wisp acceptance plaintext"), 16);
+        return new AeadCipher(gcm, gcm.Encrypt, gcm.Decrypt, Sequence(0x20, 12), Encoding.ASCII.GetBytes("isoplane"), Encoding.ASCII.GetBytes("isoplane acceptance plaintext"), 16);
     }
 
     /// <summary>RFC 3610 packet vector #1: a 13-byte nonce, 8 bytes of associated data, 23 of plaintext, an 8-byte tag.</summary>
@@ -183,7 +183,7 @@ internal sealed partial class Cryptography
         using Aes aes = Aes.Create();
         aes.Key = Sequence(0x30, 32);
         byte[] iv = Sequence(0x50, 16);
-        byte[] plaintext = Encoding.ASCII.GetBytes("wisp acceptance plaintext");
+        byte[] plaintext = Encoding.ASCII.GetBytes("isoplane acceptance plaintext");
         byte[] encrypted = aes.EncryptCbc(plaintext, iv);
         byte[] tampered = (byte[])encrypted.Clone();
         tampered[15] ^= 0x80;
@@ -224,7 +224,7 @@ internal sealed partial class Cryptography
     {
         using ECDsa key = ECDsa.Create();
         key.ImportFromPem(CryptoMaterial.EcKey);
-        byte[] message = Encoding.ASCII.GetBytes("wisp");
+        byte[] message = Encoding.ASCII.GetBytes("isoplane");
         byte[] signature = key.SignData(message, HashAlgorithmName.SHA256);
         byte[] altered = (byte[])signature.Clone();
         altered[3] ^= 0x01;

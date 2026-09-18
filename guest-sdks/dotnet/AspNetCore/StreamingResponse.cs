@@ -2,7 +2,7 @@ using System.IO.Pipelines;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 
-namespace Wisp.AspNetCore;
+namespace Isoplane.AspNetCore;
 
 internal sealed class StreamingResponse : IHttpResponseFeature, IHttpResponseBodyFeature, IDisposable
 {
@@ -26,7 +26,7 @@ internal sealed class StreamingResponse : IHttpResponseFeature, IHttpResponseBod
     public string? ReasonPhrase { get => reason; set { CheckMutable(); reason = value; } }
     public IHeaderDictionary Headers { get => headers; set { CheckMutable(); headers = value; } }
     public bool HasStarted { get; private set; }
-    public Stream Body { get => stream; set => throw new NotSupportedException("Replace the IHttpResponseBodyFeature to wrap a WISP response body."); }
+    public Stream Body { get => stream; set => throw new NotSupportedException("Replace the IHttpResponseBodyFeature to wrap an Isoplane response body."); }
     public Stream Stream => stream;
     public PipeWriter Writer => writer ??= PipeWriter.Create(stream, new StreamPipeWriterOptions(leaveOpen: true));
 
@@ -78,7 +78,7 @@ internal sealed class StreamingResponse : IHttpResponseFeature, IHttpResponseBod
         // Every write already awaits the host transport without a response buffer.
     }
     public Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("WISP does not support sending a response directly from a guest file.");
+        throw new NotSupportedException("Isoplane does not support sending a response directly from a guest file.");
     internal Response ToResponse()
     {
         if (!complete) throw new InvalidOperationException("The HTTP response has not completed.");

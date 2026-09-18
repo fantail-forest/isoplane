@@ -50,11 +50,11 @@ impl Dev {
         structured_stdout: bool,
         managed_toolchain: bool,
     ) -> Self {
-        command.env("WISP_ENDPOINT", "http://127.0.0.1:1");
+        command.env("ISOPLANE_ENDPOINT", "http://127.0.0.1:1");
         if managed_toolchain {
             command.env(
-                "WISP_GUEST_RUNTIME_FEED",
-                wisp_fixtures::guest_runtime_feed(),
+                "ISOPLANE_GUEST_RUNTIME_FEED",
+                isoplane_fixtures::guest_runtime_feed(),
             );
         }
         let (child, terminal, streams) = if structured_stdout {
@@ -302,7 +302,7 @@ impl Drop for Dev {
 
 pub fn manifest(dir: &std::path::Path, extra: &str) {
     std::fs::write(
-        dir.join("wisp.toml"),
+        dir.join("isoplane.toml"),
         format!("name='local-app'\nmodule='app.wasm'\n{extra}"),
     )
     .unwrap();
@@ -317,19 +317,19 @@ pub fn guest_with_log(body: &str, message: &str) -> Vec<u8> {
 }
 
 fn guest_module(body: &str, message: Option<&str>) -> Vec<u8> {
-    let response = wisp_abi::dispatch::ResponseHead {
+    let response = isoplane_abi::dispatch::ResponseHead {
         status: 200,
         headers: vec![],
         body: body.as_bytes().to_vec(),
         streaming: false,
     };
-    let bytes = wisp_abi::encode(&response).unwrap();
+    let bytes = isoplane_abi::encode(&response).unwrap();
     let escaped: String = bytes.iter().map(|b| format!("\\{b:02x}")).collect();
     let log = message.map_or_else(String::new, |message| {
         let bytes = message.as_bytes();
         let escaped: String = bytes.iter().map(|byte| format!("\\{byte:02x}")).collect();
         format!(
-            "(import \"wisp\" \"log_emit\" (func $log (param i32 i32 i32)))\n\
+            "(import \"isoplane\" \"log_emit\" (func $log (param i32 i32 i32)))\n\
              (data (i32.const 8192) \"{escaped}\")"
         )
     });
@@ -340,15 +340,15 @@ fn guest_module(body: &str, message: Option<&str>) -> Vec<u8> {
         )
     });
     wat::parse_str(format!(r#"(module
-        (import "wisp" "resp_new" (func $response (param i32 i32) (result i32)))
+        (import "isoplane" "resp_new" (func $response (param i32 i32) (result i32)))
         {log}
         (memory (export "memory") 2 2)
         (data (i32.const 4096) "{escaped}")
-        (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 16384))
-        (func (export "wisp_handle") (param i32 i32) (result i64)
+        (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 16384))
+        (func (export "isoplane_handle") (param i32 i32) (result i64)
             {emit}
             (i64.shl (i64.extend_i32_u (call $response (i32.const 4096) (i32.const {}))) (i64.const 32)))
-        (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, bytes.len())).unwrap()
+        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#, bytes.len())).unwrap()
 }
 
 #[cfg(unix)]

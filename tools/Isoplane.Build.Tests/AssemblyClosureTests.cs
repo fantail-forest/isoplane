@@ -5,14 +5,14 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using Wisp.Build;
+using Isoplane.Build;
 using Xunit;
 
 namespace Isoplane.Build.Tests;
 
 public sealed class AssemblyClosureTests : IDisposable
 {
-    private readonly string directory = Directory.CreateTempSubdirectory("wisp-assembly-closure-").FullName;
+    private readonly string directory = Directory.CreateTempSubdirectory("isoplane-assembly-closure-").FullName;
     private static readonly string CoreLibrary = typeof(object).Assembly.Location;
     private static IReadOnlyDictionary<string, InspectedAssembly> Platform => AssemblyClosure.Platform([AssemblyClosure.InspectFile(CoreLibrary)]);
 
@@ -120,7 +120,7 @@ public sealed class AssemblyClosureTests : IDisposable
         var inputs = AssemblyClosure.Application([AssemblyClosure.InspectFile(application), AssemblyClosure.InspectFile(dependency)]);
         AssemblyClosure.Validate(inputs, Platform);
         var diagnostics = AssemblyClosure.Diagnostics(inputs.Values).Select(item => item.ToString()).ToArray();
-        Assert.True(diagnostics.Length == 1 && diagnostics[0].Contains("WISP1001", StringComparison.Ordinal)
+        Assert.True(diagnostics.Length == 1 && diagnostics[0].Contains("ISOPLANE1001", StringComparison.Ordinal)
             && diagnostics[0].Contains("PortableDependency", StringComparison.Ordinal)
             && diagnostics[0].Contains("Portable.Library.Native.Read", StringComparison.Ordinal)
             && diagnostics[0].Contains("platform-only!native_value", StringComparison.Ordinal),
@@ -140,8 +140,8 @@ public sealed class AssemblyClosureTests : IDisposable
         var assembly = AssemblyClosure.InspectFile(dependency);
         AssemblyClosure.Validate(AssemblyClosure.Application([assembly]), Platform);
         var diagnostics = AssemblyClosure.Diagnostics([assembly]).ToArray();
-        Assert.True(diagnostics.Any(item => item.Code == "WISP1002" && item.Message.Contains("System.Threading.Thread.Start", StringComparison.Ordinal))
-            && diagnostics.Any(item => item.Code == "WISP1003" && item.Message.Contains("System.Threading.Tasks.Task.Wait", StringComparison.Ordinal)),
+        Assert.True(diagnostics.Any(item => item.Code == "ISOPLANE1002" && item.Message.Contains("System.Threading.Thread.Start", StringComparison.Ordinal))
+            && diagnostics.Any(item => item.Code == "ISOPLANE1003" && item.Message.Contains("System.Threading.Tasks.Task.Wait", StringComparison.Ordinal)),
             "Dependency metadata must identify thread creation and potentially blocking calls without blacklisting the containing assembly.");
     }
 

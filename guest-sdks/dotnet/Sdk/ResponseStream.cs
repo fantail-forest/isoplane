@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>A response whose headers are published immediately and whose writes await host acceptance.</summary>
 public sealed class ResponseStream

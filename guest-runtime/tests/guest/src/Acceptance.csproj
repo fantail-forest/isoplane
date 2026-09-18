@@ -7,7 +7,7 @@
     ../build.sh in either SDK profile, each of which compiles against the
     pack guest-runtime/build.sh publishes for it.
   -->
-  <Import Project="../../../../guest-sdks/dotnet/Wisp.Guest.props" />
+  <Import Project="../../../../guest-sdks/dotnet/Isoplane.Guest.props" />
 
   <PropertyGroup>
     <AssemblyName>guest_runtime_acceptance</AssemblyName>
@@ -18,22 +18,22 @@
     <WasmInitialHeapSize>67108864</WasmInitialHeapSize>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(WispCompilerProbe)' == 'true'">
+  <PropertyGroup Condition="'$(IsoplaneCompilerProbe)' == 'true'">
     <Optimize>false</Optimize>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);WISP_COMPILER_PROBE</DefineConstants>
+    <DefineConstants>$(DefineConstants);ISOPLANE_COMPILER_PROBE</DefineConstants>
   </PropertyGroup>
-  <ItemGroup Condition="'$(WispCompilerProbe)' == 'true'">
+  <ItemGroup Condition="'$(IsoplaneCompilerProbe)' == 'true'">
     <Compile Remove="App/**/*.cs" />
     <Compile Include="../compiler/Handler.cs" />
     <Compile Include="../../../../guest-sdks/dotnet/Abi/Tests/NativeCompilerProbe.cs" />
-    <NativeLibrary Include="$(WispCompilerProbeObject)" Library="wisp_compiler_probe" />
+    <NativeLibrary Include="$(IsoplaneCompilerProbeObject)" Library="isoplane_compiler_probe" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="Payload/**/*.cs" />
     <Compile Include="../../../../guest-sdks/dotnet/Abi/Tests/NativeLibraryProbe.cs" />
-    <ProjectReference Include="../../../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
+    <ProjectReference Include="../../../../guest-sdks/dotnet/Isoplane.Sdk.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -48,17 +48,17 @@
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(WispGuestRuntime)' == 'Mono'">
+  <ItemGroup Condition="'$(IsoplaneGuestRuntime)' == 'Mono'">
     <TrimmerRootAssembly Include="System.Runtime" />
-    <EmbeddedResource Include="$(WispAcceptancePayload)" LogicalName="dynamic-payload" />
+    <EmbeddedResource Include="$(IsoplaneAcceptancePayload)" LogicalName="dynamic-payload" />
   </ItemGroup>
 
   <Target Name="RequireAcceptancePayload" BeforeTargets="PrepareForBuild"
-          Condition="'$(WispGuestRuntime)' == 'Mono'">
-    <Error Condition="!Exists('$(WispAcceptancePayload)')"
+          Condition="'$(IsoplaneGuestRuntime)' == 'Mono'">
+    <Error Condition="!Exists('$(IsoplaneAcceptancePayload)')"
            Text="Build the acceptance payload through guest-runtime/tests/guest/build.sh." />
   </Target>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
-  <Import Project="../../../../guest-sdks/dotnet/Wisp.Guest.targets" />
+  <Import Project="../../../../guest-sdks/dotnet/Isoplane.Guest.targets" />
 </Project>

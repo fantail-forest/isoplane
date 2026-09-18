@@ -3,12 +3,12 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises an ordinary managed outbound TCP connection.</summary>
-public sealed class ConnectProbe : IWispHandler
+public sealed class ConnectProbe : IIsoplaneHandler
 {
     /// <summary>Connects to the test endpoint and disposes the socket after resuming.</summary>
     public async Task<Response> HandleAsync(Request request, Ctx context)

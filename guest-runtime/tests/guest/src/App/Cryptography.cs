@@ -60,7 +60,7 @@ internal sealed partial class Cryptography
                 aes.KeySize = 256;
                 aes.GenerateKey();
                 aes.GenerateIV();
-                byte[] plaintext = Encoding.ASCII.GetBytes("wisp acceptance plaintext");
+                byte[] plaintext = Encoding.ASCII.GetBytes("isoplane acceptance plaintext");
                 byte[] encrypted = aes.EncryptCbc(plaintext, aes.IV);
                 byte[] decrypted = aes.DecryptCbc(encrypted, aes.IV);
                 return Encoding.ASCII.GetString(decrypted) + " " + (encrypted.Length % 16 == 0 && !encrypted.AsSpan().SequenceEqual(plaintext));
@@ -69,7 +69,7 @@ internal sealed partial class Cryptography
             {
                 using RSA rsa = RSA.Create();
                 rsa.ImportFromPem(CryptoMaterial.LeafKey);
-                byte[] message = Encoding.ASCII.GetBytes("wisp");
+                byte[] message = Encoding.ASCII.GetBytes("isoplane");
                 byte[] signature = rsa.SignData(message, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
                 bool verified = rsa.VerifyData(message, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
                 byte[] pss = rsa.SignData(message, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
@@ -96,7 +96,7 @@ internal sealed partial class Cryptography
             {
                 using ECDsa fixedKey = ECDsa.Create();
                 fixedKey.ImportFromPem(CryptoMaterial.EcKey);
-                byte[] message = Encoding.ASCII.GetBytes("wisp");
+                byte[] message = Encoding.ASCII.GetBytes("isoplane");
                 byte[] signature = fixedKey.SignData(message, HashAlgorithmName.SHA256);
                 using ECDsa publicOnly = ECDsa.Create(fixedKey.ExportParameters(false));
                 bool verified = publicOnly.VerifyData(message, signature, HashAlgorithmName.SHA256);
@@ -117,7 +117,7 @@ internal sealed partial class Cryptography
             {
                 using var leaf = X509Certificate2.CreateFromPem(CryptoMaterial.LeafCertificate);
                 using RSA? publicKey = leaf.GetRSAPublicKey();
-                bool verified = publicKey != null && publicKey.VerifyData(Encoding.ASCII.GetBytes("wisp"), Convert.FromHexString(path[1]), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+                bool verified = publicKey != null && publicKey.VerifyData(Encoding.ASCII.GetBytes("isoplane"), Convert.FromHexString(path[1]), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
                 return leaf.Subject + "|" + leaf.Thumbprint + "|" + leaf.SerialNumber + "|" + leaf.SignatureAlgorithm.FriendlyName + "|" + verified;
             }
             case "x509-chain":

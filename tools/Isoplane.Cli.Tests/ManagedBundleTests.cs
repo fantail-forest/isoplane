@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Formats.Tar;
 using System.Text.Json;
 using Xunit;
-using Wisp.Build;
+using Isoplane.Build;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
 {
@@ -190,17 +190,17 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
                 "<root><data name=\"Greeting\" xml:space=\"preserve\"><value>" + culture + " greeting</value></data></root>");
         var project = System.Xml.Linq.XDocument.Load(Path.Combine(application.FullName, "Application.csproj"));
         project.Root!.Add(new System.Xml.Linq.XElement("PropertyGroup",
-            new System.Xml.Linq.XElement("WispManagedBundleBuild", "true"),
-            new System.Xml.Linq.XElement("WispApplicationFactory", "Application.Create"),
-            new System.Xml.Linq.XElement("WispGuestRuntime", "Mono")));
+            new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
+            new System.Xml.Linq.XElement("IsoplaneApplicationFactory", "Application.Create"),
+            new System.Xml.Linq.XElement("IsoplaneGuestRuntime", "Mono")));
         project.Root.Add(new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("None",
             new System.Xml.Linq.XAttribute("Update", "data.txt"), new System.Xml.Linq.XElement("CopyToOutputDirectory", "PreserveNewest"),
             new System.Xml.Linq.XElement("TargetPath", "data/greeting.txt"))));
-        project.Root.Add(new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(AppContext.BaseDirectory, "Wisp.ManagedBundle.targets"))));
+        project.Root.Add(new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(AppContext.BaseDirectory, "Isoplane.ManagedBundle.targets"))));
         project.Save(Path.Combine(application.FullName, "Application.csproj"));
         var resultPath = Path.Combine(directory.Path, "result.json");
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory.Path };
-        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:WispManagedBundle", "-getProperty:AssemblyName,WispApplicationFactory,WispGuestRuntime", "-getItem:ReferencePath,WispBundleAssembly,WispBundleSymbol,WispBundleAsset,WispBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not build managed bundle fixture.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -228,13 +228,13 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         if (additionalAssembly is not null) assemblies.Add(additionalAssembly);
         return JsonSerializer.SerializeToElement(new
         {
-            Properties = new { AssemblyName = "Application", WispApplicationFactory = "Application.Create", WispGuestRuntime = runtime },
+            Properties = new { AssemblyName = "Application", IsoplaneApplicationFactory = "Application.Create", IsoplaneGuestRuntime = runtime },
             Items = new
             {
-                WispBundleAssembly = assemblies.Select(path => new { FullPath = path }),
-                WispBundleSymbol = assemblies.Where(path => !path.EndsWith(".resources.dll", StringComparison.Ordinal)).Select(path => new { FullPath = Path.ChangeExtension(path, ".pdb") }),
-                WispBundlePlatformReference = platform.Select(path => new { FullPath = path }),
-                WispBundleAsset = (asset is null ? Array.Empty<string>() : [asset]).Select(path => new { FullPath = Path.Combine(directory.Path, path), TargetPath = assetTarget ?? Path.GetFileName(path) })
+                IsoplaneBundleAssembly = assemblies.Select(path => new { FullPath = path }),
+                IsoplaneBundleSymbol = assemblies.Where(path => !path.EndsWith(".resources.dll", StringComparison.Ordinal)).Select(path => new { FullPath = Path.ChangeExtension(path, ".pdb") }),
+                IsoplaneBundlePlatformReference = platform.Select(path => new { FullPath = path }),
+                IsoplaneBundleAsset = (asset is null ? Array.Empty<string>() : [asset]).Select(path => new { FullPath = Path.Combine(directory.Path, path), TargetPath = assetTarget ?? Path.GetFileName(path) })
             }
         });
     }
@@ -244,6 +244,6 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
 
 internal sealed class BundleDirectory : IDisposable
 {
-    internal string Path { get; } = Directory.CreateTempSubdirectory("wisp-bundle-test-").FullName;
+    internal string Path { get; } = Directory.CreateTempSubdirectory("isoplane-bundle-test-").FullName;
     public void Dispose() => Directory.Delete(Path, recursive: true);
 }

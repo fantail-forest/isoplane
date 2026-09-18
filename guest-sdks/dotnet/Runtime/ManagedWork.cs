@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace Wisp.Runtime;
+namespace Isoplane.Runtime;
 
 internal static class ManagedWork
 {
@@ -10,10 +10,10 @@ internal static class ManagedWork
         do
         {
             RunReady(null!);
-            SynchronizationContext.SetSynchronizationContext(WispSynchronizationContext.Instance);
-            WispSynchronizationContext.Instance.Drain();
+            SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
+            IsoplaneSynchronizationContext.Instance.Drain();
         }
-        while (ThreadPool.PendingWorkItemCount > 0 || WispSynchronizationContext.Instance.HasWork);
+        while (ThreadPool.PendingWorkItemCount > 0 || IsoplaneSynchronizationContext.Instance.HasWork);
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.StaticMethod, Name = "RunWasiEventLoopOnce")]

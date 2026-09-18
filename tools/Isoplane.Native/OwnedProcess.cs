@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
-using Wisp.Native;
-using Wisp.Native.Interop;
+using Isoplane.Native;
+using Isoplane.Native.Interop;
 
-namespace Wisp.Processes;
+namespace Isoplane.Processes;
 
 internal sealed class OwnedProcess : IDisposable
 {

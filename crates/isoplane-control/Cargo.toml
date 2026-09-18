@@ -1,0 +1,42 @@
+[package]
+name = "isoplane-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+description = "WebAssembly module validation, pre-initialization and native compilation"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+isoplane-abi = { workspace = true, features = ["host"] }
+isoplane-engine = { workspace = true }
+async-trait = { workspace = true }
+isoplane-runtime = { workspace = true }
+isoplane-prepare.workspace = true
+tokio-util.workspace = true
+wasmtime = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+zstd = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+wasmparser = { workspace = true }
+wat = { workspace = true }
+tokio = { workspace = true }
+tempfile = { workspace = true }
+async-trait = { workspace = true }
+rustls-pki-types = { workspace = true }
+sha1 = { workspace = true }
+isoplane-fixtures = { workspace = true }
+isoplane-harness = { workspace = true }
+isoplane-host = { workspace = true }
+
+[features]
+# Deploy preparation includes guest initialization.
+default = ["preinit"]
+preinit = []

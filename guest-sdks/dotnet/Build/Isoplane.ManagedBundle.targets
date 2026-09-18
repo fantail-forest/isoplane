@@ -1,0 +1,27 @@
+<Project>
+  <Target Name="IsoplaneResolveManagedPlatform">
+    <ItemGroup>
+      <_IsoplaneBundleAspNetReference Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(IsoplaneAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' != ''" />
+      <IsoplaneBundlePlatformReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == 'Microsoft.NETCore.App' OR '%(ReferencePath.NuGetPackageId)' == 'Isoplane.Sdk' OR '%(ReferencePath.NuGetPackageId)' == 'Isoplane.AspNetCore'" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneManagedBundle" DependsOnTargets="Build;IsoplaneResolveManagedPlatform">
+    <Error Condition="'$(IsoplaneManagedBundleBuild)' != 'true'" Text="Use isoplane bundle to build managed deployment input." />
+    <Error Condition="'$(IsoplaneApplicationFactory)' == ''" Text="Set IsoplaneApplicationFactory to the application's public static factory method." />
+    <ItemGroup>
+      <IsoplaneBundleAssembly Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.Sdk' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.AspNetCore'" />
+      <_IsoplaneBundleAspNetReference Remove="@(IsoplaneBundleAssembly)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
+      <IsoplaneBundleAssembly Include="@(_IsoplaneBundleAspNetReference)" />
+      <IsoplaneBundleAssembly Remove="@(IsoplaneBundlePlatformReference)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
+      <IsoplaneBundleAssembly Remove="@(RuntimePackAsset)" />
+      <IsoplaneBundleAssembly Include="$(TargetPath);@(IntermediateSatelliteAssembliesWithTargetPath)" />
+      <_IsoplaneBundleSymbol Include="@(IsoplaneBundleAssembly->'%(RootDir)%(Directory)%(Filename).pdb')" />
+      <IsoplaneBundleSymbol Include="@(_IsoplaneBundleSymbol)" Condition="Exists('%(_IsoplaneBundleSymbol.Identity)')" />
+      <IsoplaneBundleAsset Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' != '.dll' AND '%(Extension)' != '.pdb' AND '%(Extension)' != '.xml'" />
+      <IsoplaneBundleAsset Remove="@(RuntimePackAsset)" />
+      <IsoplaneBundleAsset Include="@(_NoneWithTargetPath)" Condition="'%(_NoneWithTargetPath.CopyToPublishDirectory)' != 'Never' AND (('%(_NoneWithTargetPath.CopyToOutputDirectory)' != '' AND '%(_NoneWithTargetPath.CopyToOutputDirectory)' != 'Never') OR '%(_NoneWithTargetPath.CopyToPublishDirectory)' != '')" />
+      <IsoplaneBundleAsset Include="@(ContentWithTargetPath)" Condition="'%(ContentWithTargetPath.CopyToPublishDirectory)' != 'Never' AND (('%(ContentWithTargetPath.CopyToOutputDirectory)' != '' AND '%(ContentWithTargetPath.CopyToOutputDirectory)' != 'Never') OR ('%(ContentWithTargetPath.CopyToPublishDirectory)' != '' AND '%(ContentWithTargetPath.CopyToPublishDirectory)' != 'Never'))" />
+      <IsoplaneBundleAsset Remove="NuGet.Config;nuget.config;$(MSBuildProjectDirectory)/NuGet.Config;$(MSBuildProjectDirectory)/nuget.config" />
+    </ItemGroup>
+  </Target>
+</Project>

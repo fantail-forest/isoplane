@@ -196,7 +196,7 @@ internal sealed class Globalization
         var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
             DateTime.MinValue.Date, DateTime.MaxValue.Date, TimeSpan.FromHours(1), transitionIn, transitionOut);
         TimeZoneInfo zone = TimeZoneInfo.CreateCustomTimeZone(
-            "Wisp Central", TimeSpan.FromHours(1), "Wisp Central", "Wisp Standard", "Wisp Summer", new[] { rule });
+            "Isoplane Central", TimeSpan.FromHours(1), "Isoplane Central", "Isoplane Standard", "Isoplane Summer", new[] { rule });
         var summerUtc = new DateTime(2026, 9, 11, 12, 0, 0, DateTimeKind.Utc);
         var winterUtc = new DateTime(2026, 12, 11, 12, 0, 0, DateTimeKind.Utc);
         DateTime summerLocal = TimeZoneInfo.ConvertTimeFromUtc(summerUtc, zone);

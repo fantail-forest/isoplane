@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class BuildInputsTests(unittest.TestCase):
     def run_script(self, statements, setup=None):
-        temporary = tempfile.TemporaryDirectory(prefix='wisp-build-inputs-')
+        temporary = tempfile.TemporaryDirectory(prefix='isoplane-build-inputs-')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         shutil.copy(ROOT / 'manifest.env', root)
@@ -68,7 +68,7 @@ cp "$WORK/runtime-pack-artifacts" "$WORK/nativeaot-pack-artifacts"
 ''' + f'echo changed >> "$WORK/{changed}"\nstage_feed\n')
                 self.assertNotEqual(result.returncode, 0, 'changed package identity must prevent publication')
                 self.assertIn('package bytes or version identity changed', result.stderr, 'publication must diagnose modified pack artifacts')
-                self.assertFalse((root / 'out/feed/Wisp.GuestRuntime.props').exists(), 'unverified packages must not receive feed metadata')
+                self.assertFalse((root / 'out/feed/Isoplane.GuestRuntime.props').exists(), 'unverified packages must not receive feed metadata')
 
     def test_toolchain_rejects_an_unverified_archive_before_replacing_an_existing_install(self):
         root, result = self.run_script('''
@@ -156,8 +156,8 @@ require_build_inputs
         root, result = self.run_script('''openssl_source() { return 0; }
 openssl_inputs_digest() { echo openssl; }
 mkdir -p "$OUT/openssl/include/openssl" "$OUT/openssl/lib" "$WASI_SDK/bin"
-echo openssl > "$OUT/openssl/.wisp-build-identity"
-echo "$WASI_SDK_SHA256" > "$WASI_SDK/.wisp-archive-sha256"
+echo openssl > "$OUT/openssl/.isoplane-build-identity"
+echo "$WASI_SDK_SHA256" > "$WASI_SDK/.isoplane-archive-sha256"
 printf '#!/bin/sh\\nexit 0\\n' > "$WASI_SDK/bin/clang"
 chmod +x "$WASI_SDK/bin/clang"
 make() {
@@ -186,13 +186,13 @@ echo icu > "$WORK/icu-build-inputs"
 echo icu > "$WORK/icu-data"
 sha256sum "$WORK/icu-data" > "$WORK/icu-build-artifacts"
 mkdir -p "$OUT/openssl/lib" "$OUT/openssl/include/openssl" "$WASI_SDK/bin"
-echo openssl > "$OUT/openssl/.wisp-build-identity"
+echo openssl > "$OUT/openssl/.isoplane-build-identity"
 echo library > "$OUT/openssl/lib/libcrypto.a"
 echo header > "$OUT/openssl/include/openssl/ssl.h"
 find "$OUT/openssl/include" "$OUT/openssl/lib" -type f -print0 | sort -z | xargs -0 sha256sum > "$WORK/openssl-build-artifacts"
 printf '#!/bin/sh\\nexit 0\\n' > "$WASI_SDK/bin/clang"
 chmod +x "$WASI_SDK/bin/clang"
-echo "$WASI_SDK_SHA256" > "$WASI_SDK/.wisp-archive-sha256"
+echo "$WASI_SDK_SHA256" > "$WASI_SDK/.isoplane-archive-sha256"
 ''' + f'echo changed >> "$OUT/openssl/{changed}"\nrequire_build_inputs\n')
                 self.assertNotEqual(result.returncode, 0, 'modified OpenSSL bytes must not enter a runtime pack')
                 self.assertIn('OpenSSL headers or archives changed', result.stderr, 'the build must diagnose its invalid native dependency receipt')

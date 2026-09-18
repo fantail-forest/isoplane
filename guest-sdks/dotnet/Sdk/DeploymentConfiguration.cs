@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>Non-secret settings fixed for an application version at deployment.</summary>
 public static class DeploymentConfiguration

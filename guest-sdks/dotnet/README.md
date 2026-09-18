@@ -1,15 +1,15 @@
-# `guest-sdks/dotnet` — the C# WISP guest SDK
+# `guest-sdks/dotnet` — the C# Isoplane guest SDK
 
 The shared library used by .NET guests. The separate
 [ASP.NET adapter](AspNetCore/README.md) supplies framework hosting and generated exports.
 
 | | |
 |---|---|
-| `Wisp.Sdk.csproj` | The library. Compiles to IL and names no tenant type. |
-| `Wisp.Guest.props` | Every critical guest build setting, imported by each guest's `.csproj`. |
+| `Isoplane.Sdk.csproj` | The library. Compiles to IL and names no tenant type. |
+| `Isoplane.Guest.props` | Every critical guest build setting, imported by each guest's `.csproj`. |
 | `build-guest.sh` | A wrapper that publishes and copies a named module into `out/`. |
-| `native/wisp_pal.c` | The PAL shim. Read it before touching the build. |
-| `Abi/` | The `wisp` imports, the five exports, the postcard codec, the records. |
+| `native/isoplane_pal.c` | The PAL shim. Read it before touching the build. |
+| `Abi/` | The `isoplane` imports, the five exports, the postcard codec, the records. |
 | `Runtime/` | The continuation queue and the future table. |
 | `Sdk/` | Managed HTTP, context and handler/router APIs. |
 
@@ -23,8 +23,8 @@ An entry project emits one set of host exports.
 ## Build a guest
 
 ```bash
-dotnet build guests/dotnet/src/WispGuest.csproj
-dotnet publish guests/dotnet/src/WispGuest.csproj -c Release
+dotnet build guests/dotnet/src/IsoplaneGuest.csproj
+dotnet publish guests/dotnet/src/IsoplaneGuest.csproj -c Release
 ```
 
 `dotnet build` compiles IL for IDE diagnostics. Publishing compiles the PAL,
@@ -41,18 +41,18 @@ intermediates per invocation, and returns developer-owned output. It removes
 its compiler container on completion or cancellation. `isoplane dev` uses the
 same publication path and executes the guest in the native runtime.
 
-After the first online publish, `dotnet publish -p:WispOffline=true` uses the
+After the first online publish, `dotnet publish -p:IsoplaneOffline=true` uses the
 cached image and packages with compiler networking disabled. Missing inputs
-are errors naming what needs provisioning. `WispOffline=true` in the
+are errors naming what needs provisioning. `IsoplaneOffline=true` in the
 environment applies the same policy to builds launched by `isoplane dev`.
 
-The cache defaults to the user's application-data directory under `Wisp`;
-`-p:WispCompilerCache=/path/to/cache` relocates it. Projects and references are
+The cache defaults to the user's application-data directory under `Isoplane`;
+`-p:IsoplaneCompilerCache=/path/to/cache` relocates it. Projects and references are
 mounted beneath the nearest ancestor containing `nuget.config`, or the project
-directory if there is none. Set `-p:WispBuildRoot=/path/to/source` when project
+directory if there is none. Set `-p:IsoplaneBuildRoot=/path/to/source` when project
 references or build inputs live outside that tree. The SDK is mounted separately
 when needed. Container control operations have a 60-second default timeout,
-adjustable with `-p:WispContainerCommandTimeoutSeconds=N`.
+adjustable with `-p:IsoplaneContainerCommandTimeoutSeconds=N`.
 
 `dotnet clean -c Release` removes that configuration's recorded WASM outputs,
 including custom publish locations, while retaining shared packages and images.
@@ -75,7 +75,7 @@ at all. It says so rather than passing quietly.
 
 The gate is mandatory: a module nothing has judged is not a publication, so
 the absence of a verdict fails the publish the same as a rejection. A local
-debugging publish (`WispLocalDebug=true`) links a raw artifact the control
+debugging publish (`IsoplaneLocalDebug=true`) links a raw artifact the control
 plane refuses by design and is the one publish the gate does not judge.
 
 ## Randomness after activation
@@ -86,10 +86,10 @@ already stored in guest memory remain captured. A generator that seeds itself
 once and then advances private state (`new Random(seed)` or a library DRBG)
 can therefore repeat across copies if initialization created it before capture.
 Create that generator after activation, or recreate it on
-`Wisp.Activation.Activated`, raised on the first dispatch of each activation:
+`Isoplane.Activation.Activated`, raised on the first dispatch of each activation:
 
 ```csharp
-Wisp.Activation.Activated += () =>
+Isoplane.Activation.Activated += () =>
 {
     _random = new Random(RandomNumberGenerator.GetInt32(int.MaxValue));
     return Task.CompletedTask;

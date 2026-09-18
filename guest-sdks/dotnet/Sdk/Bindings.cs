@@ -1,22 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Wisp.Abi;
-using Wisp.Runtime;
+using Isoplane.Abi;
+using Isoplane.Runtime;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>
 /// A capability call the host refused or could not complete;
-/// <see cref="WispError"/> says which.
+/// <see cref="IsoplaneError"/> says which.
 /// </summary>
 public sealed class BindingException : Exception
 {
-    internal BindingException(FutureError e) => WispError = (int)e;
+    internal BindingException(FutureError e) => IsoplaneError = (int)e;
     /// <summary>
     /// The numeric error code returned by the host for the failed capability call.
     /// </summary>
-    public int WispError { get; }
+    public int IsoplaneError { get; }
 }
 
 /// <summary>A buffered or completed streaming response.</summary>

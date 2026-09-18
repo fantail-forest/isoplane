@@ -4,17 +4,17 @@
 /guests/out/
 /guests/.build.lock
 **/*.rs.bk
-.wisp-data/
+.isoplane-data/
 
 # .NET build intermediates (the ILCompiler packages restore large)
 guests/dotnet/src/obj/
 guests/dotnet/src/bin/
 guests/dotnet/hostcheck/target/
 .scratch-*
-wispd-data/
-.wisp-data/
+isoplaned-data/
+.isoplane-data/
 
-wispd-data-todo/
+isoplaned-data-todo/
 
 # local .data output for manual testing
 .data/
@@ -29,11 +29,11 @@ guest-sdks/dotnet/bin/
 guest-sdks/dotnet/obj/
 
 # Local development tools and caches.
-/.wisp-dev/
+/.isoplane-dev/
 /scripts/**/__pycache__/
 
 # Local guest development state and build logs.
-.wisp/
+.isoplane/
 
 # Template package build outputs.
 /guest-sdks/dotnet/Templates/bin/

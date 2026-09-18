@@ -1,12 +1,12 @@
-#if WISP_STREAMING_PROBE
+#if ISOPLANE_STREAMING_PROBE
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
-public sealed class StreamingProbe : IWispHandler
+public sealed class StreamingProbe : IIsoplaneHandler
 {
     public async Task<Response> HandleAsync(Request request, Ctx context)
     {

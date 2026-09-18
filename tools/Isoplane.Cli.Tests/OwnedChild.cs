@@ -1,6 +1,6 @@
 using System.IO.Pipes;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 internal static class OwnedChild
 {

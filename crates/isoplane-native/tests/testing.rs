@@ -6,8 +6,8 @@ use std::process::Command;
 #[test]
 fn a_dotnet_test_project_runs_its_application_in_the_installed_sandbox() {
     let directory = tempfile::tempdir().unwrap();
-    let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for package in ["Isoplane.Native", "Isoplane.Testing"] {
         run(Command::new("dotnet")
@@ -40,20 +40,20 @@ fn a_dotnet_test_project_runs_its_application_in_the_installed_sandbox() {
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" PrivateAssets="all" />
   </ItemGroup>
 </Project>"#,
-            wisp_fixtures::release_version()
+            isoplane_fixtures::release_version()
         ),
     )
     .unwrap();
     std::fs::write(
         consumer.join("ApplicationTests.cs"),
-        r#"using Wisp.Testing;
+        r#"using Isoplane.Testing;
 using Xunit;
 
 public sealed class ApplicationTests
 {
     [Theory]
-    [InlineData("WispInterpretedDebug")]
-    [InlineData("WispNativeAotRelease")]
+    [InlineData("IsoplaneInterpretedDebug")]
+    [InlineData("IsoplaneNativeAotRelease")]
     public async Task the_application_runs_inside_the_installed_sandbox_and_releases_its_listener(string configuration)
     {
         using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(20));
@@ -90,8 +90,8 @@ public sealed class ApplicationTests
         .env("TEST_APP", &app)
         .env("TEST_CLI", &cli)
         .env(
-            "WISP_GUEST_RUNTIME_FEED",
-            wisp_fixtures::guest_runtime_feed(),
+            "ISOPLANE_GUEST_RUNTIME_FEED",
+            isoplane_fixtures::guest_runtime_feed(),
         )
         .current_dir(consumer));
 }

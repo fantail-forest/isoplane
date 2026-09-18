@@ -1,4 +1,4 @@
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 internal sealed class RecordingResponseTransport : ResponseTransport
 {

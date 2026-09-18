@@ -1,11 +1,11 @@
 using System;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>A failed application factory for the pre-initialization regression.</summary>
-public sealed class FailingBoot : IWispHandler
+public sealed class FailingBoot : IIsoplaneHandler
 {
     /// <summary>Refuses to construct the application.</summary>
     public FailingBoot() => throw new InvalidOperationException("fixture application construction failed");

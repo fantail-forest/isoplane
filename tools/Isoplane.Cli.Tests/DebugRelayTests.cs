@@ -1,9 +1,9 @@
-using Wisp.Native;
+using Isoplane.Native;
 using Isoplane.Cli.Tests;
 using System.Net.Sockets;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class DebugRelayTests
 {
@@ -41,7 +41,7 @@ public sealed class DebugRelayTests
 
         private RelaySession()
         {
-            File.WriteAllText(Path.Combine(directory.FullName, "wisp.toml"), "name='relay-test'\nmodule='app.wasm'\n");
+            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "name='relay-test'\nmodule='app.wasm'\n");
             Relay = new DebugRelay(Cancellation);
             Host = new LocalSession(ModuleValidationTests.Module, new LocalProject(directory.FullName).SessionOptions(0, []), message =>
             {

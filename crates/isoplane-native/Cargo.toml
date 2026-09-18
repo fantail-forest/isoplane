@@ -10,20 +10,20 @@ description = "Native platform support for managed Isoplane development tools"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wisp-runtime = { workspace = true, features = ["local"] }
-wisp-abi = { workspace = true, features = ["host"] }
+isoplane-runtime = { workspace = true, features = ["local"] }
+isoplane-abi = { workspace = true, features = ["host"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 wasmparser.workspace = true
 
 anyhow.workspace = true
-wisp-engine.workspace = true
-wisp-host.workspace = true
-wisp-prepare.workspace = true
-wisp-proxy.workspace = true
-wisp-hibernate.workspace = true
-wisp-trust.workspace = true
+isoplane-engine.workspace = true
+isoplane-host.workspace = true
+isoplane-prepare.workspace = true
+isoplane-proxy.workspace = true
+isoplane-hibernate.workspace = true
+isoplane-trust.workspace = true
 parking_lot.workspace = true
 blake3.workspace = true
 rand.workspace = true
@@ -49,7 +49,7 @@ csbindgen.workspace = true
 [dev-dependencies]
 http-body-util.workspace = true
 wat.workspace = true
-wisp-fixtures.workspace = true
+isoplane-fixtures.workspace = true
 reqwest.workspace = true
 portable-pty.workspace = true
 toml.workspace = true

@@ -4,7 +4,7 @@
        moves it together with the in-repo SDK pins that must match. -->
   <PropertyGroup>
     <Version>0.1.0-preview.1</Version>
-    <RepositoryUrl>https://github.com/fantail-forest/wisp</RepositoryUrl>
+    <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 </Project>

@@ -57,7 +57,7 @@ def verify_unpacked(package, directory):
 
 def verify_feed(feed, current_root=None):
     feed = Path(feed)
-    props = ET.parse(feed / 'Wisp.GuestRuntime.props').getroot()
+    props = ET.parse(feed / 'Isoplane.GuestRuntime.props').getroot()
 
     def field(name):
         elements = props.findall('./PropertyGroup/' + name)
@@ -68,16 +68,16 @@ def verify_feed(feed, current_root=None):
             raise ValueError(f'{feed} has no {name}; rebuild the runtime feed')
         return value.strip()
 
-    identity = field('WispGuestRuntimeInputsSha256')
+    identity = field('IsoplaneGuestRuntimeInputsSha256')
     if re.fullmatch(r'[0-9a-f]{64}', identity) is None:
         raise ValueError('runtime input identity is not a lowercase SHA256 digest')
     if current_root is not None and identity != input_digest(current_root):
         raise ValueError('runtime feed is stale for current sources; run guest-runtime/build.sh')
     packages = (
-        ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'WispGuestRuntimePack'),
-        ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'WispGuestWasiSdkPack'),
-        ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotPack'),
-        ('Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotSdkPack'),
+        ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack'),
+        ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'IsoplaneGuestWasiSdkPack'),
+        ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotPack'),
+        ('Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotSdkPack'),
     )
     for package, prefix in packages:
         version = field(prefix + 'Version')

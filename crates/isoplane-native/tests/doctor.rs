@@ -14,7 +14,7 @@ fn module(imports: &[(&str, &str)], exports: &[&str]) -> Vec<u8> {
 /// [`module`] with a declared memory maximum, which is legal on one memory budget and
 /// not on another.
 fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32>) -> Vec<u8> {
-    use wisp_abi::imports::{Sig, Ty};
+    use isoplane_abi::imports::{Sig, Ty};
 
     fn ty(t: Ty) -> &'static str {
         match t {
@@ -46,10 +46,10 @@ fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32
 
     let mut wat = String::from("(module\n");
     for (module_, field) in imports {
-        let declared = if *module_ == wisp_abi::imports::HOST_MODULE {
-            wisp_abi::imports::lookup(field).map(|d| d.sig)
+        let declared = if *module_ == isoplane_abi::imports::HOST_MODULE {
+            isoplane_abi::imports::lookup(field).map(|d| d.sig)
         } else {
-            wisp_abi::pal::lookup(module_, field).and_then(|d| d.sig)
+            isoplane_abi::pal::lookup(module_, field).and_then(|d| d.sig)
         };
         let sig = signature(declared);
         wat.push_str(&format!(
@@ -67,7 +67,7 @@ fn module_with(imports: &[(&str, &str)], exports: &[&str], max_pages: Option<u32
     };
     wat.push_str(&format!("  (memory{export} {limits})\n"));
     for e in exports.iter().filter(|e| **e != "memory") {
-        let sig = signature(wisp_abi::imports::exports::signature(e));
+        let sig = signature(isoplane_abi::imports::exports::signature(e));
         wat.push_str(&format!("  (func (export \"{e}\"){sig} unreachable)\n"));
     }
     wat.push_str(")\n");
@@ -89,12 +89,17 @@ fn doctor_prints_the_capability_manifest_with_its_policy_bits() {
         "good.wasm",
         &module(
             &[
-                ("wisp", "http_fetch"),
-                ("wisp", "http_body_read"),
-                ("wisp", "clock_now_coarse"),
-                ("wisp", "init_hash_seed"),
+                ("isoplane", "http_fetch"),
+                ("isoplane", "http_body_read"),
+                ("isoplane", "clock_now_coarse"),
+                ("isoplane", "init_hash_seed"),
             ],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
         ),
     );
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
@@ -140,11 +145,16 @@ fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
         "bad.wasm",
         &module(
             &[
-                ("wisp", "http_fetch"),
+                ("isoplane", "http_fetch"),
                 ("wasi_snapshot_preview1", "fd_write"),
                 ("env", "pthread_create"),
             ],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
         ),
     );
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
@@ -166,13 +176,21 @@ fn doctor_rejects_a_module_that_reaches_for_an_undeclared_capability() {
 /// The whole PAL whitelist is accepted, as the validator accepts it.
 #[test]
 fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
-    let pal: Vec<(&str, &str)> = wisp_abi::pal::PAL_IMPORTS
+    let pal: Vec<(&str, &str)> = isoplane_abi::pal::PAL_IMPORTS
         .iter()
         .map(|d| (d.module, d.func))
         .collect();
     let (_dir, p) = write_module(
         "pal.wasm",
-        &module(&pal, &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"]),
+        &module(
+            &pal,
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
+        ),
     );
 
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
@@ -199,7 +217,7 @@ fn doctor_accepts_the_wasi_imports_the_pal_whitelist_covers() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("delegates to wisp.entropy_fill")
+        out.stdout.contains("delegates to isoplane.entropy_fill")
             && out.stdout.contains("draw randomness from the host CSPRNG"),
         "a delegated entry is the capability it names: {}",
         out.stdout
@@ -236,7 +254,12 @@ fn a_wasi_import_outside_the_whitelist_is_still_refused() {
                 "wasi:sockets/tcp@0.2.0",
                 "[method]tcp-socket.unknown-operation",
             )],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
         ),
     );
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
@@ -257,7 +280,7 @@ fn a_wasi_import_outside_the_whitelist_is_still_refused() {
 fn doctor_notices_a_module_that_cannot_be_activated_at_all() {
     let (_dir, p) = write_module(
         "noexports.wasm",
-        &module(&[("wisp", "http_fetch")], &["memory"]),
+        &module(&[("isoplane", "http_fetch")], &["memory"]),
     );
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(
@@ -267,7 +290,7 @@ fn doctor_notices_a_module_that_cannot_be_activated_at_all() {
     );
     assert!(
         out.stdout
-            .contains("required guest export `wisp_handle` is missing"),
+            .contains("required guest export `isoplane_handle` is missing"),
         "the missing export is named: {}",
         out.stdout
     );
@@ -278,8 +301,13 @@ fn doctor_has_a_machine_readable_form() {
     let (_dir, p) = write_module(
         "json.wasm",
         &module(
-            &[("wisp", "http_fetch")],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[("isoplane", "http_fetch")],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
         ),
     );
     let out = run(&["doctor", "--json", p.to_str().unwrap()]);
@@ -307,8 +335,13 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
     let (_dir, p) = write_module(
         "pure.wasm",
         &module(
-            &[("wisp", "log_emit"), ("wisp", "resp_new")],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[("isoplane", "log_emit"), ("isoplane", "resp_new")],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
         ),
     );
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
@@ -324,8 +357,13 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
 #[test]
 fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     let m = module_with(
-        &[("wisp", "http_fetch")],
-        &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+        &[("isoplane", "http_fetch")],
+        &[
+            "isoplane_alloc",
+            "isoplane_handle",
+            "isoplane_wake",
+            "memory",
+        ],
         Some(2048),
     );
     let (_dir, p) = write_module("bigmem.wasm", &m);
@@ -359,7 +397,7 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
         bad.stdout
     );
     assert!(
-        bad.stdout.contains("✓ wisp_handle") && !bad.stdout.contains("V1MissingExport"),
+        bad.stdout.contains("✓ isoplane_handle") && !bad.stdout.contains("V1MissingExport"),
         "the manifest alone would have passed it: {}",
         bad.stdout
     );
@@ -377,7 +415,7 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     let dir = tmp.path().to_path_buf();
     std::fs::create_dir_all(dir.join("out")).unwrap();
     std::fs::write(
-        dir.join("wisp.toml"),
+        dir.join("isoplane.toml"),
         "name = \"pinched\"\nlimits = \"free\"\n",
     )
     .unwrap();
@@ -385,8 +423,13 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     std::fs::write(
         &p,
         module_with(
-            &[("wisp", "http_fetch")],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[("isoplane", "http_fetch")],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(2048),
         ),
     )
@@ -400,7 +443,7 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("numeric limits") && out.stdout.contains("wisp.toml"),
+        out.stdout.contains("numeric limits") && out.stdout.contains("isoplane.toml"),
         "the limits and where it came from are stated: {}",
         out.stdout
     );
@@ -429,7 +472,12 @@ fn doctor_reports_and_enforces_the_default_memory_ceiling() {
         "large.wasm",
         &module_with(
             &[],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(8192),
         ),
     );
@@ -457,7 +505,12 @@ fn doctor_admits_an_explicit_memory_override_without_changing_numeric_limits() {
         "large.wasm",
         &module_with(
             &[],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(8192),
         ),
     );
@@ -503,7 +556,15 @@ fn doctor_admits_an_explicit_memory_override_without_changing_numeric_limits() {
 fn a_doctor_memory_override_requires_a_declared_module_maximum() {
     let (_dir, path) = write_module(
         "unbounded.wasm",
-        &module(&[], &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"]),
+        &module(
+            &[],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
+        ),
     );
     let out = run(&[
         "doctor",
@@ -530,7 +591,12 @@ fn a_doctor_memory_override_does_not_admit_hostile_imports() {
         "hostile.wasm",
         &module_with(
             &[("env", "pthread_create")],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(8192),
         ),
     );
@@ -557,7 +623,15 @@ fn a_doctor_memory_override_does_not_admit_hostile_imports() {
 fn invalid_doctor_memory_budgets_name_the_supported_byte_constraints() {
     let (_directory, path) = write_module(
         "valid.wasm",
-        &module(&[], &["memory", "wisp_alloc", "wisp_handle", "wisp_wake"]),
+        &module(
+            &[],
+            &[
+                "memory",
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+            ],
+        ),
     );
     for bytes in ["0", "1", "134217729", "4295032832"] {
         let out = run(&[
@@ -585,11 +659,16 @@ fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() 
         "large.wasm",
         &module_with(
             &[],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(8192),
         ),
     );
-    let manifest = directory.path().join("wisp.toml");
+    let manifest = directory.path().join("isoplane.toml");
     std::fs::write(
         &manifest,
         "name='large'\nlimits='standard'\nguest_memory_bytes=536870912\n",
@@ -635,12 +714,17 @@ fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
         "large.wasm",
         &module_with(
             &[],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(8192),
         ),
     );
     std::fs::write(
-        directory.path().join("wisp.toml"),
+        directory.path().join("isoplane.toml"),
         "name='large'\nlimits='standard'\nguest_memory_bytes=536870912\n",
     )
     .unwrap();
@@ -671,14 +755,14 @@ fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
 fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
-        directory.path().join("wisp.toml"),
+        directory.path().join("isoplane.toml"),
         "name='outer'\nguest_memory_bytes=536870912\n",
     )
     .unwrap();
     let nested = directory.path().join("nested");
     std::fs::create_dir(&nested).unwrap();
     std::fs::write(
-        nested.join("wisp.toml"),
+        nested.join("isoplane.toml"),
         "name='inner'\nlimits='standard'\n",
     )
     .unwrap();
@@ -687,7 +771,12 @@ fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() 
         &path,
         module_with(
             &[],
-            &["wisp_alloc", "wisp_handle", "wisp_wake", "memory"],
+            &[
+                "isoplane_alloc",
+                "isoplane_handle",
+                "isoplane_wake",
+                "memory",
+            ],
             Some(8192),
         ),
     )

@@ -1,5 +1,5 @@
 using System.Globalization;
-using Wisp;
+using Isoplane;
 
 namespace MinimalGallery;
 

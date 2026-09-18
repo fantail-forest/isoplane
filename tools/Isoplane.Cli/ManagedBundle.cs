@@ -1,9 +1,9 @@
 using System.Formats.Tar;
 using System.Reflection.Metadata;
 using System.Text.Json;
-using Wisp.Build;
+using Isoplane.Build;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal sealed record BundleOptions(string Directory, string Configuration, string Output)
 {
@@ -39,11 +39,11 @@ internal static class ManagedBundle
         try
         {
             var metadata = Path.Combine(temporary.FullName, "inputs.json");
-            var exit = await Processes.RunAsync("dotnet", ["msbuild", projects[0], "-restore", "-target:WispManagedBundle",
+            var exit = await Processes.RunAsync("dotnet", ["msbuild", projects[0], "-restore", "-target:IsoplaneManagedBundle",
                 "-nodeReuse:false", "-property:UseSharedCompilation=false",
-                "-property:WispManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
-                "-getProperty:AssemblyName,WispApplicationFactory,WispGuestRuntime",
-                "-getItem:WispBundleAssembly,WispBundleSymbol,WispBundleAsset,WispBundlePlatformReference",
+                "-property:IsoplaneManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
+                "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime",
+                "-getItem:IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference",
                 "-getResultOutputFile:" + metadata, "-nologo"], options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(metadata, cancellation));
@@ -57,19 +57,19 @@ internal static class ManagedBundle
         var properties = metadata.GetProperty("Properties");
         var items = metadata.GetProperty("Items");
         var assets = ReadAssets(items);
-        var assemblies = ReadAssemblies(Paths(items, "WispBundleAssembly"));
-        var platform = ReadAssemblies(Paths(items, "WispBundlePlatformReference"), platform: true);
-        var symbols = Paths(items, "WispBundleSymbol").ToHashSet(StringComparer.Ordinal);
+        var assemblies = ReadAssemblies(Paths(items, "IsoplaneBundleAssembly"));
+        var platform = ReadAssemblies(Paths(items, "IsoplaneBundlePlatformReference"), platform: true);
+        var symbols = Paths(items, "IsoplaneBundleSymbol").ToHashSet(StringComparer.Ordinal);
         AssemblyClosure.Validate(assemblies, platform);
         var entry = properties.GetProperty("AssemblyName").GetString();
         if (!assemblies.ContainsKey(entry ?? "")) throw new InvalidOperationException("The bundle has no application entry assembly.");
-        var execution = properties.GetProperty("WispGuestRuntime").GetString() switch
+        var execution = properties.GetProperty("IsoplaneGuestRuntime").GetString() switch
         {
             "Mono" => GuestExecution.Interpreted,
             "NativeAOT" => GuestExecution.NativeAot,
             _ => throw new InvalidOperationException("The project must select an interpreted or NativeAOT configuration.")
         };
-        var factory = properties.GetProperty("WispApplicationFactory").GetString();
+        var factory = properties.GetProperty("IsoplaneApplicationFactory").GetString();
         if (string.IsNullOrWhiteSpace(factory)) throw new InvalidOperationException("The project must name its application factory.");
         var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, factory, execution), BuildJson.Options);
         var partial = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -102,7 +102,7 @@ internal static class ManagedBundle
     {
         var result = new List<(string Source, string Target)>();
         var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in items.GetProperty("WispBundleAsset").EnumerateArray())
+        foreach (var item in items.GetProperty("IsoplaneBundleAsset").EnumerateArray())
         {
             var source = Path.GetFullPath(item.GetProperty("FullPath").GetString() ?? throw new InvalidOperationException("The SDK returned an empty asset source."));
             RequireRegularFile(source);

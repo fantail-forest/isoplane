@@ -20,7 +20,7 @@ def main():
         args.pop(0)
     args = args or [os.environ.get("SHELL", "/bin/bash")]
     os.chdir(ROOT)
-    os.environ["PATH"] = str(ROOT / ".wisp-dev/tools/bin") + os.pathsep + os.environ.get("PATH", os.defpath)
+    os.environ["PATH"] = str(ROOT / ".isoplane-dev/tools/bin") + os.pathsep + os.environ.get("PATH", os.defpath)
     os.execvp(args[0], args)
 
 

@@ -9,7 +9,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'audit-pinvokes.py'
 
 class PInvokeAuditTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='wisp-pinvoke-test-')
+        self.directory = tempfile.TemporaryDirectory(prefix='isoplane-pinvoke-test-')
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
 

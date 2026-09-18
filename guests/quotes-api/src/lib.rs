@@ -2,8 +2,8 @@
 
 use core::cell::Cell;
 
+use isoplane_guest::{Clock, Ctx, Handler, Request, RequestExt, Response};
 use serde::Serialize;
-use wisp_guest::{Clock, Ctx, Handler, Request, RequestExt, Response};
 
 const DEFAULT_FX_URL: &str = "https://rates.internal/nzd";
 
@@ -16,7 +16,7 @@ pub struct ApiConfig {
     pub var_count: usize,
 }
 
-wisp_guest::deferred_lazy! {
+isoplane_guest::deferred_lazy! {
     /// Routes handled by this fixture.
     static ROUTES: Vec<&'static str> = { vec!["/memo", "/park", "/stream"] };
 
@@ -26,7 +26,7 @@ wisp_guest::deferred_lazy! {
 
     /// Parses supplied configuration into initialized guest state.
     static CONFIG: ApiConfig = {
-        let vars = wisp_guest::init::config_vars();
+        let vars = isoplane_guest::init::config_vars();
         let get = |k: &str| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         ApiConfig {
             fx_url: get("FX_URL").unwrap_or_else(|| DEFAULT_FX_URL.to_string()),
@@ -71,7 +71,7 @@ struct ParkReport {
 
 impl Api {
     fn memo_report(&'static self) -> Response {
-        let h = wisp_guest::heap_stats();
+        let h = isoplane_guest::heap_stats();
         Response::json(&MemoReport {
             instance_dispatches: self.dispatches.get(),
             routes_initializer_runs: ROUTES.run_count(),
@@ -103,13 +103,13 @@ impl Api {
     }
 
     async fn stream(&'static self) -> Response {
-        let s = wisp_guest::ResponseStream::open(
+        let s = isoplane_guest::ResponseStream::open(
             200,
             vec![("content-type".into(), "text/plain".into())],
         );
         for i in 0..3u32 {
             if let Err(e) = s.write(format!("chunk {i}\n").as_bytes()).await {
-                wisp_guest::log(wisp_guest::Level::Warn, &format!("stream write: {e}"));
+                isoplane_guest::log(isoplane_guest::Level::Warn, &format!("stream write: {e}"));
                 break;
             }
         }
@@ -138,7 +138,7 @@ impl Handler for Api {
     }
 }
 
-wisp_guest::export_handler!(
+isoplane_guest::export_handler!(
     Api,
-    units = wisp_guest::init_units![ROUTES, BOOT_MS, CONFIG]
+    units = isoplane_guest::init_units![ROUTES, BOOT_MS, CONFIG]
 );

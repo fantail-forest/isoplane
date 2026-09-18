@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal sealed class CommandCancellation : IDisposable
 {

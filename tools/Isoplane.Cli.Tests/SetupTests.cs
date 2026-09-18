@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class SetupTests
 {
@@ -24,7 +24,7 @@ public sealed class SetupTests
         foreach (var id in ToolchainBundle.PackageIds)
             Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", $"{id}.{ToolchainBundle.Version}.nupkg")), $"the {id} package must be installed into the feed");
         Assert.Equal(Path.Combine(fixture.Home, "packages"), registrations.Sources["isoplane"]);
-        Assert.Equal(ToolchainBundle.Version, registrations.Templates["Wisp.Templates"]);
+        Assert.Equal(ToolchainBundle.Version, registrations.Templates["Isoplane.Templates"]);
         Assert.False(Directory.Exists(Path.Combine(fixture.Home, "downloads")), "the toolchain archive is not kept after installation");
         var profile = await File.ReadAllTextAsync(Path.Combine(fixture.UserHome, ".profile"));
         Assert.Contains(ShellEnvironment.SourceLine(fixture.Home, fixture.UserHome), profile);
@@ -37,7 +37,7 @@ public sealed class SetupTests
             .ToList();
         Assert.Contains(("Directory", toolchain, true), recorded);
         Assert.Contains(("PackageSource", "isoplane", true), recorded);
-        Assert.Contains(("Template", "Wisp.Templates", true), recorded);
+        Assert.Contains(("Template", "Isoplane.Templates", true), recorded);
         Assert.Contains(("ProfileLine", Path.Combine(fixture.UserHome, ".profile"), true), recorded);
         Assert.Contains(("SymbolicLink", Path.Combine(fixture.Home, "dotnet"), true), recorded);
         Assert.Contains(("File", ShellEnvironment.EnvironmentFile(fixture.Home), true), recorded);
@@ -68,7 +68,7 @@ public sealed class SetupTests
         var registrations = new FakeRegistrations();
         Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations), "http://origin.test/release/", client: new HttpClient(handler)));
         Assert.Contains("release/toolchain.tgz", handler.Requests);
-        Assert.Contains("release/packages/Wisp.Templates.0.1.0-preview.1.nupkg", handler.Requests);
+        Assert.Contains("release/packages/Isoplane.Templates.0.1.0-preview.1.nupkg", handler.Requests);
         Assert.NotNull(await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None));
     }
 
@@ -258,10 +258,10 @@ public sealed class SetupTests
         var second = await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None);
         Assert.NotEqual(first, second);
         Assert.False(Directory.Exists(first), "the superseded toolchain is removed");
-        Assert.Equal("0.1.0-preview.2", registrations.Templates["Wisp.Templates"]);
-        Assert.Contains("uninstall template Wisp.Templates", registrations.Calls);
-        Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Wisp.Sdk.0.1.0-preview.1.nupkg")), "projects pinned to the earlier SDK still restore");
-        Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Wisp.Sdk.0.1.0-preview.2.nupkg")), "the new SDK is installed");
+        Assert.Equal("0.1.0-preview.2", registrations.Templates["Isoplane.Templates"]);
+        Assert.Contains("uninstall template Isoplane.Templates", registrations.Calls);
+        Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Isoplane.Sdk.0.1.0-preview.1.nupkg")), "projects pinned to the earlier SDK still restore");
+        Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Isoplane.Sdk.0.1.0-preview.2.nupkg")), "the new SDK is installed");
         Assert.Equal("0.1.0-preview.2", Manifest(fixture).RootElement.GetProperty("cliVersion").GetString());
     }
 

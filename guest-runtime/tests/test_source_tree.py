@@ -13,7 +13,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'source-tree.py'
 
 class SourceTreeTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='wisp-source-test-')
+        self.directory = tempfile.TemporaryDirectory(prefix='isoplane-source-test-')
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.tree = self.root / 'source'
@@ -76,7 +76,7 @@ class SourceTreeTests(unittest.TestCase):
         (self.tree / 'Directory.Build.rsp').write_text('previous local input')
         self.write_archive('old\n', {'.gitignore': '*.rsp\n', 'Directory.Build.rsp': 'new upstream'})
         self.materialize()
-        saved = list((self.tree / '.git/wisp-source-backups').glob('*/Directory.Build.rsp'))
+        saved = list((self.tree / '.git/isoplane-source-backups').glob('*/Directory.Build.rsp'))
         self.assertEqual(len(saved), 1, 'reconciliation must preserve an ignored local input before replacing it')
         self.assertEqual(saved[0].read_text(), 'previous local input', 'the original ignored input must remain recoverable byte for byte')
         self.assertEqual((self.tree / 'Directory.Build.rsp').read_text(), 'new upstream', 'the reconciled source must use the current pinned archive')
@@ -87,7 +87,7 @@ class SourceTreeTests(unittest.TestCase):
         (self.tree / 'foo').write_text('local ancestor payload')
         self.write_archive('old\n', {'.gitignore': 'foo\n', 'foo/bar.txt': 'upstream', 'foo/other.txt': 'other'})
         self.materialize()
-        saved = list((self.tree / '.git/wisp-source-backups').glob('*/foo'))
+        saved = list((self.tree / '.git/isoplane-source-backups').glob('*/foo'))
         self.assertEqual(len(saved), 1, 'an obstructing ignored ancestor must be backed up once')
         self.assertEqual(saved[0].read_text(), 'local ancestor payload', 'ancestor bytes must remain recoverable')
         self.assertEqual((self.tree / 'foo/bar.txt').read_text(), 'upstream', 'new source directory must be materialized')
@@ -101,7 +101,7 @@ class SourceTreeTests(unittest.TestCase):
         (self.tree / 'foo').symlink_to(external, target_is_directory=True)
         self.write_archive('old\n', {'.gitignore': 'foo\n', 'foo/bar.txt': 'upstream'})
         self.materialize()
-        saved = list((self.tree / '.git/wisp-source-backups').glob('*/foo'))
+        saved = list((self.tree / '.git/isoplane-source-backups').glob('*/foo'))
         self.assertEqual(len(saved), 1, 'ignored ancestor symlink must be retained')
         self.assertTrue(saved[0].is_symlink(), 'backup must preserve the symlink rather than its external contents')
         self.assertEqual(os.readlink(saved[0]), str(external), 'original symlink destination must remain recoverable')
@@ -136,7 +136,7 @@ class SourceTreeTests(unittest.TestCase):
         self.assertNotEqual(self.run_source('verify').returncode, 0, 'a changed patch must invalidate verification')
         self.materialize()
         self.assertEqual((self.tree / 'value.txt').read_text(), 'second\n', 'changed patch must reach source')
-        refs = subprocess.check_output(['git', '-C', str(self.tree), 'for-each-ref', '--format=%(objectname)', 'refs/wisp/source-backups'], text=True)
+        refs = subprocess.check_output(['git', '-C', str(self.tree), 'for-each-ref', '--format=%(objectname)', 'refs/isoplane/source-backups'], text=True)
         self.assertIn(old_head, refs, 'previous committed source must remain recoverable')
 
     def test_local_edits_are_preserved_and_refused(self):
@@ -170,9 +170,9 @@ class SourceTreeTests(unittest.TestCase):
 
     def test_unchanged_inputs_preserve_existing_source_head(self):
         self.materialize()
-        before = (self.tree / '.git/wisp-source.json').read_text()
+        before = (self.tree / '.git/isoplane-source.json').read_text()
         self.materialize()
-        self.assertEqual((self.tree / '.git/wisp-source.json').read_text(), before, 'unchanged inputs must retain the same verified source identity')
+        self.assertEqual((self.tree / '.git/isoplane-source.json').read_text(), before, 'unchanged inputs must retain the same verified source identity')
         self.assertEqual(self.run_source('verify').returncode, 0, 'reconciled source must verify against its declared identity')
 
 

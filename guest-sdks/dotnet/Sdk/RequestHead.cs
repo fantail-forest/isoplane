@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>HTTP request metadata, independent of whether the body is buffered or streamed.</summary>
 public class RequestHead
@@ -32,7 +32,7 @@ public class RequestHead
 
     internal RequestHead(DispatchRecord record)
     {
-        Aborted = Wisp.Runtime.FutureTable.Aborted;
+        Aborted = Isoplane.Runtime.FutureTable.Aborted;
         Method = record.Method;
         Url = record.Url;
         Path = record.Path;

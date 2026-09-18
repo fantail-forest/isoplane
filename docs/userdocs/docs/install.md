@@ -5,7 +5,7 @@ title: Install on Linux
 The Isoplane tools install in two steps: the `isoplane` command as a global
 .NET tool, then `isoplane setup`, which installs the SDK, compiler tools,
 runtime, package feed and project templates that match that command. You do
-not need a WISP checkout, Rust, Mono, or a separately installed WASI SDK.
+not need an Isoplane checkout, Rust, Mono, or a separately installed WASI SDK.
 
 The current release is for Linux x64 with glibc; the validated baseline is
 Ubuntu 24.04. Package restore needs internet access.
@@ -87,7 +87,7 @@ CLI.
 
 The new template selects the matching SDK automatically. To move an existing
 application to the new release, change the version in
-`<Project Sdk="Wisp.AspNetCore/VERSION">` and in any explicit Isoplane package
+`<Project Sdk="Isoplane.AspNetCore/VERSION">` and in any explicit Isoplane package
 references, including `Isoplane.Testing` in test projects, then rebuild and
 test each configuration you use.
 

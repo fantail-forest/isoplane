@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 TOOLS="$ROOT/scripts/fixture-tools.py"
 LOCK="$ROOT/guests/.build-dotnet.lock"
-if [ "${WISP_FIXTURE_LOCK:-}" != "$HERE/build.sh" ]; then
+if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$HERE/build.sh" ]; then
   exec python3 "$TOOLS" lock "$LOCK" "$HERE/build.sh" "$@"
 fi
 
@@ -33,22 +33,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-FEED="${WISP_TEST_RUNTIME_FEED:-$ROOT/guest-runtime/out/feed}"
-if [ -n "${WISP_TEST_RUNTIME_FEED:-}" ]; then
+FEED="${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/guest-runtime/out/feed}"
+if [ -n "${ISOPLANE_TEST_RUNTIME_FEED:-}" ]; then
   python3 "$ROOT/guest-runtime/feed-identity.py" verify-artifact "$FEED"
   echo "==> explicitly selected runtime artifacts: $FEED"
 else
   python3 "$ROOT/guest-runtime/feed-identity.py" verify-current "$ROOT/guest-runtime" "$FEED"
 fi
-export WISP_GUEST_RUNTIME_FEED="$FEED"
-PROPS="$FEED/Wisp.GuestRuntime.props"
+export ISOPLANE_GUEST_RUNTIME_FEED="$FEED"
+PROPS="$FEED/Isoplane.GuestRuntime.props"
 NAME="guest_${FIXTURE}_acceptance"
 OUT="$HERE/out/$RUNTIME/$NAME.wasm"
 COMPILER_INPUTS=()
 if [ "$RUNTIME" = nativeaot ]; then
   COMPILER="$(dirname "$FEED")/compiler"
   VERIFY=verify-current
-  if [ -n "${WISP_TEST_RUNTIME_FEED:-}" ]; then VERIFY=verify-artifact; fi
+  if [ -n "${ISOPLANE_TEST_RUNTIME_FEED:-}" ]; then VERIFY=verify-artifact; fi
   python3 "$ROOT/guest-runtime/compiler/build.py" "$VERIFY" --output "$COMPILER"
   COMPILER_INPUTS+=("$COMPILER/compiler.json")
 fi
@@ -63,24 +63,24 @@ command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the 
 
 case "$RUNTIME" in
   # Symbols stay in the interpreter's module so a trap names its frames.
-  mono) profile=(-p:WispGuestRuntime=Mono -p:WasmNativeStrip=false) ;;
-  nativeaot) profile=(-p:WispGuestRuntime=NativeAOT) ;;
+  mono) profile=(-p:IsoplaneGuestRuntime=Mono -p:WasmNativeStrip=false) ;;
+  nativeaot) profile=(-p:IsoplaneGuestRuntime=NativeAOT) ;;
 esac
 if [ "$RUNTIME" = mono ]; then
   payload="$HERE/obj/$RUNTIME/payload"
   dotnet build "$HERE/src/Payload/Payload.csproj" --configuration Release \
     --artifacts-path "$HERE/obj/$RUNTIME/payload-artifacts" --output "$payload"
-  profile+=("-p:WispAcceptancePayload=$payload/Wisp.Acceptance.DynamicPayload.dll")
+  profile+=("-p:IsoplaneAcceptancePayload=$payload/Isoplane.Acceptance.DynamicPayload.dll")
 fi
 if [ "$FIXTURE" = compiler ]; then
   [ "$RUNTIME" = nativeaot ] || { echo "compiler fixture requires NativeAOT" >&2; exit 2; }
   : "${WASI_SDK_PATH:?WASI_SDK_PATH is required to compile the ABI fixture}"
   mkdir -p "$HERE/obj/compiler"
   "$WASI_SDK_PATH/bin/clang" --target=wasm32-wasip2 -O2 -c "$HERE/compiler/narrow.c" -o "$HERE/obj/compiler/narrow.o"
-  profile+=(-p:WispCompilerProbe=true "-p:WispCompilerProbeObject=$HERE/obj/compiler/narrow.o")
+  profile+=(-p:IsoplaneCompilerProbe=true "-p:IsoplaneCompilerProbeObject=$HERE/obj/compiler/narrow.o")
 fi
 rm -f "$OUT"
-WISP_OUT_DIR="$HERE/out/$RUNTIME" WISP_OUT="$NAME" "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
+ISOPLANE_OUT_DIR="$HERE/out/$RUNTIME" ISOPLANE_OUT="$NAME" "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
   "${profile[@]}" --artifacts-path "$HERE/obj/$RUNTIME-$FIXTURE"
 
 python3 "$TOOLS" record "$OUT.fixture.json" "$INPUTS" "$OUT" "$OUT.runtime"

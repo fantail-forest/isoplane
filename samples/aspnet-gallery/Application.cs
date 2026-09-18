@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MinimalGallery;
 using Npgsql;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 
 namespace AspNetGallery;
 
@@ -15,7 +15,7 @@ public static class Application
     /// <summary>Builds routes without reading credentials or contacting services during preparation.</summary>
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, GalleryJson.Default));
         builder.Services.AddScoped(_ => GallerySettings.Read());
@@ -38,7 +38,7 @@ public static class Application
         application.MapGet("/images", ListAsync);
         application.MapGet("/images/{id:guid}/original", OriginalAsync);
         application.MapGet("/images/{id:guid}/thumbnail", ThumbnailAsync);
-        Wisp.Initialization.Initializing += () =>
+        Isoplane.Initialization.Initializing += () =>
         {
             _ = GallerySchema.Generated.GalleryDbModel.Instance.GetEntityTypes().ToArray();
             _ = application.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value;

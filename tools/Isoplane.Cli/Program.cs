@@ -1,5 +1,5 @@
-using Wisp.Cli;
-using Wisp.Native;
+using Isoplane.Cli;
+using Isoplane.Native;
 
 try
 {

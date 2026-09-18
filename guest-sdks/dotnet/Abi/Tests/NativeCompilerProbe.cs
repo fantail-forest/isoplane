@@ -2,42 +2,42 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 internal static unsafe class NativeCompilerProbe
 {
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_arg_u8")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_arg_u8")]
     private static extern uint Argumentu8(byte value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_return_u8")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_return_u8")]
     private static extern byte Returnu8(uint value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_callback_u8")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_callback_u8")]
     private static extern uint Callbacku8(delegate* unmanaged[Cdecl]<byte, byte> callback, byte value);
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static byte Echou8(byte value) => value;
 
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_arg_i8")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_arg_i8")]
     private static extern int Argumenti8(sbyte value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_return_i8")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_return_i8")]
     private static extern sbyte Returni8(int value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_callback_i8")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_callback_i8")]
     private static extern int Callbacki8(delegate* unmanaged[Cdecl]<sbyte, sbyte> callback, sbyte value);
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static sbyte Echoi8(sbyte value) => value;
 
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_arg_u16")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_arg_u16")]
     private static extern uint Argumentu16(ushort value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_return_u16")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_return_u16")]
     private static extern ushort Returnu16(uint value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_callback_u16")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_callback_u16")]
     private static extern uint Callbacku16(delegate* unmanaged[Cdecl]<ushort, ushort> callback, ushort value);
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static ushort Echou16(ushort value) => value;
 
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_arg_i16")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_arg_i16")]
     private static extern int Argumenti16(short value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_return_i16")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_return_i16")]
     private static extern short Returni16(int value);
-    [DllImport("wisp_compiler_probe", EntryPoint = "wisp_probe_callback_i16")]
+    [DllImport("isoplane_compiler_probe", EntryPoint = "isoplane_probe_callback_i16")]
     private static extern int Callbacki16(delegate* unmanaged[Cdecl]<short, short> callback, short value);
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static short Echoi16(short value) => value;

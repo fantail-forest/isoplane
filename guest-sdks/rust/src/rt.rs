@@ -1,4 +1,4 @@
-//! **The wisp scheduler**: a single-threaded, non-concurrent executor that
+//! **The isoplane scheduler**: a single-threaded, non-concurrent executor that
 //! owns a continuation queue and a future table mapping host future ids to
 //! waker slots.
 //!
@@ -11,7 +11,7 @@
 //! There is one code path and it is a chain of ordinary `return`s:
 //!
 //! ```text
-//!  host calls wisp_handle(ptr, len)
+//!  host calls isoplane_handle(ptr, len)
 //!    -> rt::handle_dispatch  decodes the record, spawns ONE task, calls run()
 //!      -> run()              pops the task, polls it exactly once
 //!        -> app's async fn   awaits e.g. Kv::get(...)
@@ -27,7 +27,7 @@
 //!  Parked: evictable, snapshotable, relocatable.
 //! ```
 //!
-//! Later, `wisp_wake(future_id, result)` writes the result into the slot,
+//! Later, `isoplane_wake(future_id, result)` writes the result into the slot,
 //! pushes the owning task back onto the ready queue and calls `run()` again --
 //! a *fresh* stack, not a resumed one. That is the whole mechanism. There is
 //! no Asyncify, no stack switching, no thread, and nothing that spins:
@@ -43,9 +43,9 @@ use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-use wisp_abi::dispatch::DispatchRecord;
-use wisp_abi::result::ResultRecord;
-use wisp_abi::status::{PollStatus, TrapCode};
+use isoplane_abi::dispatch::DispatchRecord;
+use isoplane_abi::result::ResultRecord;
+use isoplane_abi::status::{PollStatus, TrapCode};
 
 use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc};
 use std::collections::{BTreeMap, VecDeque};
@@ -68,7 +68,7 @@ struct Task {
 }
 
 /// One entry of the future table: a host future id, the task waiting on it,
-/// and the result once `wisp_wake` delivers one.
+/// and the result once `isoplane_wake` delivers one.
 struct FutureSlot {
     owner: u32,
     result: Option<ResultRecord>,
@@ -89,8 +89,8 @@ pub(crate) struct Runtime {
     current: u32,
     main_response: Option<u32>,
     trap: Option<TrapCode>,
-    /// Buffers handed to the host by `wisp_alloc`, freed once the host has
-    /// handed them back in a `wisp_handle` / `wisp_wake` call.
+    /// Buffers handed to the host by `isoplane_alloc`, freed once the host has
+    /// handed them back in a `isoplane_handle` / `isoplane_wake` call.
     host_bufs: Vec<(usize, usize, usize)>,
     /// Instrumentation. `polls` is the assertion that backs "parking is a
     /// return, not a spin".
@@ -183,7 +183,7 @@ impl Runtime {
 //
 // The engine builds wasmtime without threads, shared memory or atomics and the
 // validator rejects a module that declares them, so the module cannot express a
-// second thread; and both `wisp-host` and the engine refuse a reentrant call
+// second thread; and both `isoplane-host` and the engine refuse a reentrant call
 // into an instance while one is outstanding. Together those make an
 // `UnsafeCell` global the honest representation. The one hazard left is
 // *self*-nesting, so `with` refuses it in debug builds.
@@ -313,7 +313,7 @@ pub(crate) fn take_result(id: u64) -> Option<ResultRecord> {
 }
 
 /// Called from `HostFuture::drop`. A future the guest stopped caring about is
-/// forgotten locally so a late `wisp_wake` for it is a no-op.
+/// forgotten locally so a late `isoplane_wake` for it is a no-op.
 ///
 /// CONTRACT GAP: there is no `future_cancel` import, so the host is not told,
 /// and the abandoned future keeps counting against the pending-futures cap
@@ -356,7 +356,7 @@ pub fn park_count() -> u64 {
 // the guest crate that call straight into these.
 // ---------------------------------------------------------------------------
 
-/// `wisp_alloc(size, align) -> ptr`: the host->guest buffer handoff. No host
+/// `isoplane_alloc(size, align) -> ptr`: the host->guest buffer handoff. No host
 /// pointer ever enters guest memory; the host copies into this buffer, and the
 /// guest frees it when the host hands it back.
 pub fn export_alloc(size: usize, align: usize) -> usize {
@@ -385,7 +385,7 @@ fn free_host_buf(ptr: usize) {
     }
 }
 
-/// `wisp_handle(ptr, len) -> poll-status`.
+/// `isoplane_handle(ptr, len) -> poll-status`.
 pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask) -> u64 {
     #[cfg(target_arch = "wasm32")]
     crate::install_panic_hook();
@@ -405,7 +405,7 @@ pub fn export_handle(ptr: usize, len: usize, make: fn(DispatchRecord) -> BoxTask
     run().encode()
 }
 
-/// `wisp_wake(future, ptr, len) -> poll-status`.
+/// `isoplane_wake(future, ptr, len) -> poll-status`.
 pub fn export_wake(future: u64, ptr: usize, len: usize) -> u64 {
     #[cfg(target_arch = "wasm32")]
     crate::install_panic_hook();

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class LocalSecretsTests
 {

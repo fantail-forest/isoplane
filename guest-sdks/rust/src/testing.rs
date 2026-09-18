@@ -107,7 +107,7 @@ pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
     }
     // Config blob: write up to `cap` bytes, return the FULL length so a
     // zero-length probe sizes the buffer. Mirrors the host in
-    // `wisp_control::preinit`.
+    // `isoplane_control::preinit`.
     if name == "init_config_get" {
         return CONFIG.with(|c| {
             let blob = c.borrow();
@@ -117,8 +117,8 @@ pub(crate) fn stub_call(name: &'static str, args: &[i64]) -> i64 {
             blob.len() as i64
         });
     }
-    if wisp_abi::imports::lookup(name)
-        .is_some_and(|import| matches!(import.kind, wisp_abi::imports::ImportKind::Future))
+    if isoplane_abi::imports::lookup(name)
+        .is_some_and(|import| matches!(import.kind, isoplane_abi::imports::ImportKind::Future))
     {
         NEXT_ID.with(|c| {
             let v = c.get();

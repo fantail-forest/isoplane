@@ -10,8 +10,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="XmlDocMarkdown.Core" Version="2.9.0" />
-    <ProjectReference Include="../../guest-sdks/dotnet/Wisp.Sdk.csproj" />
-    <ProjectReference Include="../../guest-sdks/dotnet/AspNetCore/Wisp.AspNetCore.csproj" />
+    <ProjectReference Include="../../guest-sdks/dotnet/Isoplane.Sdk.csproj" />
+    <ProjectReference Include="../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
     <ProjectReference Include="../Isoplane.Testing/Isoplane.Testing.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

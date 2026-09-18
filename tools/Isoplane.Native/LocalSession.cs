@@ -2,9 +2,9 @@ using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
-using Wisp.Native.Interop;
+using Isoplane.Native.Interop;
 
-namespace Wisp.Native;
+namespace Isoplane.Native;
 
 internal sealed class LocalSession : IAsyncDisposable
 {

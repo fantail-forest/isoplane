@@ -1,0 +1,116 @@
+<Project>
+  <Import Project="Isoplane.NativeExports.targets" Condition="'$(IsoplaneGuestRuntime)' != 'Mono'" />
+  <Target Name="IsoplaneNativeAotExportBindings" BeforeTargets="WriteIlcRspFileForCompilation"
+          DependsOnTargets="IsoplaneNativeAotVerifyCommonPack;SetupOSSpecificProps;IsoplaneNativeAotLinkShims;IsoplaneCompilePal;SelectNativeLibrariesForWasmLink"
+          Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <PropertyGroup>
+      <_IsoplaneAotExports>$(NativeIntermediateOutputPath)native-exports.txt</_IsoplaneAotExports>
+      <_IsoplaneAotDirect>$(NativeIntermediateOutputPath)direct-pinvokes.txt</_IsoplaneAotDirect>
+    </PropertyGroup>
+    <ItemGroup>
+      <_IsoplaneAotNativeExportInput Include="@(NativeLibrary)" Condition="'%(Extension)' == '.a' OR '%(Extension)' == '.o'">
+        <Library Condition="'%(NativeLibrary.Library)' == ''">%(NativeLibrary.Filename)</Library>
+      </_IsoplaneAotNativeExportInput>
+    </ItemGroup>
+    <Isoplane.Conformance.NativeExports Tool="$(_NativeWasmSdkBinPath)llvm-nm$(_HostToolExeExt)"
+        Inputs="@(_IsoplaneAotNativeExportInput)" SymbolsFile="$(_IsoplaneAotExports)" DirectPInvokeFile="$(_IsoplaneAotDirect)"
+        Compiler="$(_NativeWasmSdkBinPath)clang$(_HostToolExeExt)" TargetTriple="$(IlcLlvmTarget)"
+        SystemLibraries="libc.a" IncludeCompilerBuiltins="true">
+      <Output TaskParameter="ResolvedLibraries" ItemName="NativeLibrary" />
+    </Isoplane.Conformance.NativeExports>
+    <ItemGroup>
+      <DirectPInvoke Remove="@(DirectPInvoke)" />
+      <DirectPInvokeList Include="$(_IsoplaneAotDirect)" />
+      <LinkerArg Include="-Wl,--error-unresolved-symbols" />
+      <FileWrites Include="$(_IsoplaneAotExports);$(_IsoplaneAotDirect)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneNativeAotVerifyCommonPack" BeforeTargets="IlcCompile" Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <Error Condition="'$(ILCompilerVersion)' != '$(IsoplaneGuestNativeAotSdkPackVersion)'"
+           Text="The NativeAOT targets version must match the supplied toolchain. Remove the ILCompilerVersion override." />
+    <PropertyGroup>
+      <_IsoplaneCommonPackDirectory>$([MSBuild]::NormalizeDirectory('$(NuGetPackageRoot)', 'microsoft.dotnet.ilcompiler.llvm', '$(IsoplaneGuestNativeAotSdkPackVersion)'))</_IsoplaneCommonPackDirectory>
+      <_IsoplaneCommonPackDigestFile>$(_IsoplaneCommonPackDirectory)microsoft.dotnet.ilcompiler.llvm.$(IsoplaneGuestNativeAotSdkPackVersion.ToLowerInvariant()).nupkg.sha512</_IsoplaneCommonPackDigestFile>
+    </PropertyGroup>
+    <Error Condition="'$(IsoplaneGuestNativeAotSdkPackVersion)' == '' OR !Exists('$(_IsoplaneCommonPackDigestFile)')"
+           Text="The source-built NativeAOT targets package is missing. Run isoplane setup with the matching toolchain and restore the project." />
+    <ReadLinesFromFile File="$(_IsoplaneCommonPackDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_IsoplaneCommonPackDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_IsoplaneCommonPackDigest)' != '$(IsoplaneGuestNativeAotSdkPackSha512)'"
+           Text="The NativeAOT targets package differs from the supplied toolchain. Restore the matching package before building." />
+  </Target>
+  <!-- Teach the SDK which compiler handles WASI; its bundled compiler does not. -->
+  <Target Name="IsoplaneSelectLlvmCompiler" BeforeTargets="ProcessFrameworkReferences" Condition="'$(PublishAot)' == 'true'">
+    <ItemGroup>
+      <_IsoplaneCompilerPlatform Include="@(KnownILCompilerPack)" Condition="'%(TargetFramework)' == '$(TargetFramework)'" />
+      <KnownILCompilerPack Remove="@(_IsoplaneCompilerPlatform)" />
+      <KnownILCompilerPack Include="Microsoft.DotNet.ILCompiler.LLVM">
+        <TargetFramework>$(TargetFramework)</TargetFramework>
+        <ILCompilerPackNamePattern>runtime.**RID**.Microsoft.DotNet.ILCompiler.LLVM</ILCompilerPackNamePattern>
+        <ILCompilerPackVersion>$(ILCompilerVersion)</ILCompilerPackVersion>
+        <ILCompilerRuntimeIdentifiers>@(_IsoplaneCompilerPlatform->'%(ILCompilerRuntimeIdentifiers)');wasi-wasm</ILCompilerRuntimeIdentifiers>
+        <ILCompilerPortableRuntimeIdentifiers>@(_IsoplaneCompilerPlatform->'%(ILCompilerPortableRuntimeIdentifiers)')</ILCompilerPortableRuntimeIdentifiers>
+      </KnownILCompilerPack>
+    </ItemGroup>
+  </Target>
+  <!-- Explicit references above resolve the separately versioned host and guest packs. -->
+  <Target Name="IsoplaneUseExplicitCompilerPacks" AfterTargets="ProcessFrameworkReferences" Condition="'$(PublishAot)' == 'true'">
+    <ItemGroup>
+      <PackageDownload Remove="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM;runtime.$(NETCoreSdkPortableRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM;runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" />
+    </ItemGroup>
+  </Target>
+  <!-- The pack the compile draws on must be the pack the feed offers: NuGet
+       keeps one extraction per version, so a stale copy could shadow a
+       republished pack. The compiler's targets name the directory they
+       resolved. -->
+  <Target Name="IsoplaneNativeAotVerifyFrameworkPack" DependsOnTargets="IsoplaneResolveNativeAotPackages" BeforeTargets="IlcCompile"
+          Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <Error Condition="'$(RuntimePackagePath)' == ''"
+           Text="isoplane: the compiler resolved no framework pack; expected the feed's runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM $(IsoplaneGuestNativeAotPackVersion)." />
+    <PropertyGroup>
+      <_IsoplaneNativeAotPackDirectory>$([MSBuild]::NormalizeDirectory('$(RuntimePackagePath)'))</_IsoplaneNativeAotPackDirectory>
+      <_IsoplaneNativeAotPackDigestFile>$(_IsoplaneNativeAotPackDirectory)runtime.wasi-wasm.microsoft.dotnet.ilcompiler.llvm.$(IsoplaneGuestNativeAotPackVersion.ToLowerInvariant()).nupkg.sha512</_IsoplaneNativeAotPackDigestFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_IsoplaneNativeAotPackDigestFile)')"
+           Text="isoplane: the framework pack at $(_IsoplaneNativeAotPackDirectory) records no package digest ($(_IsoplaneNativeAotPackDigestFile)); it is not a NuGet extraction of the feed's pack $(IsoplaneGuestNativeAotPackVersion)." />
+    <ReadLinesFromFile File="$(_IsoplaneNativeAotPackDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_IsoplaneNativeAotPackDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_IsoplaneNativeAotPackDigest)' != '$(IsoplaneGuestNativeAotPackSha512)'"
+           Text="isoplane: the framework pack at $(_IsoplaneNativeAotPackDirectory) is not the pack the feed offers (digest $(_IsoplaneNativeAotPackDigest) vs $(IsoplaneGuestNativeAotPackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
+  </Target>
+  <Target Name="IsoplaneNativeAotVerifyCompiler" DependsOnTargets="IsoplaneResolveNativeAotPackages;IsoplaneRequireGuestCompiler" BeforeTargets="IlcCompile"
+          Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <PropertyGroup>
+      <_IsoplaneCompilerDigestFile>$([MSBuild]::NormalizeDirectory('$(IlcHostPackagePath)'))runtime.$(NETCoreSdkRuntimeIdentifier).microsoft.dotnet.ilcompiler.llvm.$(IsoplaneGuestCompilerVersion.ToLowerInvariant()).nupkg.sha512</_IsoplaneCompilerDigestFile>
+    </PropertyGroup>
+    <Error Condition="'$(IlcHostPackagePath)' == '' OR !Exists('$(_IsoplaneCompilerDigestFile)')" Text="The resolved NativeAOT compiler has no verified package identity. Run isoplane setup and restore the project." />
+    <ReadLinesFromFile File="$(_IsoplaneCompilerDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_IsoplaneCompilerDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_IsoplaneCompilerDigest)' != '$(IsoplaneGuestCompilerSha512)'" Text="The resolved NativeAOT compiler differs from the supplied toolchain. Restore the matching compiler package before building." />
+  </Target>
+  <!-- The native shims from the pack, each after the shim that calls it:
+       OpenSSL behind the cryptography shim, zlib behind the compression one. -->
+  <Target Name="IsoplaneNativeAotLinkShims" DependsOnTargets="SetupProperties" BeforeTargets="IsoplanePalInputs;LinkNativeLlvm"
+          Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <ItemGroup>
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.Security.Cryptography.Native.OpenSsl.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libssl.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libcrypto.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libSystem.IO.Compression.Native.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libz.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libbrotlienc.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libbrotlidec.a" />
+      <NativeLibrary Include="$(IlcFrameworkNativePath)libbrotlicommon.a" />
+    </ItemGroup>
+  </Target>
+  <!-- The identity of the framework the module was compiled against, beside
+       it, so a test result is attributable to those bytes. -->
+  <Target Name="IsoplaneNativeAotRecordFramework" AfterTargets="CopyNativeBinary" DependsOnTargets="IsoplaneNativeAotVerifyFrameworkPack"
+          Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <WriteLinesToFile File="$(PublishDir)$([System.IO.Path]::GetFileName('$(NativeBinary)')).runtime"
+                      Lines="$(IsoplaneGuestNativeAotPackVersion)@sha512:$(IsoplaneGuestNativeAotPackSha512)" Overwrite="true" />
+  </Target>
+</Project>

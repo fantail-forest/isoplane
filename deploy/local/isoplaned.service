@@ -1,0 +1,22 @@
+[Unit]
+Description=Isoplane cell node
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=isoplane
+Group=isoplane
+SupplementaryGroups=docker
+WorkingDirectory=/var/lib/isoplane
+EnvironmentFile=/etc/isoplane/node.env
+ExecStart=/opt/isoplane/current/isoplaned --config /etc/isoplane/node.toml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=180
+LimitNOFILE=65536
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -14,7 +14,7 @@ DENIED_PORT=47002
 OUT="$(mktemp -d)"
 cd "$OUT"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out root.key 2>/dev/null
-openssl req -x509 -new -key root.key -days 36500 -subj "/CN=WISP Acceptance Root" -sha256 -out root.pem \
+openssl req -x509 -new -key root.key -days 36500 -subj "/CN=Isoplane Acceptance Root" -sha256 -out root.pem \
   -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out leaf.key 2>/dev/null
 openssl req -new -key leaf.key -subj "/CN=leaf.acceptance.test" -out leaf.csr 2>/dev/null
@@ -28,7 +28,7 @@ openssl x509 -req -in leaf.csr -CA root.pem -CAkey root.key -CAcreateserial -day
 # An intermediate CA under the root, and a leaf under it: the chained peer
 # presents both, the guest trusts only the root.
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out intermediate.key 2>/dev/null
-openssl req -new -key intermediate.key -subj "/CN=WISP Acceptance Intermediate" -out intermediate.csr 2>/dev/null
+openssl req -new -key intermediate.key -subj "/CN=Isoplane Acceptance Intermediate" -out intermediate.csr 2>/dev/null
 cat > intermediate.ext <<EOF
 basicConstraints=critical,CA:TRUE,pathlen:1
 keyUsage=critical,keyCertSign,cRLSign
@@ -47,7 +47,7 @@ openssl x509 -req -in chained.csr -CA intermediate.pem -CAkey intermediate.key -
 # A second intermediate under the first, naming its issuer's URL: a chain
 # the guest completes iteratively, deepest issuer last.
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out intermediate2.key 2>/dev/null
-openssl req -new -key intermediate2.key -subj "/CN=WISP Acceptance Intermediate 2" -out intermediate2.csr 2>/dev/null
+openssl req -new -key intermediate2.key -subj "/CN=Isoplane Acceptance Intermediate 2" -out intermediate2.csr 2>/dev/null
 cat > intermediate2.ext <<EOF
 basicConstraints=critical,CA:TRUE,pathlen:0
 keyUsage=critical,keyCertSign,cRLSign
@@ -82,7 +82,7 @@ leaf_with_urls denied intermediate denied.acceptance.test \
   "authorityInfoAccess=caIssuers;URI:http://127.0.0.1:$DENIED_PORT/intermediate.der\n"
 # The intermediate's OCSP signer.
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out ocspsigner.key 2>/dev/null
-openssl req -new -key ocspsigner.key -subj "/CN=WISP Acceptance OCSP Signer" -out ocspsigner.csr 2>/dev/null
+openssl req -new -key ocspsigner.key -subj "/CN=Isoplane Acceptance OCSP Signer" -out ocspsigner.csr 2>/dev/null
 cat > ocspsigner.ext <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature
@@ -166,7 +166,7 @@ ocsp_response index-good.txt remote.pem ocsp-remote-expired.der -rsigner ocspsig
 ocsp_response index-good.txt remote.pem ocsp-remote-stranger.der -rsigner stranger.pem -rkey stranger.key -ndays 36500
 ocsp_response index-good.txt ocsp.pem ocsp-leaf-good.der -rsigner ocspsigner.pem -rkey ocspsigner.key -ndays 36500
 
-printf 'wisp' > message.txt
+printf 'isoplane' > message.txt
 sig_hex="$(openssl dgst -sha256 -sign leaf.key message.txt | xxd -p | tr -d '\n')"
 leaf_thumb="$(openssl x509 -in leaf.pem -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
 leaf_serial="$(openssl x509 -in leaf.pem -noout -serial | sed 's/serial=//')"
@@ -188,7 +188,7 @@ cs="$ROOT/guest-runtime/tests/guest/src/App/CryptoMaterial.cs"
   printf '    public const string EcKey = @"'; pkcs8 ec.key; printf '";\n'
   echo "}"
 } > "$cs"
-rs="$ROOT/crates/wisp-runtime-acceptance/tests/common/crypto_vectors.rs"
+rs="$ROOT/crates/isoplane-runtime-acceptance/tests/common/crypto_vectors.rs"
 {
   echo "//! Known answers for the cryptography family: standard vectors and the"
   echo "//! values computed with OpenSSL over the fixed material the guest embeds"
@@ -213,13 +213,13 @@ rs="$ROOT/crates/wisp-runtime-acceptance/tests/common/crypto_vectors.rs"
   echo "/// sentence under a 12-byte nonce and 12 bytes of associated data."
   echo 'pub const CHACHA20_POLY1305_RFC8439_CIPHERTEXT: &str = "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116";'
   echo 'pub const CHACHA20_POLY1305_RFC8439_TAG: &str = "1ae10b594f09e26a7e902ecbd0600691";'
-  echo "/// RSA PKCS#1 v1.5 SHA-256 signature of \"wisp\" by the leaf key."
-  echo "pub const LEAF_SIGNATURE_OF_WISP: &str = \"$sig_hex\";"
+  echo "/// RSA PKCS#1 v1.5 SHA-256 signature of \"isoplane\" by the leaf key."
+  echo "pub const LEAF_SIGNATURE_OF_ISOPLANE: &str = \"$sig_hex\";"
   echo "/// The leaf certificate's SHA-1 thumbprint and serial number."
   echo "pub const LEAF_THUMBPRINT: &str = \"$leaf_thumb\";"
   echo "pub const LEAF_SERIAL: &str = \"$leaf_serial\";"
 } > "$rs"
-tls="$ROOT/crates/wisp-runtime-acceptance/tests/common/tls_material.rs"
+tls="$ROOT/crates/isoplane-runtime-acceptance/tests/common/tls_material.rs"
 {
   echo "//! The fixed certificate material of the cryptography family, for the"
   echo "//! test TLS peers (generated by guest-runtime/tests/guest/gen-material.sh):"
@@ -237,7 +237,7 @@ tls="$ROOT/crates/wisp-runtime-acceptance/tests/common/tls_material.rs"
     printf 'pub const %s: &str = "' "$1"; pkcs8 "$2" | sed 's/$/\\n/' | tr -d '\n'; printf '";\n'
   done
 } > "$tls"
-chain="$ROOT/crates/wisp-runtime-acceptance/tests/common/chain_material.rs"
+chain="$ROOT/crates/isoplane-runtime-acceptance/tests/common/chain_material.rs"
 {
   echo "//! The material a chain build retrieves (generated by"
   echo "//! guest-runtime/tests/guest/gen-material.sh): the leaves whose issuer,"

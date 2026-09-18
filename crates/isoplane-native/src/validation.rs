@@ -1,6 +1,6 @@
+use isoplane_abi::config::{GuestMemoryBytes, Limits, ValidationLimits};
+use isoplane_runtime::inspection;
 use serde::Deserialize;
-use wisp_abi::config::{GuestMemoryBytes, Limits, ValidationLimits};
-use wisp_runtime::inspection;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
@@ -27,7 +27,7 @@ struct Policy {
 pub(crate) fn inspect(wasm: &[u8], policy: &[u8]) -> Result<Vec<u8>, Error> {
     let policy: Policy = serde_json::from_slice(policy)?;
     let report = inspection::analyse(wasm)?;
-    let verdict = wisp_runtime::validate_with_limits(
+    let verdict = isoplane_runtime::validate_with_limits(
         wasm,
         policy.limits,
         policy.guest_memory_bytes,
@@ -61,8 +61,8 @@ pub(crate) fn inspect(wasm: &[u8], policy: &[u8]) -> Result<Vec<u8>, Error> {
             "traps": !entry.disposition.is_delegated(),
         })).collect::<Vec<_>>(),
         "exports": report.exports,
-        "required_exports": wisp_abi::imports::exports::REQUIRED,
-        "optional_exports": wisp_abi::imports::exports::OPTIONAL,
+        "required_exports": isoplane_abi::imports::exports::REQUIRED,
+        "optional_exports": isoplane_abi::imports::exports::OPTIONAL,
         "missing_required_exports": report.missing_required_exports,
         "missing_optional_exports": report.missing_optional_exports,
         "effects": report.plain_english(),

@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class SourceChangesTests
 {
@@ -10,7 +10,7 @@ public sealed class SourceChangesTests
     [InlineData("dist/nested/customer.wasm", false)]
     [InlineData("dist/nested/customer.wasm.runtime", false)]
     [InlineData("dist/nested/.customer.wasm.publication.tmp", false)]
-    [InlineData(".wisp/publish/build/customer.wasm", false)]
+    [InlineData(".isoplane/publish/build/customer.wasm", false)]
     public void publication_artifacts_do_not_trigger_source_rebuilds(string relativePath, bool expected)
     {
         var directory = Directory.CreateTempSubdirectory("isoplane-source-changes-");

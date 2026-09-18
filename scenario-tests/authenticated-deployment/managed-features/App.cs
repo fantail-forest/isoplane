@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 
 namespace ManagedFeatures;
 
@@ -13,7 +13,7 @@ public static class App
 {
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
         builder.Services.AddScoped<QueryService>();
         var app = builder.Build();
         app.Use(async (context, next) =>

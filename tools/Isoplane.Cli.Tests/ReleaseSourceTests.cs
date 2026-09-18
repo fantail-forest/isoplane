@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class ReleaseSourceTests
 {
@@ -9,10 +9,10 @@ public sealed class ReleaseSourceTests
     {
         using var fixture = new ToolchainBundle();
         var handler = new StaticOriginHandler(fixture.Root);
-        handler.Missing.Add("release/packages/Wisp.Sdk.0.1.0-preview.1.nupkg");
+        handler.Missing.Add("release/packages/Isoplane.Sdk.0.1.0-preview.1.nupkg");
         var source = ReleaseSource.Open("http://origin.test/release/", new HttpClient(handler));
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => source.FetchAsync("packages/Wisp.Sdk.0.1.0-preview.1.nupkg", Path.Combine(fixture.Home, "x.nupkg"), new string('0', 64), null, CancellationToken.None));
-        Assert.Contains("http://origin.test/release/packages/Wisp.Sdk.0.1.0-preview.1.nupkg", error.Message);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => source.FetchAsync("packages/Isoplane.Sdk.0.1.0-preview.1.nupkg", Path.Combine(fixture.Home, "x.nupkg"), new string('0', 64), null, CancellationToken.None));
+        Assert.Contains("http://origin.test/release/packages/Isoplane.Sdk.0.1.0-preview.1.nupkg", error.Message);
         Assert.Contains("404", error.Message);
         Assert.False(File.Exists(Path.Combine(fixture.Home, "x.nupkg")), "a failed download must not leave a file that looks installed");
     }

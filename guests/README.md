@@ -15,7 +15,7 @@ guests/build-dotnet.sh --if-stale
 ```
 
 Both scripts take a lock, so concurrent callers serialise. Host tests do not
-run them by hand: a test that needs a module calls the `wisp-fixtures` crate,
+run them by hand: a test that needs a module calls the `isoplane-fixtures` crate,
 which runs the right script with `--if-stale` and fails naming the missing
 tool (`cargo` with the wasm32 target, `wasm-tools`, `dotnet`, wasi-sdk) rather
 than skipping. `guests/build.sh` writes `guests/out/manifest`, the list of

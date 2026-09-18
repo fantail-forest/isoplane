@@ -1,12 +1,12 @@
 <Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
-  <Import Project="../sdk/Wisp.Guest.props" />
+  <Import Project="../sdk/Isoplane.Guest.props" />
   <PropertyGroup>
     <AssemblyName>publish_guest</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../sdk/Wisp.Sdk.csproj" />
+    <ProjectReference Include="../sdk/Isoplane.Sdk.csproj" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
-  <Import Project="../sdk/Wisp.Guest.targets" />
+  <Import Project="../sdk/Isoplane.Guest.targets" />
 </Project>

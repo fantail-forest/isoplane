@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Wisp.Cli;
-using Wisp.Native;
+using Isoplane.Cli;
+using Isoplane.Native;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -9,7 +9,7 @@ namespace Isoplane.Cli.Tests;
 public sealed class ModuleValidationTests
 {
     // Core WASM with one bounded memory and the three required contract exports.
-    internal static byte[] Module => Convert.FromBase64String("AGFzbQEAAAABFANgAn9/AX9gAn9/AX5gA35/fwF+AwQDAAECBQQBAQEBBzEEBm1lbW9yeQIACndpc3BfYWxsb2MAAAt3aXNwX2hhbmRsZQABCXdpc3Bfd2FrZQACChADBABBAAsEAEIBCwQAQgEL");
+    internal static byte[] Module => Convert.FromBase64String("AGFzbQEAAAABFANgAn9/AX9gAn9/AX5gA35/fwF+AwQDAAECBQQBAQEBBz0EBm1lbW9yeQIADmlzb3BsYW5lX2FsbG9jAAAPaXNvcGxhbmVfaGFuZGxlAAENaXNvcGxhbmVfd2FrZQACChADBABBAAsEAEIBCwQAQgEL");
 
     [Fact]
     public void repeated_native_inspections_return_independent_reports()
@@ -54,7 +54,7 @@ public sealed class ModuleValidationTests
         var directory = Directory.CreateTempSubdirectory("isoplane-policy-");
         try
         {
-            File.WriteAllText(Path.Combine(directory.FullName, "wisp.toml"), "limits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=262144\n");
+            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "limits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=262144\n");
             var policy = ModuleDoctor.ResolvePolicy(Path.Combine(directory.FullName, "app.wasm"), memory);
             var report = ModuleValidator.Validate(Module, JsonSerializer.SerializeToUtf8Bytes(policy.Settings));
             Assert.True(report["limits"]!["instance_memory_max"]!.GetValue<ulong>() == 67108864UL
@@ -73,7 +73,7 @@ public sealed class ModuleValidationTests
         {
             var module = Path.Combine(directory.FullName, "module.wasm");
             await File.WriteAllBytesAsync(module, Module, deadline.Token);
-            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "wisp.toml"),
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "isoplane.toml"),
                 "limits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n[validation_limits]\nmax_functions=1\n", deadline.Token);
             var start = new ProcessStartInfo("dotnet")
             {
@@ -84,7 +84,7 @@ public sealed class ModuleValidationTests
             };
             foreach (var argument in new[] { typeof(Toolchain).Assembly.Location, "doctor", module, "--json" })
                 start.ArgumentList.Add(argument);
-            start.Environment["WISP_CLI"] = Path.Combine(directory.FullName, "nonexistent-wisp");
+            start.Environment["ISOPLANE_CLI"] = Path.Combine(directory.FullName, "nonexistent-isoplane");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start module diagnostics.");
             var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
             var errors = process.StandardError.ReadToEndAsync(deadline.Token);

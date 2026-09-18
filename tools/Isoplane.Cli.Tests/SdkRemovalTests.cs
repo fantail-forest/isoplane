@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class SdkRemovalTests
 {
@@ -47,7 +47,7 @@ public sealed class SdkRemovalTests
         Assert.Equal(0, await RemoveAsync(fixture, registrations));
         await SetUpAsync(fixture, registrations);
         Assert.NotNull(await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None));
-        Assert.Equal(ToolchainBundle.Version, registrations.Templates["Wisp.Templates"]);
+        Assert.Equal(ToolchainBundle.Version, registrations.Templates["Isoplane.Templates"]);
     }
 
     [Fact]

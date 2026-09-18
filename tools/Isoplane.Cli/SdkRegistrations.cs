@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 /// <summary>
 /// The registrations a .NET SDK keeps for its user: NuGet package sources and template packages.

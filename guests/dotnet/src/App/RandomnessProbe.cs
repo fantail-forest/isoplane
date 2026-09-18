@@ -1,12 +1,12 @@
-#if WISP_RANDOMNESS_PROBE
+#if ISOPLANE_RANDOMNESS_PROBE
 using System;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
-public sealed class RandomnessProbe : IWispHandler
+public sealed class RandomnessProbe : IIsoplaneHandler
 {
     private static readonly RandomNumberGenerator InstanceRandom = RandomNumberGenerator.Create();
 

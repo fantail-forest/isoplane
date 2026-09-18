@@ -43,7 +43,7 @@ parser.add_argument("--module", type=Path, required=True)
 parser.add_argument("--name", default="minimal-gallery")
 parser.add_argument("--mode", required=True)
 parser.add_argument("--limits-json", type=parse_limits_json, default={'module_bytes_compressed': 52428800, 'instance_memory_max': 134217728, 'cpu_ms_per_http_dispatch': 30000, 'subrequests_per_dispatch': 200, 'pending_futures_per_dispatch': 64}, help="Application resource budgets as a numeric JSON object")
-parser.add_argument("--wisp", type=Path, required=True)
+parser.add_argument("--isoplane", type=Path, required=True)
 parser.add_argument("--schema", type=Path, required=True)
 parser.add_argument("--records", type=Path, required=True)
 args = parser.parse_args()
@@ -55,7 +55,7 @@ spec = importlib.util.spec_from_file_location(
 )
 pg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pg)
-wisp = args.wisp.resolve()
+isoplane = args.isoplane.resolve()
 
 
 def make_fixture(root):
@@ -68,7 +68,7 @@ def make_fixture(root):
         ]
     )
     exif = Image.Exif()
-    exif[271] = "Wisp Fixture"
+    exif[271] = "Isoplane Fixture"
     exif[272] = "Gallery 171"
     exif[274] = 6
     exif[34665] = {36867: "2026:01:02 03:04:05"}
@@ -108,9 +108,9 @@ def objects(d):
             "--detach",
             "--rm",
             "--name",
-            "wisp-gallery-" + uuid.uuid4().hex,
+            "isoplane-gallery-" + uuid.uuid4().hex,
             "--label",
-            "wisp.test=gallery-171",
+            "isoplane.test=gallery-171",
             "--publish",
             "127.0.0.1::3900",
             "--env-file",
@@ -177,7 +177,7 @@ def verify_image(url, container, s3, original):
         170,
     ), "Thumbnail must preserve pixel aspect ratio without applying EXIF orientation"
     assert created["exif"] == {
-        "make": "Wisp Fixture",
+        "make": "Isoplane Fixture",
         "model": "Gallery 171",
         "dateTimeOriginal": "2026:01:02 03:04:05",
         "orientation": 6,
@@ -268,14 +268,14 @@ with tempfile.TemporaryDirectory(prefix="run-", dir=root) as tmp:
             "Gallery:S3:SecretKey": secret,
         }
         module = args.module.resolve()
-        (project / "wisp.toml").write_text(
+        (project / "isoplane.toml").write_text(
             f'name="{args.name}"\nmodule="{module}"\nlimits={limits_toml(args.limits_json)}\n[dev]\ninit_sandbox="runtime-bringup"\nallow_endpoints=["127.0.0.1:{port}","127.0.0.1:{s3port}","[::ffff:127.0.0.1]:{s3port}"]\n[dev.trust]\nbundle="{d}/ca.crt"\nsha256="{hashlib.sha256((d/'ca.crt').read_bytes()).hexdigest()}"\n'
         )
         logpath = root / f"{mode}-ingest.log"
         with logpath.open("w") as log:
             process = subprocess.Popen(
                 [
-                    str(wisp),
+                    str(isoplane),
                     "dev",
                     "--watch",
                     str(project),

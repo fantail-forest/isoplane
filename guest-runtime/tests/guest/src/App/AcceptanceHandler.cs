@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
-using Wisp;
-using Wisp.Durable;
+using Isoplane;
+using Isoplane.Durable;
 
 namespace Acceptance;
 
@@ -11,7 +11,7 @@ namespace Acceptance;
 /// an exception the family did not classify is reported by type name so a
 /// test failure names the managed failure rather than a trap.
 /// </summary>
-public sealed class AcceptanceHandler : IWispHandler
+public sealed class AcceptanceHandler : IIsoplaneHandler
 {
     private readonly EventLoop _eventLoop = new();
     private readonly Sockets _sockets = new();

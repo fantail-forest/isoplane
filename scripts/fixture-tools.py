@@ -104,7 +104,7 @@ def main():
         lock, script, *command_args = args
         with open(lock, "a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            env = dict(os.environ, WISP_FIXTURE_LOCK=script)
+            env = dict(os.environ, ISOPLANE_FIXTURE_LOCK=script)
             result = subprocess.run(["bash", script, *command_args], env=env)
             return result.returncode
     if action == "isoplane-native":
@@ -148,7 +148,7 @@ def main():
         # nativeaot): its version and the digest NuGet records for the
         # package, from the props the feed stage writes.
         props = Path(args[0]).read_text()
-        prefix = {"mono": "WispGuestRuntimePack", "nativeaot": "WispGuestNativeAotPack"}[args[1]]
+        prefix = {"mono": "IsoplaneGuestRuntimePack", "nativeaot": "IsoplaneGuestNativeAotPack"}[args[1]]
         def field(name):
             start = props.find(f"<{name}>")
             end = props.find(f"</{name}>")

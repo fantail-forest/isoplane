@@ -24,7 +24,7 @@ internal sealed partial class Reflection
         "native-declaration-after-park" => NativeDeclarationAfterPark(),
         "native-symbol-after-park" => NativeSymbolAfterPark(path[1]),
         "native-library-after-park" => NativeLibraryAfterPark(path[1]),
-#if WISP_MONO
+#if ISOPLANE_MONO
         "assembly-after-park" => LoadedAssemblyAfterPark(),
         "native-payload-after-park" => NativePayloadAfterPark(path[1]),
         "trusted-identity-after-park" => TrustedIdentityAfterPark(path[1]),
@@ -34,7 +34,7 @@ internal sealed partial class Reflection
         "expression-default-after-park" => ExpressionAfterPark(preferInterpretation: false),
         "safe-handle-dispose" => Task.FromResult(DisposeSafeHandle()),
         "safe-handle-finalizer-after-park" => FinalizeSafeHandleAfterPark(),
-#if WISP_MONO
+#if ISOPLANE_MONO
         "emitted-delegate-after-park" => EmittedDelegateAfterPark(),
 #endif
         _ => Task.FromResult(Run(path)),
@@ -146,7 +146,7 @@ internal sealed partial class Reflection
     {
         var sample = new Sample("inv", 1);
         MethodInfo greet = typeof(Sample).GetMethod(nameof(Sample.Greet))!;
-        string invoked = (string?)greet.Invoke(sample, new object[] { "wisp" }) ?? "null";
+        string invoked = (string?)greet.Invoke(sample, new object[] { "isoplane" }) ?? "null";
         var bound = greet.CreateDelegate<Func<string, string>>(sample);
         MethodInfo generic = typeof(Sample).GetMethod(nameof(Sample.Echo))!.MakeGenericMethod(typeof(int));
         object? echoed = generic.Invoke(sample, new object[] { 5 });

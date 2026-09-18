@@ -1,4 +1,4 @@
-# `guest-sdks/rust` — the Rust WISP guest SDK
+# `guest-sdks/rust` — the Rust Isoplane guest SDK
 
 Internal Rust helpers for guest fixtures: async execution, typed host
 capabilities, arena allocation and initialization units.
@@ -13,7 +13,7 @@ The [public API source](src/lib.rs) documents the SDK surface.
 One macro call at the crate root, and exactly one:
 
 ```rust
-wisp_guest::export_handler!(Api);
+isoplane_guest::export_handler!(Api);
 ```
 
 `Handler` provides the HTTP entrypoint; the macro emits its host exports.
@@ -28,9 +28,9 @@ cargo line.
 scripts/dev guests/build.sh
 
 # The SDK's own tests, including the assertion that its import names and order
-# have not drifted from `crates/wisp-abi`. The `json` feature is required:
+# have not drifted from `crates/isoplane-abi`. The `json` feature is required:
 # the preinit tests use `init::config_vars`, which is gated behind it.
-scripts/dev bash -lc 'cd /wisp/guests && cargo test -p wisp-guest --features json \
+scripts/dev bash -lc 'cd /isoplane/guests && cargo test -p isoplane-guest --features json \
     --target x86_64-unknown-linux-gnu'
 ```
 
@@ -41,7 +41,7 @@ a separate question, and the one that decides how this crate is built.
 
 It wants that workspace because that is where the guest-shaped settings are:
 the size-tuned release profile (`opt-level = "z"`, LTO, `panic = "abort"`,
-strip) that the guests linking this crate are built with, and `wisp-abi` pinned
+strip) that the guests linking this crate are built with, and `isoplane-abi` pinned
 with `default-features = false`. The root workspace builds host crates for the
 native target and has neither.
 

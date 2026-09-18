@@ -17,7 +17,7 @@ file="$directory/$(printf '%03d' $((count + 1)))-$name.patch"
 git -C "$work" add -A
 git -C "$work" diff --cached --no-color > "$file"
 [ -s "$file" ] || { rm -f "$file"; echo "no changes to export" >&2; exit 1; }
-git -C "$work" -c user.name=wisp -c user.email=wisp@localhost commit -q -m "$(basename "$file")"
+git -C "$work" -c user.name=isoplane -c user.email=isoplane@localhost commit -q -m "$(basename "$file")"
 [ ! -f "$directory/series" ] || echo "$(basename "$file")" >> "$directory/series"
-echo "$(basename "$file")" >> "$work/.wisp-applied"
+echo "$(basename "$file")" >> "$work/.isoplane-applied"
 echo "$file"

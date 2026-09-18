@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Threading;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp.Runtime;
+namespace Isoplane.Runtime;
 
 /// <summary>
 /// The map from host future ids to the tasks awaiting them. Every entry is a
@@ -39,7 +39,7 @@ internal static class FutureTable
     /// Registers a future id an import returned and yields the task the
     /// guest awaits. <c>RunContinuationsAsynchronously</c> keeps the
     /// continuation on the scheduler's queue rather than running it inline
-    /// under <c>wisp_wake</c>'s frame.
+    /// under <c>isoplane_wake</c>'s frame.
     /// </summary>
     internal static Task<ResultRecord> Register(long futureId)
     {
@@ -52,7 +52,7 @@ internal static class FutureTable
     }
 
     /// <summary>
-    /// Delivers a completion from <c>wisp_wake</c>. An unknown id is a future
+    /// Delivers a completion from <c>isoplane_wake</c>. An unknown id is a future
     /// the guest already abandoned.
     /// </summary>
     internal static bool Complete(long futureId, ResultRecord result)

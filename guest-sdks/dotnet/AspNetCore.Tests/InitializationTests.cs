@@ -1,9 +1,9 @@
-using Wisp.Abi;
-using Wisp.Durable;
-using Wisp.Runtime;
+using Isoplane.Abi;
+using Isoplane.Durable;
+using Isoplane.Runtime;
 using Xunit;
 
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 public sealed class InitializationTests
 {
@@ -121,7 +121,7 @@ public sealed class InitializationTests
         }
     }
 
-    private sealed class RecordingRouter : IWispRouter
+    private sealed class RecordingRouter : IIsoplaneRouter
     {
         internal bool Called { get; private set; }
         public void Boot() { }

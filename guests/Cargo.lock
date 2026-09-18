@@ -15,11 +15,11 @@ dependencies = [
 name = "bigheap"
 version = "0.1.0"
 dependencies = [
+ "isoplane-abi",
+ "isoplane-guest",
  "postcard",
  "serde",
  "serde_json",
- "wisp-abi",
- "wisp-guest",
 ]
 
 [[package]]
@@ -82,18 +82,37 @@ dependencies = [
 name = "hello"
 version = "0.1.0"
 dependencies = [
- "wisp-guest",
+ "isoplane-guest",
 ]
 
 [[package]]
 name = "impure-cctor"
 version = "0.1.0"
 dependencies = [
+ "isoplane-abi",
+ "isoplane-guest",
  "postcard",
  "serde",
  "serde_json",
- "wisp-abi",
- "wisp-guest",
+]
+
+[[package]]
+name = "isoplane-abi"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "isoplane-guest"
+version = "0.1.0"
+dependencies = [
+ "isoplane-abi",
+ "postcard",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -121,10 +140,10 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "misbehaver"
 version = "0.1.0"
 dependencies = [
+ "isoplane-abi",
+ "isoplane-guest",
  "postcard",
  "serde",
- "wisp-abi",
- "wisp-guest",
 ]
 
 [[package]]
@@ -162,8 +181,8 @@ dependencies = [
 name = "quotes-api"
 version = "0.1.0"
 dependencies = [
+ "isoplane-guest",
  "serde",
- "wisp-guest",
 ]
 
 [[package]]
@@ -280,10 +299,10 @@ dependencies = [
 name = "undeclared-import"
 version = "0.1.0"
 dependencies = [
+ "isoplane-abi",
+ "isoplane-guest",
  "postcard",
  "serde",
- "wisp-abi",
- "wisp-guest",
 ]
 
 [[package]]
@@ -291,25 +310,6 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
-
-[[package]]
-name = "wisp-abi"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "wisp-guest"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "serde_json",
- "wisp-abi",
-]
 
 [[package]]
 name = "zmij"

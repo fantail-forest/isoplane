@@ -1,10 +1,10 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using Wisp.Testing;
+using Isoplane.Testing;
 using Xunit;
 
-namespace Wisp.Testing.Tests;
+namespace Isoplane.Testing.Tests;
 
 public sealed class ProcessLifetimeTests
 {

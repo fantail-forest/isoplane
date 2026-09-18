@@ -1,6 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <_WispAspNetCorePropsImported>true</_WispAspNetCorePropsImported>
-    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
-  </PropertyGroup>
-</Project>

@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 /// <summary>The release a CLI build belongs to: its package version and the source revision it was built from.</summary>
 internal sealed record ReleaseIdentity(string Version, string SourceRevision)

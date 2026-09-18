@@ -5,7 +5,7 @@
 
 The result is one release directory (release.json, the package feed, the
 toolchain archive, samples and README), plus its archive, checksum and build
-receipt under --output (default .wisp-dev/releases). Publishing the release
+receipt under --output (default .isoplane-dev/releases). Publishing the release
 directory under a release origin is what isoplane setup downloads from.
 Rebuilding the same version from the same revision verifies the existing
 release; from another revision it is refused until the version is moved with
@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_IDENTIFIER = 'linux-x64'
 NATIVE_LIBRARY = 'libisoplane_native.so'
 PROJECTS = {
-    'Wisp.Sdk': 'guest-sdks/dotnet/Wisp.Sdk.csproj',
-    'Wisp.AspNetCore': 'guest-sdks/dotnet/AspNetCore/Wisp.AspNetCore.csproj',
-    'Wisp.Templates': 'guest-sdks/dotnet/Templates/Wisp.Templates.csproj',
+    'Isoplane.Sdk': 'guest-sdks/dotnet/Isoplane.Sdk.csproj',
+    'Isoplane.AspNetCore': 'guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj',
+    'Isoplane.Templates': 'guest-sdks/dotnet/Templates/Isoplane.Templates.csproj',
     'Isoplane.Native': 'tools/Isoplane.Native/Isoplane.Native.csproj',
     'Isoplane.Testing': 'tools/Isoplane.Testing/Isoplane.Testing.csproj',
     'Isoplane.Cli': 'tools/Isoplane.Cli/Isoplane.Cli.csproj',
@@ -224,14 +224,14 @@ def verify_packages(feed, version, revision, native_library):
             for dependency in metadata.findall('.//{*}dependency'):
                 if dependency.get('id') in PROJECTS and dependency.get('version').strip('[]') != version:
                     raise ValueError(f'{name} references a different release package')
-            if name in ('Wisp.Sdk', 'Wisp.AspNetCore'):
+            if name in ('Isoplane.Sdk', 'Isoplane.AspNetCore'):
                 props = ET.fromstring(package.read('Sdk/Sdk.props'))
                 reference = props.find(f".//PackageReference[@Include='{name}']")
                 if reference is None or reference.get('Version') != version:
                     raise ValueError(f'{name} SDK selects a different package version')
-            if name == 'Wisp.Templates':
-                project = ET.fromstring(package.read('content/content/aspnet/IsoplaneApp.csproj'))
-                if project.get('Sdk') != f'Wisp.AspNetCore/{version}':
+            if name == 'Isoplane.Templates':
+                project = ET.fromstring(package.read('content/content/aspnet/SampleApp.csproj'))
+                if project.get('Sdk') != f'Isoplane.AspNetCore/{version}':
                     raise ValueError('template selects a different SDK version')
             if name == 'Isoplane.Native':
                 entry = f'runtimes/{RUNTIME_IDENTIFIER}/native/{native_library.name}'
@@ -379,9 +379,9 @@ def build(root, cache, releases, logs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--cache', type=Path, default=ROOT / '.wisp-dev/preview-build',
+    parser.add_argument('--cache', type=Path, default=ROOT / '.isoplane-dev/preview-build',
                         help='build cache shared between releases: SDK download, cargo target, packages')
-    parser.add_argument('--output', type=Path, default=ROOT / '.wisp-dev/releases',
+    parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases',
                         help='where the release directory, archive and checksum are written')
     args = parser.parse_args()
     if platform.system() != 'Linux' or platform.machine() != 'x86_64':

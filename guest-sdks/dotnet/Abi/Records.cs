@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 /// <summary>
-/// The subset of <c>wisp-abi::dispatch::DispatchRecord</c> the SDK reads,
+/// The subset of <c>isoplane-abi::dispatch::DispatchRecord</c> the SDK reads,
 /// decoded in the Rust struct's field order.
 /// </summary>
 public sealed class DispatchRecord
@@ -58,7 +58,7 @@ public sealed class DispatchRecord
     }
 }
 
-/// <summary>Mirrors <c>wisp-abi::dispatch::DispatchKind</c>.</summary>
+/// <summary>Mirrors <c>isoplane-abi::dispatch::DispatchKind</c>.</summary>
 public enum DispatchKind : uint
 {
     /// <summary>
@@ -75,7 +75,7 @@ public enum DispatchKind : uint
 }
 
 /// <summary>
-/// <c>wisp-abi::result::ResultRecord</c> as delivered by <c>wisp_wake</c>.
+/// <c>isoplane-abi::result::ResultRecord</c> as delivered by <c>isoplane_wake</c>.
 /// </summary>
 internal sealed class ResultRecord
 {
@@ -92,7 +92,7 @@ internal sealed class ResultRecord
     }
 }
 
-/// <summary>Mirrors <c>wisp-abi::result::FutureError</c>.</summary>
+/// <summary>Mirrors <c>isoplane-abi::result::FutureError</c>.</summary>
 internal enum FutureError : uint
 {
 

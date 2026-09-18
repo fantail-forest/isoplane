@@ -18,11 +18,11 @@ def main():
     if args.output.exists():
         parser.error("Choose a new output path; release archives are immutable.")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="wisp-node-package-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="isoplane-node-package-") as temporary:
         stage = Path(temporary)
-        for name in ("wispd", "wisp-app-worker"):
+        for name in ("isoplaned", "isoplane-app-worker"):
             shutil.copy2(args.binaries / name, stage / name)
-        for name in ("wispd.service", "install-node.sh"):
+        for name in ("isoplaned.service", "install-node.sh"):
             shutil.copy2(Path(__file__).with_name(name), stage / name)
         shutil.copy2(args.profiles, stage / "profiles.json")
         checksums = []

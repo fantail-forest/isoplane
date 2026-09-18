@@ -34,7 +34,7 @@ For a new release, run `dotnet tool update --global Isoplane.Cli --version VERSI
 --add-source RELEASE/packages` and then `isoplane setup --source RELEASE`. Setup
 refuses a release the installed CLI was not built from and names the update
 command. Existing projects keep their pinned SDK version; update the version in
-`<Project Sdk="Wisp.AspNetCore/VERSION">` and any Isoplane package references
+`<Project Sdk="Isoplane.AspNetCore/VERSION">` and any Isoplane package references
 to `package-version.txt` when upgrading an application.
 
 Package restore can also contact nuget.org and the .NET experimental compiler

@@ -10,7 +10,7 @@ pub use runtime::{LocalApp, Prepared};
 #[derive(Clone)]
 pub struct Inputs {
     /// Application capabilities and resource limits.
-    pub manifest: wisp_abi::config::AppManifest,
+    pub manifest: isoplane_abi::config::AppManifest,
     /// Private local persistent state and preparation cache.
     pub state_directory: std::path::PathBuf,
     /// The loaded native implementation, included in the preparation identity.
@@ -18,11 +18,11 @@ pub struct Inputs {
     /// Compiler-owned storage selected by the CLI outside application source control.
     pub compilation_directory: std::path::PathBuf,
     /// Initialization capability policy supplied by the SDK.
-    pub init_sandbox: wisp_abi::config::InitSandbox,
+    pub init_sandbox: isoplane_abi::config::InitSandbox,
     /// Explicitly authorized local service destinations.
     pub allow_endpoints: Vec<std::net::SocketAddr>,
     /// Host-provided files visible to the sandbox.
-    pub platform_files: wisp_engine::PlatformFiles,
+    pub platform_files: isoplane_engine::PlatformFiles,
 }
 
 impl Inputs {

@@ -2,20 +2,20 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 internal static class NativeLibraryProbe
 {
-    [DllImport("wisp_missing_native_library", EntryPoint = "wisp_missing_native_symbol")]
+    [DllImport("isoplane_missing_native_library", EntryPoint = "isoplane_missing_native_symbol")]
     private static extern int MissingLibrary();
 
-    [DllImport("libSystem.Native", EntryPoint = "wisp_missing_native_symbol")]
+    [DllImport("libSystem.Native", EntryPoint = "isoplane_missing_native_symbol")]
     private static extern int MissingSymbol();
 
-    [DllImport("__Internal", EntryPoint = "wisp_missing_internal_symbol")]
+    [DllImport("__Internal", EntryPoint = "isoplane_missing_internal_symbol")]
     private static extern int MissingInternalSymbol();
 
-    [DllImport("*", EntryPoint = "wisp_missing_star_symbol")]
+    [DllImport("*", EntryPoint = "isoplane_missing_star_symbol")]
     private static extern int MissingStarSymbol();
 
     [DllImport("*", EntryPoint = "SystemNative_GetTimestamp")]
@@ -24,7 +24,7 @@ internal static class NativeLibraryProbe
     [DllImport("libSystem.Native", EntryPoint = "SystemNative_GetTimestamp")]
     private static extern long Timestamp();
 
-    [DllImport("libSystem.Native", EntryPoint = "wisp_unused_native_symbol")]
+    [DllImport("libSystem.Native", EntryPoint = "isoplane_unused_native_symbol")]
     private static extern int UnusedMissingSymbol();
 
     internal static string Invoke()

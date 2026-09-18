@@ -1,7 +1,7 @@
-using Wisp.Runtime;
+using Isoplane.Runtime;
 using Xunit;
 
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 public sealed class RequestStreamTests
 {

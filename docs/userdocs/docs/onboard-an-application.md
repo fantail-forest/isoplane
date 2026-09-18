@@ -27,7 +27,7 @@ This is the shape of the factory for an application named `MyApi`:
 
 ```csharp
 using Microsoft.AspNetCore.Builder;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 
 namespace MyApi;
 
@@ -35,7 +35,7 @@ public static class Application
 {
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         // Register application services here.
         var app = builder.Build();
         app.MapGet("/", () => "Hello from MyApi");
@@ -44,8 +44,8 @@ public static class Application
 }
 ```
 
-The generated project already selects `Wisp.AspNetCore` and sets
-`WispApplicationFactory` to `MyApi.Application.Create`. If you change the namespace
+The generated project already selects `Isoplane.AspNetCore` and sets
+`IsoplaneApplicationFactory` to `MyApi.Application.Create`. If you change the namespace
 or factory name, update that property to match. Keep package versions aligned
 with your installed release.
 
@@ -54,7 +54,7 @@ registrations after it. Return the application instead of calling `Run()` or
 `RunAsync()`. The factory is called during preparation, before requests arrive.
 Do not open database connections or create request-specific secrets there.
 
-`WispHosting.CreateBuilder` starts without environment-variable or file-based
+`IsoplaneHosting.CreateBuilder` starts without environment-variable or file-based
 configuration providers. Do not assume that your development machine's
 `appsettings.json`, environment, or filesystem is available inside the sandbox.
 

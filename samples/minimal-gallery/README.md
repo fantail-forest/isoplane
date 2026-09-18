@@ -1,6 +1,6 @@
 # Minimal gallery
 
-A gallery workload built with the Wisp handler API, Npgsql, the AWS S3 SDK,
+A gallery workload built with the Isoplane handler API, Npgsql, the AWS S3 SDK,
 Stb image libraries, and MetadataExtractor. The application has no ASP.NET or
 EF Core runtime dependency. `Design/` owns the EF migrations used by both this
 sample and `../aspnet-gallery`.
@@ -27,7 +27,7 @@ before metadata is inserted. Failed object uploads attempt to remove both
 keys. If the database acknowledgement fails, objects remain because the insert
 may have committed. There is no distributed transaction or orphan collector.
 
-Supply these values through Wisp runtime configuration:
+Supply these values through Isoplane runtime configuration:
 
 | Key | Meaning |
 | --- | --- |
@@ -44,7 +44,7 @@ roots and allowed endpoints through the local development manifest. Credentials
 are read when a request runs and are not part of the prepared application.
 The S3 SDK uses path-style requests and retains its signing and checksum defaults.
 
-Build configurations are `WispInterpretedDebug` and `WispNativeAotRelease`.
+Build configurations are `IsoplaneInterpretedDebug` and `IsoplaneNativeAotRelease`.
 Apply the schema from the separate design project with `dotnet ef database update
 --project Design --connection "<your PostgreSQL connection string>"` after
 installing the matching `dotnet-ef` 10.0 tool. The guest does not apply migrations.
@@ -60,7 +60,7 @@ larger image frameworks; this sample keeps processing behind one shared module.
 
 `verify.py` checks a published guest against disposable PostgreSQL 16 and Garage
 2.3.0 containers. Install `verification-requirements.txt` in a virtual environment,
-then pass `--module`, `--mode`, `--wisp`, `--schema`, and `--records`. Generate the
+then pass `--module`, `--mode`, `--isoplane`, `--schema`, and `--records`. Generate the
 SQL supplied to `--schema` with `dotnet ef migrations script --project Design
 --output <path>`. The verifier creates a deterministic JPEG with actual EXIF,
 checks the response and independent PostgreSQL/S3 reads, decodes the thumbnail

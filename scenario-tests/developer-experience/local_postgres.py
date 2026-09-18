@@ -157,7 +157,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release', required=True, type=Path)
     arguments = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='wisp-local-postgres-scenario-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='isoplane-local-postgres-scenario-') as temporary:
         directory = Path(temporary)
         sample = Sample(arguments.release.resolve(), directory)
         try:

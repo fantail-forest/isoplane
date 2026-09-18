@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>Deployment-bound application settings supplied during preparation and activation.</summary>
 public static class RuntimeConfiguration

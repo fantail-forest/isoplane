@@ -1,12 +1,12 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Retains deployment settings in the initialized guest template.</summary>
-public sealed class ConfigProbe : IWispHandler
+public sealed class ConfigProbe : IIsoplaneHandler
 {
     private readonly IReadOnlyList<KeyValuePair<string, string>> variables = DeploymentConfiguration.ReadVariables();
 

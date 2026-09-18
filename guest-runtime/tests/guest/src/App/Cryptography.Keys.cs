@@ -11,7 +11,7 @@ namespace Acceptance;
 /// </summary>
 internal sealed partial class Cryptography
 {
-    private static readonly byte[] Message = Encoding.ASCII.GetBytes("wisp");
+    private static readonly byte[] Message = Encoding.ASCII.GetBytes("isoplane");
 
     /// <summary>
     /// Each format of the leaf key: a private import signs and verifies and

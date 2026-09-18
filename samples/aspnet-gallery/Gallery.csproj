@@ -1,13 +1,13 @@
-<Project Sdk="Wisp.AspNetCore/0.1.0-preview.1">
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.1">
   <PropertyGroup>
-    <Configurations>Debug;Release;WispInterpretedDebug;WispNativeAotRelease</Configurations>
+    <Configurations>Debug;Release;IsoplaneInterpretedDebug;IsoplaneNativeAotRelease</Configurations>
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
-    <PublishAot Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</PublishAot>
-    <Optimize Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</Optimize>
-    <WispApplicationFactory>AspNetGallery.Application.Create</WispApplicationFactory>
+    <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>
+    <Optimize Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</Optimize>
+    <IsoplaneApplicationFactory>AspNetGallery.Application.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <WispMemoryMaxBytes>536870912</WispMemoryMaxBytes>
+    <IsoplaneMemoryMaxBytes>536870912</IsoplaneMemoryMaxBytes>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces>
   </PropertyGroup>
   <ItemGroup>
@@ -26,7 +26,7 @@
     <PackageReference Include="StbImageResizeSharp" Version="0.97.1" />
     <PackageReference Include="MetadataExtractor" Version="2.9.3" />
     <ProjectReference Include="Design/Design.csproj" ReferenceOutputAssembly="false" ExcludeAssets="all" Private="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;PublishAot;WispGuestRuntime" />
+                      GlobalPropertiesToRemove="RuntimeIdentifier;PublishAot;IsoplaneGuestRuntime" />
     <RuntimeHostConfigurationOption Include="Microsoft.EntityFrameworkCore.Issue31751" Value="true" />
   </ItemGroup>
   <Target Name="IncludeCompiledDatabaseModel" BeforeTargets="CoreCompile" DependsOnTargets="ResolveProjectReferences">

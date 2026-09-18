@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Isoplane.Templates</PackageId>
+    <Description>Isoplane .NET application templates.</Description>
+    <PackageType>Template</PackageType>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <ContentTargetFolders>content</ContentTargetFolders>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="../AspNetCore/README.md" Pack="true" PackagePath="/" />
+    <Content Include="content/**" Exclude="content/**/bin/**;content/**/obj/**;content/aspnet/SampleApp.csproj" />
+  </ItemGroup>
+  <Target Name="StampTemplateSdkVersion" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_PackagedTemplateProject>$(IntermediateOutputPath)package/SampleApp.csproj</_PackagedTemplateProject>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <Copy SourceFiles="content/aspnet/SampleApp.csproj" DestinationFiles="$(_PackagedTemplateProject)" />
+    <XmlPoke XmlInputPath="$(_PackagedTemplateProject)" Query="/Project/@Sdk" Value="Isoplane.AspNetCore/$(PackageVersion)" />
+    <ItemGroup>
+      <Content Include="$(_PackagedTemplateProject)" Pack="true" PackagePath="content/content/aspnet/SampleApp.csproj" />
+    </ItemGroup>
+  </Target>
+</Project>

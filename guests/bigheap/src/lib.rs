@@ -5,8 +5,8 @@
 use core::cell::RefCell;
 use core::future::Future;
 
+use isoplane_guest::{Clock, Ctx, Handler, Request, RequestExt, Response};
 use serde::Serialize;
-use wisp_guest::{Clock, Ctx, Handler, Request, RequestExt, Response};
 
 const PAGE: usize = 4096;
 
@@ -29,7 +29,7 @@ struct Report {
 
 impl BigHeap {
     fn report(&'static self) -> Response {
-        let h = wisp_guest::heap_stats();
+        let h = isoplane_guest::heap_stats();
         let held = self.held.borrow();
         Response::json(&Report {
             blocks_held: held.len(),
@@ -102,4 +102,4 @@ impl Handler for BigHeap {
     }
 }
 
-wisp_guest::export_handler!(BigHeap);
+isoplane_guest::export_handler!(BigHeap);

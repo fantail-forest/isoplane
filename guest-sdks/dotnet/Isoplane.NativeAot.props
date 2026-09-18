@@ -1,0 +1,100 @@
+<!--
+  The build settings every C# Isoplane guest imports: what makes NativeAOT-LLVM
+  produce a flat core module, the memory ceiling the validator checks, and the
+  post-link validation. Guest-specific settings stay in the guest's .csproj.
+-->
+<Project>
+  <PropertyGroup>
+    <_IsoplaneGuestCompilerDirectory>$([MSBuild]::NormalizeDirectory('$(_IsoplaneGuestRuntimeFeedDirectory)', '..', 'compiler'))</_IsoplaneGuestCompilerDirectory>
+  </PropertyGroup>
+  <Import Project="$(_IsoplaneGuestCompilerDirectory)Isoplane.GuestCompiler.props" Condition="Exists('$(_IsoplaneGuestCompilerDirectory)Isoplane.GuestCompiler.props')" />
+  <PropertyGroup>
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(_IsoplaneGuestCompilerDirectory)</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <Target Name="IsoplaneRequireGuestCompiler" BeforeTargets="CollectPackageReferences;PrepareForBuild" Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <Error Condition="'$(IsoplaneGuestCompilerVersion)' == ''" Text="The NativeAOT compiler is missing. Run isoplane setup with a current toolchain bundle, then isoplane doctor. Repository builds use guest-runtime/compiler/build.py build." />
+    <Error Condition="'$(IsoplaneGuestCompilerVersion)' != '' AND '$(NETCoreSdkRuntimeIdentifier)' != '$(IsoplaneGuestCompilerRuntimeIdentifier)'" Text="This supplied NativeAOT compiler supports $(IsoplaneGuestCompilerRuntimeIdentifier); the current SDK runs on $(NETCoreSdkRuntimeIdentifier)." />
+  </Target>
+  <PropertyGroup>
+    <IsoplaneContainerBuild Condition="'$(IsoplaneContainerBuild)' == ''">$([MSBuild]::IsOSPlatform('OSX'))</IsoplaneContainerBuild>
+    <IsoplaneOffline Condition="'$(IsoplaneOffline)' == ''">false</IsoplaneOffline>
+    <NuGetAudit Condition="'$(IsoplaneOffline)' == 'true'">false</NuGetAudit>
+    <RestoreSources Condition="'$(IsoplaneOffline)' == 'true'">$(MSBuildThisFileDirectory)Build</RestoreSources>
+    <!-- The compiler: a preview package off an experimental feed, so pinned.
+         The framework it compiles against is the pack guest-runtime/build.sh
+         builds from the same runtimelab commit (guest-runtime/manifest.env)
+         under the Isoplane patch series, named by the feed. -->
+    <ILCompilerVersion>$(IsoplaneGuestNativeAotSdkPackVersion)</ILCompilerVersion>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
+    <!-- A reactor with named exports, not a command. -->
+    <OutputType>library</OutputType>
+    <RuntimeIdentifier Condition="'$(IsoplaneContainerBuild)' != 'true' AND '$(RuntimeIdentifier)' == ''">wasi-wasm</RuntimeIdentifier>
+    <RootNamespace Condition="'$(RootNamespace)' == ''">Isoplane</RootNamespace>
+    <Nullable Condition="'$(Nullable)' == ''">enable</Nullable>
+    <LangVersion Condition="'$(LangVersion)' == ''">14.0</LangVersion>
+    <AllowUnsafeBlocks Condition="'$(AllowUnsafeBlocks)' == ''">true</AllowUnsafeBlocks>
+    <ImplicitUsings Condition="'$(ImplicitUsings)' == ''">false</ImplicitUsings>
+
+    <PublishTrimmed Condition="'$(IsoplaneContainerBuild)' != 'true'">true</PublishTrimmed>
+    <SelfContained Condition="'$(IsoplaneContainerBuild)' != 'true'">true</SelfContained>
+    <IsPublishable Condition="'$(IsoplaneContainerBuild)' == 'true'">false</IsPublishable>
+    <PublishAotUsingRuntimePack>false</PublishAotUsingRuntimePack>
+    <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
+    <LinkerFlavor>lld</LinkerFlavor>
+    <DebugType>none</DebugType>
+
+    <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">false</InvariantGlobalization>
+    <!-- Strip what a guest cannot use. -->
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <NullabilityInfoContextSupport>false</NullabilityInfoContextSupport>
+    <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
+    <TrimMode>full</TrimMode>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <IlcFoldVTables>true</IlcFoldVTables>
+    <!-- Unresolvable methods must fail publication rather than become throwing stubs. -->
+    <IlcResilient>false</IlcResilient>
+    <StackTraceSupport>false</StackTraceSupport>
+
+    <!-- The declared memory maximum, which the validator holds to the plan's
+         ceiling; the toolchain's own link line declares 2 GiB. 134217728 is
+         the Standard plan; -p:IsoplaneMemoryMaxBytes=67108864 targets Free. -->
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <!-- The .NET SDK imports this once; the LLVM package also auto-imports it unless build assets are excluded. -->
+    <ILCompilerTargetsPath Condition="Exists('$(NuGetPackageRoot)/microsoft.dotnet.ilcompiler.llvm/$(ILCompilerVersion)/build/Microsoft.DotNet.ILCompiler.SingleEntry.targets')">$(NuGetPackageRoot)/microsoft.dotnet.ilcompiler.llvm/$(ILCompilerVersion)/build/Microsoft.DotNet.ILCompiler.SingleEntry.targets</ILCompilerTargetsPath>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(IsoplaneContainerBuild)' != 'true'">
+    <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)">
+      <ExcludeAssets Condition="'$(PublishAot)' == 'true'">build</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(IsoplaneGuestCompilerVersion)" />
+    <!-- The target pack: a direct reference outranks the compiler package's
+         own, so the compiler's targets resolve the feed's framework. -->
+    <PackageReference Include="runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" Version="$(IsoplaneGuestNativeAotPackVersion)" Condition="'$(IsoplaneGuestNativeAotPackVersion)' != ''" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The hostcheck harness compares the sample's shadow stack pointer
+         before and after guest calls. -->
+    <LinkerArg Include="-Wl,--export=__stack_pointer" />
+
+    <!-- wasm-ld honours the last max-memory flag, and this follows the
+         toolchain's. -->
+    <LinkerArg Include="-Wl,--max-memory=$(IsoplaneMemoryMaxBytes)" />
+  </ItemGroup>
+
+  <Import Project="Build/Isoplane.Publish.targets" />
+
+  <ItemGroup>
+    <!-- The PAL answers `wasi:cli/environment` with an empty list, so GC
+         settings are baked in. -->
+    <RuntimeHostConfigurationOption Include="System.GC.Server" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="System.GC.Concurrent" Value="false" Trim="true" />
+  </ItemGroup>
+
+  <Import Project="Build/Isoplane.Validation.targets" />
+</Project>

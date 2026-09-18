@@ -67,7 +67,7 @@ def main():
     if not args.packages and args.package_version:
         parser.error('--package-version requires --packages')
     if args.packages:
-        for name in ['Isoplane.Cli', 'Isoplane.Native', 'Isoplane.Testing', 'Wisp.Sdk', 'Wisp.AspNetCore', 'Wisp.Templates']:
+        for name in ['Isoplane.Cli', 'Isoplane.Native', 'Isoplane.Testing', 'Isoplane.Sdk', 'Isoplane.AspNetCore', 'Isoplane.Templates']:
             if not (args.packages / f'{name}.{args.package_version}.nupkg').is_file():
                 parser.error(f'local feed is missing {name} {args.package_version}')
         args.cli_package = args.packages / f'Isoplane.Cli.{args.package_version}.nupkg'
@@ -136,12 +136,12 @@ def main():
             (release / 'README.md').write_text(readme)
             sample = release / 'samples/aspnet-todo'
             shutil.copytree(root / 'samples/aspnet-todo', sample,
-                            ignore=shutil.ignore_patterns('bin', 'obj', 'out', '.wisp', '.wisp-dev', '.local-postgres.json'))
+                            ignore=shutil.ignore_patterns('bin', 'obj', 'out', '.isoplane', '.isoplane-dev', '.local-postgres.json'))
             project = sample / 'Todo.csproj'
             document = ET.parse(project)
-            if document.getroot().get('Sdk', '').split('/')[0] != 'Wisp.AspNetCore':
+            if document.getroot().get('Sdk', '').split('/')[0] != 'Isoplane.AspNetCore':
                 parser.error('the database sample must use the Isoplane ASP.NET SDK')
-            document.getroot().set('Sdk', 'Wisp.AspNetCore/' + args.package_version)
+            document.getroot().set('Sdk', 'Isoplane.AspNetCore/' + args.package_version)
             document.write(project, encoding='unicode')
 
         release.rename(args.output)

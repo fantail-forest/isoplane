@@ -8,14 +8,14 @@ use std::process::Command;
 #[test]
 fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
     let directory = tempfile::tempdir().expect("isolate installed SDK capability evaluation");
-    let app = wisp_fixtures::aspnet_project(directory.path());
-    for configuration in ["WispInterpretedDebug", "WispNativeAotRelease"] {
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    for configuration in ["IsoplaneInterpretedDebug", "IsoplaneNativeAotRelease"] {
         let output = Command::new("dotnet")
             .args(["msbuild", "-getItem:ProjectCapability"])
             .arg(format!("-p:Configuration={configuration}"))
             .env(
-                "WISP_GUEST_RUNTIME_FEED",
-                wisp_fixtures::guest_runtime_feed(),
+                "ISOPLANE_GUEST_RUNTIME_FEED",
+                isoplane_fixtures::guest_runtime_feed(),
             )
             .current_dir(&app)
             .output()
@@ -42,14 +42,14 @@ fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
 #[tokio::test]
 async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
     let directory = tempfile::tempdir().expect("isolate the installed project workflow");
-    let app = wisp_fixtures::aspnet_project(directory.path());
+    let app = isoplane_fixtures::aspnet_project(directory.path());
     let library = directory.path().join("CustomerLibrary");
     std::fs::create_dir(&library).expect("create an ordinary existing class library");
     std::fs::write(
         library.join("CustomerLibrary.csproj"),
         r#"<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>"#,
     )
-    .expect("write the existing library without WISP SDK dependencies");
+    .expect("write the existing library without Isoplane SDK dependencies");
     std::fs::write(
         library.join("Greeting.cs"),
         "namespace CustomerLibrary; public static class Greeting { public static string Message => \"Hello from the existing library!\"; }",
@@ -76,20 +76,20 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
         format!("using Microsoft.Extensions.Logging;\n{route}"),
     )
     .expect("exercise ordinary application logging inside both guests");
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     for (configuration, runtime, aot) in [
-        ("WispInterpretedDebug", "Mono", "false"),
-        ("WispNativeAotRelease", "NativeAOT", "true"),
+        ("IsoplaneInterpretedDebug", "Mono", "false"),
+        ("IsoplaneNativeAotRelease", "NativeAOT", "true"),
     ] {
         let evaluated = Command::new("dotnet")
             .args([
                 "msbuild",
-                "-getProperty:WispGuestRuntime,PublishAot,RuntimeIdentifier",
+                "-getProperty:IsoplaneGuestRuntime,PublishAot,RuntimeIdentifier",
             ])
             .arg(format!("-p:Configuration={configuration}"))
             .env(
-                "WISP_GUEST_RUNTIME_FEED",
-                wisp_fixtures::guest_runtime_feed(),
+                "ISOPLANE_GUEST_RUNTIME_FEED",
+                isoplane_fixtures::guest_runtime_feed(),
             )
             .current_dir(&app)
             .output()
@@ -102,7 +102,7 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
         let properties: serde_json::Value = serde_json::from_slice(&evaluated.stdout)
             .expect("MSBuild property queries produce JSON");
         assert_eq!(
-            properties["Properties"]["WispGuestRuntime"], runtime,
+            properties["Properties"]["IsoplaneGuestRuntime"], runtime,
             "project-body configuration must select the actual sandbox runtime"
         );
         assert_eq!(
@@ -134,20 +134,20 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
 #[tokio::test]
 async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication() {
     let directory = tempfile::tempdir().expect("isolate the incremental installed project journey");
-    let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     let build = Command::new("dotnet")
         .args([
             "build",
             "-c",
-            "WispInterpretedDebug",
+            "IsoplaneInterpretedDebug",
             "--disable-build-servers",
         ])
         .current_dir(&app)
-        .env("WISP_CLI", &cli)
+        .env("ISOPLANE_CLI", &cli)
         .env(
-            "WISP_GUEST_RUNTIME_FEED",
-            wisp_fixtures::guest_runtime_feed(),
+            "ISOPLANE_GUEST_RUNTIME_FEED",
+            isoplane_fixtures::guest_runtime_feed(),
         )
         .env("XDG_DATA_HOME", directory.path().join("user-data"))
         .output()
@@ -158,13 +158,13 @@ async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication()
         String::from_utf8_lossy(&build.stdout),
         String::from_utf8_lossy(&build.stderr)
     );
-    let mut first = start_dotnet(&app, &cli, "WispInterpretedDebug", false);
+    let mut first = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
     assert!(
         first.diagnostics().contains("\"compiled\":false"),
         "the first run after dotnet build must reuse native compilation"
     );
     first.stop();
-    let native = app.join("obj/WispInterpretedDebug/net10.0/wasi-wasm/wasm/for-publish");
+    let native = app.join("obj/IsoplaneInterpretedDebug/net10.0/wasi-wasm/wasm/for-publish");
     let artifacts: std::collections::BTreeMap<_, _> = std::fs::read_dir(&native)
         .expect("an interpreted run produces native build artifacts")
         .map(|entry| entry.expect("read a native artifact").path())
@@ -180,7 +180,7 @@ async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication()
         })
         .collect();
     assert!(
-        artifacts.contains_key(&native.join("wisp-managed-to-native.complete")),
+        artifacts.contains_key(&native.join("isoplane-managed-to-native.complete")),
         "successful analysis must record completion so later runs can reuse it"
     );
     assert!(
@@ -189,7 +189,7 @@ async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication()
             .is_some_and(|extension| extension == "wasm")),
         "the reuse check must cover the linked sandbox module"
     );
-    let mut second = start_dotnet(&app, &cli, "WispInterpretedDebug", false);
+    let mut second = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
     let response = reqwest::get(&second.url)
         .await
         .expect("request the reused application");
@@ -244,7 +244,7 @@ fn start_dotnet(
             "0",
         ])
         .current_dir(project)
-        .env("WISP_CLI", cli)
+        .env("ISOPLANE_CLI", cli)
         .env(
             "XDG_DATA_HOME",
             project
@@ -262,9 +262,9 @@ fn start_dotnet(
 #[tokio::test]
 async fn dotnet_watch_rebuilds_the_guest_after_a_compilation_error_is_repaired() {
     let directory = tempfile::tempdir().expect("isolate the installed watch workflow");
-    let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
-    let mut running = start_dotnet(&app, &cli, "WispInterpretedDebug", true);
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let mut running = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", true);
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).expect("read the generated application");
     std::fs::write(&source, "this is not valid C#").expect("introduce a compile failure");

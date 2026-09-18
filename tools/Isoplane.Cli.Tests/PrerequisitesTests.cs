@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class PrerequisitesTests
 {

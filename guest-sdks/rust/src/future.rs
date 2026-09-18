@@ -11,11 +11,11 @@ use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
+use isoplane_abi::result::ResultRecord;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use wisp_abi::result::ResultRecord;
 
-use crate::error::{Result, WispError};
+use crate::error::{IsoplaneError, Result};
 use crate::rt::{self, Registered};
 
 /// A pending host operation, identified by the `future-id: u64` the import
@@ -72,7 +72,7 @@ impl<T> Future for HostFuture<T> {
                         Registered::Ok => me.registered = true,
                         Registered::TooMany => {
                             me.finished = true;
-                            return Poll::Ready(Err(WispError::Protocol(
+                            return Poll::Ready(Err(IsoplaneError::Protocol(
                                 "too many simultaneous pending futures".into(),
                             )));
                         }
@@ -106,7 +106,7 @@ pub(crate) fn decode_unit(_: &[u8]) -> Result<()> {
 
 
 pub(crate) fn decode_postcard<T: DeserializeOwned>(b: &[u8]) -> Result<T> {
-    postcard::from_bytes(b).map_err(|e| WispError::Protocol(format!("decode: {e}")))
+    postcard::from_bytes(b).map_err(|e| IsoplaneError::Protocol(format!("decode: {e}")))
 }
 
 /// Encode `arg`, hand `(ptr, len)` to a future-returning import, and wrap the

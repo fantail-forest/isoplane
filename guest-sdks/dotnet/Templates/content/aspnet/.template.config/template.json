@@ -2,10 +2,10 @@
   "$schema": "http://json.schemastore.org/template",
   "author": "Isoplane",
   "classifications": ["Web", "Isoplane"],
-  "identity": "Wisp.Templates.AspNetCore",
+  "identity": "Isoplane.Templates.AspNetCore",
   "name": "Isoplane ASP.NET application",
   "shortName": "isoplane-web",
-  "sourceName": "IsoplaneApp",
+  "sourceName": "SampleApp",
   "preferNameDirectory": true,
   "tags": {
     "language": "C#",

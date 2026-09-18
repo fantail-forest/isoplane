@@ -34,7 +34,7 @@ Publish and verify the destination before removing a repository report. Preserve
 
 ## Let documentation improve the product
 
-When writing or testing documentation exposes unnecessary steps, surprising behavior or something difficult to explain, investigate the product and capture a concrete improvement issue when warranted. Do not make workaround prose the default solution. Competitor reviews can identify strengths, weaknesses and questions to investigate, but are inputs to our decisions, not templates or specifications. Evaluate them against WISP's actual behavior, audience and other evidence, including reviews of other products.
+When writing or testing documentation exposes unnecessary steps, surprising behavior or something difficult to explain, investigate the product and capture a concrete improvement issue when warranted. Do not make workaround prose the default solution. Competitor reviews can identify strengths, weaknesses and questions to investigate, but are inputs to our decisions, not templates or specifications. Evaluate them against Isoplane's actual behavior, audience and other evidence, including reviews of other products.
 
 **Not this:** Copying a competitor's navigation or tutorials and losing the opportunity to notice friction in our own product, or treating one competitor review as the blueprint for our documentation.
 

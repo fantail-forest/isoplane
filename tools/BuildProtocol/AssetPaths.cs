@@ -1,4 +1,4 @@
-namespace Wisp.Build;
+namespace Isoplane.Build;
 
 internal static class AssetPaths
 {

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Configuration;
 
-namespace Wisp.AspNetCore;
+namespace Isoplane.AspNetCore;
 
 internal sealed class RuntimeConfigurationSource : IConfigurationSource
 {

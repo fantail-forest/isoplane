@@ -1,11 +1,11 @@
 //! The raw import surface.
 //!
-//! The SDK's capabilities are a subset of [`wisp_abi::imports::IMPORTS`],
-//! under module `"wisp"` with the canonical signatures. Nothing else is declared, because
+//! The SDK's capabilities are a subset of [`isoplane_abi::imports::IMPORTS`],
+//! under module `"isoplane"` with the canonical signatures. Nothing else is declared, because
 //! the import list *is* the capability manifest: the validator rejects a module
 //! that imports anything else at deploy time.
 //!
-//! The [`wisp_imports!`] macro emits three things from one list:
+//! The [`isoplane_imports!`] macro emits three things from one list:
 //!
 //! * the `unsafe extern "C"` block, on `wasm32` only;
 //! * host stubs, so the SDK's own tests can run on the development machine;
@@ -14,7 +14,7 @@
 //!   and signatures. Drift is a compile-and-test
 //!   failure rather than a mysterious instantiation error in production.
 
-use wisp_abi::imports::{Sig, Ty};
+use isoplane_abi::imports::{Sig, Ty};
 
 /// One entry of [`SDK_IMPORTS`]: the SDK's own view of an import's shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,19 +50,19 @@ macro_rules! wstub_body {
     }};
 }
 
-macro_rules! wisp_imports {
+macro_rules! isoplane_imports {
     ($(
         $(#[$m:meta])*
         fn $name:ident ( $($p:ident : $pt:ident),* $(,)? ) $(-> $r:ident)? ;
     )*) => {
-        // The real thing. `wasm_import_module = "wisp"` is
-        // `wisp_abi::imports::HOST_MODULE`; the host linker defines these and
+        // The real thing. `wasm_import_module = "isoplane"` is
+        // `isoplane_abi::imports::HOST_MODULE`; the host linker defines these and
         // nothing else. No doc attributes here or on the items inside:
         // rustdoc does not document extern blocks and rustc warns about the
         // attempt, so the documentation lives on the host stubs below and on
         // the import list itself.
         #[cfg(target_arch = "wasm32")]
-        #[link(wasm_import_module = "wisp")]
+        #[link(wasm_import_module = "isoplane")]
         unsafe extern "C" {
             $( pub fn $name($($p: $pt),*) $(-> $r)?; )*
         }
@@ -120,7 +120,7 @@ pub(crate) fn host_stub_hook(name: &'static str, args: &[i64]) -> i64 {
     crate::testing::stub_call(name, args)
 }
 
-wisp_imports! {
+isoplane_imports! {
     // ---- core -------------------------------------------------------------
     /// Guest panic. `init_visible`, so a failed pre-init reports usefully.
     fn abort(ptr: i32, len: i32);
@@ -186,7 +186,7 @@ wisp_imports! {
 // ---------------------------------------------------------------------------
 // The guest exports.
 //
-// `wisp_abi::imports::exports::SIGNATURES` is the contract (it was not when
+// `isoplane_abi::imports::exports::SIGNATURES` is the contract (it was not when
 // this SDK was first written -- see guests/README.md gap G1, resolved). The
 // table below is what the `export_*!` macros actually emit, kept separate so
 // that `exports_match_the_contract` can catch drift rather than have the two
@@ -204,38 +204,38 @@ const I32: Ty = Ty::I32;
 const I64: Ty = Ty::I64;
 
 /// The lowering of the WIT world's guest exports onto a flat core module.
-/// Host-side buffers are handed over by `wisp_alloc` + copy; every entrypoint
-/// returns a packed [`wisp_abi::PollStatus`].
+/// Host-side buffers are handed over by `isoplane_alloc` + copy; every entrypoint
+/// returns a packed [`isoplane_abi::PollStatus`].
 pub const SDK_EXPORTS: &[SdkExport] = &[
-    // wisp-alloc: func(size: u32, align: u32) -> u32
+    // isoplane-alloc: func(size: u32, align: u32) -> u32
     SdkExport {
-        name: "wisp_alloc",
+        name: "isoplane_alloc",
         sig: Sig {
             params: &[I32, I32],
             results: &[I32],
         },
     },
-    // wisp-handle: func(dispatch: dispatch-record) -> poll-status
+    // isoplane-handle: func(dispatch: dispatch-record) -> poll-status
     // ...lowered as (ptr, len) of a postcard `DispatchRecord` in a buffer the
-    // host obtained from `wisp_alloc`. The guest frees it.
+    // host obtained from `isoplane_alloc`. The guest frees it.
     SdkExport {
-        name: "wisp_handle",
+        name: "isoplane_handle",
         sig: Sig {
             params: &[I32, I32],
             results: &[I64],
         },
     },
-    // wisp-wake: func(future: u64, result: result-record) -> poll-status
+    // isoplane-wake: func(future: u64, result: result-record) -> poll-status
     SdkExport {
-        name: "wisp_wake",
+        name: "isoplane_wake",
         sig: Sig {
             params: &[I64, I32, I32],
             results: &[I64],
         },
     },
-    // wisp-gc-hint: func(pressure: u8)
+    // isoplane-gc-hint: func(pressure: u8)
     SdkExport {
-        name: "wisp_gc_hint",
+        name: "isoplane_gc_hint",
         sig: Sig {
             params: &[I32],
             results: &[],
@@ -243,7 +243,7 @@ pub const SDK_EXPORTS: &[SdkExport] = &[
     },
     // Pre-init entrypoint, run once in the sealed init sandbox.
     SdkExport {
-        name: "wisp_initialize",
+        name: "isoplane_initialize",
         sig: Sig {
             params: &[],
             results: &[I64],
@@ -254,7 +254,7 @@ pub const SDK_EXPORTS: &[SdkExport] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wisp_abi::imports::{self, BufSpec, IMPORTS};
+    use isoplane_abi::imports::{self, BufSpec, IMPORTS};
 
     /// Every capability this SDK declares must link against the canonical host
     /// interface; capabilities the SDK does not expose need no declaration.

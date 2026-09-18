@@ -12,21 +12,23 @@ use wasmtime::{
     ValType,
 };
 
-use wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, ResponseHead, TraceContext};
-use wisp_abi::status::PollStatus;
+use isoplane_abi::dispatch::{
+    DispatchKind, DispatchRecord, HttpRequest, ResponseHead, TraceContext,
+};
+use isoplane_abi::status::PollStatus;
 
 /// How the harness binds the residual `wasi:*` imports NativeAOT-LLVM leaves
 /// in the module. This is the whole of the rule-V1 question, so it is a
 /// first-class switch rather than a constant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WasiMode {
-    /// Every non-`wisp` import traps if called. The decisive experiment: if a
+    /// Every non-`isoplane` import traps if called. The decisive experiment: if a
     /// dispatch completes under this, they are all dead declarations and the
     /// mitigation is a trapping-stub bind or a strip pass. If it does not,
     /// the set that fires is a genuine capability the toolchain requires.
     Trap,
     /// Only the measured runtime-PAL set is implemented — with the values
-    /// WISP policy demands, not with WASI's semantics: an EMPTY environment
+    /// Isoplane policy demands, not with WASI's semantics: an EMPTY environment
     /// environment, a FROZEN clock, and deterministic harness bytes.
     /// Everything else traps. This is the default fixture configuration.
     Pal,
@@ -48,16 +50,16 @@ const FROZEN_NOW_MS: i64 = 1_724_000_000_000;
 struct HostLog {
     logs: Vec<String>,
     responses: Vec<ResponseHead>,
-    /// Names of imports outside the `wisp` module that the guest actually
+    /// Names of imports outside the `isoplane` module that the guest actually
     /// invoked. Rule V1 cares about the declared set; this measures the
     /// *reachable* set, which is the number that decides whether the residual
     /// wasi imports are a real capability leak or dead weight.
-    non_wisp_calls: Vec<String>,
+    non_isoplane_calls: Vec<String>,
 }
 
 type Shared = Arc<Mutex<HostLog>>;
 fn initialize_sample(store: &mut Store<()>, instance: &Instance) -> Result<()> {
-    use wisp_abi::imports::{exports, Ty};
+    use isoplane_abi::imports::{exports, Ty};
     if let Some(function) = instance.get_func(&mut *store, exports::INITIALIZE) {
         let actual = function.ty(&*store);
         let expected = exports::SIG_INITIALIZE;
@@ -179,7 +181,7 @@ fn density(engine: &Engine, module: &Module, linker: &Linker<()>, n: usize) -> R
             .call(&mut store, ())?;
         // Force the runtime up, which is what grows the heap.
         instance
-            .get_typed_func::<(i32, i32), i32>(&mut store, "wisp_alloc")?
+            .get_typed_func::<(i32, i32), i32>(&mut store, "isoplane_alloc")?
             .call(&mut store, (1, 8))?;
         stores.push((store, instance));
     }
@@ -210,7 +212,7 @@ fn entropy_clone(
     dispatch: &[u8],
 ) -> Result<()> {
     // 1. Bring one instance up exactly as a pre-initializer would, and freeze
-    //    its memory. `wisp_initialize` is the boundary crossing that starts
+    //    its memory. `isoplane_initialize` is the boundary crossing that starts
     //    the .NET runtime.
     let mut store = Store::new(engine, ());
     let inst = linker.instantiate(&mut store, module)?;
@@ -310,7 +312,7 @@ fn entropy_clone(
 fn main() -> Result<()> {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "guests/dotnet/out/wisp_guest_dotnet.wasm".to_string());
+        .unwrap_or_else(|| "guests/dotnet/out/isoplane_guest_dotnet.wasm".to_string());
     let bytes = std::fs::read(&path).with_context(|| format!("reading {path}"))?;
 
     let config = Config::new();
@@ -374,7 +376,7 @@ fn main() -> Result<()> {
         cpu_budget_ms: 30_000,
         now_ms: 1_724_000_000_000,
     };
-    let encoded = wisp_abi::encode(&dispatch)?;
+    let encoded = isoplane_abi::encode(&dispatch)?;
     if std::env::args().any(|argument| argument == "--entropy-clone") {
         entropy_clone(&engine, &module, &linker, &log, &encoded)?;
         return Ok(());
@@ -435,7 +437,7 @@ fn main() -> Result<()> {
     let response = require_done(call_handle(
         &mut store2,
         &restored,
-        &wisp_abi::encode(&dispatch2)?,
+        &isoplane_abi::encode(&dispatch2)?,
     )?)?;
     check_response(
         &log,
@@ -481,10 +483,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// The required export set, from `wisp-abi::imports::exports::REQUIRED`.
+/// The required export set, from `isoplane-abi::imports::exports::REQUIRED`.
 fn check_abi_surface(module: &Module) -> Result<()> {
     let exports: Vec<&str> = module.exports().map(|e| e.name()).collect();
-    for required in wisp_abi::imports::exports::REQUIRED {
+    for required in isoplane_abi::imports::exports::REQUIRED {
         if !exports.contains(required) {
             bail!("module is missing required export `{required}`");
         }
@@ -513,7 +515,7 @@ fn build_linker(
     // ---- the declared capability surface ---------------------------------
     let l = log.clone();
     linker.func_wrap(
-        "wisp",
+        "isoplane",
         "log_emit",
         move |mut caller: Caller<'_, ()>, level: i32, ptr: i32, len: i32| {
             let s = read_guest_string(&mut caller, ptr, len);
@@ -523,7 +525,7 @@ fn build_linker(
 
     let l = log.clone();
     linker.func_wrap(
-        "wisp",
+        "isoplane",
         "resp_new",
         move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> i32 {
             let bytes = read_guest_bytes(&mut caller, ptr, len);
@@ -538,20 +540,22 @@ fn build_linker(
         },
     )?;
 
-    linker.func_wrap("wisp", "resp_finish", move |_handle: i32| {})?;
+    linker.func_wrap("isoplane", "resp_finish", move |_handle: i32| {})?;
 
-    // ---- the three imports the PAL shim (native/wisp_pal.c) is built from --
+    // ---- the three imports the PAL shim (native/isoplane_pal.c) is built from --
     // These exist so the .NET runtime's own clock and entropy needs are
-    // expressed as WISP capabilities instead of as `wasi:*` imports outside
-    // the manifest. They are ordinary entries in `wisp_abi::imports::IMPORTS`.
+    // expressed as Isoplane capabilities instead of as `wasi:*` imports outside
+    // the manifest. They are ordinary entries in `isoplane_abi::imports::IMPORTS`.
 
     // Coarse (1 ms) and FROZEN for the dispatch slice. A constant
     // is the policy, not a shortcut past it.
-    linker.func_wrap("wisp", "clock_now_coarse", move || -> i64 { FROZEN_NOW_MS })?;
+    linker.func_wrap("isoplane", "clock_now_coarse", move || -> i64 {
+        FROZEN_NOW_MS
+    })?;
 
     // Deterministic fixture bytes vary across calls; this is not the production entropy source.
     linker.func_wrap(
-        "wisp",
+        "isoplane",
         "entropy_fill",
         move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> wasmtime::Result<()> {
             let Some(Extern::Memory(mem)) = caller.get_export("memory") else {
@@ -575,14 +579,14 @@ fn build_linker(
     // bare trap. Reaching it is a test failure, which is the point.
     let l = log.clone();
     linker.func_wrap(
-        "wisp",
+        "isoplane",
         "abort",
         move |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
             let msg = read_guest_string(&mut caller, ptr, len);
             l.lock()
                 .unwrap()
-                .non_wisp_calls
-                .push(format!("wisp::abort: {msg}"));
+                .non_isoplane_calls
+                .push(format!("isoplane::abort: {msg}"));
         },
     )?;
 
@@ -606,7 +610,7 @@ fn build_linker(
             move |mut caller: Caller<'_, ()>, len: i64, retptr: i32| -> wasmtime::Result<()> {
                 l.lock()
                     .unwrap()
-                    .non_wisp_calls
+                    .non_isoplane_calls
                     .push("wasi:random/random@0.2.0::get-random-bytes".to_string());
                 let len = len.max(0) as usize;
                 // The canonical ABI makes the callee allocate; `cabi_realloc` is
@@ -652,7 +656,7 @@ fn build_linker(
     // the configuration a real cell would run. Under `Stub` nothing traps and
     // the run enumerates the reachable set instead of stopping at the first.
     for import in module.imports() {
-        if import.module() == wisp_abi::imports::HOST_MODULE {
+        if import.module() == isoplane_abi::imports::HOST_MODULE {
             continue;
         }
         let ExternType::Func(ty) = import.ty() else {
@@ -696,7 +700,7 @@ fn build_linker(
             import.name(),
             ty.clone(),
             move |mut caller, params, results| {
-                l.lock().unwrap().non_wisp_calls.push(full.clone());
+                l.lock().unwrap().non_isoplane_calls.push(full.clone());
 
                 // The canonical-ABI lowering of a function with no wasm result
                 // writes its return value into a caller-supplied area. Leaving
@@ -723,12 +727,12 @@ fn build_linker(
     Ok(linker)
 }
 
-/// Non-`wisp` imports this harness implements for real rather than stubbing.
+/// Non-`isoplane` imports this harness implements for real rather than stubbing.
 const PROVIDED: &[&str] = &["wasi:random/random@0.2.0::get-random-bytes"];
 
-/// **The runtime PAL set.** The only non-`wisp` imports a NativeAOT-LLVM .NET
+/// **The runtime PAL set.** The only non-`isoplane` imports a NativeAOT-LLVM .NET
 /// guest was measured to reach. Under `WasiMode::Pal` these three are
-/// implemented to WISP policy and the other 29 trap; if a toolchain bump makes
+/// implemented to Isoplane policy and the other 29 trap; if a toolchain bump makes
 /// the guest reach a fourth, `check.sh` fails and names it.
 const PAL: &[&str] = &[
     // .NET runtime startup reads configuration. There is no
@@ -778,12 +782,12 @@ fn read_guest_string(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> String 
     String::from_utf8_lossy(&read_guest_bytes(caller, ptr, len)).into_owned()
 }
 
-/// Host→guest data enters via `wisp_alloc` + copy.
+/// Host→guest data enters via `isoplane_alloc` + copy.
 fn handoff(store: &mut Store<()>, instance: &Instance, bytes: &[u8]) -> Result<i32> {
-    let alloc = instance.get_typed_func::<(i32, i32), i32>(&mut *store, "wisp_alloc")?;
+    let alloc = instance.get_typed_func::<(i32, i32), i32>(&mut *store, "isoplane_alloc")?;
     let ptr = alloc.call(&mut *store, (bytes.len() as i32, 8))?;
     if ptr == 0 {
-        bail!("wisp_alloc returned 0 for {} bytes", bytes.len());
+        bail!("isoplane_alloc returned 0 for {} bytes", bytes.len());
     }
     let mem = instance
         .get_memory(&mut *store, "memory")
@@ -794,7 +798,7 @@ fn handoff(store: &mut Store<()>, instance: &Instance, bytes: &[u8]) -> Result<i
 
 fn call_handle(store: &mut Store<()>, instance: &Instance, bytes: &[u8]) -> Result<PollStatus> {
     let ptr = handoff(store, instance, bytes)?;
-    let f = instance.get_typed_func::<(i32, i32), i64>(&mut *store, "wisp_handle")?;
+    let f = instance.get_typed_func::<(i32, i32), i64>(&mut *store, "isoplane_handle")?;
     let raw = f.call(&mut *store, (ptr, bytes.len() as i32))?;
     Ok(PollStatus::decode(raw as u64))
 }

@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Wisp.Cli;
+using Isoplane.Cli;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;
@@ -57,7 +57,7 @@ public sealed class DoctorTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        start.ArgumentList.Add(typeof(Wisp.Cli.Tests.OwnedChild).Assembly.Location);
+        start.ArgumentList.Add(typeof(Isoplane.Cli.Tests.OwnedChild).Assembly.Location);
         start.ArgumentList.Add("--successful-doctor-probe");
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the doctor probe.");
         var output = process.StandardOutput.ReadToEndAsync();

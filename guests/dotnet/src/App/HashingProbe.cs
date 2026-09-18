@@ -1,13 +1,13 @@
-#if WISP_HASHING_PROBE
+#if ISOPLANE_HASHING_PROBE
 using System;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
-public sealed class HashingProbe : IWispHandler
+public sealed class HashingProbe : IIsoplaneHandler
 {
     private static IncrementalHash? saved;
     private static SHA256? savedSha;

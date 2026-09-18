@@ -10,13 +10,13 @@ using Microsoft.Build.Utilities;
 using Task = Microsoft.Build.Utilities.Task;
 
 /// <summary>Publishes with the local Linux compiler and returns its WASM output.</summary>
-public sealed class WispContainerPublish : Task, ICancelableTask
+public sealed class IsoplaneContainerPublish : Task, ICancelableTask
 {
     /// <summary>The guest project to publish.</summary>
     [Required] public string ProjectPath { get; set; }
     /// <summary>The source tree containing the project and its references.</summary>
     [Required] public string SourceRoot { get; set; }
-    /// <summary>The installed Wisp SDK directory.</summary>
+    /// <summary>The installed Isoplane SDK directory.</summary>
     [Required] public string SdkDirectory { get; set; }
     /// <summary>The local feed supplying the source-built runtime packs.</summary>
     [Required] public string GuestRuntimeFeed { get; set; }
@@ -52,7 +52,7 @@ public sealed class WispContainerPublish : Task, ICancelableTask
     /// <summary>Builds and copies the module, failing on missing tools or compiler errors.</summary>
     public override bool Execute()
     {
-        string scratch = Path.Combine(Path.GetTempPath(), "wisp-publish-" + owner);
+        string scratch = Path.Combine(Path.GetTempPath(), "isoplane-publish-" + owner);
         bool success = false;
         try
         {
@@ -62,23 +62,23 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         }
         catch (OperationCanceledException)
         {
-            Log.LogError("wisp: C# publication cancelled.");
+            Log.LogError("isoplane: C# publication cancelled.");
         }
         catch (Exception error) when (error is IOException || error is Win32Exception || error is InvalidOperationException)
         {
-            Log.LogError("wisp: " + error.Message);
+            Log.LogError("isoplane: " + error.Message);
         }
         finally
         {
             if (runtimeAvailable && !CleanupContainer())
             {
                 success = false;
-                Log.LogError("wisp: build files retained at {0} because compiler cleanup failed.", scratch);
+                Log.LogError("isoplane: build files retained at {0} because compiler cleanup failed.", scratch);
             }
             else
             {
                 try { Directory.Delete(scratch, true); }
-                catch (IOException error) { Log.LogWarning("wisp: cleaning build directory {0}: {1}", scratch, error.Message); }
+                catch (IOException error) { Log.LogWarning("isoplane: cleaning build directory {0}: {1}", scratch, error.Message); }
             }
         }
         return success && !Log.HasLoggedErrors;
@@ -87,16 +87,16 @@ public sealed class WispContainerPublish : Task, ICancelableTask
     private void Publish(string scratch)
     {
         if (CommandTimeoutSeconds <= 0)
-            throw new InvalidOperationException("WispContainerCommandTimeoutSeconds must be positive.");
+            throw new InvalidOperationException("IsoplaneContainerCommandTimeoutSeconds must be positive.");
         SourceRoot = Path.GetFullPath(SourceRoot).TrimEnd(Path.DirectorySeparatorChar);
         ProjectPath = Path.GetFullPath(ProjectPath);
         SdkDirectory = Path.GetFullPath(SdkDirectory).TrimEnd(Path.DirectorySeparatorChar);
         if (!ProjectPath.StartsWith(SourceRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new InvalidOperationException("WispBuildRoot must contain the guest project and its project references.");
+            throw new InvalidOperationException("IsoplaneBuildRoot must contain the guest project and its project references.");
 
         GuestRuntimeFeed = Path.GetFullPath(GuestRuntimeFeed).TrimEnd(Path.DirectorySeparatorChar);
-        if (!File.Exists(Path.Combine(GuestRuntimeFeed, "Wisp.GuestRuntime.props")))
-            throw new InvalidOperationException("The guest runtime feed has no Wisp.GuestRuntime.props: " + GuestRuntimeFeed);
+        if (!File.Exists(Path.Combine(GuestRuntimeFeed, "Isoplane.GuestRuntime.props")))
+            throw new InvalidOperationException("The guest runtime feed has no Isoplane.GuestRuntime.props: " + GuestRuntimeFeed);
 
         WasiSdkPackDirectory = Path.GetFullPath(WasiSdkPackDirectory).TrimEnd(Path.DirectorySeparatorChar);
         if (!File.Exists(Path.Combine(WasiSdkPackDirectory, "Sdk", "Sdk.targets")))
@@ -119,12 +119,12 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         Require(user, "establishing the developer's user ID");
         Require(group, "establishing the developer's group ID");
         string cacheRoot = string.IsNullOrEmpty(CacheDirectory)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Wisp")
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Isoplane")
             : Path.GetFullPath(CacheDirectory);
         string cache = Path.Combine(cacheRoot, image.Replace(':', '-'), "nuget");
         Directory.CreateDirectory(cache);
         var args = new List<string> {
-            "create", "--pull", "never", "--name", "wisp-publish-" + owner, "--label", "wisp.publish=" + owner,
+            "create", "--pull", "never", "--name", "isoplane-publish-" + owner, "--label", "isoplane.publish=" + owner,
             "--user", user.Output.Trim() + ":" + group.Output.Trim(), "--init", "--workdir", Path.GetDirectoryName(ProjectPath),
             "--volume", SourceRoot + ":" + SourceRoot + ":ro",
             "--volume", scratch + ":/build", "--volume", cache + ":/nuget",
@@ -144,14 +144,14 @@ public sealed class WispContainerPublish : Task, ICancelableTask
             args.Add("-p:" + property.Key + "=" + property.Value);
         }
         args.AddRange(new[] {
-            "-p:WispContainerBuild=false", "-p:_WispContainerIntermediate=true",
-            "-p:WispGuestRuntimeFeed=" + GuestRuntimeFeed + "/",
+            "-p:IsoplaneContainerBuild=false", "-p:_IsoplaneContainerIntermediate=true",
+            "-p:IsoplaneGuestRuntimeFeed=" + GuestRuntimeFeed + "/",
             "-p:UseArtifactsOutput=true", "-p:ArtifactsPath=/build/artifacts",
             "-p:PublishDir=/build/publish/", "-p:NuGetAudit=false",
             "-p:UseSharedCompilation=false", "-nodeReuse:false",
         });
-        if (!string.IsNullOrEmpty(MemoryMaxBytes)) args.Add("-p:WispMemoryMaxBytes=" + MemoryMaxBytes);
-        if (!string.IsNullOrEmpty(GuestMemoryBytes)) args.Add("-p:WispGuestMemoryBytes=" + GuestMemoryBytes);
+        if (!string.IsNullOrEmpty(MemoryMaxBytes)) args.Add("-p:IsoplaneMemoryMaxBytes=" + MemoryMaxBytes);
+        if (!string.IsNullOrEmpty(GuestMemoryBytes)) args.Add("-p:IsoplaneGuestMemoryBytes=" + GuestMemoryBytes);
 
         if (Offline)
         {
@@ -160,8 +160,8 @@ public sealed class WispContainerPublish : Task, ICancelableTask
             args.Add("-p:RestoreAdditionalProjectSources=");
         }
         Require(Run("docker", args, false, true), "creating the Linux compiler container");
-        Log.LogMessage(MessageImportance.High, "wisp: compiling in local container wisp-publish-{0}", owner);
-        Require(Run("docker", new[] { "start", "--attach", "wisp-publish-" + owner }, true),
+        Log.LogMessage(MessageImportance.High, "isoplane: compiling in local container isoplane-publish-{0}", owner);
+        Require(Run("docker", new[] { "start", "--attach", "isoplane-publish-" + owner }, true),
             Offline ? "offline compilation; a missing NuGet package must be provisioned by an online publish" : "compiling the C# guest");
 
         string[] modules = Directory.GetFiles(Path.Combine(scratch, "publish"), "*.wasm");
@@ -189,7 +189,7 @@ public sealed class WispContainerPublish : Task, ICancelableTask
             if (File.Exists(pending)) File.Delete(pending);
         }
         File.Copy(identity, Module + ".runtime", true);
-        Log.LogMessage(MessageImportance.High, "wisp: published {0}", Module);
+        Log.LogMessage(MessageImportance.High, "isoplane: published {0}", Module);
     }
 
     private string CompilerImage()
@@ -197,7 +197,7 @@ public sealed class WispContainerPublish : Task, ICancelableTask
         using (var hash = SHA256.Create())
         {
             byte[] digest = hash.ComputeHash(File.ReadAllBytes(Path.Combine(SdkDirectory, "Build", "Dockerfile")));
-            return "wisp-csharp:" + BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant().Substring(0, 20);
+            return "isoplane-csharp:" + BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant().Substring(0, 20);
         }
     }
 
@@ -205,22 +205,22 @@ public sealed class WispContainerPublish : Task, ICancelableTask
     {
         try
         {
-            var containers = Run("docker", new[] { "ps", "--all", "--quiet", "--filter", "label=wisp.publish=" + owner }, false, true, true);
+            var containers = Run("docker", new[] { "ps", "--all", "--quiet", "--filter", "label=isoplane.publish=" + owner }, false, true, true);
             if (containers.ExitCode != 0)
             {
-                Log.LogError("wisp: could not verify compiler cleanup: {0}", containers.Output);
+                Log.LogError("isoplane: could not verify compiler cleanup: {0}", containers.Output);
                 return false;
             }
             foreach (string id in containers.Output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 Require(Run("docker", new[] { "rm", "--force", id }, false, true, true), "removing the compiler container " + id);
-                Log.LogMessage(MessageImportance.High, "wisp: released compiler container {0}", id);
+                Log.LogMessage(MessageImportance.High, "isoplane: released compiler container {0}", id);
             }
             return true;
         }
         catch (Exception error) when (error is IOException || error is Win32Exception || error is InvalidOperationException)
         {
-            Log.LogError("wisp: compiler cleanup failed: {0}", error.Message);
+            Log.LogError("isoplane: compiler cleanup failed: {0}", error.Message);
             return false;
         }
     }

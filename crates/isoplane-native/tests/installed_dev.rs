@@ -7,13 +7,13 @@ use common::Dev;
 #[tokio::test]
 async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     let dir = tempfile::tempdir().unwrap();
-    let app = wisp_fixtures::aspnet_project(dir.path());
-    let manifest_path = app.join("wisp.toml");
+    let app = isoplane_fixtures::aspnet_project(dir.path());
+    let manifest_path = app.join("isoplane.toml");
     let manifest_text = std::fs::read_to_string(&manifest_path).unwrap();
     let mut manifest: toml::Value = toml::from_str(&manifest_text).unwrap();
     manifest["module"] = toml::Value::String("dist/nested/customer.wasm".into());
     std::fs::write(&manifest_path, toml::to_string(&manifest).unwrap()).unwrap();
-    let cli = wisp_fixtures::managed_cli(dir.path(), &app);
+    let cli = isoplane_fixtures::managed_cli(dir.path(), &app);
     let mut dev = Dev::start_managed(&app, &cli);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -70,8 +70,8 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
 #[tokio::test]
 async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_timers() {
     let directory = tempfile::tempdir().unwrap();
-    let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     let mut dev = Dev::start_managed_with_args(&app, &cli, &["--guest-runtime", "mono"]);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -111,13 +111,13 @@ async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_time
 }
 
 fn installed_debug_acceptance(mode: &str) {
-    let launcher = std::env::var_os("WISP_DEBUG_ADAPTER_LAUNCHER")
-        .expect("set WISP_DEBUG_ADAPTER_LAUNCHER to the external Mono DAP adapter launcher");
-    let python = std::env::var_os("WISP_DAP_PYTHON").expect(
-        "set WISP_DAP_PYTHON to a Python interpreter with debugpy installed for DAP framing",
+    let launcher = std::env::var_os("ISOPLANE_DEBUG_ADAPTER_LAUNCHER")
+        .expect("set ISOPLANE_DEBUG_ADAPTER_LAUNCHER to the external Mono DAP adapter launcher");
+    let python = std::env::var_os("ISOPLANE_DAP_PYTHON").expect(
+        "set ISOPLANE_DAP_PYTHON to a Python interpreter with debugpy installed for DAP framing",
     );
     let directory = tempfile::tempdir().unwrap();
-    let app = wisp_fixtures::aspnet_project(directory.path());
+    let app = isoplane_fixtures::aspnet_project(directory.path());
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     let modified = original.replace(
@@ -146,7 +146,7 @@ fn installed_debug_acceptance(mode: &str) {
         ),
     )
     .unwrap();
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     let mut dev = Dev::start_managed_with_args(&app, &cli, &["--debug", "--no-watch"]);
     let metadata = dev
         .debugger
@@ -174,11 +174,11 @@ fn installed_debug_acceptance(mode: &str) {
     );
     dev.wait_exit();
     assert!(
-        !app.join(".wisp/state").exists(),
+        !app.join(".isoplane/state").exists(),
         "a disposable debugger session must not leave runtime state in the application's persistent directory"
     );
     assert!(
-        std::fs::read_dir(app.join(".wisp/debug"))
+        std::fs::read_dir(app.join(".isoplane/debug"))
             .unwrap()
             .next()
             .is_none(),
@@ -203,8 +203,8 @@ fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
 #[test]
 fn installed_debug_options_reject_watch_and_nativeaot_before_publication() {
     let directory = tempfile::tempdir().unwrap();
-    let app = wisp_fixtures::aspnet_project(directory.path());
-    let cli = wisp_fixtures::managed_cli(directory.path(), &app);
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     for (arguments, diagnostic) in [
         (vec!["--debug"], "--debug requires --no-watch"),
         (
@@ -228,7 +228,7 @@ fn installed_debug_options_reject_watch_and_nativeaot_before_publication() {
             String::from_utf8_lossy(&result.stderr)
         );
         assert!(
-            !app.join(".wisp/debug").exists(),
+            !app.join(".isoplane/debug").exists(),
             "invalid debug options must not create a session"
         );
     }

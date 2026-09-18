@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <_IsoplaneAspNetCorePropsImported>true</_IsoplaneAspNetCorePropsImported>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+  </PropertyGroup>
+</Project>

@@ -1,4 +1,4 @@
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 /// <summary>
 /// The shell configuration that makes the installed SDK and the CLI discoverable in new terminals: one sourced

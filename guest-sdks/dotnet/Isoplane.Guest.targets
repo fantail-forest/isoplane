@@ -1,0 +1,24 @@
+<!--
+  The targets every C# Isoplane guest imports after the .NET SDK's own, so that
+  targets which replace a workload target (the Mono toolchain setup) are the
+  last definition MSBuild sees. Isoplane.Guest.props selects the runtime; this
+  file completes the pipeline it selected.
+-->
+<Project>
+  <Import Project="Build/Isoplane.NativeAot.PackageResolution.targets" Condition="'$(IsoplaneGuestRuntime)' == 'NativeAOT'" />
+  <!-- The Mono pipeline is the source-built Wasi SDK pack the feed names,
+       between the workload's Mono targets, in the order the workload itself
+       would import them. -->
+  <ImportGroup Condition="'$(IsoplaneGuestRuntime)' == 'Mono'">
+    <Import Project="Sdk.props" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" />
+    <!-- A missing feed is reported by Isoplane.Guest.props' IsoplaneRequireGuestRuntimeFeed. -->
+    <Import Project="$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.props" Condition="Exists('$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.props')" />
+    <Import Project="$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.targets" Condition="Exists('$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.targets')" />
+    <!-- The workload's Mono AOT cross compiler prints the interpreter's icall
+         table; the source-built runtime does not change that table, and the
+         source build does not yet produce the cross compiler pack. -->
+    <Import Project="Sdk.props" Sdk="Microsoft.NETCore.App.Runtime.AOT.Cross.net10.wasi-wasm" />
+    <Import Project="Sdk.targets" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" />
+    <Import Project="Build/Isoplane.Mono.targets" />
+  </ImportGroup>
+</Project>

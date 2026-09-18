@@ -2,7 +2,7 @@
 
 ## A benchmark is a run of a load tool against a node, never a test
 
-Generate load with a maintained open-loop HTTP generator against a running `wispd`, and read its latency histogram. Nothing in the repository generates load or renders a report, and nothing under `cargo test` measures: a measurement with a pass mark painted on is green on one machine and red on another. Give a benchmark no verdict; what to do about its figure is a decision a person makes reading it.
+Generate load with a maintained open-loop HTTP generator against a running `isoplaned`, and read its latency histogram. Nothing in the repository generates load or renders a report, and nothing under `cargo test` measures: a measurement with a pass mark painted on is green on one machine and red on another. Give a benchmark no verdict; what to do about its figure is a decision a person makes reading it.
 
 **Not this:** Density, activation-latency, and park-cost measurements in a crate's `tests/` directory, passing on every machine because their thresholds cannot fail. A load generator of our own with a SKU projection, a campaign planner, and a report renderer.
 

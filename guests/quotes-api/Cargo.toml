@@ -9,5 +9,5 @@ license-file.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-wisp-guest = { workspace = true, features = ["json"] }
+isoplane-guest = { workspace = true, features = ["json"] }
 serde      = { workspace = true }

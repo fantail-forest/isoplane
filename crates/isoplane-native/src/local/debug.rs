@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use wisp_host::egress::{DenyReason, DestinationPolicy, PublicDestinations};
+use isoplane_host::egress::{DenyReason, DestinationPolicy, PublicDestinations};
 
 /// The one session-owned debugger destination allowed alongside public egress.
 #[derive(Clone, Copy)]

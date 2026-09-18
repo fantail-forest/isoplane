@@ -1,4 +1,4 @@
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal enum GuestRuntimeProfile { NativeAot, Mono }
 
@@ -74,8 +74,8 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException("--debug requires the Mono guest runtime.");
         if (!System.IO.Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}");
-        if (!File.Exists(Path.Combine(directory, "wisp.toml")))
-            throw new ArgumentException($"No wisp.toml in {directory}; create a project with dotnet new isoplane-web.");
+        if (!File.Exists(Path.Combine(directory, "isoplane.toml")))
+            throw new ArgumentException($"No isoplane.toml in {directory}; create a project with dotnet new isoplane-web.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
         return new(directory, port, watch, json, shutdownOnInputClose, guestRuntime, debug, configuration, noBuild, module);

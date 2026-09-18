@@ -11,7 +11,7 @@ spec.loader.exec_module(package_toolchain)
 
 class NativePairTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='wisp-package-pair-')
+        self.temporary = tempfile.TemporaryDirectory(prefix='isoplane-package-pair-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.runtime = self.root / 'libisoplane_native.so'
@@ -50,7 +50,7 @@ class NativePairTests(unittest.TestCase):
 
 class ReadabilityTests(unittest.TestCase):
     def test_private_build_staging_modes_become_readable_by_every_user(self):
-        with tempfile.TemporaryDirectory(prefix='wisp-package-modes-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='isoplane-package-modes-') as temporary:
             stage = Path(temporary) / 'toolchain'
             private = stage / 'compiler'
             private.mkdir(parents=True)

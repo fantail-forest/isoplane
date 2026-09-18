@@ -10,8 +10,8 @@ native code on your development machine.
 
 ## Why the project selects the mode
 
-The template gives each mode a named configuration: `WispInterpretedDebug` and
-`WispNativeAotRelease`. Its `PublishAot` setting selects the mode; the target is
+The template gives each mode a named configuration: `IsoplaneInterpretedDebug` and
+`IsoplaneNativeAotRelease`. Its `PublishAot` setting selects the mode; the target is
 `wasi-wasm` in both cases. Ordinary MSBuild configuration therefore determines
 what `dotnet build`, `dotnet run` and the integration test fixture execute.
 

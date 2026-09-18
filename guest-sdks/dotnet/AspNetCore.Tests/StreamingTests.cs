@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
-using Wisp.Abi;
+using Isoplane.Abi;
 using Xunit;
 
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 public sealed class StreamingTests
 {
@@ -26,7 +26,7 @@ public sealed class StreamingTests
             await release.Task;
             await context.Response.Body.WriteAsync("B"u8.ToArray());
         });
-        var request = new WispApplication(app).HandleAsync(Request());
+        var request = new IsoplaneApplication(app).HandleAsync(Request());
         await first.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(transport.Started.Task.IsCompleted && !request.IsCompleted,
             "response headers must be published before the waiting handler completes");
@@ -54,7 +54,7 @@ public sealed class StreamingTests
             await context.Response.Body.WriteAsync(new byte[] { 7 });
             returned = true;
         });
-        var request = new WispApplication(app).HandleAsync(Request());
+        var request = new IsoplaneApplication(app).HandleAsync(Request());
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(!returned && !request.IsCompleted, "guest execution must await a blocked host write");
         accepted.SetResult();
@@ -78,7 +78,7 @@ public sealed class StreamingTests
             Assert.True(error is InvalidOperationException && !callback,
                 "CompleteAsync freezes writes without prematurely running completion callbacks");
         });
-        await new WispApplication(app).HandleAsync(Request());
+        await new IsoplaneApplication(app).HandleAsync(Request());
         Assert.True(callback && transport.Bytes.ToArray().SequenceEqual(new byte[] { 9 }),
             "completion callbacks run after the handler with the final accepted body");
     }
@@ -98,7 +98,7 @@ public sealed class StreamingTests
             context.Response.OnCompleted(() => { callback = true; return Task.CompletedTask; });
             await context.Response.Body.WriteAsync(new byte[] { 1 });
         });
-        var error = await Record.ExceptionAsync(() => new WispApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
         Assert.True(error is IOException && callback, "a failed body write must propagate after completion callbacks run");
         Assert.True(transport.Started.Task.IsCompleted && transport.Bytes.Length == 0,
             "a post-header failure must not fabricate accepted response bytes");
@@ -116,13 +116,13 @@ public sealed class StreamingTests
 
     private static WebApplicationBuilder Builder(RecordingResponseTransport transport)
     {
-        var builder = WispHosting.CreateBuilder(typeof(StreamingTests).Assembly.GetName().Name!, new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource());
+        var builder = IsoplaneHosting.CreateBuilder(typeof(StreamingTests).Assembly.GetName().Name!, new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource());
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => transport);
         return builder;
     }
 
-    private static Request Request() => Wisp.Request.FromDispatch(new DispatchRecord
+    private static Request Request() => Isoplane.Request.FromDispatch(new DispatchRecord
     {
         Kind = DispatchKind.Http, Method = "GET", Path = "/", Url = "/"
     });

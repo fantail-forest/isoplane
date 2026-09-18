@@ -26,7 +26,7 @@ fn project(destination: &Path) -> (PathBuf, PathBuf) {
     .unwrap();
     std::fs::write(
         app.join("wait-build.sh"),
-        "set -eu\nmkfifo .wisp/publication-gate\nprintf 'publication-is-held\\n'\nexec cat .wisp/publication-gate\n",
+        "set -eu\nmkfifo .isoplane/publication-gate\nprintf 'publication-is-held\\n'\nexec cat .isoplane/publication-gate\n",
     )
     .unwrap();
     let packages = destination
@@ -42,7 +42,7 @@ fn project(destination: &Path) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    let cli = wisp_fixtures::managed_cli(destination, &app);
+    let cli = isoplane_fixtures::managed_cli(destination, &app);
     (app, cli)
 }
 
@@ -95,7 +95,7 @@ async fn a_missing_publication_preserves_the_running_app_and_allows_repair() {
         "a successful compiler exit without a module must not stop the working app"
     );
 
-    let replacement = app.join(".wisp/repaired.wasm");
+    let replacement = app.join(".isoplane/repaired.wasm");
     std::fs::write(&replacement, guest("repaired publication")).unwrap();
     std::fs::rename(replacement, app.join("fixture.wasm")).unwrap();
     std::fs::remove_file(app.join("omit-publication")).unwrap();
@@ -119,11 +119,11 @@ async fn shutdown_cancels_a_publication_waiting_on_external_work() {
 
     dev.stop();
     assert!(
-        app.join(".wisp/publication-gate").exists(),
+        app.join(".isoplane/publication-gate").exists(),
         "shutdown must cancel publication without requiring its external work to finish"
     );
     assert!(
-        std::fs::read_dir(app.join(".wisp/publish"))
+        std::fs::read_dir(app.join(".isoplane/publish"))
             .unwrap()
             .next()
             .is_none(),
@@ -169,7 +169,7 @@ async fn a_keep_alive_connection_serves_the_new_publication_after_reload() {
             "working publication",
             "the initial connection must serve the original publication"
         );
-        let pending = app.join(".wisp/replacement.wasm");
+        let pending = app.join(".isoplane/replacement.wasm");
         std::fs::write(&pending, guest("replacement publication")).unwrap();
         std::fs::rename(pending, app.join("fixture.wasm")).unwrap();
         running.wait_event("reloaded");

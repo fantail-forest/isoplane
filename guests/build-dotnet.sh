@@ -31,63 +31,63 @@ while [ $# -gt 0 ]; do
 done
 
 TOOLS="$ROOT/../scripts/fixture-tools.py"
-if [ "${WISP_FIXTURE_LOCK:-}" != "$ROOT/build-dotnet.sh" ]; then
+if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$ROOT/build-dotnet.sh" ]; then
   exec python3 "$TOOLS" lock "$ROOT/.build-dotnet.lock" "$ROOT/build-dotnet.sh" "${ARGS[@]}"
 fi
 
 # name | output path | guest dir | extra dotnet publish args
 #
 # `_stock` is built without the PAL shim object, so it carries the raw
-# `wasi:*` imports NativeAOT-LLVM emits; `wisp-engine`'s `dotnet_pal` test
+# `wasi:*` imports NativeAOT-LLVM emits; `isoplane-engine`'s `dotnet_pal` test
 # reads it to check what the adapter composes them down to.
 FIXTURES=(
-  "wisp_guest_dotnet_activation|$ROOT/dotnet/out/wisp_guest_dotnet_activation.wasm|$ROOT/dotnet|-p:WispActivationProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_certificates|$ROOT/dotnet/out/wisp_guest_dotnet_certificates.wasm|$ROOT/dotnet|-p:WispCertificateProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_streaming|$ROOT/dotnet/out/wisp_guest_dotnet_streaming.wasm|$ROOT/dotnet|-p:WispStreamingProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_hashing|$ROOT/dotnet/out/wisp_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:WispHashingProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_trust|$ROOT/dotnet/out/wisp_guest_dotnet_trust.wasm|$ROOT/dotnet|-p:WispTrustProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_randomness|$ROOT/dotnet/out/wisp_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:WispRandomnessProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_config|$ROOT/dotnet/out/wisp_guest_dotnet_config.wasm|$ROOT/dotnet|-p:WispConfigProbe=true"
-  "wisp_guest_dotnet_failing_boot|$ROOT/dotnet/out/wisp_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:WispFailingBoot=true"
-  "wisp_guest_dotnet_network_refusal|$ROOT/dotnet/out/wisp_guest_dotnet_network_refusal.wasm|$ROOT/dotnet|-p:WispNetworkRefusalProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_dns|$ROOT/dotnet/out/wisp_guest_dotnet_dns.wasm|$ROOT/dotnet|-p:WispDnsProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_stream|$ROOT/dotnet/out/wisp_guest_dotnet_stream.wasm|$ROOT/dotnet|-p:WispStreamProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_connect|$ROOT/dotnet/out/wisp_guest_dotnet_connect.wasm|$ROOT/dotnet|-p:WispConnectProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_cleanup|$ROOT/dotnet/out/wisp_guest_dotnet_cleanup.wasm|$ROOT/dotnet|-p:WispCleanupProbe=true -p:IlcResilient=false"
-  "wisp_guest_dotnet_timer|$ROOT/dotnet/out/wisp_guest_dotnet_timer.wasm|$ROOT/dotnet|-p:WispTimerProbe=true"
-  "wisp_guest_dotnet_logs|$ROOT/dotnet/out/wisp_guest_dotnet_logs.wasm|$ROOT/dotnet|-p:WispLogProbe=true"
-  "wisp_guest_dotnet_async|$ROOT/dotnet/out/wisp_guest_dotnet_async.wasm|$ROOT/dotnet|-p:WispAsyncProbe=true"
-  "wisp_guest_dotnet_filesystem|$ROOT/dotnet/out/wisp_guest_dotnet_filesystem.wasm|$ROOT/dotnet|-p:WispFilesystemProbe=true"
-  "wisp_guest_aspnet|$ROOT/dotnet/out/wisp_guest_aspnet.wasm|$ROOT/aspnet|"
-  "wisp_guest_dotnet_request|$ROOT/dotnet/out/wisp_guest_dotnet_request.wasm|$ROOT/dotnet|-p:WispRequestProbe=true"
-  "wisp_guest_dotnet|$ROOT/dotnet/out/wisp_guest_dotnet.wasm|$ROOT/dotnet|"
-  "wisp_guest_dotnet_compat|$ROOT/dotnet/out/wisp_guest_dotnet_compat.wasm|$ROOT/dotnet|-p:WispCompatProbe=true"
-  "wisp_guest_dotnet_entropy|$ROOT/dotnet/out/wisp_guest_dotnet_entropy.wasm|$ROOT/dotnet|-p:WispEntropyProbe=true"
-  "wisp_guest_dotnet_stock|$ROOT/dotnet/out/wisp_guest_dotnet_stock.wasm|$ROOT/dotnet|-p:WispStock=true"
-  "wisp_guest_dotnet_compat_stock|$ROOT/dotnet/out/wisp_guest_dotnet_compat_stock.wasm|$ROOT/dotnet|-p:WispCompatProbe=true -p:WispStock=true"
+  "isoplane_guest_dotnet_activation|$ROOT/dotnet/out/isoplane_guest_dotnet_activation.wasm|$ROOT/dotnet|-p:IsoplaneActivationProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_certificates|$ROOT/dotnet/out/isoplane_guest_dotnet_certificates.wasm|$ROOT/dotnet|-p:IsoplaneCertificateProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_streaming|$ROOT/dotnet/out/isoplane_guest_dotnet_streaming.wasm|$ROOT/dotnet|-p:IsoplaneStreamingProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_hashing|$ROOT/dotnet/out/isoplane_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:IsoplaneHashingProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_trust|$ROOT/dotnet/out/isoplane_guest_dotnet_trust.wasm|$ROOT/dotnet|-p:IsoplaneTrustProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_randomness|$ROOT/dotnet/out/isoplane_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:IsoplaneRandomnessProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_config|$ROOT/dotnet/out/isoplane_guest_dotnet_config.wasm|$ROOT/dotnet|-p:IsoplaneConfigProbe=true"
+  "isoplane_guest_dotnet_failing_boot|$ROOT/dotnet/out/isoplane_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:IsoplaneFailingBoot=true"
+  "isoplane_guest_dotnet_network_refusal|$ROOT/dotnet/out/isoplane_guest_dotnet_network_refusal.wasm|$ROOT/dotnet|-p:IsoplaneNetworkRefusalProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_dns|$ROOT/dotnet/out/isoplane_guest_dotnet_dns.wasm|$ROOT/dotnet|-p:IsoplaneDnsProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_stream|$ROOT/dotnet/out/isoplane_guest_dotnet_stream.wasm|$ROOT/dotnet|-p:IsoplaneStreamProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_connect|$ROOT/dotnet/out/isoplane_guest_dotnet_connect.wasm|$ROOT/dotnet|-p:IsoplaneConnectProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_cleanup|$ROOT/dotnet/out/isoplane_guest_dotnet_cleanup.wasm|$ROOT/dotnet|-p:IsoplaneCleanupProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_timer|$ROOT/dotnet/out/isoplane_guest_dotnet_timer.wasm|$ROOT/dotnet|-p:IsoplaneTimerProbe=true"
+  "isoplane_guest_dotnet_logs|$ROOT/dotnet/out/isoplane_guest_dotnet_logs.wasm|$ROOT/dotnet|-p:IsoplaneLogProbe=true"
+  "isoplane_guest_dotnet_async|$ROOT/dotnet/out/isoplane_guest_dotnet_async.wasm|$ROOT/dotnet|-p:IsoplaneAsyncProbe=true"
+  "isoplane_guest_dotnet_filesystem|$ROOT/dotnet/out/isoplane_guest_dotnet_filesystem.wasm|$ROOT/dotnet|-p:IsoplaneFilesystemProbe=true"
+  "isoplane_guest_aspnet|$ROOT/dotnet/out/isoplane_guest_aspnet.wasm|$ROOT/aspnet|"
+  "isoplane_guest_dotnet_request|$ROOT/dotnet/out/isoplane_guest_dotnet_request.wasm|$ROOT/dotnet|-p:IsoplaneRequestProbe=true"
+  "isoplane_guest_dotnet|$ROOT/dotnet/out/isoplane_guest_dotnet.wasm|$ROOT/dotnet|"
+  "isoplane_guest_dotnet_compat|$ROOT/dotnet/out/isoplane_guest_dotnet_compat.wasm|$ROOT/dotnet|-p:IsoplaneCompatProbe=true"
+  "isoplane_guest_dotnet_entropy|$ROOT/dotnet/out/isoplane_guest_dotnet_entropy.wasm|$ROOT/dotnet|-p:IsoplaneEntropyProbe=true"
+  "isoplane_guest_dotnet_stock|$ROOT/dotnet/out/isoplane_guest_dotnet_stock.wasm|$ROOT/dotnet|-p:IsoplaneStock=true"
+  "isoplane_guest_dotnet_compat_stock|$ROOT/dotnet/out/isoplane_guest_dotnet_compat_stock.wasm|$ROOT/dotnet|-p:IsoplaneCompatProbe=true -p:IsoplaneStock=true"
 )
 
 # The fixtures that also publish under the Mono interpreter: the behaviour
 # probes the engine and host tests drive in both runtimes. The stock, Durable
 # Instance and ASP.NET flavours are NativeAOT-only for now.
 MONO_FIXTURES=(
-  wisp_guest_dotnet_activation
-  wisp_guest_dotnet_certificates
-  wisp_guest_dotnet_streaming
-  wisp_guest_dotnet_hashing
-  wisp_guest_dotnet_trust
-  wisp_guest_dotnet_randomness
-  wisp_guest_dotnet_network_refusal
-  wisp_guest_dotnet_dns
-  wisp_guest_dotnet_stream
-  wisp_guest_dotnet_connect
-  wisp_guest_dotnet_cleanup
-  wisp_guest_dotnet_timer
-  wisp_guest_dotnet_logs
-  wisp_guest_dotnet_async
-  wisp_guest_dotnet_filesystem
-  wisp_guest_dotnet_compat
-  wisp_guest_dotnet_entropy
+  isoplane_guest_dotnet_activation
+  isoplane_guest_dotnet_certificates
+  isoplane_guest_dotnet_streaming
+  isoplane_guest_dotnet_hashing
+  isoplane_guest_dotnet_trust
+  isoplane_guest_dotnet_randomness
+  isoplane_guest_dotnet_network_refusal
+  isoplane_guest_dotnet_dns
+  isoplane_guest_dotnet_stream
+  isoplane_guest_dotnet_connect
+  isoplane_guest_dotnet_cleanup
+  isoplane_guest_dotnet_timer
+  isoplane_guest_dotnet_logs
+  isoplane_guest_dotnet_async
+  isoplane_guest_dotnet_filesystem
+  isoplane_guest_dotnet_compat
+  isoplane_guest_dotnet_entropy
 )
 
 if [ "$RUNTIME" = mono ]; then
@@ -96,7 +96,7 @@ if [ "$RUNTIME" = mono ]; then
     IFS='|' read -r name out dir extra <<<"$spec"
     for candidate in "${MONO_FIXTURES[@]}"; do
       if [ "$name" = "$candidate" ]; then
-        mono+=("$name|$ROOT/dotnet/out/mono/$name.wasm|$dir|$extra -p:WispGuestRuntime=Mono --artifacts-path $ROOT/dotnet/obj-mono")
+        mono+=("$name|$ROOT/dotnet/out/mono/$name.wasm|$dir|$extra -p:IsoplaneGuestRuntime=Mono --artifacts-path $ROOT/dotnet/obj-mono")
       fi
     done
   done
@@ -113,8 +113,8 @@ if [ -n "$SELECTED" ]; then
   FIXTURES=("${selected[@]}")
 fi
 
-FEED="${WISP_TEST_RUNTIME_FEED:-$ROOT/../guest-runtime/out/feed}"
-if [ -n "${WISP_TEST_RUNTIME_FEED:-}" ]; then
+FEED="${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/../guest-runtime/out/feed}"
+if [ -n "${ISOPLANE_TEST_RUNTIME_FEED:-}" ]; then
   python3 "$ROOT/../guest-runtime/feed-identity.py" verify-artifact "$FEED"
   echo "==> explicitly selected runtime artifacts: $FEED"
 else
@@ -124,12 +124,12 @@ COMPILER_DIRECTORY="$(dirname "$FEED")/compiler"
 COMPILER_INPUTS=()
 if [ "$RUNTIME" != mono ]; then
   compiler_verification=verify-current
-  [ -z "${WISP_TEST_RUNTIME_FEED:-}" ] || compiler_verification=verify-artifact
+  [ -z "${ISOPLANE_TEST_RUNTIME_FEED:-}" ] || compiler_verification=verify-artifact
   python3 "$ROOT/../guest-runtime/compiler/build.py" "$compiler_verification" --output "$COMPILER_DIRECTORY"
   COMPILER_INPUTS+=("$COMPILER_DIRECTORY/compiler.json")
 fi
-export WISP_GUEST_RUNTIME_FEED="$FEED"
-FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$FEED/Wisp.GuestRuntime.props" "$RUNTIME")
+export ISOPLANE_GUEST_RUNTIME_FEED="$FEED"
+FEED_IDENTITY=$(python3 "$TOOLS" runtime-identity "$FEED/Isoplane.GuestRuntime.props" "$RUNTIME")
 INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT/aspnet" "$ROOT/dotnet" "$ROOT/../guest-sdks/dotnet" "$TOOLS" "$ROOT/build-dotnet.sh" "$ROOT/../nuget.config" "$ROOT/../global.json" "$FEED" "${COMPILER_INPUTS[@]}")
 
 is_stale() {
@@ -172,7 +172,7 @@ for spec in "${FIXTURES[@]}"; do
   ok=0
   rm -f "$out"
   # shellcheck disable=SC2086
-  if WISP_OUT_DIR="$(dirname "$out")" WISP_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
+  if ISOPLANE_OUT_DIR="$(dirname "$out")" ISOPLANE_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
   built=$((built + 1))
 
   if [ "$ok" = 1 ]; then

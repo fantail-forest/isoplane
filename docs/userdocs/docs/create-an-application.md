@@ -17,7 +17,7 @@ dotnet new isoplane-web --name MyApi
 cd MyApi
 ```
 
-You now have `Application.cs`, a project file, and `wisp.toml`. Open
+You now have `Application.cs`, a project file, and `isoplane.toml`. Open
 `Application.cs` in your editor. Find the route that returns
 `Hello from Isoplane!`. Leave it unchanged for the first run.
 
@@ -28,7 +28,7 @@ Local state is private to the project directory.
 Run the application:
 
 ```bash
-dotnet run -c WispInterpretedDebug
+dotnet run -c IsoplaneInterpretedDebug
 ```
 
 Wait for the command to print a local address. The first build can take a while.
@@ -48,7 +48,7 @@ replace `Hello from Isoplane!` with `Hello from my API!` and save the file.
 Run the same command again:
 
 ```bash
-dotnet run -c WispInterpretedDebug
+dotnet run -c IsoplaneInterpretedDebug
 ```
 
 Open the address printed for this run. You should now see:

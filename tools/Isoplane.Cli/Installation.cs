@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal enum InstalledResourceKind
 {

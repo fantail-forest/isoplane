@@ -3,7 +3,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Xml.Linq;
-using Wisp.Conformance;
+using Isoplane.Conformance;
 using Xunit;
 
 public sealed class ConformanceTests : MsbuildTests
@@ -16,8 +16,8 @@ public sealed class ConformanceTests : MsbuildTests
         var build = Directory.CreateDirectory(Path.Combine(directory, "tools/Build")).FullName;
         var task = Directory.CreateDirectory(Path.Combine(directory, "tools/Conformance")).FullName;
         File.Copy(typeof(InspectManagedAssemblies).Assembly.Location, Path.Combine(task, "Isoplane.Conformance.dll"));
-        var targets = Path.Combine(build, "Wisp.Conformance.targets");
-        File.Copy(Path.Combine(SdkDirectory(), "Build/Wisp.Conformance.targets"), targets);
+        var targets = Path.Combine(build, "Isoplane.Conformance.targets");
+        File.Copy(Path.Combine(SdkDirectory(), "Build/Isoplane.Conformance.targets"), targets);
         var dependency = Path.Combine(directory, "PortableDependency.dll");
         File.WriteAllBytes(dependency, malformed ? [1, 2, 3] : NativeDeclaration());
         var framework = Path.Combine(directory, "Framework.dll");
@@ -28,12 +28,12 @@ public sealed class ConformanceTests : MsbuildTests
                 new XElement("ReferenceCopyLocalPaths", new XAttribute("Include", dependency)),
                 new XElement("ReferenceCopyLocalPaths", new XAttribute("Include", framework)),
                 new XElement("ReferencePath", new XAttribute("Include", framework), new XElement("FrameworkReferenceName", "Microsoft.NETCore.App"))),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.ManagedBundle.targets"))),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.ManagedBundle.targets"))),
             new XElement("Import", new XAttribute("Project", targets)),
             new XElement("Target", new XAttribute("Name", "CoreCompile")));
         var result = await Run(Msbuild(project, "-t:CoreCompile"));
-        Assert.True(malformed ? result.Exit != 0 && result.Output.Contains("WISP1000", StringComparison.Ordinal)
-                : result.Exit == 0 && result.Output.Contains("WISP1001", StringComparison.Ordinal)
+        Assert.True(malformed ? result.Exit != 0 && result.Output.Contains("ISOPLANE1000", StringComparison.Ordinal)
+                : result.Exit == 0 && result.Output.Contains("ISOPLANE1001", StringComparison.Ordinal)
                   && result.Output.Contains("Portable.Native.Read", StringComparison.Ordinal),
             "Ordinary compilation must inspect dependencies, warn on declarations and refuse malformed metadata: " + result.Output);
         Assert.True(!result.Output.Contains("Assembly 'Framework'", StringComparison.Ordinal),

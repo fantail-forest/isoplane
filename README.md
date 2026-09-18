@@ -1,6 +1,6 @@
-# WISP
+# Isoplane
 
-WISP hosts customer-written .NET applications as WebAssembly guests. The
+Isoplane hosts customer-written .NET applications as WebAssembly guests. The
 isolation boundary is the WASM sandbox, not the CLR and not a hypervisor.
 Guests are pre-initialised at deploy time into a memory template, activate
 copy-on-write from it, park with an empty stack while waiting on host I/O, and
@@ -15,7 +15,7 @@ derives from.
 ## Building and testing
 
 `scripts/dev` runs commands directly on the host, using your environment and
-adding `.wisp-dev/tools/bin` to `PATH`. Install Rust, Python 3 and your
+adding `.isoplane-dev/tools/bin` to `PATH`. Install Rust, Python 3 and your
 platform's C compiler first. Node.js is needed for frontend and docs builds.
 
 ```sh
@@ -40,7 +40,7 @@ The optional repository toolchain image remains available through
 
 See `scripts/dev` for native commands and the optional container workflow.
 
-Tests that need a guest module build it on demand through the `wisp-fixtures`
+Tests that need a guest module build it on demand through the `isoplane-fixtures`
 crate, which runs `guests/build.sh` and `guests/build-dotnet.sh` and fails
 naming the missing tool when the toolchain is absent.
 
@@ -56,7 +56,7 @@ cargo metadata --no-deps --format-version 1 \
 
 | Path                  | What it is                                                                |
 | --------------------- | ------------------------------------------------------------------------- |
-| `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `wispd` and the native Isoplane support library. |
+| `crates/`              | The host: the contract, engine, local snapshots, proxy, cell, control plane, `isoplaned` and the native Isoplane support library. |
 | `guest-sdks/dotnet`    | The C# guest SDK. |
 | `guest-sdks/rust`      | Internal Rust helpers for guest test fixtures. |
 | `guests/`             | The guest modules: fixtures the host tests drive, and the C# samples.     |

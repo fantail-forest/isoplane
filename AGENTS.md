@@ -15,7 +15,7 @@
 
 ## Project Overview
 
-**WISP** hosts customer-written .NET applications as WebAssembly guests. The
+**Isoplane** hosts customer-written .NET applications as WebAssembly guests. The
 isolation boundary is the WASM sandbox, not the CLR and not a hypervisor.
 Guests are pre-initialised at deploy time into a memory template, activate
 copy-on-write from it, park with an empty stack while waiting on host I/O, and
@@ -46,7 +46,7 @@ cargo metadata --no-deps --format-version 1 \
 | **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile pins the build toolchain. Nightly is never required for build, test, lint, or docs.                                                                                |
 | **wasmtime**             | `Cargo.toml`                                            | One version across the workspace, shared by preparation and execution.                                                |
 | **.NET SDK**             | `global.json`, consumed by `Dockerfile`                         | Policy: pin one SDK version. The image installs the version declared in `global.json`.                                                                                                           |
-| **ILCompiler.LLVM**      | `guest-sdks/dotnet/Wisp.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
+| **ILCompiler.LLVM**      | `guest-sdks/dotnet/Isoplane.Guest.props`                    | Experimental feed (`nuget.config`). Upgrade it in its own commit, with guest fixtures rebuilt and the test suite green before and after. |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
 | **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` | The gate, green before every commit.                                                                                                             |
 | **Format**               | `rustfmt.toml` (root and `guests/`)                     | `cargo fmt --all --check` in both workspaces is a commit gate, alongside clippy. Default rustfmt settings; never `#[rustfmt::skip]`.             |
@@ -72,14 +72,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check && (cd guests && cargo fmt --all --check)   # The format gate
 
 cargo test --workspace                             # Everything
-cargo test -p wisp-host                            # One crate
-cargo test -p wisp-host --test cell                # One integration test binary
+cargo test -p isoplane-host                            # One crate
+cargo test -p isoplane-host --test cell                # One integration test binary
 
 scripts/dev guests/build.sh                        # Rust guests -> guests/out/*.wasm
 scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*.wasm
 
-cargo run -p wispd -- --config wispd.toml          # Run a node
-cargo run -p wispd -- --config wispd.toml --check  # Validate a config without running
+cargo run -p isoplaned -- --config isoplaned.toml          # Run a node
+cargo run -p isoplaned -- --config isoplaned.toml --check  # Validate a config without running
 isoplane deploy --app <name> --project <directory> --team <name>
 isoplane doctor <wasm>             # Validate a module locally
 
@@ -142,12 +142,12 @@ Use the type system so that misuse is a compile error.
 
 | Construct                 | Convention                                          | Example                                       |
 | ------------------------- | --------------------------------------------------- | --------------------------------------------- |
-| Crates                    | `wisp-<noun>`                                       | `wisp-proxy`                                  |
+| Crates                    | `isoplane-<noun>`                                       | `isoplane-proxy`                                  |
 | Files, modules, functions | snake_case                                          | `future_table.rs`                             |
 | Types, traits             | PascalCase, no `I` prefix                           | `Activator` ✓, `IActivator` ✗                 |
 | Numeric values            | unit in the name                                    | `budget_ms`, `delta_bytes` ✓, `budget` ✗      |
 | Tests                     | a sentence stating the behaviour                    | `a_tombstoned_instance_refuses_the_next_call` |
-| C#                        | .NET conventions; public API in `Wisp.*` namespaces | `Wisp.Sdk.Request`                            |
+| C#                        | .NET conventions; public API in `Isoplane.*` namespaces | `Isoplane.Sdk.Request`                            |
 
 ### Module Organization
 
@@ -186,7 +186,7 @@ Tests are not optional. Ship a change to behaviour with the test that would have
 
 ### Principles
 
-1. **A feature is proven at the level that proves it, in a suite that stays fast.** Validate critical integrations (the SDK against the host, wasmtime, pre-initialisation, the execution engine) with integration tests through their real interfaces. Validate behaviour a customer sees end to end through `wispd`'s listener or the `isoplane` command when that runs in reasonable time, with a small number of such tests rather than one per change. A fast suite is a feature of the codebase: replace a slow end-to-end test whenever an integration test could cover it. Code reachable only from fakes or benchmarks is still not a feature.
+1. **A feature is proven at the level that proves it, in a suite that stays fast.** Validate critical integrations (the SDK against the host, wasmtime, pre-initialisation, the execution engine) with integration tests through their real interfaces. Validate behaviour a customer sees end to end through `isoplaned`'s listener or the `isoplane` command when that runs in reasonable time, with a small number of such tests rather than one per change. A fast suite is a feature of the codebase: replace a slow end-to-end test whenever an integration test could cover it. Code reachable only from fakes or benchmarks is still not a feature.
 2. **Tests are deterministic.** No elapsed-time assertions, no ratios of timings, no "A finished before B". Assert order with explicit sequencing; make time a clock the test controls.
 3. **Every guard fires in a test.** Ship every limit, rejection rule, and budget kill with a test that trips it. A check that has never failed is not a check.
 4. **Tests assert logic; benchmarks measure.** Tests may assert deterministic quantities and configured limits, including byte sizes, resource accounting, and deadlines advanced with a controlled clock. Machine-dependent performance thresholds belong in benchmarks outside `cargo test`. A benchmark reports measurements without a pass/fail verdict.
@@ -196,7 +196,7 @@ Tests are not optional. Ship a change to behaviour with the test that would have
 
 ### Structure
 
-- Put unit tests in the module (`#[cfg(test)] mod tests`), integration tests in `crates/<crate>/tests/`, and scenario tests in a top-level directory named for what they are, `scenario-tests/`, driving a real `wispd`. A directory called `tests/` at the root says nothing about what kind of test it holds.
+- Put unit tests in the module (`#[cfg(test)] mod tests`), integration tests in `crates/<crate>/tests/`, and scenario tests in a top-level directory named for what they are, `scenario-tests/`, driving a real `isoplaned`. A directory called `tests/` at the root says nothing about what kind of test it holds.
 - One behaviour per test. Multiple assertions may verify facets of that behaviour, such as a response status and body; split independent behaviours into separate tests.
 - Give every assertion a message that says what is wrong in the system's terms, not what was compared: `assert_eq!(status, 200, "a promoted version must be routable")`, never a bare `assert_eq!`. The values are printed anyway; the message is the diagnosis. In C#, use the message argument or FluentAssertions' `because:`.
 - Name tests like a spec: `a_websocket_survives_its_instance_hibernating`.

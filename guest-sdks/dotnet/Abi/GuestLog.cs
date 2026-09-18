@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 internal static unsafe class GuestLog
 {

@@ -1,11 +1,11 @@
-<Project Sdk="Wisp.Sdk/0.1.0-preview.1">
+<Project Sdk="Isoplane.Sdk/0.1.0-preview.1">
   <PropertyGroup>
-    <WispMemoryMaxBytes>536870912</WispMemoryMaxBytes>
-    <Configurations>Debug;Release;WispInterpretedDebug;WispNativeAotRelease</Configurations>
+    <IsoplaneMemoryMaxBytes>536870912</IsoplaneMemoryMaxBytes>
+    <Configurations>Debug;Release;IsoplaneInterpretedDebug;IsoplaneNativeAotRelease</Configurations>
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
-    <PublishAot Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</PublishAot>
-    <Optimize Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</Optimize>
-    <WispApplicationFactory>MinimalTodo.Application.Create</WispApplicationFactory>
+    <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>
+    <Optimize Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</Optimize>
+    <IsoplaneApplicationFactory>MinimalTodo.Application.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

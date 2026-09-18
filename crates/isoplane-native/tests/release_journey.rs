@@ -79,7 +79,7 @@ fn snapshot_working_tree(root: &Path, index: &Path) -> String {
         "-c",
         "user.name=release journey",
         "-c",
-        "user.email=release-journey@wisp.invalid",
+        "user.email=release-journey@isoplane.invalid",
         "commit-tree",
         &tree,
         "-p",
@@ -121,7 +121,7 @@ fn build_release(worktree: &Path, root: &Path, output: &Path) -> Release {
         Command::new("python3")
             .arg(worktree.join("scripts/build-preview.py"))
             .arg("--cache")
-            .arg(root.join(".wisp-dev/preview-build"))
+            .arg(root.join(".isoplane-dev/preview-build"))
             .arg("--output")
             .arg(output)
             .current_dir(worktree),
@@ -167,10 +167,10 @@ fn build_release(worktree: &Path, root: &Path, output: &Path) -> Release {
     }
 }
 
-/// The scratch tree for two releases lives under `.wisp-dev` and is rebuilt on every run, so a finished
+/// The scratch tree for two releases lives under `.isoplane-dev` and is rebuilt on every run, so a finished
 /// run leaves one copy behind rather than one per run in a temporary directory nobody removes.
 fn scratch_tree(root: &Path) -> PathBuf {
-    let scratch = root.join(".wisp-dev/release-journey");
+    let scratch = root.join(".isoplane-dev/release-journey");
     if scratch.exists() {
         let _ = Command::new("git")
             .args(["worktree", "remove", "--force"])
@@ -213,7 +213,7 @@ fn build_releases() -> Releases {
                 "-c",
                 "user.name=release journey",
                 "-c",
-                "user.email=release-journey@wisp.invalid",
+                "user.email=release-journey@isoplane.invalid",
                 "commit",
                 "-qam",
                 "release journey: next preview",
@@ -274,7 +274,7 @@ fn customer_image(release: &Release) -> String {
         documented_bootstrap_packages(release).join(" ")
     );
     let tag = format!(
-        "wisp-release-journey:{}",
+        "isoplane-release-journey:{}",
         blake3::hash(dockerfile.as_bytes()).to_hex()
     );
     let mut build = Command::new("docker");
@@ -419,7 +419,7 @@ const RELEASES_MOUNT: &str = "/releases";
 
 impl Machine {
     fn new(releases: &Releases) -> Self {
-        let name = format!("wisp-release-journey-{}", uuid_like());
+        let name = format!("isoplane-release-journey-{}", uuid_like());
         succeed(
             Command::new("docker")
                 .args([
@@ -428,7 +428,7 @@ impl Machine {
                     "--name",
                     &name,
                     "--label",
-                    "wisp.release-journey=1",
+                    "isoplane.release-journey=1",
                     "--add-host",
                     &format!("{HOST_ALIAS}:host-gateway"),
                 ])
@@ -538,7 +538,7 @@ impl Machine {
             "creating a project from the registered template in a new shell",
         );
         assert!(
-            project.contains(&format!("Sdk=\"Wisp.AspNetCore/{}\"", release.version)),
+            project.contains(&format!("Sdk=\"Isoplane.AspNetCore/{}\"", release.version)),
             "the generated project must pin the SDK version this release ships, not an older one:\n{project}"
         );
         name.to_owned()
@@ -633,7 +633,7 @@ fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_
         "dotnet new list must discover the registered template after setup"
     );
     let app = machine.create_project(&releases.current, "JourneyApp");
-    for configuration in ["WispInterpretedDebug", "WispNativeAotRelease"] {
+    for configuration in ["IsoplaneInterpretedDebug", "IsoplaneNativeAotRelease"] {
         machine.build(&app, configuration);
     }
 }
@@ -672,7 +672,7 @@ fn repeated_setup_changes_nothing_and_uninstall_sdk_removes_exactly_what_setup_r
         "a repeated setup must not duplicate the shell startup line"
     );
     let app = machine.create_project(&releases.current, "RemovalApp");
-    machine.build(&app, "WispInterpretedDebug");
+    machine.build(&app, "IsoplaneInterpretedDebug");
 
     let removal = machine.uninstall_sdk();
     assert!(
@@ -744,7 +744,7 @@ fn updating_the_global_tool_and_rerunning_setup_moves_to_the_next_preview_as_one
         "the upgrade must replace the toolchain rather than accumulate them:\n{toolchains}"
     );
     let app = machine.create_project(&releases.next, "UpgradedApp");
-    machine.build(&app, "WispInterpretedDebug");
+    machine.build(&app, "IsoplaneInterpretedDebug");
     machine.uninstall_sdk();
     assert!(
         !machine.templates().contains("isoplane-web"),

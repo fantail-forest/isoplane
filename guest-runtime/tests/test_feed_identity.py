@@ -15,7 +15,7 @@ input_digest, verify_feed = module.input_digest, module.verify_feed
 
 class FeedTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix='wisp-feed-identity-')
+        temporary = tempfile.TemporaryDirectory(prefix='isoplane-feed-identity-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         for name in ['manifest.env', 'build.sh', 'source-tree.py', 'feed-identity.py']:
@@ -26,12 +26,12 @@ class FeedTests(unittest.TestCase):
         self.feed.mkdir()
         props = ET.Element('Project')
         group = ET.SubElement(props, 'PropertyGroup')
-        ET.SubElement(group, 'WispGuestRuntimeInputsSha256').text = input_digest(self.root)
+        ET.SubElement(group, 'IsoplaneGuestRuntimeInputsSha256').text = input_digest(self.root)
         for package, prefix in [
-            ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'WispGuestRuntimePack'),
-            ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'WispGuestWasiSdkPack'),
-            ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotPack'),
-            ('Microsoft.DotNet.ILCompiler.LLVM', 'WispGuestNativeAotSdkPack'),
+            ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack'),
+            ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'IsoplaneGuestWasiSdkPack'),
+            ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotPack'),
+            ('Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotSdkPack'),
         ]:
             content = package.encode()
             path = self.feed / f'{package}.1.nupkg'
@@ -44,7 +44,7 @@ class FeedTests(unittest.TestCase):
             content = path.read_bytes()
             ET.SubElement(group, prefix + 'Version').text = '1'
             ET.SubElement(group, prefix + 'Sha512').text = base64.b64encode(hashlib.sha512(content).digest()).decode()
-        ET.ElementTree(props).write(self.feed / 'Wisp.GuestRuntime.props')
+        ET.ElementTree(props).write(self.feed / 'Isoplane.GuestRuntime.props')
 
     def test_current_published_inputs_are_accepted(self):
         self.assertEqual(verify_feed(self.feed, self.root), input_digest(self.root))
@@ -87,7 +87,7 @@ class FeedTests(unittest.TestCase):
 
     def test_feed_and_packs_remain_valid_after_relocation(self):
         import shutil
-        with tempfile.TemporaryDirectory(prefix='wisp-relocated-feed-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='isoplane-relocated-feed-') as temporary:
             relocated = Path(temporary)
             shutil.copytree(self.feed, relocated / 'feed')
             shutil.copytree(self.root / 'packs', relocated / 'packs')
@@ -104,28 +104,28 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(original, input_digest(self.root))
 
     def test_explicit_artifact_refuses_malformed_input_identity(self):
-        path = self.feed / 'Wisp.GuestRuntime.props'
+        path = self.feed / 'Isoplane.GuestRuntime.props'
         props = ET.parse(path)
-        props.getroot().find('./PropertyGroup/WispGuestRuntimeInputsSha256').text = 'not-a-digest'
+        props.getroot().find('./PropertyGroup/IsoplaneGuestRuntimeInputsSha256').text = 'not-a-digest'
         props.write(path)
         with self.assertRaisesRegex(ValueError, 'not a lowercase SHA256'):
             verify_feed(self.feed)
 
     def test_duplicate_properties_cannot_disagree_with_msbuild(self):
-        path = self.feed / 'Wisp.GuestRuntime.props'
+        path = self.feed / 'Isoplane.GuestRuntime.props'
         props = ET.parse(path)
-        ET.SubElement(props.getroot().find('PropertyGroup'), 'WispGuestRuntimePackVersion').text = '2'
+        ET.SubElement(props.getroot().find('PropertyGroup'), 'IsoplaneGuestRuntimePackVersion').text = '2'
         props.write(path)
         with self.assertRaisesRegex(ValueError, 'ambiguous duplicate'):
             verify_feed(self.feed)
 
     def test_missing_provenance_is_refused(self):
-        path = self.feed / 'Wisp.GuestRuntime.props'
+        path = self.feed / 'Isoplane.GuestRuntime.props'
         props = ET.parse(path)
         group = props.getroot().find('PropertyGroup')
-        group.remove(group.find('WispGuestRuntimeInputsSha256'))
+        group.remove(group.find('IsoplaneGuestRuntimeInputsSha256'))
         props.write(path)
-        with self.assertRaisesRegex(ValueError, 'no WispGuestRuntimeInputsSha256'):
+        with self.assertRaisesRegex(ValueError, 'no IsoplaneGuestRuntimeInputsSha256'):
             verify_feed(self.feed, self.root)
 
 

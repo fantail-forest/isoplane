@@ -1,8 +1,8 @@
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 /// <summary>
 /// The packed <c>u64</c> that every guest entrypoint returns; mirrors
-/// <c>wisp-abi::status::PollStatus</c>.
+/// <c>isoplane-abi::status::PollStatus</c>.
 ///
 /// <code>
 ///   bits  0..32   tag      0 = done, 1 = pending, 2 = trapped
@@ -27,7 +27,7 @@ internal static class PollStatus
     private static long Pack(uint tag, uint payload) => (long)((ulong)tag | ((ulong)payload << 32));
 }
 
-/// <summary>Mirrors <c>wisp-abi::status::TrapCode</c>.</summary>
+/// <summary>Mirrors <c>isoplane-abi::status::TrapCode</c>.</summary>
 internal enum TrapCode : uint
 {
     Unknown = 0,

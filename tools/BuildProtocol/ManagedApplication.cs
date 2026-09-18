@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Wisp.Build;
+namespace Isoplane.Build;
 
 internal enum GuestExecution { Interpreted, NativeAot }
 internal sealed record ManagedApplication(string Assembly, string Factory, GuestExecution Execution);

@@ -2,7 +2,7 @@
 
 use core::future::Future;
 
-use wisp_abi::dispatch::{DispatchRecord, TraceContext};
+use isoplane_abi::dispatch::{DispatchRecord, TraceContext};
 
 use crate::future::{decode_unit, HostFuture};
 use crate::rt;

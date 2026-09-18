@@ -8,7 +8,7 @@ using System;
 using System.Runtime.InteropServices;
 
 
-namespace Wisp.Native.Interop
+namespace Isoplane.Native.Interop
 {
     internal static unsafe partial class NativeMethods
     {

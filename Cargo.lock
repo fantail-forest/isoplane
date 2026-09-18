@@ -183,29 +183,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "aws-lc-rs"
-version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
-dependencies = [
- "aws-lc-sys",
- "zeroize",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.45.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
-dependencies = [
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
- "pkg-config",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -385,15 +362,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "cmake"
-version = "0.1.58"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -490,7 +458,7 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
@@ -498,7 +466,7 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -506,7 +474,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-entity",
  "wasmtime-internal-core",
@@ -515,7 +483,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bitset"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "serde",
  "serde_derive",
@@ -525,7 +493,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -555,7 +523,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -567,12 +535,12 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 
 [[package]]
 name = "cranelift-control"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "arbitrary",
 ]
@@ -580,7 +548,7 @@ dependencies = [
 [[package]]
 name = "cranelift-entity"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -591,7 +559,7 @@ dependencies = [
 [[package]]
 name = "cranelift-frontend"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-codegen",
  "hashbrown 0.17.1",
@@ -603,12 +571,12 @@ dependencies = [
 [[package]]
 name = "cranelift-isle"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 
 [[package]]
 name = "cranelift-native"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -618,7 +586,7 @@ dependencies = [
 [[package]]
 name = "cranelift-srcgen"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 
 [[package]]
 name = "crc32fast"
@@ -725,27 +693,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "directories-next"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "339ee130d97a610ea5a5872d2bbb130fdf68884ff09d3028b81bec8a1ac23bbc"
-dependencies = [
- "cfg-if",
- "dirs-sys-next",
-]
-
-[[package]]
-name = "dirs-sys-next"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
-dependencies = [
- "libc",
- "redox_users",
- "winapi",
-]
-
-[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -761,12 +708,6 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
-name = "dunce"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "either"
@@ -858,12 +799,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
-name = "fixedbitset"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
-
-[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -910,12 +845,6 @@ dependencies = [
  "rustix",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "fs_extra"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "futures"
@@ -1443,12 +1372,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "id-arena"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
-
-[[package]]
 name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1519,6 +1442,154 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
+name = "isoplane-abi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "postcard",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "isoplane-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "hex",
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-fixtures",
+ "isoplane-harness",
+ "isoplane-host",
+ "isoplane-prepare",
+ "isoplane-runtime",
+ "parking_lot",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wasmparser 0.244.0",
+ "wasmtime",
+ "wat",
+ "zstd",
+]
+
+[[package]]
+name = "isoplane-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "cpu-time",
+ "isoplane-abi",
+ "isoplane-fixtures",
+ "libc",
+ "memmap2",
+ "parking_lot",
+ "postcard",
+ "rayon",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml",
+ "tracing",
+ "wasmparser 0.244.0",
+ "wasmtime",
+ "wat",
+]
+
+[[package]]
+name = "isoplane-fixtures"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
+name = "isoplane-harness"
+version = "0.1.0"
+dependencies = [
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-host",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "isoplane-hibernate"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "fs4",
+ "isoplane-abi",
+ "isoplane-engine",
+ "libc",
+ "parking_lot",
+ "postcard",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zstd",
+]
+
+[[package]]
+name = "isoplane-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "cpu-time",
+ "futures",
+ "hickory-resolver",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-fixtures",
+ "isoplane-harness",
+ "isoplane-hibernate",
+ "libc",
+ "parking_lot",
+ "postcard",
+ "rand 0.9.5",
+ "scc",
+ "serde",
+ "serde_json",
+ "socket2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wat",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "isoplane-native"
 version = "0.1.0"
 dependencies = [
@@ -1530,6 +1601,15 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-fixtures",
+ "isoplane-hibernate",
+ "isoplane-host",
+ "isoplane-prepare",
+ "isoplane-proxy",
+ "isoplane-runtime",
+ "isoplane-trust",
  "libc",
  "parking_lot",
  "portable-pty",
@@ -1548,16 +1628,179 @@ dependencies = [
  "tracing-subscriber",
  "wasmparser 0.244.0",
  "wat",
- "wisp-abi",
- "wisp-engine",
- "wisp-fixtures",
- "wisp-hibernate",
- "wisp-host",
- "wisp-prepare",
- "wisp-proxy",
- "wisp-runtime",
- "wisp-trust",
  "zstd",
+]
+
+[[package]]
+name = "isoplane-prepare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "fs4",
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-host",
+ "isoplane-runtime",
+ "parking_lot",
+ "postcard",
+ "rand 0.9.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "wasm-encoder 0.244.0",
+ "wasmparser 0.244.0",
+ "wasmtime",
+ "wat",
+]
+
+[[package]]
+name = "isoplane-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "isoplane-abi",
+ "parking_lot",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha1",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "isoplane-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "hex",
+ "isoplane-abi",
+ "isoplane-fixtures",
+ "isoplane-host",
+ "isoplane-proxy",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "wasmparser 0.244.0",
+ "wat",
+]
+
+[[package]]
+name = "isoplane-runtime-acceptance"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "brotli",
+ "bytes",
+ "flate2",
+ "futures",
+ "h2",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-fixtures",
+ "isoplane-harness",
+ "isoplane-host",
+ "isoplane-proxy",
+ "libc",
+ "rustls",
+ "rustls-pki-types",
+ "sha1",
+ "socket2",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "isoplane-trust"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "isoplaned"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "blake3",
+ "bytes",
+ "clap",
+ "fs4",
+ "futures",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "isoplane-abi",
+ "isoplane-control",
+ "isoplane-engine",
+ "isoplane-fixtures",
+ "isoplane-hibernate",
+ "isoplane-host",
+ "isoplane-prepare",
+ "isoplane-proxy",
+ "isoplane-runtime",
+ "isoplane-trust",
+ "libc",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "parking_lot",
+ "prost",
+ "rand 0.9.5",
+ "reqwest 0.12.28",
+ "reqwest 0.13.5",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+ "wat",
 ]
 
 [[package]]
@@ -1690,15 +1933,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
-name = "libredox"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28d0a00925a9f930d679b6789b721e3a7f9ed110f41b86d2497caa780c3a070a"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "libsqlite3-sys"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1780,6 +2014,12 @@ checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "mime"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "miniz_oxide"
@@ -2007,16 +2247,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "petgraph"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
-dependencies = [
- "fixedbitset",
- "indexmap",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2165,7 +2395,7 @@ dependencies = [
 [[package]]
 name = "pulley-interpreter"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -2176,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "pulley-macros"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2209,7 +2439,6 @@ version = "0.11.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
 dependencies = [
- "aws-lc-rs",
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
@@ -2355,17 +2584,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_users"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
-dependencies = [
- "getrandom 0.2.17",
- "libredox",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2455,9 +2673,11 @@ checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
  "base64 0.23.1",
  "bytes",
+ "encoding_rs",
  "futures-channel",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -2466,9 +2686,9 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime",
  "percent-encoding",
  "pin-project-lite",
- "quinn",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -2558,7 +2778,6 @@ version = "0.23.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6725596c3f2c3a0aef021139e145d4eafe314a6623e4680ca83852b2c67ab2ba"
 dependencies = [
- "aws-lc-rs",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -2622,7 +2841,6 @@ version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
- "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -3514,23 +3732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-compose"
-version = "0.254.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fd717357bff09b5f1ea49aea8ed1cd149b0c521823a1cc70bc2ac16b90b651a"
-dependencies = [
- "anyhow",
- "heck",
- "indexmap",
- "log",
- "petgraph",
- "smallvec",
- "wasm-encoder 0.254.0",
- "wasmparser 0.254.0",
- "wat",
-]
-
-[[package]]
 name = "wasm-encoder"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3558,18 +3759,6 @@ checksum = "7d8ad9f0a39050867bda22e6486c316e2e52d20a42154d5bc433934bf738d085"
 dependencies = [
  "leb128fmt",
  "wasmparser 0.257.1",
-]
-
-[[package]]
-name = "wasm-metadata"
-version = "0.254.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b01df5f3b4ca7881e843f3bc0fb8a3905d79c68692250dcb8e33e698705ccdb6"
-dependencies = [
- "anyhow",
- "indexmap",
- "wasm-encoder 0.254.0",
- "wasmparser 0.254.0",
 ]
 
 [[package]]
@@ -3623,14 +3812,13 @@ dependencies = [
 [[package]]
 name = "wasmtime"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "addr2line",
  "async-trait",
  "bitflags 2.13.1",
  "bumpalo",
  "cc",
- "encoding_rs",
  "futures",
  "fxprof-processed-profile",
  "gimli",
@@ -3645,20 +3833,13 @@ dependencies = [
  "pulley-interpreter",
  "rayon",
  "rustix",
- "semver",
  "serde",
  "serde_derive",
  "serde_json",
  "smallvec",
  "target-lexicon",
- "tempfile",
- "wasm-compose",
- "wasm-encoder 0.254.0",
  "wasmparser 0.254.0",
  "wasmtime-environ",
- "wasmtime-internal-cache",
- "wasmtime-internal-component-macro",
- "wasmtime-internal-component-util",
  "wasmtime-internal-core",
  "wasmtime-internal-cranelift",
  "wasmtime-internal-fiber",
@@ -3667,15 +3848,13 @@ dependencies = [
  "wasmtime-internal-unwinder",
  "wasmtime-internal-versioned-export-macros",
  "wasmtime-internal-winch",
- "wat",
  "windows-sys 0.61.2",
- "wit-parser",
 ]
 
 [[package]]
 name = "wasmtime-environ"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -3703,47 +3882,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasmtime-internal-cache"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
-dependencies = [
- "base64 0.22.1",
- "directories-next",
- "log",
- "postcard",
- "rustix",
- "serde",
- "serde_derive",
- "sha2",
- "toml",
- "wasmtime-environ",
- "windows-sys 0.61.2",
- "zstd",
-]
-
-[[package]]
-name = "wasmtime-internal-component-macro"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
-dependencies = [
- "anyhow",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "wasmtime-internal-component-util",
- "wasmtime-internal-wit-bindgen",
- "wit-parser",
-]
-
-[[package]]
 name = "wasmtime-internal-component-util"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 
 [[package]]
 name = "wasmtime-internal-core"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "anyhow",
  "hashbrown 0.17.1",
@@ -3754,7 +3900,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-cranelift"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-codegen",
  "cranelift-control",
@@ -3779,7 +3925,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-fiber"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cc",
  "libc",
@@ -3792,7 +3938,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-jit-debug"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cc",
  "object",
@@ -3803,7 +3949,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "libc",
  "wasmtime-internal-core",
@@ -3813,7 +3959,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-unwinder"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -3824,7 +3970,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3834,7 +3980,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-winch"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-codegen",
  "gimli",
@@ -3845,19 +3991,6 @@ dependencies = [
  "wasmtime-environ",
  "wasmtime-internal-cranelift",
  "winch-codegen",
-]
-
-[[package]]
-name = "wasmtime-internal-wit-bindgen"
-version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
-dependencies = [
- "anyhow",
- "bitflags 2.13.1",
- "heck",
- "indexmap",
- "wit-component",
- "wit-parser",
 ]
 
 [[package]]
@@ -3960,7 +4093,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "winch-codegen"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=c464403e03bb1639b1ae78a73fdf496b4c2a3026#c464403e03bb1639b1ae78a73fdf496b4c2a3026"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5d2fff464e9735e337f69494db1e26fa14ee158c#5d2fff464e9735e337f69494db1e26fa14ee158c"
 dependencies = [
  "cranelift-assembler-x64",
  "cranelift-codegen",
@@ -4123,367 +4256,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wisp-abi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "postcard",
- "serde",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "wisp-control"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "hex",
- "parking_lot",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "sha1",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "wasmparser 0.244.0",
- "wasmtime",
- "wat",
- "wisp-abi",
- "wisp-engine",
- "wisp-fixtures",
- "wisp-harness",
- "wisp-host",
- "wisp-prepare",
- "wisp-runtime",
- "zstd",
-]
-
-[[package]]
-name = "wisp-engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "cpu-time",
- "libc",
- "memmap2",
- "parking_lot",
- "postcard",
- "rayon",
- "serde",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "toml",
- "tracing",
- "wasmparser 0.244.0",
- "wasmtime",
- "wat",
- "wisp-abi",
- "wisp-fixtures",
-]
-
-[[package]]
-name = "wisp-fixtures"
-version = "0.1.0"
-dependencies = [
- "tempfile",
-]
-
-[[package]]
-name = "wisp-harness"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wisp-abi",
- "wisp-engine",
- "wisp-host",
-]
-
-[[package]]
-name = "wisp-hibernate"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "async-trait",
- "blake3",
- "fs4",
- "libc",
- "parking_lot",
- "postcard",
- "rand 0.9.5",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wisp-abi",
- "wisp-engine",
- "zstd",
-]
-
-[[package]]
-name = "wisp-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "cpu-time",
- "futures",
- "hickory-resolver",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "parking_lot",
- "postcard",
- "rand 0.9.5",
- "scc",
- "serde",
- "serde_json",
- "socket2",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wat",
- "windows-sys 0.61.2",
- "wisp-abi",
- "wisp-engine",
- "wisp-fixtures",
- "wisp-harness",
- "wisp-hibernate",
-]
-
-[[package]]
-name = "wisp-prepare"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "fs4",
- "parking_lot",
- "postcard",
- "rand 0.9.5",
- "rayon",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "wasm-encoder 0.244.0",
- "wasmparser 0.244.0",
- "wasmtime",
- "wat",
- "wisp-abi",
- "wisp-engine",
- "wisp-host",
- "wisp-runtime",
-]
-
-[[package]]
-name = "wisp-proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "futures",
- "http-body-util",
- "hyper",
- "hyper-util",
- "parking_lot",
- "rand 0.9.5",
- "serde",
- "serde_json",
- "sha1",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "wisp-abi",
-]
-
-[[package]]
-name = "wisp-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "blake3",
- "hex",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "wasmparser 0.244.0",
- "wat",
- "wisp-abi",
- "wisp-fixtures",
- "wisp-host",
- "wisp-proxy",
-]
-
-[[package]]
-name = "wisp-runtime-acceptance"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "brotli",
- "bytes",
- "flate2",
- "futures",
- "h2",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "rustls",
- "rustls-pki-types",
- "sha1",
- "socket2",
- "tokio",
- "tokio-rustls",
- "wisp-abi",
- "wisp-engine",
- "wisp-fixtures",
- "wisp-harness",
- "wisp-host",
- "wisp-proxy",
-]
-
-[[package]]
-name = "wisp-trust"
-version = "0.1.0"
-dependencies = [
- "hex",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "wispd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "clap",
- "fs4",
- "futures",
- "hex",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "parking_lot",
- "prost",
- "rand 0.9.5",
- "reqwest 0.12.28",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
- "wat",
- "wisp-abi",
- "wisp-control",
- "wisp-engine",
- "wisp-fixtures",
- "wisp-hibernate",
- "wisp-host",
- "wisp-prepare",
- "wisp-proxy",
- "wisp-runtime",
- "wisp-trust",
-]
-
-[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
-
-[[package]]
-name = "wit-component"
-version = "0.254.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0e65bb94c369b3c4741ce3d1d2704b1fec93db7c540df0e521a097e7ceeb5be"
-dependencies = [
- "anyhow",
- "bitflags 2.13.1",
- "indexmap",
- "log",
- "serde",
- "serde_derive",
- "serde_json",
- "wasm-encoder 0.254.0",
- "wasm-metadata",
- "wasmparser 0.254.0",
- "wit-parser",
-]
-
-[[package]]
-name = "wit-parser"
-version = "0.254.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1655131e4f7d3f0cb141f6eca71315ca40eff0f3d4de7cff0a82bacedd8c89b4"
-dependencies = [
- "anyhow",
- "hashbrown 0.17.1",
- "id-arena",
- "indexmap",
- "log",
- "semver",
- "serde",
- "serde_derive",
- "serde_json",
- "unicode-ident",
- "wasmparser 0.254.0",
-]
 
 [[package]]
 name = "writeable"

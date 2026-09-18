@@ -11,11 +11,11 @@ crate-type = ["cdylib"]
 [features]
 default = []
 # Build variant: the undeclared capability comes from a whole foreign MODULE
-# rather than an unknown field of `wisp`. Both must be rejected by V1.
+# rather than an unknown field of `isoplane`. Both must be rejected by V1.
 foreign-module = []
 
 [dependencies]
-wisp-guest = { workspace = true }
-wisp-abi   = { workspace = true }
+isoplane-guest = { workspace = true }
+isoplane-abi   = { workspace = true }
 serde      = { workspace = true }
 postcard   = { workspace = true }

@@ -9,4 +9,4 @@ license-file.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-wisp-guest = { workspace = true }
+isoplane-guest = { workspace = true }

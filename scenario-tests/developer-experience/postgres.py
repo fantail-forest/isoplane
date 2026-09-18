@@ -30,7 +30,7 @@ def command(arguments, *, env=None, cwd=None, data=None, timeout=120):
 def database(directory):
     command(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
              '-keyout', str(directory / 'ca.key'), '-out', str(directory / 'ca.crt'),
-             '-days', '1', '-subj', '/CN=WISP local development test CA',
+             '-days', '1', '-subj', '/CN=Isoplane local development test CA',
              '-addext', 'basicConstraints=critical,CA:TRUE'])
     command(['openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes',
              '-keyout', str(directory / 'server.key'), '-out', str(directory / 'server.csr'),
@@ -44,8 +44,8 @@ def database(directory):
     credentials = directory / 'postgres.env'
     credentials.write_text(f'POSTGRES_PASSWORD={password}\nPOSTGRES_DB=todo\n')
     credentials.chmod(0o600)
-    container = command(['docker', 'run', '--detach', '--rm', '--name', 'wisp-dx-pg-' + uuid.uuid4().hex,
-                         '--label', 'wisp.test=developer-experience', '--publish', '127.0.0.1::5432',
+    container = command(['docker', 'run', '--detach', '--rm', '--name', 'isoplane-dx-pg-' + uuid.uuid4().hex,
+                         '--label', 'isoplane.test=developer-experience', '--publish', '127.0.0.1::5432',
                          '--env-file', str(credentials),
                          '--mount', f'type=bind,source={directory},target=/certificates,readonly',
                          '--entrypoint', 'bash', 'postgres:16', '-ceu',
@@ -144,12 +144,12 @@ def main():
     parser.add_argument('--package-feed', type=Path, required=True)
     parser.add_argument('--records', type=Path, default=None)
     parser.add_argument('--sample', type=Path, default=Path(__file__).resolve().parents[2] / 'samples/aspnet-todo')
-    parser.add_argument('--configuration', action='append', choices=['WispInterpretedDebug', 'WispNativeAotRelease'])
+    parser.add_argument('--configuration', action='append', choices=['IsoplaneInterpretedDebug', 'IsoplaneNativeAotRelease'])
     arguments = parser.parse_args()
-    records = arguments.records or Path(tempfile.mkdtemp(prefix='wisp-dx-postgres-records-'))
+    records = arguments.records or Path(tempfile.mkdtemp(prefix='isoplane-dx-postgres-records-'))
     records.mkdir(parents=True, exist_ok=True)
     print(f'Records: {records}', flush=True)
-    with tempfile.TemporaryDirectory(prefix='wisp-dx-postgres-') as work:
+    with tempfile.TemporaryDirectory(prefix='isoplane-dx-postgres-') as work:
         directory = Path(work)
         project = directory / 'app'
         shutil.copytree(arguments.sample, project, ignore=shutil.ignore_patterns('bin', 'obj', 'out'))
@@ -172,10 +172,10 @@ def main():
             connection = f'Host=127.0.0.1;Port={port};Database=todo;Username=postgres;Password={password}'
             command([dotnet, 'user-secrets', 'set', '--project', str(project)], env=env,
                     data=json.dumps({'ConnectionStrings:Todo': connection}))
-            manifest = project / 'wisp.toml'
+            manifest = project / 'isoplane.toml'
             base = manifest.read_text().replace('127.0.0.1:5432', f'127.0.0.1:{port}')
             trust = f'\n[dev.trust]\nbundle = {json.dumps(str(directory / "ca.crt"))}\nsha256 = "{hashlib.sha256((directory / "ca.crt").read_bytes()).hexdigest()}"\n'
-            for configuration in arguments.configuration or ['WispInterpretedDebug', 'WispNativeAotRelease']:
+            for configuration in arguments.configuration or ['IsoplaneInterpretedDebug', 'IsoplaneNativeAotRelease']:
                 manifest.write_text(base + trust)
                 with (records / f'{configuration}-build.log').open('w') as log:
                     subprocess.run([dotnet, 'build', '-c', configuration, '--disable-build-servers'],

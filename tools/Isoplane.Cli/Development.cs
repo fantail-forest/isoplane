@@ -1,7 +1,7 @@
 using System.Threading.Channels;
-using Wisp.Native;
+using Isoplane.Native;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal static class Development
 {
@@ -123,7 +123,7 @@ internal static class Development
     private static async Task<int> BuildAsync(DevelopmentOptions options, SourceChanges changes, CancellationToken cancellation)
     {
         var directory = options.Directory;
-        var staging = Path.Combine(directory, ".wisp", "publish", Guid.NewGuid().ToString("N"));
+        var staging = Path.Combine(directory, ".isoplane", "publish", Guid.NewGuid().ToString("N"));
         try
         {
             var module = new LocalProject(directory).Module;
@@ -132,7 +132,7 @@ internal static class Development
             var project = Directory.GetFiles(directory, "*.csproj").Single();
             List<string> arguments = ["publish", project, "-c", options.Configuration, "-o", staging, "--disable-build-servers"];
             if (options.GuestRuntime is not null)
-                arguments.Add("-p:WispGuestRuntime=" + (options.GuestRuntime.Value switch
+                arguments.Add("-p:IsoplaneGuestRuntime=" + (options.GuestRuntime.Value switch
                 {
                     GuestRuntimeProfile.Mono => "Mono",
                     GuestRuntimeProfile.NativeAot => "NativeAOT",
@@ -193,7 +193,7 @@ internal static class Development
     internal static async Task<GuestRuntimeProfile> RuntimeProfileAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
         var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
-        using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration, "-getProperty:WispGuestRuntime"], options.Directory, captureOutput: true);
+        using var process = Processes.Start("dotnet", ["msbuild", project, "-p:Configuration=" + options.Configuration, "-getProperty:IsoplaneGuestRuntime"], options.Directory, captureOutput: true);
         try
         {
             var output = await process.StandardOutput.ReadToEndAsync(cancellation);
@@ -204,7 +204,7 @@ internal static class Development
             {
                 "Mono" => GuestRuntimeProfile.Mono,
                 "NativeAOT" => GuestRuntimeProfile.NativeAot,
-                _ => throw new InvalidOperationException("The project did not select a supported WISP guest runtime.")
+                _ => throw new InvalidOperationException("The project did not select a supported Isoplane guest runtime.")
             };
             if (options.GuestRuntime is { } requested && requested != selected)
                 throw new ArgumentException("--guest-runtime conflicts with the project configuration. Select the intended configuration with --configuration instead.");

@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-__attribute__((import_module("wisp"), import_name("log_emit")))
-extern void wisp_debug_log_emit(int32_t, const char *, int32_t);
+__attribute__((import_module("isoplane"), import_name("log_emit")))
+extern void isoplane_debug_log_emit(int32_t, const char *, int32_t);
 extern int __real_vfprintf(FILE *, const char *, va_list);
 extern int __real_fputs(const char *, FILE *);
 
@@ -19,7 +19,7 @@ static int emit(const char *format, va_list arguments)
     char *buffer = malloc((size_t)length + 1);
     if (!buffer) return -1;
     int written = vsnprintf(buffer, (size_t)length + 1, format, arguments);
-    if (written >= 0) wisp_debug_log_emit(2, buffer, written);
+    if (written >= 0) isoplane_debug_log_emit(2, buffer, written);
     free(buffer);
     return written;
 }
@@ -56,13 +56,13 @@ int __wrap_fprintf(FILE *stream, const char *format, ...)
 
 int __wrap_puts(const char *text)
 {
-    wisp_debug_log_emit(2, text, (int32_t)strlen(text));
+    isoplane_debug_log_emit(2, text, (int32_t)strlen(text));
     return 0;
 }
 
 int __wrap_fputs(const char *text, FILE *stream)
 {
     if (stream != stdout && stream != stderr) return __real_fputs(text, stream);
-    wisp_debug_log_emit(2, text, (int32_t)strlen(text));
+    isoplane_debug_log_emit(2, text, (int32_t)strlen(text));
     return 0;
 }

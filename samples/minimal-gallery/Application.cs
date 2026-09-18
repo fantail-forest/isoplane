@@ -1,14 +1,14 @@
 using System.Text.Json;
-using Wisp;
-using Wisp.Durable;
+using Isoplane;
+using Isoplane.Durable;
 
 namespace MinimalGallery;
 
 /// <summary>A gallery using maintained image, PostgreSQL, and S3 libraries without ASP.NET or EF Core.</summary>
-public sealed class Application : IWispHandler
+public sealed class Application : IIsoplaneHandler
 {
     /// <summary>Constructs the handler without reading credentials during preparation.</summary>
-    public static IWispHandler Create()
+    public static IIsoplaneHandler Create()
     {
         Initialization.Initializing += () =>
         {

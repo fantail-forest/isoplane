@@ -9,16 +9,16 @@ for the differences between them.
 ## Build and run a configuration
 
 ```bash
-dotnet build -c WispInterpretedDebug
-dotnet run --no-build -c WispInterpretedDebug
+dotnet build -c IsoplaneInterpretedDebug
+dotnet run --no-build -c IsoplaneInterpretedDebug
 ```
 
 Stop the application with Ctrl+C before starting another session for that
 project. To check ahead-of-time compilation:
 
 ```bash
-dotnet build -c WispNativeAotRelease
-dotnet run --no-build -c WispNativeAotRelease
+dotnet build -c IsoplaneNativeAotRelease
+dotnet run --no-build -c IsoplaneNativeAotRelease
 ```
 
 A successful build publishes and validates WebAssembly, pre-initializes the
@@ -35,7 +35,7 @@ NativeAOT build exposes different compatibility requirements.
 ## Watch for source changes
 
 ```bash
-dotnet watch --no-hot-reload run -c WispInterpretedDebug
+dotnet watch --no-hot-reload run -c IsoplaneInterpretedDebug
 ```
 
 This uses the ordinary .NET watch workflow: on an edit it stops the application,
@@ -44,7 +44,7 @@ retries after the next edit. The application is unavailable between stopping and
 the successful restart. Press Ctrl+C to end the session.
 
 `--no-hot-reload` requests a restart instead of applying code changes to the
-running instance. WISP guests do not support hot reload; without the flag, the
+running instance. Isoplane guests do not support hot reload; without the flag, the
 .NET watcher reports that limitation and falls back to restarting. Use the same
 configuration you would pass to `dotnet run`.
 

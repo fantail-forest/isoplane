@@ -1,14 +1,14 @@
-#if WISP_FILESYSTEM_PROBE
+#if ISOPLANE_FILESYSTEM_PROBE
 using System;
 using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises the managed view of the empty read-only filesystem.</summary>
-public sealed class FilesystemProbe : IWispHandler
+public sealed class FilesystemProbe : IIsoplaneHandler
 {
     private static readonly string InitialDirectory = Directory.GetCurrentDirectory();
 

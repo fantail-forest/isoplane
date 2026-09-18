@@ -29,16 +29,16 @@ struct Update {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Options {
-    manifest: wisp_abi::config::AppManifest,
+    manifest: isoplane_abi::config::AppManifest,
     state_directory: PathBuf,
     runtime_library: PathBuf,
     compilation_directory: PathBuf,
     #[serde(default)]
-    init_sandbox: wisp_abi::config::InitSandbox,
+    init_sandbox: isoplane_abi::config::InitSandbox,
     #[serde(default)]
     allow_endpoints: Vec<SocketAddr>,
     #[serde(default)]
-    trust: wisp_trust::TrustConfig,
+    trust: isoplane_trust::TrustConfig,
     #[serde(default)]
     configuration: std::collections::BTreeMap<String, String>,
     log_filter: Option<String>,
@@ -68,12 +68,13 @@ impl Options {
                     && !address.ip().is_multicast()),
             "development services must name individual IP addresses and nonzero ports"
         );
-        let trust = wisp_trust::TrustBundle::load(&self.trust)?;
-        let platform_files = wisp_engine::PlatformFiles::new(vec![wisp_engine::PlatformFile {
-            path: wisp_trust::GUEST_PATH.into(),
-            bytes: trust.pem().into(),
-            modified_ns: trust.modified_ns(),
-        }])?;
+        let trust = isoplane_trust::TrustBundle::load(&self.trust)?;
+        let platform_files =
+            isoplane_engine::PlatformFiles::new(vec![isoplane_engine::PlatformFile {
+                path: isoplane_trust::GUEST_PATH.into(),
+                bytes: trust.pem().into(),
+                modified_ns: trust.modified_ns(),
+            }])?;
         Ok(Inputs {
             manifest: self.manifest.clone(),
             state_directory: self.state_directory.clone(),
@@ -89,9 +90,9 @@ impl Options {
 pub(crate) fn prepare_local(wasm: &[u8], options: &[u8]) -> anyhow::Result<Vec<u8>> {
     let options: Options = serde_json::from_slice(options)?;
     let inputs = options.inputs()?;
-    let configuration = wisp_host::bindings::RuntimeConfiguration::from_json(&serde_json::to_vec(
-        &options.configuration,
-    )?)?;
+    let configuration = isoplane_host::bindings::RuntimeConfiguration::from_json(
+        &serde_json::to_vec(&options.configuration)?,
+    )?;
     let prepared = Prepared::build(&inputs, wasm, &configuration)?;
     Ok(serde_json::to_vec(
         &serde_json::json!({"compiled": prepared.compiled()}),
@@ -163,7 +164,9 @@ impl Session {
             .context("another local development session owns this application")?;
         let listener = tokio::net::TcpListener::bind((
             Ipv4Addr::LOCALHOST,
-            options.port.unwrap_or(wisp_abi::config::DEFAULT_PROXY_PORT),
+            options
+                .port
+                .unwrap_or(isoplane_abi::config::DEFAULT_PROXY_PORT),
         ))
         .await?;
         let address = listener.local_addr()?;
@@ -226,7 +229,7 @@ impl Session {
 struct PendingApp {
     prepared: Prepared,
     directory: PathBuf,
-    configuration: wisp_host::bindings::RuntimeConfiguration,
+    configuration: isoplane_host::bindings::RuntimeConfiguration,
     debug: Option<DebugPeer>,
 }
 
@@ -240,9 +243,9 @@ impl PendingApp {
 }
 
 async fn prepare(wasm: Vec<u8>, options: &Options, inputs: Inputs) -> anyhow::Result<PendingApp> {
-    let configuration = wisp_host::bindings::RuntimeConfiguration::from_json(&serde_json::to_vec(
-        &options.configuration,
-    )?)?;
+    let configuration = isoplane_host::bindings::RuntimeConfiguration::from_json(
+        &serde_json::to_vec(&options.configuration)?,
+    )?;
     let preparation_configuration = configuration.clone();
     let debug = options.debug_endpoint.map(DebugPeer::new).transpose()?;
     let directory = inputs.state_directory.clone();
@@ -285,7 +288,7 @@ async fn stop_connections(connections: &mut JoinSet<bool>) {
 async fn connection_task(
     stream: tokio::net::TcpStream,
     peer: SocketAddr,
-    current_proxy: Arc<RwLock<Arc<wisp_proxy::Proxy>>>,
+    current_proxy: Arc<RwLock<Arc<isoplane_proxy::Proxy>>>,
     debug: bool,
     admitted: Arc<AtomicBool>,
 ) -> bool {
@@ -297,7 +300,7 @@ async fn connection_task(
         let handled = handled.clone();
         async move {
             if debug && admitted.swap(true, Ordering::AcqRel) {
-                let mut response = hyper::Response::new(wisp_proxy::server::Body::default());
+                let mut response = hyper::Response::new(isoplane_proxy::server::Body::default());
                 *response.status_mut() = hyper::StatusCode::SERVICE_UNAVAILABLE;
                 return Ok(response);
             }

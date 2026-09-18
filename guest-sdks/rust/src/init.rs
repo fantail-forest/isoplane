@@ -17,7 +17,7 @@ pub struct InitUnit {
     pub run: fn(),
 }
 
-/// "No unit in scope". `wisp_control::preinit::NO_UNIT` is `u32::MAX`; this is
+/// "No unit in scope". `isoplane_control::preinit::NO_UNIT` is `u32::MAX`; this is
 /// the same bit pattern as an `i32`, because the import takes `i32`.
 ///
 /// Deliberately **not** 0: unit 0 is the first static initializer in every
@@ -118,7 +118,7 @@ impl<T: 'static> core::ops::Deref for LazyInit<T> {
 /// deferred_lazy! {
 ///     /// Impure: reads the clock, so it TRAPS in the sealed init sandbox,
 ///     /// the host defers it, and it runs per instance on first touch.
-///     static STARTED_AT: u64 = { wisp_guest::Clock::now_ms() };
+///     static STARTED_AT: u64 = { isoplane_guest::Clock::now_ms() };
 /// }
 /// ```
 #[macro_export]
@@ -261,9 +261,9 @@ pub fn config_is_bound() -> bool {
 
 /// The init-visible vars as `(name, value)` pairs.
 ///
-/// CONTRACT GAP: the blob's encoding is not declared in `wisp-abi`. The
+/// CONTRACT GAP: the blob's encoding is not declared in `isoplane-abi`. The
 /// control plane emits `serde_json::to_vec(&Vec<(String, String)>)`
-/// (`wisp_control::pipeline::encode_init_vars`), so that is what this decodes.
+/// (`isoplane_control::pipeline::encode_init_vars`), so that is what this decodes.
 /// Two sides guessing the same thing is not the same as a contract.
 #[cfg(feature = "json")]
 pub fn config_vars() -> Vec<(String, String)> {

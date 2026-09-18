@@ -104,7 +104,7 @@ internal sealed class Http
             {
                 using var client = Client(selection);
                 using var request = new HttpRequestMessage(HttpMethod.Get, Url("http", path[1], path[2], "/headers"));
-                request.Headers.Add("X-Wisp", "ping");
+                request.Headers.Add("X-Isoplane", "ping");
                 using var response = await client.SendAsync(request).ConfigureAwait(false);
                 string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 return Describe(response, selection) + " body=" + body + " x-answer=" + string.Join(",", response.Headers.GetValues("X-Answer"));

@@ -41,7 +41,7 @@ impl<T: 'static> Default for Slot<T> {
 }
 
 /// Stateless entrypoint. Whether an instance is reused between requests or
-/// reset first is `wisp.toml`'s `lifecycle`.
+/// reset first is `isoplane.toml`'s `lifecycle`.
 pub trait Handler: Sized + 'static {
     fn new() -> Self;
 
@@ -50,9 +50,9 @@ pub trait Handler: Sized + 'static {
 }
 
 
-/// Guest GC pressure levels for `wisp_gc_hint`.
+/// Guest GC pressure levels for `isoplane_gc_hint`.
 ///
-/// CONTRACT GAP: `wisp-abi` types this as a bare `u8` with no enum, so these
+/// CONTRACT GAP: `isoplane-abi` types this as a bare `u8` with no enum, so these
 /// values are the SDK's proposal. See guests/README.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -87,8 +87,8 @@ impl GcPressure {
 /// Emit the host exports for a [`Handler`].
 ///
 /// ```ignore
-/// wisp_guest::export_handler!(Api);
-/// wisp_guest::export_handler!(Api, units = wisp_guest::init_units![FX_TABLE]);
+/// isoplane_guest::export_handler!(Api);
+/// isoplane_guest::export_handler!(Api, units = isoplane_guest::init_units![FX_TABLE]);
 /// ```
 #[macro_export]
 macro_rules! export_handler {
@@ -97,20 +97,20 @@ macro_rules! export_handler {
     };
     ($ty:ty, units = $units:expr) => {
         #[doc(hidden)]
-        static __WISP_APP: $crate::app::Slot<$ty> = $crate::app::Slot::new();
+        static __ISOPLANE_APP: $crate::app::Slot<$ty> = $crate::app::Slot::new();
         #[doc(hidden)]
-        static __WISP_UNITS: &[$crate::init::InitUnit] = $units;
+        static __ISOPLANE_UNITS: &[$crate::init::InitUnit] = $units;
 
-        $crate::__wisp_common_exports!(__WISP_UNITS);
+        $crate::__isoplane_common_exports!(__ISOPLANE_UNITS);
 
-        /// `wisp-handle: func(dispatch: dispatch-record) -> poll-status`,
+        /// `isoplane-handle: func(dispatch: dispatch-record) -> poll-status`,
         /// lowered as `(ptr, len) -> u64`.
         #[no_mangle]
-        pub extern "C" fn wisp_handle(ptr: usize, len: usize) -> u64 {
+        pub extern "C" fn isoplane_handle(ptr: usize, len: usize) -> u64 {
             $crate::rt::export_handle(ptr, len, |rec| {
                 use $crate::__rexport::DispatchKind;
                 let ctx = $crate::Ctx::from_record(&rec);
-                let app = __WISP_APP.get(<$ty as $crate::Handler>::new);
+                let app = __ISOPLANE_APP.get(<$ty as $crate::Handler>::new);
                 match rec.kind {
                     DispatchKind::Http(req) => ::std::boxed::Box::pin(async move {
                         let r = <$ty as $crate::Handler>::handle(app, req, ctx).await;
@@ -128,32 +128,32 @@ macro_rules! export_handler {
 /// The exports that do not depend on the entrypoint kind.
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __wisp_common_exports {
+macro_rules! __isoplane_common_exports {
     ($units:ident) => {
         /// Host->guest buffer handoff. The guest frees the buffer when the
-        /// host hands it back in `wisp_handle` / `wisp_wake`.
+        /// host hands it back in `isoplane_handle` / `isoplane_wake`.
         #[no_mangle]
-        pub extern "C" fn wisp_alloc(size: usize, align: usize) -> usize {
+        pub extern "C" fn isoplane_alloc(size: usize, align: usize) -> usize {
             $crate::rt::export_alloc(size, align)
         }
 
-        /// `wisp-wake: func(future: u64, result: result-record) -> poll-status`.
+        /// `isoplane-wake: func(future: u64, result: result-record) -> poll-status`.
         /// This is the *only* way a parked instance resumes, and it arrives on
-        /// a fresh stack -- see the `wisp_guest::rt` module docs.
+        /// a fresh stack -- see the `isoplane_guest::rt` module docs.
         #[no_mangle]
-        pub extern "C" fn wisp_wake(future: u64, ptr: usize, len: usize) -> u64 {
+        pub extern "C" fn isoplane_wake(future: u64, ptr: usize, len: usize) -> u64 {
             $crate::rt::export_wake(future, ptr, len)
         }
 
         /// Pre-snapshot compaction hint.
         #[no_mangle]
-        pub extern "C" fn wisp_gc_hint(pressure: u32) {
+        pub extern "C" fn isoplane_gc_hint(pressure: u32) {
             $crate::gc_hint(pressure as u8);
         }
 
         /// Pre-initialization, run once in the sealed init sandbox.
         #[no_mangle]
-        pub extern "C" fn wisp_initialize() -> u64 {
+        pub extern "C" fn isoplane_initialize() -> u64 {
             $crate::init::run_init_units($units);
             0
         }

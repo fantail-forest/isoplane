@@ -2,10 +2,10 @@
 
 use core::fmt;
 
-use wisp_abi::result::{FutureError, };
+use isoplane_abi::result::{FutureError, };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WispError {
+pub enum IsoplaneError {
     /// The dispatch's implicit cancellation future completed. Observed at an
     /// await, because cancellation is not an entrancy.
     Cancelled,
@@ -18,35 +18,35 @@ pub enum WispError {
     Protocol(String),
 }
 
-pub type Result<T> = core::result::Result<T, WispError>;
+pub type Result<T> = core::result::Result<T, IsoplaneError>;
 
-impl WispError {
+impl IsoplaneError {
 
 
 }
 
-impl From<FutureError> for WispError {
+impl From<FutureError> for IsoplaneError {
     fn from(e: FutureError) -> Self {
         match e {
-            FutureError::Cancelled => WispError::Cancelled,
-            FutureError::Denied(s) => WispError::Denied(s),
-            FutureError::NotFound => WispError::NotFound,
-            FutureError::Io(s) => WispError::Io(s),
+            FutureError::Cancelled => IsoplaneError::Cancelled,
+            FutureError::Denied(s) => IsoplaneError::Denied(s),
+            FutureError::NotFound => IsoplaneError::NotFound,
+            FutureError::Io(s) => IsoplaneError::Io(s),
         }
     }
 }
 
-impl fmt::Display for WispError {
+impl fmt::Display for IsoplaneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WispError::Cancelled => write!(f, "cancelled"),
-            WispError::Denied(s) => write!(f, "denied: {s}"),
-            WispError::NotFound => write!(f, "not found"),
-            WispError::Io(s) => write!(f, "io: {s}"),
-            WispError::Protocol(s) => write!(f, "protocol: {s}"),
+            IsoplaneError::Cancelled => write!(f, "cancelled"),
+            IsoplaneError::Denied(s) => write!(f, "denied: {s}"),
+            IsoplaneError::NotFound => write!(f, "not found"),
+            IsoplaneError::Io(s) => write!(f, "io: {s}"),
+            IsoplaneError::Protocol(s) => write!(f, "protocol: {s}"),
         }
     }
 }
 
-impl std::error::Error for WispError {}
+impl std::error::Error for IsoplaneError {}
 

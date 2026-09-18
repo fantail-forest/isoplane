@@ -39,12 +39,12 @@ public sealed class RuntimePublicationTests : MsbuildTests
         await BuildPal(project);
         var path = change switch
         {
-            "source" => Path.Combine(directory, "sdk/native/wisp_pal.c"),
+            "source" => Path.Combine(directory, "sdk/native/isoplane_pal.c"),
             "header" or "removed-header" => Path.Combine(directory, "sdk/native/pal.h"),
             "toolchain-header" => Path.Combine(directory, "toolchain/share/wasi-sysroot/include/system.h"),
             "compiler" => Path.Combine(directory, "toolchain/bin/clang"),
             "configuration" => project,
-            "missing-object" => Path.Combine(directory, "obj/wisp_pal.o"),
+            "missing-object" => Path.Combine(directory, "obj/isoplane_pal.o"),
             _ => throw new ArgumentOutOfRangeException(nameof(change))
         };
         if (change is "removed-header" or "missing-object") File.Delete(path);
@@ -69,9 +69,9 @@ public sealed class RuntimePublicationTests : MsbuildTests
     {
         var project = PalProject();
         await BuildPal(project);
-        File.Delete(Path.Combine(directory, "sdk/native/wisp_pal.c"));
+        File.Delete(Path.Combine(directory, "sdk/native/isoplane_pal.c"));
         var result = await Run(Msbuild(project, "-t:Exercise"));
-        Assert.True(result.Exit != 0 && result.Output.Contains("wisp_pal.c", StringComparison.Ordinal),
+        Assert.True(result.Exit != 0 && result.Output.Contains("isoplane_pal.c", StringComparison.Ordinal),
             "A deleted required source must fail compilation instead of silently reusing an old PAL: " + result.Output);
     }
 
@@ -85,7 +85,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
     {
         var sdk = Directory.CreateDirectory(Path.Combine(directory, "sdk/native")).Parent!.FullName;
         var toolchain = Directory.CreateDirectory(Path.Combine(directory, "toolchain/bin")).Parent!.FullName;
-        foreach (var name in new[] { "wisp_pal.c", "wisp_clock.c", "pal.h" })
+        foreach (var name in new[] { "isoplane_pal.c", "isoplane_clock.c", "pal.h" })
             File.WriteAllText(Path.Combine(sdk, "native", name), "fixture " + name);
         var headers = Directory.CreateDirectory(Path.Combine(toolchain, "share/wasi-sysroot/include"));
         File.WriteAllText(Path.Combine(headers.FullName, "system.h"), "fixture system header");
@@ -102,15 +102,15 @@ public sealed class RuntimePublicationTests : MsbuildTests
             """);
         return WriteProject(
             new XElement("PropertyGroup",
-                new XElement("_WispSdkDirectory", sdk + Path.DirectorySeparatorChar),
+                new XElement("_IsoplaneSdkDirectory", sdk + Path.DirectorySeparatorChar),
                 new XElement("WASI_SDK_PATH", toolchain),
                 new XElement("IntermediateOutputPath", Path.Combine(directory, "obj") + Path.DirectorySeparatorChar)),
             new XElement("ItemGroup",
                 new XElement("LinkerArg", new XAttribute("Include", "-Wl,--max-memory=16777216")),
-                new XElement("WispWrappedSymbol", new XAttribute("Include", "wrapped_symbol"))),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Publish.targets"))),
+                new XElement("IsoplaneWrappedSymbol", new XAttribute("Include", "wrapped_symbol"))),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.Publish.targets"))),
             new XElement("Target", new XAttribute("Name", "SetupProperties")),
-            new XElement("Target", new XAttribute("Name", "Exercise"), new XAttribute("DependsOnTargets", "WispCompilePal"),
+            new XElement("Target", new XAttribute("Name", "Exercise"), new XAttribute("DependsOnTargets", "IsoplaneCompilePal"),
                 new XElement("WriteLinesToFile", new XAttribute("File", Path.Combine(directory, "link-inputs")),
                     new XAttribute("Lines", "@(NativeLibrary)"), new XAttribute("Overwrite", "true")),
                 new XElement("WriteLinesToFile", new XAttribute("File", Path.Combine(directory, "link-args")),
@@ -198,23 +198,23 @@ public sealed class RuntimePublicationTests : MsbuildTests
         File.WriteAllText(Path.Combine(targetDirectory, target.ToLowerInvariant() + ".2.0.0-target.nupkg.sha512"), "target digest");
         return WriteProject(
             new XElement("PropertyGroup",
-                new XElement("WispGuestRuntime", "NativeAOT"),
+                new XElement("IsoplaneGuestRuntime", "NativeAOT"),
                 new XElement("_targetArchitecture", "wasm"),
                 new XElement("_hostPackageName", host),
                 new XElement("_targetPackageName", target),
                 new XElement("NETCoreSdkRuntimeIdentifier", "linux-x64"),
-                new XElement("WispGuestCompilerVersion", "1.0.0-host"),
-                new XElement("WispGuestCompilerSha512", "host digest"),
-                new XElement("WispGuestNativeAotPackVersion", "2.0.0-target"),
-                new XElement("WispGuestNativeAotPackSha512", "target digest")),
+                new XElement("IsoplaneGuestCompilerVersion", "1.0.0-host"),
+                new XElement("IsoplaneGuestCompilerSha512", "host digest"),
+                new XElement("IsoplaneGuestNativeAotPackVersion", "2.0.0-target"),
+                new XElement("IsoplaneGuestNativeAotPackSha512", "target digest")),
             new XElement("ItemGroup",
                 new XElement("PackageDefinitions", new XAttribute("Include", host),
                     new XElement("Name", host), new XElement("Version", "1.0.0-host"), new XElement("ResolvedPath", hostDirectory)),
                 new XElement("PackageDefinitions", new XAttribute("Include", target),
                     new XElement("Name", target), new XElement("Version", "2.0.0-target"), new XElement("ResolvedPath", targetDirectory))),
-            new XElement("Target", new XAttribute("Name", "WispRequireGuestCompiler")),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.NativeAot.targets"))),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Wisp.Guest.targets"))));
+            new XElement("Target", new XAttribute("Name", "IsoplaneRequireGuestCompiler")),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.NativeAot.targets"))),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Isoplane.Guest.targets"))));
     }
 
     [Theory]
@@ -224,23 +224,23 @@ public sealed class RuntimePublicationTests : MsbuildTests
     {
         var project = WriteProject(
             new XElement("PropertyGroup",
-                new XElement("_WispGuestRuntimeFeedDirectory", Path.Combine(directory, "feed")),
-                new XElement("WispContainerBuild", "false"),
-                new XElement("WispGuestCompilerVersion", version),
-                new XElement("WispGuestCompilerRuntimeIdentifier", "linux-x64"),
+                new XElement("_IsoplaneGuestRuntimeFeedDirectory", Path.Combine(directory, "feed")),
+                new XElement("IsoplaneContainerBuild", "false"),
+                new XElement("IsoplaneGuestCompilerVersion", version),
+                new XElement("IsoplaneGuestCompilerRuntimeIdentifier", "linux-x64"),
                 new XElement("NETCoreSdkRuntimeIdentifier", host)),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Wisp.NativeAot.props"))));
-        var result = await Run(Msbuild(project, "-t:WispRequireGuestCompiler"));
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Isoplane.NativeAot.props"))));
+        var result = await Run(Msbuild(project, "-t:IsoplaneRequireGuestCompiler"));
         Assert.True(result.Exit != 0 && result.Output.Contains(diagnostic, StringComparison.Ordinal),
             "A missing or incompatible compiler must fail before publication with its prerequisite diagnosis: " + result.Output);
     }
 
     [Theory]
-    [InlineData("WispInterpretedDebug", "false")]
-    [InlineData("WispNativeAotRelease", "true")]
+    [InlineData("IsoplaneInterpretedDebug", "false")]
+    [InlineData("IsoplaneNativeAotRelease", "true")]
     public async Task template_configurations_select_their_named_optimization_mode(string configuration, string optimize)
     {
-        var template = XDocument.Load(Path.Combine(SdkDirectory(), "Templates/content/aspnet/IsoplaneApp.csproj"));
+        var template = XDocument.Load(Path.Combine(SdkDirectory(), "Templates/content/aspnet/SampleApp.csproj"));
         var project = WriteProject(
             new XElement("Import", new XAttribute("Project", "Sdk.props"), new XAttribute("Sdk", "Microsoft.NET.Sdk")),
             new XElement("PropertyGroup", new XElement("Configuration", configuration), new XElement("TargetFramework", "net10.0")),
@@ -266,7 +266,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
         var app = Path.Combine(directory, "app");
         var publish = Path.Combine(directory, "published");
         foreach (var path in new[] { tools, feed, app }) Directory.CreateDirectory(path);
-        File.WriteAllText(Path.Combine(feed, "Wisp.GuestRuntime.props"), "<Project />");
+        File.WriteAllText(Path.Combine(feed, "Isoplane.GuestRuntime.props"), "<Project />");
         var argsFile = Path.Combine(directory, "container.json");
         var validatorLog = Path.Combine(directory, "validator.json");
         WriteExecutable(Path.Combine(tools, "docker"), """
@@ -274,7 +274,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
             import json, os, pathlib, sys
             args = sys.argv[1:]
             if args[0] == 'create':
-                pathlib.Path(os.environ['WISP_TEST_CONTAINER_ARGS']).write_text(json.dumps(args))
+                pathlib.Path(os.environ['ISOPLANE_TEST_CONTAINER_ARGS']).write_text(json.dumps(args))
                 for arg in args:
                     if arg.endswith(':/build'):
                         output = pathlib.Path(arg[:-len(':/build')]) / 'publish'
@@ -286,28 +286,28 @@ public sealed class RuntimePublicationTests : MsbuildTests
         WriteExecutable(validator, """
             #!/usr/bin/env python3
             import json, os, pathlib, sys
-            pathlib.Path(os.environ['WISP_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
-            sys.exit(int(os.environ['WISP_TEST_VERDICT']))
+            pathlib.Path(os.environ['ISOPLANE_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
+            sys.exit(int(os.environ['ISOPLANE_TEST_VERDICT']))
             """);
         var project = ContainerProject(app, feed, wasiSdk, validator, publish, overrideMemory ? "536870912" : "");
         var start = Msbuild(project, "-t:Exercise");
         start.Environment["PATH"] = tools + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
-        start.Environment["WISP_TEST_CONTAINER_ARGS"] = argsFile;
-        start.Environment["WISP_TEST_VALIDATOR_LOG"] = validatorLog;
-        start.Environment["WISP_TEST_VERDICT"] = verdict.ToString();
+        start.Environment["ISOPLANE_TEST_CONTAINER_ARGS"] = argsFile;
+        start.Environment["ISOPLANE_TEST_VALIDATOR_LOG"] = validatorLog;
+        start.Environment["ISOPLANE_TEST_VERDICT"] = verdict.ToString();
         var result = await Run(start);
         Assert.True((result.Exit == 0) == (verdict == 0), "Host validation must determine publication success: " + result.Output);
         var args = JsonSerializer.Deserialize<string[]>(File.ReadAllText(argsFile))!;
         Assert.True(args.Contains(feed + ":" + feed + ":ro"), "The external runtime feed must be mounted read-only.");
         Assert.True(args.Contains(wasiSdk + ":" + wasiSdk + ":ro"), "The unpacked WASI SDK referenced by the external feed must be accessible inside the compiler.");
-        Assert.True(args.Contains("-p:WispGuestRuntimeFeed=" + feed + "/"), "The compiler must receive the selected runtime feed.");
-        Assert.True(args.Contains("-p:_WispContainerIntermediate=true"), "The container must produce an intermediate artifact for host validation.");
-        Assert.True(!args.Contains("-p:WispValidate=false"), "Container publication must not depend on the obsolete public validation bypass.");
+        Assert.True(args.Contains("-p:IsoplaneGuestRuntimeFeed=" + feed + "/"), "The compiler must receive the selected runtime feed.");
+        Assert.True(args.Contains("-p:_IsoplaneContainerIntermediate=true"), "The container must produce an intermediate artifact for host validation.");
+        Assert.True(!args.Contains("-p:IsoplaneValidate=false"), "Container publication must not depend on the obsolete public validation bypass.");
         var validation = JsonSerializer.Deserialize<string[]>(File.ReadAllText(validatorLog))!;
         Assert.True(validation[0] == "doctor" && validation[1].EndsWith("test.wasm", StringComparison.Ordinal), "The host CLI must judge the actual linked artifact.");
         Assert.True(validation.Contains("--guest-memory-bytes") == overrideMemory &&
-            args.Contains("-p:WispGuestMemoryBytes=536870912") == overrideMemory &&
-            args.Contains("-p:WispMemoryMaxBytes=536870912") == overrideMemory,
+            args.Contains("-p:IsoplaneGuestMemoryBytes=536870912") == overrideMemory &&
+            args.Contains("-p:IsoplaneMemoryMaxBytes=536870912") == overrideMemory,
             "An explicit memory policy must reach inner linking and host admission without inferring permission from a declaration.");
         if (overrideMemory) Assert.True(validation.Contains("536870912") && validation.Contains("standard"),
             "The explicit memory override must retain Standard non-memory limits.");
@@ -322,18 +322,18 @@ public sealed class RuntimePublicationTests : MsbuildTests
         var feed = Path.Combine(directory, "feed");
         var app = Path.Combine(directory, "app");
         foreach (var path in new[] { tools, feed, app }) Directory.CreateDirectory(path);
-        File.WriteAllText(Path.Combine(feed, "Wisp.GuestRuntime.props"), "<Project />");
+        File.WriteAllText(Path.Combine(feed, "Isoplane.GuestRuntime.props"), "<Project />");
         var marker = Path.Combine(directory, "docker-started");
         WriteExecutable(Path.Combine(tools, "docker"), """
             #!/usr/bin/env python3
             import os, pathlib, sys
-            pathlib.Path(os.environ['WISP_TEST_DOCKER_MARKER']).touch()
+            pathlib.Path(os.environ['ISOPLANE_TEST_DOCKER_MARKER']).touch()
             sys.exit(1)
             """);
         var project = ContainerProject(app, feed, Path.Combine(directory, "missing-sdk"), "unused-validator", Path.Combine(directory, "publish"));
         var start = Msbuild(project, "-t:Exercise");
         start.Environment["PATH"] = tools + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
-        start.Environment["WISP_TEST_DOCKER_MARKER"] = marker;
+        start.Environment["ISOPLANE_TEST_DOCKER_MARKER"] = marker;
         var result = await Run(start);
         Assert.True(result.Exit != 0 && result.Output.Contains("unpacked WASI SDK is missing", StringComparison.Ordinal), "An incomplete runtime feed must name its missing WASI SDK: " + result.Output);
         Assert.True(!File.Exists(marker), "Missing build inputs must fail before acquiring container resources.");
@@ -351,14 +351,14 @@ public sealed class RuntimePublicationTests : MsbuildTests
         WriteExecutable(validator, """
             #!/usr/bin/env python3
             import json, os, pathlib, sys
-            pathlib.Path(os.environ['WISP_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
+            pathlib.Path(os.environ['ISOPLANE_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
             """);
         var project = WriteProject(new XElement("PropertyGroup", new XElement("NativeBinary", module),
-                new XElement("WispCli", validator), new XElement("WispPlan", "standard"),
-                new XElement("WispMemoryMaxBytes", "536870912"), new XElement("WispGuestMemoryBytes", memoryBytes)),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Validation.targets"))));
-        var start = Msbuild(project, "-t:WispValidateModule");
-        start.Environment["WISP_TEST_VALIDATOR_LOG"] = log;
+                new XElement("IsoplaneCli", validator), new XElement("IsoplanePlan", "standard"),
+                new XElement("IsoplaneMemoryMaxBytes", "536870912"), new XElement("IsoplaneGuestMemoryBytes", memoryBytes)),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.Validation.targets"))));
+        var start = Msbuild(project, "-t:IsoplaneValidateModule");
+        start.Environment["ISOPLANE_TEST_VALIDATOR_LOG"] = log;
         var result = await Run(start);
         Assert.True(result.Exit == 0, "The SDK validation target must run successfully: " + result.Output);
         var arguments = JsonSerializer.Deserialize<string[]>(File.ReadAllText(log))!;
@@ -373,21 +373,21 @@ public sealed class RuntimePublicationTests : MsbuildTests
         var module = Path.Combine(directory, "test.wasm");
         File.WriteAllText(module, "fixture");
         var project = WriteProject(new XElement("PropertyGroup", new XElement("NativeBinary", module),
-                new XElement("WispCli", Path.Combine(directory, "missing-validator")), new XElement("WispValidate", "false")),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Validation.targets"))));
-        var result = await Run(Msbuild(project, "-t:WispValidateModule"));
-        Assert.True(result.Exit != 0 && result.Output.Contains("WISP0002", StringComparison.Ordinal), "A missing validator must fail ordinary publication even when the obsolete bypass is supplied: " + result.Output);
+                new XElement("IsoplaneCli", Path.Combine(directory, "missing-validator")), new XElement("IsoplaneValidate", "false")),
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.Validation.targets"))));
+        var result = await Run(Msbuild(project, "-t:IsoplaneValidateModule"));
+        Assert.True(result.Exit != 0 && result.Output.Contains("ISOPLANE0002", StringComparison.Ordinal), "A missing validator must fail ordinary publication even when the obsolete bypass is supplied: " + result.Output);
     }
 
     [Theory]
-    [InlineData("WispInterpretedDebug")]
-    [InlineData("WispNativeAotRelease")]
+    [InlineData("IsoplaneInterpretedDebug")]
+    [InlineData("IsoplaneNativeAotRelease")]
     public async Task dotnet_run_passes_the_selected_configuration_to_local_metadata_evaluation(string configuration)
     {
         var project = WriteProject(
             new XElement("PropertyGroup", new XElement("Configuration", configuration),
                 new XElement("PublishDir", "published/"), new XElement("AssemblyName", "App")),
-            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Wisp.Run.targets"))));
+            new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.Run.targets"))));
         var start = Msbuild(project, "-t:ComputeRunArguments");
         start.ArgumentList.Add("-getProperty:RunArguments,RunCommand");
         var result = await Run(start);
@@ -403,12 +403,12 @@ public sealed class RuntimePublicationTests : MsbuildTests
     private string ContainerProject(string app, string feed, string wasiSdk, string validator, string publish, string memoryBytes = "")
     {
         return WriteProject(
-            new XElement("UsingTask", new XAttribute("TaskName", "WispContainerPublish"), new XAttribute("TaskFactory", "RoslynCodeTaskFactory"),
+            new XElement("UsingTask", new XAttribute("TaskName", "IsoplaneContainerPublish"), new XAttribute("TaskFactory", "RoslynCodeTaskFactory"),
                 new XAttribute("AssemblyFile", "$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll"),
                 new XElement("Task", new XElement("Code", new XAttribute("Type", "Class"), new XAttribute("Language", "cs"),
                     new XAttribute("Source", Path.Combine(SdkDirectory(), "Build/ContainerPublish.cs"))))),
             new XElement("Target", new XAttribute("Name", "Exercise"),
-                new XElement("WispContainerPublish", new XAttribute("ProjectPath", Path.Combine(app, "guest.csproj")),
+                new XElement("IsoplaneContainerPublish", new XAttribute("ProjectPath", Path.Combine(app, "guest.csproj")),
                     new XAttribute("SourceRoot", app), new XAttribute("SdkDirectory", SdkDirectory()),
                     new XAttribute("GuestRuntimeFeed", feed), new XAttribute("WasiSdkPackDirectory", wasiSdk), new XAttribute("Validator", validator),
                     new XAttribute("PublishDirectory", publish), new XAttribute("Configuration", "Release"),

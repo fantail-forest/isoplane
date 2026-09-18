@@ -17,7 +17,7 @@ class FixtureTests(unittest.TestCase):
             interpreter.write_text('#!/bin/sh\ncase "$1" in */aspnet/build.py) exit 0;; *) exit 23;; esac\n')
             interpreter.chmod(0o755)
             environment = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"],
-                               WISP_FIXTURE_LOCK=str(ROOT / "guests/build-dotnet.sh"))
+                               ISOPLANE_FIXTURE_LOCK=str(ROOT / "guests/build-dotnet.sh"))
             result = subprocess.run(["bash", str(ROOT / "guests/aspnet/build.sh")], env=environment)
             self.assertEqual(result.returncode, 0, "a nested guest build must not wait on the lock held by its parent")
 
@@ -48,9 +48,9 @@ class FixtureTests(unittest.TestCase):
             runtime = root / "guest-runtime"
             feed = runtime / "out/feed"
             feed.mkdir(parents=True)
-            (feed / "Wisp.GuestRuntime.props").write_text(
-                "<Project><WispGuestNativeAotPackVersion>test</WispGuestNativeAotPackVersion>"
-                "<WispGuestNativeAotPackSha512>digest</WispGuestNativeAotPackSha512></Project>")
+            (feed / "Isoplane.GuestRuntime.props").write_text(
+                "<Project><IsoplaneGuestNativeAotPackVersion>test</IsoplaneGuestNativeAotPackVersion>"
+                "<IsoplaneGuestNativeAotPackSha512>digest</IsoplaneGuestNativeAotPackSha512></Project>")
             # This test isolates variant selection; feed integrity has its own real verifier tests.
             (runtime / "feed-identity.py").write_text(
                 "import sys\nfrom pathlib import Path\n"
@@ -64,14 +64,14 @@ class FixtureTests(unittest.TestCase):
                 "output = Path(sys.argv[3])\noutput.mkdir(parents=True)\n"
                 "(output / 'compiler.json').write_text('{}')\n")
             builder = project / "build.sh"
-            builder.write_text('#!/bin/sh\nmkdir -p "$WISP_OUT_DIR"\nprintf fixture > "$WISP_OUT_DIR/$WISP_OUT.wasm"\nprintf test@sha512:digest > "$WISP_OUT_DIR/$WISP_OUT.wasm.runtime"\n')
+            builder.write_text('#!/bin/sh\nmkdir -p "$ISOPLANE_OUT_DIR"\nprintf fixture > "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm"\nprintf test@sha512:digest > "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm.runtime"\n')
             builder.chmod(0o755)
             tools = root / "tools"
             tools.mkdir()
             dotnet = tools / "dotnet"
             dotnet.write_text("#!/bin/sh\nexit 0\n")
             dotnet.chmod(0o755)
-            selected = "wisp_guest_dotnet_connect"
+            selected = "isoplane_guest_dotnet_connect"
             result = subprocess.run(["bash", str(guests / "build-dotnet.sh"), "--fixture", selected],
                                     env=dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"]),
                                     capture_output=True, text=True)

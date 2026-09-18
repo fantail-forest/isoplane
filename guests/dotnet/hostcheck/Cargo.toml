@@ -2,33 +2,33 @@
 [workspace]
 
 [package]
-name = "wisp-dotnet-hostcheck"
+name = "isoplane-dotnet-hostcheck"
 version = "0.1.0"
 edition = "2021"
 license-file = "../../../LICENSE.txt"
 description = "Checks the managed HTTP fixture response ABI and sample memory round trip"
 
 [[bin]]
-name = "wisp-dotnet-hostcheck"
+name = "isoplane-dotnet-hostcheck"
 path = "src/main.rs"
 
 # Runs the module through the platform's real validator. Feature-gated because
-# `wisp-control` pulls in wizer, which pins a second wasmtime major.
+# `isoplane-control` pulls in wizer, which pins a second wasmtime major.
 [[bin]]
-name = "wisp-validate"
-path = "src/bin/wisp-validate.rs"
+name = "isoplane-validate"
+path = "src/bin/isoplane-validate.rs"
 required-features = ["validator"]
 
 [features]
-validator = ["dep:wisp-control"]
+validator = ["dep:isoplane-control"]
 
 [dependencies]
-wisp-abi = { path = "../../../crates/wisp-abi" }
-wisp-control = { path = "../../../crates/wisp-control", optional = true }
+isoplane-abi = { path = "../../../crates/isoplane-abi" }
+isoplane-control = { path = "../../../crates/isoplane-control", optional = true }
 anyhow = "1"
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
-# Same feature set as wisp-engine: `async` (fibers) stays OFF, because a fiber
+# Same feature set as isoplane-engine: `async` (fibers) stays OFF, because a fiber
 # is a hidden native stack and invariant 3 forbids those.
 wasmtime = { version = "48", default-features = false, features = [
     "runtime", "std", "anyhow", "cranelift", "pooling-allocator", "backtrace", "demangle",

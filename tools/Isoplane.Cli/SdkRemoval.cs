@@ -1,4 +1,4 @@
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 /// <summary>
 /// <c>isoplane uninstall-sdk</c>: removes what the installation manifest records setup owning, registrations before

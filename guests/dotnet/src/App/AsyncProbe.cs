@@ -1,11 +1,11 @@
 using System;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises managed continuations on both sides of a host future.</summary>
-public sealed class AsyncProbe : IWispHandler
+public sealed class AsyncProbe : IIsoplaneHandler
 {
     private int _runs;
 

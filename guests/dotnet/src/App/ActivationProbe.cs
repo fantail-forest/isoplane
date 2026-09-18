@@ -1,17 +1,17 @@
-#if WISP_ACTIVATION_PROBE
+#if ISOPLANE_ACTIVATION_PROBE
 using System;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>
 /// A generator seeded once at boot, before the template snapshot, and
 /// reseeded on activation: the activation hook is what keeps two copies of
 /// the template from drawing the same sequence.
 /// </summary>
-internal sealed class ActivationProbe : IWispHandler
+internal sealed class ActivationProbe : IIsoplaneHandler
 {
     private static Random _seeded = Fresh();
     private static int _activations;

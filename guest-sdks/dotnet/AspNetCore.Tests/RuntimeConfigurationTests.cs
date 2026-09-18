@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Xunit;
 
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 public sealed class RuntimeConfigurationTests
 {

@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The C# Isoplane guest SDK: the ABI, the async runtime, and the bindings.
+    Compiles to IL; the guest that references it is what publishes to wasm.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Isoplane</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>false</ImplicitUsings>
+    <DebugType>none</DebugType>
+    <!-- The guest publishes; this project never does. -->
+    <IsPackable>true</IsPackable>
+    <Description>Isoplane guest ABI, request bindings and cooperative runtime.</Description>
+
+    <!-- A public member without a doc comment fails the build (CS1591). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <InternalsVisibleTo Include="Isoplane.AspNetCore.Tests" />
+    <InternalsVisibleTo Include="Isoplane.AspNetCore" />
+    <Compile Include="Abi/**/*.cs" Exclude="Abi/Tests/**/*.cs" />
+    <Compile Include="Runtime/**/*.cs" />
+    <Compile Include="Sdk/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The reference's built output becomes the packed task assembly, so the pack ships what this build produced. -->
+    <ProjectReference Include="Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained"
+                      OutputItemType="None" Pack="true" PackagePath="tools/Conformance/" />
+    <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
+    <None Include="Isoplane.Guest.props;Isoplane.Guest.targets;Isoplane.NativeAot.props" Pack="true" PackagePath="tools/" />
+    <None Include="Build/**" Exclude="Build/**/obj/**;Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
+    <None Include="native/**" Pack="true" PackagePath="tools/native/" />
+  </ItemGroup>
+  <Target Name="StampCoreSdkVersion" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup><_CoreSdkProps>$(IntermediateOutputPath)package/Sdk.props</_CoreSdkProps></PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <Copy SourceFiles="MSBuild/Sdk.props" DestinationFiles="$(_CoreSdkProps)" />
+    <XmlPoke XmlInputPath="$(_CoreSdkProps)" Query="/Project/ItemGroup/PackageReference[@Include='Isoplane.Sdk']/@Version" Value="$(PackageVersion)" />
+    <ItemGroup><None Include="$(_CoreSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" /></ItemGroup>
+  </Target>
+</Project>

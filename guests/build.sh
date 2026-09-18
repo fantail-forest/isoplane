@@ -12,11 +12,11 @@ IF_STALE=0
 [ "${1:-}" = "--if-stale" ] && IF_STALE=1
 
 TOOLS="$ROOT/../scripts/fixture-tools.py"
-if [ "${WISP_FIXTURE_LOCK:-}" != "$ROOT/build.sh" ]; then
+if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$ROOT/build.sh" ]; then
   exec python3 "$TOOLS" lock "$ROOT/.build.lock" "$ROOT/build.sh" "$@"
 fi
 
-INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/wisp-abi" "$TOOLS" "$ROOT/build.sh")
+INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/isoplane-abi" "$TOOLS" "$ROOT/build.sh")
 
 is_fresh() {
   [ -f "$MANIFEST" ] || return 1
@@ -39,14 +39,14 @@ TDIR="${TDIR:-$ROOT/target}"
 export CARGO_TARGET_DIR="$TDIR"
 export CARGO_BUILD_BUILD_DIR="$TDIR/build"
 
-# WISP_BUILD_QUIET drops the size and import/export reports, which a test
+# ISOPLANE_BUILD_QUIET drops the size and import/export reports, which a test
 # running this never reads, and keeps every check.
-QUIET="${WISP_BUILD_QUIET:-}"
+QUIET="${ISOPLANE_BUILD_QUIET:-}"
 mkdir -p "$OUT"
 cd "$ROOT"
 
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
-[ -n "${WISP_OFFLINE:-}" ] && CARGO_FLAGS+=(--offline)
+[ -n "${ISOPLANE_OFFLINE:-}" ] && CARGO_FLAGS+=(--offline)
 
 # Everything this script needs is checked before anything is deleted.
 preflight_missing=()
@@ -130,7 +130,7 @@ if [ -z "$QUIET" ]; then
   done
 fi
 
-# V1, the capability surface, is checked by `wisp_control::validate` in the
+# V1, the capability surface, is checked by `isoplane_control::validate` in the
 # `real_guests` test, which holds every module in the manifest to a recorded
 # verdict; a shell copy of the import table would drift and could not check
 # signatures.
@@ -139,7 +139,7 @@ if [ "${#v2_failed[@]}" -ne 0 ]; then
   rm -f "$MANIFEST"
   echo >&2
   echo "BUILD FAILED -- the modules are on disk and at least one is not a legal" >&2
-  echo "WISP guest, so nothing here is measuring the platform tenants get:" >&2
+  echo "Isoplane guest, so nothing here is measuring the platform tenants get:" >&2
   for m in ${v2_failed[@]+"${v2_failed[@]}"}; do
     echo "  V2 (wasm-tools validate): $m" >&2
   done

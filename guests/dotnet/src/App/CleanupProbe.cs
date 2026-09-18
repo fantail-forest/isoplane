@@ -2,12 +2,12 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Leaves pending operations at a response boundary and reports later callbacks.</summary>
-public sealed class CleanupProbe : IWispHandler
+public sealed class CleanupProbe : IIsoplaneHandler
 {
     private int _requests;
     private int _callbacks;

@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal sealed class DebugRelay : IAsyncDisposable
 {

@@ -6,12 +6,12 @@
 //! state machine and resolves to a `return Poll::Pending` out of the guest.
 
 
-use wisp_abi::calls::*;
-use wisp_abi::result::{
+use isoplane_abi::calls::*;
+use isoplane_abi::result::{
     BodyChunk, FetchResponse, };
 
 use crate::abi;
-use crate::error::{Result, WispError};
+use crate::error::{IsoplaneError, Result};
 use crate::future::{call, decode_postcard, decode_unit, HostFuture};
 
 // ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ pub struct HttpFetch;
 
 impl HttpFetch {
     /// SSRF policy is enforced host-side; an RFC1918 target comes back as
-    /// `WispError::Denied`.
+    /// `IsoplaneError::Denied`.
     pub fn fetch(req: FetchRequest) -> HostFuture<FetchResponse> {
         call(abi::http_fetch, &req, decode_postcard::<FetchResponse>)
     }
@@ -169,7 +169,7 @@ pub enum Level {
     Error = 4,
 }
 
-/// CONTRACT GAP: `wisp-abi` defines no log record type, so the payload here is
+/// CONTRACT GAP: `isoplane-abi` defines no log record type, so the payload here is
 /// the raw UTF-8 message. See guests/README.md.
 pub fn log(level: Level, msg: &str) {
     let b = msg.as_bytes();
@@ -197,6 +197,6 @@ impl Drop for Span {
 
 /// Turn a `Denied` into something an app can branch on without string
 /// matching in three places.
-pub fn is_denied(e: &WispError) -> bool {
-    matches!(e, WispError::Denied(_))
+pub fn is_denied(e: &IsoplaneError) -> bool {
+    matches!(e, IsoplaneError::Denied(_))
 }

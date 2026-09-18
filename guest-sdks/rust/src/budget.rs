@@ -85,7 +85,7 @@ impl Budget {
     ///
     /// ```ignore
     /// for chunk in chunks {
-    ///     Budget::check()?;          // -> Err(WispError::Cancelled)
+    ///     Budget::check()?;          // -> Err(IsoplaneError::Cancelled)
     ///     total += expensive(chunk);
     /// }
     /// ```
@@ -96,7 +96,7 @@ impl Budget {
     #[inline]
     pub fn check() -> crate::Result<()> {
         if exhausted() {
-            Err(crate::WispError::Cancelled)
+            Err(crate::IsoplaneError::Cancelled)
         } else {
             Ok(())
         }
@@ -155,7 +155,7 @@ mod tests {
     fn check_is_an_early_return_not_a_panic() {
         testing::with_stub_host(|_| {
             let r: crate::Result<()> = Budget::check();
-            assert!(matches!(r, Err(crate::WispError::Cancelled)));
+            assert!(matches!(r, Err(crate::IsoplaneError::Cancelled)));
         });
     }
 

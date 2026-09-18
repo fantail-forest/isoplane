@@ -106,9 +106,9 @@ def start():
             data=json.dumps({'ConnectionStrings:Todo': connection}))
         ca = directory / 'ca.crt'
         print('Created disposable PostgreSQL and set ConnectionStrings:Todo in User Secrets.')
-        print('Replace allow_endpoints inside [dev] in wisp.toml with:')
+        print('Replace allow_endpoints inside [dev] in isoplane.toml with:')
         print(f'allow_endpoints = ["127.0.0.1:{port}"]')
-        print('Add this separate table at the end of wisp.toml:')
+        print('Add this separate table at the end of isoplane.toml:')
         print(f'\n[dev.trust]\nbundle = {json.dumps(str(ca))}\nsha256 = "{hashlib.sha256(ca.read_bytes()).hexdigest()}"')
         print('\nStop the application before running: python3 local-postgres.py stop')
     except BaseException as error:
@@ -129,7 +129,7 @@ def main():
         remove(json.loads(STATE.read_text()))
         print('Removed the sample database and temporary certificates.')
         print('Remove its setting with: dotnet user-secrets remove ConnectionStrings:Todo')
-        print('Remove [dev.trust] and the local endpoint from wisp.toml before using another database.')
+        print('Remove [dev.trust] and the local endpoint from isoplane.toml before using another database.')
     else:
         print('No local sample database is recorded.')
 

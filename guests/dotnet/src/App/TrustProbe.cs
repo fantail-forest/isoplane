@@ -1,12 +1,12 @@
-#if WISP_TRUST_PROBE
+#if ISOPLANE_TRUST_PROBE
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>
 /// Lists the machine root store while the application is constructed, which
@@ -15,7 +15,7 @@ namespace Wisp.App;
 /// listing and <c>/roots</c> with what the store lists now, each as
 /// <c>roots=N thumbprint,thumbprint,…</c> sorted.
 /// </summary>
-internal sealed class TrustProbe : IWispHandler
+internal sealed class TrustProbe : IIsoplaneHandler
 {
     private readonly string _atBoot = Roots();
 

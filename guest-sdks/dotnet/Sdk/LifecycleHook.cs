@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Wisp;
+namespace Isoplane;
 
 internal sealed class LifecycleHook
 {

@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class SdkRegistrationsTests
 {
@@ -17,14 +17,14 @@ public sealed class SdkRegistrationsTests
 
     private const string Templates = """
         Currently installed items:
-           Wisp.Templates
+           Isoplane.Templates
               Version: 0.1.0-preview.1
               Details:
                  Author: Isoplane
               Templates:
                  Isoplane ASP.NET application (isoplane-web) C#
               Uninstall Command:
-                 dotnet new uninstall Wisp.Templates
+                 dotnet new uninstall Isoplane.Templates
            Other.Templates
               Version: 2.0.0
 
@@ -42,10 +42,10 @@ public sealed class SdkRegistrationsTests
     [Fact]
     public void A_template_package_is_found_by_id_with_its_version()
     {
-        Assert.Equal("0.1.0-preview.1", DotnetRegistrations.TemplateVersion(Templates, "Wisp.Templates"));
+        Assert.Equal("0.1.0-preview.1", DotnetRegistrations.TemplateVersion(Templates, "Isoplane.Templates"));
         Assert.Equal("2.0.0", DotnetRegistrations.TemplateVersion(Templates, "Other.Templates"));
         Assert.Null(DotnetRegistrations.TemplateVersion(Templates, "Missing.Templates"));
-        Assert.Null(DotnetRegistrations.TemplateVersion("Currently installed items:\n(No Items)\n", "Wisp.Templates"));
+        Assert.Null(DotnetRegistrations.TemplateVersion("Currently installed items:\n(No Items)\n", "Isoplane.Templates"));
     }
 
     [Fact]

@@ -36,7 +36,7 @@ its connection string. It reads configuration when creating each request's
 DbContext, without connecting to the database during application preparation.
 
 For a normal public database endpoint, remove the sample's
-`allow_endpoints = ["127.0.0.1:5432"]` line from `[dev]` in `wisp.toml`.
+`allow_endpoints = ["127.0.0.1:5432"]` line from `[dev]` in `isoplane.toml`.
 For a database on your local machine, change that line to its exact local IP
 address and port. This explicitly permits that local development destination;
 it does not open unrestricted access to private networks.
@@ -61,7 +61,7 @@ uses a random password and a private development CA; the password is not printed
 Plaintext database connections are refused. The certificates expire after seven
 days; stop and recreate the database to renew them.
 
-Apply the two configuration snippets printed by the helper to `wisp.toml`:
+Apply the two configuration snippets printed by the helper to `isoplane.toml`:
 replace `allow_endpoints` inside `[dev]`, then add the separate `[dev.trust]`
 table. These permit precisely the local endpoint and trust its generated CA.
 Do not also follow the external-provider connection-string instructions for
@@ -75,7 +75,7 @@ python3 local-postgres.py stop
 dotnet user-secrets remove ConnectionStrings:Todo
 ```
 
-Remove the local endpoint and `[dev.trust]` from `wisp.toml` before switching to
+Remove the local endpoint and `[dev.trust]` from `isoplane.toml` before switching to
 another database. The helper removes only its recorded container and temporary
 certificate directory. Its ignored `.local-postgres.json` file records that
 ownership; keep it until cleanup. Other User Secrets are left untouched.
@@ -83,7 +83,7 @@ ownership; keep it until cleanup. Other User Secrets are left untouched.
 ## Run and exercise the API
 
 ```bash
-dotnet run -c WispInterpretedDebug
+dotnet run -c IsoplaneInterpretedDebug
 ```
 
 Use the URL printed by the command. The following examples use `curl`; another
@@ -109,7 +109,7 @@ curl "$app_url/todos"
 Check the table independently in your database's SQL console. Restart the app
 after creating a row to confirm persistence comes from the database.
 
-Stop the application, run `dotnet run -c WispNativeAotRelease`, and repeat the
+Stop the application, run `dotnet run -c IsoplaneNativeAotRelease`, and repeat the
 same operations. The sample generates its EF model and queries at build time
 for NativeAOT.
 
@@ -123,7 +123,7 @@ for example `local-ca.pem`, and calculate its SHA-256:
 sha256sum local-ca.pem
 ```
 
-Add the result to `wisp.toml`:
+Add the result to `isoplane.toml`:
 
 ```toml
 [dev.trust]

@@ -16,7 +16,7 @@ DOTNET = shutil.which("dotnet")
 
 class ContainerPublishTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="wisp publish '")
+        self.directory = tempfile.TemporaryDirectory(prefix="isoplane publish '")
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.bin = self.root / "tools"
@@ -34,14 +34,14 @@ class ContainerPublishTests(unittest.TestCase):
         props = ET.Element("Project")
         group = ET.SubElement(props, "PropertyGroup")
         for name, value in {
-            "WispGuestRuntimePackVersion": "1.0.0",
-            "WispGuestNativeAotPackVersion": "1.0.0",
-            "WispGuestWasiSdkPackDirectory": str(sdk) + "/",
+            "IsoplaneGuestRuntimePackVersion": "1.0.0",
+            "IsoplaneGuestNativeAotPackVersion": "1.0.0",
+            "IsoplaneGuestWasiSdkPackDirectory": str(sdk) + "/",
         }.items():
             ET.SubElement(group, name).text = value
-        ET.ElementTree(props).write(feed / "Wisp.GuestRuntime.props")
-        self.env["WISP_GUEST_RUNTIME_FEED"] = str(feed)
-        validator = self.bin / "wisp-validator"
+        ET.ElementTree(props).write(feed / "Isoplane.GuestRuntime.props")
+        self.env["ISOPLANE_GUEST_RUNTIME_FEED"] = str(feed)
+        validator = self.bin / "isoplane-validator"
         validator.write_text(f"#!{sys.executable}\n" + """
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ['FAKE_ROOT'])
@@ -52,10 +52,10 @@ assert pathlib.Path(sys.argv[2]).read_bytes() == b'published module', 'validate 
 sys.exit(2 if os.environ.get('FAKE_MODE') == 'validator-rejection' else 0)
 """)
         validator.chmod(0o755)
-        self.env["WISP_CLI"] = str(validator)
+        self.env["ISOPLANE_CLI"] = str(validator)
         self.project = self.root / "Guest.csproj"
         self.project.write_text(f'''<Project Sdk="Microsoft.NET.Sdk">
-<Import Project="{ROOT}/guest-sdks/dotnet/Wisp.Guest.props" />
+<Import Project="{ROOT}/guest-sdks/dotnet/Isoplane.Guest.props" />
 </Project>''')
         docker = self.bin / "docker"
         docker.write_text(f"#!{sys.executable}\n" + '''
@@ -100,9 +100,9 @@ else:
         self.assertIsNotNone(DOTNET, "install the .NET SDK to test the MSBuild integration")
         return subprocess.run([
             DOTNET, "msbuild", str(self.project), "-t:Publish", "-nologo",
-            "-p:WispContainerBuild=true",
+            "-p:IsoplaneContainerBuild=true",
             "-p:Configuration=Release", f"-p:PublishDir={self.root}/out",
-            f"-p:WispCompilerCache={self.root}/cache",
+            f"-p:IsoplaneCompilerCache={self.root}/cache",
             *properties,
         ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
 
@@ -117,7 +117,7 @@ else:
         (self.root / "Handler.cs").write_text("public class Handler {}")
         result = subprocess.run([
             DOTNET, "build", str(self.project), "-c", "Release", "--disable-build-servers",
-            "-p:WispContainerBuild=true", "-p:NuGetAudit=false",
+            "-p:IsoplaneContainerBuild=true", "-p:NuGetAudit=false",
         ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.root / "bin/Release/net10.0/Guest.dll").exists(), "an IDE build must produce an IL assembly")
@@ -132,7 +132,7 @@ else:
 
     def test_offline_publication_requires_a_cached_image(self):
         self.env["FAKE_MODE"] = "missing-image"
-        result = self.publish("-p:WispOffline=true")
+        result = self.publish("-p:IsoplaneOffline=true")
         self.assertNotEqual(result.returncode, 0, "offline publication cannot build a missing image")
         self.assertIn("offline compiler image is missing", result.stdout, result.stdout)
         self.assertFalse((self.root / "created").exists(), "missing offline inputs must not start compilation")
@@ -162,7 +162,7 @@ else:
         self.assertTrue((self.root / "removed").exists(), "rejection must reclaim its compiler container")
 
     def test_offline_builds_preserve_arguments_isolate_outputs_and_disable_network(self):
-        result = self.publish("-p:WispOffline=true", "-p:DefineConstants=FIRST%3BSECOND")
+        result = self.publish("-p:IsoplaneOffline=true", "-p:DefineConstants=FIRST%3BSECOND")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         args = json.loads((self.root / "created").read_text())
         self.assertIn(str(self.project), args, "spaces and quotes in project paths must survive process invocation")
@@ -194,7 +194,7 @@ else:
         for _ in range(2):
             result = subprocess.run([
                 DOTNET, "clean", str(self.project), "-c", "Release",
-                "-p:WispContainerBuild=true",
+                "-p:IsoplaneContainerBuild=true",
             ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for output in outputs:
@@ -208,7 +208,7 @@ else:
             result = self.publish(f"-p:Configuration={configuration}", f"-p:PublishDir={self.root}/{configuration}")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = subprocess.run([
-            DOTNET, "clean", str(self.project), "-c", "Debug", "-p:WispContainerBuild=true",
+            DOTNET, "clean", str(self.project), "-c", "Debug", "-p:IsoplaneContainerBuild=true",
         ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.root / "Debug/guest.wasm").exists(), "clean must remove the selected configuration")
@@ -224,27 +224,27 @@ else:
         self.assertIn("compiler cleanup failed", result.stdout, result.stdout)
 
     def test_a_build_root_outside_the_project_is_rejected_before_startup(self):
-        result = self.publish(f"-p:WispBuildRoot={self.root}/unrelated")
+        result = self.publish(f"-p:IsoplaneBuildRoot={self.root}/unrelated")
         self.assertNotEqual(result.returncode, 0, "the mounted source tree must contain the project")
-        self.assertIn("WispBuildRoot must contain", result.stdout, result.stdout)
+        self.assertIn("IsoplaneBuildRoot must contain", result.stdout, result.stdout)
         self.assertFalse((self.root / "calls").exists(), "invalid static inputs must not acquire container resources")
 
     def test_control_timeouts_must_be_positive(self):
-        result = self.publish("-p:WispContainerCommandTimeoutSeconds=0")
+        result = self.publish("-p:IsoplaneContainerCommandTimeoutSeconds=0")
         self.assertNotEqual(result.returncode, 0, "an invalid control timeout must fail before starting resources")
         self.assertIn("must be positive", result.stdout, result.stdout)
 
 
 class MonoPublicationTests(unittest.TestCase):
     def test_untrimmed_publication_excludes_the_prebuilt_runtime_module(self):
-        with tempfile.TemporaryDirectory(prefix="wisp-mono-publish-items-") as directory:
+        with tempfile.TemporaryDirectory(prefix="isoplane-mono-publish-items-") as directory:
             project = ET.Element("Project")
             properties = ET.SubElement(project, "PropertyGroup")
             ET.SubElement(properties, "PublishTrimmed").text = "false"
             items = ET.SubElement(project, "ItemGroup")
             ET.SubElement(items, "ResolvedFileToPublish", Include="dotnet.wasm;Application.wasm;data.json")
-            targets = ET.parse(ROOT / "guest-sdks/dotnet/Build/Wisp.Mono.targets")
-            project.append(targets.find("Target[@Name='WispMonoDropPrebuiltRuntime']"))
+            targets = ET.parse(ROOT / "guest-sdks/dotnet/Build/Isoplane.Mono.targets")
+            project.append(targets.find("Target[@Name='IsoplaneMonoDropPrebuiltRuntime']"))
             ET.SubElement(project, "Target", Name="ComputeFilesToPublish")
             path = Path(directory) / "Publish.proj"
             ET.ElementTree(project).write(path)
@@ -257,7 +257,7 @@ class MonoPublicationTests(unittest.TestCase):
                              "publication must retain application outputs and remove the unused runtime module without requiring trimming")
 
     def test_publication_accepts_output_directories_without_a_trailing_separator(self):
-        with tempfile.TemporaryDirectory(prefix="wisp-mono-publication-") as directory:
+        with tempfile.TemporaryDirectory(prefix="isoplane-mono-publication-") as directory:
             root = Path(directory)
             source = root / "linked.wasm"
             source.write_bytes(b"linked guest")
@@ -267,18 +267,18 @@ class MonoPublicationTests(unittest.TestCase):
                 "PublishDir": str(root / "output directory"),
                 "AssemblyName": "Application",
                 "_WasiOutputFileName": str(source),
-                "WispGuestRuntimePackVersion": "1.0.0",
-                "WispGuestRuntimePackSha512": "fixture-digest",
+                "IsoplaneGuestRuntimePackVersion": "1.0.0",
+                "IsoplaneGuestRuntimePackSha512": "fixture-digest",
             }.items():
                 ET.SubElement(properties, name).text = value
-            targets = ET.parse(ROOT / "guest-sdks/dotnet/Build/Wisp.Mono.targets")
-            project.append(targets.find("Target[@Name='WispMonoPublishCore']"))
-            run_targets = ET.parse(ROOT / "guest-sdks/dotnet/Build/Wisp.Run.targets")
+            targets = ET.parse(ROOT / "guest-sdks/dotnet/Build/Isoplane.Mono.targets")
+            project.append(targets.find("Target[@Name='IsoplaneMonoPublishCore']"))
+            run_targets = ET.parse(ROOT / "guest-sdks/dotnet/Build/Isoplane.Run.targets")
             project.append(run_targets.find("Target[@Name='ComputeRunArguments']"))
-            ET.SubElement(project, "Target", Name="WispMonoVerifyRuntimePack")
+            ET.SubElement(project, "Target", Name="IsoplaneMonoVerifyRuntimePack")
             path = root / "Publish.proj"
             ET.ElementTree(project).write(path)
-            result = subprocess.run([DOTNET, "msbuild", str(path), "-t:WispMonoPublishCore;ComputeRunArguments", "-getProperty:NativeBinary,RunArguments", "-nologo"],
+            result = subprocess.run([DOTNET, "msbuild", str(path), "-t:IsoplaneMonoPublishCore;ComputeRunArguments", "-getProperty:NativeBinary,RunArguments", "-nologo"],
                                     capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             module = root / "output directory/Application.wasm"

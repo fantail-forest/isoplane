@@ -1,13 +1,13 @@
 using System;
 using System.Net;
 using System.Threading.Tasks;
-using Wisp;
-using Wisp.Durable;
+using Isoplane;
+using Isoplane.Durable;
 
 namespace Acceptance;
 
 /// <summary>Exercises native compiler ABI lowering without optimization.</summary>
-public sealed class AcceptanceHandler : IWispHandler
+public sealed class AcceptanceHandler : IIsoplaneHandler
 {
     /// <summary>Checks a native integer boundary or socket-address serialization.</summary>
     public Task<Response> HandleAsync(Request request, Ctx context)
@@ -27,7 +27,7 @@ public sealed class AcceptanceHandler : IWispHandler
                 }
             }
         }
-        else result = Wisp.Abi.NativeCompilerProbe.Run(parts[0], parts[1]);
+        else result = Isoplane.Abi.NativeCompilerProbe.Run(parts[0], parts[1]);
         return Task.FromResult(Response.Text(result));
     }
 }

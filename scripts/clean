@@ -20,7 +20,7 @@ JUNK=(target/debug/incremental target/release/incremental
       guests/target guests/dotnet/src/obj guests/dotnet/src/bin
       guests/dotnet/obj
       guest-sdks/dotnet/obj guest-sdks/dotnet/bin
-      .wisp-dev/release-journey)
+      .isoplane-dev/release-journey)
 
 rm -rf "${JUNK[@]}"
 find . -name '*.rs.bk' -delete

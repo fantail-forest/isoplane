@@ -1,0 +1,58 @@
+<Project>
+  <!-- The workload's emitter compiles every resource whenever invoked. Keep
+       its object naming and registration logic, and let MSBuild track the
+       complete input inventory and the actual outputs returned by that task. -->
+  <Target Name="_GenerateObjectFilesForSingleFileBundle" Returns="@(_WasmObjectFilesForBundle)"
+          Condition="'$(WasmSingleFileBundle)' == 'true'"
+          DependsOnTargets="IsoplaneMonoBundleInputs;IsoplaneMonoGenerateBundleObjects;IsoplaneMonoCollectBundleObjects" />
+
+  <Target Name="IsoplaneMonoBundleInputs">
+    <Error Condition="'$(_IsToolchainMissing)' == 'true'" Text="$(_ToolchainMissingErrorMessage) SDK is required for building native files." />
+    <MakeDir Directories="$(_WasmIntermediateOutputPath)" />
+    <PropertyGroup>
+      <_IsoplaneBundleInventory>$(_WasmIntermediateOutputPath)isoplane-bundle.inputs</_IsoplaneBundleInventory>
+      <_IsoplaneBundleManifest>$(_WasmIntermediateOutputPath)isoplane-bundle.outputs</_IsoplaneBundleManifest>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WasmBundleItem Remove="@(_WasmSatelliteAssemblies)" />
+      <_WasmBundleItem Include="@(_WasmSatelliteAssemblies)" Culture="%(_WasmSatelliteAssemblies.CultureName)"
+                       BundleRegistrationFunctionName="mono_register_assemblies_bundle" BundleFile="wasi_bundled_assemblies.o" />
+      <_IsoplaneBundleInputs Include="@(_WasmBundleItem);@(_WasmBundleItem->'%(SymbolFile)');$(WasmClang);$(MonoTargetsTasksAssemblyPath);$(MSBuildThisFileFullPath);$([System.IO.Path]::GetDirectoryName('$(WasmClang)'))/*.cfg;$(WASI_SDK_PATH)/share/wasi-sysroot/include/**/*.h;$(WASI_SDK_PATH)/lib/clang/**/include/**/*.h" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_IsoplaneBundleInventory)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="@(_IsoplaneBundleInputs);@(_WasmBundleItem->'%(Identity)|%(RegisteredName)|%(Culture)|%(SymbolFile)|%(BundleFile)|%(BundleRegistrationFunctionName)');$(IsoplaneGuestRuntimePackVersion);$(IsoplaneGuestRuntimePackSha512)" />
+    <ReadLinesFromFile File="$(_IsoplaneBundleManifest)" Condition="Exists('$(_IsoplaneBundleManifest)')">
+      <Output TaskParameter="Lines" ItemName="_IsoplaneBundleManifestLines" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_IsoplaneBundleCompletion Include="@(_IsoplaneBundleManifestLines)" Condition="'%(Identity)' == '#isoplane-bundle-complete'" />
+      <_IsoplanePreviousBundleOutputs Include="@(_IsoplaneBundleManifestLines)" Exclude="#isoplane-bundle-complete" />
+    </ItemGroup>
+    <Delete Files="$(_IsoplaneBundleManifest)"
+            Condition="'@(_IsoplaneBundleCompletion)' == '' OR ('@(_WasmBundleItem)' != '' AND '@(_IsoplanePreviousBundleOutputs)' == '')" />
+  </Target>
+
+  <Target Name="IsoplaneMonoGenerateBundleObjects"
+          Inputs="@(_IsoplaneBundleInputs);$(_IsoplaneBundleInventory)"
+          Outputs="$(_IsoplaneBundleManifest);@(_IsoplanePreviousBundleOutputs)">
+    <EmitBundleObjectFiles FilesToBundle="@(_WasmBundleItem)" ClangExecutable="$(WasmClang)"
+                           BundleRegistrationFunctionName="%(_WasmBundleItem.BundleRegistrationFunctionName)"
+                           BundleFile="%(_WasmBundleItem.BundleFile)" OutputDirectory="$(_WasmIntermediateOutputPath)">
+      <Output TaskParameter="BundledResources" ItemName="_IsoplaneBundleResources" />
+      <Output TaskParameter="BundleRegistrationFile" ItemName="_IsoplaneBundleRegistrations" />
+    </EmitBundleObjectFiles>
+    <WriteLinesToFile File="$(_IsoplaneBundleManifest).tmp" Overwrite="true"
+                      Lines="@(_IsoplaneBundleResources->'%(DestinationFile)');@(_IsoplaneBundleRegistrations);#isoplane-bundle-complete" />
+    <Move SourceFiles="$(_IsoplaneBundleManifest).tmp" DestinationFiles="$(_IsoplaneBundleManifest)" />
+  </Target>
+
+  <Target Name="IsoplaneMonoCollectBundleObjects">
+    <ReadLinesFromFile File="$(_IsoplaneBundleManifest)">
+      <Output TaskParameter="Lines" ItemName="_WasmObjectFilesForBundle" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_WasmObjectFilesForBundle Remove="#isoplane-bundle-complete" />
+      <FileWrites Include="@(_WasmObjectFilesForBundle);$(_IsoplaneBundleInventory);$(_IsoplaneBundleManifest)" />
+    </ItemGroup>
+  </Target>
+</Project>

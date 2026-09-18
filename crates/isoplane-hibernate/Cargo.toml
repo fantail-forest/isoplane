@@ -1,0 +1,21 @@
+[package]
+name = "isoplane-hibernate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+description = "Snapshot identity and local storage primitives"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+isoplane-abi = { workspace = true, features = ["host"] }
+isoplane-engine = { workspace = true }
+postcard = { workspace = true }
+fs4 = { workspace = true }
+tempfile = { workspace = true }
+
+[dev-dependencies]
+libc = { workspace = true }

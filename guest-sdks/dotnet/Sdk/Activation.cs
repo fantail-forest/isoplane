@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>
 /// The moment an instance first runs after activation from its template.

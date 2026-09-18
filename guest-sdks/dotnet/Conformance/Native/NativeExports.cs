@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Build.Framework;
 
-namespace Wisp.Conformance;
+namespace Isoplane.Conformance;
 
 /// <summary>Inventories exports from the exact native inputs selected for guest linking.</summary>
 public sealed class NativeExports : Microsoft.Build.Utilities.Task

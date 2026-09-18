@@ -1,16 +1,18 @@
 //! End-to-end through the **real guest exports**: a `DispatchRecord` goes in
-//! through `wisp_handle`, the guest parks, and `wisp_wake` finishes it.
+//! through `isoplane_handle`, the guest parks, and `isoplane_wake` finishes it.
 //!
 //! This is the same code path a wasm engine drives; only the import vtable is
 //! a stub. What it pins down is that a dispatch waiting on host work
 //! **returns** `pending` with an empty stack, and the response only appears
 //! after a wake.
 
-use wisp_guest::testing::{with_stub_host, RESP_HANDLE};
-use wisp_guest::wisp_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
-use wisp_guest::wisp_abi::result::ResultRecord;
-use wisp_guest::wisp_abi::status::PollStatus;
-use wisp_guest::{Clock, Ctx, Handler, Request, Response};
+use isoplane_guest::isoplane_abi::dispatch::{
+    DispatchKind, DispatchRecord, HttpRequest, TraceContext,
+};
+use isoplane_guest::isoplane_abi::result::ResultRecord;
+use isoplane_guest::isoplane_abi::status::PollStatus;
+use isoplane_guest::testing::{with_stub_host, RESP_HANDLE};
+use isoplane_guest::{Clock, Ctx, Handler, Request, Response};
 
 struct Api;
 
@@ -26,7 +28,7 @@ impl Handler for Api {
     }
 }
 
-wisp_guest::export_handler!(Api);
+isoplane_guest::export_handler!(Api);
 
 fn record(path: &str) -> DispatchRecord {
     DispatchRecord {
@@ -46,11 +48,11 @@ fn record(path: &str) -> DispatchRecord {
     }
 }
 
-/// Copy `bytes` into a guest buffer the way a host does: ask `wisp_alloc`,
+/// Copy `bytes` into a guest buffer the way a host does: ask `isoplane_alloc`,
 /// write, then hand back `(ptr, len)`.
 fn handoff(bytes: &[u8]) -> (usize, usize) {
-    let p = wisp_alloc(bytes.len(), 8);
-    assert_ne!(p, 0, "wisp_alloc refused");
+    let p = isoplane_alloc(bytes.len(), 8);
+    assert_ne!(p, 0, "isoplane_alloc refused");
     // SAFETY: the non-null allocation above has room for all copied bytes.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, bytes.len()) };
     (p, bytes.len())
@@ -63,9 +65,9 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         let (ptr, len) = handoff(&enc);
 
         // 1. The dispatch. The handler awaits `clock_deadline_in`, so this MUST park.
-        let st = PollStatus::decode(wisp_handle(ptr, len));
+        let st = PollStatus::decode(isoplane_handle(ptr, len));
         assert_eq!(st, PollStatus::Pending, "an awaited host future must park");
-        assert_eq!(wisp_guest::rt::pending_futures(), 1);
+        assert_eq!(isoplane_guest::rt::pending_futures(), 1);
         assert!(
             host.called("clock_deadline_in"),
             "the import must have been issued before parking"
@@ -82,7 +84,7 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         let res = ResultRecord::Ok(Vec::new());
         let enc = postcard::to_allocvec(&res).unwrap();
         let (ptr, len) = handoff(&enc);
-        let st = PollStatus::decode(wisp_wake(fut_id, ptr, len));
+        let st = PollStatus::decode(isoplane_wake(fut_id, ptr, len));
 
         assert_eq!(
             st,
@@ -92,7 +94,7 @@ fn a_dispatch_that_waits_parks_and_a_wake_completes_it() {
         );
         assert!(host.called("resp_new"));
         assert_eq!(
-            wisp_guest::rt::pending_futures(),
+            isoplane_guest::rt::pending_futures(),
             0,
             "future table must not leak"
         );

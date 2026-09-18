@@ -33,7 +33,7 @@ is possible even when the previous request completed successfully.
 ## Preparation and activation are different
 
 Application initialization can happen before an instance starts serving requests.
-Subscribe to [`Wisp.Initialization.Initializing`](reference/sdk/Wisp.Sdk/Wisp/Initialization/Initializing.md)
+Subscribe to [`Isoplane.Initialization.Initializing`](reference/sdk/Isoplane.Sdk/Isoplane/Initialization/Initializing.md)
 during application construction to warm reusable state before the template is
 captured, such as serialization metadata or a compiled EF model. Callbacks return
 a `Task` and are awaited in registration order before capture. Asynchronous

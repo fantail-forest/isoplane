@@ -2,7 +2,7 @@
 
 ## Keep one definition of the boundary, in the ABI crate
 
-Give every type, constant, and capability that crosses the sandbox boundary one definition, in `wisp-abi`. How the validator, the linker, and the guest SDKs consume it is their business, and it may change to serve developer experience; what does not change is that anything describing the boundary elsewhere must be generated from that definition or drift-tested against it. Documentation of a contract that is neither is a second contract waiting to drift.
+Give every type, constant, and capability that crosses the sandbox boundary one definition, in `isoplane-abi`. How the validator, the linker, and the guest SDKs consume it is their business, and it may change to serve developer experience; what does not change is that anything describing the boundary elsewhere must be generated from that definition or drift-tested against it. Documentation of a contract that is neither is a second contract waiting to drift.
 
 **Not this:** A WIT file whose own header says nothing reads it, alongside the Rust table that is the real list.
 

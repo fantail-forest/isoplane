@@ -3,7 +3,7 @@ using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-#if WISP_MONO
+#if ISOPLANE_MONO
 using System.Reflection.Emit;
 #endif
 
@@ -73,7 +73,7 @@ internal sealed partial class Reflection
         }
     }
 
-#if WISP_MONO
+#if ISOPLANE_MONO
     private static async Task<string> EmittedDelegateAfterPark()
     {
         var method = new DynamicMethod("AddOne", typeof(int), new[] { typeof(int) });

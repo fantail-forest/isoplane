@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup><_IsoplaneBuildsRunnableModule>true</_IsoplaneBuildsRunnableModule></PropertyGroup>
+  <ItemGroup><Watch Include="$(MSBuildProjectDirectory)/isoplane.toml" /></ItemGroup>
+  <!-- Publish the sandbox artifact before watch regards a rebuild as successful. -->
+  <Target Name="IsoplaneBuildRunnableModule" AfterTargets="Build"
+          Condition="'$(IsoplaneManagedBundleBuild)' != 'true' AND '$(_IsPublishing)' != 'true' AND '$(NoBuild)' != 'true' AND '$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish"
+             Properties="NoBuild=true;_IsPublishing=true" BuildInParallel="false" />
+    <PropertyGroup>
+      <_IsoplanePrepareCommand>&quot;$(IsoplaneCli)&quot;</_IsoplanePrepareCommand>
+      <_IsoplanePrepareCommand Condition="'$(IsoplaneCliAssembly)' != ''">dotnet &quot;$(IsoplaneCliAssembly)&quot;</_IsoplanePrepareCommand>
+      <_IsoplanePreparedModule>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(PublishDir)', '$(AssemblyName).wasm')), '$(MSBuildProjectDirectory)'))</_IsoplanePreparedModule>
+    </PropertyGroup>
+    <Exec Command="$(_IsoplanePrepareCommand) prepare --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --module &quot;$(_IsoplanePreparedModule)&quot;" />
+  </Target>
+  <Target Name="ComputeRunArguments">
+    <PropertyGroup>
+      <RunCommand>isoplane</RunCommand>
+      <_IsoplaneRunModule>$([System.IO.Path]::Combine('$(PublishDir)', '$(AssemblyName).wasm'))</_IsoplaneRunModule>
+      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-build --no-watch --module &quot;$([System.IO.Path]::GetFullPath('$(_IsoplaneRunModule)', '$(MSBuildProjectDirectory)'))&quot;</RunArguments>
+      <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
+    </PropertyGroup>
+  </Target>
+</Project>

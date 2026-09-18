@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>An HTTP request delivered by the host, for any HTTP method.</summary>
 public sealed class Request : RequestHead

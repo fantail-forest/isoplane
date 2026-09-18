@@ -6,9 +6,9 @@ using System.Text;
 using Microsoft.Build.Framework;
 
 /// <summary>Records the exact module and symbols delivered to a local debug session.</summary>
-public sealed class WispMonoDebugManifest : Microsoft.Build.Utilities.Task
+public sealed class IsoplaneMonoDebugManifest : Microsoft.Build.Utilities.Task
 {
-    private const string LocalDebugSection = "wisp.local-debug";
+    private const string LocalDebugSection = "isoplane.local-debug";
 
     /// <summary>The final raw guest module.</summary>
     [Required] public string Module { get; set; } = "";

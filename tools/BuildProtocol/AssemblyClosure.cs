@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 
-namespace Wisp.Build;
+namespace Isoplane.Build;
 
 internal enum AssemblyInputProblem
 {
@@ -138,18 +138,18 @@ internal static class AssemblyClosure
         foreach (var assembly in assemblies.OrderBy(item => item.Identity.Key, StringComparer.Ordinal))
         {
             foreach (var import in assembly.NativeImports.OrderBy(item => item.Member, StringComparer.Ordinal))
-                yield return new("WISP1001", $"Assembly '{assembly.Identity.Name}', member '{import.Member}' declares native import '{import.Library}!{import.EntryPoint}'. " +
+                yield return new("ISOPLANE1001", $"Assembly '{assembly.Identity.Name}', member '{import.Member}' declares native import '{import.Library}!{import.EntryPoint}'. " +
                     "The declaration is permitted; an unsupported native call fails if reached. Use managed .NET APIs for platform services. Conformance rules: 1.");
             foreach (var method in assembly.Methods.OrderBy(method => method.Type, StringComparer.Ordinal).ThenBy(method => method.Name, StringComparer.Ordinal))
             {
                 if (method is { Type: "System.Threading.Thread", Name: "Start" })
-                    yield return new("WISP1002", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}'. " +
+                    yield return new("ISOPLANE1002", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}'. " +
                         "Guest applications cannot start operating-system threads. Use asynchronous .NET APIs for concurrent I/O. Conformance rules: 1.");
                 else if (method is { Type: "System.Threading.Thread", Name: "Sleep" or "Join" }
                     or { Type: "System.Threading.Monitor", Name: "Wait" }
                     or { Type: "System.Threading.Tasks.Task", Name: "Wait" or "WaitAll" or "WaitAny" }
                     or { Type: "System.Threading.SemaphoreSlim", Name: "Wait" })
-                    yield return new("WISP1003", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}', which can wait synchronously. " +
+                    yield return new("ISOPLANE1003", $"Assembly '{assembly.Identity.Name}' references '{method.Type}.{method.Name}', which can wait synchronously. " +
                         "A guest cannot block waiting for unfinished work; use await and asynchronous wait APIs. Already-completed operations are not rejected by this diagnostic. Conformance rules: 1.");
             }
         }

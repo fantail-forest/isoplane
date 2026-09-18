@@ -22,14 +22,14 @@ expected body to `Hello from my API!`. For another application, assert the
 response its route should return.
 
 ```csharp
-using Wisp.Testing;
+using Isoplane.Testing;
 using Xunit;
 
 public class ApplicationTests
 {
     [Theory]
-    [InlineData("WispInterpretedDebug")]
-    [InlineData("WispNativeAotRelease")]
+    [InlineData("IsoplaneInterpretedDebug")]
+    [InlineData("IsoplaneNativeAotRelease")]
     public async Task The_home_page_answers(string configuration)
     {
         using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(10));

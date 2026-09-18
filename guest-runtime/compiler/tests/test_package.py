@@ -14,7 +14,7 @@ spec.loader.exec_module(compiler)
 
 class CompilerPackageTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='wisp-compiler-package-')
+        self.temp = tempfile.TemporaryDirectory(prefix='isoplane-compiler-package-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.upstream = self.root / 'upstream.nupkg'
@@ -69,7 +69,7 @@ class CompilerPackageTests(unittest.TestCase):
 
     def test_changed_msbuild_identity_is_refused(self):
         output, _ = self.compose()
-        (output / 'Wisp.GuestCompiler.props').write_text('<Project/>')
+        (output / 'Isoplane.GuestCompiler.props').write_text('<Project/>')
         with self.assertRaisesRegex(ValueError, 'properties do not match'):
             compiler.verify(output, False)
 

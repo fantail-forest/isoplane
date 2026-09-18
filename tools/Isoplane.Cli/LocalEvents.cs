@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal static class LocalEvents
 {
@@ -10,7 +10,7 @@ internal static class LocalEvents
         if (kind == "diagnostic")
         {
             if (json) Console.Error.WriteLine(message.ToJsonString());
-            else if (message["target"]!.GetValue<string>() == "wisp_host::bindings::observability")
+            else if (message["target"]!.GetValue<string>() == "isoplane_host::bindings::observability")
                 ApplicationLog(message["fields"]!.AsObject());
             return;
         }

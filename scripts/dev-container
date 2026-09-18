@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run a command inside the wisp-dev toolchain container.
+# Run a command inside the isoplane-dev toolchain container.
 #
 #   scripts/dev --container cargo test --workspace
 #   scripts/dev --container bash
-#   WISP_CONTAINER_NAME=wisp-foo scripts/dev --container ...
+#   ISOPLANE_CONTAINER_NAME=isoplane-foo scripts/dev --container ...
 #   scripts/dev --container --stop       # remove this name's container
 #   scripts/dev --container --reap       # remove all of our own stopped containers
 #   scripts/dev --container --status     # what we own, and whether it responds
@@ -16,14 +16,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${WISP_IMAGE:-wisp-dev:latest}"
-NAME="${WISP_CONTAINER_NAME:-wisp-$(id -u)-shared}"
-LABEL="wisp.owner=$(id -u)"
-PROBE_TIMEOUT="${WISP_PROBE_TIMEOUT:-15}"
-DOCKER_TIMEOUT="${WISP_DOCKER_TIMEOUT:-60}"
+IMAGE="${ISOPLANE_IMAGE:-isoplane-dev:latest}"
+NAME="${ISOPLANE_CONTAINER_NAME:-isoplane-$(id -u)-shared}"
+LABEL="isoplane.owner=$(id -u)"
+PROBE_TIMEOUT="${ISOPLANE_PROBE_TIMEOUT:-15}"
+DOCKER_TIMEOUT="${ISOPLANE_DOCKER_TIMEOUT:-60}"
 # How long to wait for a container someone else is starting: `created` and
 # `restarting` are what the winner of a startup race looks like for a moment.
-START_WAIT="${WISP_START_WAIT:-30}"
+START_WAIT="${ISOPLANE_START_WAIT:-30}"
 
 timed() {
   python3 -c 'import subprocess, sys
@@ -73,7 +73,7 @@ state_of() {
 # 0 = ours, 1 = exists and is not ours, 2 = absent, 3 = docker would not say.
 owner_of() {
   local n="$1" out rc=0
-  out=$(d inspect -f '{{index .Config.Labels "wisp.owner"}}' "$n" 2>&1) || rc=$?
+  out=$(d inspect -f '{{index .Config.Labels "isoplane.owner"}}' "$n" 2>&1) || rc=$?
   if [ "$rc" = 0 ]; then
     [ "$out" = "$(id -u)" ] && return 0
     return 1
@@ -157,16 +157,16 @@ if ! d info >/dev/null 2>&1; then
 fi
 
 PORTS=()
-for p in ${WISP_PORTS:-}; do PORTS+=(-p "$p"); done
+for p in ${ISOPLANE_PORTS:-}; do PORTS+=(-p "$p"); done
 create_container() {
   d run -d --name "$NAME" \
-    --label "$LABEL" --label "wisp.created=$(date -u +%FT%TZ)" \
+    --label "$LABEL" --label "isoplane.created=$(date -u +%FT%TZ)" \
     --user "$(id -u):$(id -g)" \
-    -v "$ROOT:/wisp" \
-    -v wisp-ctarget:/ctarget \
-    -v wisp-cargo-registry:/opt/cargo/registry \
-    -v wisp-nuget:/nuget \
-    -w /wisp \
+    -v "$ROOT:/isoplane" \
+    -v isoplane-ctarget:/ctarget \
+    -v isoplane-cargo-registry:/opt/cargo/registry \
+    -v isoplane-nuget:/nuget \
+    -w /isoplane \
     -e CARGO_TARGET_DIR=/ctarget \
     -e CARGO_BUILD_BUILD_DIR=/ctarget/build \
     -e CARGO_HOME=/opt/cargo \
@@ -262,13 +262,13 @@ while :; do
   exit 72
 done
 
-# Forward the caller's `WISP_*` environment into the container, since `docker
+# Forward the caller's `ISOPLANE_*` environment into the container, since `docker
 # exec` inherits nothing; the script's own control variables stay out so a
 # nested `scripts/dev` does not inherit a name or an image it was not given.
 EXEC=(docker exec)
-for v in "${!WISP_@}"; do
+for v in "${!ISOPLANE_@}"; do
   case "$v" in
-    WISP_IMAGE|WISP_CONTAINER_NAME|WISP_PORTS|WISP_PROBE_TIMEOUT|WISP_DOCKER_TIMEOUT|WISP_START_WAIT) continue ;;
+    ISOPLANE_IMAGE|ISOPLANE_CONTAINER_NAME|ISOPLANE_PORTS|ISOPLANE_PROBE_TIMEOUT|ISOPLANE_DOCKER_TIMEOUT|ISOPLANE_START_WAIT) continue ;;
   esac
   EXEC+=(-e "$v=${!v}")
 done

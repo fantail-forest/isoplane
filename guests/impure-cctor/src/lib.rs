@@ -27,10 +27,10 @@
 
 use core::future::Future;
 
+use isoplane_guest::{Clock, Ctx, Handler, Request, Response};
 use serde::Serialize;
-use wisp_guest::{Clock, Ctx, Handler, Request, Response};
 
-wisp_guest::deferred_lazy! {
+isoplane_guest::deferred_lazy! {
     /// **Unit 0 — PURE.** Hashes nothing, calls nothing. Pre-runs into the
     /// template and costs every instance zero.
     static PURE_TABLE: Vec<u32> = { (0..64u32).map(|i| i * i).collect() };
@@ -80,9 +80,9 @@ impl Handler for Impure {
                         && STARTED_AT.run_count() == 1;
                     let body = serde_json::to_vec(&InitReport {
                         unit_ids: [
-                            ("PURE_TABLE", wisp_guest::init::unit_id(0)),
-                            ("STARTED_AT", wisp_guest::init::unit_id(1)),
-                            ("ROUTES", wisp_guest::init::unit_id(2)),
+                            ("PURE_TABLE", isoplane_guest::init::unit_id(0)),
+                            ("STARTED_AT", isoplane_guest::init::unit_id(1)),
+                            ("ROUTES", isoplane_guest::init::unit_id(2)),
                         ],
                         pure_table_runs_in_instance: PURE_TABLE.run_count(),
                         pure_table_len: PURE_TABLE.get().len(),
@@ -101,7 +101,7 @@ impl Handler for Impure {
     }
 }
 
-wisp_guest::export_handler!(
+isoplane_guest::export_handler!(
     Impure,
-    units = wisp_guest::init_units![PURE_TABLE, STARTED_AT, ROUTES]
+    units = isoplane_guest::init_units![PURE_TABLE, STARTED_AT, ROUTES]
 );

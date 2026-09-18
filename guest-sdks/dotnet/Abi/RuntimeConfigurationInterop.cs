@@ -1,6 +1,6 @@
 using System;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 internal static class RuntimeConfigurationInterop
 {

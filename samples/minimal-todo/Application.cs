@@ -1,16 +1,16 @@
 using System.Globalization;
 using System.Text.Json;
 using Npgsql;
-using Wisp;
-using Wisp.Durable;
+using Isoplane;
+using Isoplane.Durable;
 
 namespace MinimalTodo;
 
 /// <summary>A PostgreSQL TODO handler without ASP.NET or EF Core.</summary>
-public sealed class Application : IWispHandler
+public sealed class Application : IIsoplaneHandler
 {
     /// <summary>Warms the read endpoint before template capture.</summary>
-    public static IWispHandler Create()
+    public static IIsoplaneHandler Create()
     {
         Initialization.Initializing += Warmup;
         return new Application();

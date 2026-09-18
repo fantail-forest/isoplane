@@ -1,13 +1,13 @@
-#if WISP_ENTROPY_PROBE
+#if ISOPLANE_ENTROPY_PROBE
 using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>
-/// The clone-uniqueness probe. Build with <c>-p:WispEntropyProbe=true</c>, then
+/// The clone-uniqueness probe. Build with <c>-p:IsoplaneEntropyProbe=true</c>, then
 /// run <c>check.sh --entropy-clone</c>.
 ///
 /// Host entropy is drawn per call, but template memory can retain returned
@@ -31,7 +31,7 @@ internal static class EntropyProbe
     /// those hash strings, which is why the deploy escrows a per-deploy Marvin
     /// seed — without it, nothing that hashes a string could pre-run.
     ///
-    /// Called from <c>wisp_initialize</c> under the probe only. Its whole
+    /// Called from <c>isoplane_initialize</c> under the probe only. Its whole
     /// purpose is to move the lazily-seeded RNG state from "drawn after the
     /// template was frozen" to "baked into the template", so
     /// <c>check.sh --entropy-clone</c> can show what that costs.
@@ -54,7 +54,7 @@ internal static class EntropyProbe
         GC.KeepAlive(config["region"]);
 
         // Seeds the Marvin string-hash state (the escrowed seed).
-        GC.KeepAlive("wisp-config".GetHashCode());
+        GC.KeepAlive("isoplane-config".GetHashCode());
 
         // Seeds the object-header hash path: ThreadSafeRandom -> Xoshiro.
         GC.KeepAlive(new object().GetHashCode());
@@ -86,7 +86,7 @@ internal static class EntropyProbe
         Field(sb, "shared", static () => Random.Shared.Next().ToString());
 
         // The escrowed Marvin string-hash seed, observed indirectly.
-        Field(sb, "strhash", static () => "wisp".GetHashCode().ToString());
+        Field(sb, "strhash", static () => "isoplane".GetHashCode().ToString());
 
         // Object-header hash code: assigned lazily from `ThreadSafeRandom`,
         // which is the path that was traced to `_Exit`.

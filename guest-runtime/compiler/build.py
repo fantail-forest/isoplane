@@ -50,9 +50,9 @@ def fetch(url, path, expected):
 def props_bytes(version, sha512, source_identity, rid):
     root = ET.Element('Project')
     group = ET.SubElement(root, 'PropertyGroup')
-    for key, value in {'WispGuestCompilerVersion': version, 'WispGuestCompilerSha512': sha512,
-                       'WispGuestCompilerInputsSha256': source_identity,
-                       'WispGuestCompilerRuntimeIdentifier': rid}.items():
+    for key, value in {'IsoplaneGuestCompilerVersion': version, 'IsoplaneGuestCompilerSha512': sha512,
+                       'IsoplaneGuestCompilerInputsSha256': source_identity,
+                       'IsoplaneGuestCompilerRuntimeIdentifier': rid}.items():
         ET.SubElement(group, key).text = value
     return ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
@@ -69,7 +69,7 @@ def verify(output, current):
     if actual_sha512 != receipt['package_sha512']:
         raise ValueError('compiler package SHA512 does not match its receipt')
     expected = props_bytes(receipt['version'], receipt['package_sha512'], receipt['inputs_sha256'], receipt['upstream']['runtime_identifier'])
-    if (output / 'Wisp.GuestCompiler.props').read_bytes() != expected:
+    if (output / 'Isoplane.GuestCompiler.props').read_bytes() != expected:
         raise ValueError('compiler MSBuild properties do not match its receipt')
     if digest(output / 'backend') != receipt['backend_sha256']:
         raise ValueError('compiler dependency probe backend does not match its receipt')
@@ -95,7 +95,7 @@ def compose(upstream, backend, managed, output):
         raise ValueError('source-built compiler uses a different native backend')
     compiler_files = {name: digest(path) for name, path in files.items()}
     payload_hash = hashlib.sha256(json.dumps(compiler_files, sort_keys=True).encode()).hexdigest()
-    version = f"10.0.0-wisp.{identity()[:12]}.{payload_hash[:12]}"
+    version = f"10.0.0-isoplane.{identity()[:12]}.{payload_hash[:12]}"
     if output.exists():
         raise ValueError(f'output already exists: {output}; choose a new compiler output directory')
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -126,9 +126,9 @@ def compose(upstream, backend, managed, output):
                     entry = zipfile.ZipInfo(name)
                     entry.external_attr = (0o100755 if path.name == 'ilc' else 0o100644) << 16
                     result.writestr(entry, path.read_bytes())
-            result.writestr(zipfile.ZipInfo('WISP-COMPILER-NOTICE.txt'), 'WISP builds the managed compiler and LLVM backend from the pinned runtime source with the accompanying patches. Upstream license notices remain included.\n')
+            result.writestr(zipfile.ZipInfo('ISOPLANE-COMPILER-NOTICE.txt'), 'Isoplane builds the managed compiler and LLVM backend from the pinned runtime source with the accompanying patches. Upstream license notices remain included.\n')
             for patch in sorted((HERE / 'patches').glob('*.patch')):
-                result.writestr(zipfile.ZipInfo('wisp-patches/' + patch.name), patch.read_bytes())
+                result.writestr(zipfile.ZipInfo('isoplane-patches/' + patch.name), patch.read_bytes())
         with package.open('rb') as stream:
             sha512 = base64.b64encode(hashlib.file_digest(stream, 'sha512').digest()).decode()
         receipt = {'inputs_sha256': identity(), 'version': version, 'package': package.name,
@@ -136,7 +136,7 @@ def compose(upstream, backend, managed, output):
                    'backend_sha256': backend_hash, 'compiler_files': compiler_files, 'upstream': spec}
         shutil.copyfile(backend, stage / 'backend')
         (stage / 'compiler.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        (stage / 'Wisp.GuestCompiler.props').write_bytes(props_bytes(version, sha512, identity(), spec['runtime_identifier']))
+        (stage / 'Isoplane.GuestCompiler.props').write_bytes(props_bytes(version, sha512, identity(), spec['runtime_identifier']))
         stage.rename(output)
     return verify(output, True)
 

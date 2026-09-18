@@ -2,9 +2,9 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp.Runtime;
+namespace Isoplane.Runtime;
 
 internal sealed class RequestStream(ReadOnlyMemory<byte> prefix, bool canHaveBody) : Stream
 {

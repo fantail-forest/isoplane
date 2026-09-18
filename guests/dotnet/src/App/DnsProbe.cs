@@ -3,12 +3,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises the ordinary managed asynchronous DNS API.</summary>
-public sealed class DnsProbe : IWispHandler
+public sealed class DnsProbe : IIsoplaneHandler
 {
     /// <summary>Returns the first host-resolved address.</summary>
     public async Task<Response> HandleAsync(Request request, Ctx context)

@@ -5,7 +5,7 @@ using System.Xml.Linq;
 /// <summary>Runs isolated MSBuild projects against the guest SDK targets.</summary>
 public abstract class MsbuildTests : IDisposable
 {
-    protected readonly string directory = Directory.CreateTempSubdirectory("wisp-publication-test-").FullName;
+    protected readonly string directory = Directory.CreateTempSubdirectory("isoplane-publication-test-").FullName;
     protected static string SdkDirectory() => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(SourcePath())!, "..", ".."));
     private static string SourcePath([CallerFilePath] string source = "") => source;
 
@@ -20,7 +20,7 @@ public abstract class MsbuildTests : IDisposable
     {
         var start = new ProcessStartInfo("dotnet") { WorkingDirectory = Path.GetDirectoryName(project)!, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "msbuild", project, "-nologo", "-nodeReuse:false", argument }) start.ArgumentList.Add(arg);
-        start.Environment.Remove("WISP_GUEST_RUNTIME_FEED");
+        start.Environment.Remove("ISOPLANE_GUEST_RUNTIME_FEED");
         return start;
     }
 

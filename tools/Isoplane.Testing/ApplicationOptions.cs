@@ -1,4 +1,4 @@
-namespace Wisp.Testing;
+namespace Isoplane.Testing;
 
 /// <summary>How a test locates and shuts down its installed development tool.</summary>
 public sealed record ApplicationOptions

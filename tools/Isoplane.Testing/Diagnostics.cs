@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Wisp.Testing;
+namespace Isoplane.Testing;
 
 internal sealed class Diagnostics(int limit)
 {

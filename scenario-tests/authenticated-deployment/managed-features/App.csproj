@@ -1,8 +1,8 @@
-<Project Sdk="Wisp.AspNetCore/0.1.0-preview.1">
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.1">
   <PropertyGroup>
     <PublishAot>false</PublishAot>
-    <PublishAot Condition="'$(Configuration)' == 'WispNativeAotRelease'">true</PublishAot>
-    <WispApplicationFactory>ManagedFeatures.App.Create</WispApplicationFactory>
+    <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>
+    <IsoplaneApplicationFactory>ManagedFeatures.App.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>

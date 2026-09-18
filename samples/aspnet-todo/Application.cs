@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 
 namespace TodoApp;
 
@@ -13,14 +13,14 @@ public static class Application
     /// <summary>Configures the application and registers read-only database warmup before template capture.</summary>
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, TodoJson.Default));
         builder.Services.AddDbContext<TodoDb>((services, options) =>
             ConfigureDatabase(options, services.GetRequiredService<IConfiguration>()));
         var application = builder.Build();
         TodoEndpoints.Map(application);
-        Wisp.Initialization.Initializing += () => Warmup(application);
+        Isoplane.Initialization.Initializing += () => Warmup(application);
         return application;
     }
 
@@ -36,5 +36,5 @@ public static class Application
         options.UseModel(Generated.TodoDbModel.Instance).UseNpgsql(connection.ConnectionString);
     }
 
-    private static Task Warmup(WebApplication application) => new WispApplication(application).WarmupAsync("/todos");
+    private static Task Warmup(WebApplication application) => new IsoplaneApplication(application).WarmupAsync("/todos");
 }

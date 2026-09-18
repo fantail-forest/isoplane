@@ -1,9 +1,9 @@
 using System.Threading.Tasks;
-using Wisp;
-using Wisp.Durable;
+using Isoplane;
+using Isoplane.Durable;
 
 /// <summary>Returns a literal that the reload test edits.</summary>
-public sealed class Handler : IWispHandler
+public sealed class Handler : IIsoplaneHandler
 {
     /// <summary>Returns the current build's marker.</summary>
     public Task<Response> HandleAsync(Request request, Ctx context) =>

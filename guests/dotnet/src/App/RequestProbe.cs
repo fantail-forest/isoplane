@@ -1,12 +1,12 @@
 using System;
 using System.Text;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Checks HTTP request fields, including on methods whose responses have no body.</summary>
-public sealed class RequestProbe : IWispHandler
+public sealed class RequestProbe : IIsoplaneHandler
 {
     /// <summary>Returns 200 only when the request matches the caller's expected field summary.</summary>
     public async Task<Response> HandleAsync(Request req, Ctx ctx)
@@ -37,7 +37,7 @@ public sealed class RequestProbeRouter : IStreamingHttpRouter
     /// <summary>Initializes the buffered route.</summary>
     public void Boot() => buffered.Boot();
     /// <summary>Preserves ordinary router dispatch for unselected requests.</summary>
-    public Task<Response> Route(Wisp.Abi.DispatchRecord record, Ctx ctx) => buffered.Route(record, ctx);
+    public Task<Response> Route(Isoplane.Abi.DispatchRecord record, Ctx ctx) => buffered.Route(record, ctx);
     /// <summary>Selects only the fixture's streaming route.</summary>
     public bool StreamsRequest(RequestHead request) => request.Path == "/streaming";
     /// <summary>Reports the streamed bytes through a distinguishable route response.</summary>

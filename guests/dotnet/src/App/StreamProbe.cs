@@ -5,12 +5,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises ordinary asynchronous NetworkStream reads and writes.</summary>
-public sealed class StreamProbe : IWispHandler
+public sealed class StreamProbe : IIsoplaneHandler
 {
     /// <summary>Reads the endpoint's payload and writes the same bytes back.</summary>
     public async Task<Response> HandleAsync(Request request, Ctx context)

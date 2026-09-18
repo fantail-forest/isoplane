@@ -1,16 +1,16 @@
-# WISP ASP.NET adapter
+# Isoplane ASP.NET adapter
 
-`Wisp.AspNetCore` runs ASP.NET routing, middleware and request-scoped dependency
-injection over WISP requests. It replaces the server transport and
+`Isoplane.AspNetCore` runs ASP.NET routing, middleware and request-scoped dependency
+injection over Isoplane requests. It replaces the server transport and
 generates the platform exports. The guest does not bind a listener.
 
 Use the package's .NET SDK entry point so its compiler and target settings are
 available to the first restore:
 
 ```xml
-<Project Sdk="Wisp.AspNetCore/VERSION">
+<Project Sdk="Isoplane.AspNetCore/VERSION">
   <PropertyGroup>
-    <WispApplicationFactory>MyApp.Application.Create</WispApplicationFactory>
+    <IsoplaneApplicationFactory>MyApp.Application.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 </Project>
@@ -20,7 +20,7 @@ The named static method returns a built `WebApplication`:
 
 ```csharp
 using Microsoft.AspNetCore.Builder;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 
 namespace MyApp;
 
@@ -28,9 +28,9 @@ public static class Application
 {
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         var app = builder.Build();
-        app.MapGet("/", () => "Hello from ASP.NET on WISP");
+        app.MapGet("/", () => "Hello from ASP.NET on Isoplane");
         return app;
     }
 }
@@ -38,7 +38,7 @@ public static class Application
 
 Register services and middleware as usual. `CreateBuilder` uses ASP.NET's empty
 builder, with no environment or file configuration sources. Existing builders
-can register the transport with `builder.WebHost.UseWisp()`.
+can register the transport with `builder.WebHost.UseIsoplane()`.
 
 The factory builds the service provider and route conventions during pre-init.
 Keep request-specific state out of that factory. Use an initialization hook for
@@ -51,8 +51,8 @@ its lifetime cannot extend beyond a completed dispatch. Asynchronous bounded
 To warm a read endpoint through middleware, binding and serialization before capture:
 
 ```csharp
-Wisp.Initialization.Initializing += () =>
-    new WispApplication(application).WarmupAsync("/todos");
+Isoplane.Initialization.Initializing += () =>
+    new IsoplaneApplication(application).WarmupAsync("/todos");
 ```
 
 The warmup consumes the response locally and fails for unsuccessful HTTP statuses.
@@ -63,7 +63,7 @@ Responses preserve status, binary bodies and repeated headers. `OnStarting`
 runs before headers become immutable. For requests that finish through the
 adapter, `OnCompleted` runs before the request context is disposed. Disconnect
 or eviction can end guest execution before callbacks run. `RequestAborted`
-receives WISP's dispatch cancellation wake and application-triggered aborts.
+receives Isoplane's dispatch cancellation wake and application-triggered aborts.
 Response writes and flushes can reach the client while the handler awaits I/O.
 `CompleteAsync` closes application writes; the host sends EOF after the handler
 and completion callbacks finish. A failure after headers terminates the body
@@ -90,7 +90,7 @@ patch listed by the .NET SDK. Ordinary `PackageReference` versions remain owned 
 the application. Deployment bundles carry those resolved implementations;
 the platform supplies its own WASM runtime and compiler.
 
-To build local packages, pack `Wisp.Sdk.csproj` and `Wisp.AspNetCore.csproj` into
+To build local packages, pack `Isoplane.Sdk.csproj` and `Isoplane.AspNetCore.csproj` into
 the same directory and configure that directory as a NuGet source. The fixture
 builder at `guests/aspnet/build.sh` exercises this installation path with an
 isolated consumer and package cache. Managed adapter tests run with
@@ -98,14 +98,14 @@ isolated consumer and package cache. Managed adapter tests run with
 
 ## Start from a template
 
-Pack `Templates/Wisp.Templates.csproj` alongside the two SDK packages in your
+Pack `Templates/Isoplane.Templates.csproj` alongside the two SDK packages in your
 local NuGet feed. Install that template package and generate an application:
 
 ```sh
-dotnet new install /path/to/feed/Wisp.Templates.VERSION.nupkg
+dotnet new install /path/to/feed/Isoplane.Templates.VERSION.nupkg
 dotnet new isoplane-web --name MyApp
 cd MyApp
-dotnet nuget add source /path/to/feed --name wisp-local --configfile nuget.config
+dotnet nuget add source /path/to/feed --name isoplane-local --configfile nuget.config
 isoplane dev
 ```
 

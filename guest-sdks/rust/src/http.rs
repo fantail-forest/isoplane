@@ -1,13 +1,13 @@
 //! Request and response shapes for the Handler entrypoint.
 
+use isoplane_abi::dispatch::ResponseHead;
 use serde::Serialize;
-use wisp_abi::dispatch::ResponseHead;
 
 use crate::abi;
 use crate::error::Result;
 use crate::future::{decode_unit, HostFuture};
 
-pub use wisp_abi::dispatch::HttpRequest as Request;
+pub use isoplane_abi::dispatch::HttpRequest as Request;
 
 pub trait RequestExt {
     fn query_get(&self, key: &str) -> Option<&str>;
@@ -92,7 +92,7 @@ impl Response {
 
 /// A streaming response. `write` is an **UNBOUNDED** future: a stream in
 /// flight is not preserved across hibernation, so a write can fail with
-/// `WispError::Lost` and only the app knows whether resuming is meaningful.
+/// `IsoplaneError::Lost` and only the app knows whether resuming is meaningful.
 pub struct ResponseStream {
     handle: u32,
 }

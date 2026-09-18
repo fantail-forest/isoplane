@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class ToolchainTests
 {
@@ -138,7 +138,7 @@ public sealed class ToolchainTests
         var start = new System.Diagnostics.ProcessStartInfo("dotnet");
         Toolchain.Apply(start, fixture.Home);
         Assert.True(start.FileName == Path.Combine(installed, "dotnet", "dotnet"), "publication must use the selected SDK");
-        Assert.True(start.Environment["WISP_GUEST_RUNTIME_FEED"] == Path.Combine(installed, "feed"), "publication must use the selected runtime packs");
+        Assert.True(start.Environment["ISOPLANE_GUEST_RUNTIME_FEED"] == Path.Combine(installed, "feed"), "publication must use the selected runtime packs");
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class ToolchainTests
         using var fixture = new ToolchainBundle();
         var bundled = Path.Combine(fixture.Root, "runtime");
         Directory.CreateDirectory(bundled);
-        await File.WriteAllTextAsync(Path.Combine(bundled, Wisp.Native.NativeRuntime.LibraryFilename), "different engine");
+        await File.WriteAllTextAsync(Path.Combine(bundled, Isoplane.Native.NativeRuntime.LibraryFilename), "different engine");
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.InstallAsync(bundled));
         AssertNothingInstalled(fixture, "mixed release components must not replace a working installation");
     }

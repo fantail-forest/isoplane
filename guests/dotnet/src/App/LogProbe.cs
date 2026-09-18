@@ -1,12 +1,12 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Emits Console and SDK-provider records on both sides of a host future.</summary>
-public sealed class LogProbe : IWispHandler
+public sealed class LogProbe : IIsoplaneHandler
 {
     /// <summary>Completes after the host resumes the logging request.</summary>
     public async Task<Response> HandleAsync(Request req, Ctx ctx)
@@ -16,7 +16,7 @@ public sealed class LogProbe : IWispHandler
             _ = LogAfterResponse(ctx);
             return Response.Text("returned");
         }
-        using var provider = new WispLoggerProvider();
+        using var provider = new IsoplaneLoggerProvider();
         var logger = provider.CreateLogger("LoggingFixture");
         Console.WriteLine("console-before");
         logger.LogWarning("sdk-before");

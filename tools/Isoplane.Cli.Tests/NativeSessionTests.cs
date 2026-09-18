@@ -1,10 +1,10 @@
 using Isoplane.Cli.Tests;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Wisp.Native;
+using Isoplane.Native;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class NativeSessionTests
 {
@@ -163,7 +163,7 @@ public sealed class NativeSessionTests
 
         internal SessionDirectory()
         {
-            File.WriteAllText(Path.Combine(directory.FullName, "wisp.toml"), "name='session'\nmodule='app.wasm'\n");
+            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "name='session'\nmodule='app.wasm'\n");
             var options = JsonNode.Parse(new LocalProject(directory.FullName).SessionOptions(0, []))!;
             options["compilation_directory"] = Path.Combine(directory.FullName, "compiler");
             Options = JsonSerializer.SerializeToUtf8Bytes(options);

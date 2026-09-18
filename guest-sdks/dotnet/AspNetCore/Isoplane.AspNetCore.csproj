@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageId>Isoplane.AspNetCore</PackageId>
+    <Description>ASP.NET hosting over Isoplane request dispatch, without a guest listener.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Isoplane.AspNetCore.Tests" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Isoplane.Sdk.csproj" />
+    <!-- The reference's built output becomes the packed task assembly, so the pack ships what this build produced. -->
+    <ProjectReference Include="../Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained"
+                      OutputItemType="None" Pack="true" PackagePath="tools/Conformance/" />
+    <None Update="README.md" Pack="true" PackagePath="/" />
+    <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
+    <None Include="../Isoplane.Guest.props;../Isoplane.Guest.targets;../Isoplane.NativeAot.props" Pack="true" PackagePath="tools/" />
+    <None Include="../Build/**" Exclude="../Build/**/obj/**;../Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
+    <None Include="../native/**" Pack="true" PackagePath="tools/native/" />
+    <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
+  </ItemGroup>
+  <Target Name="StampPackagedSdkVersion" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_PackagedSdkProps>$(IntermediateOutputPath)package/Sdk.props</_PackagedSdkProps>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <Copy SourceFiles="Sdk/Sdk.props" DestinationFiles="$(_PackagedSdkProps)" />
+    <XmlPoke XmlInputPath="$(_PackagedSdkProps)" Query="/Project/ItemGroup/PackageReference[@Include='Isoplane.AspNetCore']/@Version" Value="$(PackageVersion)" />
+    <ItemGroup>
+      <None Include="$(_PackagedSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -18,7 +18,7 @@ The runtime declares `wasi:*` imports the sandbox does not provide. Have the pla
 
 ## Bind an import only with a wrapper and a test
 
-Declare an extern in `Wisp.Abi` only when a `Wisp.Sdk` type calls it and a test exercises the call through a guest. A bound import with no wrapper is a capability the SDK claims and does not deliver, and a doc comment describing a method that does not exist is worse.
+Declare an extern in `Isoplane.Abi` only when a `Isoplane.Sdk` type calls it and a test exercises the call through a guest. A bound import with no wrapper is a capability the SDK claims and does not deliver, and a doc comment describing a method that does not exist is worse.
 
 **Not this:** Externs for put, fetch, and wait-until declared and never wrapped, with SDK docs describing them as available.
 

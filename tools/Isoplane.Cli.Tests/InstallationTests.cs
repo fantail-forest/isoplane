@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class InstallationTests : IDisposable
 {
@@ -30,8 +30,8 @@ public sealed class InstallationTests : IDisposable
     public void Recording_the_same_resource_again_replaces_its_record()
     {
         var installation = Installation.Begin(home, Cli);
-        installation.Record(new(InstalledResourceKind.Template, "Wisp.Templates", Owned: true, Detail: "1"));
-        installation.Record(new(InstalledResourceKind.Template, "Wisp.Templates", Owned: true, Detail: "2"));
+        installation.Record(new(InstalledResourceKind.Template, "Isoplane.Templates", Owned: true, Detail: "1"));
+        installation.Record(new(InstalledResourceKind.Template, "Isoplane.Templates", Owned: true, Detail: "2"));
         Assert.Equal("2", Assert.Single(Installation.Load(home)!.Resources).Detail);
     }
 

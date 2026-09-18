@@ -1,0 +1,87 @@
+<Project>
+  <Import Project="Isoplane.NativeExports.targets" />
+  <Import Project="Isoplane.Mono.Bundle.targets" />
+  <Import Project="Isoplane.Mono.ManagedToNative.targets" />
+  <Target Name="IsoplaneMonoNativeExports" BeforeTargets="IsoplaneMonoManagedToNativeInputs"
+          DependsOnTargets="_WasiSelectNativeArchives;IsoplaneMonoPaths">
+    <PropertyGroup>
+      <WasmPInvokeSymbolInventoryFile>$(_IsoplaneMonoDir)native-exports.txt</WasmPInvokeSymbolInventoryFile>
+      <WasmRequirePInvokeSymbolInventory>true</WasmRequirePInvokeSymbolInventory>
+      <_IsoplaneNativeToolSuffix Condition="$([System.OperatingSystem]::IsWindows())">.exe</_IsoplaneNativeToolSuffix>
+    </PropertyGroup>
+    <ItemGroup>
+      <_IsoplaneMonoExportInput Include="@(_WasiNativeArchiveForLinking)" />
+      <_IsoplaneMonoExportInput Include="@(NativeFileReference)" Condition="'%(Extension)' == '.a' OR '%(Extension)' == '.o'" />
+    </ItemGroup>
+    <Isoplane.Conformance.NativeExports Tool="$(WasiSdkBinPath)llvm-nm$(_IsoplaneNativeToolSuffix)"
+        Compiler="$(WasiClang)" TargetTriple="wasm32-wasip2" SysRoot="$(WasiSysRoot)"
+        Inputs="@(_IsoplaneMonoExportInput)" SymbolsFile="$(WasmPInvokeSymbolInventoryFile)"
+        SystemLibraries="@(_WasiImplicitNativeLibrary->'lib%(Identity).a')"
+        IncludeCompilerBuiltins="true">
+      <Output TaskParameter="ResolvedLibraries" ItemName="_WasiNativeArchiveForLinking" />
+    </Isoplane.Conformance.NativeExports>
+    <ItemGroup><FileWrites Include="$(WasmPInvokeSymbolInventoryFile)" /></ItemGroup>
+  </Target>
+  <Target Name="IsoplaneMonoSelectRuntimePack" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <FrameworkReference Update="Microsoft.NETCore.App" RuntimeFrameworkVersion="$(IsoplaneGuestRuntimePackVersion)" />
+    </ItemGroup>
+  </Target>
+  <Import Project="Isoplane.Validation.targets" />
+  <ItemGroup>
+    <LinkerArg Include="-nostartfiles" />
+    <LinkerArg Include="-Wl,--skip-wit-component,--no-entry,--export=isoplane_alloc,--export=isoplane_handle,--export=isoplane_wake,--export=isoplane_initialize,--export=isoplane_gc_hint,--export=__stack_pointer,--max-memory=$(IsoplaneMemoryMaxBytes)" />
+    <LinkerArg Include="@(IsoplaneWrappedSymbol->'-Wl,--wrap=%(Identity)')" />
+  </ItemGroup>
+  <Target Name="IsoplaneMonoPaths">
+    <PropertyGroup>
+      <_IsoplaneMonoDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'isoplane-mono'))</_IsoplaneMonoDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_IsoplaneMonoDir)" />
+  </Target>
+  <!-- The source-built runtime pack integrates scheduling, sockets, DNS and
+       cryptography with the host in source, so no assembly is adapted; the
+       pack's prebuilt runtime module gives way to the native link below. -->
+  <Target Name="IsoplaneMonoDropPrebuiltRuntime" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <_IsoplaneMonoPrebuilt Include="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'dotnet' AND '%(Extension)' == '.wasm'" />
+      <ResolvedFileToPublish Remove="@(_IsoplaneMonoPrebuilt)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneMonoNativeEntry" BeforeTargets="_PrepareForWasiBuildNative" DependsOnTargets="IsoplaneMonoPaths">
+    <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="#define ISOPLANE_MONO_ASSEMBLY &quot;$(AssemblyName)&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Copy SourceFiles="$(_IsoplaneSdkDirectory)native/mono_entry.c" DestinationFiles="$(_IsoplaneMonoDir)mono_entry.c" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <NativeFileReference Include="$(_IsoplaneMonoDir)mono_entry.c;$(_IsoplaneSdkDirectory)native/isoplane_clock.c" />
+      <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_pal.c" Condition="'$(IsoplaneLocalDebug)' != 'true'" />
+      <FileWrites Include="$(_IsoplaneMonoDir)mono_entry.c;$(_IsoplaneMonoDir)mono_assembly.h" />
+    </ItemGroup>
+  </Target>
+  <!-- The pack the link draws on must be the pack the feed offers: NuGet
+       keeps one extraction per version, so a stale copy could shadow a
+       republished pack. The workload names the directory it links from. -->
+  <Target Name="IsoplaneMonoVerifyRuntimePack" DependsOnTargets="_InitializeCommonProperties">
+    <Error Condition="'$(MicrosoftNetCoreAppRuntimePackDir)' == ''"
+           Text="isoplane: the workload resolved no runtime pack directory; expected the feed's Microsoft.NETCore.App.Runtime.Mono.wasi-wasm $(IsoplaneGuestRuntimePackVersion)." />
+    <PropertyGroup>
+      <_IsoplaneMonoRuntimePackDirectory>$([MSBuild]::NormalizeDirectory('$(MicrosoftNetCoreAppRuntimePackDir)'))</_IsoplaneMonoRuntimePackDirectory>
+      <_IsoplaneMonoRuntimePackDigestFile>$(_IsoplaneMonoRuntimePackDirectory)microsoft.netcore.app.runtime.mono.wasi-wasm.$(IsoplaneGuestRuntimePackVersion.ToLowerInvariant()).nupkg.sha512</_IsoplaneMonoRuntimePackDigestFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_IsoplaneMonoRuntimePackDigestFile)')"
+           Text="isoplane: the runtime pack at $(_IsoplaneMonoRuntimePackDirectory) records no package digest ($(_IsoplaneMonoRuntimePackDigestFile)); it is not a NuGet extraction of the feed's pack $(IsoplaneGuestRuntimePackVersion)." />
+    <ReadLinesFromFile File="$(_IsoplaneMonoRuntimePackDigestFile)">
+      <Output TaskParameter="Lines" PropertyName="_IsoplaneMonoRuntimePackDigest" />
+    </ReadLinesFromFile>
+    <Error Condition="'$(_IsoplaneMonoRuntimePackDigest)' != '$(IsoplaneGuestRuntimePackSha512)'"
+           Text="isoplane: the runtime pack at $(_IsoplaneMonoRuntimePackDirectory) is not the pack the feed offers (digest $(_IsoplaneMonoRuntimePackDigest) vs $(IsoplaneGuestRuntimePackSha512)); delete that directory or republish the feed with guest-runtime/build.sh feed." />
+  </Target>
+  <Target Name="IsoplaneMonoPublishCore" AfterTargets="_WasiLinkDotNet" DependsOnTargets="IsoplaneMonoVerifyRuntimePack">
+    <PropertyGroup><NativeBinary>$([System.IO.Path]::Combine('$(PublishDir)', '$(AssemblyName).wasm'))</NativeBinary></PropertyGroup>
+    <Copy SourceFiles="$(_WasiOutputFileName)" DestinationFiles="$(NativeBinary)" SkipUnchangedFiles="true" />
+    <!-- The identity of the runtime the module links, beside it, so a test
+         result is attributable to those bytes. -->
+    <WriteLinesToFile File="$(NativeBinary).runtime" Lines="$(IsoplaneGuestRuntimePackVersion)@sha512:$(IsoplaneGuestRuntimePackSha512)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup><FileWrites Include="$(NativeBinary);$(NativeBinary).runtime" /></ItemGroup>
+  </Target>
+  <Import Project="Isoplane.Mono.Debug.targets" Condition="'$(IsoplaneLocalDebug)' == 'true'" />
+</Project>

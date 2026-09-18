@@ -1,0 +1,56 @@
+<Project>
+  <PropertyGroup>
+    <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND '$(ISOPLANE_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(ISOPLANE_GUEST_RUNTIME_FEED)'))</IsoplaneGuestRuntimeFeed>
+    <IsoplaneCliAssembly Condition="'$(IsoplaneCliAssembly)' == '' AND '$(ISOPLANE_CLI_ASSEMBLY)' != ''">$(ISOPLANE_CLI_ASSEMBLY)</IsoplaneCliAssembly>
+    <IsoplaneCli Condition="'$(IsoplaneCli)' == '' AND '$(ISOPLANE_CLI)' != ''">$(ISOPLANE_CLI)</IsoplaneCli>
+    <_IsoplaneToolchainHome Condition="'$(ISOPLANE_HOME)' != ''">$(ISOPLANE_HOME)</_IsoplaneToolchainHome>
+    <_IsoplaneToolchainHome Condition="'$(_IsoplaneToolchainHome)' == ''">$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.isoplane</_IsoplaneToolchainHome>
+  </PropertyGroup>
+  <Import Project="$(_IsoplaneToolchainHome)/toolchain.props" Condition="Exists('$(_IsoplaneToolchainHome)/toolchain.props')" />
+  <PropertyGroup>
+    <IsoplaneGuestRuntime Condition="'$(IsoplaneGuestRuntime)' == ''">NativeAOT</IsoplaneGuestRuntime>
+    <IsoplaneMemoryMaxBytes Condition="'$(IsoplaneMemoryMaxBytes)' == ''">134217728</IsoplaneMemoryMaxBytes>
+    <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
+    <!-- Both profiles run the Isoplane guest runtime built from source by
+         guest-runtime/build.sh: the Mono runtime pack and the NativeAOT
+         framework pack, published to a local feed with a props file naming
+         each pack's version and digest. A project outside this checkout
+         names its feed with IsoplaneGuestRuntimeFeed or ISOPLANE_GUEST_RUNTIME_FEED;
+         a published feed replaces this path later. -->
+    <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == ''">$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</IsoplaneGuestRuntimeFeed>
+    <_IsoplaneGuestRuntimeFeedDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneGuestRuntimeFeed)'))</_IsoplaneGuestRuntimeFeedDirectory>
+  </PropertyGroup>
+  <Import Project="$(_IsoplaneGuestRuntimeFeedDirectory)Isoplane.GuestRuntime.props" Condition="Exists('$(_IsoplaneGuestRuntimeFeedDirectory)Isoplane.GuestRuntime.props')" />
+  <PropertyGroup>
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(IsoplaneGuestRuntimeFeed)</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The libc and System.Native symbols the link wraps: the PAL objects
+         answer the socket and file calls through the host interface, and the
+         runtime pack's System.Native observes a socket's pollables through
+         libc's poll and recovers the network error code libc drops from a
+         failed stream operation. -->
+    <IsoplaneWrappedSymbol Include="SystemNative_MksTemps;SystemNative_SetLingerOption;socket;close;connect;getsockopt;setsockopt;send;sendmsg" />
+    <IsoplaneWrappedSymbol Include="poll_poll;streams_method_input_stream_read;streams_method_output_stream_check_write;streams_method_output_stream_write" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- HttpClient runs SocketsHttpHandler over the delegated sockets:
+         HTTP/1.1 and HTTP/2 (h2 through the guest's own TLS with ALPN, h2c
+         with prior knowledge). HTTP/3 needs QUIC over UDP, which the host
+         interface does not carry. -->
+    <RuntimeHostConfigurationOption Include="System.Net.SocketsHttpHandler.Http3Support" Value="false" Trim="true" />
+  </ItemGroup>
+  <Import Project="Isoplane.NativeAot.props" Condition="'$(IsoplaneGuestRuntime)' == 'NativeAOT'" />
+  <Import Project="Build/Isoplane.Mono.props" Condition="'$(IsoplaneGuestRuntime)' == 'Mono'" />
+  <Target Name="IsoplaneValidateRuntimeProfile" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(TargetFramework)' != 'net10.0'" Text="This Isoplane SDK requires TargetFramework=net10.0." />
+    <Error Condition="'$(IsoplaneContainerBuild)' != 'true' AND '$(RuntimeIdentifier)' != 'wasi-wasm'" Text="Isoplane applications require RuntimeIdentifier=wasi-wasm." />
+    <Error Condition="'$(IsoplaneLocalDebug)' == 'true' AND '$(IsoplaneGuestRuntime)' != 'Mono'" Text="Local debugging requires an interpreted project configuration (PublishAot=false)." />
+    <Error Condition="'$(IsoplaneGuestRuntime)' != 'NativeAOT' AND '$(IsoplaneGuestRuntime)' != 'Mono'"
+           Text="The project selected an unsupported guest runtime; choose an interpreted or NativeAOT project configuration." />
+  </Target>
+  <Target Name="IsoplaneRequireGuestRuntimeFeed" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(IsoplaneGuestRuntimePackVersion)' == '' OR '$(IsoplaneGuestNativeAotPackVersion)' == ''"
+           Text="isoplane: the guest runtime feed at $(IsoplaneGuestRuntimeFeed) has no Isoplane.GuestRuntime.props naming both packs; run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
+  </Target>
+</Project>

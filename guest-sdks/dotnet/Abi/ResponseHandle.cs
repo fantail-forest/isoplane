@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Wisp.Runtime;
+using Isoplane.Runtime;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 internal sealed class ResponseHandle
 {

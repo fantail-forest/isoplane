@@ -23,9 +23,9 @@ pub(super) fn template(
 struct Cache {
     path: PathBuf,
     key: blake3::Hash,
-    limits: wisp_abi::config::Limits,
-    validation_limits: wisp_abi::config::ValidationLimits,
-    guest_memory_bytes: Option<wisp_abi::config::GuestMemoryBytes>,
+    limits: isoplane_abi::config::Limits,
+    validation_limits: isoplane_abi::config::ValidationLimits,
+    guest_memory_bytes: Option<isoplane_abi::config::GuestMemoryBytes>,
 }
 
 impl Cache {
@@ -39,7 +39,7 @@ impl Cache {
         runtime
             .update_reader(File::open(executable)?)
             .with_context(|| format!("identifying local runtime {}", executable.display()))?;
-        let mut key = blake3::Hasher::new_derive_key("wisp local preinitialization cache v1");
+        let mut key = blake3::Hasher::new_derive_key("isoplane local preinitialization cache v1");
         for bytes in [
             wasm,
             configuration,
@@ -72,7 +72,7 @@ impl Cache {
         prepare: impl FnOnce() -> anyhow::Result<Vec<u8>>,
     ) -> anyhow::Result<Vec<u8>> {
         if let Some(wasm) = self.read()? {
-            match wisp_runtime::validate_with_limits(
+            match isoplane_runtime::validate_with_limits(
                 &wasm,
                 self.limits,
                 self.guest_memory_bytes,
@@ -145,8 +145,8 @@ fn hash_part(hash: &mut blake3::Hasher, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wisp_abi::config::{InitSandbox, Limits};
-    use wisp_engine::{PlatformFile, PlatformFiles};
+    use isoplane_abi::config::{InitSandbox, Limits};
+    use isoplane_engine::{PlatformFile, PlatformFiles};
 
     struct Fixture {
         _directory: tempfile::TempDir,
@@ -177,11 +177,11 @@ mod tests {
             let wasm = wat::parse_str(
                 r#"(module
                 (memory (export "memory") 1 1)
-                (func (export "wisp_initialize") (result i64)
+                (func (export "isoplane_initialize") (result i64)
                     (i32.store (i32.const 0) (i32.const 42)) i64.const 0)
-                (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
-                (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
-                (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
+                (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
+                (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
+                (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
             )
             .unwrap();
             Self {
@@ -259,7 +259,7 @@ mod tests {
             cached, first,
             "a cache hit must return the initialized image unchanged"
         );
-        let engine = wisp_engine::WispEngine::new(wisp_engine::EngineConfig {
+        let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
             pooling: false,
             ..Default::default()
         })
@@ -271,7 +271,7 @@ mod tests {
         );
         assert_eq!(
             template.hash,
-            wisp_engine::ModuleHash::of(&first),
+            isoplane_engine::ModuleHash::of(&first),
             "the ordinary engine must load the cached sandbox bytecode"
         );
     }
@@ -280,14 +280,14 @@ mod tests {
     fn an_independent_memory_override_is_retained_when_reusing_local_preparation() {
         let mut fixture = Fixture::new();
         fixture.project.manifest.guest_memory_bytes =
-            Some(wisp_abi::config::GuestMemoryBytes::new(512 << 20).unwrap());
+            Some(isoplane_abi::config::GuestMemoryBytes::new(512 << 20).unwrap());
         fixture.wasm = wat::parse_str(
             r#"(module
                 (memory (export "memory") 1 8192)
-                (func (export "wisp_initialize") (result i64) i64.const 0)
-                (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
-                (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
-                (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
+                (func (export "isoplane_initialize") (result i64) i64.const 0)
+                (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
+                (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
+                (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
         )
         .unwrap();
         super::super::validate(&fixture.project, &fixture.wasm, false).unwrap();
@@ -503,13 +503,13 @@ mod tests {
             r#"(module
             (import "outside" "io" (func))
             (memory (export "memory") 1 1)
-            (func (export "wisp_alloc") (param i32 i32) (result i32) (i32.const 0))
-            (func (export "wisp_handle") (param i32 i32) (result i64) (i64.const 1))
-            (func (export "wisp_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
+            (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
+            (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
+            (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
         )
         .unwrap();
         let violations =
-            wisp_runtime::validate(&hostile, fixture.project.manifest.limits).unwrap_err();
+            isoplane_runtime::validate(&hostile, fixture.project.manifest.limits).unwrap_err();
         assert_eq!(
             violations.len(),
             1,
@@ -517,7 +517,7 @@ mod tests {
         );
         assert_eq!(
             violations[0].code,
-            wisp_runtime::ViolationCode::V1UndeclaredImport,
+            isoplane_runtime::ViolationCode::V1UndeclaredImport,
             "cache recovery must exercise the forbidden capability guard"
         );
         cache.publish(&hostile).unwrap();

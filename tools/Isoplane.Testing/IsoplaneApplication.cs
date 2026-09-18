@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Wisp.Processes;
+using Isoplane.Processes;
 
-namespace Wisp.Testing;
+namespace Isoplane.Testing;
 
 /// <summary>Owns an installed CLI session and HTTP client that execute an app in the real WASM sandbox.</summary>
 public sealed class IsoplaneApplication : IAsyncDisposable
@@ -33,7 +33,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
     public string DiagnosticOutput => diagnostics.ToString();
 
     /// <summary>Publishes and starts a project using the installed CLI, on an automatically assigned local port.</summary>
-    /// <remarks>The project must contain one csproj and wisp.toml. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.</remarks>
+    /// <remarks>The project must contain one csproj and isoplane.toml. Cancellation bounds startup and disposes owned children; it does not cancel an already returned session.</remarks>
     /// <exception cref="ArgumentException">The directory or options are invalid.</exception>
     /// <exception cref="InvalidOperationException">The CLI cannot start, exits before readiness, or emits an invalid readiness record.</exception>
     /// <exception cref="OperationCanceledException">Startup was cancelled.</exception>

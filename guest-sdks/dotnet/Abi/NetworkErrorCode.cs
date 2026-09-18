@@ -1,5 +1,5 @@
-// Generated from wisp_abi::native_io::network_error.
-namespace Wisp.Abi;
+// Generated from isoplane_abi::native_io::network_error.
+namespace Isoplane.Abi;
 
 internal enum NetworkErrorCode
 {

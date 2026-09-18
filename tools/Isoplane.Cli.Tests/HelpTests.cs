@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Wisp.Cli;
+using Isoplane.Cli;
 using Xunit;
 
 namespace Isoplane.Cli.Tests;

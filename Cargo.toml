@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/wisp-abi",
-    "crates/wisp-engine",
-    "crates/wisp-hibernate",
-    "crates/wisp-host",
-    "crates/wisp-control",
-    "crates/wisp-runtime",
-    "crates/wisp-prepare",
-    "crates/wisp-trust",
-    "crates/wisp-proxy",
-    "crates/wispd",
+    "crates/isoplane-abi",
+    "crates/isoplane-engine",
+    "crates/isoplane-hibernate",
+    "crates/isoplane-host",
+    "crates/isoplane-control",
+    "crates/isoplane-runtime",
+    "crates/isoplane-prepare",
+    "crates/isoplane-trust",
+    "crates/isoplane-proxy",
+    "crates/isoplaned",
     "crates/isoplane-native",
-    "crates/wisp-fixtures",
-    "crates/wisp-runtime-acceptance",
-    "crates/wisp-harness",
+    "crates/isoplane-fixtures",
+    "crates/isoplane-runtime-acceptance",
+    "crates/isoplane-harness",
 ]
 exclude = ["crates/spike", "guests"]
 
@@ -29,17 +29,17 @@ csbindgen = "=1.9.8"
 procfs = { version = "0.18", default-features = false }
 fs4 = "1.1.0"
 portable-pty = "0.9.0"
-wisp-abi       = { path = "crates/wisp-abi" }
-wisp-engine    = { path = "crates/wisp-engine" }
-wisp-hibernate = { path = "crates/wisp-hibernate" }
-wisp-host      = { path = "crates/wisp-host" }
-wisp-trust     = { path = "crates/wisp-trust" }
-wisp-runtime   = { path = "crates/wisp-runtime", default-features = false }
-wisp-prepare   = { path = "crates/wisp-prepare" }
-wisp-control   = { path = "crates/wisp-control" }
-wisp-proxy     = { path = "crates/wisp-proxy" }
-wisp-fixtures  = { path = "crates/wisp-fixtures" }
-wisp-harness   = { path = "crates/wisp-harness" }
+isoplane-abi       = { path = "crates/isoplane-abi" }
+isoplane-engine    = { path = "crates/isoplane-engine" }
+isoplane-hibernate = { path = "crates/isoplane-hibernate" }
+isoplane-host      = { path = "crates/isoplane-host" }
+isoplane-trust     = { path = "crates/isoplane-trust" }
+isoplane-runtime   = { path = "crates/isoplane-runtime", default-features = false }
+isoplane-prepare   = { path = "crates/isoplane-prepare" }
+isoplane-control   = { path = "crates/isoplane-control" }
+isoplane-proxy     = { path = "crates/isoplane-proxy" }
+isoplane-fixtures  = { path = "crates/isoplane-fixtures" }
+isoplane-harness   = { path = "crates/isoplane-harness" }
 
 anyhow      = "1"
 thiserror   = "2"
@@ -59,7 +59,11 @@ opentelemetry = { version = "0.32", default-features = false, features = ["logs"
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs", "trace", "internal-logs"] }
 tracing-opentelemetry = { version = "0.33", default-features = false }
 opentelemetry-appender-tracing = { version = "0.32", default-features = false }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["logs", "trace", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "internal-logs"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["logs", "trace", "http-proto", "reqwest-blocking-client", "internal-logs"] }
+# The exporter's reqwest 0.13 selects its TLS provider through this entry, not through
+# opentelemetry-http's reqwest-rustls feature, which would compile a second rustls
+# provider (aws-lc-rs) beside ring and leave rustls unable to pick a default.
+reqwest-otlp = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "charset", "blocking"] }
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "logs", "trace"] }
 prost = "0.14"
 url = { version = "2", features = ["serde"] }
@@ -90,7 +94,12 @@ wasmparser  = "0.244"
 wasm-encoder = { version = "0.244", features = ["wasmparser"] }
 # Default features off: the defaults pull in `async` (fiber stack switching)
 # and `threads`. Each crate names the features it needs.
-wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "c464403e03bb1639b1ae78a73fdf496b4c2a3026", default-features = false, features = ["profiling"] }
+# Preparation and execution share this Wasmtime dependency configuration.
+# Engine construction and module validation apply guest capability restrictions.
+wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "5d2fff464e9735e337f69494db1e26fa14ee158c", default-features = false, features = [
+    "anyhow", "runtime", "std", "cranelift", "winch", "pooling-allocator", "call-hook",
+    "backtrace", "demangle", "addr2line", "parallel-compilation", "profiling", "gc", "gc-null",
+] }
 wat         = "1"
 tempfile    = "3"
 memmap2 = "0.9"

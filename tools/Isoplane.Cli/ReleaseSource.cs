@@ -1,7 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 /// <summary>
 /// Where a release's manifest and assets are read from: an extracted release directory or an HTTP origin.

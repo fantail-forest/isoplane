@@ -6,8 +6,8 @@
 	}
 }
 
-{$WISP_EDGE_ADDRESS} {
+{$ISOPLANE_EDGE_ADDRESS} {
 	bind 127.0.0.1
-	tls {$WISP_EDGE_CERT} {$WISP_EDGE_KEY}
-	reverse_proxy {$WISP_UPSTREAM}
+	tls {$ISOPLANE_EDGE_CERT} {$ISOPLANE_EDGE_KEY}
+	reverse_proxy {$ISOPLANE_UPSTREAM}
 }

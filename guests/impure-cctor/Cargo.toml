@@ -9,8 +9,8 @@ license-file.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-wisp-guest = { workspace = true }
-wisp-abi   = { workspace = true }
+isoplane-guest = { workspace = true }
+isoplane-abi   = { workspace = true }
 serde      = { workspace = true }
 postcard   = { workspace = true }
 serde_json = { workspace = true }

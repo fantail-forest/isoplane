@@ -4,7 +4,7 @@
 
 use core::future::Future;
 
-use wisp_guest::{Ctx, Handler, Request, Response};
+use isoplane_guest::{Ctx, Handler, Request, Response};
 
 pub struct Hello;
 
@@ -18,4 +18,4 @@ impl Handler for Hello {
     }
 }
 
-wisp_guest::export_handler!(Hello);
+isoplane_guest::export_handler!(Hello);

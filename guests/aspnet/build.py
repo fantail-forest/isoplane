@@ -18,10 +18,10 @@ def run(*args, **kwargs):
 
 def verify_missing_factory_fails(source, environment):
     result = subprocess.run(["dotnet", "build", str(source / "AspNet.csproj"),
-                             "-p:WispApplicationFactory=", "--disable-build-servers"],
+                             "-p:IsoplaneApplicationFactory=", "--disable-build-servers"],
                             env=environment, capture_output=True, text=True)
-    if result.returncode == 0 or "WISP0079" not in result.stdout + result.stderr:
-        raise AssertionError("A missing application factory must fail the build with WISP0079:\n"
+    if result.returncode == 0 or "ISOPLANE0079" not in result.stdout + result.stderr:
+        raise AssertionError("A missing application factory must fail the build with ISOPLANE0079:\n"
                              + result.stdout + result.stderr)
 
 
@@ -40,8 +40,8 @@ def verify_publication_refusal(source, environment, target, diagnostic, reason):
 
 def verify_missing_framework_fails(source, environment):
     verify_publication_refusal(source, environment, '''<Project>
-  <Target Name="RemoveFrameworkRuntimeForNegativeControl" AfterTargets="WispAspNetCoreReferences">
-    <ItemGroup><IlcReference Remove="@(_WispAspNetCoreAssembly)" /></ItemGroup>
+  <Target Name="RemoveFrameworkRuntimeForNegativeControl" AfterTargets="ComputeIlcCompileInputs">
+    <ItemGroup><IlcReference Remove="@(_IsoplaneAspNetAssembly)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" /></ItemGroup>
   </Target>
 </Project>
 ''', ": AOT analysis error IL1005:",
@@ -49,21 +49,21 @@ def verify_missing_framework_fails(source, environment):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="wisp-aspnet-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="isoplane-aspnet-") as temporary:
         scratch = Path(temporary)
         packages = scratch / "packages"
-        for project in ["Wisp.Sdk.csproj", "AspNetCore/Wisp.AspNetCore.csproj"]:
+        for project in ["Isoplane.Sdk.csproj", "AspNetCore/Isoplane.AspNetCore.csproj"]:
             run("dotnet", "pack", str(ROOT / "guest-sdks/dotnet" / project),
                 "--artifacts-path", str(scratch / "artifacts"), "-o", str(packages))
         # An installed package names the guest runtime feed the way a customer
         # does; here it is this checkout's, mapped by the ids it offers
         # (`<id>.<version>.nupkg`, the version being the first dotted segment
         # that starts with a digit).
-        feed = Path(os.environ.get("WISP_GUEST_RUNTIME_FEED", str(ROOT / "guest-runtime/out/feed")))
-        local_feeds = {"wisp-guest-runtime": feed}
+        feed = Path(os.environ.get("ISOPLANE_GUEST_RUNTIME_FEED", str(ROOT / "guest-runtime/out/feed")))
+        local_feeds = {"isoplane-guest-runtime": feed}
         compiler = feed.parent / "compiler"
         if compiler.is_dir():
-            local_feeds["wisp-guest-compiler"] = compiler
+            local_feeds["isoplane-guest-compiler"] = compiler
         config = ET.parse(ROOT / "nuget.config")
         ET.SubElement(config.getroot().find("packageSources"), "add",
                       key="fixture-packages", value=str(packages))
@@ -79,7 +79,7 @@ def main():
                 for feed_id in feed_ids:
                     ET.SubElement(package_source, "package", pattern=feed_id)
             else:
-                ET.SubElement(package_source, "package", pattern="Wisp.*" if entry.attrib["key"] == "fixture-packages" else "*")
+                ET.SubElement(package_source, "package", pattern="Isoplane.*" if entry.attrib["key"] == "fixture-packages" else "*")
         config.write(scratch / "nuget.config")
         shutil.copy(ROOT / "global.json", scratch / "global.json")
         source = scratch / "app/src"
@@ -87,8 +87,8 @@ def main():
         shutil.copy(GUEST / "src/Application.cs", source / "Application.cs")
         shutil.copy(GUEST / "src/AspNet.csproj", source / "AspNet.csproj")
         environment = dict(os.environ, NUGET_PACKAGES=str(scratch / "nuget"),
-                           WISP_OUT_DIR=os.environ.get("WISP_OUT_DIR", str(GUEST / "out")),
-                           WISP_GUEST_RUNTIME_FEED=str(feed))
+                           ISOPLANE_OUT_DIR=os.environ.get("ISOPLANE_OUT_DIR", str(GUEST / "out")),
+                           ISOPLANE_GUEST_RUNTIME_FEED=str(feed))
         verify_missing_factory_fails(source, environment)
         verify_missing_framework_fails(source, environment)
         run(str(ROOT / "guest-sdks/dotnet/build-guest.sh"), str(source.parent),

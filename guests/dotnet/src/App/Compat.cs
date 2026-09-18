@@ -1,4 +1,4 @@
-#if WISP_COMPAT_PROBE
+#if ISOPLANE_COMPAT_PROBE
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -6,13 +6,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>
 /// The BCL compatibility probe. Off by default so the shipped guest stays a
 /// hello-world Handler and its size stays comparable to one. Turn it on with:
 ///
-/// <code>guests/dotnet/build.sh -p:WispCompatProbe=true</code>
+/// <code>guests/dotnet/build.sh -p:IsoplaneCompatProbe=true</code>
 ///
 /// Everything referenced here is something the compatibility story says works.
 /// Each line is a claim the module either compiles and executes or does not, and

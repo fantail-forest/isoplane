@@ -1,4 +1,4 @@
-using Wisp.Native;
+using Isoplane.Native;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal sealed record ToolchainFile(string Path, string Sha256, bool Executable);
 internal sealed record ToolchainManifest(string RuntimeIdentifier, string DotnetSdkVersion, string WasiWorkloadVersion, ToolchainFile[] Files);
@@ -139,7 +139,7 @@ internal static class Toolchain
         if (start.FileName == "dotnet")
             start.FileName = Path.Combine(directory, "dotnet", "dotnet");
         start.Environment["WASI_SDK_PATH"] = Path.Combine(directory, "wasi-sdk");
-        start.Environment["WISP_GUEST_RUNTIME_FEED"] = Path.Combine(directory, "feed");
+        start.Environment["ISOPLANE_GUEST_RUNTIME_FEED"] = Path.Combine(directory, "feed");
         start.Environment["ISOPLANE_CLI_ASSEMBLY"] = Path.Combine(directory, "cli", "Isoplane.Cli.dll");
         start.Environment["PATH"] = Path.Combine(directory, "bin") + Path.PathSeparator
             + Path.Combine(directory, "dotnet") + Path.PathSeparator + (start.Environment.TryGetValue("PATH", out var searchPath) ? searchPath : "");
@@ -227,8 +227,8 @@ internal static class Toolchain
     internal static string[] RequiredFiles(string sdk, string workload, string rid) => [
         "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
         "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools", "wasi-sdk/bin/clang",
-        "dotnet/dotnet", $"dotnet/sdk/{sdk}/dotnet.dll", "feed/Wisp.GuestRuntime.props",
-        "compiler/compiler.json", "compiler/Wisp.GuestCompiler.props", "compiler/backend",
+        "dotnet/dotnet", $"dotnet/sdk/{sdk}/dotnet.dll", "feed/Isoplane.GuestRuntime.props",
+        "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/backend",
         $"dotnet/packs/Microsoft.NET.Runtime.MonoTargets.Sdk/{workload}/Sdk/Sdk.props",
         $"dotnet/packs/Microsoft.NETCore.App.Runtime.AOT.{rid}.Cross.wasi-wasm/{workload}/Sdk/Sdk.props"
     ];
@@ -298,7 +298,7 @@ internal static class Toolchain
     }
 
     private static string Properties(string directory) => new XDocument(new XElement("Project", new XElement("PropertyGroup",
-        Property("WispGuestRuntimeFeed", Path.Combine(directory, "feed")),
+        Property("IsoplaneGuestRuntimeFeed", Path.Combine(directory, "feed")),
         Property("WASI_SDK_PATH", Path.Combine(directory, "wasi-sdk")),
         Property("IsoplaneCliAssembly", Path.Combine(directory, "cli", "Isoplane.Cli.dll"))))).ToString();
 

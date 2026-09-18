@@ -13,7 +13,7 @@ dotnet user-secrets set "ConnectionStrings:Todo" "YOUR_DEVELOPMENT_CONNECTION_ST
 Replace the placeholder with your own development connection string. User Secrets
 keeps the value outside the project; it is a local development store, not an
 encrypted production secret manager. Avoid putting credentials in source files,
-`wisp.toml`, or committed configuration. Be mindful that a value typed as a shell
+`isoplane.toml`, or committed configuration. Be mindful that a value typed as a shell
 argument can be retained in shell history; `dotnet user-secrets set` also accepts
 JSON through standard input.
 

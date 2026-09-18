@@ -39,7 +39,7 @@ use core::future::Future;
 use core::hint::black_box;
 use core::task::{Context, Poll, Waker};
 
-use wisp_guest::{
+use isoplane_guest::{
     log, Budget, Clock, Ctx, Handler, Level, Request, RequestExt, Response, UnsafeToTrap,
 };
 
@@ -60,7 +60,7 @@ fn spin_forever() -> ! {
 ///
 /// This creates a real host future (a 1-second deadline), then polls it in a
 /// loop instead of returning `Pending`. The host delivers results only through
-/// `wisp_wake`, and `wisp_wake` can only be called when the guest is *not*
+/// `isoplane_wake`, and `isoplane_wake` can only be called when the guest is *not*
 /// executing -- so this loop can never observe a completion. It is not slow;
 /// it is impossible. The CPU budget kill is what ends it.
 fn sync_over_async() -> ! {
@@ -201,4 +201,4 @@ impl Handler for Misbehaver {
     }
 }
 
-wisp_guest::export_handler!(Misbehaver);
+isoplane_guest::export_handler!(Misbehaver);

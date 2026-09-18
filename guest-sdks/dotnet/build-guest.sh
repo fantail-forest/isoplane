@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a C# WISP guest to a core wasm module.
+# Build a C# Isoplane guest to a core wasm module.
 #
 #   build-guest.sh <guest-dir> [dotnet publish args...]
 set -euo pipefail
@@ -17,10 +17,10 @@ if [ "$(printf '%s' "$CSPROJ" | grep -c .)" != 1 ]; then
   echo "$CSPROJ" >&2
   exit 1
 fi
-# WISP_OUT_DIR is where the module lands and WISP_OUT its basename, so one
+# ISOPLANE_OUT_DIR is where the module lands and ISOPLANE_OUT its basename, so one
 # project can be built in several flavours side by side.
-OUT="${WISP_OUT_DIR:-$HERE/out}"
-NAME="${WISP_OUT:-}"
+OUT="${ISOPLANE_OUT_DIR:-$HERE/out}"
+NAME="${ISOPLANE_OUT:-}"
 
 # Build the managed validator separately from any parent Cargo invocation.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

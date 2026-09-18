@@ -8,7 +8,7 @@ members = [
     # The Rust guest SDK. Its source lives beside the C# SDK in `guest-sdks/`;
     # its build settings come from here, because it is compiled for wasm32
     # under the size-tuned release profile below and against the same
-    # `wisp-abi` features as the guests that link it. Its own manifest names
+    # `isoplane-abi` features as the guests that link it. Its own manifest names
     # this workspace, since Cargo would otherwise walk up to the repo root.
     "../guest-sdks/rust",
     "hello",
@@ -25,10 +25,10 @@ edition = "2021"
 license-file = "../LICENSE.txt"
 
 [workspace.dependencies]
-wisp-guest = { path = "../guest-sdks/rust" }
+isoplane-guest = { path = "../guest-sdks/rust" }
 # The contract. Built from the same source as the host side, so the encoding
 # on both sides of the sandbox boundary is one implementation, not two.
-wisp-abi   = { path = "../crates/wisp-abi", default-features = false }
+isoplane-abi   = { path = "../crates/isoplane-abi", default-features = false }
 serde      = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 postcard   = { version = "1", features = ["alloc"] }

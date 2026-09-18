@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Resources;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Logging;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 namespace Example;
 public static class App
 {
@@ -16,7 +16,7 @@ public static class App
     }
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
         VerifyData();
         var app = builder.Build();
         app.MapGet("/", (ILoggerFactory logging) =>

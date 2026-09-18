@@ -1,20 +1,20 @@
 using System.Threading.Tasks;
 
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>
 /// HTTP fixture returning the requested path. Optional build probes replace
 /// that response with their compatibility or activation-randomness observations.
 /// </summary>
-public sealed class Api : IWispHandler
+public sealed class Api : IIsoplaneHandler
 {
     public Task<Response> HandleAsync(Request req, Ctx ctx)
     {
-#if WISP_ENTROPY_PROBE
+#if ISOPLANE_ENTROPY_PROBE
         return Task.FromResult(Response.Text(EntropyProbe.Sample()));
-#elif WISP_COMPAT_PROBE
+#elif ISOPLANE_COMPAT_PROBE
         return Task.FromResult(Response.Json(Compat.Exercise(req.Path), 404));
 #else
         return Task.FromResult(Response.Text(req.Path));

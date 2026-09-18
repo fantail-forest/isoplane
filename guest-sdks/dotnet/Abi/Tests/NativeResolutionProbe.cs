@@ -1,14 +1,14 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 internal static class NativeResolutionProbe
 {
-    [DllImport("wisp_missing_native_library", EntryPoint = "wisp_missing_native_symbol")]
+    [DllImport("isoplane_missing_native_library", EntryPoint = "isoplane_missing_native_symbol")]
     private static extern int MissingLibrary();
 
-    [DllImport("libSystem.Native", EntryPoint = "wisp_missing_native_symbol")]
+    [DllImport("libSystem.Native", EntryPoint = "isoplane_missing_native_symbol")]
     private static extern int MissingSymbol();
 
     [DllImport("libSystem.Native", EntryPoint = "SystemNative_GetTimestamp")]

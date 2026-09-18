@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 /// <summary>
 /// The subset of the postcard wire format the SDK reads and writes: varints,

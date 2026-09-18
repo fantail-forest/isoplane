@@ -1,9 +1,0 @@
-<Project>
-  <PropertyGroup Condition="'$(WispManagedBundleBuild)' == 'true'">
-    <OutputType>Library</OutputType>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <IntermediateOutputPath>$(BaseIntermediateOutputPath)$(Configuration)/managed-bundle/</IntermediateOutputPath>
-    <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/</BaseOutputPath>
-    <OutputPath>$(BaseOutputPath)$(Configuration)/managed-bundle/</OutputPath>
-  </PropertyGroup>
-</Project>

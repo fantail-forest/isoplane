@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using Wisp.Processes;
+using Isoplane.Processes;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal static class Processes
 {

@@ -34,10 +34,10 @@ class ReleaseTests(unittest.TestCase):
                 dependencies = f'<dependencies><group><dependency id="Isoplane.Native" version="{dependency_version or self.version}" /></group></dependencies>'
             archive.writestr(name + '.nuspec', f'<package><metadata><id>{name}</id><version>{version or self.version}</version>'
                              f'<repository commit="{revision or self.revision}" />{dependencies}</metadata></package>')
-            if name in ('Wisp.Sdk', 'Wisp.AspNetCore'):
+            if name in ('Isoplane.Sdk', 'Isoplane.AspNetCore'):
                 archive.writestr('Sdk/Sdk.props', f'<Project><ItemGroup><PackageReference Include="{name}" Version="{sdk_version or self.version}" /></ItemGroup></Project>')
-            if name == 'Wisp.Templates':
-                archive.writestr('content/content/aspnet/IsoplaneApp.csproj', f'<Project Sdk="Wisp.AspNetCore/{sdk_version or self.version}" />')
+            if name == 'Isoplane.Templates':
+                archive.writestr('content/content/aspnet/SampleApp.csproj', f'<Project Sdk="Isoplane.AspNetCore/{sdk_version or self.version}" />')
             if name == 'Isoplane.Cli':
                 archive.writestr(f'tools/net10.0/any/runtime/{self.library.name}', library or self.library.read_bytes())
             if name == 'Isoplane.Native':
@@ -60,12 +60,12 @@ class ReleaseTests(unittest.TestCase):
             self.verify()
 
     def test_a_stale_template_pin_is_rejected(self):
-        self.package('Wisp.Templates', sdk_version='0.1.0-old')
+        self.package('Isoplane.Templates', sdk_version='0.1.0-old')
         with self.assertRaisesRegex(ValueError, 'template selects'):
             self.verify()
 
     def test_a_stale_sdk_self_reference_is_rejected(self):
-        self.package('Wisp.Sdk', sdk_version='0.1.0-old')
+        self.package('Isoplane.Sdk', sdk_version='0.1.0-old')
         with self.assertRaisesRegex(ValueError, 'SDK selects'):
             self.verify()
 
@@ -152,7 +152,7 @@ class ReleaseTests(unittest.TestCase):
         (source / 'scripts').mkdir(parents=True)
         (source / 'scripts/release-version.py').write_bytes((Path(__file__).parents[1] / 'release-version.py').read_bytes())
         (source / 'Directory.Build.props').write_text('<Project><PropertyGroup><Version>0.1.0-preview.2</Version></PropertyGroup></Project>')
-        (source / 'App.csproj').write_text('<Project Sdk="Wisp.AspNetCore/0.1.0-preview.1" />')
+        (source / 'App.csproj').write_text('<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.1" />')
         with self.assertRaisesRegex(ValueError, 'App.csproj pins 0.1.0-preview.1'):
             preview.release_version(source)
 

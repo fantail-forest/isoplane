@@ -96,16 +96,16 @@ def preserve_untracked_inputs(tree, source, backup_id):
         original = current.relative_to(tree)
         if str(original) in previous or original in saved:
             continue
-        destination = tree / ".git" / "wisp-source-backups" / backup_id / original
+        destination = tree / ".git" / "isoplane-source-backups" / backup_id / original
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(current, destination, follow_symlinks=False)
         saved.add(original)
     if saved:
-        print(f"    {tree.name}: preserved {len(saved)} untracked source files under .git/wisp-source-backups/{backup_id}")
+        print(f"    {tree.name}: preserved {len(saved)} untracked source files under .git/isoplane-source-backups/{backup_id}")
 
 
 def materialize(tree, archive, desired, directory, exclude):
-    state_path = tree / ".git" / "wisp-source.json"
+    state_path = tree / ".git" / "isoplane-source.json"
     exists = (tree / ".git").is_dir()
     if exists:
         clean(tree)
@@ -127,23 +127,23 @@ def materialize(tree, archive, desired, directory, exclude):
         source = staged / prefix
         git(source, "init", "-q")
         with open(source / ".git/info/exclude", "a") as ignored:
-            ignored.write("\n.wisp-applied\n")
+            ignored.write("\n.isoplane-applied\n")
         git(source, "add", "--force", "-A")
-        git(source, "-c", "user.name=wisp", "-c", "user.email=wisp@localhost",
+        git(source, "-c", "user.name=isoplane", "-c", "user.email=isoplane@localhost",
             "commit", "-qm", f"pristine sha256:{desired['archive']}")
         for patch in patches(directory):
             arguments = ["apply", "--index"]
             if exclude:
                 arguments.append(f"--exclude={exclude}")
             git(source, *arguments, str(patch.resolve()))
-            git(source, "-c", "user.name=wisp", "-c", "user.email=wisp@localhost",
+            git(source, "-c", "user.name=isoplane", "-c", "user.email=isoplane@localhost",
                 "commit", "-qm", patch.name)
         if exists:
             clean(tree)
             # Preserve all committed history, including edits not produced by this script.
             backup_id = uuid.uuid4().hex
             preserve_untracked_inputs(tree, source, backup_id)
-            backup = f"refs/wisp/source-backups/{backup_id}"
+            backup = f"refs/isoplane/source-backups/{backup_id}"
             git(tree, "update-ref", backup, "HEAD")
             git(tree, "fetch", "--quiet", str(source), "HEAD")
             git(tree, "reset", "--hard", "FETCH_HEAD")
@@ -168,7 +168,7 @@ def main():
             materialize(args.tree, args.archive, desired, args.patches, args.exclude)
         else:
             clean(args.tree)
-            record = args.tree / ".git/wisp-source.json"
+            record = args.tree / ".git/isoplane-source.json"
             if not record.exists():
                 raise ValueError(f"{args.tree}: no verified source identity; run guest-runtime/build.sh patch")
             state = json.loads(record.read_text())

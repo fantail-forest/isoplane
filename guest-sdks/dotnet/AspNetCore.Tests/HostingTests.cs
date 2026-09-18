@@ -4,22 +4,22 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Wisp.Abi;
-using Wisp.AspNetCore;
+using Isoplane.Abi;
+using Isoplane.AspNetCore;
 using Xunit;
 
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 public sealed class HostingTests
 {
     private static WebApplicationBuilder Builder()
     {
-        var builder = WispHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!, new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource());
+        var builder = IsoplaneHosting.CreateBuilder(typeof(HostingTests).Assembly.GetName().Name!, new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource());
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => new RecordingResponseTransport());
         return builder;
     }
-    private static Request Request(string path = "/") => Wisp.Request.FromDispatch(new DispatchRecord
+    private static Request Request(string path = "/") => Isoplane.Request.FromDispatch(new DispatchRecord
     {
         Kind = DispatchKind.Http, Method = "GET", Path = path.Split('?')[0], Url = path
     });
@@ -32,7 +32,7 @@ public sealed class HostingTests
         builder.Services.AddSingleton<IHostedService>(new Service(events));
         await using var app = builder.Build();
         app.MapGet("/", () => "ready");
-        var runtime = new WispApplication(app);
+        var runtime = new IsoplaneApplication(app);
         Assert.True(events.Count == 0, "building template state must not start hosted services");
         await runtime.HandleAsync(Request());
         await runtime.HandleAsync(Request());
@@ -62,7 +62,7 @@ public sealed class HostingTests
             context.Response.OnCompleted(() => { events.Add("complete-last"); return Task.CompletedTask; });
             await context.Response.WriteAsync("ok");
         });
-        await new WispApplication(app).HandleAsync(Request());
+        await new IsoplaneApplication(app).HandleAsync(Request());
         Assert.True(events.SequenceEqual(["before", "handler", "start-last", "start-first", "after", "complete-last", "complete-first"]),
             "middleware wraps the handler; callbacks run in reverse registration order");
     }
@@ -82,7 +82,7 @@ public sealed class HostingTests
             if (throws) throw new InvalidOperationException("fixture failure");
             return Task.CompletedTask;
         });
-        var runtime = new WispApplication(app);
+        var runtime = new IsoplaneApplication(app);
         for (var i = 0; i < 2; i++)
         {
             var error = await Record.ExceptionAsync(() => runtime.HandleAsync(Request()));
@@ -106,7 +106,7 @@ public sealed class HostingTests
             Assert.True(context.RequestAborted.IsCancellationRequested, "Abort cancels RequestAborted");
             return Task.CompletedTask;
         });
-        var error = await Record.ExceptionAsync(() => new WispApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
         Assert.True(error is OperationCanceledException, "aborted requests must end with cancellation");
         Assert.True(scope.Disposed, "aborted requests dispose their DI scope");
     }
@@ -123,7 +123,7 @@ public sealed class HostingTests
             context.Response.Headers.Append("Set-Cookie", "b=two");
             await context.Response.Body.WriteAsync(new byte[] { 0, 255, 1 });
         });
-        var response = await new WispApplication(app).HandleAsync(Request());
+        var response = await new IsoplaneApplication(app).HandleAsync(Request());
         Assert.True(response.Status == 201 && response.Body.SequenceEqual(new byte[] { 0, 255, 1 }), "the transport preserves status and binary bytes");
         Assert.True(response.Headers.Where(header => header.Key == "Set-Cookie").Select(header => header.Value).SequenceEqual(["a=one", "b=two"]), "Set-Cookie values remain separate");
     }
@@ -131,8 +131,8 @@ public sealed class HostingTests
     [Fact]
     public async Task a_host_cancellation_wake_reaches_aspnet_and_disposes_the_scope()
     {
-        Wisp.Runtime.FutureTable.Reset();
-        Wisp.Runtime.FutureTable.BeginCancellation(42);
+        Isoplane.Runtime.FutureTable.Reset();
+        Isoplane.Runtime.FutureTable.BeginCancellation(42);
         var scope = new Scope();
         var builder = Builder();
         builder.Services.AddScoped(_ => scope);
@@ -142,17 +142,17 @@ public sealed class HostingTests
             context.RequestServices.GetRequiredService<Scope>();
             var cancelled = new TaskCompletionSource();
             using var registration = context.RequestAborted.Register(() => cancelled.SetResult());
-            Wisp.Runtime.FutureTable.Complete(42, new ResultRecord { Error = FutureError.Cancelled });
+            Isoplane.Runtime.FutureTable.Complete(42, new ResultRecord { Error = FutureError.Cancelled });
             await cancelled.Task;
             context.RequestAborted.ThrowIfCancellationRequested();
         });
         try
         {
-            var error = await Record.ExceptionAsync(() => new WispApplication(app).HandleAsync(Request()));
+            var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
             Assert.True(error is OperationCanceledException, "host cancellation must end the request");
             Assert.True(scope.Disposed, "host cancellation must dispose the request scope");
         }
-        finally { Wisp.Runtime.FutureTable.Reset(); }
+        finally { Isoplane.Runtime.FutureTable.Reset(); }
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public sealed class HostingTests
             Assert.True(status is InvalidOperationException && header is InvalidOperationException,
                 "started response status and headers must be immutable");
         });
-        await new WispApplication(app).HandleAsync(Request());
+        await new IsoplaneApplication(app).HandleAsync(Request());
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public sealed class HostingTests
             context.Response.OnCompleted(() => throw new InvalidOperationException("completion failure"));
             throw new ApplicationException("handler failure");
         });
-        var error = await Record.ExceptionAsync(() => new WispApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
         Assert.True(scope.Disposed, "a failed completion callback must not suppress request scope disposal");
         Assert.True(error is AggregateException aggregate && aggregate.Flatten().InnerExceptions.Count == 2,
             "handler and completion failures must both be reported");
@@ -203,7 +203,7 @@ public sealed class HostingTests
             writer.Advance(3);
             return Task.CompletedTask;
         });
-        var response = await new WispApplication(app).HandleAsync(Request());
+        var response = await new IsoplaneApplication(app).HandleAsync(Request());
         Assert.True(response.Body.SequenceEqual(new byte[] { 1, 2, 3 }),
             "server completion flushes pending response pipe bytes");
     }
@@ -225,7 +225,7 @@ public sealed class HostingTests
                 default: throw new ArgumentOutOfRangeException(nameof(operation));
             }
         });
-        var error = await Record.ExceptionAsync(() => new WispApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
         Assert.True(error is NotSupportedException,
             $"unsupported {operation} must fail explicitly at the response boundary");
     }
@@ -238,7 +238,7 @@ public sealed class HostingTests
         builder.Services.AddSingleton<IHostedService>(background);
         await using var app = builder.Build();
         app.MapGet("/", () => "ready");
-        var runtime = new WispApplication(app);
+        var runtime = new IsoplaneApplication(app);
         var error = await Record.ExceptionAsync(() => runtime.HandleAsync(Request()));
         Assert.True(error is NotSupportedException, "ongoing background services require a supported host-owned lifetime");
         Assert.True(!background.Started, "unsupported background work must be rejected before execution");
@@ -271,14 +271,14 @@ public sealed class HostingTests
             await context.Request.Body.CopyToAsync(body);
             Assert.True(body.ToArray().SequenceEqual(new byte[] { 0, 255 }), "binary request bodies reach ASP.NET unchanged");
         });
-        var request = Wisp.Request.FromDispatch(new DispatchRecord
+        var request = Isoplane.Request.FromDispatch(new DispatchRecord
         {
             Kind = DispatchKind.Http, Method = "POST", Path = "/snow/%E2%98%83",
             Url = "/snow/%E2%98%83?tag=one&tag=two&empty=",
             Headers = [new("X-Input", "first"), new("X-Input", "second")],
             Body = [0, 255]
         });
-        await new WispApplication(app).HandleAsync(request);
+        await new IsoplaneApplication(app).HandleAsync(request);
     }
 
     [Fact]
@@ -290,7 +290,7 @@ public sealed class HostingTests
         builder.Services.AddScoped(_ => { scoped = true; return new Scope(); });
         await using var app = builder.Build();
         app.MapGet("/", (Scope scope) => "ok").Add(_ => routes = true);
-        var runtime = new WispApplication(app);
+        var runtime = new IsoplaneApplication(app);
         Assert.True(routes && !scoped, "pre-initialization materializes routing while request scopes remain uncreated");
         await runtime.HandleAsync(Request());
         Assert.True(scoped, "the request creates its scoped dependencies after activation");
@@ -314,12 +314,12 @@ public sealed class HostingTests
             await next(context);
         });
         app.MapGet("/todos", (Scope scope, int page) => new { page });
-        var first = new WispApplication(app);
+        var first = new IsoplaneApplication(app);
         await first.WarmupAsync("/todos?page=1");
         Assert.True(transports == 0, "warmup must not create a host response stream");
         Assert.True(scopes.Count == 1 && scopes[0].Disposed, "warmup must dispose its request scope before capture");
         Assert.True(events.SequenceEqual(["start", "middleware", "completed"]), "warmup must await host startup, middleware and completion callbacks");
-        await new WispApplication(app).HandleAsync(Request("/todos?page=2"));
+        await new IsoplaneApplication(app).HandleAsync(Request("/todos?page=2"));
         Assert.True(transports == 1 && events.Count(e => e == "start") == 1,
             "a separate adapter for the same app must reuse startup and send real responses to the host");
     }
@@ -334,7 +334,7 @@ public sealed class HostingTests
         builder.Services.AddScoped(_ => scope);
         await using var app = builder.Build();
         app.MapGet("/", (Scope _) => Results.StatusCode(status));
-        var error = await Record.ExceptionAsync(() => new WispApplication(app).WarmupAsync("/"));
+        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).WarmupAsync("/"));
         Assert.True(error is HttpRequestException { StatusCode: var code } && (int?)code == status,
             "warmup must report the endpoint's unsuccessful HTTP status");
         Assert.True(scope.Disposed, "failed warmup responses must still dispose scoped services");
@@ -347,7 +347,7 @@ public sealed class HostingTests
     public async Task warmup_requires_an_application_relative_path(string path)
     {
         await using var app = Builder().Build();
-        var error = await Record.ExceptionAsync(() => new WispApplication(app).WarmupAsync(path));
+        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).WarmupAsync(path));
         Assert.True(error is ArgumentException, "warmup must refuse paths that name an external host");
     }
 

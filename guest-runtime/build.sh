@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the WISP guest runtime from pinned sources: guest-runtime/build.sh [stage...]
+# Build the Isoplane guest runtime from pinned sources: guest-runtime/build.sh [stage...]
 #
 # Stages, in order (default: all): acquire toolchain patch openssl icu packs feed
 #   acquire    download and verify the archives in manifest.env
@@ -74,7 +74,7 @@ stage_acquire() {
 stage_toolchain() {
   echo "==> toolchain"
   # The marker is what the runtime build checks before provisioning its own copy.
-  if [ -f "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION" ] && [ -f "$WASI_SDK/.wisp-archive-sha256" ] && [ "$(cat "$WASI_SDK/.wisp-archive-sha256")" = "$WASI_SDK_SHA256" ]; then
+  if [ -f "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION" ] && [ -f "$WASI_SDK/.isoplane-archive-sha256" ] && [ "$(cat "$WASI_SDK/.isoplane-archive-sha256")" = "$WASI_SDK_SHA256" ]; then
     echo "    wasi-sdk $WASI_SDK_VERSION already unpacked"
     return
   fi
@@ -84,7 +84,7 @@ stage_toolchain() {
   tar --strip-components=1 -xzf "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz" -C "$WASI_SDK"
   echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
   touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
-  echo "$WASI_SDK_SHA256" > "$WASI_SDK/.wisp-archive-sha256"
+  echo "$WASI_SDK_SHA256" > "$WASI_SDK/.isoplane-archive-sha256"
 }
 
 source_tree() {
@@ -123,7 +123,7 @@ stage_openssl() {
   echo "==> openssl (log: $LOGS/openssl-build.log)"
   openssl_source verify
   local build_inputs="$(openssl_inputs_digest)"
-  [ -x "$WASI_SDK/bin/clang" ] && [ -f "$WASI_SDK/.wisp-archive-sha256" ] && [ "$(cat "$WASI_SDK/.wisp-archive-sha256")" = "$WASI_SDK_SHA256" ] || { echo "the toolchain stage unpacks the pinned wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
+  [ -x "$WASI_SDK/bin/clang" ] && [ -f "$WASI_SDK/.isoplane-archive-sha256" ] && [ "$(cat "$WASI_SDK/.isoplane-archive-sha256")" = "$WASI_SDK_SHA256" ] || { echo "the toolchain stage unpacks the pinned wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
   # Out of tree, so the source tree stays a clean base for patches. The
   # OPENSSLDIR is a guest path: the compiled-in default certificate file and
   # directory are then /etc/ssl/cert.pem and /etc/ssl/certs inside the
@@ -131,7 +131,7 @@ stage_openssl() {
   mkdir -p "$OPENSSL_BUILD"
   (
     cd "$OPENSSL_BUILD"
-    if [ ! -f "$OUT/openssl/.wisp-build-identity" ] || [ "$(cat "$OUT/openssl/.wisp-build-identity")" != "$(openssl_inputs_digest)" ]; then
+    if [ ! -f "$OUT/openssl/.isoplane-build-identity" ] || [ "$(cat "$OUT/openssl/.isoplane-build-identity")" != "$(openssl_inputs_digest)" ]; then
       if [ -f Makefile ]; then make clean; fi
       CC="$WASI_SDK/bin/clang" AR="$WASI_SDK/bin/llvm-ar" RANLIB="$WASI_SDK/bin/llvm-ranlib" \
       perl "$OPENSSL/Configure" linux-generic32 no-shared no-threads no-asm no-dso no-module no-engine \
@@ -144,7 +144,7 @@ stage_openssl() {
     openssl_source verify
     [ "$build_inputs" = "$(openssl_inputs_digest)" ] || { echo "OpenSSL inputs changed during compilation; rerun the build" >&2; exit 1; }
     find "$OUT/openssl/include" "$OUT/openssl/lib" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$WORK/openssl-build-artifacts"
-    echo "$build_inputs" > "$OUT/openssl/.wisp-build-identity"
+    echo "$build_inputs" > "$OUT/openssl/.isoplane-build-identity"
   ) > "$LOGS/openssl-build.log" 2>&1
 }
 
@@ -216,10 +216,10 @@ require_build_inputs() {
   [ -f "$WORK/icu-build-inputs" ] && [ "$(cat "$WORK/icu-build-inputs")" = "$(icu_inputs_digest)" ] || { echo "the ICU data does not match current build inputs; run guest-runtime/build.sh icu" >&2; exit 1; }
   [ -f "$WORK/icu-build-artifacts" ] && sha256sum --check --status "$WORK/icu-build-artifacts" || { echo "staged ICU native libraries or data changed; run guest-runtime/build.sh icu" >&2; exit 1; }
   openssl_source verify
-  [ -f "$OUT/openssl/.wisp-build-identity" ] && [ "$(cat "$OUT/openssl/.wisp-build-identity")" = "$(openssl_inputs_digest)" ] || { echo "the OpenSSL archives do not match current build inputs; run guest-runtime/build.sh openssl" >&2; exit 1; }
+  [ -f "$OUT/openssl/.isoplane-build-identity" ] && [ "$(cat "$OUT/openssl/.isoplane-build-identity")" = "$(openssl_inputs_digest)" ] || { echo "the OpenSSL archives do not match current build inputs; run guest-runtime/build.sh openssl" >&2; exit 1; }
   [ -f "$WORK/openssl-build-artifacts" ] && sha256sum --check --status "$WORK/openssl-build-artifacts" || { echo "OpenSSL headers or archives changed; run guest-runtime/build.sh openssl" >&2; exit 1; }
   [ -f "$OUT/openssl/lib/libcrypto.a" ] || { echo "the openssl stage installs OpenSSL under $OUT/openssl; run it first" >&2; exit 1; }
-  [ -x "$WASI_SDK/bin/clang" ] && [ -f "$WASI_SDK/.wisp-archive-sha256" ] && [ "$(cat "$WASI_SDK/.wisp-archive-sha256")" = "$WASI_SDK_SHA256" ] || { echo "the toolchain stage unpacks the pinned wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
+  [ -x "$WASI_SDK/bin/clang" ] && [ -f "$WASI_SDK/.isoplane-archive-sha256" ] && [ "$(cat "$WASI_SDK/.isoplane-archive-sha256")" = "$WASI_SDK_SHA256" ] || { echo "the toolchain stage unpacks the pinned wasi-sdk at $WASI_SDK; run it first" >&2; exit 1; }
 }
 # A managed P/Invoke whose wasm signature disagrees with its C prototype
 # traps on the first call; the audit refuses to build such a pack.
@@ -370,22 +370,22 @@ stage_feed() {
   unpack "$nativeaot_sdk" "$OUT/packs/nativeaot-sdk"
   # The SDK's profiles import this to select their packs by version and to
   # check the pack a build resolves against the feed's digest.
-  cat > "$feed/Wisp.GuestRuntime.props" <<EOF
+  cat > "$feed/Isoplane.GuestRuntime.props" <<EOF
 <Project>
   <PropertyGroup>
-    <WispGuestRuntimeInputsSha256>$(inputs_digest)</WispGuestRuntimeInputsSha256>
-    <WispGuestWasiSdkPackVersion>$version</WispGuestWasiSdkPackVersion>
-    <WispGuestWasiSdkPackSha512>$(pack_digest "$sdkpack")</WispGuestWasiSdkPackSha512>
-    <WispGuestRuntimePackVersion>$version</WispGuestRuntimePackVersion>
-    <WispGuestRuntimePackSha512>$(pack_digest "$pack")</WispGuestRuntimePackSha512>
-    <WispGuestRuntimePackDirectory>\$(MSBuildThisFileDirectory)../packs/runtime/</WispGuestRuntimePackDirectory>
-    <WispGuestWasiSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/wasi-sdk/</WispGuestWasiSdkPackDirectory>
-    <WispGuestNativeAotSdkPackVersion>$nativeaot_version</WispGuestNativeAotSdkPackVersion>
-    <WispGuestNativeAotSdkPackSha512>$(pack_digest "$nativeaot_sdk")</WispGuestNativeAotSdkPackSha512>
-    <WispGuestNativeAotSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot-sdk/</WispGuestNativeAotSdkPackDirectory>
-    <WispGuestNativeAotPackVersion>$nativeaot_version</WispGuestNativeAotPackVersion>
-    <WispGuestNativeAotPackSha512>$(pack_digest "$nativeaot_pack")</WispGuestNativeAotPackSha512>
-    <WispGuestNativeAotPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot/</WispGuestNativeAotPackDirectory>
+    <IsoplaneGuestRuntimeInputsSha256>$(inputs_digest)</IsoplaneGuestRuntimeInputsSha256>
+    <IsoplaneGuestWasiSdkPackVersion>$version</IsoplaneGuestWasiSdkPackVersion>
+    <IsoplaneGuestWasiSdkPackSha512>$(pack_digest "$sdkpack")</IsoplaneGuestWasiSdkPackSha512>
+    <IsoplaneGuestRuntimePackVersion>$version</IsoplaneGuestRuntimePackVersion>
+    <IsoplaneGuestRuntimePackSha512>$(pack_digest "$pack")</IsoplaneGuestRuntimePackSha512>
+    <IsoplaneGuestRuntimePackDirectory>\$(MSBuildThisFileDirectory)../packs/runtime/</IsoplaneGuestRuntimePackDirectory>
+    <IsoplaneGuestWasiSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/wasi-sdk/</IsoplaneGuestWasiSdkPackDirectory>
+    <IsoplaneGuestNativeAotSdkPackVersion>$nativeaot_version</IsoplaneGuestNativeAotSdkPackVersion>
+    <IsoplaneGuestNativeAotSdkPackSha512>$(pack_digest "$nativeaot_sdk")</IsoplaneGuestNativeAotSdkPackSha512>
+    <IsoplaneGuestNativeAotSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot-sdk/</IsoplaneGuestNativeAotSdkPackDirectory>
+    <IsoplaneGuestNativeAotPackVersion>$nativeaot_version</IsoplaneGuestNativeAotPackVersion>
+    <IsoplaneGuestNativeAotPackSha512>$(pack_digest "$nativeaot_pack")</IsoplaneGuestNativeAotPackSha512>
+    <IsoplaneGuestNativeAotPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot/</IsoplaneGuestNativeAotPackDirectory>
   </PropertyGroup>
 </Project>
 EOF

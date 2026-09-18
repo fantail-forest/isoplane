@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 /// <summary>A native library the installed toolchain loads, with the Ubuntu 24.04 package that provides it.</summary>
 internal sealed record NativePrerequisite(string Name, string[] Sonames, string Purpose, string UbuntuPackage);

@@ -8,7 +8,7 @@ fn the_installed_dotnet_tool_reports_its_package_version() {
         r#"<configuration><packageSources><clear/><add key="local" value="./packages"/></packageSources></configuration>"#,
     )
     .expect("configure the isolated local package feed");
-    let cli = wisp_fixtures::managed_cli(directory.path(), directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), directory.path());
     let installed = Command::new("dotnet")
         .args(["tool", "list", "--tool-path"])
         .arg(directory.path().join("tools"))

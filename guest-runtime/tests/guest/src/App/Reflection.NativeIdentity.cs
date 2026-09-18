@@ -1,4 +1,4 @@
-#if WISP_MONO
+#if ISOPLANE_MONO
 using System;
 using System.IO;
 using System.Reflection;
@@ -13,14 +13,14 @@ internal sealed partial class Reflection
 {
     private static async Task<string> TrustedIdentityAfterPark(string component)
     {
-        var control = new AssemblyName("Wisp.Boundary.IdentityControl") { Version = new Version(1, 0, 0, 0) };
+        var control = new AssemblyName("Isoplane.Boundary.IdentityControl") { Version = new Version(1, 0, 0, 0) };
         if (Assembly.Load(Impostor(control)).GetName().Name != control.Name)
             throw new InvalidOperationException("impostor generator must produce a loadable ordinary assembly");
         Assembly original = component switch
         {
             "corelib" => typeof(object).Assembly,
             "bcl" => typeof(System.Net.Http.HttpClient).Assembly,
-            "sdk" => typeof(Wisp.Request).Assembly,
+            "sdk" => typeof(Isoplane.Request).Assembly,
             _ => throw new ArgumentException("unknown trusted component"),
         };
         string before = PreserveDefaultIdentity(original);

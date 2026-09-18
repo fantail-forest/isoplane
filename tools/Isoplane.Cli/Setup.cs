@@ -1,6 +1,6 @@
-using Wisp.Native;
+using Isoplane.Native;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal sealed record SetupOptions(string? Source, bool AssumeYes)
 {
@@ -61,7 +61,7 @@ internal sealed record SetupMachine(
 internal static class Setup
 {
     internal const string PackageSourceName = "isoplane";
-    internal const string TemplatePackageId = "Wisp.Templates";
+    internal const string TemplatePackageId = "Isoplane.Templates";
 
     internal static async Task<int> RunAsync(SetupOptions options, ReleaseIdentity cli, string home, SetupMachine machine, HttpClient client, CancellationToken cancellation)
     {

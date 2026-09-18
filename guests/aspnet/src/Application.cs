@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using Wisp.AspNetCore;
+using Isoplane.AspNetCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,7 +11,7 @@ public static class Application
 {
     public static WebApplication Create()
     {
-        var builder = WispHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         builder.Services.AddScoped<RequestScope>();
         builder.Services.AddHostedService<StartupService>();
         var app = builder.Build();
@@ -26,7 +26,7 @@ public static class Application
                 await context.Response.WriteAsync("cancelled");
             }
         });
-        app.MapGet("/", () => "WISP ASP.NET");
+        app.MapGet("/", () => "Isoplane ASP.NET");
         app.MapGet("/logs", async context =>
         {
             context.RequestServices.GetRequiredService<ILoggerFactory>()

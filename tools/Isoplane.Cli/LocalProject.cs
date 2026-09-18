@@ -3,9 +3,9 @@ using System.Text;
 using System.Text.Json;
 using Tomlyn;
 using Tomlyn.Model;
-using Wisp.Native;
+using Isoplane.Native;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal sealed class LocalProject
 {
@@ -15,7 +15,7 @@ internal sealed class LocalProject
     internal LocalProject(string directory)
     {
         this.directory = Path.GetFullPath(directory);
-        var path = Path.Combine(this.directory, "wisp.toml");
+        var path = Path.Combine(this.directory, "isoplane.toml");
         try { manifest = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path)) ?? throw new ArgumentException($"Empty project manifest: {path}"); }
         catch (TomlException error) { throw new ArgumentException($"Cannot read {path}: {error.Message}", error); }
         if (!manifest.TryGetValue("name", out var name) || name is not string text || string.IsNullOrWhiteSpace(text))
@@ -23,7 +23,7 @@ internal sealed class LocalProject
     }
 
     internal string Module => manifest.TryGetValue("module", out var module) && module is string path && !string.IsNullOrWhiteSpace(path)
-        ? Path.GetFullPath(path, directory) : throw new ArgumentException("wisp.toml must name the module to execute.");
+        ? Path.GetFullPath(path, directory) : throw new ArgumentException("isoplane.toml must name the module to execute.");
 
     internal byte[] SessionOptions(ushort? port, Dictionary<string, string> configuration, string? debugEndpoint = null, string? debugDirectory = null)
     {
@@ -35,7 +35,7 @@ internal sealed class LocalProject
         Dictionary<string, object?> settings = new()
         {
             ["manifest"] = manifest,
-            ["state_directory"] = debugDirectory ?? Path.Combine(directory, ".wisp", "local", identity),
+            ["state_directory"] = debugDirectory ?? Path.Combine(directory, ".isoplane", "local", identity),
             ["runtime_library"] = NativeRuntime.LibraryPath,
             ["compilation_directory"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Isoplane", "compiled"),
             ["configuration"] = configuration,

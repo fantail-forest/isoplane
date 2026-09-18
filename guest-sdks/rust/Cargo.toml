@@ -1,5 +1,5 @@
 [package]
-name = "wisp-guest"
+name = "isoplane-guest"
 # This crate lives beside the C# SDK in `guest-sdks/`, and belongs to the
 # `guests/` Cargo workspace. Those are separate things: the directory is where
 # the source is, the workspace is where its build settings come from.
@@ -8,7 +8,7 @@ name = "wisp-guest"
 #   * `[profile.release]` there is the size-tuned one (`opt-level = "z"`, LTO,
 #     `panic = "abort"`, strip) that the guests linking this crate are built
 #     with.
-#   * `[workspace.dependencies]` there pins `wisp-abi` with
+#   * `[workspace.dependencies]` there pins `isoplane-abi` with
 #     `default-features = false`. Inert today (`default = []`), and a guard
 #     worth keeping: a guest must not pick up a host-shaped feature by default.
 #
@@ -20,16 +20,16 @@ workspace = "../../guests"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
-description = "The WISP Rust guest SDK: the wisp scheduler (a single-threaded, never-blocking executor), typed capability bindings, the snapshot-friendly arena allocator, and the pre-init unit registry."
+description = "The Isoplane Rust guest SDK: the isoplane scheduler (a single-threaded, never-blocking executor), typed capability bindings, the snapshot-friendly arena allocator, and the pre-init unit registry."
 
 [lib]
 # rlib only: the `#[no_mangle]` exports are emitted into the *guest* crate by
-# `wisp_guest::export_handler!` / `export_durable!`, so the linker cannot GC
+# `isoplane_guest::export_handler!` / `export_durable!`, so the linker cannot GC
 # them and every guest gets exactly one copy.
 crate-type = ["rlib"]
 
 [dependencies]
-wisp-abi = { workspace = true }
+isoplane-abi = { workspace = true }
 serde    = { workspace = true }
 postcard = { workspace = true }
 serde_json = { workspace = true, optional = true }

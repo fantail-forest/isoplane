@@ -4,4 +4,4 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 rustup target add wasm32-unknown-unknown wasm32-wasip1
-scripts/dev cargo install --locked --version 1.244.0 --root .wisp-dev/tools wasm-tools
+scripts/dev cargo install --locked --version 1.244.0 --root .isoplane-dev/tools wasm-tools

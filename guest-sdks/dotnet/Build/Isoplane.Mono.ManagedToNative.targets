@@ -1,0 +1,52 @@
+<Project>
+  <Target Name="_GenerateManagedToNative"
+          DependsOnTargets="IsoplaneMonoManagedToNativeInputs;IsoplaneMonoGenerateManagedToNative">
+    <ItemGroup><FileWrites Include="@(_IsoplaneManagedToNativeOutputs);$(_IsoplaneManagedToNativeInventory);$(_IsoplaneManagedToNativeStamp)" /></ItemGroup>
+  </Target>
+
+  <Target Name="IsoplaneMonoManagedToNativeInputs">
+    <Error Condition="'$(_MonoAotCrossCompilerPath)' == ''" Text="Managed-to-native generation requires the Mono AOT cross compiler; restore the WASI workload before building." />
+    <MakeDir Directories="$(_WasmIntermediateOutputPath)" />
+    <ItemGroup>
+      <_WasmPInvokeModules Include="%(_WasmNativeFileForLinking.FileName)" Condition="'%(_WasmNativeFileForLinking.ScanForPInvokes)' != 'false'" />
+      <_WasmPInvokeModules Include="libSystem.Native;libSystem.IO.Compression.Native;libSystem.Globalization.Native" />
+      <_WasmPInvokeModules Include="libSystem.Security.Cryptography.Native.OpenSsl" Condition="Exists('$(MicrosoftNetCoreAppRuntimePackRidNativeDir)libSystem.Security.Cryptography.Native.OpenSsl.a')" />
+      <_IsoplaneMscorlib Include="@(_WasmAssembliesInternal)" Condition="'%(Filename)%(Extension)' == 'mscorlib.dll'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_MscorlibPath Condition="'@(_IsoplaneMscorlib)' == ''">$([System.IO.Path]::Combine('$(MicrosoftNetCoreAppRuntimePackRidLibTfmDir)', 'mscorlib.dll'))</_MscorlibPath>
+      <_IsoplaneManagedToNativeInventory>$(_WasmIntermediateOutputPath)isoplane-managed-to-native.inputs</_IsoplaneManagedToNativeInventory>
+      <_IsoplaneManagedToNativeStamp>$(_WasmIntermediateOutputPath)isoplane-managed-to-native.complete</_IsoplaneManagedToNativeStamp>
+    </PropertyGroup>
+    <ItemGroup>
+      <_IsoplaneManagedToNativeInputs Include="@(_WasmAssembliesInternal);$(_MscorlibPath);$(WasmPInvokeSymbolInventoryFile);$(_MonoAotCrossCompilerPath);$(WasmAppBuilderTasksAssemblyPath);$(MSBuildAllProjects);$(MSBuildThisFileFullPath)" />
+      <_IsoplaneManagedToNativeOutputs Include="$(_WasmRuntimeICallTablePath);$(_WasmICallTablePath);$(_WasmPInvokeTablePath);$(_WasmInterpToNativeTablePath)" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_IsoplaneManagedToNativeInputs.Identity)')" Text="A managed-to-native generation input is missing: %(_IsoplaneManagedToNativeInputs.Identity)" />
+    <WriteLinesToFile File="$(_IsoplaneManagedToNativeInventory)" Overwrite="true" WriteOnlyWhenDifferent="true"
+                      Lines="@(_IsoplaneManagedToNativeInputs);@(_WasmPInvokeModules);@(_IsoplaneManagedToNativeOutputs);$(_IsLibraryMode);$(WasmRequirePInvokeSymbolInventory);$(IsoplaneGuestRuntimePackVersion);$(IsoplaneGuestRuntimePackSha512)" />
+    <Delete Files="$(_IsoplaneManagedToNativeStamp)" Condition="!Exists('%(_IsoplaneManagedToNativeOutputs.Identity)')" />
+  </Target>
+
+  <!-- The generator preserves unchanged headers. A completion stamp tracks
+       successful analysis without making unchanged headers force a relink. -->
+  <Target Name="IsoplaneMonoGenerateManagedToNative"
+          Inputs="@(_IsoplaneManagedToNativeInputs);$(_IsoplaneManagedToNativeInventory)"
+          Outputs="$(_IsoplaneManagedToNativeStamp)">
+    <Delete Files="$(_IsoplaneManagedToNativeStamp)" />
+    <Exec Command="&quot;$(_MonoAotCrossCompilerPath)&quot; --print-icall-table &gt; &quot;$(_WasmRuntimeICallTablePath)&quot;" />
+    <ManagedToNativeGenerator
+        Assemblies="@(_WasmAssembliesInternal);$(_MscorlibPath)"
+        RuntimeIcallTableFile="$(_WasmRuntimeICallTablePath)"
+        IcallOutputPath="$(_WasmICallTablePath)"
+        PInvokeModules="@(_WasmPInvokeModules)"
+        PInvokeSymbolInventoryFile="$(WasmPInvokeSymbolInventoryFile)"
+        RequirePInvokeSymbolInventory="$(WasmRequirePInvokeSymbolInventory)"
+        PInvokeOutputPath="$(_WasmPInvokeTablePath)"
+        InterpToNativeOutputPath="$(_WasmInterpToNativeTablePath)"
+        IsLibraryMode="$(_IsLibraryMode)">
+      <Output TaskParameter="FileWrites" ItemName="FileWrites" />
+    </ManagedToNativeGenerator>
+    <Touch Files="$(_IsoplaneManagedToNativeStamp)" AlwaysCreate="true" />
+  </Target>
+</Project>

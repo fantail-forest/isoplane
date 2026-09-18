@@ -3,7 +3,7 @@
 //!
 //! The protocol under test is the replay handshake:
 //!
-//! * `wisp_initialize` announces every unit with `init_unit_begin(id)` BEFORE
+//! * `isoplane_initialize` announces every unit with `init_unit_begin(id)` BEFORE
 //!   running it, so a trap inside the unit identifies itself;
 //! * on the replay, `init_unit_deferred(id)` tells the guest to skip the unit
 //!   the host learned was impure;
@@ -12,14 +12,14 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use wisp_guest::testing::with_stub_host;
-use wisp_guest::{Ctx, Handler, Request, Response};
+use isoplane_guest::testing::with_stub_host;
+use isoplane_guest::{Ctx, Handler, Request, Response};
 
 static PURE_RAN: AtomicU32 = AtomicU32::new(0);
 static IMPURE_RAN: AtomicU32 = AtomicU32::new(0);
 static AFTER_RAN: AtomicU32 = AtomicU32::new(0);
 
-wisp_guest::deferred_lazy! {
+isoplane_guest::deferred_lazy! {
     /// Unit **0**. Pure: pre-runs into the template.
     static PURE: u32 = {
         PURE_RAN.fetch_add(1, Ordering::Relaxed);
@@ -50,7 +50,10 @@ impl Handler for App {
     }
 }
 
-wisp_guest::export_handler!(App, units = wisp_guest::init_units![PURE, IMPURE, AFTER]);
+isoplane_guest::export_handler!(
+    App,
+    units = isoplane_guest::init_units![PURE, IMPURE, AFTER]
+);
 
 #[test]
 fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
@@ -61,7 +64,7 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         // host-side), NOT 0 -- 0 is a real unit.
         host.defer_unit(1);
 
-        wisp_initialize();
+        isoplane_initialize();
 
         let calls = host.calls();
         let begins: Vec<i64> = calls
@@ -77,7 +80,7 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
             vec![0, -1, 1, 2, -1],
             "0-based ids; `begin(NO_UNIT)` only after a unit that actually ran"
         );
-        assert_eq!(wisp_guest::init::NO_UNIT, -1);
+        assert_eq!(isoplane_guest::init::NO_UNIT, -1);
 
         assert_eq!(PURE_RAN.load(Ordering::Relaxed), 1, "a pure unit pre-runs");
         assert_eq!(
@@ -109,14 +112,14 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
         assert_eq!(PURE.run_count(), 1, "this test IS the init sandbox pass");
 
         // Init-only imports stay declared in the template but the runtime
-        // linker binds them to traps. After `wisp_initialize` the SDK must
+        // linker binds them to traps. After `isoplane_initialize` the SDK must
         // serve the captured seed rather than call the import again.
         let before = host
             .calls()
             .iter()
             .filter(|(n, _)| *n == "init_hash_seed")
             .count();
-        let _ = wisp_guest::init::hash_seed();
+        let _ = isoplane_guest::init::hash_seed();
         let after = host
             .calls()
             .iter()
@@ -133,7 +136,7 @@ fn a_deferred_unit_is_skipped_at_init_and_runs_on_first_touch() {
 /// activation. The blob is tenant-authored deploy input, so parsing it inside
 /// an init unit is safe to pre-run and the *parsed* result is what lands in the
 /// template. This drives the real probe-then-fill idiom against a host stub
-/// that mirrors `wisp_control::preinit`.
+/// that mirrors `isoplane_control::preinit`.
 #[cfg(feature = "json")]
 #[test]
 fn config_is_readable_at_init_and_only_at_init() {
@@ -147,13 +150,13 @@ fn config_is_readable_at_init_and_only_at_init() {
         ];
         host.set_config(serde_json::to_vec(&vars).unwrap());
 
-        let got = wisp_guest::init::config_vars();
+        let got = isoplane_guest::init::config_vars();
         assert_eq!(got, vars, "the guest must see exactly the declared vars");
         assert_eq!(
-            wisp_guest::init::config_get("QUOTE_TTL_MS").as_deref(),
+            isoplane_guest::init::config_get("QUOTE_TTL_MS").as_deref(),
             Some("300000")
         );
-        assert!(wisp_guest::init::config_is_bound());
+        assert!(isoplane_guest::init::config_is_bound());
 
         // Probe (cap 0) then fill (cap = full length): two calls, not one.
         let calls: Vec<i64> = host
@@ -173,7 +176,7 @@ fn config_is_readable_at_init_and_only_at_init() {
             .iter()
             .filter(|(n, _)| *n == "init_config_get")
             .count();
-        let _ = wisp_guest::init::config_vars();
+        let _ = isoplane_guest::init::config_vars();
         let after = host
             .calls()
             .iter()

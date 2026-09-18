@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Configuration;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal static class LocalSecrets
 {

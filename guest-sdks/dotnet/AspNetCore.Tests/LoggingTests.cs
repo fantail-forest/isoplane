@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
-namespace Wisp.AspNetCore.Tests;
+namespace Isoplane.AspNetCore.Tests;
 
 public sealed class LoggingTests
 {
@@ -10,7 +10,7 @@ public sealed class LoggingTests
     public void critical_logs_use_the_host_error_level_and_keep_the_framework_severity()
     {
         var records = new List<(int Level, string Fields)>();
-        using var provider = new WispLoggerProvider((level, fields) => records.Add((level, fields)));
+        using var provider = new IsoplaneLoggerProvider((level, fields) => records.Add((level, fields)));
         provider.CreateLogger("CustomerApplication").LogCritical("cannot continue");
         using var payload = JsonDocument.Parse(records.Single().Fields);
         Assert.True(records[0].Level == (int)LogLevel.Error && payload.RootElement.GetProperty("severity").GetString() == "Critical",
@@ -21,7 +21,7 @@ public sealed class LoggingTests
     public async Task console_writes_emit_during_the_call_without_retaining_post_response_work()
     {
         var records = new List<(int Level, string Fields)>();
-        using var writer = new Wisp.Runtime.GuestConsole((int)LogLevel.Information, (level, fields) => records.Add((level, fields)));
+        using var writer = new Isoplane.Runtime.GuestConsole((int)LogLevel.Information, (level, fields) => records.Add((level, fields)));
         writer.Write("first");
         var written = writer.WriteLineAsync("second");
         Assert.True(written.IsCompletedSuccessfully && records.Select(record => record.Fields).SequenceEqual(new[] { "first", "second" }),
@@ -39,7 +39,7 @@ public sealed class LoggingTests
     public void application_logs_preserve_category_message_exception_and_active_scopes()
     {
         var records = new List<(int Level, string Fields)>();
-        using var provider = new WispLoggerProvider((level, fields) => records.Add((level, fields)));
+        using var provider = new IsoplaneLoggerProvider((level, fields) => records.Add((level, fields)));
         var logger = provider.CreateLogger("CustomerApplication");
         using (logger.BeginScope("request scope"))
             logger.LogError(new EventId(17, "SaveFailed"), new InvalidOperationException("database unavailable"), "Could not save {ItemId}", 42);
@@ -59,7 +59,7 @@ public sealed class LoggingTests
     public void disabled_log_events_do_not_invoke_the_host()
     {
         var calls = 0;
-        using var provider = new WispLoggerProvider((_, _) => calls++);
+        using var provider = new IsoplaneLoggerProvider((_, _) => calls++);
         var logger = provider.CreateLogger("CustomerApplication");
         logger.Log(LogLevel.None, "disabled");
         Assert.True(calls == 0, "LogLevel.None must not emit a host event.");

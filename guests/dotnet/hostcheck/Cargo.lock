@@ -3410,7 +3410,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wisp-abi"
+name = "isoplane-abi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3420,7 +3420,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wisp-control"
+name = "isoplane-control"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3439,27 +3439,27 @@ dependencies = [
  "tracing",
  "wasmparser 0.244.0",
  "wasmtime 48.0.0",
- "wisp-abi",
- "wisp-engine",
- "wisp-store",
+ "isoplane-abi",
+ "isoplane-engine",
+ "isoplane-store",
  "wizer",
  "zstd",
 ]
 
 [[package]]
-name = "wisp-dotnet-hostcheck"
+name = "isoplane-dotnet-hostcheck"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "postcard",
  "serde",
  "wasmtime 48.0.0",
- "wisp-abi",
- "wisp-control",
+ "isoplane-abi",
+ "isoplane-control",
 ]
 
 [[package]]
-name = "wisp-engine"
+name = "isoplane-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3472,11 +3472,11 @@ dependencies = [
  "tracing",
  "wasmparser 0.244.0",
  "wasmtime 48.0.0",
- "wisp-abi",
+ "isoplane-abi",
 ]
 
 [[package]]
-name = "wisp-store"
+name = "isoplane-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3488,7 +3488,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
- "wisp-abi",
+ "isoplane-abi",
 ]
 
 [[package]]

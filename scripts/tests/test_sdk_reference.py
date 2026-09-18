@@ -18,7 +18,7 @@ class SdkReferenceTests(unittest.TestCase):
             raise AssertionError('The reference generator must build against current SDK sources:\n' + result.stdout + result.stderr)
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='wisp-sdk-reference-test-')
+        self.temporary = tempfile.TemporaryDirectory(prefix='isoplane-sdk-reference-test-')
         self.addCleanup(self.temporary.cleanup)
         self.output = Path(self.temporary.name)
         result = self.generate()
@@ -33,18 +33,18 @@ class SdkReferenceTests(unittest.TestCase):
     def test_generated_reference_matches_the_current_public_api(self):
         result = self.generate(check=True)
         self.assertEqual(result.returncode, 0, 'A newly generated reference must pass its drift check: ' + result.stderr)
-        handler = self.output / 'sdk/Wisp.Sdk/Wisp.Durable/IWispHandler/HandleAsync.md'
+        handler = self.output / 'sdk/Isoplane.Sdk/Isoplane.Durable/IIsoplaneHandler/HandleAsync.md'
         self.assertIn('Task<Response> HandleAsync(Request req, Ctx ctx)', handler.read_text(),
                       'The ordinary HTTP handler must remain documented despite its Durable namespace')
-        configuration = self.output / 'sdk/Isoplane.Testing/Wisp.Testing/ApplicationOptions/Configuration.md'
+        configuration = self.output / 'sdk/Isoplane.Testing/Isoplane.Testing/ApplicationOptions/Configuration.md'
         self.assertIn('get; init;', configuration.read_text(), 'The reference must preserve init-only API setters')
 
     def test_changed_or_missing_generated_pages_fail_the_check(self):
-        page = self.output / 'sdk/Wisp.AspNetCore/Wisp.AspNetCore/WispHosting.md'
+        page = self.output / 'sdk/Isoplane.AspNetCore/Isoplane.AspNetCore/IsoplaneHosting.md'
         page.write_text('stale documentation\n')
         changed = self.generate(check=True)
         self.assertEqual(changed.returncode, 1, 'Modified reference content must fail the drift check')
-        self.assertIn('WispHosting.md', changed.stderr, 'The drift diagnostic must identify the stale API page')
+        self.assertIn('IsoplaneHosting.md', changed.stderr, 'The drift diagnostic must identify the stale API page')
         page.unlink()
         missing = self.generate(check=True)
         self.assertEqual(missing.returncode, 1, 'Missing generated API pages must fail the drift check')
@@ -57,12 +57,12 @@ class SdkReferenceTests(unittest.TestCase):
 
     def test_di_and_interop_are_excluded_without_hiding_the_http_handler(self):
         pages = [str(path.relative_to(self.output)) for path in self.output.rglob('*.md')]
-        self.assertFalse(any('Wisp.Abi' in path or '/DurableInstance' in path or '/FromDispatch.md' in path for path in pages),
+        self.assertFalse(any('Isoplane.Abi' in path or '/DurableInstance' in path or '/FromDispatch.md' in path for path in pages),
                          'Internal interop and DI APIs must not be presented as customer preview APIs')
-        context = (self.output / 'sdk/Wisp.Sdk/Wisp/Ctx.md').read_text()
+        context = (self.output / 'sdk/Isoplane.Sdk/Isoplane/Ctx.md').read_text()
         self.assertNotIn('Fencing', context, 'The DI-only fencing member must be outside this reference')
         self.assertNotIn('Outbox', context, 'The DI-only outbox member must be outside this reference')
-        self.assertTrue(any('/IWispHandler.md' in path for path in pages), 'The HTTP handler contract must remain discoverable')
+        self.assertTrue(any('/IIsoplaneHandler.md' in path for path in pages), 'The HTTP handler contract must remain discoverable')
 
 
 if __name__ == '__main__':

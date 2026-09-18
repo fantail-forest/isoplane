@@ -22,26 +22,26 @@ pub use bindings::{
     fetch_bytes, log, BodyReader, Clock, Entropy, HttpFetch, Level, Span, };
 pub use budget::{Budget, UnsafeToTrap};
 pub use ctx::Ctx;
-pub use error::{Result, WispError};
+pub use error::{IsoplaneError, Result};
 pub use future::{join2, join3, join_all, select2, Either, HostFuture};
 pub use http::{Request, RequestExt, Response, ResponseStream};
 pub use init::{InitUnit, LazyInit};
 
-pub use wisp_abi;
-pub use wisp_abi::result::{FutureError, };
+pub use isoplane_abi;
+pub use isoplane_abi::result::{FutureError, };
 
 /// Items the `export_*!` macros need to name. Not a stable surface.
 #[doc(hidden)]
 pub mod __rexport {
-    pub use wisp_abi::dispatch::DispatchKind;
-    pub use wisp_abi::status::TrapCode;
+    pub use isoplane_abi::dispatch::DispatchKind;
+    pub use isoplane_abi::status::TrapCode;
 
     pub fn into_handle(r: crate::Response) -> u32 {
         r.into_handle()
     }
 }
 
-/// Called by the generated `wisp_gc_hint` export.
+/// Called by the generated `isoplane_gc_hint` export.
 ///
 /// See [`alloc`] for exactly what this does; the short version is that it
 /// rolls the bump pointer back over a free tail and zeroes everything

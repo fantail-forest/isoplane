@@ -6,7 +6,7 @@ using Xunit;
 
 public sealed class PackageVersionTests : IDisposable
 {
-    private readonly string directory = Directory.CreateTempSubdirectory("wisp-package-version-").FullName;
+    private readonly string directory = Directory.CreateTempSubdirectory("isoplane-package-version-").FullName;
     private static string SdkDirectory([CallerFilePath] string source = "") => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, ".."));
 
     [Fact]
@@ -14,23 +14,23 @@ public sealed class PackageVersionTests : IDisposable
     {
         foreach (var version in new[] { "0.1.0-package-test.1", "0.1.0-package-test.2" })
         {
-            await Pack("Wisp.Sdk.csproj", version);
-            await Pack("AspNetCore/Wisp.AspNetCore.csproj", version);
-            await Pack("Templates/Wisp.Templates.csproj", version);
-            using var core = ZipFile.OpenRead(Path.Combine(directory, "Wisp.Sdk." + version + ".nupkg"));
+            await Pack("Isoplane.Sdk.csproj", version);
+            await Pack("AspNetCore/Isoplane.AspNetCore.csproj", version);
+            await Pack("Templates/Isoplane.Templates.csproj", version);
+            using var core = ZipFile.OpenRead(Path.Combine(directory, "Isoplane.Sdk." + version + ".nupkg"));
             var coreProps = ReadXml(core, "Sdk/Sdk.props");
-            Assert.True(coreProps.Descendants("PackageReference").Single(element => (string?)element.Attribute("Include") == "Wisp.Sdk").Attribute("Version")?.Value == version,
+            Assert.True(coreProps.Descendants("PackageReference").Single(element => (string?)element.Attribute("Include") == "Isoplane.Sdk").Attribute("Version")?.Value == version,
                 "The core project SDK must pin its own runtime API package version.");
-            using var sdk = ZipFile.OpenRead(Path.Combine(directory, "Wisp.AspNetCore." + version + ".nupkg"));
+            using var sdk = ZipFile.OpenRead(Path.Combine(directory, "Isoplane.AspNetCore." + version + ".nupkg"));
             var props = ReadXml(sdk, "Sdk/Sdk.props");
-            Assert.True(props.Descendants("PackageReference").Single(element => (string?)element.Attribute("Include") == "Wisp.AspNetCore").Attribute("Version")?.Value == version,
+            Assert.True(props.Descendants("PackageReference").Single(element => (string?)element.Attribute("Include") == "Isoplane.AspNetCore").Attribute("Version")?.Value == version,
                 "The packaged SDK must reference its own package version rather than a cached earlier release.");
-            var nuspec = ReadXml(sdk, "Wisp.AspNetCore.nuspec");
-            Assert.True(nuspec.Descendants().Single(element => element.Name.LocalName == "dependency" && (string?)element.Attribute("id") == "Wisp.Sdk").Attribute("version")?.Value == version,
+            var nuspec = ReadXml(sdk, "Isoplane.AspNetCore.nuspec");
+            Assert.True(nuspec.Descendants().Single(element => element.Name.LocalName == "dependency" && (string?)element.Attribute("id") == "Isoplane.Sdk").Attribute("version")?.Value == version,
                 "The ASP.NET package must depend on the matching core SDK release.");
-            using var templates = ZipFile.OpenRead(Path.Combine(directory, "Wisp.Templates." + version + ".nupkg"));
-            var project = ReadXml(templates, "content/content/aspnet/IsoplaneApp.csproj");
-            Assert.True(project.Root?.Attribute("Sdk")?.Value == "Wisp.AspNetCore/" + version,
+            using var templates = ZipFile.OpenRead(Path.Combine(directory, "Isoplane.Templates." + version + ".nupkg"));
+            var project = ReadXml(templates, "content/content/aspnet/SampleApp.csproj");
+            Assert.True(project.Root?.Attribute("Sdk")?.Value == "Isoplane.AspNetCore/" + version,
                 "An installed template must create a project using the matching SDK release.");
         }
     }

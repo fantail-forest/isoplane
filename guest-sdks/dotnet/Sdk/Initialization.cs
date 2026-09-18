@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Wisp;
+namespace Isoplane;
 
 /// <summary>Initializes reusable application state before its deployment template is captured.</summary>
 public static class Initialization

@@ -1,0 +1,19 @@
+[package]
+name = "isoplane-trust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+description = "Verified platform certificate bundles shared by node and local development hosts"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+rustls-pki-types = { workspace = true }
+rustls = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

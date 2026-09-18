@@ -18,7 +18,7 @@ SCANNED_SUFFIXES = ('.csproj', '.props', '.targets')
 EXCLUDED_PATHS = frozenset({'guest-runtime/work', 'handoffs', 'target'})
 EXCLUDED_DIRECTORIES = frozenset({'bin', 'obj', 'node_modules'})
 SEMVER = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$')
-PIN = re.compile(r'(?P<prefix>\bSdk="(?:Wisp\.Sdk|Wisp\.AspNetCore)/|<PackageReference Include="(?:Wisp\.Sdk|Wisp\.AspNetCore)" Version=")(?P<version>[^"]+)"')
+PIN = re.compile(r'(?P<prefix>\bSdk="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)/|<PackageReference Include="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)" Version=")(?P<version>[^"]+)"')
 
 
 def declared(root=ROOT):

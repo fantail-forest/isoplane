@@ -2,12 +2,12 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises managed exceptions for forbidden inbound networking.</summary>
-public sealed class NetworkRefusalProbe : IWispHandler
+public sealed class NetworkRefusalProbe : IIsoplaneHandler
 {
     /// <summary>Returns the actual SocketError raised by an attempted listener.</summary>
     public Task<Response> HandleAsync(Request request, Ctx context)

@@ -1,10 +1,10 @@
 using System.Threading.Tasks;
-using Wisp.Durable;
+using Isoplane.Durable;
 
-namespace Wisp.App;
+namespace Isoplane.App;
 
 /// <summary>Exercises ordinary managed deadlines across host parking.</summary>
-public sealed class TimerProbe : IWispHandler
+public sealed class TimerProbe : IIsoplaneHandler
 {
     private int _abandonedCallbacks;
     private int _requests;

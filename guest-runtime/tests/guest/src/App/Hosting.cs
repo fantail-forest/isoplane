@@ -307,11 +307,11 @@ internal sealed partial class Hosting
 
     private static string Activities()
     {
-        using var source = new ActivitySource("Wisp.Acceptance");
+        using var source = new ActivitySource("Isoplane.Acceptance");
         var started = new List<string>();
         using var listener = new ActivityListener
         {
-            ShouldListenTo = candidate => candidate.Name == "Wisp.Acceptance",
+            ShouldListenTo = candidate => candidate.Name == "Isoplane.Acceptance",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStarted = activity => started.Add(activity.OperationName),
         };
@@ -323,7 +323,7 @@ internal sealed partial class Hosting
         using (Activity? parent = source.StartActivity("dispatch"))
         {
             if (parent is null) return "no parent activity";
-            parent.SetTag("wisp.instance", 7);
+            parent.SetTag("isoplane.instance", 7);
             parentId = parent.Id ?? "null";
             using (Activity? child = source.StartActivity("stage", ActivityKind.Internal))
             {
@@ -361,7 +361,7 @@ internal sealed partial class Hosting
 
     private static string DiagnosticListeners()
     {
-        using var listener = new DiagnosticListener("Wisp.Acceptance.Diag");
+        using var listener = new DiagnosticListener("Isoplane.Acceptance.Diag");
         var observer = new Observer();
         using (listener.Subscribe(observer, name => name.StartsWith("Kept", StringComparison.Ordinal)))
         {

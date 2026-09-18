@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
-using Wisp.Native;
+using Isoplane.Native;
 
-namespace Wisp.Cli;
+namespace Isoplane.Cli;
 
 internal static class DebugDevelopment
 {
@@ -12,7 +12,7 @@ internal static class DebugDevelopment
         if (await Development.RuntimeProfileAsync(options, cancellation) != GuestRuntimeProfile.Mono)
             throw new ArgumentException("Debugging currently requires an explicitly selected interpreted project configuration; NativeAOT debugging is not supported.");
         var ordinaryModule = new LocalProject(options.Directory).Module;
-        var session = Path.Combine(options.Directory, ".wisp", "debug", Guid.NewGuid().ToString("N"));
+        var session = Path.Combine(options.Directory, ".isoplane", "debug", Guid.NewGuid().ToString("N"));
         try
         {
             if (OperatingSystem.IsWindows())
@@ -23,7 +23,7 @@ internal static class DebugDevelopment
             var endpoint = relay.Endpoint.ToString();
             var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
             List<string> publication = ["publish", project, "-c", options.Configuration, "-o", session, "--disable-build-servers",
-                "-p:WispLocalDebug=true", "-p:WispDebugEndpoint=" + endpoint];
+                "-p:IsoplaneLocalDebug=true", "-p:IsoplaneDebugEndpoint=" + endpoint];
             var result = await Processes.RunAsync("dotnet", publication, options.Directory, cancellation, redirectOutput: options.Json);
             if (result != 0)
                 return result;

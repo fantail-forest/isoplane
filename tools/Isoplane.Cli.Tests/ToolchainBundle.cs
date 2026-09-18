@@ -3,7 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 /// <summary>
 /// A synthetic release: a toolchain directory whose manifest lists every required file, archived as a release ships
@@ -13,9 +13,9 @@ internal sealed class ToolchainBundle : IDisposable
 {
     internal const string Version = "0.1.0-preview.1";
     internal const string Revision = "0123456789abcdef0123456789abcdef01234567";
-    internal static readonly string[] PackageIds = ["Isoplane.Cli", "Isoplane.Native", "Isoplane.Testing", "Wisp.Sdk", "Wisp.AspNetCore", "Wisp.Templates"];
+    internal static readonly string[] PackageIds = ["Isoplane.Cli", "Isoplane.Native", "Isoplane.Testing", "Isoplane.Sdk", "Isoplane.AspNetCore", "Isoplane.Templates"];
 
-    internal string Root { get; } = Directory.CreateTempSubdirectory("wisp-toolchain-test-").FullName;
+    internal string Root { get; } = Directory.CreateTempSubdirectory("isoplane-toolchain-test-").FullName;
     internal string Release => Path.Combine(Root, "release");
     internal string Source => Path.Combine(Root, "toolchain");
     internal string Home => Path.Combine(Root, "home");
@@ -78,7 +78,7 @@ internal sealed class ToolchainBundle : IDisposable
         }).ToArray();
         var manifest = new ReleaseManifest(revision, version, Toolchain.PlatformIdentifier(),
             new ReleaseToolchain("toolchain.tgz", Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(ArchivePath))), Identity), packages);
-        File.WriteAllText(Path.Combine(Release, Wisp.Cli.Release.ManifestName), JsonSerializer.Serialize(manifest));
+        File.WriteAllText(Path.Combine(Release, Isoplane.Cli.Release.ManifestName), JsonSerializer.Serialize(manifest));
         return manifest;
     }
 

@@ -1,13 +1,13 @@
 using System.Threading.Tasks;
-using Wisp.Abi;
+using Isoplane.Abi;
 
-namespace Wisp.Durable;
+namespace Isoplane.Durable;
 
 /// <summary>
 /// What routes a decoded dispatch to guest code. <see cref="Exports{T}"/>
 /// is generic over one of these, so the SDK names no tenant type.
 /// </summary>
-public interface IWispRouter
+public interface IIsoplaneRouter
 {
     /// <summary>Called once per wasm instance, before the first dispatch.</summary>
     void Boot();
@@ -21,7 +21,7 @@ public interface IWispRouter
 }
 
 /// <summary>Explicitly selects HTTP routes that consume uploads without SDK buffering.</summary>
-public interface IStreamingHttpRouter : IWispRouter
+public interface IStreamingHttpRouter : IIsoplaneRouter
 {
     /// <summary>Returns true only for requests handled by RouteStreamingAsync; other routes receive full buffered bodies.</summary>
     bool StreamsRequest(RequestHead request);
@@ -33,7 +33,7 @@ public interface IStreamingHttpRouter : IWispRouter
 /// <summary>
 /// A Handler: an HTTP request in, a response out.
 /// </summary>
-public interface IWispHandler
+public interface IIsoplaneHandler
 {
     /// <summary>
     /// Handles one HTTP request. Instances may be reused or evicted between requests;
@@ -46,8 +46,8 @@ public interface IWispHandler
 /// Routes HTTP dispatches to a Handler; any other trigger is a
 /// <see cref="PostcardException"/>.
 /// </summary>
-public sealed class HandlerRouter<TApp> : IWispRouter
-    where TApp : IWispHandler, new()
+public sealed class HandlerRouter<TApp> : IIsoplaneRouter
+    where TApp : IIsoplaneHandler, new()
 {
     private TApp? _app;
 

@@ -1,43 +1,43 @@
 using System.Runtime.InteropServices;
 
-#if WISP_LOG_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.LogProbe>>;
-#elif WISP_STREAMING_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamingProbe>>;
-#elif WISP_ACTIVATION_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ActivationProbe>>;
-#elif WISP_CERTIFICATE_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.CertificateProbe>>;
-#elif WISP_HASHING_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.HashingProbe>>;
-#elif WISP_TRUST_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.TrustProbe>>;
-#elif WISP_RANDOMNESS_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.RandomnessProbe>>;
-#elif WISP_CONFIG_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConfigProbe>>;
-#elif WISP_FAILING_BOOT
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FailingBoot>>;
-#elif WISP_NETWORK_REFUSAL_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.NetworkRefusalProbe>>;
-#elif WISP_DNS_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.DnsProbe>>;
-#elif WISP_STREAM_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.StreamProbe>>;
-#elif WISP_CONNECT_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.ConnectProbe>>;
-#elif WISP_CLEANUP_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.CleanupProbe>>;
-#elif WISP_TIMER_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.TimerProbe>>;
-#elif WISP_ASYNC_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.AsyncProbe>>;
-#elif WISP_FILESYSTEM_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.FilesystemProbe>>;
-#elif WISP_REQUEST_PROBE
-using Guest = Wisp.Abi.Exports<Wisp.App.RequestProbeRouter>;
+#if ISOPLANE_LOG_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.LogProbe>>;
+#elif ISOPLANE_STREAMING_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.StreamingProbe>>;
+#elif ISOPLANE_ACTIVATION_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.ActivationProbe>>;
+#elif ISOPLANE_CERTIFICATE_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.CertificateProbe>>;
+#elif ISOPLANE_HASHING_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.HashingProbe>>;
+#elif ISOPLANE_TRUST_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.TrustProbe>>;
+#elif ISOPLANE_RANDOMNESS_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.RandomnessProbe>>;
+#elif ISOPLANE_CONFIG_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.ConfigProbe>>;
+#elif ISOPLANE_FAILING_BOOT
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.FailingBoot>>;
+#elif ISOPLANE_NETWORK_REFUSAL_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.NetworkRefusalProbe>>;
+#elif ISOPLANE_DNS_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.DnsProbe>>;
+#elif ISOPLANE_STREAM_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.StreamProbe>>;
+#elif ISOPLANE_CONNECT_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.ConnectProbe>>;
+#elif ISOPLANE_CLEANUP_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.CleanupProbe>>;
+#elif ISOPLANE_TIMER_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.TimerProbe>>;
+#elif ISOPLANE_ASYNC_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.AsyncProbe>>;
+#elif ISOPLANE_FILESYSTEM_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.FilesystemProbe>>;
+#elif ISOPLANE_REQUEST_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.App.RequestProbeRouter>;
 #else
-using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.Api>>;
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.Api>>;
 #endif
 
 /// <summary>
@@ -50,37 +50,37 @@ using Guest = Wisp.Abi.Exports<Wisp.Durable.HandlerRouter<Wisp.App.Api>>;
 /// runtime, so the class keeps the name the entry expects and a <c>Main</c>
 /// that roots the methods through trimming.
 /// </summary>
-internal static class WispGeneratedExports
+internal static class IsoplaneGeneratedExports
 {
-#if WISP_MONO
+#if ISOPLANE_MONO
     [System.Diagnostics.CodeAnalysis.DynamicDependency(
         System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods,
-        typeof(WispGeneratedExports))]
+        typeof(IsoplaneGeneratedExports))]
     public static void Main() { }
 #endif
 
-#if !WISP_MONO
-    [UnmanagedCallersOnly(EntryPoint = "wisp_alloc")]
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_alloc")]
 #endif
     public static int Alloc(int size, int align) => Guest.Alloc(size, align);
 
-#if !WISP_MONO
-    [UnmanagedCallersOnly(EntryPoint = "wisp_handle")]
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_handle")]
 #endif
     public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
 
-#if !WISP_MONO
-    [UnmanagedCallersOnly(EntryPoint = "wisp_wake")]
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_wake")]
 #endif
     public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
 
-#if !WISP_MONO
-    [UnmanagedCallersOnly(EntryPoint = "wisp_initialize")]
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_initialize")]
 #endif
     public static long Initialize() => Guest.Initialize();
 
-#if !WISP_MONO
-    [UnmanagedCallersOnly(EntryPoint = "wisp_gc_hint")]
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_gc_hint")]
 #endif
     public static void GcHint(int pressure) => Guest.GcHint(pressure);
 }

@@ -24,11 +24,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 # --- .NET (the C# guest, which is the point of the exercise) ----------------
 # Installed inside the image only; never on the host.
-COPY global.json /tmp/wisp-global.json
+COPY global.json /tmp/isoplane-global.json
 RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
     && chmod +x /tmp/dotnet-install.sh \
-    && /tmp/dotnet-install.sh --version "$(jq -er .sdk.version /tmp/wisp-global.json)" --install-dir /usr/share/dotnet \
-    && rm /tmp/dotnet-install.sh /tmp/wisp-global.json \
+    && /tmp/dotnet-install.sh --version "$(jq -er .sdk.version /tmp/isoplane-global.json)" --install-dir /usr/share/dotnet \
+    && rm /tmp/dotnet-install.sh /tmp/isoplane-global.json \
     && ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
     && dotnet --info | head -5
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
@@ -40,7 +40,7 @@ RUN cargo install --locked wasm-tools@1.244.0
 
 # --- wasi-sdk (the C# guest's linker and PAL compiler) ----------------------
 # NativeAOT-LLVM shells out to the WASI SDK's clang for the final link, and
-# `guests/dotnet/build.sh` compiles `native/wisp_pal.c` with the same clang.
+# `guests/dotnet/build.sh` compiles `native/isoplane_pal.c` with the same clang.
 # The ILCompiler package pins an expected version and warns on anything else,
 # so this is the version that package wants -- see guests/dotnet/README.md.
 #
@@ -72,4 +72,4 @@ RUN mkdir -p /ctarget /opt/cargo /opt/cargo/registry /nuget /tmp/home \
     && chown -R ${HOST_UID}:${HOST_GID} /ctarget /opt/cargo /nuget /tmp/home \
     && chmod -R u+rwX /ctarget /opt/cargo /nuget
 
-WORKDIR /wisp
+WORKDIR /isoplane

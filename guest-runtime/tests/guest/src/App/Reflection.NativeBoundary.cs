@@ -21,7 +21,7 @@ internal sealed partial class Reflection
 
     private static async Task<string> NativeLibraryAfterPark(string operation)
     {
-        string name = operation == "host" ? "libc.so.6" : "wisp_missing_native_library";
+        string name = operation == "host" ? "libc.so.6" : "isoplane_missing_native_library";
         string before = MissingNativeLibrary(name);
         await Task.Delay(50).ConfigureAwait(false);
         return before + "/" + MissingNativeLibrary(name);
@@ -29,19 +29,19 @@ internal sealed partial class Reflection
 
     private static async Task<string> NativeDeclarationAfterPark()
     {
-        string before = Wisp.Abi.NativeLibraryProbe.Invoke();
+        string before = Isoplane.Abi.NativeLibraryProbe.Invoke();
         await Task.Delay(50).ConfigureAwait(false);
-        return before + "/" + Wisp.Abi.NativeLibraryProbe.Invoke();
+        return before + "/" + Isoplane.Abi.NativeLibraryProbe.Invoke();
     }
 
     private static async Task<string> NativeSymbolAfterPark(string operation)
     {
-        string before = Wisp.Abi.NativeLibraryProbe.Invoke(operation);
+        string before = Isoplane.Abi.NativeLibraryProbe.Invoke(operation);
         await Task.Delay(50).ConfigureAwait(false);
-        return before + "/" + Wisp.Abi.NativeLibraryProbe.Invoke(operation);
+        return before + "/" + Isoplane.Abi.NativeLibraryProbe.Invoke(operation);
     }
 
-#if WISP_MONO
+#if ISOPLANE_MONO
     private static async Task<string> NativePayloadAfterPark(string operation)
     {
         using var stream = typeof(Reflection).Assembly.GetManifestResourceStream("dynamic-payload")

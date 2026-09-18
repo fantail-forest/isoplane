@@ -1,4 +1,4 @@
-namespace Wisp.AspNetCore;
+namespace Isoplane.AspNetCore;
 
 internal abstract class ResponseTransport
 {

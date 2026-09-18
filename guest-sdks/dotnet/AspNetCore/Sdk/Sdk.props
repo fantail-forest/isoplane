@@ -4,8 +4,8 @@
     <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
-  <Import Project="../buildTransitive/Wisp.AspNetCore.props" Condition="'$(_WispAspNetCorePropsImported)' != 'true'" />
+  <Import Project="../buildTransitive/Isoplane.AspNetCore.props" Condition="'$(_IsoplaneAspNetCorePropsImported)' != 'true'" />
   <ItemGroup>
-    <PackageReference Include="Wisp.AspNetCore" Version="0.1.0-preview.1" />
+    <PackageReference Include="Isoplane.AspNetCore" Version="0.1.0-preview.1" />
   </ItemGroup>
 </Project>

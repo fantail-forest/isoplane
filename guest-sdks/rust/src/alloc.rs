@@ -9,7 +9,7 @@
 //! against the template and zstd-compresses it, so pages that are runs of
 //! zeros nearly vanish.
 //!
-//! So on `wisp_gc_hint(snapshot)` this allocator:
+//! So on `isoplane_gc_hint(snapshot)` this allocator:
 //!
 //! 1. **rolls the bump pointer back** over any free run that reaches the top
 //!    of the heap -- compaction toward low addresses in the only sense a
@@ -58,7 +58,7 @@ struct FreeBlock {
     next: usize,
 }
 
-/// Reported by [`heap_stats`] and by `wisp_gc_hint`; the demo guests surface
+/// Reported by [`heap_stats`] and by `isoplane_gc_hint`; the demo guests surface
 /// these so delta-size tests have something to assert on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HeapStats {
@@ -318,7 +318,7 @@ impl Heap {
         }
     }
 
-    /// The body of `wisp_gc_hint`. See the module docs for what this does and
+    /// The body of `isoplane_gc_hint`. See the module docs for what this does and
     /// does not do.
     ///
     /// `zero` is false for the low-pressure hint, where writing zeros would
@@ -435,9 +435,9 @@ impl Default for Heap {
     }
 }
 
-pub struct WispAlloc;
+pub struct IsoplaneAlloc;
 
-unsafe impl GlobalAlloc for WispAlloc {
+unsafe impl GlobalAlloc for IsoplaneAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         heap().alloc(layout)
     }
@@ -451,7 +451,7 @@ unsafe impl GlobalAlloc for WispAlloc {
 
 #[cfg(target_arch = "wasm32")]
 #[global_allocator]
-static GLOBAL: WispAlloc = WispAlloc;
+static GLOBAL: IsoplaneAlloc = IsoplaneAlloc;
 
 /// Snapshot of the guest heap. Demo guests expose this over HTTP so the
 /// host-side delta-size tests have a guest-visible number to compare against.
@@ -459,7 +459,7 @@ pub fn heap_stats() -> HeapStats {
     heap().stats()
 }
 
-/// Called by the generated `wisp_gc_hint` export.
+/// Called by the generated `isoplane_gc_hint` export.
 pub(crate) fn gc_hint(pressure: crate::GcPressure) -> HeapStats {
     heap().compact_and_zero(pressure.should_zero())
 }

@@ -3,13 +3,14 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Wisp.Runtime;
+using Isoplane.Durable;
+using Isoplane.Runtime;
 
-namespace Wisp.Abi;
+namespace Isoplane.Abi;
 
 /// <summary>
-/// The bodies of the guest's exports (<c>wisp_alloc</c>, <c>wisp_handle</c>,
-/// <c>wisp_wake</c>, <c>wisp_initialize</c>, <c>wisp_gc_hint</c>), generic
+/// The bodies of the guest's exports (<c>isoplane_alloc</c>, <c>isoplane_handle</c>,
+/// <c>isoplane_wake</c>, <c>isoplane_initialize</c>, <c>isoplane_gc_hint</c>), generic
 /// over what routes a dispatch. A guest's own <c>[UnmanagedCallersOnly]</c>
 /// methods delegate here, since that attribute cannot sit on a generic class.
 /// Nothing here throws across the boundary: an escaping exception in an
@@ -17,7 +18,7 @@ namespace Wisp.Abi;
 /// every entrypoint converts to <see cref="PollStatus.Trapped"/>.
 /// </summary>
 public static unsafe class Exports<TRouter>
-    where TRouter : IWispRouter, new()
+    where TRouter : IIsoplaneRouter, new()
 {
     private static bool _booted;
     private static TRouter? _router;
@@ -30,7 +31,7 @@ public static unsafe class Exports<TRouter>
     {
         if (_booted) return;
         GuestConsole.Install();
-        SynchronizationContext.SetSynchronizationContext(WispSynchronizationContext.Instance);
+        SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
         _router = new TRouter();
         _router.Boot();
         _booted = true;
@@ -38,7 +39,7 @@ public static unsafe class Exports<TRouter>
 
     /// <summary>
     /// Where the host copies a dispatch or result record. Every pointer the
-    /// host passes to <c>wisp_handle</c> or <c>wisp_wake</c> came from here,
+    /// host passes to <c>isoplane_handle</c> or <c>isoplane_wake</c> came from here,
     /// and those entrypoints free it once they have copied it onto the heap.
     /// </summary>
     public static int Alloc(int size, int align)
@@ -130,7 +131,7 @@ public static unsafe class Exports<TRouter>
                 return PollStatus.Trapped(TrapCode.Protocol);
             }
 
-            Log(1, "wisp_wake enter: future=" + future.ToString());
+            Log(1, "isoplane_wake enter: future=" + future.ToString());
 
             FutureTable.Complete(future, r);
 
@@ -154,17 +155,17 @@ public static unsafe class Exports<TRouter>
             Boot();
             var warm = new PostcardWriter(64);
             warm.Varint(1);
-            warm.Str("wisp");
+            warm.Str("isoplane");
             GC.KeepAlive(warm.Span.Length);
-            _initialization ??= Wisp.Initialization.EnterAsync();
-#if WISP_ENTROPY_PROBE
-            Wisp.App.EntropyProbe.WarmLikePreInit();
+            _initialization ??= Isoplane.Initialization.EnterAsync();
+#if ISOPLANE_ENTROPY_PROBE
+            Isoplane.App.EntropyProbe.WarmLikePreInit();
 #endif
             return SettleInitialization();
         }
         catch (Exception error)
         {
-            return Panic(error);
+            return Panic("pre-initialization", error);
         }
     }
 
@@ -224,7 +225,7 @@ public static unsafe class Exports<TRouter>
         Task initialization = _initialization!;
         if (!initialization.IsCompleted) return PollStatus.Pending();
         if (initialization.IsFaulted || initialization.IsCanceled)
-            return initialization.Exception is { } error ? Panic(error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);
+            return initialization.Exception is { } error ? Panic("pre-initialization", error.GetBaseException()) : PollStatus.Trapped(TrapCode.Panic);
         _initialization = null;
         return PollStatus.Done(0);
     }
@@ -243,6 +244,23 @@ public static unsafe class Exports<TRouter>
     /// Logs the exception's type name, which is the diagnostic that survives
     /// <c>UseSystemResourceKeys</c> and no stack traces, then traps.
     /// </summary>
+    /// <summary>
+    /// Logs which operation failed for which application before trapping, so
+    /// the deployment failure the host reports names both.
+    /// </summary>
+    private static long Panic(string operation, Exception e)
+    {
+        try
+        {
+            Log(3, operation + " failed for " + typeof(TRouter).FullName + ": unhandled " + e.GetType().FullName);
+        }
+        catch
+        {
+            // Diagnosis must not be what breaks the trap path.
+        }
+        return PollStatus.Trapped(TrapCode.Panic);
+    }
+
     private static long Panic(Exception e)
     {
         try
@@ -259,7 +277,7 @@ public static unsafe class Exports<TRouter>
     /// <summary>Records entry into a managed dispatch.</summary>
     private static void TraceDispatch(DispatchRecord d)
     {
-        Log(1, "wisp_handle enter: " + d.Method + " " + d.Path);
+        Log(1, "isoplane_handle enter: " + d.Method + " " + d.Path);
     }
 
     /// <summary>

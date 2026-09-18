@@ -10,7 +10,7 @@ namespace Acceptance;
 
 internal sealed partial class Reflection
 {
-#if WISP_MONO
+#if ISOPLANE_MONO
     private static async Task<string> LoadedAssemblyAfterPark()
     {
         using var stream = typeof(Reflection).Assembly.GetManifestResourceStream("dynamic-payload")
@@ -65,7 +65,7 @@ internal sealed partial class Reflection
         return string.Join(",", listener.Values);
     }
 
-    [EventSource(Name = "Wisp-Acceptance-Capabilities")]
+    [EventSource(Name = "Isoplane-Acceptance-Capabilities")]
     private sealed class CapabilityEvents : EventSource
     {
         [Event(1, Level = EventLevel.Informational)]

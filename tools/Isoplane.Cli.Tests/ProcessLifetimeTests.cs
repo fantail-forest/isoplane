@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Xunit;
 
-namespace Wisp.Cli.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class ProcessLifetimeTests
 {
@@ -67,7 +67,7 @@ public sealed class ProcessLifetimeTests
         };
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add("exec 3<&0; sh -c 'echo ready; read release <&3' & echo $! > child.pid; exit 0");
-        using var process = Wisp.Processes.OwnedProcess.Start(start, TimeSpan.FromSeconds(30));
+        using var process = Isoplane.Processes.OwnedProcess.Start(start, TimeSpan.FromSeconds(30));
         Assert.True(await process.StandardOutput.ReadLineAsync(fixture.Cancellation) == "ready",
             "The child must hold its cleanup gate before its parent exits.");
         var statPath = $"/proc/{process.Id}/stat";

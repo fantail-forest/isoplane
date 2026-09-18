@@ -1,7 +1,7 @@
 using Microsoft.Build.Framework;
-using Wisp.Build;
+using Isoplane.Build;
 
-namespace Wisp.Conformance;
+namespace Isoplane.Conformance;
 
 /// <summary>Reports platform compatibility diagnostics without loading application code.</summary>
 public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
@@ -23,7 +23,7 @@ public sealed class InspectManagedAssemblies : Microsoft.Build.Utilities.Task
             }
             catch (Exception error) when (error is AssemblyInputException or IOException or UnauthorizedAccessException)
             {
-                Log.LogError(null, "WISP1000", null, path, 0, 0, 0, 0, "{0}", error.Message);
+                Log.LogError(null, "ISOPLANE1000", null, path, 0, 0, 0, 0, "{0}", error.Message);
             }
         }
         return !Log.HasLoggedErrors;
