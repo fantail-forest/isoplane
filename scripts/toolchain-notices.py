@@ -8,6 +8,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 
 PREFIXES = ('license', 'licence', 'copying', 'notice', 'copyright', 'third-party')
@@ -18,15 +19,29 @@ def fetch(url):
         return response.read()
 
 
+def license_files(directory):
+    return {path.name: path.read_bytes() for path in directory.iterdir()
+            if path.is_file() and path.name.lower().startswith(PREFIXES)}
+
+
+def checkout_root(directory):
+    """The git checkout a crate came from; its license texts cover every crate of the workspace inside it."""
+    for candidate in [directory, *directory.parents]:
+        if (candidate / '.cargo-ok').exists() or (candidate / '.git').exists():
+            return candidate
+    raise ValueError(f'no git checkout root above {directory}')
+
+
 def source_licenses(package, cache, repositories):
     root = Path(package['manifest_path']).parent
-    files = {path.name: path.read_bytes() for path in root.iterdir()
-             if path.is_file() and path.name.lower().startswith(PREFIXES)}
+    files = license_files(root)
     if package.get('license_file'):
         path = Path(package['license_file'])
         if not path.is_absolute():
             path = root / path
         files[path.name] = path.read_bytes()
+    if not files and (package.get('source') or '').startswith('git+'):
+        files = license_files(checkout_root(root))
     if files:
         return files
     vcs = root / '.cargo_vcs_info.json'
@@ -68,12 +83,54 @@ def source_licenses(package, cache, repositories):
     return cache[key]
 
 
+def managed_notices(source, output):
+    packages = {}
+    for assets in sorted(path for area in ('tools', 'guest-sdks')
+                         for path in (source / area).rglob('project.assets.json')):
+        document = json.loads(assets.read_text())
+        for identity, library in document['libraries'].items():
+            if library['type'] != 'package':
+                continue
+            for folder in document['packageFolders']:
+                directory = Path(folder) / library['path']
+                if directory.is_dir():
+                    packages[identity] = directory
+                    break
+            else:
+                raise ValueError(f'managed dependency is missing: {identity}')
+    records = []
+    license_cache = {}
+    for identity, directory in sorted(packages.items()):
+        name, version = identity.split('/')
+        destination = output / 'managed' / name / version
+        destination.mkdir(parents=True)
+        nuspec = directory / (name.lower() + '.nuspec')
+        shutil.copyfile(nuspec, destination / nuspec.name)
+        metadata = ET.parse(nuspec).getroot().find('{*}metadata')
+        license = metadata.find('{*}license')
+        if license is not None and license.get('type') == 'file':
+            path = directory / license.text
+            shutil.copyfile(path, destination / path.name)
+        else:
+            url = ('https://licenses.nuget.org/' + urllib.parse.quote(license.text, safe='')
+                   if license is not None else metadata.findtext('{*}licenseUrl'))
+            if not url:
+                raise ValueError(f'managed dependency has no license: {identity}')
+            if url not in license_cache:
+                license_cache[url] = fetch(url)
+            (destination / 'LICENSE.html').write_bytes(license_cache[url])
+        records.append({'id': name, 'version': version,
+                        'license': license.text if license is not None else metadata.findtext('{*}licenseUrl')})
+    (output / 'managed-dependencies.json').write_text(json.dumps(records, indent=2) + '\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--wasm-tools-source', type=Path, required=True)
     parser.add_argument('--runtime-work', type=Path, required=True)
     parser.add_argument('--wasi-sdk', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--managed-source', type=Path, help='collect restored managed package attribution')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     packages = {}
@@ -116,6 +173,12 @@ def main():
         destination = args.output / 'wasi-sdk' / repository.split('/')[-1] / filename
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(fetch(f'https://raw.githubusercontent.com/{repository}/{revision}/{filename}'))
+    trust = args.output / 'trust'
+    trust.mkdir(exist_ok=True)
+    for name in ('NOTICE', 'ca-bundle.pem', 'ca-bundle.manifest.json'):
+        shutil.copyfile(root / 'trust' / name, trust / name)
+    if args.managed_source:
+        managed_notices(args.managed_source, args.output)
     print(args.output)
 
 

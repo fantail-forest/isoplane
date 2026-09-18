@@ -48,5 +48,22 @@ class NativePairTests(unittest.TestCase):
         self.assertFalse((self.root / 'escape').exists(), 'archive traversal must not create files outside the CLI payload')
 
 
+class ReadabilityTests(unittest.TestCase):
+    def test_private_build_staging_modes_become_readable_by_every_user(self):
+        with tempfile.TemporaryDirectory(prefix='wisp-package-modes-') as temporary:
+            stage = Path(temporary) / 'toolchain'
+            private = stage / 'compiler'
+            private.mkdir(parents=True)
+            private.chmod(0o700)
+            (private / 'props').write_text('settings')
+            (private / 'props').chmod(0o600)
+            (private / 'tool').write_text('#!/bin/sh')
+            (private / 'tool').chmod(0o700)
+            package_toolchain.make_world_readable(stage)
+            self.assertEqual(private.stat().st_mode & 0o777, 0o755, 'a customer installing as another user must be able to enter every release directory')
+            self.assertEqual((private / 'props').stat().st_mode & 0o777, 0o644, 'a customer must be able to read every release file')
+            self.assertEqual((private / 'tool').stat().st_mode & 0o777, 0o755, 'executables stay executable for every user')
+
+
 if __name__ == '__main__':
     unittest.main()

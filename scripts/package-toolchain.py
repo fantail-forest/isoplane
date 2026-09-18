@@ -38,6 +38,16 @@ def extract_cli(package_path, destination):
                 shutil.copyfileobj(source, target)
 
 
+def make_world_readable(directory):
+    """A release is installed by users other than the builder; private modes from build staging
+    (the compiler output keeps its temporary directory's 0700) must not ship."""
+    for path in [directory, *directory.rglob('*')]:
+        if path.is_symlink():
+            continue
+        mode = path.stat().st_mode & 0o777
+        path.chmod(0o755 if path.is_dir() or mode & 0o100 else 0o644)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-output', type=Path, required=True, help='guest-runtime/out containing feed and packs')
@@ -109,6 +119,7 @@ def main():
         (stage / 'bin').mkdir()
         shutil.copy2(args.wasm_tools, stage / 'bin/wasm-tools')
         extract_cli(args.cli_package, stage / 'cli')
+        make_world_readable(stage)
         entries = []
         for path in sorted(stage.rglob('*')):
             if path.is_file():
