@@ -15,7 +15,7 @@ internal static class Toolchain
     internal static string Home => Environment.GetEnvironmentVariable("ISOPLANE_HOME") is { Length: > 0 } configured
         ? Path.GetFullPath(configured)
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".isoplane");
-    private const string ManifestName = "toolchain.json";
+    internal const string ManifestName = "toolchain.json";
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
     internal static async Task<string> InstallAsync(string source, string home, CancellationToken cancellation, string? bundledRuntime = null)
@@ -112,7 +112,7 @@ internal static class Toolchain
     {
         var current = Path.Combine(home, "current.json");
         if (!File.Exists(current))
-            throw new InvalidOperationException("No toolchain is installed. Run isoplane setup --source DIRECTORY using the preview toolchain bundle.");
+            throw new InvalidOperationException("No toolchain is installed. Run isoplane setup --source DIRECTORY using the extracted preview release.");
         var directory = JsonSerializer.Deserialize<string>(await File.ReadAllTextAsync(current, cancellation))
             ?? throw new InvalidOperationException("The toolchain selection is invalid; rerun isoplane setup.");
         var manifest = ReadManifest(await File.ReadAllBytesAsync(Path.Combine(directory, ManifestName), cancellation));
@@ -136,7 +136,7 @@ internal static class Toolchain
             await using var stream = File.OpenRead(path);
             var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellation));
             if (!string.Equals(actual, file.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"Toolchain file {path} is corrupt. Rerun isoplane setup --source DIRECTORY to repair it.");
+                throw new InvalidOperationException($"Toolchain file {path} is corrupt. Rerun isoplane setup --source DIRECTORY with the release to repair it.");
             if (!OperatingSystem.IsWindows() && file.Executable && (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) == 0)
                 throw new InvalidOperationException($"Toolchain file {path} is not executable; rerun setup from a complete bundle.");
         }
@@ -226,7 +226,7 @@ internal static class Toolchain
             throw new InvalidOperationException($"Toolchain targets {manifest.RuntimeIdentifier}; this process runs on {rid}.");
     }
 
-    private static string Resolve(string directory, string relative)
+    internal static string Resolve(string directory, string relative)
     {
         if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) || relative.Split('/', '\\').Any(part => part is ".." or "." or ""))
             throw new InvalidOperationException($"Unsafe toolchain path: {relative}.");

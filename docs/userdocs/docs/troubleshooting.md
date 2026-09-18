@@ -9,14 +9,15 @@ when reporting a problem.
 ## Command or SDK not found
 
 Check that `DOTNET_ROOT` points to `$ISOPLANE_HOME/dotnet` and that this directory
-and `$ISOPLANE_HOME/bin` are on `PATH`. New terminals need the environment
+and `$HOME/.dotnet/tools` are on `PATH`. New terminals need the environment
 settings from [installation](install.md). A system SDK can select different
 workloads from the toolchain installed by setup.
 
 ## Missing or damaged toolchain
 
-Run `isoplane setup --source` with the complete release's `toolchain` directory,
-then run `isoplane doctor` again. Do not combine pack files from different
+Run `isoplane setup --source` with the complete release directory, then run
+`isoplane doctor` again. Setup refuses a release the installed CLI was not built
+from and prints the `dotnet tool update` command that installs the matching CLI. Do not combine pack files from different
 releases or manually repair hashes. If doctor reports a missing system library,
 install the package for your distribution; the bundle does not replace glibc or
 the operating system's native dependencies.

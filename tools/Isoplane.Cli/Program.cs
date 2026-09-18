@@ -1,4 +1,3 @@
-using System.Reflection;
 using Wisp.Cli;
 using Wisp.Native;
 
@@ -6,14 +5,13 @@ try
 {
     if (args is ["--version"])
     {
-        var version = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? throw new InvalidOperationException("The CLI package is missing its version metadata; reinstall a complete package.");
-        Console.WriteLine($"isoplane {version}");
+        var identity = ReleaseIdentity.OfRunningCli();
+        Console.WriteLine($"isoplane {identity.Version}+{identity.SourceRevision}");
         return 0;
     }
     if (args.Length == 0 || args is ["--help"] or ["-h"] or [_, "--help" or "-h"])
     {
-        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request with an external Mono debugger.\nisoplane setup --source DIRECTORY\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
+        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request with an external Mono debugger.\nisoplane setup --source RELEASE_DIRECTORY\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
         Console.WriteLine("isoplane prepare --project DIRECTORY --configuration CONFIGURATION --module FILE [--json]\nPrepare a built application for local execution without starting it.");
         Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
         return 0;
@@ -21,7 +19,7 @@ try
     using var cancellation = new CommandCancellation();
     if (args is ["setup", "--source", var source])
     {
-        var installed = await Toolchain.InstallAsync(source, Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
+        var installed = await Release.InstallAsync(source, ReleaseIdentity.OfRunningCli(), Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
         Console.WriteLine($"Installed and verified toolchain: {installed}");
         Console.WriteLine($"Use {Path.Combine(Toolchain.Home, "dotnet")} as DOTNET_ROOT and put it first on PATH for ordinary dotnet commands.");
         return 0;
