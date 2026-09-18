@@ -2,7 +2,6 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <PackageId>Wisp.Templates</PackageId>
-    <Version>0.1.0</Version>
     <Description>Isoplane .NET application templates.</Description>
     <PackageType>Template</PackageType>
     <IncludeBuildOutput>false</IncludeBuildOutput>

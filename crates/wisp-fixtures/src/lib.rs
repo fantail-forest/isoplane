@@ -13,7 +13,7 @@
 
 mod dotnet_template;
 
-pub use dotnet_template::{aspnet_project, managed_cli};
+pub use dotnet_template::{aspnet_project, managed_cli, release_version};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

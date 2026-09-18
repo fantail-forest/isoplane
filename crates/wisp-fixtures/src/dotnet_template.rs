@@ -1,6 +1,21 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The release version `Directory.Build.props` declares: the version every
+/// first-party package packs as unless a build overrides it.
+pub fn release_version() -> String {
+    let path = super::repo_root().join("Directory.Build.props");
+    let props = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} declares the release version: {e}", path.display()));
+    let (_, rest) = props
+        .split_once("<Version>")
+        .expect("Directory.Build.props declares <Version>");
+    let (version, _) = rest
+        .split_once("</Version>")
+        .expect("Directory.Build.props closes its <Version> element");
+    version.trim().to_owned()
+}
+
 /// Installs the packaged ASP.NET template into an isolated hive and creates a consumer.
 /// The returned project resolves WISP packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
@@ -25,7 +40,7 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
     let hive = destination.join("template-hive");
     run(Command::new("dotnet")
         .args(["new", "install"])
-        .arg(packages.join("Wisp.Templates.0.1.0.nupkg"))
+        .arg(packages.join(format!("Wisp.Templates.{}.nupkg", release_version())))
         .arg("--debug:custom-hive")
         .arg(&hive));
     let app = destination.join("app");
@@ -113,14 +128,9 @@ pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
         install.env("DOTNET_RUNTIME_ID", "linux-x64");
     }
     run(install
-        .args([
-            "tool",
-            "install",
-            "Isoplane.Cli",
-            "--version",
-            "0.1.0",
-            "--tool-path",
-        ])
+        .args(["tool", "install", "Isoplane.Cli", "--version"])
+        .arg(release_version())
+        .arg("--tool-path")
         .arg(&tools)
         .arg("--configfile")
         .arg(app.join("nuget.config"))

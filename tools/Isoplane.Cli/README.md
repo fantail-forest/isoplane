@@ -14,15 +14,16 @@ From the repository root, build and pack into a local feed:
 
 ```sh
 dotnet pack tools/Isoplane.Cli -o /tmp/wisp-preview-feed
-dotnet tool install Isoplane.Cli --version 0.1.0 --tool-path /tmp/isoplane-tools --add-source /tmp/wisp-preview-feed
+dotnet tool install Isoplane.Cli --version "$(scripts/release-version.py show)" --tool-path /tmp/isoplane-tools --add-source /tmp/wisp-preview-feed
 /tmp/isoplane-tools/isoplane --version
 ```
 
-Use the version of the package you built when installing. `isoplane --version`
-reports the installed CLI version and its source revision when available.
+Every first-party package packs as the release version `Directory.Build.props`
+declares. `isoplane --version` reports the installed CLI version and its source
+revision.
 
 The tool requires .NET 10 to bootstrap. Install a prepared local toolchain with
-`isoplane setup --source /path/to/toolchain-bundle`; `isoplane doctor` verifies
+`isoplane setup --source /path/to/release`; `isoplane doctor` verifies
 its contents and runs the SDK, compiler, wasm-tools and runtime to check native
 dependencies. `ISOPLANE_HOME` overrides the default `~/.isoplane` installation.
 Setup can be rerun to repair damaged files. Doctor does not repair them.

@@ -6,7 +6,6 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Isoplane.Testing</PackageId>
-    <Version>0.1.0</Version>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Integration-test ownership of real Isoplane CLI development sessions.</Description>
   </PropertyGroup>

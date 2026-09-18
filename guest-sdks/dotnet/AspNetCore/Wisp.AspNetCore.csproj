@@ -7,7 +7,6 @@
     <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageId>Wisp.AspNetCore</PackageId>
-    <Version>0.1.0</Version>
     <Description>ASP.NET hosting over WISP request dispatch, without a guest listener.</Description>
   </PropertyGroup>
   <ItemGroup>

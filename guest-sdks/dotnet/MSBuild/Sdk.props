@@ -5,6 +5,6 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Wisp.Sdk" Version="0.1.0" />
+    <PackageReference Include="Wisp.Sdk" Version="0.1.0-preview.1" />
   </ItemGroup>
 </Project>

@@ -8,7 +8,7 @@ Use the package's .NET SDK entry point so its compiler and target settings are
 available to the first restore:
 
 ```xml
-<Project Sdk="Wisp.AspNetCore/0.1.0">
+<Project Sdk="Wisp.AspNetCore/VERSION">
   <PropertyGroup>
     <WispApplicationFactory>MyApp.Application.Create</WispApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -102,7 +102,7 @@ Pack `Templates/Wisp.Templates.csproj` alongside the two SDK packages in your
 local NuGet feed. Install that template package and generate an application:
 
 ```sh
-dotnet new install /path/to/feed/Wisp.Templates.0.1.0.nupkg
+dotnet new install /path/to/feed/Wisp.Templates.VERSION.nupkg
 dotnet new isoplane-web --name MyApp
 cd MyApp
 dotnet nuget add source /path/to/feed --name wisp-local --configfile nuget.config

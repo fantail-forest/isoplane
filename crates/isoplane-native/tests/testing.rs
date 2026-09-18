@@ -24,7 +24,8 @@ fn a_dotnet_test_project_runs_its_application_in_the_installed_sandbox() {
     std::fs::copy(app.join("nuget.config"), consumer.join("nuget.config")).unwrap();
     std::fs::write(
         consumer.join("Consumer.csproj"),
-        r#"<Project Sdk="Microsoft.NET.Sdk">
+        format!(
+            r#"<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -33,12 +34,14 @@ fn a_dotnet_test_project_runs_its_application_in_the_installed_sandbox() {
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Isoplane.Testing" Version="0.1.0" />
+    <PackageReference Include="Isoplane.Testing" Version="{}" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1" PrivateAssets="all" />
   </ItemGroup>
 </Project>"#,
+            wisp_fixtures::release_version()
+        ),
     )
     .unwrap();
     std::fs::write(

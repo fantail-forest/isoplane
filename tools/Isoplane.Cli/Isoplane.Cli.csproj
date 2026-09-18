@@ -8,7 +8,6 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>isoplane</ToolCommandName>
     <PackageId>Isoplane.Cli</PackageId>
-    <Version>0.1.0</Version>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
   </PropertyGroup>

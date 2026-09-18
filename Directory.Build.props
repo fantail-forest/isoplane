@@ -1,0 +1,10 @@
+<Project>
+  <!-- The one declaration of the release version. Every first-party package,
+       the CLI tool and the generated template carry it; scripts/release-version.py
+       moves it together with the in-repo SDK pins that must match. -->
+  <PropertyGroup>
+    <Version>0.1.0-preview.1</Version>
+    <RepositoryUrl>https://github.com/fantail-forest/wisp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+</Project>
