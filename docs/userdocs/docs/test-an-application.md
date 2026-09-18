@@ -6,15 +6,14 @@ Use ordinary .NET unit tests for application logic. `Isoplane.Testing` adds
 integration tests that start your application in the real sandbox and make HTTP
 requests to it. The tests themselves run outside the sandbox.
 
-In the terminal used for installation, `preview_release` and `preview_version`
-identify the matching release. From the directory containing `MyApi`, create a
-sibling test project:
+From the directory containing `MyApi`, create a sibling test project and add
+the testing package at the version of your installed release, which
+`isoplane --version` prints before the `+`:
 
 ```bash
 dotnet new xunit --name MyApi.Tests
 cd MyApi.Tests
-dotnet add package Isoplane.Testing --version "$preview_version" \
-  --source "$preview_release/packages"
+dotnet add package Isoplane.Testing --version "$(isoplane --version | sed 's/isoplane //; s/+.*//')"
 ```
 
 Replace the generated test with the example below. It expects the original

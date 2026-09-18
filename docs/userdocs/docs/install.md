@@ -2,105 +2,112 @@
 title: Install on Linux
 ---
 
-Use the supplied preview release directory. It contains `toolchain/`, `packages/`,
-`samples/`, a `README.md`, `package-version.txt` naming the one version every
-package in the release carries, and `release.json`, which records the source
-revision the release was built from and the checksum of each component. You do
+The Isoplane tools install in two steps: the `isoplane` command as a global
+.NET tool, then `isoplane setup`, which installs the SDK, compiler tools,
+runtime, package feed and project templates that match that command. You do
 not need a WISP checkout, Rust, Mono, or a separately installed WASI SDK.
 
-The current package is for Linux x64 with glibc. The validated baseline is
-Ubuntu 24.04 with `libicu74`, `libssl3`, `zlib1g`, `libstdc++6`,
-`libzstd1`, `libtinfo6`, and `ca-certificates` installed. Alpine and other architectures need different
-packages. Package restore needs internet access.
+The current release is for Linux x64 with glibc; the validated baseline is
+Ubuntu 24.04. Package restore needs internet access.
 
-## Install the CLI and toolchain
+## Prerequisite: a .NET SDK
 
-In a terminal, change into the supplied release directory:
+`dotnet tool install` needs a .NET 10 SDK. On Ubuntu 24.04, install the packaged
+one, which also brings every native library the Isoplane toolchain needs:
 
 ```bash
-preview_release="$PWD"
-export ISOPLANE_HOME="${ISOPLANE_HOME:-$HOME/.isoplane}"
-preview_version=$(cat "$preview_release/package-version.txt")
-export DOTNET_ROOT="$preview_release/toolchain/dotnet"
-export PATH="$DOTNET_ROOT:$HOME/.dotnet/tools:$PATH"
-dotnet tool install --global Isoplane.Cli --version "$preview_version" \
-  --add-source "$preview_release/packages"
-isoplane setup --source "$preview_release"
-export DOTNET_ROOT="$ISOPLANE_HOME/dotnet"
-export PATH="$DOTNET_ROOT:$PATH"
+sudo apt-get install -y dotnet-sdk-10.0
+```
+
+Setup reuses whatever `dotnet` you have and never changes your `DOTNET_ROOT`.
+On another Linux distribution, install the .NET 10 SDK its packages provide;
+setup checks the native libraries it needs before downloading anything and
+names what is missing.
+
+## Install the CLI and the SDK
+
+```bash
+dotnet tool install --global Isoplane.Cli
+export PATH="$HOME/.dotnet/tools:$PATH"
+isoplane setup
+```
+
+The tool installs into `~/.dotnet/tools`; putting that directory on `PATH` is
+the standard .NET global-tool step, and setup adds it to new terminals for you.
+
+Setup downloads the release the installed CLI was built from, verifies every
+component against the release manifest, and installs it under `~/.isoplane`
+(`ISOPLANE_HOME` overrides this). It registers the release's package feed with
+NuGet and its project templates with `dotnet new`, records everything it did in
+`~/.isoplane/installation.json`, and adds one line to `~/.profile` and, when
+present, `~/.bashrc`, `~/.bash_profile` and `~/.zshrc` that sources
+`~/.isoplane/env`. That file puts the installed SDK and `~/.dotnet/tools` first
+on `PATH`. Before reporting success, setup runs the installed tools to prove
+they work on your machine.
+
+Open a new terminal, or load the environment in this one:
+
+```bash
+. "$HOME/.isoplane/env"
+isoplane doctor
+dotnet new list
+```
+
+Doctor checks the installation's integrity and runs the tools; it reports
+problems and does not repair them. The template list includes
+`isoplane-web`. Continue with [creating an application](create-an-application.md).
+
+When setup finds a native library missing on Ubuntu 24.04, it shows the one
+`sudo apt-get install` command that provides it and asks before running it;
+`isoplane setup --yes` runs it without asking. Setup does not report success
+while anything is missing.
+
+For a release supplied as a directory instead of downloaded, run
+`isoplane setup --source RELEASE_DIRECTORY`, and install the CLI with
+`--add-source RELEASE_DIRECTORY/packages`. `ISOPLANE_RELEASE_ORIGIN` points
+setup at another release origin.
+
+## Update
+
+Stop running development sessions, then update the CLI and run setup again:
+
+```bash
+dotnet tool update --global Isoplane.Cli
+isoplane setup
 isoplane doctor
 ```
 
-The CLI installs as a global .NET tool in `~/.dotnet/tools`. Setup checks that
-the release is the one the installed CLI was built from, then installs its SDK,
-compiler tools and runtime in your user directory. Doctor checks their
-integrity and runs the tools to detect missing native libraries. It reports
-problems; it does not repair them.
+Setup installs the release matching the updated CLI, replaces the superseded
+toolchain and template registration, and keeps earlier SDK packages so existing
+applications still restore. Setup refuses a release the installed CLI was not
+built from, naming the `dotnet tool update` command that installs the matching
+CLI.
 
-Keep the installed tools available in new terminals by adding these lines to
-your shell's startup file:
+The new template selects the matching SDK automatically. To move an existing
+application to the new release, change the version in
+`<Project Sdk="Wisp.AspNetCore/VERSION">` and in any explicit Isoplane package
+references, including `Isoplane.Testing` in test projects, then rebuild and
+test each configuration you use.
 
-```bash
-export ISOPLANE_HOME="${ISOPLANE_HOME:-$HOME/.isoplane}"
-export DOTNET_ROOT="$ISOPLANE_HOME/dotnet"
-export PATH="$DOTNET_ROOT:$HOME/.dotnet/tools:$PATH"
-```
+## Repair
 
-## Install the project template
+Run `isoplane setup` again. It reuses verified components, downloads what is
+missing or damaged, and re-registers the feed and templates. It does not rewrite
+your project's package references.
 
-```bash
-dotnet nuget add source "$preview_release/packages" --name isoplane-preview
-dotnet new install "$preview_release/packages/Wisp.Templates.$preview_version.nupkg"
-```
-
-Continue with [creating an application](create-an-application.md). Keep the
-release directory while using its local package feed.
-
-## Update or repair
-
-Stop running development sessions before updating. Change into the new release
-directory, read its version, then update the CLI and toolchain:
+## Remove the SDK
 
 ```bash
-preview_release="$PWD"
-preview_version=$(cat "$preview_release/package-version.txt")
-dotnet tool update --global Isoplane.Cli --version "$preview_version" \
-  --add-source "$preview_release/packages"
-isoplane setup --source "$preview_release"
-isoplane doctor
-dotnet nuget update source isoplane-preview --source "$preview_release/packages"
+isoplane uninstall-sdk
 ```
 
-Setup refuses a release that the installed CLI was not built from, naming the
-`dotnet tool update` command that installs the matching CLI. Run the two
-commands in the order above.
+This removes everything recorded in `~/.isoplane/installation.json`: the
+toolchain, the package feed and its NuGet registration, the template
+registration, the environment file and the startup-file lines. Resources that
+existed before setup, your projects, and the CLI's own configuration and
+sign-in state stay. Anything that could not be removed remains listed in the
+manifest with the reason, and the command can be run again. Without a
+manifest, or with a damaged one, the command explains and removes nothing.
 
-Replace the installed template package so the old and new versions do not
-compete for the same template name:
-
-```bash
-dotnet new uninstall Wisp.Templates
-dotnet new install "$preview_release/packages/Wisp.Templates.$preview_version.nupkg"
-```
-
-The new template selects the matching SDK automatically. Existing applications
-need an update too:
-
-- Change the version in `<Project Sdk="Wisp.AspNetCore/VERSION">` to the value
-  in `package-version.txt`. Update any explicit Wisp package references to that
-  version as well.
-- In each application with a local `nuget.config`, update its feed:
-  `dotnet nuget update source isoplane-preview --source "$preview_release/packages" --configfile nuget.config`.
-- In each test project, run:
-
-```bash
-dotnet add package Isoplane.Testing --version "$preview_version" \
-  --source "$preview_release/packages"
-```
-
-Rebuild and test each application configuration you use. These releases have
-unique package versions; there is no need to clear the global NuGet cache.
-
-For repair without an upgrade, rerun setup from the same complete release and run
-doctor again. Setup repairs damaged toolchain files; it does not rewrite your
-project's package references.
+The CLI itself remains so setup can be run again; remove it with
+`dotnet tool uninstall --global Isoplane.Cli`.

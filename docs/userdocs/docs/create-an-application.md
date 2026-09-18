@@ -5,20 +5,16 @@ title: Your first application
 In this tutorial you will create an ASP.NET application, run it inside Isoplane's
 sandbox, and change the response you see in your browser.
 
-Before starting, [install the tools and template](install.md). Keep that terminal
-open: `preview_release` identifies the release you installed. You will also need
-a text editor and a browser.
+Before starting, [install the tools](install.md). You will also need a text
+editor and a browser.
 
 ## Create the application
 
-Change to a directory where you keep projects, outside the extracted release.
-Create the application and add its local package source:
+Change to a directory where you keep projects and create the application:
 
 ```bash
 dotnet new isoplane-web --name MyApi
 cd MyApi
-dotnet nuget add source "$preview_release/packages" \
-  --name isoplane-preview --configfile nuget.config
 ```
 
 You now have `Application.cs`, a project file, and `wisp.toml`. Open

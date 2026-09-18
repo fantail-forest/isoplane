@@ -3,8 +3,10 @@
 
     python3 scripts/build-preview.py [--cache DIR] [--output DIR]
 
-The result is one release directory, its archive, checksum and build receipt
-under --output (default .wisp-dev/releases), described by release.json.
+The result is one release directory (release.json, the package feed, the
+toolchain archive, samples and README), plus its archive, checksum and build
+receipt under --output (default .wisp-dev/releases). Publishing the release
+directory under a release origin is what isoplane setup downloads from.
 Rebuilding the same version from the same revision verifies the existing
 release; from another revision it is refused until the version is moved with
 scripts/release-version.py.
@@ -238,11 +240,12 @@ def verify_packages(feed, version, revision, native_library):
     load(ROOT / 'scripts/package-toolchain.py').verify_native_pair(feed / f'Isoplane.Cli.{version}.nupkg', native_library)
 
 
-def archive_release(release, archive, epoch):
+def archive_directory(directory, archive, epoch, prefix):
+    """Archive a directory reproducibly: entries are ordered, owned by root and dated at the source commit."""
     with archive.open('wb') as raw, gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=epoch) as compressed:
         with tarfile.open(fileobj=compressed, mode='w') as bundle:
-            for path in [release, *sorted(release.rglob('*'))]:
-                info = bundle.gettarinfo(str(path), arcname=str(Path(release.name) / path.relative_to(release)))
+            for path in sorted(directory.rglob('*')) if not prefix else [directory, *sorted(directory.rglob('*'))]:
+                info = bundle.gettarinfo(str(path), arcname=str(Path(prefix) / path.relative_to(directory)))
                 info.uid = info.gid = 0
                 info.uname = info.gname = ''
                 info.mtime = epoch
@@ -251,6 +254,20 @@ def archive_release(release, archive, epoch):
                         bundle.addfile(info, stream)
                 else:
                     bundle.addfile(info)
+
+
+def archive_release(release, archive, epoch):
+    archive_directory(release, archive, epoch, release.name)
+
+
+def archive_toolchain(release, epoch):
+    """Pack the assembled toolchain into the archive setup downloads, describe it, and drop the unpacked copy."""
+    toolchain = release / 'toolchain'
+    archive = release / 'toolchain.tgz'
+    archive_directory(toolchain, archive, epoch, '')
+    description = {'archive': archive.name, 'archiveSha256': sha(archive), 'manifestSha256': sha(toolchain / 'toolchain.json')}
+    shutil.rmtree(toolchain)
+    return description
 
 
 def release_name(version):
@@ -338,15 +355,18 @@ def build(root, cache, releases, logs):
          '--notices', notices, '--packages', packages, '--package-version', version,
          '--output', release], source, logs / 'assemble.log', environment)
     verify_packages(release / 'packages', version, revision, native_library)
+    runtime_inputs = load(source / 'guest-runtime/feed-identity.py').verify_feed(release / 'toolchain/feed', source / 'guest-runtime')
+    compiler_identity = load(source / 'guest-runtime/compiler/build.py').verify(release / 'toolchain/compiler', True)
+    wasi_sdk_version = (release / 'toolchain/wasi-sdk/VERSION').read_text()
     manifest = {'sourceRevision': revision, 'packageVersion': version, 'runtimeIdentifier': RUNTIME_IDENTIFIER,
-                'toolchain': {'directory': 'toolchain', 'manifestSha256': sha(release / 'toolchain/toolchain.json')},
+                'toolchain': archive_toolchain(release, epoch),
                 'packages': [{'id': name, 'version': version, 'file': f'packages/{name}.{version}.nupkg',
                               'sha256': sha(release / 'packages' / f'{name}.{version}.nupkg')} for name in PROJECTS],
                 'dotnetSdk': {key: value for key, value in sdk_identity.items() if key != 'files'},
                 'wasmToolsVersion': wasm_version,
-                'runtimeInputsSha256': load(source / 'guest-runtime/feed-identity.py').verify_feed(release / 'toolchain/feed', source / 'guest-runtime'),
-                'compiler': load(source / 'guest-runtime/compiler/build.py').verify(release / 'toolchain/compiler', True),
-                'wasiSdk': (release / 'toolchain/wasi-sdk/VERSION').read_text(),
+                'runtimeInputsSha256': runtime_inputs,
+                'compiler': compiler_identity,
+                'wasiSdk': wasi_sdk_version,
                 'builder': {'rustc': output(['rustc', '-vV']), 'cargo': output(['cargo', '--version']),
                             'cargoLockSha256': sha(source / 'Cargo.lock')}}
     (release / 'release.json').write_text(json.dumps(manifest, indent=2) + '\n')

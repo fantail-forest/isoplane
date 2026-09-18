@@ -1,47 +1,46 @@
 # Isoplane Linux developer preview
 
-This bundle targets Linux x64 on Ubuntu 24.04. It includes the pinned .NET SDK,
-WASI workload, source-built guest runtimes, compiler tools and local engine.
-The OS needs `libicu74`, `libssl3`, `zlib1g`, `libstdc++6`, `libzstd1`, `libtinfo6` and `ca-certificates`.
-No preinstalled .NET SDK, Rust, Wasmtime or Mono is needed.
+This release targets Linux x64 on Ubuntu 24.04. It contains `release.json`,
+the package feed (`packages/`), the toolchain archive (`toolchain.tgz`) and a
+sample. Every Isoplane package carries the version in `package-version.txt`;
+`release.json` records the source revision and the checksum of each component.
 
-Every Isoplane package in this release carries the version recorded in
-`package-version.txt`; `release.json` records the source revision and the
-checksum of each component. Run these commands from this extracted directory:
+Install the bootstrap .NET SDK, which brings every native library the toolchain needs:
 
 ```sh
-export ISOPLANE_HOME="${ISOPLANE_HOME:-$HOME/.isoplane}"
-export DOTNET_ROOT="$PWD/toolchain/dotnet"
-export PATH="$DOTNET_ROOT:$HOME/.dotnet/tools:$PATH"
-dotnet tool install --global Isoplane.Cli --version @PACKAGE_VERSION@ --add-source "$PWD/packages"
-isoplane setup --source "$PWD"
-export DOTNET_ROOT="$ISOPLANE_HOME/dotnet"
-export PATH="$DOTNET_ROOT:$HOME/.dotnet/tools:$PATH"
-isoplane doctor
-dotnet nuget add source "$PWD/packages" --name isoplane-preview
-dotnet new install "$PWD/packages/Wisp.Templates.@PACKAGE_VERSION@.nupkg"
+sudo apt-get install -y dotnet-sdk-10.0
 ```
 
-For each new shell, set `ISOPLANE_HOME`, `DOTNET_ROOT` and `PATH` to the installed
-paths above. Keep `packages/` available while developing: NuGet restores SDK
-packages from that directory. Package restore can also contact nuget.org and
-the .NET experimental compiler feed; fully offline builds are not promised.
+Then install the CLI as a global .NET tool and let it install the rest:
 
-For a new release, replace `dotnet tool install` with `dotnet tool update` and
-use its exact version, then run setup with the new release directory, then
-doctor. Setup refuses a release the installed CLI was not built from and names
-the update command. Setup reuses a verified installation or repairs damaged
-files; doctor only diagnoses.
-Before installing an updated template package, run
-`dotnet new uninstall Wisp.Templates` to remove its earlier template registration. Existing projects
-keep their pinned SDK and test-package versions; update those references to
-this release's `package-version.txt` value when upgrading an application.
-Use `dotnet nuget update source isoplane-preview --source "$PWD/packages"` when
-moving the local feed or switching releases.
+```sh
+dotnet tool install --global Isoplane.Cli --version @PACKAGE_VERSION@ --add-source "$PWD/packages"
+export PATH="$HOME/.dotnet/tools:$PATH"
+isoplane setup --source "$PWD"
+. "$HOME/.isoplane/env"
+dotnet new isoplane-web --name MyApp
+```
 
-Follow the customer documentation for project creation, `dotnet run`,
-`dotnet watch`, testing and database configuration. Debugger support is not
-established by successful installation.
+Setup installs the SDK, compiler tools, runtime, package feed and project
+templates under `~/.isoplane`, registers the feed and templates with .NET,
+records everything in `~/.isoplane/installation.json`, and adds one line to your
+shell startup files so new terminals find `dotnet` and `isoplane`. Without
+`--source`, setup downloads the release matching the installed CLI from the
+release origin. Rerunning setup verifies and repairs the installation; `isoplane
+doctor` only diagnoses. `isoplane uninstall-sdk` removes everything setup
+recorded and keeps the CLI.
 
-Third-party attribution and license texts are in `toolchain/notices/`, with
-additional upstream notices retained in the .NET SDK and runtime packs.
+For a new release, run `dotnet tool update --global Isoplane.Cli --version VERSION
+--add-source RELEASE/packages` and then `isoplane setup --source RELEASE`. Setup
+refuses a release the installed CLI was not built from and names the update
+command. Existing projects keep their pinned SDK version; update the version in
+`<Project Sdk="Wisp.AspNetCore/VERSION">` and any Isoplane package references
+to `package-version.txt` when upgrading an application.
+
+Package restore can also contact nuget.org and the .NET experimental compiler
+feed; fully offline builds are not promised. Follow the customer documentation
+for `dotnet run`, `dotnet watch`, testing and database configuration. Debugger
+support is not established by successful installation.
+
+Third-party attribution and license texts are in `notices/` inside the toolchain
+archive, with additional upstream notices retained in the .NET SDK and runtime packs.

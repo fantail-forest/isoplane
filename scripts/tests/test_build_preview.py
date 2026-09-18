@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -102,6 +103,22 @@ class ReleaseTests(unittest.TestCase):
             path.touch()
         preview.archive_release(self.feed, second, 1234567890)
         self.assertEqual(first.read_bytes(), second.read_bytes(), 'the same bundle must produce the same archive bytes')
+
+    def test_the_toolchain_archive_is_rooted_at_the_toolchain_and_described_by_its_hashes(self):
+        release = self.root / 'release'
+        toolchain = release / 'toolchain'
+        (toolchain / 'bin').mkdir(parents=True)
+        (toolchain / 'bin/tool').write_bytes(b'tool')
+        (toolchain / 'toolchain.json').write_text('{"files": []}')
+        manifest_digest = preview.sha(toolchain / 'toolchain.json')
+        description = preview.archive_toolchain(release, 1234567890)
+        self.assertFalse(toolchain.exists(), 'the unpacked toolchain is not shipped beside its archive')
+        self.assertEqual(description['archive'], 'toolchain.tgz')
+        self.assertEqual(description['manifestSha256'], manifest_digest, 'setup identifies the toolchain by its manifest hash')
+        self.assertEqual(description['archiveSha256'], preview.sha(release / 'toolchain.tgz'), 'setup verifies the archive it downloads')
+        with tarfile.open(release / 'toolchain.tgz') as archive:
+            self.assertEqual(sorted(archive.getnames()), ['bin', 'bin/tool', 'toolchain.json'],
+                             'entries are relative to the toolchain so extraction yields the toolchain directory')
 
     def test_export_preserves_runtime_builds_but_removes_managed_intermediates(self):
         repository = self.root / 'repository'

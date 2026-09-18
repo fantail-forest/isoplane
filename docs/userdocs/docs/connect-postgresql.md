@@ -23,14 +23,7 @@ using a private CA, see [local private trust](#local-private-trust) below.
 ## Configure the sample
 
 Copy `samples/aspnet-todo` from the release into a fresh working directory, then
-change into that copy. Add the local package feed:
-
-```bash
-dotnet nuget add source "$preview_release/packages" \
-  --name isoplane-preview --configfile nuget.config
-```
-
-Set `ConnectionStrings:Todo` using [local development settings](local-settings.md).
+change into that copy. Set `ConnectionStrings:Todo` using [local development settings](local-settings.md).
 For example, replace the values in this connection string with your development
 database's values:
 

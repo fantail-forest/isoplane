@@ -22,11 +22,18 @@ Every first-party package packs as the release version `Directory.Build.props`
 declares. `isoplane --version` reports the installed CLI version and its source
 revision.
 
-The tool requires .NET 10 to bootstrap. Install a prepared local toolchain with
-`isoplane setup --source /path/to/release`; `isoplane doctor` verifies
-its contents and runs the SDK, compiler, wasm-tools and runtime to check native
-dependencies. `ISOPLANE_HOME` overrides the default `~/.isoplane` installation.
-Setup can be rerun to repair damaged files. Doctor does not repair them.
+The tool requires .NET 10 to bootstrap. `isoplane setup` downloads the release
+the CLI was built from (`isoplane-linux-x64-VERSION/` under the origin named by
+`ISOPLANE_RELEASE_ORIGIN`, default `https://releases.isoplane.dev/`) or reads it
+from `--source RELEASE_DIRECTORY`, verifies each component against
+`release.json`, installs the toolchain archive and package feed under
+`ISOPLANE_HOME` (default `~/.isoplane`), registers the feed and template with
+`dotnet`, writes `env` and the startup-file line that sources it, and records
+every change in `installation.json`. Missing native prerequisites are installed
+through the one `sudo apt-get` command setup shows, after confirmation or with
+`--yes`. `isoplane doctor` verifies the installation and runs the SDK, compiler,
+wasm-tools and runtime; it does not repair. `isoplane uninstall-sdk` removes what
+the manifest records and keeps the CLI.
 
 The bundle is assembled by `scripts/package-toolchain.py --help` from verified
 runtime packs, wasi-sdk, wasm-tools, the managed CLI and native support library,
@@ -36,10 +43,9 @@ Assembly provisions the WASI workload pinned by that SDK's shipped manifests.
 locked Cargo graphs and matching upstream sources. The
 customer needs the resulting bundle and NuGet feed, not those source inputs.
 No Rust compiler or host Mono is required. CLI-owned builds select the installed
-toolchain automatically. For ordinary `dotnet` commands, set `DOTNET_ROOT` to
-`$ISOPLANE_HOME/dotnet` and put that directory first on PATH, using
-`$HOME/.isoplane/dotnet` when `ISOPLANE_HOME` is unset. This selects the same
-SDK and workload even when another .NET installation is on the machine.
+toolchain automatically. Ordinary `dotnet` commands find the same SDK and
+workload through `$ISOPLANE_HOME/env`, which puts `$ISOPLANE_HOME/dotnet` first
+on PATH; `DOTNET_ROOT` is left alone.
 
 Run a generated app with `/tmp/isoplane-tools/isoplane dev --project /path/to/app`.
 Publication follows the module path in `wisp.toml`. Source edits rebuild into a

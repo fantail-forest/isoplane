@@ -1,5 +1,7 @@
 using Wisp.Native;
 using System.Diagnostics;
+using System.Formats.Tar;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -18,86 +20,121 @@ internal static class Toolchain
     internal const string ManifestName = "toolchain.json";
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
-    internal static async Task<string> InstallAsync(string source, string home, CancellationToken cancellation, string? bundledRuntime = null)
+    internal static string Installations(string home) => Path.Combine(home, "toolchains");
+
+    /// <summary>The installed toolchain with this identity when every file verifies, otherwise null.</summary>
+    internal static async Task<string?> VerifiedInstallationAsync(string home, string identity, CancellationToken cancellation, string? bundledRuntime = null)
     {
-        source = Path.GetFullPath(source);
-        home = Path.GetFullPath(home);
-        var manifestBytes = await File.ReadAllBytesAsync(Path.Combine(source, ManifestName), cancellation);
-        var manifest = ReadManifest(manifestBytes);
-        ValidatePlatform(manifest);
-        if (bundledRuntime is not null)
-            await VerifyRuntimePairAsync(manifest, bundledRuntime, cancellation);
-        var identity = Convert.ToHexStringLower(SHA256.HashData(manifestBytes));
-        var installs = Path.Combine(home, "toolchains");
+        var destination = Path.Combine(Installations(home), identity);
+        if (!File.Exists(Path.Combine(destination, ManifestName)))
+            return null;
+        try
+        {
+            var manifest = ReadManifest(await File.ReadAllBytesAsync(Path.Combine(destination, ManifestName), cancellation));
+            ValidatePlatform(manifest);
+            await VerifyAsync(destination, manifest, cancellation);
+            if (bundledRuntime is not null)
+                await VerifyRuntimePairAsync(manifest, bundledRuntime, cancellation);
+            return destination;
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException)
+        {
+            Console.Error.WriteLine($"isoplane: replacing an incomplete or corrupt toolchain: {error.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Extracts a toolchain archive into a staging directory beside the installations, verifies every file against the
+    /// manifest it carries and the identity the release promised, then moves it into place. A verification failure
+    /// leaves no trace; an existing installation with the same identity is replaced only after the new one verified.
+    /// </summary>
+    internal static async Task<string> InstallArchiveAsync(string archive, string identity, string home, CancellationToken cancellation, string? bundledRuntime = null)
+    {
+        var installs = Installations(home);
         Directory.CreateDirectory(installs);
-        using var installLock = new FileStream(Path.Combine(home, "setup.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var destination = Path.Combine(installs, identity);
-        var reusable = false;
-        if (Directory.Exists(destination))
+        var staging = Path.Combine(installs, ".install-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging);
+        try
         {
             try
             {
-                await VerifyAsync(destination, manifest, cancellation);
-                reusable = true;
+                await using var stream = File.OpenRead(archive);
+                await using var decompressed = new GZipStream(stream, CompressionMode.Decompress);
+                await TarFile.ExtractToDirectoryAsync(decompressed, staging, overwriteFiles: false, cancellation);
             }
-            catch (Exception error) when (error is IOException or InvalidOperationException)
+            catch (Exception error) when (error is IOException or InvalidDataException)
             {
-                Console.Error.WriteLine($"isoplane: repairing incomplete or corrupt toolchain: {error.Message}");
+                throw new InvalidOperationException($"The toolchain archive {archive} cannot be extracted: {error.Message}. The release is incomplete or altered; rerun isoplane setup to download it again.", error);
             }
-        }
-        if (!reusable)
-        {
-            var staging = Path.Combine(installs, ".install-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(staging);
+            var manifestPath = Path.Combine(staging, ManifestName);
+            if (!File.Exists(manifestPath))
+                throw new InvalidOperationException($"The toolchain archive {archive} carries no {ManifestName}; the release is incomplete.");
+            var manifestBytes = await File.ReadAllBytesAsync(manifestPath, cancellation);
+            var actual = Convert.ToHexStringLower(SHA256.HashData(manifestBytes));
+            if (actual != identity)
+                throw new InvalidOperationException($"The toolchain archive {archive} is not the one the release manifest describes; the release is incomplete or altered.");
+            var manifest = ReadManifest(manifestBytes);
+            ValidatePlatform(manifest);
+            if (!OperatingSystem.IsWindows())
+                foreach (var entry in manifest.Files.Where(file => file.Executable))
+                {
+                    var path = Resolve(staging, entry.Path);
+                    if (File.Exists(path))
+                        File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserExecute);
+                }
+            await VerifyAsync(staging, manifest, cancellation);
+            if (bundledRuntime is not null)
+                await VerifyRuntimePairAsync(manifest, bundledRuntime, cancellation);
+            var destination = Path.Combine(installs, identity);
+            var backup = staging + ".previous";
+            if (Directory.Exists(destination))
+                Directory.Move(destination, backup);
             try
             {
-                foreach (var entry in manifest.Files)
-                {
-                    cancellation.ThrowIfCancellationRequested();
-                    var input = Resolve(source, entry.Path);
-                    RejectLinks(source, input);
-                    var output = Resolve(staging, entry.Path);
-                    Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-                    File.Copy(input, output);
-                    if (!OperatingSystem.IsWindows() && entry.Executable)
-                        File.SetUnixFileMode(output, File.GetUnixFileMode(output) | UnixFileMode.UserExecute);
-                }
-                await File.WriteAllBytesAsync(Path.Combine(staging, ManifestName), manifestBytes, cancellation);
-                await VerifyAsync(staging, manifest, cancellation);
-                var backup = staging + ".previous";
-                if (Directory.Exists(destination))
-                    Directory.Move(destination, backup);
-                try
-                {
-                    Directory.Move(staging, destination);
-                }
-                catch
-                {
-                    if (Directory.Exists(backup))
-                        Directory.Move(backup, destination);
-                    throw;
-                }
+                Directory.Move(staging, destination);
+            }
+            catch
+            {
                 if (Directory.Exists(backup))
-                    Directory.Delete(backup, recursive: true);
+                    Directory.Move(backup, destination);
+                throw;
             }
-            finally
-            {
-                if (Directory.Exists(staging))
-                    Directory.Delete(staging, recursive: true);
-            }
+            if (Directory.Exists(backup))
+                Directory.Delete(backup, recursive: true);
+            return destination;
         }
-        SelectDotnet(home, Path.Combine(destination, "dotnet"));
-        await ReplaceAsync(Path.Combine(home, "toolchain.props"), Properties(destination), cancellation);
-        await ReplaceAsync(Path.Combine(home, "current.json"), JsonSerializer.Serialize(destination), cancellation);
-        return destination;
+        finally
+        {
+            if (Directory.Exists(staging))
+                Directory.Delete(staging, recursive: true);
+        }
+    }
+
+    /// <summary>Makes <paramref name="directory"/> the selected toolchain: the SDK link, the MSBuild properties and the selection record.</summary>
+    internal static async Task SelectAsync(string home, string directory, CancellationToken cancellation)
+    {
+        SelectDotnet(home, Path.Combine(directory, "dotnet"));
+        await ReplaceAsync(Path.Combine(home, "toolchain.props"), Properties(directory), cancellation);
+        await ReplaceAsync(Path.Combine(home, "current.json"), JsonSerializer.Serialize(directory), cancellation);
+    }
+
+    /// <summary>The files and link selection writes, for the installation manifest.</summary>
+    internal static (string Link, string Properties, string Selection) SelectionPaths(string home) =>
+        (Path.Combine(home, "dotnet"), Path.Combine(home, "toolchain.props"), Path.Combine(home, "current.json"));
+
+    /// <summary>The selected toolchain directory, or null when none is selected.</summary>
+    internal static string? Selected(string home)
+    {
+        var selected = Path.Combine(home, "current.json");
+        return File.Exists(selected) ? JsonSerializer.Deserialize<string>(File.ReadAllText(selected)) : null;
     }
 
     internal static void Apply(ProcessStartInfo start, string? home = null)
     {
-        var selected = Path.Combine(home ?? Home, "current.json");
-        if (!File.Exists(selected))
+        if (!File.Exists(Path.Combine(home ?? Home, "current.json")))
             return;
-        var directory = JsonSerializer.Deserialize<string>(File.ReadAllText(selected))
+        var directory = Selected(home ?? Home)
             ?? throw new InvalidOperationException("Invalid toolchain selection; rerun isoplane setup.");
         if (start.FileName == "dotnet")
             start.FileName = Path.Combine(directory, "dotnet", "dotnet");
@@ -112,7 +149,7 @@ internal static class Toolchain
     {
         var current = Path.Combine(home, "current.json");
         if (!File.Exists(current))
-            throw new InvalidOperationException("No toolchain is installed. Run isoplane setup --source DIRECTORY using the extracted preview release.");
+            throw new InvalidOperationException("No toolchain is installed. Run isoplane setup.");
         var directory = JsonSerializer.Deserialize<string>(await File.ReadAllTextAsync(current, cancellation))
             ?? throw new InvalidOperationException("The toolchain selection is invalid; rerun isoplane setup.");
         var manifest = ReadManifest(await File.ReadAllBytesAsync(Path.Combine(directory, ManifestName), cancellation));
@@ -136,7 +173,7 @@ internal static class Toolchain
             await using var stream = File.OpenRead(path);
             var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellation));
             if (!string.Equals(actual, file.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"Toolchain file {path} is corrupt. Rerun isoplane setup --source DIRECTORY with the release to repair it.");
+                throw new InvalidOperationException($"Toolchain file {path} is corrupt. Rerun isoplane setup to repair it.");
             if (!OperatingSystem.IsWindows() && file.Executable && (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) == 0)
                 throw new InvalidOperationException($"Toolchain file {path} is not executable; rerun setup from a complete bundle.");
         }

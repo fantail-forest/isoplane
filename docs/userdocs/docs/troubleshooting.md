@@ -8,25 +8,29 @@ when reporting a problem.
 
 ## Command or SDK not found
 
-Check that `DOTNET_ROOT` points to `$ISOPLANE_HOME/dotnet` and that this directory
-and `$HOME/.dotnet/tools` are on `PATH`. New terminals need the environment
-settings from [installation](install.md). A system SDK can select different
-workloads from the toolchain installed by setup.
+New terminals load `~/.isoplane/env`, which puts the installed SDK and
+`~/.dotnet/tools` first on `PATH`, through the line setup added to your shell
+startup files. In a terminal opened before setup, run `. "$HOME/.isoplane/env"`.
+`command -v dotnet` should print `~/.isoplane/dotnet/dotnet`; a system SDK
+first on `PATH` lacks the workloads the toolchain installs.
 
 ## Missing or damaged toolchain
 
-Run `isoplane setup --source` with the complete release directory, then run
-`isoplane doctor` again. Setup refuses a release the installed CLI was not built
-from and prints the `dotnet tool update` command that installs the matching CLI. Do not combine pack files from different
-releases or manually repair hashes. If doctor reports a missing system library,
-install the package for your distribution; the bundle does not replace glibc or
-the operating system's native dependencies.
+Run `isoplane setup`, then `isoplane doctor` again. Setup reuses verified
+components and downloads the rest; it refuses a release the installed CLI was
+not built from and prints the `dotnet tool update` command that installs the
+matching CLI. Do not combine files from different releases or repair hashes by
+hand. If setup or doctor reports a missing system library, install the package
+setup names; the toolchain does not replace glibc or the operating system's
+native dependencies.
 
 ## Package restore cannot find the SDK
 
-Check the application's `nuget.config`. It needs the local release `packages`
-source as well as the feeds supplied by the template. Confirm that the directory
-still exists and the project references the package version in that release.
+Setup registers the release feed as the NuGet package source `isoplane`, at
+`~/.isoplane/packages`; `dotnet nuget list source` shows it. A `nuget.config`
+with `<clear />` between the project and your home directory hides it. Confirm
+the project references a package version that feed holds; `isoplane setup`
+keeps the packages of every release it installed.
 
 ## An application build fails
 

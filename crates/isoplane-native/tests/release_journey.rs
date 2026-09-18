@@ -1,11 +1,15 @@
-//! The canonical release build, consumed the way a customer does: a global tool
-//! install, `isoplane setup`, the template, both execution modes, and the upgrade
-//! to the next preview. Two releases are built from a snapshot of the working
-//! tree, so the journey validates the sources as they are, not the last commit.
-//! Every install runs inside a fresh Ubuntu 24.04 container carrying only the
-//! prerequisites the release README names, with the releases mounted read-only.
+//! The canonical release build, consumed the way a customer does: the bootstrap
+//! .NET SDK from Ubuntu's packages, a global tool install, `isoplane setup`
+//! downloading the release from an origin, the registered template, both
+//! execution modes, the upgrade to the next preview, and `isoplane uninstall-sdk`.
+//! Two releases are built from a snapshot of the working tree, so the journey
+//! validates the sources as they are, not the last commit. Every install runs
+//! inside a fresh Ubuntu 24.04 container carrying only the bootstrap SDK the
+//! release README names, with the releases served over HTTP from this process
+//! and mounted read-only for the offline `--source` path.
 
 use std::borrow::BorrowMut;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -20,6 +24,7 @@ struct Releases {
     _scratch: tempfile::TempDir,
     directory: PathBuf,
     image: String,
+    origin: Origin,
     current: Release,
     next: Release,
 }
@@ -142,6 +147,12 @@ fn build_release(worktree: &Path, root: &Path, output: &Path) -> Release {
         "the release manifest must carry the declared version"
     );
     assert!(
+        directory
+            .join(manifest["toolchain"]["archive"].as_str().unwrap())
+            .is_file(),
+        "the release must ship the toolchain archive its manifest names"
+    );
+    assert!(
         output
             .join(format!("isoplane-linux-x64-{version}.tgz"))
             .is_file(),
@@ -212,41 +223,41 @@ fn build_releases() -> Releases {
         "removing the snapshot checkout",
     );
     let image = customer_image(&current);
+    let origin = Origin::serve(output.clone());
     Releases {
         _scratch: scratch,
         directory: output,
         image,
+        origin,
         current,
         next,
     }
 }
 
-/// The apt packages the release README tells a customer to install, and nothing else.
-fn documented_prerequisites(release: &Release) -> Vec<String> {
+/// The one apt command the release README tells a customer to run before installing the tool.
+fn documented_bootstrap_packages(release: &Release) -> Vec<String> {
     let readme = std::fs::read_to_string(release.directory.join("README.md"))
         .expect("the release ships its README");
     let line = readme
         .lines()
-        .find(|line| line.starts_with("The OS needs"))
-        .expect("the release README names the OS prerequisites");
-    let packages: Vec<String> = line
-        .split('`')
-        .skip(1)
-        .step_by(2)
+        .find(|line| line.starts_with("sudo apt-get install -y "))
+        .expect("the release README gives the bootstrap apt command");
+    let packages: Vec<String> = line["sudo apt-get install -y ".len()..]
+        .split_whitespace()
         .map(str::to_owned)
         .collect();
     assert!(
         !packages.is_empty(),
-        "the README prerequisite sentence must name packages"
+        "the README bootstrap command must name packages"
     );
     packages
 }
 
-/// A fresh Ubuntu 24.04 image with the documented prerequisites and an ordinary user; no .NET, no Isoplane.
+/// A fresh Ubuntu 24.04 image with the documented bootstrap SDK and an ordinary user; nothing of Isoplane.
 fn customer_image(release: &Release) -> String {
     let dockerfile = format!(
         "FROM ubuntu:24.04\nRUN apt-get update && apt-get install -y --no-install-recommends {} && rm -rf /var/lib/apt/lists/*\nRUN useradd --create-home dev\nUSER dev\nWORKDIR /home/dev\n",
-        documented_prerequisites(release).join(" ")
+        documented_bootstrap_packages(release).join(" ")
     );
     let tag = format!(
         "wisp-release-journey:{}",
@@ -273,7 +284,119 @@ fn customer_image(release: &Release) -> String {
     tag
 }
 
-/// A customer's machine: a container started from the fresh image with the releases mounted read-only.
+/// The release origin: this process serving the releases directory over HTTP to the containers.
+/// Under `/cut/` the toolchain archive is served truncated, which is how a download is interrupted on demand.
+struct Origin {
+    port: u16,
+    _runtime: tokio::runtime::Runtime,
+}
+
+const HOST_ALIAS: &str = "host.docker.internal";
+
+impl Origin {
+    fn serve(root: PathBuf) -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime for the release origin");
+        let listener = runtime.block_on(async {
+            tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+                .await
+                .expect("bind the release origin")
+        });
+        let port = listener.local_addr().unwrap().port();
+        runtime.spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                let root = root.clone();
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(move |request| {
+                        let root = root.clone();
+                        async move { Ok::<_, std::convert::Infallible>(respond(&root, request)) }
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+        Self {
+            port,
+            _runtime: runtime,
+        }
+    }
+
+    fn url(&self, prefix: &str) -> String {
+        format!("http://{HOST_ALIAS}:{}/{prefix}", self.port)
+    }
+}
+
+/// A response body served in chunks with no size hint, so a cut download can promise the whole file
+/// in its headers and still end early, the way a dropped connection does.
+struct Chunks {
+    data: Vec<u8>,
+    offset: usize,
+}
+
+impl hyper::body::Body for Chunks {
+    type Data = hyper::body::Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        if self.offset >= self.data.len() {
+            return std::task::Poll::Ready(None);
+        }
+        let end = (self.offset + (1 << 20)).min(self.data.len());
+        let chunk = hyper::body::Bytes::copy_from_slice(&self.data[self.offset..end]);
+        self.offset = end;
+        std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(chunk))))
+    }
+}
+
+fn respond(root: &Path, request: hyper::Request<hyper::body::Incoming>) -> hyper::Response<Chunks> {
+    let path = request.uri().path().trim_start_matches('/');
+    let (cut, relative) = match path.strip_prefix("cut/") {
+        Some(rest) => (true, rest),
+        None => (false, path),
+    };
+    let escapes = relative
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..");
+    let file = root.join(relative);
+    if escapes || !file.is_file() {
+        return hyper::Response::builder()
+            .status(404)
+            .body(Chunks {
+                data: Vec::new(),
+                offset: 0,
+            })
+            .unwrap();
+    }
+    let content = std::fs::read(&file).expect("read a served release file");
+    let length = content.len();
+    let served = if cut && relative.ends_with("toolchain.tgz") {
+        content[..length / 2].to_vec()
+    } else {
+        content
+    };
+    hyper::Response::builder()
+        .status(200)
+        .header("content-length", length)
+        .body(Chunks {
+            data: served,
+            offset: 0,
+        })
+        .unwrap()
+}
+
+/// A customer's machine: a container started from the fresh image with the releases mounted read-only
+/// and the origin reachable by name.
 struct Machine {
     name: String,
 }
@@ -292,6 +415,8 @@ impl Machine {
                     &name,
                     "--label",
                     "wisp.release-journey=1",
+                    "--add-host",
+                    &format!("{HOST_ALIAS}:host-gateway"),
                 ])
                 .arg("--volume")
                 .arg(format!(
@@ -327,73 +452,76 @@ impl Machine {
         command
     }
 
-    /// The documented environment once setup has installed the toolchain.
-    fn installed(&self, script: &str) -> Command {
-        self.shell(&format!(
-            "export ISOPLANE_HOME=\"$HOME/.isoplane\"\nexport DOTNET_ROOT=\"$ISOPLANE_HOME/dotnet\"\nexport PATH=\"$DOTNET_ROOT:$HOME/.dotnet/tools:$PATH\"\n{script}"
-        ))
+    /// A new terminal: a login shell with no environment hand-written by the test.
+    fn new_shell(&self, script: &str) -> Command {
+        let mut command = Command::new("docker");
+        command
+            .args([
+                "exec",
+                "--user",
+                "dev",
+                "--workdir",
+                "/home/dev",
+                &self.name,
+            ])
+            .args(["bash", "-leo", "pipefail", "-c", script]);
+        command
     }
 
-    /// The documented environment before setup: the release's own SDK bootstraps the tool.
-    fn bootstrap(&self, release: &Release, script: &str) -> Command {
+    /// The environment the README asks for before setup: the .NET tools directory on PATH.
+    fn bootstrap(&self, script: &str) -> Command {
         self.shell(&format!(
-            "preview_release={}\nexport DOTNET_ROOT=\"$preview_release/toolchain/dotnet\"\nexport PATH=\"$DOTNET_ROOT:$HOME/.dotnet/tools:$PATH\"\n{script}",
-            Self::mounted(release)
+            "export PATH=\"$HOME/.dotnet/tools:$PATH\"\n{script}"
         ))
     }
 
     fn install_cli(&self, release: &Release, verb: &str) {
         succeed(
-            self.bootstrap(
-                release,
-                &format!(
-                    "dotnet tool {verb} --global Isoplane.Cli --version {} --add-source \"$preview_release/packages\"",
-                    release.version
-                ),
-            ),
-            "installing the CLI as a global tool",
+            self.bootstrap(&format!(
+                "dotnet tool {verb} --global Isoplane.Cli --version {} --add-source \"{}/packages\"",
+                release.version,
+                Self::mounted(release)
+            )),
+            "installing the CLI as a global tool with the bootstrap SDK",
         );
-    }
-
-    fn install(&self, release: &Release, verb: &str) {
-        self.install_cli(release, verb);
-        let version = succeed(
-            self.bootstrap(release, "isoplane --version"),
-            "isoplane --version",
-        );
+        let version = succeed(self.bootstrap("isoplane --version"), "isoplane --version");
         assert_eq!(
             version.trim(),
             format!("isoplane {}+{}", release.version, release.revision),
             "the installed CLI must report the release's version and revision"
         );
-        succeed(
-            self.bootstrap(release, "isoplane setup --source \"$preview_release\""),
-            "isoplane setup",
-        );
-        succeed(
-            self.installed("isoplane doctor"),
-            "isoplane doctor after setup",
-        );
     }
 
-    fn install_template(&self, release: &Release) {
-        let mounted = Self::mounted(release);
+    /// `isoplane setup` downloading from the origin, as the README documents.
+    fn setup(&self, origin: &str) -> String {
         succeed(
-            self.installed(&format!(
-                "dotnet new uninstall Wisp.Templates >/dev/null 2>&1 || true\ndotnet new install \"{mounted}/packages/Wisp.Templates.{}.nupkg\"",
-                release.version
+            self.bootstrap(&format!(
+                "ISOPLANE_RELEASE_ORIGIN={origin} isoplane setup --yes 2>setup.log || {{ cat setup.log; exit 1; }}"
             )),
-            "installing the release's template",
+            "isoplane setup from the release origin",
+        )
+    }
+
+    fn install(&self, releases: &Releases, release: &Release, verb: &str) -> String {
+        self.install_cli(release, verb);
+        let report = self.setup(&releases.origin.url(""));
+        assert!(
+            report.contains(&format!("Installed Isoplane {}", release.version)),
+            "setup must report the installed release:\n{report}"
         );
+        succeed(
+            self.new_shell("isoplane doctor"),
+            "isoplane doctor in a new shell after setup",
+        );
+        report
     }
 
     fn create_project(&self, release: &Release, name: &str) -> String {
-        let mounted = Self::mounted(release);
         let project = succeed(
-            self.installed(&format!(
-                "dotnet new isoplane-web --name {name} --output {name} >/dev/null\ncd {name}\ndotnet nuget add source \"{mounted}/packages\" --name isoplane-preview --configfile nuget.config >/dev/null\ncat {name}.csproj"
+            self.new_shell(&format!(
+                "dotnet new isoplane-web --name {name} --output {name} >/dev/null\ncat {name}/{name}.csproj"
             )),
-            "creating a project from the installed template",
+            "creating a project from the registered template in a new shell",
         );
         assert!(
             project.contains(&format!("Sdk=\"Wisp.AspNetCore/{}\"", release.version)),
@@ -404,7 +532,7 @@ impl Machine {
 
     fn build(&self, app: &str, configuration: &str) {
         let modules = succeed(
-            self.installed(&format!(
+            self.new_shell(&format!(
                 "cd {app}\ndotnet build -c {configuration} >build-{configuration}.log 2>&1 || {{ cat build-{configuration}.log; exit 1; }}\nls bin/{configuration}/net10.0/wasi-wasm/publish/*.wasm"
             )),
             &format!("building the {configuration} configuration with installed assets"),
@@ -413,6 +541,31 @@ impl Machine {
             modules.trim().ends_with(".wasm"),
             "the {configuration} build must publish a WebAssembly module from installed assets"
         );
+    }
+
+    fn templates(&self) -> String {
+        succeed(
+            self.new_shell("dotnet new list"),
+            "dotnet new list in a new shell",
+        )
+    }
+
+    /// Every path under the home directory that is not .NET's own state or a customer project.
+    fn home_inventory(&self) -> Vec<String> {
+        let listing = succeed(
+            self.shell("find \"$HOME\" -mindepth 1 \\( -path \"$HOME/.dotnet\" -o -path \"$HOME/.nuget\" -o -path \"$HOME/.templateengine\" -o -path \"$HOME/.local\" -o -path \"$HOME/.cache\" -o -path \"$HOME/.config\" -o -name '*App' -o -name '*.log' \\) -prune -o -print | sort"),
+            "listing the home directory",
+        );
+        listing.lines().map(str::to_owned).collect()
+    }
+
+    fn uninstall_sdk(&self) -> String {
+        succeed(
+            self.new_shell(
+                "isoplane uninstall-sdk 2>uninstall.log || { cat uninstall.log; exit 1; }",
+            ),
+            "isoplane uninstall-sdk",
+        )
     }
 }
 
@@ -439,16 +592,32 @@ fn uuid_like() -> String {
 }
 
 #[test]
-fn a_clean_global_tool_install_and_setup_create_a_project_that_builds_in_both_modes() {
+fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_in_both_modes() {
     let releases = releases();
     let machine = Machine::new(releases);
-    machine.install(&releases.current, "install");
-    let help = succeed(machine.installed("isoplane --help"), "isoplane --help");
+    let report = machine.install(releases, &releases.current, "install");
     assert!(
-        help.contains("isoplane login"),
-        "the released CLI must offer the documented login command"
+        report.contains(".isoplane/env"),
+        "setup must explain how new terminals find the installed tools:\n{report}"
     );
-    machine.install_template(&releases.current);
+    let help = succeed(machine.new_shell("isoplane --help"), "isoplane --help");
+    assert!(
+        help.contains("isoplane login") && help.contains("isoplane uninstall-sdk"),
+        "the released CLI must offer the documented login and uninstall-sdk commands"
+    );
+    let sdk = succeed(
+        machine.new_shell("command -v dotnet"),
+        "which dotnet a new shell runs",
+    );
+    assert_eq!(
+        sdk.trim(),
+        "/home/dev/.isoplane/dotnet/dotnet",
+        "a new shell must run the SDK setup installed, without hand-written environment"
+    );
+    assert!(
+        machine.templates().contains("isoplane-web"),
+        "dotnet new list must discover the registered template after setup"
+    );
     let app = machine.create_project(&releases.current, "JourneyApp");
     for configuration in ["WispInterpretedDebug", "WispNativeAotRelease"] {
         machine.build(&app, configuration);
@@ -456,15 +625,117 @@ fn a_clean_global_tool_install_and_setup_create_a_project_that_builds_in_both_mo
 }
 
 #[test]
+fn repeated_setup_changes_nothing_and_uninstall_sdk_removes_exactly_what_setup_recorded() {
+    let releases = releases();
+    let machine = Machine::new(releases);
+    machine.install_cli(&releases.current, "install");
+    let before = machine.home_inventory();
+    machine.setup(&releases.origin.url(""));
+    let manifest = succeed(
+        machine.shell("cat \"$HOME/.isoplane/installation.json\""),
+        "reading the installation manifest",
+    );
+    let report = machine.setup(&releases.origin.url(""));
+    assert!(
+        report.contains(&format!("Installed Isoplane {}", releases.current.version)),
+        "a repeated setup must succeed:\n{report}"
+    );
+    assert_eq!(
+        succeed(
+            machine.shell("cat \"$HOME/.isoplane/installation.json\""),
+            "re-reading the installation manifest"
+        ),
+        manifest,
+        "a repeated setup must record nothing new"
+    );
+    assert_eq!(
+        succeed(
+            machine.shell("grep -c 'isoplane setup' \"$HOME/.profile\""),
+            "counting profile lines"
+        )
+        .trim(),
+        "1",
+        "a repeated setup must not duplicate the shell startup line"
+    );
+    let app = machine.create_project(&releases.current, "RemovalApp");
+    machine.build(&app, "WispInterpretedDebug");
+
+    let removal = machine.uninstall_sdk();
+    assert!(
+        removal.contains("Removed the Isoplane SDK"),
+        "removal must report completion:\n{removal}"
+    );
+    let after = machine.home_inventory();
+    let leftovers: Vec<&String> = after
+        .iter()
+        .filter(|path| !before.contains(path) && path.as_str() != "/home/dev/.isoplane")
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "uninstall-sdk must leave nothing setup created:\n{leftovers:?}"
+    );
+    assert!(
+        !machine.templates().contains("isoplane-web"),
+        "the template registration must be gone after uninstall-sdk"
+    );
+    let sources = succeed(
+        machine.new_shell("dotnet nuget list source"),
+        "listing package sources after removal",
+    );
+    assert!(
+        !sources.contains("isoplane"),
+        "the package source registration must be gone after uninstall-sdk:\n{sources}"
+    );
+    succeed(
+        machine.shell(&format!(
+            "test -f {app}/{app}.csproj && test -f {app}/Application.cs"
+        )),
+        "the customer's project surviving removal",
+    );
+    let repeated = fail(
+        machine.new_shell("isoplane uninstall-sdk"),
+        "a second uninstall-sdk with nothing recorded",
+    );
+    assert!(
+        repeated.contains("no installation manifest"),
+        "a repeated removal must say nothing is recorded rather than guess:\n{repeated}"
+    );
+    machine.setup(&releases.origin.url(""));
+    assert!(
+        machine.templates().contains("isoplane-web"),
+        "setup after removal must register the template again"
+    );
+    succeed(
+        machine.new_shell("isoplane doctor"),
+        "doctor after reinstalling the SDK",
+    );
+}
+
+#[test]
 fn updating_the_global_tool_and_rerunning_setup_moves_to_the_next_preview_as_one_release() {
     let releases = releases();
     let machine = Machine::new(releases);
-    machine.install(&releases.current, "install");
-    machine.install_template(&releases.current);
-    machine.install(&releases.next, "update");
-    machine.install_template(&releases.next);
+    machine.install(releases, &releases.current, "install");
+    let first = succeed(
+        machine.shell("ls \"$HOME/.isoplane/toolchains\""),
+        "listing installed toolchains",
+    );
+    machine.install(releases, &releases.next, "update");
+    let toolchains = succeed(
+        machine.shell("ls \"$HOME/.isoplane/toolchains\""),
+        "listing installed toolchains after the upgrade",
+    );
+    assert!(
+        toolchains.lines().count() == 1 && toolchains != first,
+        "the upgrade must replace the toolchain rather than accumulate them:\n{toolchains}"
+    );
     let app = machine.create_project(&releases.next, "UpgradedApp");
     machine.build(&app, "WispInterpretedDebug");
+    machine.uninstall_sdk();
+    assert!(
+        !machine.templates().contains("isoplane-web"),
+        "uninstall-sdk after an upgrade must remove the upgraded template registration"
+    );
 }
 
 #[test]
@@ -473,13 +744,10 @@ fn setup_refuses_the_release_of_another_revision_and_names_the_matching_cli_inst
     let machine = Machine::new(releases);
     machine.install_cli(&releases.next, "install");
     let error = fail(
-        machine.bootstrap(
-            &releases.next,
-            &format!(
-                "isoplane setup --source {}",
-                Machine::mounted(&releases.current)
-            ),
-        ),
+        machine.bootstrap(&format!(
+            "isoplane setup --source {}",
+            Machine::mounted(&releases.current)
+        )),
         "installing a toolchain from a release the CLI was not built from",
     );
     assert!(
@@ -492,5 +760,57 @@ fn setup_refuses_the_release_of_another_revision_and_names_the_matching_cli_inst
     succeed(
         machine.shell("test ! -e \"$HOME/.isoplane/current.json\""),
         "a refused release leaving no toolchain selected",
+    );
+}
+
+#[test]
+fn an_interrupted_download_is_not_a_successful_setup_and_a_retry_completes_it() {
+    let releases = releases();
+    let machine = Machine::new(releases);
+    machine.install_cli(&releases.current, "install");
+    let error = fail(
+        machine.bootstrap(&format!(
+            "ISOPLANE_RELEASE_ORIGIN={} isoplane setup --yes",
+            releases.origin.url("cut/")
+        )),
+        "setup with the toolchain download cut short",
+    );
+    assert!(
+        error.contains("interrupted") && !error.contains("Installed Isoplane"),
+        "an interrupted download must be reported as such and never as success:\n{error}"
+    );
+    succeed(
+        machine.shell("test ! -e \"$HOME/.isoplane/current.json\" && test -f \"$HOME/.isoplane/installation.json\" && grep -q downloads \"$HOME/.isoplane/installation.json\""),
+        "an interrupted setup leaving no toolchain selected but a manifest describing what it left",
+    );
+    assert!(
+        !machine.templates().contains("isoplane-web"),
+        "no template may be registered by an incomplete setup"
+    );
+    succeed(
+        machine.shell("cp \"$HOME/.isoplane/installation.json\" manifest.json && echo '{ damaged' > \"$HOME/.isoplane/installation.json\""),
+        "damaging the manifest",
+    );
+    let refusal = fail(
+        machine.new_shell("isoplane uninstall-sdk"),
+        "uninstall-sdk with a damaged manifest",
+    );
+    assert!(
+        refusal.contains("installation.json") && refusal.contains("Nothing was removed"),
+        "a damaged manifest must produce a diagnostic, not destructive cleanup:\n{refusal}"
+    );
+    succeed(
+        machine.shell("test -d \"$HOME/.isoplane/packages\" && mv manifest.json \"$HOME/.isoplane/installation.json\""),
+        "the partial installation surviving the refusal, then restoring the manifest",
+    );
+    machine.setup(&releases.origin.url(""));
+    succeed(
+        machine.new_shell("isoplane doctor && test ! -e \"$HOME/.isoplane/downloads\""),
+        "the retried setup completing and discarding the download",
+    );
+    let removal = machine.uninstall_sdk();
+    assert!(
+        removal.contains("Removed the Isoplane SDK"),
+        "removal after the recovered setup must complete:\n{removal}"
     );
 }
