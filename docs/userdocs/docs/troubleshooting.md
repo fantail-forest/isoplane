@@ -6,6 +6,18 @@ Start with `isoplane doctor` in the terminal where the application fails. Keep
 its output, the selected configuration, and the first build or runtime error
 when reporting a problem.
 
+## `dotnet tool install` cannot find `DotnetToolSettings.xml`
+
+The package is intact; the SDK cannot map this machine's runtime identifier
+to the package's `any` tools folder. This happens when a Microsoft-built SDK
+runs on a distribution-built runtime in the same root, such as a 10.0.4xx SDK
+placed into Ubuntu's `/usr/lib/dotnet`, where the runtime reports
+`ubuntu.24.04-x64`, a runtime identifier Microsoft's SDK does not know. Keep
+one vendor per root: install the SDK from your distribution's packages, or
+install Microsoft's SDK together with its runtime in its own directory
+(for example `~/.dotnet` with `DOTNET_ROOT` set), and remove the other from
+that root. `dotnet --info` shows which SDK and runtime identifier are active.
+
 ## Command or SDK not found
 
 New terminals load `~/.isoplane/env`, which puts the installed SDK and

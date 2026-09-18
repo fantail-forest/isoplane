@@ -20,9 +20,11 @@ sudo apt-get install -y dotnet-sdk-10.0
 ```
 
 Setup reuses whatever `dotnet` you have and never changes your `DOTNET_ROOT`.
-On another Linux distribution, install the .NET 10 SDK its packages provide;
-setup checks the native libraries it needs before downloading anything and
-names what is missing.
+On another Linux distribution, install the .NET 10 SDK its packages provide,
+or Microsoft's SDK with its own runtime in its own directory; do not mix the
+two in one root (see [troubleshooting](troubleshooting.md)). Setup checks the
+native libraries it needs before downloading anything and names what is
+missing.
 
 ## Install the CLI and the SDK
 
