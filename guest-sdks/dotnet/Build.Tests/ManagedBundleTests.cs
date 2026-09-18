@@ -61,8 +61,14 @@ public sealed class ManagedBundleTests : MsbuildTests
         using var document = JsonDocument.Parse(File.ReadAllBytes(output));
         var items = document.RootElement.GetProperty("Items");
         static string[] Names(JsonElement items, string name) => items.GetProperty(name).EnumerateArray().Select(item => item.GetProperty("Filename").GetString()!).ToArray();
-        Assert.True(Names(items, "WispBundleAssembly").Order().SequenceEqual(new[] { "Application", "Dependency" }), "The application and NuGet or project-reference implementation must both be bundled.");
+        static bool AspNetImplementation(JsonElement item) => item.GetProperty("FullPath").GetString()!.Contains("/microsoft.aspnetcore.app.runtime.linux-x64/", StringComparison.OrdinalIgnoreCase);
+        var bundled = items.GetProperty("WispBundleAssembly").EnumerateArray().ToLookup(AspNetImplementation, item => item.GetProperty("FullPath").GetString()!);
+        Assert.True(bundled[false].Select(Path.GetFileNameWithoutExtension).Order().SequenceEqual(new[] { "Application", "Dependency" }), "The application and NuGet or project-reference implementation must both be bundled, and nothing else beside the selected ASP.NET implementation.");
+        Assert.True(bundled[true].Any(), "The application's selected ASP.NET implementation must ship in the bundle instead of being inherited from the platform.");
+        var aspNetPack = Directory.GetFiles(Path.GetDirectoryName(bundled[true].First())!, "*.dll").Select(Path.GetFileName);
+        Assert.True(bundled[true].Select(Path.GetFileName).Order().SequenceEqual(aspNetPack.Order()), "The selected ASP.NET implementation must ship in full, at the version the application restored.");
         Assert.True(!Names(items, "WispBundlePlatformReference").Contains("Dependency"), "A project reference's reference assembly must not be mistaken for a platform dependency.");
+        Assert.True(!items.GetProperty("WispBundlePlatformReference").EnumerateArray().Any(AspNetImplementation), "The selected ASP.NET implementation must not be reported as a platform-supplied reference.");
         var expectedSymbols = !symbols ? Array.Empty<string>() : packageReference ? new[] { "Application" } : new[] { "Application", "Dependency" };
         Assert.True(Names(items, "WispBundleSymbol").Order().SequenceEqual(expectedSymbols), "Portable symbols must be collected when supplied for application assemblies.");
         Assert.True(Names(items, "WispBundleAsset").Order().SequenceEqual(new[] { "customer-native", "data" }), "Application data and customer native inputs must be reported; platform runtime artifacts, NuGet settings and explicitly unpublished files must stay local.");
