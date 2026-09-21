@@ -49,6 +49,17 @@ class CompilerPackageTests(unittest.TestCase):
             self.assertEqual(archive.read(compiler.BACKEND), self.backend.read_bytes(), 'the composed package must use the corrected backend')
             self.assertIn(receipt['version'].encode(), archive.read('compiler.nuspec'), 'NuGet must resolve the distinct version')
 
+    def test_windows_package_uses_the_windows_compiler_and_backend(self):
+        self.manifest.update(package='runtime.win-x64.Microsoft.DotNet.ILCompiler.LLVM', runtime_identifier='win-x64')
+        backend = compiler.backend_name('win-x64')
+        (self.managed / 'ilc').rename(self.managed / 'ilc.exe')
+        (self.managed / Path(compiler.BACKEND).name).rename(self.managed / Path(backend).name)
+        output, receipt = self.compose()
+        with zipfile.ZipFile(output / receipt['package']) as archive:
+            self.assertEqual(archive.read('tools/ilc.exe'), b'source-built compiler', 'Windows must use the patched executable')
+            self.assertEqual(archive.read(backend), self.backend.read_bytes(), 'Windows must use the patched DLL')
+        self.assertIn(b'win-x64', (output / 'Isoplane.GuestCompiler.props').read_bytes(), 'the SDK must select the Windows compiler package')
+
     def test_changed_managed_compiler_bytes_get_a_distinct_version(self):
         _, first = self.compose()
         (self.managed / 'ilc').write_bytes(b'different compiled output')

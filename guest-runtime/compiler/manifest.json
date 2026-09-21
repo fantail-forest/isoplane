@@ -4,5 +4,11 @@
   "sha256": "d5ecbf4efc3cd6756e9cbef17ab83764f9770c0a5f35de4fed787e5507f8ecc8",
   "source": "https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-experimental/nuget/v3/index.json",
   "llvm_version": "18.1.3",
-  "runtime_identifier": "linux-x64"
+  "runtime_identifier": "linux-x64",
+  "platforms": {
+    "win-x64": {
+      "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler.LLVM",
+      "sha256": "9b0f21f9a711d071b13a55ea2d94a8ac126ab0bdc43d4d994e8f0462d6bffd79"
+    }
+  }
 }

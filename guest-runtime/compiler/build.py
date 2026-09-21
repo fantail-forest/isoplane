@@ -10,6 +10,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -19,6 +20,14 @@ HERE = Path(__file__).resolve().parent
 BACKEND = 'tools/libclrjit_universal_llvm32_x64.so'
 
 
+def backend_name(rid):
+    return 'tools/clrjit_universal_llvm32_x64.dll' if rid == 'win-x64' else BACKEND
+
+
+def probe_name(rid):
+    return 'backend.dll' if rid == 'win-x64' else 'backend'
+
+
 def digest(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -26,6 +35,9 @@ def digest(path):
 
 def manifest():
     result = json.loads((HERE / 'manifest.json').read_text())
+    platforms = result.pop('platforms')
+    if platform.system() == 'Windows':
+        result.update(platforms['win-x64'], runtime_identifier='win-x64')
     source = (HERE.parent / 'manifest.env').read_text()
     for key in ('RUNTIMELAB_COMMIT', 'RUNTIMELAB_TARBALL_URL', 'RUNTIMELAB_TARBALL_SHA256'):
         result[key] = re.search(r'^' + key + r'=(.+)$', source, re.MULTILINE).group(1)
@@ -71,10 +83,10 @@ def verify(output, current):
     expected = props_bytes(receipt['version'], receipt['package_sha512'], receipt['inputs_sha256'], receipt['upstream']['runtime_identifier'])
     if (output / 'Isoplane.GuestCompiler.props').read_bytes() != expected:
         raise ValueError('compiler MSBuild properties do not match its receipt')
-    if digest(output / 'backend') != receipt['backend_sha256']:
+    if digest(output / probe_name(receipt['upstream']['runtime_identifier'])) != receipt['backend_sha256']:
         raise ValueError('compiler dependency probe backend does not match its receipt')
     with zipfile.ZipFile(package) as archive:
-        if hashlib.sha256(archive.read(BACKEND)).hexdigest() != receipt['backend_sha256']:
+        if hashlib.sha256(archive.read(backend_name(receipt['upstream']['runtime_identifier']))).hexdigest() != receipt['backend_sha256']:
             raise ValueError('compiler backend does not match its receipt')
     with zipfile.ZipFile(package) as archive:
         for name, expected_hash in receipt['compiler_files'].items():
@@ -87,11 +99,13 @@ def compose(upstream, backend, managed, output):
     spec = manifest()
     if digest(upstream) != spec['sha256']:
         raise ValueError('upstream compiler package hash mismatch')
+    backend_path = backend_name(spec['runtime_identifier'])
+    executable = 'tools/ilc.exe' if spec['runtime_identifier'] == 'win-x64' else 'tools/ilc'
     backend_hash = digest(backend)
     files = {f'tools/{path.name}': path for path in sorted(managed.iterdir()) if path.is_file() and path.suffix != '.pdb'}
-    if 'tools/ilc' not in files:
+    if executable not in files:
         raise ValueError('source-built compiler executable is missing')
-    if BACKEND not in files or digest(files[BACKEND]) != backend_hash:
+    if backend_path not in files or digest(files[backend_path]) != backend_hash:
         raise ValueError('source-built compiler uses a different native backend')
     compiler_files = {name: digest(path) for name, path in files.items()}
     payload_hash = hashlib.sha256(json.dumps(compiler_files, sort_keys=True).encode()).hexdigest()
@@ -134,7 +148,7 @@ def compose(upstream, backend, managed, output):
         receipt = {'inputs_sha256': identity(), 'version': version, 'package': package.name,
                    'package_sha256': digest(package), 'package_sha512': sha512,
                    'backend_sha256': backend_hash, 'compiler_files': compiler_files, 'upstream': spec}
-        shutil.copyfile(backend, stage / 'backend')
+        shutil.copyfile(backend, stage / probe_name(spec['runtime_identifier']))
         (stage / 'compiler.json').write_text(json.dumps(receipt, indent=2) + '\n')
         (stage / 'Isoplane.GuestCompiler.props').write_bytes(props_bytes(version, sha512, identity(), spec['runtime_identifier']))
         stage.rename(output)
@@ -143,9 +157,11 @@ def compose(upstream, backend, managed, output):
 
 def build(args):
     spec = manifest()
-    if platform.system() != 'Linux' or platform.machine() != 'x86_64':
-        raise ValueError('this compiler backend build currently qualifies Linux x64 only')
-    llvm_config = args.llvm / 'bin/llvm-config'
+    if platform.system() not in ('Linux', 'Windows') or platform.machine().lower() not in ('x86_64', 'amd64'):
+        raise ValueError('the compiler backend build supports Linux x64 and Windows x64')
+    windows = platform.system() == 'Windows'
+    target_os = 'windows' if windows else 'linux'
+    llvm_config = args.llvm / ('bin/llvm-config.exe' if windows else 'bin/llvm-config')
     version = subprocess.check_output([str(llvm_config), '--version'], text=True).strip()
     if version != spec['llvm_version']:
         raise ValueError(f"LLVM {spec['llvm_version']} is required; found {version}")
@@ -153,15 +169,20 @@ def build(args):
     archive = args.work / 'runtimelab.tar.gz'
     fetch(spec['RUNTIMELAB_TARBALL_URL'], archive, spec['RUNTIMELAB_TARBALL_SHA256'])
     tree = args.work / 'source'
-    subprocess.run(['python3', str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches')], check=True)
+    subprocess.run([sys.executable, str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches')], check=True)
     environment = os.environ.copy()
     environment['LLVM_CMAKE_CONFIG'] = str(args.llvm / 'lib/cmake/llvm')
     command = ['./src/coreclr/build-runtime.sh', '-x64', '-release', '-os', 'linux', '-ninja', '-component', 'llvmjit', '-cmakeargs', '-DFEATURE_EVENTSOURCE_XPLAT=0']
+    if windows:
+        command = ['cmd', '/c', 'src\\coreclr\\build-runtime.cmd', '-x64', '-release', '-component', 'llvmjit']
+        environment.setdefault('NumberOfCores', str(os.cpu_count()))
     with (args.work / 'build.log').open('w') as log:
         subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
     with tempfile.TemporaryDirectory(prefix='managed-publish-', dir=args.work) as published:
         command = ['./dotnet.sh', 'publish', 'src/coreclr/tools/aot/ILCompiler/ILCompiler_publish.csproj', '-c', 'Release',
-                   '-p:TargetArchitecture=x64', '-p:TargetOS=linux', '-p:UseNativeAotForComponents=false', '-p:UseBootstrap=false', f'-p:PublishDir={published}/']
+                   '-p:TargetArchitecture=x64', f'-p:TargetOS={target_os}', '-p:UseNativeAotForComponents=false', '-p:UseBootstrap=false', f'-p:PublishDir={Path(published).as_posix()}/']
+        if windows:
+            command = ['cmd', '/c', 'dotnet.cmd', *command[1:]]
         with (args.work / 'managed-build.log').open('w') as log:
             subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
         upstream = args.work / 'upstream.nupkg'
@@ -170,7 +191,7 @@ def build(args):
         base = next(resource['@id'] for resource in index['resources'] if resource['@type'].startswith('PackageBaseAddress/'))
         name = spec['package'].lower()
         fetch(f"{base}{name}/{spec['version']}/{name}.{spec['version']}.nupkg", upstream, spec['sha256'])
-        return compose(upstream, tree / 'artifacts/bin/coreclr/linux.x64.Release/libclrjit_universal_llvm32_x64.so',
+        return compose(upstream, tree / f'artifacts/bin/coreclr/{target_os}.x64.Release' / Path(backend_name(spec['runtime_identifier'])).name,
                        Path(published), args.output)
 
 
