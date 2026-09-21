@@ -1519,14 +1519,17 @@ dependencies = [
 name = "isoplane-harness"
 version = "0.1.0"
 dependencies = [
+ "fs4",
  "isoplane-abi",
  "isoplane-engine",
  "isoplane-host",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wat",
 ]
 
 [[package]]

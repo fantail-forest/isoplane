@@ -6,6 +6,9 @@
 //! Test support only: it panics on every failure because its callers are
 //! tests. A dev-dependency only; nothing here is linked into a daemon.
 
+mod compiled_guest;
+
+use compiled_guest::engine_serving;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,8 +16,8 @@ use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{
-    Completion, CpuBudget, DispatchOutcome, EngineConfig, Instance, InstanceImage, InstanceOps,
-    IsoplaneEngine, PlatformFiles, Template,
+    Completion, CpuBudget, DispatchOutcome, Instance, InstanceImage, InstanceOps, IsoplaneEngine,
+    PlatformFiles, Template,
 };
 
 use isoplane_host::bindings::{
@@ -124,21 +127,6 @@ impl Reactor {
     pub fn response_text(&self, index: u32) -> String {
         String::from_utf8_lossy(&self.response_body(index)).into_owned()
     }
-}
-
-fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEngine, Template) {
-    let engine = IsoplaneEngine::new(EngineConfig {
-        max_instances: 2,
-        max_memory_bytes: 256 << 20,
-        guard_size_bytes: 64 << 20,
-        platform_files: files,
-        ..EngineConfig::default()
-    })
-    .expect("the returned-guest engine must initialize");
-    let template = engine
-        .load_template(module)
-        .unwrap_or_else(|error| panic!("the guest module must load: {error:#}"));
-    (engine, template)
 }
 
 /// A guest that returns to the host on an empty stack: parked or done, its

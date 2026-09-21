@@ -46,16 +46,22 @@ pub struct Fixture {
     pub template: Template,
 }
 
+type FixtureSlots = HashMap<(&'static str, GuestRuntime), &'static OnceLock<Fixture>>;
+
 /// The fixture `name` published for `runtime`, loaded once per test binary.
 /// Building or loading it fails the calling test with the runtime named.
 pub fn fixture(name: &'static str, runtime: GuestRuntime) -> &'static Fixture {
-    static FIXTURES: OnceLock<Mutex<HashMap<(&'static str, GuestRuntime), &'static Fixture>>> =
-        OnceLock::new();
-    let mut fixtures = FIXTURES
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    fixtures.entry((name, runtime)).or_insert_with(|| {
+    static FIXTURES: OnceLock<Mutex<FixtureSlots>> = OnceLock::new();
+    let fixture = {
+        let mut fixtures = FIXTURES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *fixtures
+            .entry((name, runtime))
+            .or_insert_with(|| Box::leak(Box::new(OnceLock::new())))
+    };
+    fixture.get_or_init(|| {
         let engine = IsoplaneEngine::new(EngineConfig {
             max_instances: 16,
             max_memory_bytes: 256 << 20,
@@ -68,7 +74,7 @@ pub fn fixture(name: &'static str, runtime: GuestRuntime) -> &'static Fixture {
             .unwrap_or_else(|error| {
                 panic!("the {name} fixture must load under {runtime}: {error:#}")
             });
-        Box::leak(Box::new(Fixture { engine, template }))
+        Fixture { engine, template }
     })
 }
 

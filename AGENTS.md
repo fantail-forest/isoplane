@@ -71,7 +71,8 @@ cargo build --workspace --all-targets              # Build crates, tests, exampl
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check && (cd guests && cargo fmt --all --check)   # The format gate
 
-cargo test --workspace                             # Everything
+scripts/dev scripts/test --exclude-binary isoplane-native/release_journey # Rust suite, parallel binaries
+cargo test --workspace                             # Everything, including release-installation journeys
 cargo test -p isoplane-host                            # One crate
 cargo test -p isoplane-host --test cell                # One integration test binary
 

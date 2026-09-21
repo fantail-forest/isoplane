@@ -119,6 +119,9 @@ incremental = false
 # Keep development debug information focused on workspace crates.
 [profile.dev.package."*"]
 debug = false
+# Tests compile large WASM guests at runtime; the compiler's own hot paths
+# need optimization. Workspace code retains its development profile.
+opt-level = 2
 
 [profile.release.package."*"]
 debug = false

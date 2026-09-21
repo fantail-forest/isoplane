@@ -1,5 +1,46 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+
+fn package_feed() -> &'static Path {
+    static PACKAGES: OnceLock<PathBuf> = OnceLock::new();
+    PACKAGES.get_or_init(|| {
+        let root = super::repo_root();
+        let output = Command::new("python3")
+            .arg(root.join("scripts/fixture-packages.py"))
+            .arg(&root)
+            .output()
+            .expect("python3 is required to build the installed SDK and CLI packages");
+        assert!(
+            output.status.success(),
+            "SDK and CLI packages must build: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        PathBuf::from(
+            String::from_utf8(output.stdout)
+                .expect("package feed path is UTF-8")
+                .trim(),
+        )
+    })
+}
+
+fn stage_packages(destination: &Path) -> PathBuf {
+    let packages = destination.join("packages");
+    std::fs::create_dir_all(&packages).expect("create the isolated package feed");
+    for entry in std::fs::read_dir(package_feed()).expect("read the built package feed") {
+        let entry = entry.expect("read built package");
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "nupkg")
+        {
+            std::fs::copy(entry.path(), packages.join(entry.file_name()))
+                .expect("copy the package into the isolated consumer feed");
+        }
+    }
+    packages
+}
 
 /// The release version `Directory.Build.props` declares: the version every
 /// first-party package packs as unless a build overrides it.
@@ -20,21 +61,7 @@ pub fn release_version() -> String {
 /// The returned project resolves Isoplane packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
     let root = super::repo_root();
-    let packages = destination.join("packages");
-    for project in [
-        "Isoplane.Sdk.csproj",
-        "AspNetCore/Isoplane.AspNetCore.csproj",
-        "Templates/Isoplane.Templates.csproj",
-    ] {
-        run(Command::new("dotnet")
-            .arg("pack")
-            .arg(root.join("guest-sdks/dotnet").join(project))
-            .arg("--artifacts-path")
-            .arg(destination.join("artifacts"))
-            .arg("-o")
-            .arg(&packages)
-            .arg("--disable-build-servers"));
-    }
+    let packages = stage_packages(destination);
     std::fs::copy(root.join("global.json"), destination.join("global.json"))
         .expect("pin the template consumer SDK");
     let hive = destination.join("template-hive");
@@ -105,17 +132,9 @@ fn run(command: &mut Command) {
     );
 }
 
-/// Packs and installs the managed CLI with native local support into a local tool directory.
+/// Installs the packaged managed CLI with native local support into a local tool directory.
 pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
-    let packages = destination.join("packages");
-    run(Command::new("dotnet")
-        .arg("pack")
-        .arg(super::repo_root().join("tools/Isoplane.Cli/Isoplane.Cli.csproj"))
-        .arg("--artifacts-path")
-        .arg(destination.join("cli-artifacts"))
-        .arg("-o")
-        .arg(&packages)
-        .arg("--disable-build-servers"));
+    stage_packages(destination);
     let tools = destination.join("tools");
     let mut install = Command::new("dotnet");
     if cfg!(all(

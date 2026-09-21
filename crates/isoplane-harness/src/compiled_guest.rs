@@ -1,0 +1,169 @@
+//! Share disk-backed compilation while keeping engines and guest state isolated.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use isoplane_engine::{
+    CompilationCache, EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles, Template,
+};
+
+struct CompiledGuests {
+    directory: PathBuf,
+    cache: CompilationCache,
+    initialized: Mutex<HashMap<FixtureKey, Arc<OnceLock<()>>>>,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+struct FixtureKey {
+    module: ModuleHash,
+    configuration: Vec<u8>,
+}
+
+impl CompiledGuests {
+    fn new(directory: PathBuf) -> Self {
+        // SAFETY: this private fixture-output directory is written only by this
+        // helper through CompilationCache's atomic compiler path. Native artifacts
+        // are keyed by portable content and engine compatibility, never supplied
+        // by a guest or copied from an external artifact source.
+        let cache = unsafe { CompilationCache::from_trusted_directory(directory.clone()) }
+            .expect("create the private compiled-fixture cache");
+        Self {
+            directory,
+            cache,
+            initialized: Mutex::default(),
+        }
+    }
+
+    fn load(&self, engine: &IsoplaneEngine, module: &[u8]) -> (Template, bool) {
+        let key = FixtureKey {
+            module: ModuleHash::of(module),
+            configuration: serde_json::to_vec(&engine.configuration())
+                .expect("serialize engine settings"),
+        };
+        let lock_path = self.directory.join(format!("{}.lock", key.module.hex()));
+        let ready = self
+            .initialized
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(key)
+            .or_default()
+            .clone();
+        let load = || {
+            self.cache
+                .load(engine, module)
+                .unwrap_or_else(|error| panic!("the compiled guest must load: {error:#}"))
+        };
+        let mut initial = None;
+        ready.get_or_init(|| {
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(lock_path)
+                .expect("open the guest compilation lock");
+            fs4::FileExt::lock(&lock).expect("lock guest compilation across test processes");
+            initial = Some(load());
+        });
+        initial.unwrap_or_else(load)
+    }
+}
+
+pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEngine, Template) {
+    let engine = IsoplaneEngine::new(EngineConfig {
+        max_instances: 2,
+        max_memory_bytes: 256 << 20,
+        guard_size_bytes: 64 << 20,
+        platform_files: files,
+        ..EngineConfig::default()
+    })
+    .expect("the returned-guest engine must initialize");
+    static COMPILED: OnceLock<CompiledGuests> = OnceLock::new();
+    let cache = COMPILED.get_or_init(|| {
+        CompiledGuests::new(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/compiled-test-guests"),
+        )
+    });
+    let template = cache.load(&engine, module).0;
+    (engine, template)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use isoplane_engine::{HostBindings, ImportCall, InstanceOps};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn concurrent_cache_owners_compile_a_module_once() {
+        let directory = tempfile::tempdir().expect("isolate the compiled-guest cache");
+        let module = wat::parse_str("(module (memory (export \"memory\") 1))")
+            .expect("the compilation fixture must parse");
+        let compiled = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    let cache = CompiledGuests::new(directory.path().join("cache"));
+                    let engine =
+                        IsoplaneEngine::new(EngineConfig::default()).expect("fixture engine");
+                    let (_, did_compile) = cache.load(&engine, &module);
+                    compiled.fetch_add(usize::from(did_compile), Ordering::Relaxed);
+                });
+            }
+        });
+        assert_eq!(
+            compiled.load(Ordering::Relaxed),
+            1,
+            "independent cache owners must reuse the first completed compilation"
+        );
+    }
+
+    struct NoImports;
+
+    impl HostBindings for NoImports {
+        fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
+            panic!("the memory fixture has no host imports")
+        }
+
+        fn call_sync(&mut self, _: ImportCall<'_>) -> i64 {
+            panic!("the memory fixture has no host imports")
+        }
+
+        fn slice_clock_ms(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn reusing_compiled_code_keeps_guest_memory_independent() {
+        let module = wat::parse_str(
+            r#"(module
+                (memory (export "memory") 1)
+                (data (i32.const 0) "original")
+                (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
+                (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 0)
+                (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0))"#,
+        )
+        .expect("the isolated-memory fixture must parse");
+        let (first_engine, first) = engine_serving(&module, PlatformFiles::default());
+        let mut first_instance = first_engine
+            .activate(&first, Box::new(NoImports))
+            .expect("the first compiled guest must activate");
+        first_instance.memory()[..8].copy_from_slice(b"modified");
+        let (second_engine, second) = engine_serving(&module, PlatformFiles::default());
+        let mut second_instance = second_engine
+            .activate(&second, Box::new(NoImports))
+            .expect("a cached guest must activate in another engine");
+        assert_eq!(
+            &second_instance.memory()[..8],
+            b"original",
+            "sharing compiled code must not share a previous guest's mutable memory"
+        );
+        assert_eq!(
+            &first_instance.memory()[..8],
+            b"modified",
+            "another activation must not reset a live guest's memory"
+        );
+    }
+}
