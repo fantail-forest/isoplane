@@ -12,12 +12,14 @@
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Windows'))">isoplane_native.dll</NativeLibraryName>
     <NativeProfile Condition="'$(Configuration)' == 'Debug'">debug</NativeProfile>
     <NativeProfile Condition="'$(NativeProfile)' == ''">release</NativeProfile>
+    <NativeBuildPython Condition="$([MSBuild]::IsOSPlatform('Windows'))">python</NativeBuildPython>
+    <NativeBuildPython Condition="'$(NativeBuildPython)' == ''">python3</NativeBuildPython>
     <BuildNativeSupport Condition="'$(IsoplaneNativePath)' == ''">true</BuildNativeSupport>
     <IsoplaneNativePath Condition="'$(IsoplaneNativePath)' == ''">$(MSBuildThisFileDirectory)../../target/native-support/$(NativeProfile)/$(NativeLibraryName)</IsoplaneNativePath>
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(IsoplaneNativePath)" Link="runtime/$(NativeLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="$(IsoplaneNativePath)" Pack="true" PackagePath="runtimes/linux-x64/native/$(NativeLibraryName)" Visible="false" />
+    <None Include="$(IsoplaneNativePath)" Pack="true" PackagePath="runtimes/$(NETCoreSdkPortableRuntimeIdentifier)/native/$(NativeLibraryName)" Visible="false" />
     <None Include="README.md" Pack="true" PackagePath="/" />
     <InternalsVisibleTo Include="Isoplane.Cli" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
@@ -25,7 +27,7 @@
     <InternalsVisibleTo Include="Isoplane.Testing.Tests" />
   </ItemGroup>
   <Target Name="RequireNativeLibrary" BeforeTargets="PrepareForBuild">
-    <Exec Condition="'$(BuildNativeSupport)' == 'true'" Command="python3 &quot;$(MSBuildThisFileDirectory)../../scripts/fixture-tools.py&quot; isoplane-native &quot;$(MSBuildThisFileDirectory)../..&quot; $(NativeProfile)" />
+    <Exec Condition="'$(BuildNativeSupport)' == 'true'" Command="$(NativeBuildPython) &quot;$(MSBuildThisFileDirectory)../../scripts/fixture-tools.py&quot; isoplane-native &quot;$(MSBuildThisFileDirectory)../..&quot; $(NativeProfile)" />
     <Error Condition="!Exists('$(IsoplaneNativePath)')" Text="Build isoplane-native with cargo build -p isoplane-native, or set IsoplaneNativePath to its built library." />
   </Target>
 </Project>

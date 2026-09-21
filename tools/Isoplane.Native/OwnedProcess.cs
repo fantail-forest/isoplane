@@ -35,7 +35,7 @@ internal sealed class OwnedProcess : IDisposable
 
     internal static unsafe OwnedProcess Start(ProcessStartInfo child, TimeSpan grace)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Local process ownership is currently supported on Linux.");
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Local process ownership is supported on Linux and Windows.");
         NativeRuntime.EnsureLoaded();
         var settings = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -49,9 +49,9 @@ internal sealed class OwnedProcess : IDisposable
         {
             var result = NativeRuntime.Read(NativeMethods.isoplane_process_start(data, (nuint)settings.Length));
             var handle = (nint)result["handle"]!.GetValue<ulong>();
-            var inputHandle = new SafeFileHandle((nint)result["stdin"]!.GetValue<int>(), ownsHandle: true);
-            var outputHandle = result["stdout"] is { } stdout ? new SafeFileHandle((nint)stdout.GetValue<int>(), ownsHandle: true) : null;
-            var errorHandle = result["stderr"] is { } stderr ? new SafeFileHandle((nint)stderr.GetValue<int>(), ownsHandle: true) : null;
+            var inputHandle = new SafeFileHandle((nint)result["stdin"]!.GetValue<long>(), ownsHandle: true);
+            var outputHandle = result["stdout"] is { } stdout ? new SafeFileHandle((nint)stdout.GetValue<long>(), ownsHandle: true) : null;
+            var errorHandle = result["stderr"] is { } stderr ? new SafeFileHandle((nint)stderr.GetValue<long>(), ownsHandle: true) : null;
             StreamWriter? input = null;
             StreamReader? output = null;
             StreamReader? errors = null;

@@ -27,3 +27,7 @@ build-dir = "{workspace-root}/target/build"
 # Managed guests have substantial private memories. Bound libtest concurrency
 # even on hosts reporting hundreds of CPUs; an explicit environment overrides it.
 RUST_TEST_THREADS = "4"
+
+# The CLI must load its native support before setup can install tool prerequisites.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

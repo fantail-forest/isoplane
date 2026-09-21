@@ -43,6 +43,10 @@ libc.workspace = true
 procfs.workspace = true
 rustix.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+win32job.workspace = true
+
 [build-dependencies]
 csbindgen.workspace = true
 

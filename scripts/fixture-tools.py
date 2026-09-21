@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fixture locking and content identities, shared by guest builders."""
 
-import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -9,6 +9,22 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+
+
+def lock_file(handle):
+    if os.name == 'nt':
+        import msvcrt
+        handle.seek(0)
+        while True:
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EDEADLK):
+                    raise
+    else:
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_EX)
 
 
 def source_files(root):
@@ -103,7 +119,7 @@ def main():
     if action == "lock":
         lock, script, *command_args = args
         with open(lock, "a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle)
             env = dict(os.environ, ISOPLANE_FIXTURE_LOCK=script)
             result = subprocess.run(["bash", script, *command_args], env=env)
             return result.returncode
@@ -116,7 +132,7 @@ def main():
         target.mkdir(parents=True, exist_ok=True)
         environment = dict(os.environ, CARGO_BUILD_BUILD_DIR=str(target / "build"))
         with (target / "fixture.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle)
             log = target / "build.log"
             with log.open("w") as output:
                 result = subprocess.run(
@@ -132,7 +148,7 @@ def main():
         target = root / "target" / "managed-cli"
         target.mkdir(parents=True, exist_ok=True)
         with (target / "fixture.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            lock_file(handle)
             log = target / "build.log"
             with log.open("w") as output:
                 result = subprocess.run(
