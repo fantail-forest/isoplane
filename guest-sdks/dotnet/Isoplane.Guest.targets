@@ -5,6 +5,11 @@
   file completes the pipeline it selected.
 -->
 <Project>
+  <Target Name="IsoplaneSelectRuntimePack" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <FrameworkReference Update="Microsoft.NETCore.App" RuntimeFrameworkVersion="$(IsoplaneGuestRuntimePackVersion)" />
+    </ItemGroup>
+  </Target>
   <Import Project="Build/Isoplane.NativeAot.PackageResolution.targets" Condition="'$(IsoplaneGuestRuntime)' == 'NativeAOT'" />
   <!-- The Mono pipeline is the source-built Wasi SDK pack the feed names,
        between the workload's Mono targets, in the order the workload itself

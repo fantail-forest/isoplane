@@ -22,11 +22,6 @@
     </Isoplane.Conformance.NativeExports>
     <ItemGroup><FileWrites Include="$(WasmPInvokeSymbolInventoryFile)" /></ItemGroup>
   </Target>
-  <Target Name="IsoplaneMonoSelectRuntimePack" BeforeTargets="ProcessFrameworkReferences">
-    <ItemGroup>
-      <FrameworkReference Update="Microsoft.NETCore.App" RuntimeFrameworkVersion="$(IsoplaneGuestRuntimePackVersion)" />
-    </ItemGroup>
-  </Target>
   <Import Project="Isoplane.Validation.targets" />
   <ItemGroup>
     <LinkerArg Include="-nostartfiles" />
