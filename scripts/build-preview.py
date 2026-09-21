@@ -355,9 +355,9 @@ def build(root, cache, releases, logs):
          '--notices', notices, '--packages', packages, '--package-version', version,
          '--output', release], source, logs / 'assemble.log', environment)
     verify_packages(release / 'packages', version, revision, native_library)
-    runtime_inputs = load(source / 'guest-runtime/feed-identity.py').verify_feed(release / 'toolchain/feed', source / 'guest-runtime')
-    compiler_identity = load(source / 'guest-runtime/compiler/build.py').verify(release / 'toolchain/compiler', True)
-    wasi_sdk_version = (release / 'toolchain/wasi-sdk/VERSION').read_text()
+    runtime_inputs = load(source / 'guest-runtime/feed-identity.py').verify_feed(runtime_output / 'feed', source / 'guest-runtime')
+    compiler_identity = load(source / 'guest-runtime/compiler/build.py').verify(runtime_output / 'compiler', True)
+    wasi_sdk_version = (source / 'guest-runtime/work/wasi-sdk/VERSION').read_text()
     manifest = {'sourceRevision': revision, 'packageVersion': version, 'runtimeIdentifier': RUNTIME_IDENTIFIER,
                 'toolchain': archive_toolchain(release, epoch),
                 'packages': [{'id': name, 'version': version, 'file': f'packages/{name}.{version}.nupkg',

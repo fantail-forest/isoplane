@@ -20,11 +20,10 @@ that root. `dotnet --info` shows which SDK and runtime identifier are active.
 
 ## Command or SDK not found
 
-New terminals load `~/.isoplane/env`, which puts the installed SDK and
-`~/.dotnet/tools` first on `PATH`, through the line setup added to your shell
-startup files. In a terminal opened before setup, run `. "$HOME/.isoplane/env"`.
-`command -v dotnet` should print `~/.isoplane/dotnet/dotnet`; a system SDK
-first on `PATH` lacks the workloads the toolchain installs.
+Check that `~/.dotnet/tools` is on `PATH` so your shell can find `isoplane`.
+`dotnet --info` shows your selected SDK. Isoplane uses that SDK's workload
+installation; after switching SDK feature bands, run `isoplane setup` again.
+Projects do not need a machine-specific SDK path.
 
 ## Missing or damaged toolchain
 

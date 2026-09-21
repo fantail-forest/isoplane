@@ -10,15 +10,18 @@
        between the workload's Mono targets, in the order the workload itself
        would import them. -->
   <ImportGroup Condition="'$(IsoplaneGuestRuntime)' == 'Mono'">
-    <Import Project="Sdk.props" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" />
+    <Import Project="Sdk.props" Sdk="Isoplane.MonoTargets" Condition="'$(IsoplaneWorkloadInstalled)' == 'true'" />
+    <Import Project="Sdk.props" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" Condition="'$(IsoplaneWorkloadInstalled)' != 'true'" />
     <!-- A missing feed is reported by Isoplane.Guest.props' IsoplaneRequireGuestRuntimeFeed. -->
     <Import Project="$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.props" Condition="Exists('$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.props')" />
     <Import Project="$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.targets" Condition="Exists('$(IsoplaneGuestWasiSdkPackDirectory)Sdk/Sdk.targets')" />
     <!-- The workload's Mono AOT cross compiler prints the interpreter's icall
          table; the source-built runtime does not change that table, and the
          source build does not yet produce the cross compiler pack. -->
-    <Import Project="Sdk.props" Sdk="Microsoft.NETCore.App.Runtime.AOT.Cross.net10.wasi-wasm" />
-    <Import Project="Sdk.targets" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" />
+    <Import Project="Sdk.props" Sdk="Isoplane.Wasi.Cross" Condition="'$(IsoplaneWorkloadInstalled)' == 'true'" />
+    <Import Project="Sdk.props" Sdk="Microsoft.NETCore.App.Runtime.AOT.Cross.net10.wasi-wasm" Condition="'$(IsoplaneWorkloadInstalled)' != 'true'" />
+    <Import Project="Sdk.targets" Sdk="Isoplane.MonoTargets" Condition="'$(IsoplaneWorkloadInstalled)' == 'true'" />
+    <Import Project="Sdk.targets" Sdk="Microsoft.NET.Runtime.MonoTargets.Sdk.net10" Condition="'$(IsoplaneWorkloadInstalled)' != 'true'" />
     <Import Project="Build/Isoplane.Mono.targets" />
   </ImportGroup>
 </Project>

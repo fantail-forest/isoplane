@@ -441,7 +441,14 @@ impl Machine {
                 .args(["sleep", "infinity"]),
             "starting a fresh customer machine",
         );
-        Self { name }
+        let machine = Self { name };
+        succeed(
+            machine.shell(
+                "printf '%s\\n' 'export PATH=\"$HOME/.dotnet/tools:$PATH\"' >> \"$HOME/.profile\"",
+            ),
+            "configuring the standard global-tool PATH prerequisite",
+        );
+        machine
     }
 
     fn mounted(release: &Release) -> String {
@@ -609,10 +616,26 @@ fn uuid_like() -> String {
 fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_in_both_modes() {
     let releases = releases();
     let machine = Machine::new(releases);
-    let report = machine.install(releases, &releases.current, "install");
-    assert!(
-        report.contains(".isoplane/env"),
-        "setup must explain how new terminals find the installed tools:\n{report}"
+    let sdk_before = succeed(
+        machine.new_shell("command -v dotnet"),
+        "finding the existing SDK",
+    );
+    succeed(
+        machine.new_shell("dotnet new console --name UnrelatedApp && dotnet build UnrelatedApp"),
+        "building an unrelated project before setup",
+    );
+    succeed(
+        machine.new_shell("dotnet workload install wasi-experimental --skip-manifest-update"),
+        "installing a Microsoft workload before Isoplane",
+    );
+    machine.install(releases, &releases.current, "install");
+    succeed(
+        machine.new_shell("dotnet workload repair"),
+        "repairing Microsoft and Isoplane workloads through the standard SDK command",
+    );
+    succeed(
+        machine.new_shell("dotnet build UnrelatedApp"),
+        "building the unrelated project with Isoplane installed",
     );
     let help = succeed(machine.new_shell("isoplane --help"), "isoplane --help");
     assert!(
@@ -625,8 +648,8 @@ fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_
     );
     assert_eq!(
         sdk.trim(),
-        "/home/dev/.isoplane/dotnet/dotnet",
-        "a new shell must run the SDK setup installed, without hand-written environment"
+        sdk_before.trim(),
+        "setup must preserve SDK selection in a new shell"
     );
     assert!(
         machine.templates().contains("isoplane-web"),
@@ -636,6 +659,19 @@ fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_
     for configuration in ["IsoplaneInterpretedDebug", "IsoplaneNativeAotRelease"] {
         machine.build(&app, configuration);
     }
+    machine.uninstall_sdk();
+    let workloads = succeed(
+        machine.new_shell("dotnet workload list"),
+        "listing workloads after Isoplane removal",
+    );
+    assert!(
+        workloads.contains("wasi-experimental"),
+        "removing Isoplane must retain the Microsoft workload"
+    );
+    succeed(
+        machine.new_shell("dotnet build UnrelatedApp"),
+        "building the unrelated project after removal",
+    );
 }
 
 #[test]
@@ -644,6 +680,10 @@ fn repeated_setup_changes_nothing_and_uninstall_sdk_removes_exactly_what_setup_r
     let machine = Machine::new(releases);
     machine.install_cli(&releases.current, "install");
     let before = machine.home_inventory();
+    let profile_before = succeed(
+        machine.shell("cat \"$HOME/.profile\""),
+        "reading the original shell profile",
+    );
     machine.setup(&releases.origin.url(""));
     let manifest = succeed(
         machine.shell("cat \"$HOME/.isoplane/installation.json\""),
@@ -664,15 +704,34 @@ fn repeated_setup_changes_nothing_and_uninstall_sdk_removes_exactly_what_setup_r
     );
     assert_eq!(
         succeed(
-            machine.shell("grep -c 'isoplane setup' \"$HOME/.profile\""),
-            "counting profile lines"
-        )
-        .trim(),
-        "1",
-        "a repeated setup must not duplicate the shell startup line"
+            machine.shell("cat \"$HOME/.profile\""),
+            "reading the shell profile after repeated setup"
+        ),
+        profile_before,
+        "setup must not alter the user's shell configuration"
     );
     let app = machine.create_project(&releases.current, "RemovalApp");
     machine.build(&app, "IsoplaneInterpretedDebug");
+
+    let selected = succeed(
+        machine.shell("cat \"$HOME/.isoplane/current.json\""),
+        "locating the installed toolchain for the repair check",
+    );
+    let selected: String =
+        serde_json::from_str(&selected).expect("the selected toolchain is a JSON path");
+    succeed(
+        machine.shell(&format!("printf broken > '{selected}/bin/wasm-tools'")),
+        "damaging an owned tool to exercise setup repair",
+    );
+    fail(
+        machine.new_shell("isoplane doctor"),
+        "doctor detecting the damaged tool",
+    );
+    machine.setup(&releases.origin.url(""));
+    succeed(
+        machine.new_shell("isoplane doctor"),
+        "doctor after setup repairs its workload",
+    );
 
     let removal = machine.uninstall_sdk();
     assert!(
@@ -822,6 +881,26 @@ fn an_interrupted_download_is_not_a_successful_setup_and_a_retry_completes_it() 
         machine.new_shell("isoplane doctor && test ! -e \"$HOME/.isoplane/downloads\""),
         "the retried setup completing and discarding the download",
     );
+    let selected = succeed(
+        machine.shell("cat \"$HOME/.isoplane/current.json\""),
+        "locating the installed toolchain for the repair check",
+    );
+    let selected: String =
+        serde_json::from_str(&selected).expect("the selected toolchain is a JSON path");
+    succeed(
+        machine.shell(&format!("printf broken > '{selected}/bin/wasm-tools'")),
+        "damaging an owned tool to exercise setup repair",
+    );
+    fail(
+        machine.new_shell("isoplane doctor"),
+        "doctor detecting the damaged tool",
+    );
+    machine.setup(&releases.origin.url(""));
+    succeed(
+        machine.new_shell("isoplane doctor"),
+        "doctor after setup repairs its workload",
+    );
+
     let removal = machine.uninstall_sdk();
     assert!(
         removal.contains("Removed the Isoplane SDK"),

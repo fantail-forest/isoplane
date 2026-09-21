@@ -13,7 +13,7 @@
   </PropertyGroup>
   <Target Name="IsoplaneRequireGuestCompiler" BeforeTargets="CollectPackageReferences;PrepareForBuild" Condition="'$(IsoplaneContainerBuild)' != 'true'">
     <Error Condition="'$(IsoplaneGuestCompilerVersion)' == ''" Text="The NativeAOT compiler is missing. Run isoplane setup with a current toolchain bundle, then isoplane doctor. Repository builds use guest-runtime/compiler/build.py build." />
-    <Error Condition="'$(IsoplaneGuestCompilerVersion)' != '' AND '$(NETCoreSdkRuntimeIdentifier)' != '$(IsoplaneGuestCompilerRuntimeIdentifier)'" Text="This supplied NativeAOT compiler supports $(IsoplaneGuestCompilerRuntimeIdentifier); the current SDK runs on $(NETCoreSdkRuntimeIdentifier)." />
+    <Error Condition="'$(IsoplaneGuestCompilerVersion)' != '' AND '$(NETCoreSdkPortableRuntimeIdentifier)' != '$(IsoplaneGuestCompilerRuntimeIdentifier)'" Text="This supplied NativeAOT compiler supports $(IsoplaneGuestCompilerRuntimeIdentifier); the current SDK runs on $(NETCoreSdkPortableRuntimeIdentifier)." />
   </Target>
   <PropertyGroup>
     <IsoplaneContainerBuild Condition="'$(IsoplaneContainerBuild)' == ''">$([MSBuild]::IsOSPlatform('OSX'))</IsoplaneContainerBuild>
@@ -39,7 +39,6 @@
     <SelfContained Condition="'$(IsoplaneContainerBuild)' != 'true'">true</SelfContained>
     <IsPublishable Condition="'$(IsoplaneContainerBuild)' == 'true'">false</IsPublishable>
     <PublishAotUsingRuntimePack>false</PublishAotUsingRuntimePack>
-    <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
     <LinkerFlavor>lld</LinkerFlavor>
     <DebugType>none</DebugType>
 
@@ -71,7 +70,7 @@
     <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)">
       <ExcludeAssets Condition="'$(PublishAot)' == 'true'">build</ExcludeAssets>
     </PackageReference>
-    <PackageReference Include="runtime.$(NETCoreSdkRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(IsoplaneGuestCompilerVersion)" />
+    <PackageReference Include="runtime.$(NETCoreSdkPortableRuntimeIdentifier).Microsoft.DotNet.ILCompiler.LLVM" Version="$(IsoplaneGuestCompilerVersion)" />
     <!-- The target pack: a direct reference outranks the compiler package's
          own, so the compiler's targets resolve the feed's framework. -->
     <PackageReference Include="runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM" Version="$(IsoplaneGuestNativeAotPackVersion)" Condition="'$(IsoplaneGuestNativeAotPackVersion)' != ''" />

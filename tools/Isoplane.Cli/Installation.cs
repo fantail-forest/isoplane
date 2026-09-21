@@ -8,13 +8,18 @@ internal enum InstalledResourceKind
     /// <summary>A directory setup created, removed recursively.</summary>
     Directory,
     File,
+    /// <summary>A link recorded by a pre-workload installation; retained for removal.</summary>
     SymbolicLink,
     /// <summary>A NuGet package source in the user's NuGet configuration; the target is its name, the detail its path.</summary>
     PackageSource,
-    /// <summary>A template package registered with the .NET template engine; the target is its package id, the detail its version.</summary>
+    /// <summary>A standalone template registration from a pre-workload installation; retained for removal.</summary>
     Template,
-    /// <summary>A line setup appended to a shell startup file; the target is the file, the detail the exact line.</summary>
+    /// <summary>A shell entry from a pre-workload installation; the detail is the exact line to remove.</summary>
     ProfileLine,
+    /// <summary>A workload installation marker; the detail identifies its owning .NET SDK.</summary>
+    Workload,
+    /// <summary>A manifest version directory; the detail identifies its owning .NET SDK.</summary>
+    WorkloadManifest,
 }
 
 /// <summary>

@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -30,8 +33,8 @@ internal sealed record SetupMachine(
     Func<string, CancellationToken, Task<int>> RunPrivileged,
     Func<string, ISdkRegistrations> Registrations,
     Func<string, CancellationToken, Task> ProveReady,
-    string UserHome,
-    string? BundledRuntime)
+    string? BundledRuntime,
+    Func<bool, IWorkloadInstallation> Workloads)
 {
     internal static SetupMachine Production() => new(
         Prerequisites.CanLoad,
@@ -41,10 +44,10 @@ internal sealed record SetupMachine(
         (command, cancellation) => Processes.RunAsync("/bin/sh", ["-c", command], Environment.CurrentDirectory, cancellation),
         dotnet => new DotnetRegistrations(dotnet, Toolchain.Home),
         Readiness.ProveAsync,
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        Path.Combine(AppContext.BaseDirectory, "runtime"));
+        Path.Combine(AppContext.BaseDirectory, "runtime"),
+        yes => new WorkloadInstallation(DotnetRegistrations.BootstrapDotnet(), ConfirmOnTerminal, yes));
 
-    private static Task<bool> ConfirmOnTerminal(string question)
+    internal static Task<bool> ConfirmOnTerminal(string question)
     {
         if (Console.IsInputRedirected)
             return Task.FromResult(false);
@@ -61,7 +64,6 @@ internal sealed record SetupMachine(
 internal static class Setup
 {
     internal const string PackageSourceName = "isoplane";
-    internal const string TemplatePackageId = "Isoplane.Templates";
 
     internal static async Task<int> RunAsync(SetupOptions options, ReleaseIdentity cli, string home, SetupMachine machine, HttpClient client, CancellationToken cancellation)
     {
@@ -84,57 +86,100 @@ internal static class Setup
         var installation = Installation.Begin(home, cli);
 
         var packages = Path.Combine(home, "packages");
-        installation.Record(new(InstalledResourceKind.Directory, packages, Owned: true));
+        RecordDirectory(installation, packages);
         foreach (var package in manifest.Packages)
         {
             var destination = Path.Combine(packages, Path.GetFileName(package.File));
-            installation.Record(new(InstalledResourceKind.File, destination, Owned: true, Detail: package.Sha256));
+            RecordFile(installation, destination, package.Sha256);
             if (await source.FetchAsync(package.File, destination, package.Sha256, null, cancellation))
                 Console.Error.WriteLine($"Installed package {package.Id} {package.Version}.");
         }
 
         var identity = manifest.Toolchain.ManifestSha256;
-        installation.Record(new(InstalledResourceKind.Directory, Toolchain.Installations(home), Owned: true));
-        var toolchain = await Toolchain.VerifiedInstallationAsync(home, identity, cancellation, machine.BundledRuntime);
+        RecordDirectory(installation, Toolchain.Installations(home));
+        var toolchain = await Toolchain.VerifiedInstallationAsync(home, identity, cancellation);
         if (toolchain is null)
         {
             var downloads = Path.Combine(home, "downloads");
-            installation.Record(new(InstalledResourceKind.Directory, downloads, Owned: true));
-            var archive = Path.Combine(downloads, cli.ReleaseName, Path.GetFileName(manifest.Toolchain.Archive));
+            RecordDirectory(installation, downloads);
+            var download = Path.Combine(downloads, Guid.NewGuid().ToString("N"));
+            RecordDirectory(installation, download);
+            var archive = Path.Combine(download, Path.GetFileName(manifest.Toolchain.Archive));
             if (await source.FetchAsync(manifest.Toolchain.Archive, archive, manifest.Toolchain.ArchiveSha256, new DownloadProgress(manifest.Toolchain.Archive), cancellation))
                 Console.Error.WriteLine($"Downloaded {manifest.Toolchain.Archive}.");
             Console.Error.WriteLine("Installing the toolchain...");
-            installation.Record(new(InstalledResourceKind.Directory, Path.Combine(Toolchain.Installations(home), identity), Owned: true, Detail: manifest.PackageVersion));
-            toolchain = await Toolchain.InstallArchiveAsync(archive, identity, home, cancellation, machine.BundledRuntime);
-            Directory.Delete(downloads, recursive: true);
-            installation.Forget(new(InstalledResourceKind.Directory, downloads, Owned: true));
+            var destination = Path.Combine(Toolchain.Installations(home), identity);
+            if (Directory.Exists(destination) && installation.Find(InstalledResourceKind.Directory, destination) is not { Owned: true })
+                throw new InvalidOperationException($"Setup will not replace the unowned directory {destination}. Move it aside and retry.");
+            RecordDirectory(installation, destination);
+            toolchain = await Toolchain.InstallArchiveAsync(archive, identity, home, cancellation);
+            foreach (var partial in installation.Resources.Where(resource => resource is { Kind: InstalledResourceKind.Directory, Owned: true }
+                && Path.GetDirectoryName(resource.Target) == downloads).ToArray())
+            {
+                if (Directory.Exists(partial.Target))
+                    Directory.Delete(partial.Target, recursive: true);
+                installation.Forget(partial);
+            }
+            if (installation.Find(InstalledResourceKind.Directory, downloads) is { Owned: true } recordedDownload && !Directory.EnumerateFileSystemEntries(downloads).Any())
+            {
+                Directory.Delete(downloads);
+                installation.Forget(recordedDownload);
+            }
         }
         else
         {
-            installation.Record(new(InstalledResourceKind.Directory, toolchain, Owned: true, Detail: manifest.PackageVersion));
+            RecordDirectory(installation, toolchain);
             Console.Error.WriteLine("The toolchain is already installed and verified.");
         }
-        var (link, properties, selection) = Toolchain.SelectionPaths(home);
-        installation.Record(new(InstalledResourceKind.SymbolicLink, link, Owned: true));
-        installation.Record(new(InstalledResourceKind.File, properties, Owned: true));
-        installation.Record(new(InstalledResourceKind.File, selection, Owned: true));
+        var bundle = toolchain;
+        var bundled = Toolchain.ReadManifest(await File.ReadAllBytesAsync(Path.Combine(bundle, Toolchain.ManifestName), cancellation));
+        foreach (var package in bundled.Files.Where(file => file.Path.StartsWith("packages/", StringComparison.Ordinal)))
+        {
+            var destination = Path.Combine(packages, Path.GetFileName(package.Path));
+            RecordFile(installation, destination, package.Sha256);
+            if (!MatchesFile(destination, package.Sha256))
+                File.Copy(Toolchain.Resolve(bundle, package.Path), destination, overwrite: true);
+        }
+        toolchain = await machine.Workloads(options.AssumeYes).InstallAsync(bundle, manifest.PackageVersion, installation, cancellation);
+        var selection = Path.Combine(home, "current.json");
+        var selectionDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(toolchain))));
+        RecordFile(installation, selection, selectionDigest);
         await Toolchain.SelectAsync(home, toolchain, cancellation);
-        RemoveSupersededToolchains(installation, home, toolchain);
+        RemoveSupersededToolchains(installation, home, bundle);
 
-        var registrations = machine.Registrations(Path.Combine(toolchain, "dotnet", "dotnet"));
+        var registrations = machine.Registrations(DotnetRegistrations.BootstrapDotnet());
         await RegisterPackageSourceAsync(installation, registrations, packages, cancellation);
-        var template = manifest.Packages.SingleOrDefault(package => package.Id == TemplatePackageId)
-            ?? throw new InvalidOperationException($"The release carries no {TemplatePackageId} package; the release is incomplete.");
-        await RegisterTemplateAsync(installation, registrations, Path.Combine(packages, Path.GetFileName(template.File)), template.Version, cancellation);
-        ConfigureShell(installation, home, machine.UserHome);
 
         Console.Error.WriteLine("Checking that the installed tools run...");
+        await Toolchain.DiagnoseAsync(home, cancellation, machine.BundledRuntime);
         await machine.ProveReady(toolchain, cancellation);
 
-        Console.WriteLine($"Installed Isoplane {manifest.PackageVersion} under {home}.");
-        Console.WriteLine($"New terminals find dotnet and isoplane through {ShellEnvironment.EnvironmentFile(home)}; in this one, run: . \"{ShellEnvironment.EnvironmentFile(home)}\"");
+        Console.WriteLine($"Installed Isoplane {manifest.PackageVersion}. Your .NET SDK is ready to build Isoplane applications.");
         Console.WriteLine("Create an application with: dotnet new isoplane-web --name MyApp");
         return 0;
+    }
+
+    private static void RecordDirectory(Installation installation, string directory)
+    {
+        var owned = installation.Find(InstalledResourceKind.Directory, directory)?.Owned ?? !Directory.Exists(directory);
+        installation.Record(new(InstalledResourceKind.Directory, directory, owned));
+    }
+
+    private static void RecordFile(Installation installation, string path, string digest)
+    {
+        var recorded = installation.Find(InstalledResourceKind.File, path);
+        var owned = recorded?.Owned ?? !File.Exists(path);
+        if (!owned && !MatchesFile(path, digest))
+            throw new InvalidOperationException($"Setup will not replace the unowned file {path}. Move it aside and retry.");
+        installation.Record(new(InstalledResourceKind.File, path, owned, digest));
+    }
+
+    private static bool MatchesFile(string path, string digest)
+    {
+        if (!File.Exists(path))
+            return false;
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexStringLower(SHA256.HashData(stream)) == digest;
     }
 
     private static async Task EnsurePrerequisitesAsync(SetupOptions options, SetupMachine machine, CancellationToken cancellation)
@@ -190,33 +235,6 @@ internal static class Setup
         Console.Error.WriteLine($"Registered the NuGet package source '{PackageSourceName}' at {packages}.");
     }
 
-    private static async Task RegisterTemplateAsync(Installation installation, ISdkRegistrations registrations, string package, string version, CancellationToken cancellation)
-    {
-        var registered = await registrations.TemplateVersionAsync(TemplatePackageId, cancellation);
-        if (registered == version && installation.Find(InstalledResourceKind.Template, TemplatePackageId) is not null)
-            return;
-        installation.Record(new(InstalledResourceKind.Template, TemplatePackageId, Owned: true, Detail: version));
-        if (registered is not null)
-            await registrations.UninstallTemplateAsync(TemplatePackageId, cancellation);
-        await registrations.InstallTemplateAsync(package, cancellation);
-        Console.Error.WriteLine($"Registered the project templates from {TemplatePackageId} {version}.");
-    }
-
-    private static void ConfigureShell(Installation installation, string home, string userHome)
-    {
-        var environment = ShellEnvironment.EnvironmentFile(home);
-        installation.Record(new(InstalledResourceKind.File, environment, Owned: true));
-        File.WriteAllText(environment, ShellEnvironment.Script(home, userHome));
-        var line = ShellEnvironment.SourceLine(home, userHome);
-        foreach (var file in ShellEnvironment.StartupFiles(userHome))
-        {
-            var recorded = installation.Find(InstalledResourceKind.ProfileLine, file);
-            var owned = recorded?.Owned ?? true;
-            installation.Record(new(InstalledResourceKind.ProfileLine, file, Owned: owned, Detail: line));
-            ShellEnvironment.AddLine(file, line);
-        }
-    }
-
     private sealed class DownloadProgress(string name) : IProgress<(long Copied, long? Total)>
     {
         private int lastPercent = -1;
@@ -252,7 +270,6 @@ internal static class Readiness
 
     internal static readonly (string Name, string Path)[] Probes =
     [
-        (".NET SDK", "dotnet/dotnet"),
         ("WebAssembly compiler", "wasi-sdk/bin/clang"),
         ("WebAssembly tools", "bin/wasm-tools"),
     ];

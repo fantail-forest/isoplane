@@ -3,16 +3,14 @@
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND '$(ISOPLANE_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(ISOPLANE_GUEST_RUNTIME_FEED)'))</IsoplaneGuestRuntimeFeed>
     <IsoplaneCliAssembly Condition="'$(IsoplaneCliAssembly)' == '' AND '$(ISOPLANE_CLI_ASSEMBLY)' != ''">$(ISOPLANE_CLI_ASSEMBLY)</IsoplaneCliAssembly>
     <IsoplaneCli Condition="'$(IsoplaneCli)' == '' AND '$(ISOPLANE_CLI)' != ''">$(ISOPLANE_CLI)</IsoplaneCli>
-    <_IsoplaneToolchainHome Condition="'$(ISOPLANE_HOME)' != ''">$(ISOPLANE_HOME)</_IsoplaneToolchainHome>
-    <_IsoplaneToolchainHome Condition="'$(_IsoplaneToolchainHome)' == ''">$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.isoplane</_IsoplaneToolchainHome>
+    <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
+    <_IsoplaneCheckoutFeed>$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</_IsoplaneCheckoutFeed>
+    <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND Exists('$(_IsoplaneCheckoutFeed)Isoplane.GuestRuntime.props')">$(_IsoplaneCheckoutFeed)</IsoplaneGuestRuntimeFeed>
   </PropertyGroup>
-  <Import Project="$(_IsoplaneToolchainHome)/toolchain.props" Condition="Exists('$(_IsoplaneToolchainHome)/toolchain.props')" />
+  <Import Project="Sdk.props" Sdk="Isoplane.Toolchain" Condition="'$(IsoplaneGuestRuntimeFeed)' == ''" />
   <PropertyGroup>
     <IsoplaneGuestRuntime Condition="'$(IsoplaneGuestRuntime)' == ''">NativeAOT</IsoplaneGuestRuntime>
     <IsoplaneMemoryMaxBytes Condition="'$(IsoplaneMemoryMaxBytes)' == ''">134217728</IsoplaneMemoryMaxBytes>
-    <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
-    <!-- Checkout builds use the local runtime feed when setup has not supplied one. -->
-    <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == ''">$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</IsoplaneGuestRuntimeFeed>
     <_IsoplaneGuestRuntimeFeedDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneGuestRuntimeFeed)'))</_IsoplaneGuestRuntimeFeedDirectory>
   </PropertyGroup>
   <Import Project="$(_IsoplaneGuestRuntimeFeedDirectory)Isoplane.GuestRuntime.props" Condition="Exists('$(_IsoplaneGuestRuntimeFeedDirectory)Isoplane.GuestRuntime.props')" />

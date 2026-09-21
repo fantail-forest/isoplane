@@ -2,6 +2,7 @@
 """Assemble an integrity-checked local preview toolchain from built artifacts."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -128,6 +129,23 @@ def main():
                 entries.append(dict(path=path.relative_to(stage).as_posix(), sha256=digest, executable=bool(path.stat().st_mode & 0o100)))
         manifest = dict(runtimeIdentifier='linux-x64', dotnetSdkVersion=sdk, wasiWorkloadVersion=runtime_version, files=entries)
         (stage / 'toolchain.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        if args.packages:
+            specification = importlib.util.spec_from_file_location('package_workload', root / 'scripts/package-workload.py')
+            workload = importlib.util.module_from_spec(specification)
+            specification.loader.exec_module(workload)
+            workload_output = release / 'workload'
+            workload.package(stage, args.packages / f'Isoplane.Templates.{args.package_version}.nupkg',
+                             args.package_version, workload_output)
+            shutil.rmtree(stage)
+            workload_output.rename(stage)
+            files = []
+            for path in sorted(stage.rglob('*')):
+                if path.is_file():
+                    with path.open('rb') as stream:
+                        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+                    files.append(dict(path=path.relative_to(stage).as_posix(), sha256=digest, executable=False))
+            manifest.update(kind='workload', files=files)
+            (stage / 'toolchain.json').write_text(json.dumps(manifest, indent=2) + '\n')
         if args.packages:
             shutil.copytree(args.packages, release / 'packages')
             readme = (root / 'scripts/developer-preview-readme.md').read_text()

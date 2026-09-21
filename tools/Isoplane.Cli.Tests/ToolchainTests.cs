@@ -7,6 +7,16 @@ namespace Isoplane.Cli.Tests;
 public sealed class ToolchainTests
 {
     [Fact]
+    public void Unknown_bundle_kinds_are_rejected()
+    {
+        using var fixture = new ToolchainBundle();
+        var manifest = JsonSerializer.Deserialize<ToolchainManifest>(File.ReadAllText(Path.Combine(fixture.Source, "toolchain.json")))!;
+        var error = Assert.Throws<InvalidOperationException>(() => Toolchain.ReadManifest(JsonSerializer.SerializeToUtf8Bytes(manifest with { Kind = "unknown" })));
+        Assert.True(error.Message.Contains("Unknown toolchain bundle kind", StringComparison.Ordinal),
+            "setup must reject a bundle layout it cannot interpret");
+    }
+
+    [Fact]
     public async Task SetupRefusesAnUntrackedCompilerPackage()
     {
         using var fixture = new ToolchainBundle();
@@ -44,7 +54,7 @@ public sealed class ToolchainTests
         Assert.Equal("payload", await File.ReadAllTextAsync(Path.Combine(first, "bin", "tool")));
         Assert.True(await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None) == first,
             "installed files must remain usable after deleting their source");
-        Assert.DoesNotContain(fixture.Source, await File.ReadAllTextAsync(Path.Combine(fixture.Home, "toolchain.props")));
+        Assert.DoesNotContain(fixture.Source, await File.ReadAllTextAsync(Path.Combine(fixture.Home, "current.json")));
     }
 
     [Fact]
@@ -55,8 +65,7 @@ public sealed class ToolchainTests
         var second = await fixture.InstallAsync();
         Assert.True(first == second, "identical content must reuse the installed toolchain identity");
         Assert.True(await Toolchain.VerifiedInstallationAsync(fixture.Home, fixture.Identity, CancellationToken.None) == first, "a verified installation is found by its identity");
-        Assert.True(new DirectoryInfo(Path.Combine(fixture.Home, "dotnet")).ResolveLinkTarget(true)?.FullName == Path.Combine(first, "dotnet"),
-            "the stable SDK path must resolve to the selected toolchain");
+        Assert.False(Directory.Exists(Path.Combine(fixture.Home, "dotnet")), "setup must not install a replacement dotnet");
     }
 
     [Fact]
@@ -131,14 +140,16 @@ public sealed class ToolchainTests
     }
 
     [Fact]
-    public async Task Child_builds_use_the_selected_sdk_and_runtime_feed()
+    public async Task Child_builds_preserve_sdk_selection_and_workload_discovery()
     {
         using var fixture = new ToolchainBundle();
         var installed = await fixture.InstallAsync();
         var start = new System.Diagnostics.ProcessStartInfo("dotnet");
+        start.Environment.Remove("ISOPLANE_GUEST_RUNTIME_FEED");
         Toolchain.Apply(start, fixture.Home);
-        Assert.True(start.FileName == Path.Combine(installed, "dotnet", "dotnet"), "publication must use the selected SDK");
-        Assert.True(start.Environment["ISOPLANE_GUEST_RUNTIME_FEED"] == Path.Combine(installed, "feed"), "publication must use the selected runtime packs");
+        Assert.True(start.FileName == "dotnet", "publication must preserve the caller's SDK selection");
+        Assert.False(start.Environment.ContainsKey("ISOPLANE_GUEST_RUNTIME_FEED"), "CLI builds must discover the workload like ordinary dotnet builds");
+        Assert.True(start.Environment["PATH"]!.StartsWith(Path.Combine(installed, "bin"), StringComparison.Ordinal), "CLI tools must find the installed wasm-tools executable");
     }
 
     [Fact]
@@ -152,14 +163,5 @@ public sealed class ToolchainTests
         AssertNothingInstalled(fixture, "mixed release components must not replace a working installation");
     }
 
-    [Fact]
-    public async Task Doctor_detects_a_broken_msbuild_selection_without_repairing_it()
-    {
-        using var fixture = new ToolchainBundle();
-        await fixture.InstallAsync();
-        var props = Path.Combine(fixture.Home, "toolchain.props");
-        await File.WriteAllTextAsync(props, "<Project />");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None));
-        Assert.True(await File.ReadAllTextAsync(props) == "<Project />", "doctor must not rewrite inconsistent selections");
-    }
+
 }

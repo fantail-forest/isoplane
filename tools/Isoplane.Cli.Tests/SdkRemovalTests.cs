@@ -13,7 +13,7 @@ public sealed class SdkRemovalTests
     }
 
     private static Task<int> RemoveAsync(ToolchainBundle fixture, FakeRegistrations registrations) =>
-        SdkRemoval.RunAsync(fixture.Home, _ => registrations, CancellationToken.None);
+        SdkRemoval.RunAsync(fixture.Home, _ => registrations, CancellationToken.None, new FakeWorkloadInstallation(registrations));
 
     [Fact]
     public async Task Removal_takes_away_everything_setup_recorded_and_nothing_else()
@@ -32,7 +32,7 @@ public sealed class SdkRemovalTests
         Assert.False(File.Exists(Path.Combine(fixture.Home, "current.json")), "the toolchain selection is removed");
         Assert.False(File.Exists(Path.Combine(fixture.Home, "toolchain.props")), "the MSBuild selection is removed");
         Assert.Null(new DirectoryInfo(Path.Combine(fixture.Home, "dotnet")).LinkTarget);
-        Assert.False(File.Exists(ShellEnvironment.EnvironmentFile(fixture.Home)), "the environment file is removed");
+        Assert.False(File.Exists(Path.Combine(fixture.Home, "env")), "the environment file is removed");
         Assert.Empty(registrations.Sources);
         Assert.Empty(registrations.Templates);
         Assert.Equal("# user profile\nexport MINE=1\n", await File.ReadAllTextAsync(Path.Combine(fixture.UserHome, ".profile")));
@@ -60,6 +60,21 @@ public sealed class SdkRemovalTests
         Assert.Equal(0, await RemoveAsync(fixture, registrations));
         Assert.Equal(Path.Combine(fixture.Home, "packages"), registrations.Sources["isoplane"]);
         Assert.Empty(registrations.Templates);
+    }
+
+    [Fact]
+    public async Task Reused_package_files_survive_setup_and_removal()
+    {
+        using var fixture = new ToolchainBundle();
+        var packages = Path.Combine(fixture.Home, "packages");
+        Directory.CreateDirectory(packages);
+        var name = $"Isoplane.Sdk.{ToolchainBundle.Version}.nupkg";
+        var existing = Path.Combine(packages, name);
+        File.Copy(Path.Combine(fixture.Release, "packages", name), existing);
+        var original = File.ReadAllBytes(existing);
+        var registrations = await SetUpAsync(fixture);
+        Assert.True(await RemoveAsync(fixture, registrations) == 0, "removal must complete with reused packages present");
+        Assert.True(File.ReadAllBytes(existing).SequenceEqual(original), "setup must not claim ownership of an existing package");
     }
 
     [Fact]
@@ -92,7 +107,7 @@ public sealed class SdkRemovalTests
         Assert.Equal(1, await RemoveAsync(fixture, registrations));
         var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Installation.PathIn(fixture.Home)));
         var remaining = manifest.RootElement.GetProperty("resources").EnumerateArray().ToList();
-        var template = Assert.Single(remaining, resource => resource.GetProperty("kind").GetString() == "Template");
+        var template = Assert.Single(remaining, resource => resource.GetProperty("kind").GetString() == "Workload");
         Assert.Equal("template engine busy", template.GetProperty("removalFailure").GetString());
         Assert.Single(registrations.Templates);
 

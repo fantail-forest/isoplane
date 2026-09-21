@@ -6,7 +6,7 @@ namespace Isoplane.Cli;
 
 /// <summary>
 /// The registrations a .NET SDK keeps for its user: NuGet package sources and template packages.
-/// Setup adds the release's feed and template through it; removal takes them away again.
+/// Setup registers the feed; removal also handles standalone templates recorded by earlier installations.
 /// </summary>
 internal interface ISdkRegistrations
 {
@@ -16,7 +16,6 @@ internal interface ISdkRegistrations
     Task RemovePackageSourceAsync(string name, CancellationToken cancellation);
     /// <summary>The version of the registered template package, or null when it is not registered.</summary>
     Task<string?> TemplateVersionAsync(string packageId, CancellationToken cancellation);
-    Task InstallTemplateAsync(string package, CancellationToken cancellation);
     Task UninstallTemplateAsync(string packageId, CancellationToken cancellation);
 }
 
@@ -69,9 +68,6 @@ internal sealed partial class DotnetRegistrations(string dotnet, string workingD
         return null;
     }
 
-    public Task InstallTemplateAsync(string package, CancellationToken cancellation) =>
-        RunAsync(["new", "install", package], cancellation);
-
     public Task UninstallTemplateAsync(string packageId, CancellationToken cancellation) =>
         RunAsync(["new", "uninstall", packageId], cancellation);
 
@@ -105,8 +101,7 @@ internal sealed partial class DotnetRegistrations(string dotnet, string workingD
     private static partial Regex SourceEntry();
 
     /// <summary>
-    /// The <c>dotnet</c> that runs this CLI: the bootstrap SDK the customer installed the tool with. It exists whenever the
-    /// CLI runs as a tool; the selected toolchain's SDK is preferred for registrations when it is installed.
+    /// Finds the <c>dotnet</c> hosting this CLI, falling back to the executable search path.
     /// </summary>
     internal static string BootstrapDotnet()
     {

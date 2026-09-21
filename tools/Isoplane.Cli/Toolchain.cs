@@ -5,12 +5,11 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.Xml.Linq;
 
 namespace Isoplane.Cli;
 
 internal sealed record ToolchainFile(string Path, string Sha256, bool Executable);
-internal sealed record ToolchainManifest(string RuntimeIdentifier, string DotnetSdkVersion, string WasiWorkloadVersion, ToolchainFile[] Files);
+internal sealed record ToolchainManifest(string RuntimeIdentifier, string DotnetSdkVersion, string WasiWorkloadVersion, ToolchainFile[] Files, string Kind = "toolchain");
 
 internal static class Toolchain
 {
@@ -111,17 +110,11 @@ internal static class Toolchain
         }
     }
 
-    /// <summary>Makes <paramref name="directory"/> the selected toolchain: the SDK link, the MSBuild properties and the selection record.</summary>
+    /// <summary>Records the workload-installed toolchain used by CLI child processes.</summary>
     internal static async Task SelectAsync(string home, string directory, CancellationToken cancellation)
     {
-        SelectDotnet(home, Path.Combine(directory, "dotnet"));
-        await ReplaceAsync(Path.Combine(home, "toolchain.props"), Properties(directory), cancellation);
         await ReplaceAsync(Path.Combine(home, "current.json"), JsonSerializer.Serialize(directory), cancellation);
     }
-
-    /// <summary>The files and link selection writes, for the installation manifest.</summary>
-    internal static (string Link, string Properties, string Selection) SelectionPaths(string home) =>
-        (Path.Combine(home, "dotnet"), Path.Combine(home, "toolchain.props"), Path.Combine(home, "current.json"));
 
     /// <summary>The selected toolchain directory, or null when none is selected.</summary>
     internal static string? Selected(string home)
@@ -136,13 +129,8 @@ internal static class Toolchain
             return;
         var directory = Selected(home ?? Home)
             ?? throw new InvalidOperationException("Invalid toolchain selection; rerun isoplane setup.");
-        if (start.FileName == "dotnet")
-            start.FileName = Path.Combine(directory, "dotnet", "dotnet");
-        start.Environment["WASI_SDK_PATH"] = Path.Combine(directory, "wasi-sdk");
-        start.Environment["ISOPLANE_GUEST_RUNTIME_FEED"] = Path.Combine(directory, "feed");
-        start.Environment["ISOPLANE_CLI_ASSEMBLY"] = Path.Combine(directory, "cli", "Isoplane.Cli.dll");
         start.Environment["PATH"] = Path.Combine(directory, "bin") + Path.PathSeparator
-            + Path.Combine(directory, "dotnet") + Path.PathSeparator + (start.Environment.TryGetValue("PATH", out var searchPath) ? searchPath : "");
+            + (start.Environment.TryGetValue("PATH", out var searchPath) ? searchPath : "");
     }
 
     internal static async Task<string> DiagnoseAsync(string home, CancellationToken cancellation, string? bundledRuntime = null)
@@ -155,10 +143,6 @@ internal static class Toolchain
         var manifest = ReadManifest(await File.ReadAllBytesAsync(Path.Combine(directory, ManifestName), cancellation));
         ValidatePlatform(manifest);
         await VerifyAsync(directory, manifest, cancellation);
-        if (await File.ReadAllTextAsync(Path.Combine(home, "toolchain.props"), cancellation) != Properties(directory))
-            throw new InvalidOperationException("The installed MSBuild toolchain selection is missing or inconsistent; rerun isoplane setup.");
-        if (new DirectoryInfo(Path.Combine(home, "dotnet")).ResolveLinkTarget(true)?.FullName != Path.Combine(directory, "dotnet"))
-            throw new InvalidOperationException("The installed SDK selection link is inconsistent; rerun isoplane setup.");
         if (bundledRuntime is not null)
             await VerifyRuntimePairAsync(manifest, bundledRuntime, cancellation);
         return directory;
@@ -177,7 +161,8 @@ internal static class Toolchain
             if (!OperatingSystem.IsWindows() && file.Executable && (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) == 0)
                 throw new InvalidOperationException($"Toolchain file {path} is not executable; rerun setup from a complete bundle.");
         }
-        await VerifyCompilerPackageAsync(directory, manifest, cancellation);
+        if (manifest.Kind == "toolchain")
+            await VerifyCompilerPackageAsync(directory, manifest, cancellation);
     }
 
     private static async Task VerifyCompilerPackageAsync(string directory, ToolchainManifest manifest, CancellationToken cancellation)
@@ -210,6 +195,8 @@ internal static class Toolchain
             ?? throw new InvalidOperationException("The toolchain bundle has no manifest.");
         if (string.IsNullOrWhiteSpace(manifest.RuntimeIdentifier) || string.IsNullOrWhiteSpace(manifest.DotnetSdkVersion) || string.IsNullOrWhiteSpace(manifest.WasiWorkloadVersion) || manifest.Files is not { Length: > 0 })
             throw new InvalidOperationException("The toolchain manifest must identify its SDK and files.");
+        if (manifest.Kind is not ("toolchain" or "workload"))
+            throw new InvalidOperationException($"Unknown toolchain bundle kind: {manifest.Kind}.");
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var file in manifest.Files)
         {
@@ -218,19 +205,19 @@ internal static class Toolchain
                 throw new InvalidOperationException($"Invalid or duplicate toolchain manifest entry: {file?.Path ?? "<null>"}.");
             Resolve(Path.GetTempPath(), file.Path);
         }
-        foreach (var required in RequiredFiles(manifest.DotnetSdkVersion, manifest.WasiWorkloadVersion, manifest.RuntimeIdentifier))
+        foreach (var required in manifest.Kind == "workload"
+            ? new[] { "WorkloadManifest.json", "WorkloadManifest.targets" }
+            : RequiredFiles())
             if (!names.Contains(required))
                 throw new InvalidOperationException($"The toolchain manifest is incomplete: missing {required}.");
         return manifest;
     }
 
-    internal static string[] RequiredFiles(string sdk, string workload, string rid) => [
+    internal static string[] RequiredFiles() => [
         "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
         "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools", "wasi-sdk/bin/clang",
-        "dotnet/dotnet", $"dotnet/sdk/{sdk}/dotnet.dll", "feed/Isoplane.GuestRuntime.props",
-        "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/backend",
-        $"dotnet/packs/Microsoft.NET.Runtime.MonoTargets.Sdk/{workload}/Sdk/Sdk.props",
-        $"dotnet/packs/Microsoft.NETCore.App.Runtime.AOT.{rid}.Cross.wasi-wasm/{workload}/Sdk/Sdk.props"
+        "feed/Isoplane.GuestRuntime.props",
+        "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/backend"
     ];
 
     internal static void ProbeCompiler(string directory)
@@ -276,33 +263,6 @@ internal static class Toolchain
             if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidOperationException($"Toolchain entry must not be a symbolic link: {current}.");
     }
-
-    private static void SelectDotnet(string home, string target)
-    {
-        var selected = Path.Combine(home, "dotnet");
-        if (Directory.Exists(selected) && new DirectoryInfo(selected).LinkTarget is null)
-            throw new InvalidOperationException($"{selected} is a directory rather than an Isoplane SDK selection link; move it before running setup.");
-        var temporary = selected + "." + Guid.NewGuid().ToString("N");
-        try
-        {
-            Directory.CreateSymbolicLink(temporary, target);
-            if (new DirectoryInfo(selected).LinkTarget is not null)
-                Directory.Delete(selected);
-            Directory.Move(temporary, selected);
-        }
-        finally
-        {
-            if (new DirectoryInfo(temporary).LinkTarget is not null)
-                Directory.Delete(temporary);
-        }
-    }
-
-    private static string Properties(string directory) => new XDocument(new XElement("Project", new XElement("PropertyGroup",
-        Property("IsoplaneGuestRuntimeFeed", Path.Combine(directory, "feed")),
-        Property("WASI_SDK_PATH", Path.Combine(directory, "wasi-sdk")),
-        Property("IsoplaneCliAssembly", Path.Combine(directory, "cli", "Isoplane.Cli.dll"))))).ToString();
-
-    private static XElement Property(string name, string value) => new(name, new XAttribute("Condition", $"'$({name})' == ''"), value);
 
     private static async Task ReplaceAsync(string path, string content, CancellationToken cancellation)
     {

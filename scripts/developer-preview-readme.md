@@ -17,18 +17,17 @@ Then install the CLI as a global .NET tool and let it install the rest:
 dotnet tool install --global Isoplane.Cli --version @PACKAGE_VERSION@ --add-source "$PWD/packages"
 export PATH="$HOME/.dotnet/tools:$PATH"
 isoplane setup --source "$PWD"
-. "$HOME/.isoplane/env"
 dotnet new isoplane-web --name MyApp
 ```
 
-Setup installs the SDK, compiler tools, runtime, package feed and project
-templates under `~/.isoplane`, registers the feed and templates with .NET,
-records everything in `~/.isoplane/installation.json`, and adds one line to your
-shell startup files so new terminals find `dotnet` and `isoplane`. Without
-`--source`, setup downloads the release matching the installed CLI from the
-release origin. Rerunning setup verifies and repairs the installation; `isoplane
-doctor` only diagnoses. `isoplane uninstall-sdk` removes everything setup
-recorded and keeps the CLI.
+Setup installs the Isoplane workload into your existing .NET SDK and registers
+the release's NuGet feed. It requests administrator access if the SDK directory
+requires it. Release packages and ownership records live in `~/.isoplane`;
+setup preserves your shell configuration and SDK selection. Add
+`~/.dotnet/tools` to your shell startup configuration for future terminals.
+Without `--source`, setup downloads the release matching the installed CLI.
+`isoplane doctor` diagnoses installation problems. `isoplane uninstall-sdk`
+removes owned SDK resources and keeps the CLI.
 
 For a new release, run `dotnet tool update --global Isoplane.Cli --version VERSION
 --add-source RELEASE/packages` and then `isoplane setup --source RELEASE`. Setup
@@ -42,5 +41,5 @@ feed; fully offline builds are not promised. Follow the customer documentation
 for `dotnet run`, `dotnet watch`, testing and database configuration. Debugger
 support is not established by successful installation.
 
-Third-party attribution and license texts are in `notices/` inside the toolchain
-archive, with additional upstream notices retained in the .NET SDK and runtime packs.
+Third-party attribution and license texts are in `notices/` inside the Isoplane
+toolchain workload pack, with upstream notices retained in the runtime and build packs.

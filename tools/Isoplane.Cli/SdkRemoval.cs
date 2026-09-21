@@ -6,8 +6,9 @@ namespace Isoplane.Cli;
 /// </summary>
 internal static class SdkRemoval
 {
-    internal static async Task<int> RunAsync(string home, Func<string, ISdkRegistrations> registrations, CancellationToken cancellation)
+    internal static async Task<int> RunAsync(string home, Func<string, ISdkRegistrations> registrations, CancellationToken cancellation, IWorkloadInstallation? workloads = null)
     {
+        workloads ??= new WorkloadInstallation(DotnetRegistrations.BootstrapDotnet(), SetupMachine.ConfirmOnTerminal, false);
         home = Path.GetFullPath(home);
         var installation = Installation.Load(home);
         if (installation is null)
@@ -16,7 +17,7 @@ internal static class SdkRemoval
             return 1;
         }
         using var held = new FileStream(Path.Combine(home, "setup.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var dotnet = new Lazy<ISdkRegistrations>(() => registrations(RegistrationDotnet(home)));
+        var dotnet = new Lazy<ISdkRegistrations>(() => registrations(DotnetRegistrations.BootstrapDotnet()));
         var removed = 0;
         var kept = 0;
         var failed = new List<InstalledResource>();
@@ -31,7 +32,9 @@ internal static class SdkRemoval
             }
             try
             {
-                await RemoveAsync(resource, dotnet, cancellation);
+                if (resource.Kind == InstalledResourceKind.WorkloadManifest && failed.Any(item => item.Kind == InstalledResourceKind.Workload))
+                    throw new InvalidOperationException("The workload could not be removed; its discovery manifest is retained so removal can be retried.");
+                await RemoveAsync(resource, dotnet, workloads, cancellation);
                 installation.Forget(resource);
                 removed++;
             }
@@ -55,13 +58,14 @@ internal static class SdkRemoval
     }
 
     /// <summary>
-    /// Registrations go first, while the toolchain's SDK can still make them; then shell configuration, files and
-    /// links; directories last. Within a kind, the most recently recorded resource goes first.
+    /// Remove workloads before their discovery manifests and cached packages so failures remain retryable.
     /// </summary>
     private static InstalledResource[] RemovalOrder(IReadOnlyList<InstalledResource> resources) =>
         resources.Select((resource, index) => (resource, index))
             .OrderBy(entry => entry.resource.Kind switch
             {
+                InstalledResourceKind.Workload => -2,
+                InstalledResourceKind.WorkloadManifest => -1,
                 InstalledResourceKind.Template => 0,
                 InstalledResourceKind.PackageSource => 1,
                 InstalledResourceKind.ProfileLine => 2,
@@ -74,19 +78,14 @@ internal static class SdkRemoval
             .Select(entry => entry.resource)
             .ToArray();
 
-    /// <summary>The selected toolchain's SDK while it exists; otherwise the SDK running this CLI.</summary>
-    private static string RegistrationDotnet(string home)
-    {
-        var selected = Toolchain.Selected(home);
-        if (selected is not null && File.Exists(Path.Combine(selected, "dotnet", "dotnet")))
-            return Path.Combine(selected, "dotnet", "dotnet");
-        return DotnetRegistrations.BootstrapDotnet();
-    }
-
-    private static async Task RemoveAsync(InstalledResource resource, Lazy<ISdkRegistrations> dotnet, CancellationToken cancellation)
+    private static async Task RemoveAsync(InstalledResource resource, Lazy<ISdkRegistrations> dotnet, IWorkloadInstallation workloads, CancellationToken cancellation)
     {
         switch (resource.Kind)
         {
+            case InstalledResourceKind.Workload:
+            case InstalledResourceKind.WorkloadManifest:
+                await workloads.RemoveAsync(resource, cancellation);
+                break;
             case InstalledResourceKind.Directory:
                 if (Directory.Exists(resource.Target))
                     Directory.Delete(resource.Target, recursive: true);

@@ -33,7 +33,7 @@ internal sealed class ToolchainBundle : IDisposable
         File.WriteAllText(Path.Combine(Source, "bin", "tool"), "payload");
         var digest = Convert.ToHexStringLower(SHA256.HashData("payload"u8));
         var entries = new List<ToolchainFile> { new(path, digest, false) };
-        foreach (var required in Toolchain.RequiredFiles("10.0.400", "10.0.11", platform ?? Toolchain.PlatformIdentifier()))
+        foreach (var required in Toolchain.RequiredFiles())
         {
             var target = Path.Combine(Source, required);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -119,15 +119,6 @@ internal sealed class FakeRegistrations : ISdkRegistrations
 
     public Task<string?> TemplateVersionAsync(string packageId, CancellationToken cancellation) => Task.FromResult(Templates.GetValueOrDefault(packageId));
 
-    public Task InstallTemplateAsync(string package, CancellationToken cancellation)
-    {
-        Calls.Add($"install template {Path.GetFileName(package)}");
-        var name = Path.GetFileNameWithoutExtension(package);
-        var separator = name.IndexOf('.', name.IndexOf('.') + 1);
-        Templates[name[..separator]] = name[(separator + 1)..];
-        return Task.CompletedTask;
-    }
-
     public Task UninstallTemplateAsync(string packageId, CancellationToken cancellation)
     {
         if (FailUninstallTemplate?.Invoke(packageId) is { } failure)
@@ -145,7 +136,8 @@ internal static class Machines
         _ => true, _ => true, new OperatingSystemRelease("ubuntu", "24.04"),
         _ => throw new InvalidOperationException("nothing should be asked on a ready machine"),
         (_, _) => throw new InvalidOperationException("nothing privileged should run on a ready machine"),
-        _ => registrations, (_, _) => Task.CompletedTask, bundle.UserHome, null);
+        _ => registrations, (_, _) => Task.CompletedTask, null,
+        _ => new FakeWorkloadInstallation(registrations));
 }
 
 /// <summary>An HTTP origin serving a directory tree, with files that can be withheld or cut short.</summary>
@@ -167,4 +159,17 @@ internal sealed class StaticOriginHandler(string root) : HttpMessageHandler
         content.Headers.ContentLength = bytes.Length;
         return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
     }
+}
+
+internal sealed class FakeWorkloadInstallation(FakeRegistrations registrations) : IWorkloadInstallation
+{
+    public Task<string> InstallAsync(string bundle, string version, Installation installation, CancellationToken cancellation)
+    {
+        installation.Record(new(InstalledResourceKind.Workload, "isoplane", true, version));
+        registrations.Templates["Isoplane.Templates"] = version;
+        return Task.FromResult(bundle);
+    }
+
+    public Task RemoveAsync(InstalledResource resource, CancellationToken cancellation) =>
+        registrations.UninstallTemplateAsync("Isoplane.Templates", cancellation);
 }

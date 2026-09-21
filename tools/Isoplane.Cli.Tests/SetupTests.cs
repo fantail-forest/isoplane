@@ -27,9 +27,9 @@ public sealed class SetupTests
         Assert.Equal(ToolchainBundle.Version, registrations.Templates["Isoplane.Templates"]);
         Assert.False(Directory.Exists(Path.Combine(fixture.Home, "downloads")), "the toolchain archive is not kept after installation");
         var profile = await File.ReadAllTextAsync(Path.Combine(fixture.UserHome, ".profile"));
-        Assert.Contains(ShellEnvironment.SourceLine(fixture.Home, fixture.UserHome), profile);
+        Assert.Equal("# user profile\n", profile);
         Assert.StartsWith("# user profile", profile);
-        Assert.True(File.Exists(ShellEnvironment.EnvironmentFile(fixture.Home)), "the sourced environment file must exist");
+        Assert.False(File.Exists(Path.Combine(fixture.Home, "env")), "setup must not change shell SDK selection");
 
         var manifest = Manifest(fixture);
         var recorded = manifest.RootElement.GetProperty("resources").EnumerateArray()
@@ -37,10 +37,7 @@ public sealed class SetupTests
             .ToList();
         Assert.Contains(("Directory", toolchain, true), recorded);
         Assert.Contains(("PackageSource", "isoplane", true), recorded);
-        Assert.Contains(("Template", "Isoplane.Templates", true), recorded);
-        Assert.Contains(("ProfileLine", Path.Combine(fixture.UserHome, ".profile"), true), recorded);
-        Assert.Contains(("SymbolicLink", Path.Combine(fixture.Home, "dotnet"), true), recorded);
-        Assert.Contains(("File", ShellEnvironment.EnvironmentFile(fixture.Home), true), recorded);
+        Assert.Contains(("Workload", "isoplane", true), recorded);
         Assert.DoesNotContain(recorded, resource => resource.Target!.Contains("downloads", StringComparison.Ordinal));
         Assert.Equal(ToolchainBundle.Version, manifest.RootElement.GetProperty("cliVersion").GetString());
     }
@@ -259,7 +256,6 @@ public sealed class SetupTests
         Assert.NotEqual(first, second);
         Assert.False(Directory.Exists(first), "the superseded toolchain is removed");
         Assert.Equal("0.1.0-preview.2", registrations.Templates["Isoplane.Templates"]);
-        Assert.Contains("uninstall template Isoplane.Templates", registrations.Calls);
         Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Isoplane.Sdk.0.1.0-preview.1.nupkg")), "projects pinned to the earlier SDK still restore");
         Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Isoplane.Sdk.0.1.0-preview.2.nupkg")), "the new SDK is installed");
         Assert.Equal("0.1.0-preview.2", Manifest(fixture).RootElement.GetProperty("cliVersion").GetString());

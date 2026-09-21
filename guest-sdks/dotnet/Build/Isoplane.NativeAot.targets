@@ -83,7 +83,7 @@
   <Target Name="IsoplaneNativeAotVerifyCompiler" DependsOnTargets="IsoplaneResolveNativeAotPackages;IsoplaneRequireGuestCompiler" BeforeTargets="IlcCompile"
           Condition="'$(IsoplaneContainerBuild)' != 'true'">
     <PropertyGroup>
-      <_IsoplaneCompilerDigestFile>$([MSBuild]::NormalizeDirectory('$(IlcHostPackagePath)'))runtime.$(NETCoreSdkRuntimeIdentifier).microsoft.dotnet.ilcompiler.llvm.$(IsoplaneGuestCompilerVersion.ToLowerInvariant()).nupkg.sha512</_IsoplaneCompilerDigestFile>
+      <_IsoplaneCompilerDigestFile>$([MSBuild]::NormalizeDirectory('$(IlcHostPackagePath)'))runtime.$(NETCoreSdkPortableRuntimeIdentifier).microsoft.dotnet.ilcompiler.llvm.$(IsoplaneGuestCompilerVersion.ToLowerInvariant()).nupkg.sha512</_IsoplaneCompilerDigestFile>
     </PropertyGroup>
     <Error Condition="'$(IlcHostPackagePath)' == '' OR !Exists('$(_IsoplaneCompilerDigestFile)')" Text="The resolved NativeAOT compiler has no verified package identity. Run isoplane setup and restore the project." />
     <ReadLinesFromFile File="$(_IsoplaneCompilerDigestFile)">

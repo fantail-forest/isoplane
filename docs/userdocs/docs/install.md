@@ -34,23 +34,20 @@ export PATH="$HOME/.dotnet/tools:$PATH"
 isoplane setup
 ```
 
-The tool installs into `~/.dotnet/tools`; putting that directory on `PATH` is
-the standard .NET global-tool step, and setup adds it to new terminals for you.
+The tool installs into `~/.dotnet/tools`. Add that directory to your shell's
+startup configuration if your .NET installation has not already done so.
 
-Setup downloads the release the installed CLI was built from, verifies every
-component against the release manifest, and installs it under `~/.isoplane`
-(`ISOPLANE_HOME` overrides this). It registers the release's package feed with
-NuGet and its project templates with `dotnet new`, records everything it did in
-`~/.isoplane/installation.json`, and adds one line to `~/.profile` and, when
-present, `~/.bashrc`, `~/.bash_profile` and `~/.zshrc` that sources
-`~/.isoplane/env`. That file puts the installed SDK and `~/.dotnet/tools` first
-on `PATH`. Before reporting success, setup runs the installed tools to prove
-they work on your machine.
+Setup downloads and verifies the release matching the CLI, then installs the
+Isoplane workload into your existing .NET SDK. The workload supplies compiler
+tools, runtime packs and project templates. Setup asks for administrator access
+when your SDK's workload directory requires it.
 
-Open a new terminal, or load the environment in this one:
+Release packages and the installation record are kept under `~/.isoplane`
+(`ISOPLANE_HOME` overrides this). Setup registers the release's NuGet feed and
+runs the installed tools before reporting success. Your shell configuration and
+.NET SDK selection stay unchanged.
 
 ```bash
-. "$HOME/.isoplane/env"
 isoplane doctor
 dotnet new list
 ```
