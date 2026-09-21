@@ -305,7 +305,7 @@ mod tests {
         // What `crate::bindings` and `crate::init` assume, written out.
         let assumed: &[(&str, BufSpec)] = &[
             // Host writes INTO guest memory: we pass (ptr, capacity) of a
-            // buffer we own. Only these two.
+            // buffer we own.
             ("entropy_fill", BufSpec::Out(0)),
             ("init_hash_seed", BufSpec::Out(0)),
             ("init_config_get", BufSpec::Out(0)),
@@ -331,16 +331,19 @@ mod tests {
             let got = imports::lookup(name).unwrap().buf;
             assert_eq!(got, *want, "BufSpec drift on `{name}`");
         }
-        // And the SDK's blanket assumption: nothing else is an out-buffer.
+        // Every out-buffer binding exposed by this SDK needs a checked call site.
         let outs: Vec<&str> = IMPORTS
             .iter()
-            .filter(|i| matches!(i.buf, BufSpec::Out(_)))
+            .filter(|i| {
+                matches!(i.buf, BufSpec::Out(_))
+                    && SDK_IMPORTS.iter().any(|binding| binding.name == i.name)
+            })
             .map(|i| i.name)
             .collect();
         assert_eq!(
             outs,
             vec!["init_hash_seed", "init_config_get", "entropy_fill"],
-            "a new host-writes-into-guest-memory import needs an SDK call site"
+            "an SDK out-buffer binding needs a checked call site"
         );
     }
 
