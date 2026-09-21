@@ -23,6 +23,28 @@ def execution_batches(binaries, name):
     return [*exclusive, shared]
 
 
+
+def binary_environment(name, environment):
+    result = dict(environment)
+    if name in EXCLUSIVE_BINARIES:
+        result["RUST_TEST_THREADS"] = "1"
+    return result
+
+
+def require_guest_tools(environment):
+    try:
+        sdk = subprocess.run(["dotnet", "--version"], cwd=ROOT, env=environment,
+                             capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as error:
+        raise RuntimeError("The test suite needs the pinned .NET SDK. Run scripts/setup, then scripts/dev scripts/test.") from error
+    if sdk.returncode:
+        raise RuntimeError("The repository's .NET SDK is unavailable. Run scripts/setup, then scripts/dev scripts/test.\n"
+                           + sdk.stdout + sdk.stderr)
+    wasi = environment.get("WASI_SDK_PATH", "")
+    if not wasi or not (Path(wasi) / "bin/clang").is_file():
+        raise RuntimeError("The test suite needs the WASI compiler. Build the guest-runtime toolchain, then run scripts/dev scripts/test.")
+
+
 def run(command, cwd, environment, log, timeout_seconds):
     started = time.monotonic()
     with log.open("w") as output:
@@ -64,6 +86,8 @@ def main():
     args = parser.parse_args()
     if min(args.jobs, args.test_threads, args.timeout_seconds) < 1:
         parser.error("jobs, test threads and timeout must be positive")
+    if not args.package:
+        require_guest_tools(dict(os.environ))
     selection = [item for package in args.package for item in ("-p", package)] or ["--workspace"]
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=ROOT))
@@ -119,7 +143,7 @@ def main():
                 index = indexed[binary["executable"]]
                 package = packages[binary["package_id"]]
                 cwd = Path(package["manifest_path"]).parent
-                future = executor.submit(run, [binary["executable"]], cwd, environment,
+                future = executor.submit(run, [binary["executable"]], cwd, binary_environment(name(binary), environment),
                                          logs / f"{index:03d}-{binary['target']['name']}.log",
                                          args.timeout_seconds)
                 pending[future] = name(binary)

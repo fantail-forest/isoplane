@@ -8,6 +8,21 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def development_environment(root, inherited):
+    environment = dict(inherited)
+    tools = root / ".isoplane-dev/tools"
+    paths = [str(tools / "bin")]
+    sdk = tools / "dotnet"
+    if (sdk / "dotnet").is_file():
+        paths.append(str(sdk))
+        environment["DOTNET_ROOT"] = str(sdk)
+    wasi = root / "guest-runtime/work/wasi-sdk"
+    if (wasi / "bin/clang").is_file():
+        environment.setdefault("WASI_SDK_PATH", str(wasi))
+    environment["PATH"] = os.pathsep.join([*paths, environment.get("PATH", os.defpath)])
+    return environment
+
+
 def main():
     args = sys.argv[1:]
     if args and args[0] == "--container":
@@ -20,8 +35,7 @@ def main():
         args.pop(0)
     args = args or [os.environ.get("SHELL", "/bin/bash")]
     os.chdir(ROOT)
-    os.environ["PATH"] = str(ROOT / ".isoplane-dev/tools/bin") + os.pathsep + os.environ.get("PATH", os.defpath)
-    os.execvp(args[0], args)
+    os.execvpe(args[0], args, development_environment(ROOT, os.environ))
 
 
 if __name__ == "__main__":

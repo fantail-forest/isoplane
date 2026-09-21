@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
-# Install native development helpers: scripts/setup
+# Install the pinned development SDK and native helpers: scripts/setup
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 rustup target add wasm32-unknown-unknown wasm32-wasip1
 scripts/dev cargo install --locked --version 1.244.0 --root .isoplane-dev/tools wasm-tools
+
+python3 - "$ROOT" <<'PYTHON'
+import importlib.util
+from pathlib import Path
+import platform
+import sys
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('preview', root / 'scripts/build-preview.py')
+preview = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(preview)
+os_name = {'Linux': 'linux', 'Darwin': 'osx'}[platform.system()]
+architecture = {'x86_64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}[platform.machine().lower()]
+cache = root / '.isoplane-dev/tools'
+logs = cache / 'logs'
+logs.mkdir(parents=True, exist_ok=True)
+preview.prepare_sdk(root, cache, logs, f'{os_name}-{architecture}')
+PYTHON

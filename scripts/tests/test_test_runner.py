@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 PATH = Path(__file__).parents[1] / "test"
 SPEC = importlib.util.spec_from_loader("test_runner", SourceFileLoader("test_runner", str(PATH)))
@@ -20,6 +21,32 @@ class TestRunner(unittest.TestCase):
         self.assertEqual(batches, [["isoplane-prepare/process"],
                                   ["isoplane-native/installed_dev", "isoplane-host/io"]],
                          "preparation deadlines need isolation without losing other tests")
+
+    def test_preparation_deadlines_do_not_compete_inside_the_binary(self):
+        inherited = {"RUST_TEST_THREADS": "4"}
+        self.assertEqual(runner.binary_environment("isoplane-prepare/process", inherited)["RUST_TEST_THREADS"], "1",
+                         "preparation containers must start without competing deadline tests")
+        self.assertEqual(runner.binary_environment("isoplane-host/io", inherited)["RUST_TEST_THREADS"], "4",
+                         "other test binaries must retain their selected concurrency")
+
+    def test_a_missing_dotnet_command_names_the_bootstrap_command(self):
+        with patch.object(runner.subprocess, 'run', side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(RuntimeError, 'Run scripts/setup'):
+                runner.require_guest_tools({})
+
+    def test_an_unavailable_sdk_fails_before_test_execution(self):
+        with patch.object(runner.subprocess, 'run') as run:
+            run.return_value.returncode = 1
+            run.return_value.stdout = 'SDK missing'
+            run.return_value.stderr = ''
+            with self.assertRaisesRegex(RuntimeError, 'Run scripts/setup'):
+                runner.require_guest_tools({})
+
+    def test_an_unavailable_wasi_compiler_fails_before_test_execution(self):
+        with patch.object(runner.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            with self.assertRaisesRegex(RuntimeError, 'WASI compiler'):
+                runner.require_guest_tools({})
 
     def test_only_test_executables_run_once(self):
         artifact = {"reason": "compiler-artifact", "profile": {"test": True},

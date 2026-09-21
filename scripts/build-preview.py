@@ -119,20 +119,20 @@ def export_source(root, source, cache, revision, logs):
     preserved.rmdir()
 
 
-def prepare_sdk(source, cache, logs):
+def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
     version = json.loads((source / 'global.json').read_text())['sdk']['version']
     directory = cache / 'dotnet'
     receipt = cache / 'dotnet.json'
     if receipt.exists():
         identity = json.loads(receipt.read_text())
-        if identity['version'] == version:
+        if identity['version'] == version and identity.get('runtimeIdentifier', RUNTIME_IDENTIFIER) == runtime_identifier:
             verify_inventory(directory, identity['files'])
             return directory, identity
     metadata_url = f'https://builds.dotnet.microsoft.com/dotnet/release-metadata/{version.rsplit(".", 1)[0]}/releases.json'
     with urllib.request.urlopen(metadata_url, timeout=60) as response:
         releases = json.load(response)
     sdk = next(sdk for release in releases['releases'] for sdk in release.get('sdks', []) if sdk['version'] == version)
-    archive = next(file for file in sdk['files'] if file['rid'] == RUNTIME_IDENTIFIER and file['name'].endswith('.tar.gz'))
+    archive = next(file for file in sdk['files'] if file['rid'] == runtime_identifier and file['name'].endswith('.tar.gz'))
     path = cache / f'dotnet-{version}.tar.gz'
     download(archive['url'], path, archive['hash'].lower(), 'sha512')
     if directory.exists():
@@ -145,7 +145,7 @@ def prepare_sdk(source, cache, logs):
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')
     run([directory / 'dotnet', 'workload', 'install', 'wasi-experimental', '--skip-manifest-update',
          '--source', 'https://api.nuget.org/v3/index.json'], source, logs / 'sdk-workload.log', environment)
-    identity = {'version': version, 'url': archive['url'], 'sha512': archive['hash'].lower(),
+    identity = {'version': version, 'runtimeIdentifier': runtime_identifier, 'url': archive['url'], 'sha512': archive['hash'].lower(),
                 'files': inventory(directory)}
     receipt.write_text(json.dumps(identity, indent=2) + '\n')
     return directory, identity
