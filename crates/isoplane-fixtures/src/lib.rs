@@ -55,8 +55,8 @@ fn build_selected(script: &str, fixture: Option<&str>, runtime: Option<&str>) ->
     if built.contains(&selection) {
         return root;
     }
-    let mut command = Command::new("bash");
-    command.arg(&path).arg("--if-stale");
+    let mut command = Command::new(root.join("scripts/dev"));
+    command.arg("bash").arg(&path).arg("--if-stale");
     if let Some(name) = fixture {
         command.arg("--fixture").arg(name);
     }
@@ -444,6 +444,26 @@ pub fn assert_cpu_clock_advances(read_clock: impl Fn() -> Option<u64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixture_builds_receive_the_tools_installed_by_setup_on_path() {
+        let directory = tempfile::tempdir().expect("isolated fixture environment directory");
+        let script = directory.path().join("build.sh");
+        std::fs::write(&script, "printf '%s' \"$PATH\" > \"${0}.path\"\n")
+            .expect("write fixture environment probe");
+        build_selected(
+            script.to_str().expect("temporary script path is Unicode"),
+            None,
+            None,
+        );
+        let path = std::fs::read_to_string(script.with_extension("sh.path"))
+            .expect("read the fixture build's PATH");
+        assert!(
+            std::env::split_paths(&path)
+                .any(|entry| entry == repo_root().join(".isoplane-dev/tools/bin")),
+            "fixture builds must find tools installed by scripts/setup without caller PATH changes"
+        );
+    }
 
     #[test]
     fn a_successful_fixture_selection_is_built_once_per_test_process() {
