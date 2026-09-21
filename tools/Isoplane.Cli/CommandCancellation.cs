@@ -20,6 +20,16 @@ internal sealed class CommandCancellation : IDisposable
 
     internal CancellationToken Token => source.Token;
 
+    internal static int Report(string command, TextWriter error)
+    {
+        if (command is "setup" or "uninstall-sdk")
+        {
+            error.WriteLine($"isoplane: {command} cancelled before completion. Run isoplane {command} again to retry.");
+            return 130;
+        }
+        return command is "bundle" or "prepare-runtime" ? 130 : 0;
+    }
+
     private void Cancel(object? sender, ConsoleCancelEventArgs arguments)
     {
         arguments.Cancel = true;

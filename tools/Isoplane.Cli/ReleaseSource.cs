@@ -5,7 +5,7 @@ namespace Isoplane.Cli;
 
 /// <summary>
 /// Where a release's manifest and assets are read from: an extracted release directory or an HTTP origin.
-/// Assets are copied with their SHA-256 checked against the manifest; nothing unverified reaches the installation.
+/// Asset copies are checked against the SHA-256 supplied by the release manifest.
 /// </summary>
 internal abstract class ReleaseSource
 {
@@ -24,7 +24,7 @@ internal abstract class ReleaseSource
     internal static ReleaseSource Open(string location, HttpClient client)
     {
         if (Uri.TryCreate(location, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
-            return new HttpReleaseSource(uri, client);
+            return new HttpReleaseSource(new UriBuilder(uri) { Path = uri.AbsolutePath.TrimEnd('/') + "/" }.Uri, client);
         return new DirectoryReleaseSource(location);
     }
 

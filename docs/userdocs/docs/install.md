@@ -29,7 +29,7 @@ missing.
 ## Install the CLI and the SDK
 
 ```bash
-dotnet tool install --global Isoplane.Cli
+dotnet tool install --global Isoplane.Cli --prerelease
 export PATH="$HOME/.dotnet/tools:$PATH"
 isoplane setup
 ```
@@ -74,7 +74,7 @@ setup at another release origin.
 Stop running development sessions, then update the CLI and run setup again:
 
 ```bash
-dotnet tool update --global Isoplane.Cli
+dotnet tool update --global Isoplane.Cli --prerelease
 isoplane setup
 isoplane doctor
 ```

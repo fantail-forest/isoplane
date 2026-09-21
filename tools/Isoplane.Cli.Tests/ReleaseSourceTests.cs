@@ -4,6 +4,28 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class ReleaseSourceTests
 {
+    [Theory]
+    [InlineData("http://origin.test/release")]
+    [InlineData("http://origin.test/release/")]
+    public async Task Release_directory_urls_resolve_the_manifest_and_nested_assets(string location)
+    {
+        using var fixture = new ToolchainBundle();
+        var handler = new StaticOriginHandler(fixture.Root);
+        using var client = new HttpClient(handler);
+        var source = ReleaseSource.Open(location, client);
+        var manifest = await source.ReadAsync("release.json", CancellationToken.None);
+        var expectedManifest = await File.ReadAllBytesAsync(Path.Combine(fixture.Release, "release.json"));
+        Assert.True(manifest.SequenceEqual(expectedManifest),
+            "The manifest must be read inside the supplied release directory.");
+        var package = Directory.GetFiles(Path.Combine(fixture.Release, "packages"))[0];
+        var relative = "packages/" + Path.GetFileName(package);
+        var destination = Path.Combine(fixture.Home, "package.nupkg");
+        var digest = await ReleaseSource.DigestAsync(package, CancellationToken.None);
+        await source.FetchAsync(relative, destination, digest, null, CancellationToken.None);
+        Assert.True(handler.Requests.SequenceEqual(new[] { "release/release.json", "release/" + relative }),
+            "Asset requests must retain the release directory, even without a trailing slash.");
+    }
+
     [Fact]
     public async Task An_unpublished_asset_is_reported_with_its_url()
     {

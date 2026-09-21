@@ -241,12 +241,8 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// Logs the exception's type name, which is the diagnostic that survives
-    /// <c>UseSystemResourceKeys</c> and no stack traces, then traps.
-    /// </summary>
-    /// <summary>
-    /// Logs which operation failed for which application before trapping, so
-    /// the deployment failure the host reports names both.
+    /// Logs the operation, application and exception type before trapping.
+    /// Exception types remain available with <c>UseSystemResourceKeys</c> and no stack traces.
     /// </summary>
     private static long Panic(string operation, Exception e)
     {

@@ -18,8 +18,7 @@ internal enum InstalledResourceKind
 }
 
 /// <summary>
-/// One thing setup created or configured. A resource that existed before setup is recorded as not owned:
-/// removal leaves it in place and says so.
+/// A resource recorded by setup, with the ownership used to decide whether removal deletes it.
 /// </summary>
 internal sealed record InstalledResource(InstalledResourceKind Kind, string Target, bool Owned, string? Detail = null, string? RemovalFailure = null);
 
@@ -32,8 +31,7 @@ internal sealed record InstallationRecord(int Schema, string CliVersion, string 
 internal sealed class InstallationManifestException(string message, Exception? inner = null) : InvalidOperationException(message, inner);
 
 /// <summary>
-/// The installation manifest at <c>ISOPLANE_HOME/installation.json</c>: every asset, registration and configuration
-/// change setup made, written as each change happens so that an interrupted setup is still fully described.
+/// Reads and persists setup's resource records at <c>ISOPLANE_HOME/installation.json</c>.
 /// </summary>
 internal sealed class Installation
 {

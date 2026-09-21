@@ -11,12 +11,7 @@
     <IsoplaneGuestRuntime Condition="'$(IsoplaneGuestRuntime)' == ''">NativeAOT</IsoplaneGuestRuntime>
     <IsoplaneMemoryMaxBytes Condition="'$(IsoplaneMemoryMaxBytes)' == ''">134217728</IsoplaneMemoryMaxBytes>
     <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
-    <!-- Both profiles run the Isoplane guest runtime built from source by
-         guest-runtime/build.sh: the Mono runtime pack and the NativeAOT
-         framework pack, published to a local feed with a props file naming
-         each pack's version and digest. A project outside this checkout
-         names its feed with IsoplaneGuestRuntimeFeed or ISOPLANE_GUEST_RUNTIME_FEED;
-         a published feed replaces this path later. -->
+    <!-- Checkout builds use the local runtime feed when setup has not supplied one. -->
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == ''">$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</IsoplaneGuestRuntimeFeed>
     <_IsoplaneGuestRuntimeFeedDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneGuestRuntimeFeed)'))</_IsoplaneGuestRuntimeFeedDirectory>
   </PropertyGroup>

@@ -51,7 +51,7 @@ try
 }
 catch (OperationCanceledException error) when (error.CancellationToken.IsCancellationRequested)
 {
-    return args.Length > 0 && args[0] is "bundle" or "prepare" ? 130 : 0;
+    return CommandCancellation.Report(args.Length > 0 ? args[0] : "", Console.Error);
 }
 catch (Exception error) when (error is System.Text.Json.JsonException or ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
 {
