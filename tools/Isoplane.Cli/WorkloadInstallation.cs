@@ -4,14 +4,21 @@ namespace Isoplane.Cli;
 
 internal sealed record WorkloadSdk(string Dotnet, string Version, string FeatureBand, string Root);
 
-internal interface IWorkloadInstallation
+internal interface ISdkInstallation
 {
     Task<string> InstallAsync(string bundle, string version, Installation installation, CancellationToken cancellation);
     Task RemoveAsync(InstalledResource resource, CancellationToken cancellation);
 }
 
+internal static class SdkInstallation
+{
+    internal static ISdkInstallation Create(bool assumeYes) => OperatingSystem.IsWindows()
+        ? new WindowsInstallation()
+        : new WorkloadInstallation(DotnetRegistrations.BootstrapDotnet(), SetupMachine.ConfirmOnTerminal, assumeYes);
+}
+
 /// <summary>Installs Isoplane packs through the selected SDK's file-based workload manager.</summary>
-internal sealed class WorkloadInstallation(string dotnet, Func<string, Task<bool>> confirm, bool assumeYes) : IWorkloadInstallation
+internal sealed class WorkloadInstallation(string dotnet, Func<string, Task<bool>> confirm, bool assumeYes) : ISdkInstallation
 {
     internal const string Id = "isoplane";
 

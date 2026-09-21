@@ -7,8 +7,8 @@ Builds still launch .NET, the supplied LLVM/compiler tools and wasm-tools.
 Node operators use the daemon's HTTP administration API.
 
 The .NET tool owns publication and source watching; its bundled native runtime
-validates, prepares and executes WASM. This package currently targets the Linux
-host used to build it. macOS and Windows packages are not validated.
+validates, prepares and executes WASM. Packages are built separately for Linux
+x64 and Windows x64. macOS packages are not yet validated.
 
 From the repository root, build and pack into a local feed:
 

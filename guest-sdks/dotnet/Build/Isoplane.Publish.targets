@@ -32,12 +32,12 @@
       <IsoplanePalObject>$(IntermediateOutputPath)isoplane_pal.o</IsoplanePalObject>
       <IsoplaneClockObject>$(IntermediateOutputPath)isoplane_clock.o</IsoplaneClockObject>
     </PropertyGroup>
-    <Error Condition="!Exists('$(WASI_SDK_PATH)/bin/clang')"
-           Text="isoplane: missing wasi-sdk clang at $(WASI_SDK_PATH)/bin/clang; run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
+    <Error Condition="!Exists('$(WASI_SDK_PATH)/bin/clang$(_IsoplaneToolExtension)')"
+           Text="isoplane: missing wasi-sdk clang at $(WASI_SDK_PATH)/bin/clang$(_IsoplaneToolExtension); run isoplane setup with the supplied toolchain bundle, then isoplane doctor." />
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <ItemGroup>
       <NativeLibrary Include="$(IsoplanePalObject);$(IsoplaneClockObject)" />
-      <_IsoplanePalInputs Include="$(_IsoplaneSdkDirectory)native/isoplane_pal.c;$(_IsoplaneSdkDirectory)native/isoplane_clock.c;$(_IsoplaneSdkDirectory)native/**/*.h;$(MSBuildAllProjects);$(WASI_SDK_PATH)/bin/clang;$(WASI_SDK_PATH)/share/wasi-sysroot/include/**/*.h;$(WASI_SDK_PATH)/lib/clang/**/include/**/*.h" />
+      <_IsoplanePalInputs Include="$(_IsoplaneSdkDirectory)native/isoplane_pal.c;$(_IsoplaneSdkDirectory)native/isoplane_clock.c;$(_IsoplaneSdkDirectory)native/**/*.h;$(MSBuildAllProjects);$(WASI_SDK_PATH)/bin/clang$(_IsoplaneToolExtension);$(WASI_SDK_PATH)/share/wasi-sysroot/include/**/*.h;$(WASI_SDK_PATH)/lib/clang/**/include/**/*.h" />
       <LinkerArg Include="@(IsoplaneWrappedSymbol->'-Wl,--wrap=%(Identity)')" />
     </ItemGroup>
     <WriteLinesToFile File="$(IntermediateOutputPath)isoplane-pal.inputs"
@@ -47,8 +47,8 @@
           Condition="'$(IsoplaneContainerBuild)' != 'true'"
           Inputs="@(_IsoplanePalInputs);$(IntermediateOutputPath)isoplane-pal.inputs"
           Outputs="$(IsoplanePalObject);$(IsoplaneClockObject)">
-    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(IsoplanePalObject)&quot; &quot;$(_IsoplaneSdkDirectory)native/isoplane_pal.c&quot;" />
-    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(IsoplaneClockObject)&quot; &quot;$(_IsoplaneSdkDirectory)native/isoplane_clock.c&quot;" />
+    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang$(_IsoplaneToolExtension)&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(IsoplanePalObject)&quot; &quot;$(_IsoplaneSdkDirectory)native/isoplane_pal.c&quot;" />
+    <Exec Command="&quot;$(WASI_SDK_PATH)/bin/clang$(_IsoplaneToolExtension)&quot; --target=wasm32-unknown-wasip2 -O2 -c -o &quot;$(IsoplaneClockObject)&quot; &quot;$(_IsoplaneSdkDirectory)native/isoplane_clock.c&quot;" />
   </Target>
 
   <!-- PublishDir may be outside OutDir, where MSBuild's FileWrites cleanup stops. -->

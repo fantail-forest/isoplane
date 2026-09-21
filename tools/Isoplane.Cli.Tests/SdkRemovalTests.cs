@@ -16,6 +16,41 @@ public sealed class SdkRemovalTests
         SdkRemoval.RunAsync(fixture.Home, _ => registrations, CancellationToken.None, new FakeWorkloadInstallation(registrations));
 
     [Fact]
+    public async Task A_failed_template_removal_keeps_the_windows_installer_available_for_retry()
+    {
+        using var fixture = new ToolchainBundle();
+        Directory.CreateDirectory(fixture.Home);
+        var installation = Installation.Begin(fixture.Home, fixture.Cli);
+        installation.Record(new(InstalledResourceKind.WindowsInstaller, "product", true));
+        installation.Record(new(InstalledResourceKind.Template, "Isoplane.Templates", true));
+        var registrations = new FakeRegistrations { FailUninstallTemplate = _ => new InvalidOperationException("template busy") };
+        registrations.Templates["Isoplane.Templates"] = ToolchainBundle.Version;
+        var installer = new RecordingInstaller();
+
+        var failed = await SdkRemoval.RunAsync(fixture.Home, _ => registrations, CancellationToken.None, installer);
+        Assert.True(failed == 1, "template removal failure must make SDK removal fail");
+        Assert.True(installer.Removed.Count == 0, "the MSI must remain installed while its template registration remains");
+        Assert.True(Installation.Load(fixture.Home)!.Resources.Count == 2, "both failed resources must remain recorded for retry");
+
+        registrations.FailUninstallTemplate = null;
+        var retried = await SdkRemoval.RunAsync(fixture.Home, _ => registrations, CancellationToken.None, installer);
+        Assert.True(retried == 0, "removal must succeed after the template engine recovers");
+        Assert.True(installer.Removed.Count == 1, "the retry must remove the retained MSI");
+    }
+
+    private sealed class RecordingInstaller : ISdkInstallation
+    {
+        internal List<InstalledResource> Removed { get; } = [];
+        public Task<string> InstallAsync(string bundle, string version, Installation installation, CancellationToken cancellation) =>
+            throw new NotSupportedException();
+        public Task RemoveAsync(InstalledResource resource, CancellationToken cancellation)
+        {
+            Removed.Add(resource);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
     public async Task Removal_takes_away_everything_setup_recorded_and_nothing_else()
     {
         using var fixture = new ToolchainBundle();

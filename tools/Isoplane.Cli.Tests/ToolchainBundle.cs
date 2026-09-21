@@ -161,7 +161,7 @@ internal sealed class StaticOriginHandler(string root) : HttpMessageHandler
     }
 }
 
-internal sealed class FakeWorkloadInstallation(FakeRegistrations registrations) : IWorkloadInstallation
+internal sealed class FakeWorkloadInstallation(FakeRegistrations registrations) : ISdkInstallation
 {
     public Task<string> InstallAsync(string bundle, string version, Installation installation, CancellationToken cancellation)
     {

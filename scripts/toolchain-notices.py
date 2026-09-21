@@ -130,13 +130,15 @@ def main():
     parser.add_argument('--runtime-work', type=Path, required=True)
     parser.add_argument('--wasi-sdk', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--target', help='Rust target whose native dependencies are shipped (defaults to the build host)')
     parser.add_argument('--managed-source', type=Path, help='collect restored managed package attribution')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
+    target = args.target or next(line.removeprefix('host: ') for line in subprocess.check_output(['rustc', '-vV'], text=True).splitlines() if line.startswith('host: '))
     packages = {}
     for manifest in (root / 'Cargo.toml', args.wasm_tools_source / 'Cargo.toml'):
         metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version', '1',
-            '--filter-platform', 'x86_64-unknown-linux-gnu', '--manifest-path', str(manifest)]))
+            '--filter-platform', target, '--manifest-path', str(manifest)]))
         for package in metadata['packages']:
             if package['source'] is not None or package['name'] == 'wasm-tools':
                 packages[(package['name'], package['version'])] = package

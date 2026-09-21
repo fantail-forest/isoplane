@@ -34,7 +34,7 @@ internal sealed record SetupMachine(
     Func<string, ISdkRegistrations> Registrations,
     Func<string, CancellationToken, Task> ProveReady,
     string? BundledRuntime,
-    Func<bool, IWorkloadInstallation> Workloads)
+    Func<bool, ISdkInstallation> Installers)
 {
     internal static SetupMachine Production() => new(
         Prerequisites.CanLoad,
@@ -45,7 +45,7 @@ internal sealed record SetupMachine(
         dotnet => new DotnetRegistrations(dotnet, Toolchain.Home),
         Readiness.ProveAsync,
         Path.Combine(AppContext.BaseDirectory, "runtime"),
-        yes => new WorkloadInstallation(DotnetRegistrations.BootstrapDotnet(), ConfirmOnTerminal, yes));
+        SdkInstallation.Create);
 
     internal static Task<bool> ConfirmOnTerminal(string question)
     {
@@ -57,9 +57,8 @@ internal sealed record SetupMachine(
 }
 
 /// <summary>
-/// <c>isoplane setup</c>: installs the release the running CLI belongs to. Prerequisites are checked before anything is
-/// downloaded; every asset is verified against the release manifest; every change is recorded in the installation
-/// manifest as it is made; readiness is proven by running the installed tools before success is reported.
+/// Installs the running CLI's matching release through the platform installer,
+/// verifies its assets, records ownership, and proves readiness before reporting success.
 /// </summary>
 internal static class Setup
 {
@@ -69,9 +68,10 @@ internal static class Setup
     {
         home = Path.GetFullPath(home);
         var platform = Toolchain.PlatformIdentifier();
-        if (platform != "linux-x64")
-            throw new InvalidOperationException($"Isoplane releases support Linux x64 (glibc); this machine is {platform}.");
-        await EnsurePrerequisitesAsync(options, machine, cancellation);
+        if (platform is not ("linux-x64" or "win-x64"))
+            throw new InvalidOperationException($"Isoplane releases support Linux x64 (glibc) and Windows x64; this machine is {platform}.");
+        if (!OperatingSystem.IsWindows())
+            await EnsurePrerequisitesAsync(options, machine, cancellation);
 
         var source = options.Source is null
             ? ReleaseSource.AtOrigin(Release.Origin(), cli.ReleaseName, client)
@@ -107,7 +107,7 @@ internal static class Setup
             var archive = Path.Combine(download, Path.GetFileName(manifest.Toolchain.Archive));
             if (await source.FetchAsync(manifest.Toolchain.Archive, archive, manifest.Toolchain.ArchiveSha256, new DownloadProgress(manifest.Toolchain.Archive), cancellation))
                 Console.Error.WriteLine($"Downloaded {manifest.Toolchain.Archive}.");
-            Console.Error.WriteLine("Installing the toolchain...");
+            Console.Error.WriteLine("Unpacking the SDK bundle...");
             var destination = Path.Combine(Toolchain.Installations(home), identity);
             if (Directory.Exists(destination) && installation.Find(InstalledResourceKind.Directory, destination) is not { Owned: true })
                 throw new InvalidOperationException($"Setup will not replace the unowned directory {destination}. Move it aside and retry.");
@@ -129,7 +129,7 @@ internal static class Setup
         else
         {
             RecordDirectory(installation, toolchain);
-            Console.Error.WriteLine("The toolchain is already installed and verified.");
+            Console.Error.WriteLine("The SDK bundle is already downloaded and verified.");
         }
         var bundle = toolchain;
         var bundled = Toolchain.ReadManifest(await File.ReadAllBytesAsync(Path.Combine(bundle, Toolchain.ManifestName), cancellation));
@@ -140,7 +140,7 @@ internal static class Setup
             if (!MatchesFile(destination, package.Sha256))
                 File.Copy(Toolchain.Resolve(bundle, package.Path), destination, overwrite: true);
         }
-        toolchain = await machine.Workloads(options.AssumeYes).InstallAsync(bundle, manifest.PackageVersion, installation, cancellation);
+        toolchain = await machine.Installers(options.AssumeYes).InstallAsync(bundle, manifest.PackageVersion, installation, cancellation);
         var selection = Path.Combine(home, "current.json");
         var selectionDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(toolchain))));
         RecordFile(installation, selection, selectionDigest);
@@ -270,7 +270,7 @@ internal static class Readiness
 
     internal static readonly (string Name, string Path)[] Probes =
     [
-        ("WebAssembly compiler", "wasi-sdk/bin/clang"),
-        ("WebAssembly tools", "bin/wasm-tools"),
+        ("WebAssembly compiler", "wasi-sdk/bin/clang" + Toolchain.ExecutableExtension),
+        ("WebAssembly tools", "bin/wasm-tools" + Toolchain.ExecutableExtension),
     ];
 }

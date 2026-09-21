@@ -6,7 +6,7 @@ namespace Isoplane.Cli;
 
 /// <summary>
 /// The registrations a .NET SDK keeps for its user: NuGet package sources and template packages.
-/// Setup registers the feed; removal also handles standalone templates recorded by earlier installations.
+/// Setup registers the feed; Windows setup also registers the template package.
 /// </summary>
 internal interface ISdkRegistrations
 {

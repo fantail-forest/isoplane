@@ -209,7 +209,7 @@ def package_metadata(package):
     return ET.fromstring(package.read(nuspecs[0])).find('{*}metadata')
 
 
-def verify_packages(feed, version, revision, native_library):
+def verify_packages(feed, version, revision, native_library, runtime_identifier=RUNTIME_IDENTIFIER):
     expected = {f'{name}.{version}.nupkg' for name in PROJECTS}
     if {p.name for p in feed.iterdir()} != expected:
         raise ValueError(f'release feed must contain exactly the {len(PROJECTS)} matching packages')
@@ -227,14 +227,15 @@ def verify_packages(feed, version, revision, native_library):
             if name in ('Isoplane.Sdk', 'Isoplane.AspNetCore'):
                 props = ET.fromstring(package.read('Sdk/Sdk.props'))
                 reference = props.find(f".//PackageReference[@Include='{name}']")
-                if reference is None or reference.get('Version') != version:
+                if (reference is None or reference.get('Version') != version
+                        or props.findtext('./PropertyGroup/IsoplaneSdkVersion') != version):
                     raise ValueError(f'{name} SDK selects a different package version')
             if name == 'Isoplane.Templates':
                 project = ET.fromstring(package.read('content/content/aspnet/SampleApp.csproj'))
                 if project.get('Sdk') != f'Isoplane.AspNetCore/{version}':
                     raise ValueError('template selects a different SDK version')
             if name == 'Isoplane.Native':
-                entry = f'runtimes/{RUNTIME_IDENTIFIER}/native/{native_library.name}'
+                entry = f'runtimes/{runtime_identifier}/native/{native_library.name}'
                 if entry not in package.namelist() or hashlib.sha256(package.read(entry)).hexdigest() != library_digest:
                     raise ValueError('Isoplane.Native carries a native library other than the one built for this release')
     load(ROOT / 'scripts/package-toolchain.py').verify_native_pair(feed / f'Isoplane.Cli.{version}.nupkg', native_library)

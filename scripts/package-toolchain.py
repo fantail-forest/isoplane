@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
+import sys
 import re
 from pathlib import Path
 import shutil
@@ -56,6 +58,9 @@ def main():
     parser.add_argument('--wasm-tools', type=Path, required=True)
     parser.add_argument('--native-library', type=Path, required=True, help='built isoplane-native library matching the CLI package')
     parser.add_argument('--cli-package', type=Path, help='CLI package for a toolchain-only bundle')
+    parser.add_argument('--templates', type=Path, help='Windows template NuGet package')
+    parser.add_argument('--mono-targets', type=Path, help='unpacked Windows MonoTargets SDK pack')
+    parser.add_argument('--wasi-cross', type=Path, help='unpacked Windows WASI cross-compiler pack')
     parser.add_argument('--dotnet-root', type=Path, required=True)
     parser.add_argument('--notices', type=Path, required=True, help='output from toolchain-notices.py')
     parser.add_argument('--packages', type=Path, help='include this SDK/CLI/template NuGet feed in a complete preview release')
@@ -63,6 +68,13 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
+    windows = platform.system() == 'Windows'
+    rid = 'win-x64' if windows else 'linux-x64'
+    executable = '.exe' if windows else ''
+    if windows and (not args.mono_targets or not args.wasi_cross or not args.templates):
+        parser.error('Windows assembly requires --templates, --mono-targets and --wasi-cross from the pinned runtime release')
+    if windows and args.packages:
+        parser.error('assemble Windows with --cli-package, then use package-windows.py to build its MSI and setup bundle')
     if args.packages and not args.package_version:
         parser.error('--packages requires --package-version')
     if not args.packages and args.package_version:
@@ -85,13 +97,13 @@ def main():
         parser.error(f'wasi-sdk must match the runtime build: {expected_wasi}')
     expected_wasm = re.search(r'cargo install --locked wasm-tools@([^\s]+)', (root / 'Dockerfile').read_text()).group(1)
     actual_wasm = subprocess.check_output([str(args.wasm_tools), '--version'], text=True).strip()
-    if actual_wasm != f'wasm-tools {expected_wasm}':
+    if actual_wasm.split()[:2] != ['wasm-tools', expected_wasm]:
         parser.error(f'expected wasm-tools {expected_wasm}; got {actual_wasm}')
     if not (args.dotnet_root / 'sdk' / sdk).is_dir():
         parser.error(f'dotnet root does not contain pinned SDK {sdk}')
-    subprocess.run(['python3', str(root / 'guest-runtime/feed-identity.py'), 'verify-current', str(root / 'guest-runtime'), str(args.runtime_output / 'feed')], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run(['python3', str(root / 'guest-runtime/compiler/build.py'), 'verify-current', '--output', str(args.runtime_output / 'compiler')], check=True, stdout=subprocess.DEVNULL)
-    if subprocess.check_output([str(args.dotnet_root / 'dotnet'), '--list-sdks'], text=True).splitlines() == []:
+    subprocess.run([sys.executable, str(root / 'guest-runtime/feed-identity.py'), 'verify-current', str(root / 'guest-runtime'), str(args.runtime_output / 'feed')], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([sys.executable, str(root / 'guest-runtime/compiler/build.py'), 'verify-current', '--output', str(args.runtime_output / 'compiler')], check=True, stdout=subprocess.DEVNULL)
+    if subprocess.check_output([str(args.dotnet_root / ('dotnet' + executable)), '--list-sdks'], text=True).splitlines() == []:
         parser.error('dotnet root is not runnable')
     if not (args.notices / 'rust-dependencies.json').is_file():
         parser.error('notices collection is incomplete; run toolchain-notices.py first')
@@ -103,22 +115,41 @@ def main():
         stage = release / 'toolchain' if args.packages else release
         stage.mkdir(parents=True)
         for source, name in [(args.runtime_output / 'feed', 'feed'), (args.runtime_output / 'packs', 'packs'), (args.runtime_output / 'compiler', 'compiler'),
-                             (args.wasi_sdk, 'wasi-sdk'), (args.dotnet_root, 'dotnet'), (args.notices, 'notices')]:
+                             (args.wasi_sdk, 'wasi-sdk'), (args.notices, 'notices')]:
             shutil.copytree(source, stage / name, symlinks=False)
-        environment = os.environ.copy()
-        environment.update(DOTNET_CLI_HOME=str(stage / '.setup-home'), DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')
-        subprocess.run([str((stage / 'dotnet/dotnet').resolve()), 'workload', 'install', 'wasi-experimental',
-            '--skip-manifest-update', '--source', 'https://api.nuget.org/v3/index.json'], cwd=stage,
-            env=environment, check=True)
-        shutil.rmtree(stage / '.setup-home', ignore_errors=False)
-        # SDK first use recreates these records with absolute local pack paths.
-        # They are installation state, not reproducible toolchain payload.
-        shutil.rmtree(stage / 'dotnet/metadata/workloads/InstalledPacks')
-        for pack in ('Microsoft.NET.Runtime.MonoTargets.Sdk', 'Microsoft.NETCore.App.Runtime.AOT.linux-x64.Cross.wasi-wasm'):
-            if not (stage / 'dotnet/packs' / pack / runtime_version / 'Sdk/Sdk.props').is_file():
-                parser.error(f'pinned SDK did not provide expected WASI build pack {pack} {runtime_version}')
+        if windows:
+            (stage / 'templates').mkdir()
+            shutil.copy2(args.templates, stage / 'templates' / args.templates.name)
+            for source, name, package_id in [
+                (args.mono_targets, 'mono-targets', 'Microsoft.NET.Runtime.MonoTargets.Sdk'),
+                (args.wasi_cross, 'wasi-cross', 'Microsoft.NETCore.App.Runtime.AOT.win-x64.Cross.wasi-wasm'),
+            ]:
+                metadata = ET.parse(source / (package_id + '.nuspec')).getroot().find('{*}metadata')
+                if (metadata.findtext('{*}id') != package_id or metadata.findtext('{*}version') != runtime_version
+                        or not (source / 'Sdk/Sdk.props').is_file()):
+                    parser.error(f'expected Windows SDK pack {package_id} {runtime_version}: {source}')
+                shutil.copytree(source, stage / name)
+            specification = importlib.util.spec_from_file_location('package_windows', root / 'scripts/package-windows.py')
+            msi = importlib.util.module_from_spec(specification)
+            specification.loader.exec_module(msi)
+            (stage / 'Sdk').mkdir()
+            (stage / 'Sdk/Sdk.props').write_bytes(msi.properties())
+        else:
+            shutil.copytree(args.dotnet_root, stage / 'dotnet')
+            environment = os.environ.copy()
+            environment.update(DOTNET_CLI_HOME=str(stage / '.setup-home'), DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')
+            subprocess.run([str((stage / 'dotnet/dotnet').resolve()), 'workload', 'install', 'wasi-experimental',
+                '--skip-manifest-update', '--source', 'https://api.nuget.org/v3/index.json'], cwd=stage,
+                env=environment, check=True)
+            shutil.rmtree(stage / '.setup-home', ignore_errors=False)
+            # SDK first use recreates these records with absolute local pack paths.
+            # They are installation state, not reproducible toolchain payload.
+            shutil.rmtree(stage / 'dotnet/metadata/workloads/InstalledPacks')
+            for pack in ('Microsoft.NET.Runtime.MonoTargets.Sdk', 'Microsoft.NETCore.App.Runtime.AOT.linux-x64.Cross.wasi-wasm'):
+                if not (stage / 'dotnet/packs' / pack / runtime_version / 'Sdk/Sdk.props').is_file():
+                    parser.error(f'pinned SDK did not provide expected WASI build pack {pack} {runtime_version}')
         (stage / 'bin').mkdir()
-        shutil.copy2(args.wasm_tools, stage / 'bin/wasm-tools')
+        shutil.copy2(args.wasm_tools, stage / ('bin/wasm-tools' + executable))
         extract_cli(args.cli_package, stage / 'cli')
         make_world_readable(stage)
         entries = []
@@ -127,7 +158,7 @@ def main():
                 with path.open('rb') as stream:
                     digest = hashlib.file_digest(stream, 'sha256').hexdigest()
                 entries.append(dict(path=path.relative_to(stage).as_posix(), sha256=digest, executable=bool(path.stat().st_mode & 0o100)))
-        manifest = dict(runtimeIdentifier='linux-x64', dotnetSdkVersion=sdk, wasiWorkloadVersion=runtime_version, files=entries)
+        manifest = dict(runtimeIdentifier=rid, dotnetSdkVersion=sdk, wasiWorkloadVersion=runtime_version, files=entries)
         (stage / 'toolchain.json').write_text(json.dumps(manifest, indent=2) + '\n')
         if args.packages:
             specification = importlib.util.spec_from_file_location('package_workload', root / 'scripts/package-workload.py')

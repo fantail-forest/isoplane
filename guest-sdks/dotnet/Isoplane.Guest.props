@@ -3,11 +3,20 @@
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND '$(ISOPLANE_GUEST_RUNTIME_FEED)' != ''">$([MSBuild]::EnsureTrailingSlash('$(ISOPLANE_GUEST_RUNTIME_FEED)'))</IsoplaneGuestRuntimeFeed>
     <IsoplaneCliAssembly Condition="'$(IsoplaneCliAssembly)' == '' AND '$(ISOPLANE_CLI_ASSEMBLY)' != ''">$(ISOPLANE_CLI_ASSEMBLY)</IsoplaneCliAssembly>
     <IsoplaneCli Condition="'$(IsoplaneCli)' == '' AND '$(ISOPLANE_CLI)' != ''">$(ISOPLANE_CLI)</IsoplaneCli>
+    <_IsoplaneToolExtension Condition="$([MSBuild]::IsOSPlatform('Windows'))">.exe</_IsoplaneToolExtension>
     <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
     <_IsoplaneCheckoutFeed>$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</_IsoplaneCheckoutFeed>
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND Exists('$(_IsoplaneCheckoutFeed)Isoplane.GuestRuntime.props')">$(_IsoplaneCheckoutFeed)</IsoplaneGuestRuntimeFeed>
   </PropertyGroup>
-  <Import Project="Sdk.props" Sdk="Isoplane.Toolchain" Condition="'$(IsoplaneGuestRuntimeFeed)' == ''" />
+  <PropertyGroup Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND $([MSBuild]::IsOSPlatform('Windows'))">
+    <_IsoplaneWindowsSdk>$(ProgramW6432)/Isoplane/SDK/$(IsoplaneSdkVersion)/Sdk/Sdk.props</_IsoplaneWindowsSdk>
+  </PropertyGroup>
+  <Import Project="$(_IsoplaneWindowsSdk)" Condition="'$(_IsoplaneWindowsSdk)' != '' AND Exists('$(_IsoplaneWindowsSdk)')" />
+  <Import Project="Sdk.props" Sdk="Isoplane.Toolchain" Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND !$([MSBuild]::IsOSPlatform('Windows'))" />
+  <Target Name="IsoplaneRequireWindowsSdk" BeforeTargets="CollectPackageReferences;PrepareForBuild"
+          Condition="'$(_IsoplaneWindowsSdk)' != '' AND !Exists('$(_IsoplaneWindowsSdk)')">
+    <Error Text="Isoplane SDK $(IsoplaneSdkVersion) is not installed. Run isoplane setup using the matching CLI release, then build again." />
+  </Target>
   <PropertyGroup>
     <IsoplaneGuestRuntime Condition="'$(IsoplaneGuestRuntime)' == ''">NativeAOT</IsoplaneGuestRuntime>
     <IsoplaneMemoryMaxBytes Condition="'$(IsoplaneMemoryMaxBytes)' == ''">134217728</IsoplaneMemoryMaxBytes>

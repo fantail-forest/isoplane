@@ -46,6 +46,7 @@
     <MakeDir Directories="$(IntermediateOutputPath)package" />
     <Copy SourceFiles="MSBuild/Sdk.props" DestinationFiles="$(_CoreSdkProps)" />
     <XmlPoke XmlInputPath="$(_CoreSdkProps)" Query="/Project/ItemGroup/PackageReference[@Include='Isoplane.Sdk']/@Version" Value="$(PackageVersion)" />
+    <XmlPoke XmlInputPath="$(_CoreSdkProps)" Query="/Project/PropertyGroup/IsoplaneSdkVersion" Value="$(PackageVersion)" />
     <ItemGroup><None Include="$(_CoreSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" /></ItemGroup>
   </Target>
 </Project>

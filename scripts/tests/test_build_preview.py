@@ -35,7 +35,7 @@ class ReleaseTests(unittest.TestCase):
             archive.writestr(name + '.nuspec', f'<package><metadata><id>{name}</id><version>{version or self.version}</version>'
                              f'<repository commit="{revision or self.revision}" />{dependencies}</metadata></package>')
             if name in ('Isoplane.Sdk', 'Isoplane.AspNetCore'):
-                archive.writestr('Sdk/Sdk.props', f'<Project><ItemGroup><PackageReference Include="{name}" Version="{sdk_version or self.version}" /></ItemGroup></Project>')
+                archive.writestr('Sdk/Sdk.props', f'<Project><PropertyGroup><IsoplaneSdkVersion>{sdk_version or self.version}</IsoplaneSdkVersion></PropertyGroup><ItemGroup><PackageReference Include="{name}" Version="{sdk_version or self.version}" /></ItemGroup></Project>')
             if name == 'Isoplane.Templates':
                 archive.writestr('content/content/aspnet/SampleApp.csproj', f'<Project Sdk="Isoplane.AspNetCore/{sdk_version or self.version}" />')
             if name == 'Isoplane.Cli':

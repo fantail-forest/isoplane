@@ -31,6 +31,7 @@
     <MakeDir Directories="$(IntermediateOutputPath)package" />
     <Copy SourceFiles="Sdk/Sdk.props" DestinationFiles="$(_PackagedSdkProps)" />
     <XmlPoke XmlInputPath="$(_PackagedSdkProps)" Query="/Project/ItemGroup/PackageReference[@Include='Isoplane.AspNetCore']/@Version" Value="$(PackageVersion)" />
+    <XmlPoke XmlInputPath="$(_PackagedSdkProps)" Query="/Project/PropertyGroup/IsoplaneSdkVersion" Value="$(PackageVersion)" />
     <ItemGroup>
       <None Include="$(_PackagedSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" />
     </ItemGroup>

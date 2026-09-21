@@ -1,5 +1,5 @@
 ---
-title: Install on Linux
+title: Install the SDK
 ---
 
 The Isoplane tools install in two steps: the `isoplane` command as a global
@@ -7,8 +7,8 @@ The Isoplane tools install in two steps: the `isoplane` command as a global
 runtime, package feed and project templates that match that command. You do
 not need an Isoplane checkout, Rust, Mono, or a separately installed WASI SDK.
 
-The current release is for Linux x64 with glibc; the validated baseline is
-Ubuntu 24.04. Package restore needs internet access.
+The validated platforms are Ubuntu 24.04 x64 and Windows 11 x64. Package
+restore needs internet access.
 
 ## Prerequisite: a .NET SDK
 
@@ -18,6 +18,9 @@ one, which also brings every native library the Isoplane toolchain needs:
 ```bash
 sudo apt-get install -y dotnet-sdk-10.0
 ```
+
+On Windows, install the .NET 10 SDK before installing the CLI. Setup installs
+the required Visual C++ runtime if it is missing.
 
 Setup reuses whatever `dotnet` you have and never changes your `DOTNET_ROOT`.
 On another Linux distribution, install the .NET 10 SDK its packages provide,
@@ -30,21 +33,23 @@ missing.
 
 ```bash
 dotnet tool install --global Isoplane.Cli --prerelease
-export PATH="$HOME/.dotnet/tools:$PATH"
 isoplane setup
 ```
 
-The tool installs into `~/.dotnet/tools`. Add that directory to your shell's
-startup configuration if your .NET installation has not already done so.
+The tool installs into `~/.dotnet/tools` on Linux and `%USERPROFILE%\.dotnet\tools`
+on Windows. Add that directory to your PATH if your .NET installation has not
+already done so; reopen your terminal after changing it.
 
-Setup downloads and verifies the release matching the CLI, then installs the
-Isoplane workload into your existing .NET SDK. The workload supplies compiler
-tools, runtime packs and project templates. Setup asks for administrator access
-when your SDK's workload directory requires it.
+Setup downloads and verifies the release matching the CLI. On Linux it installs
+an Isoplane workload into your existing .NET SDK. On Windows it uses Windows
+Installer to install the compiler and runtime tools, and registers the project
+template. Windows installations are maintained by Isoplane setup and Windows
+Installer; `dotnet workload update` does not manage them. Setup requests
+administrator access when needed.
 
 Release packages and the installation record are kept under `~/.isoplane`
-(`ISOPLANE_HOME` overrides this). Setup registers the release's NuGet feed and
-runs the installed tools before reporting success. Your shell configuration and
+on Linux and `%USERPROFILE%\.isoplane` on Windows (`ISOPLANE_HOME` overrides this).
+Setup registers the release's NuGet feed and runs the installed tools before reporting success. Your shell configuration and
 .NET SDK selection stay unchanged.
 
 ```bash
@@ -76,10 +81,10 @@ isoplane setup
 isoplane doctor
 ```
 
-Setup installs the release matching the updated CLI, replaces the superseded
-toolchain and template registration, and keeps earlier SDK packages so existing
-applications still restore. Setup refuses a release the installed CLI was not
-built from, naming the `dotnet tool update` command that installs the matching
+Setup installs the release matching the updated CLI, updates the
+template registration, and keeps earlier SDK packages so existing
+applications still restore. Windows SDK versions install side by side. Setup
+refuses a release the installed CLI was not built from, naming the `dotnet tool update` command that installs the matching
 CLI.
 
 The new template selects the matching SDK automatically. To move an existing
@@ -100,9 +105,9 @@ your project's package references.
 isoplane uninstall-sdk
 ```
 
-This removes everything recorded in `~/.isoplane/installation.json`: the
-toolchain, the package feed and its NuGet registration, the template
-registration, the environment file and the startup-file lines. Resources that
+This removes the resources setup owns, as recorded in `installation.json`
+under the installation home: the SDK tools, the package feed and its NuGet
+registration, and the template registration. Resources that
 existed before setup, your projects, and the CLI's own configuration and
 sign-in state stay. Anything that could not be removed remains listed in the
 manifest with the reason, and the command can be run again. Without a

@@ -12,7 +12,7 @@ internal enum InstalledResourceKind
     SymbolicLink,
     /// <summary>A NuGet package source in the user's NuGet configuration; the target is its name, the detail its path.</summary>
     PackageSource,
-    /// <summary>A standalone template registration from a pre-workload installation; retained for removal.</summary>
+    /// <summary>A per-user template registration maintained by dotnet new.</summary>
     Template,
     /// <summary>A shell entry from a pre-workload installation; the detail is the exact line to remove.</summary>
     ProfileLine,
@@ -20,6 +20,8 @@ internal enum InstalledResourceKind
     Workload,
     /// <summary>A manifest version directory; the detail identifies its owning .NET SDK.</summary>
     WorkloadManifest,
+    /// <summary>A Windows Installer product owned by setup.</summary>
+    WindowsInstaller,
 }
 
 /// <summary>

@@ -6,9 +6,9 @@ namespace Isoplane.Cli;
 /// </summary>
 internal static class SdkRemoval
 {
-    internal static async Task<int> RunAsync(string home, Func<string, ISdkRegistrations> registrations, CancellationToken cancellation, IWorkloadInstallation? workloads = null)
+    internal static async Task<int> RunAsync(string home, Func<string, ISdkRegistrations> registrations, CancellationToken cancellation, ISdkInstallation? installer = null)
     {
-        workloads ??= new WorkloadInstallation(DotnetRegistrations.BootstrapDotnet(), SetupMachine.ConfirmOnTerminal, false);
+        installer ??= SdkInstallation.Create(false);
         home = Path.GetFullPath(home);
         var installation = Installation.Load(home);
         if (installation is null)
@@ -34,7 +34,9 @@ internal static class SdkRemoval
             {
                 if (resource.Kind == InstalledResourceKind.WorkloadManifest && failed.Any(item => item.Kind == InstalledResourceKind.Workload))
                     throw new InvalidOperationException("The workload could not be removed; its discovery manifest is retained so removal can be retried.");
-                await RemoveAsync(resource, dotnet, workloads, cancellation);
+                if (resource.Kind == InstalledResourceKind.WindowsInstaller && failed.Any(item => item.Kind == InstalledResourceKind.Template))
+                    throw new InvalidOperationException("The template could not be unregistered; the Windows SDK is retained so removal can be retried.");
+                await RemoveAsync(resource, dotnet, installer, cancellation);
                 installation.Forget(resource);
                 removed++;
             }
@@ -51,22 +53,21 @@ internal static class SdkRemoval
             return 1;
         }
         installation.Delete();
-        File.Delete(Path.Combine(home, "setup.lock"));
         Console.WriteLine($"Removed the Isoplane SDK: {removed} items removed{(kept > 0 ? $", {kept} pre-existing items kept" : "")}.");
         Console.WriteLine("The isoplane CLI remains installed; run isoplane setup to install the SDK again, or dotnet tool uninstall --global Isoplane.Cli to remove the CLI.");
         return 0;
     }
 
     /// <summary>
-    /// Remove workloads before their discovery manifests and cached packages so failures remain retryable.
+    /// Remove registrations before their backing files so failures remain retryable.
     /// </summary>
     private static InstalledResource[] RemovalOrder(IReadOnlyList<InstalledResource> resources) =>
         resources.Select((resource, index) => (resource, index))
             .OrderBy(entry => entry.resource.Kind switch
             {
-                InstalledResourceKind.Workload => -2,
+                InstalledResourceKind.Workload or InstalledResourceKind.WindowsInstaller => -2,
                 InstalledResourceKind.WorkloadManifest => -1,
-                InstalledResourceKind.Template => 0,
+                InstalledResourceKind.Template => -3,
                 InstalledResourceKind.PackageSource => 1,
                 InstalledResourceKind.ProfileLine => 2,
                 InstalledResourceKind.File => 3,
@@ -78,13 +79,14 @@ internal static class SdkRemoval
             .Select(entry => entry.resource)
             .ToArray();
 
-    private static async Task RemoveAsync(InstalledResource resource, Lazy<ISdkRegistrations> dotnet, IWorkloadInstallation workloads, CancellationToken cancellation)
+    private static async Task RemoveAsync(InstalledResource resource, Lazy<ISdkRegistrations> dotnet, ISdkInstallation installer, CancellationToken cancellation)
     {
         switch (resource.Kind)
         {
+            case InstalledResourceKind.WindowsInstaller:
             case InstalledResourceKind.Workload:
             case InstalledResourceKind.WorkloadManifest:
-                await workloads.RemoveAsync(resource, cancellation);
+                await installer.RemoveAsync(resource, cancellation);
                 break;
             case InstalledResourceKind.Directory:
                 if (Directory.Exists(resource.Target))

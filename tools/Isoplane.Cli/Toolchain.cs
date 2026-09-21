@@ -174,7 +174,7 @@ internal static class Toolchain
         var entry = manifest.Files.SingleOrDefault(file => file.Path == "compiler/" + package);
         if (entry is null || entry.Sha256 != receipt.RootElement.GetProperty("package_sha256").GetString())
             throw new InvalidOperationException("The compiler package is missing from the toolchain manifest or has the wrong identity; reinstall the complete bundle.");
-        var backend = manifest.Files.Single(file => file.Path == "compiler/backend");
+        var backend = manifest.Files.Single(file => file.Path == "compiler/" + CompilerProbeName);
         if (backend.Sha256 != receipt.RootElement.GetProperty("backend_sha256").GetString())
             throw new InvalidOperationException("The compiler dependency probe differs from the packaged backend; reinstall the complete bundle.");
     }
@@ -195,7 +195,7 @@ internal static class Toolchain
             ?? throw new InvalidOperationException("The toolchain bundle has no manifest.");
         if (string.IsNullOrWhiteSpace(manifest.RuntimeIdentifier) || string.IsNullOrWhiteSpace(manifest.DotnetSdkVersion) || string.IsNullOrWhiteSpace(manifest.WasiWorkloadVersion) || manifest.Files is not { Length: > 0 })
             throw new InvalidOperationException("The toolchain manifest must identify its SDK and files.");
-        if (manifest.Kind is not ("toolchain" or "workload"))
+        if (manifest.Kind is not ("toolchain" or "workload" or "msi"))
             throw new InvalidOperationException($"Unknown toolchain bundle kind: {manifest.Kind}.");
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var file in manifest.Files)
@@ -207,22 +207,26 @@ internal static class Toolchain
         }
         foreach (var required in manifest.Kind == "workload"
             ? new[] { "WorkloadManifest.json", "WorkloadManifest.targets" }
-            : RequiredFiles())
+            : manifest.Kind == "msi" ? new[] { "sdk.msi", "WindowsInstaller.json", "vc_redist.x64.exe" } : RequiredFiles())
             if (!names.Contains(required))
                 throw new InvalidOperationException($"The toolchain manifest is incomplete: missing {required}.");
         return manifest;
     }
 
+    internal static string ExecutableExtension => OperatingSystem.IsWindows() ? ".exe" : "";
+
     internal static string[] RequiredFiles() => [
         "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
-        "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools", "wasi-sdk/bin/clang",
+        "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools" + ExecutableExtension, "wasi-sdk/bin/clang" + ExecutableExtension,
         "feed/Isoplane.GuestRuntime.props",
-        "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/backend"
+        "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/" + CompilerProbeName
     ];
+
+    private static string CompilerProbeName => OperatingSystem.IsWindows() ? "backend.dll" : "backend";
 
     internal static void ProbeCompiler(string directory)
     {
-        var path = Path.Combine(directory, "compiler", "backend");
+        var path = Path.Combine(directory, "compiler", CompilerProbeName);
         try
         {
             var library = NativeLibrary.Load(path);
