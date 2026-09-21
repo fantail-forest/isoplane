@@ -30,7 +30,7 @@ guest-sdks/dotnet/obj/
 
 # Local development tools and caches.
 /.isoplane-dev/
-/scripts/**/__pycache__/
+__pycache__/
 
 # Local guest development state and build logs.
 .isoplane/
@@ -61,7 +61,6 @@ guest-sdks/dotnet/obj/
 /guest-runtime/tests/guest/src/obj/
 /guests/dotnet/out/**/*.runtime
 *.wasm.fixture.json
-/guest-runtime/**/__pycache__/
 
 # ephemeral handoffs dir
 handoffs/
