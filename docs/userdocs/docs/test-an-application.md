@@ -16,6 +16,12 @@ cd MyApi.Tests
 dotnet add package Isoplane.Testing --version "$(isoplane --version | sed 's/isoplane //; s/+.*//')"
 ```
 
+In PowerShell, use this final command instead:
+
+```powershell
+dotnet add package Isoplane.Testing --version ((isoplane --version) -replace '^isoplane ', '' -replace '\+.*$', '')
+```
+
 Replace the generated test with the example below. It expects the original
 template response; if you followed the first-application tutorial, change the
 expected body to `Hello from my API!`. For another application, assert the

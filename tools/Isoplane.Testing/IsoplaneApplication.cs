@@ -37,7 +37,7 @@ public sealed class IsoplaneApplication : IAsyncDisposable
     /// <exception cref="ArgumentException">The directory or options are invalid.</exception>
     /// <exception cref="InvalidOperationException">The CLI cannot start, exits before readiness, or emits an invalid readiness record.</exception>
     /// <exception cref="OperationCanceledException">Startup was cancelled.</exception>
-    /// <exception cref="PlatformNotSupportedException">The platform cannot provide the validated Linux process ownership.</exception>
+    /// <exception cref="PlatformNotSupportedException">The platform cannot provide native process ownership.</exception>
     /// <exception cref="AggregateException">Startup failed and owned process cleanup also reported failure.</exception>
     public static async Task<IsoplaneApplication> StartAsync(string projectDirectory, ApplicationOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -53,8 +53,6 @@ public sealed class IsoplaneApplication : IAsyncDisposable
         if (!Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}", nameof(projectDirectory));
         cancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsLinux())
-            throw new PlatformNotSupportedException("The packaged local runtime and process owner are currently supported on Linux.");
         var start = new ProcessStartInfo(options.CliPath)
         {
             WorkingDirectory = directory,

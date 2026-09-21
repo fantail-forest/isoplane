@@ -26,48 +26,44 @@ function Invoke-Dotnet {
     if ($LASTEXITCODE -ne 0) { throw "dotnet failed: $args (exit $LASTEXITCODE)" }
 }
 function Test-HttpGuest([string]$Profile, [string]$Configuration) {
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    $port = $listener.LocalEndpoint.Port
-    $listener.Stop()
-    $start = [Diagnostics.ProcessStartInfo]::new($Cli)
-    $start.Arguments = 'dev --project "' + (Get-Location).Path + '" --configuration ' + $Configuration + ' --no-watch --shutdown-on-stdin-close --port ' + $port
-    $start.UseShellExecute = $false
-    $start.RedirectStandardInput = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    $start.StandardOutputEncoding = [Text.Encoding]::UTF8
-    $start.StandardErrorEncoding = [Text.Encoding]::UTF8
-    $process = [Diagnostics.Process]::Start($start)
-    $output = $process.StandardOutput.ReadToEndAsync()
-    $errors = $process.StandardError.ReadToEndAsync()
-    try {
-        $deadline = [DateTime]::UtcNow.AddMinutes(10)
-        $response = $null
-        while ([DateTime]::UtcNow -lt $deadline -and !$process.HasExited) {
-            try { $response = Invoke-WebRequest "http://127.0.0.1:$port/" -UseBasicParsing -TimeoutSec 5 }
-            catch [Net.WebException] { Start-Sleep -Milliseconds 100; continue }
-            break
-        }
-        if ($null -eq $response -or $response.Content -ne 'Hello from Isoplane!') {
-            throw "$Profile did not serve the template response."
-        }
-        $process.StandardInput.Close()
-        if (!$process.WaitForExit(30000)) { throw "$Profile did not stop after stdin closed." }
-        if ($process.ExitCode -ne 0) { throw "$Profile exited with $($process.ExitCode)." }
-    }
-    finally {
-        if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
-        Set-Content -Encoding UTF8 (Join-Path $workspace "$Profile-http.log") ($output.GetAwaiter().GetResult() + $errors.GetAwaiter().GetResult())
-        $process.Dispose()
-    }
+    Invoke-Dotnet run --project (Join-Path $workspace 'Consumer') --no-restore -- (Get-Location).Path $Cli $Configuration
+    Write-Output "PASS: $Profile through the installed testing package"
 }
+
 try {
     Set-Location $workspace
     Invoke-Dotnet tool install Isoplane.Cli --tool-path $toolDirectory --add-source "$Release\packages" --version $manifest.packageVersion
     Invoke-Cli setup --source $Release --yes
     Invoke-Cli setup --source $Release --yes
     Invoke-Dotnet new isoplane-web --name Sample
+    $consumer = Join-Path $workspace 'Consumer'
+    New-Item -ItemType Directory $consumer | Out-Null
+    Set-Content -Encoding UTF8 "$consumer/Consumer.csproj" @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup><PackageReference Include="Isoplane.Testing" Version="$($manifest.packageVersion)" /></ItemGroup>
+</Project>
+"@
+    Set-Content -Encoding UTF8 "$consumer/Program.cs" @'
+using Isoplane.Testing;
+using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+var app = await IsoplaneApplication.StartAsync(args[0],
+    new ApplicationOptions { CliPath = args[1], Configuration = args[2] }, deadline.Token);
+var address = app.Client.BaseAddress!;
+try
+{
+    using var response = await app.Client.GetAsync("/", deadline.Token);
+    var body = await response.Content.ReadAsStringAsync(deadline.Token);
+    if (!response.IsSuccessStatusCode || body != "Hello from Isoplane!")
+        throw new Exception($"The sandbox returned an unexpected response: {response.StatusCode} {body}\n{app.DiagnosticOutput}");
+}
+finally { await app.DisposeAsync(); }
+using var client = new HttpClient();
+try { await client.GetAsync(address, deadline.Token); }
+catch (HttpRequestException) { return; }
+throw new Exception("Disposal left the application listener running.");
+'@
+    Invoke-Dotnet restore "$consumer/Consumer.csproj"
     Set-Location (Join-Path $workspace 'Sample')
     Invoke-Dotnet build
     Test-HttpGuest Mono Debug

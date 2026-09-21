@@ -19,7 +19,7 @@ public static Task<IsoplaneApplication> StartAsync(string projectDirectory,
 | ArgumentException | The directory or options are invalid. |
 | InvalidOperationException | The CLI cannot start, exits before readiness, or emits an invalid readiness record. |
 | OperationCanceledException | Startup was cancelled. |
-| PlatformNotSupportedException | The platform cannot provide the validated Linux process ownership. |
+| PlatformNotSupportedException | The platform cannot provide native process ownership. |
 | AggregateException | Startup failed and owned process cleanup also reported failure. |
 
 ## Remarks
