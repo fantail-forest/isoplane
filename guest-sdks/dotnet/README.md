@@ -34,15 +34,16 @@ records that pack's identity beside the module, and judges the module with
 `isoplane doctor`. A guest's `build.sh` uses this same MSBuild integration and
 copies the module and its identity into `out/`.
 
-On macOS, install the .NET 10 SDK and start Docker Desktop or a compatible
-local Docker runtime. Publishing provisions the Linux compiler image and
-NuGet cache on first use. It mounts source read-only, uses separate build
-intermediates per invocation, and returns developer-owned output. It removes
-its compiler container on completion or cancellation. `isoplane dev` uses the
-same publication path and executes the guest in the native runtime.
+Installed builds on Linux, macOS and Windows use the native compiler and tools
+provided by `isoplane setup`. Customer builds do not require Docker, Rust,
+Homebrew or Xcode. Both interpreted and NativeAOT applications compile locally.
 
-After the first online publish, `dotnet publish -p:IsoplaneOffline=true` uses the
-cached image and packages with compiler networking disabled. Missing inputs
+Container publishing is an explicit `-p:IsoplaneContainerBuild=true` option
+for builds supplied with a Linux toolchain. It requires a running Docker daemon.
+
+For container publishing, after the first online publish,
+`dotnet publish -p:IsoplaneOffline=true` uses the cached image and packages
+with compiler networking disabled. Missing inputs
 are errors naming what needs provisioning. `IsoplaneOffline=true` in the
 environment applies the same policy to builds launched by `isoplane dev`.
 
@@ -57,8 +58,8 @@ adjustable with `-p:IsoplaneContainerCommandTimeoutSeconds=N`.
 `dotnet clean -c Release` removes that configuration's recorded WASM outputs,
 including custom publish locations, while retaining shared packages and images.
 
-On Linux, publishing uses the native installed compiler, wasi-sdk 29 and
-wasm-tools. Set `WASI_SDK_PATH` to the wasi-sdk installation. The
+Setup supplies the native compiler, wasi-sdk 29 and wasm-tools and selects
+their installed paths automatically. The
 NativeAOT-LLVM package remains experimental; targeting `net10.0` does not make
 it an officially supported .NET WASM distribution.
 

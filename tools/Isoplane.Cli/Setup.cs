@@ -28,7 +28,7 @@ internal sealed record SetupOptions(string? Source, bool AssumeYes)
 internal sealed record SetupMachine(
     Func<string, bool> CanLoad,
     Func<string, bool> FileExists,
-    OperatingSystemRelease OperatingSystem,
+    OperatingSystemRelease? LinuxDistribution,
     Func<string, Task<bool>> Confirm,
     Func<string, CancellationToken, Task<int>> RunPrivileged,
     Func<string, ISdkRegistrations> Registrations,
@@ -39,7 +39,7 @@ internal sealed record SetupMachine(
     internal static SetupMachine Production() => new(
         Prerequisites.CanLoad,
         File.Exists,
-        Prerequisites.Detect(),
+        OperatingSystem.IsLinux() ? Prerequisites.Detect() : null,
         ConfirmOnTerminal,
         (command, cancellation) => Processes.RunAsync("/bin/sh", ["-c", command], Environment.CurrentDirectory, cancellation),
         dotnet => new DotnetRegistrations(dotnet, Toolchain.Home),
@@ -68,10 +68,10 @@ internal static class Setup
     {
         home = Path.GetFullPath(home);
         var platform = Toolchain.PlatformIdentifier();
-        if (platform is not ("linux-x64" or "win-x64"))
-            throw new InvalidOperationException($"Isoplane releases support Linux x64 (glibc) and Windows x64; this machine is {platform}.");
-        if (!OperatingSystem.IsWindows())
-            await EnsurePrerequisitesAsync(options, machine, cancellation);
+        if (platform is not ("linux-x64" or "win-x64" or "osx-arm64"))
+            throw new InvalidOperationException($"Isoplane releases support Linux x64 (glibc), Windows x64, and macOS ARM64; this machine is {platform}.");
+        if (machine.LinuxDistribution is { } distribution)
+            await EnsurePrerequisitesAsync(options, machine, distribution, cancellation);
 
         var source = options.Source is null
             ? ReleaseSource.AtOrigin(Release.Origin(), cli.ReleaseName, client)
@@ -182,13 +182,13 @@ internal static class Setup
         return Convert.ToHexStringLower(SHA256.HashData(stream)) == digest;
     }
 
-    private static async Task EnsurePrerequisitesAsync(SetupOptions options, SetupMachine machine, CancellationToken cancellation)
+    private static async Task EnsurePrerequisitesAsync(SetupOptions options, SetupMachine machine, OperatingSystemRelease distribution, CancellationToken cancellation)
     {
         var missing = Prerequisites.Missing(machine.CanLoad, machine.FileExists);
         if (missing.Count == 0)
             return;
         var described = Prerequisites.Describe(missing);
-        var command = Prerequisites.InstallCommand(machine.OperatingSystem, missing)
+        var command = Prerequisites.InstallCommand(distribution, missing)
             ?? throw new InvalidOperationException($"Setup is incomplete: this machine lacks {described}. Install your distribution's packages providing them (on Ubuntu 24.04: {string.Join(' ', missing.Select(m => m.UbuntuPackage))}), then rerun isoplane setup.");
         Console.Error.WriteLine($"This machine lacks {described}.");
         if (!options.AssumeYes && !await machine.Confirm($"Install them now with: {command}"))

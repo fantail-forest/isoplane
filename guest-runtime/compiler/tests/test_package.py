@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 import zipfile
 
@@ -13,6 +14,20 @@ spec.loader.exec_module(compiler)
 
 
 class NativeCacheTests(unittest.TestCase):
+    def test_macos_arm64_manifest_selects_source_built_host_tools(self):
+        with patch.object(compiler.platform, 'system', return_value='Darwin'), \
+                patch.object(compiler.platform, 'machine', return_value='arm64'):
+            spec = compiler.manifest()
+        self.assertEqual(spec['runtime_identifier'], 'osx-arm64', 'Apple Silicon must select native tools')
+        self.assertEqual(spec['package'], 'runtime.osx-arm64.Microsoft.DotNet.ILCompiler.LLVM',
+                         'Mac compiler packages must not replace Linux packages')
+
+    def test_unsupported_hosts_fail_before_building_linux_packages(self):
+        with patch.object(compiler.platform, 'system', return_value='Linux'), \
+                patch.object(compiler.platform, 'machine', return_value='aarch64'):
+            with self.assertRaisesRegex(ValueError, 'unsupported compiler build host'):
+                compiler.manifest()
+
     def test_moved_native_build_directories_are_reconfigured(self):
         with tempfile.TemporaryDirectory() as temporary:
             tree = Path(temporary)
@@ -46,7 +61,7 @@ class CompilerPackageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.upstream = self.root / 'upstream.nupkg'
         with zipfile.ZipFile(self.upstream, 'w') as archive:
-            archive.writestr('compiler.nuspec', '<package xmlns="urn:nuget"><metadata><version>1.0</version><repository commit="source" /></metadata></package>')
+            archive.writestr('compiler.nuspec', '<package xmlns="urn:nuget"><metadata><id>runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM</id><version>1.0</version><repository commit="source" /></metadata></package>')
             archive.writestr(compiler.BACKEND, b'upstream backend')
             archive.writestr('tools/ilc', b'pinned compiler executable')
             archive.writestr('LICENSE.TXT', b'original license')
@@ -86,6 +101,28 @@ class CompilerPackageTests(unittest.TestCase):
             self.assertEqual(archive.read('tools/ilc.exe'), b'source-built compiler', 'Windows must use the patched executable')
             self.assertEqual(archive.read(backend), self.backend.read_bytes(), 'Windows must use the patched DLL')
         self.assertIn(b'win-x64', (output / 'Isoplane.GuestCompiler.props').read_bytes(), 'the SDK must select the Windows compiler package')
+
+    def test_macos_package_contains_only_source_built_host_tools(self):
+        self.manifest.update(package='runtime.osx-arm64.Microsoft.DotNet.ILCompiler.LLVM',
+                             runtime_identifier='osx-arm64', metadata_package=self.manifest['package'])
+        with zipfile.ZipFile(self.upstream, 'a') as archive:
+            archive.writestr('tools/linux-only.so', b'foreign binary')
+            archive.writestr('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="so" ContentType="application/octet-stream" /></Types>')
+        self.manifest['sha256'] = compiler.digest(self.upstream)
+        backend = compiler.backend_name('osx-arm64')
+        (self.managed / Path(compiler.BACKEND).name).rename(self.managed / Path(backend).name)
+        output, receipt = self.compose()
+        with zipfile.ZipFile(output / receipt['package']) as archive:
+            tools = {name for name in archive.namelist() if name.startswith('tools/')}
+            self.assertEqual(tools, {'tools/ilc', backend}, 'foreign tools must never leak from the metadata package')
+            self.assertEqual(archive.read(backend), self.backend.read_bytes(), 'Mac must ship its native backend')
+            metadata = ET.fromstring(archive.read('compiler.nuspec'))
+            self.assertEqual(metadata.findtext('./{*}metadata/{*}id'), self.manifest['package'],
+                             'NuGet identity must select the Mac package')
+            types = ET.fromstring(archive.read('[Content_Types].xml'))
+            self.assertIn('dylib', {item.get('Extension') for item in types}, 'NuGet must recognize Mac libraries')
+            self.assertTrue(archive.getinfo('tools/ilc').external_attr >> 16 & 0o111,
+                            'the Mac compiler must remain executable after extraction')
 
     def test_changed_managed_compiler_bytes_get_a_distinct_version(self):
         _, first = self.compose()

@@ -8,7 +8,12 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
 use rustix::fd::OwnedFd;
+#[cfg(target_os = "linux")]
 use rustix::process::{getpgid, pidfd_open, Pid, PidfdFlags};
+
+#[cfg(target_os = "macos")]
+#[path = "process_macos.rs"]
+mod macos;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -81,6 +86,11 @@ impl OwnedChild {
         // preventing its ID from being reused for an unrelated process group.
         if unsafe { libc::kill(-self.pid, libc::SIGKILL) } < 0 {
             let error = io::Error::last_os_error();
+            #[cfg(target_os = "macos")]
+            if error.raw_os_error() == Some(libc::EPERM) && macos::group_is_dead(self.pid)? {
+                // Darwin refuses signals to a group containing only zombies.
+                return Ok(());
+            }
             if error.raw_os_error() != Some(libc::ESRCH) {
                 return Err(error);
             }
@@ -152,6 +162,12 @@ impl OwnedChild {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn live_members(&self) -> io::Result<Vec<OwnedFd>> {
+        macos::live_members(self.pid)
+    }
+
+    #[cfg(target_os = "linux")]
     fn live_members(&self) -> io::Result<Vec<OwnedFd>> {
         let mut members = Vec::new();
         for process in procfs::process::all_processes().map_err(io::Error::other)? {

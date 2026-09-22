@@ -1,7 +1,7 @@
 //! Native platform operations consumed by managed local development tooling.
 
 mod local;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod process;
 #[cfg(windows)]
 #[path = "process_windows.rs"]
@@ -269,16 +269,16 @@ pub unsafe extern "C" fn isoplane_process_start(
     boundary(|| {
         // SAFETY: the managed caller pins the serialized process settings.
         let settings = unsafe { input(settings, length)? };
-        #[cfg(any(target_os = "linux", windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         {
             process::start(settings)
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _settings = settings;
             Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "local process ownership is supported on Linux and Windows",
+                "local process ownership is supported on Linux, macOS and Windows",
             )
             .into())
         }
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn isoplane_process_start(
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_process_wait(handle: *mut std::ffi::c_void) -> NativeResult {
     boundary(|| {
-        #[cfg(any(target_os = "linux", windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         {
             // SAFETY: the managed owner retains the process until this call finishes.
             let process = unsafe { handle.cast::<process::OwnedChild>().as_ref() }
@@ -301,12 +301,12 @@ pub unsafe extern "C" fn isoplane_process_wait(handle: *mut std::ffi::c_void) ->
                 .to_string()
                 .into_bytes())
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _handle = handle;
             Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "local process ownership is supported on Linux and Windows",
+                "local process ownership is supported on Linux, macOS and Windows",
             )
             .into())
         }
@@ -320,7 +320,7 @@ pub unsafe extern "C" fn isoplane_process_wait(handle: *mut std::ffi::c_void) ->
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_process_stop(handle: *mut std::ffi::c_void) -> NativeResult {
     boundary(|| {
-        #[cfg(any(target_os = "linux", windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         {
             // SAFETY: the managed owner retains the process during cancellation.
             let process = unsafe { handle.cast::<process::OwnedChild>().as_ref() }
@@ -328,12 +328,12 @@ pub unsafe extern "C" fn isoplane_process_stop(handle: *mut std::ffi::c_void) ->
             process.terminate()?;
             Ok(b"{}".to_vec())
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _handle = handle;
             Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "local process ownership is supported on Linux and Windows",
+                "local process ownership is supported on Linux, macOS and Windows",
             )
             .into())
         }
@@ -346,12 +346,12 @@ pub unsafe extern "C" fn isoplane_process_stop(handle: *mut std::ffi::c_void) ->
 /// The handle is unchanged, exclusively owned, and freed exactly once.
 #[no_mangle]
 pub unsafe extern "C" fn isoplane_process_free(handle: *mut std::ffi::c_void) {
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     // SAFETY: the managed owner joins the waiter before transferring sole ownership.
     unsafe {
         drop(Box::from_raw(handle.cast::<process::OwnedChild>()))
     };
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     let _handle = handle;
 }
 

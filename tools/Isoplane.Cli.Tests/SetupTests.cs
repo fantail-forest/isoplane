@@ -101,6 +101,19 @@ public sealed class SetupTests
     }
 
     [Fact]
+    public async Task Non_linux_setup_does_not_require_linux_system_libraries()
+    {
+        using var fixture = new ToolchainBundle();
+        var machine = Machines.Ready(fixture, new FakeRegistrations()) with
+        {
+            LinuxDistribution = null,
+            CanLoad = _ => throw new InvalidOperationException("Linux library checks must not run on this platform."),
+            FileExists = _ => throw new InvalidOperationException("Linux certificate checks must not run on this platform."),
+        };
+        Assert.True(await RunAsync(fixture, machine) == 0, "Non-Linux setup must use its bundled native dependencies.");
+    }
+
+    [Fact]
     public async Task Missing_prerequisites_stop_setup_before_any_download_and_name_the_exact_command()
     {
         using var fixture = new ToolchainBundle();
@@ -168,7 +181,7 @@ public sealed class SetupTests
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
             CanLoad = soname => soname != "libtinfo.so.6",
-            OperatingSystem = new OperatingSystemRelease("fedora", "41"),
+            LinuxDistribution = new OperatingSystemRelease("fedora", "41"),
         };
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, machine));
         Assert.Contains("libtinfo.so.6", error.Message);

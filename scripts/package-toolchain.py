@@ -69,7 +69,13 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     windows = platform.system() == 'Windows'
-    rid = 'win-x64' if windows else 'linux-x64'
+    if platform.system() == 'Darwin':
+        architecture = {'arm64': 'arm64', 'x86_64': 'x64'}.get(platform.machine())
+        if architecture is None:
+            parser.error('macOS assembly requires an ARM64 or x64 host')
+        rid = f'osx-{architecture}'
+    else:
+        rid = 'win-x64' if windows else 'linux-x64'
     executable = '.exe' if windows else ''
     if windows and (not args.mono_targets or not args.wasi_cross or not args.templates):
         parser.error('Windows assembly requires --templates, --mono-targets and --wasi-cross from the pinned runtime release')
@@ -145,7 +151,7 @@ def main():
             # SDK first use recreates these records with absolute local pack paths.
             # They are installation state, not reproducible toolchain payload.
             shutil.rmtree(stage / 'dotnet/metadata/workloads/InstalledPacks')
-            for pack in ('Microsoft.NET.Runtime.MonoTargets.Sdk', 'Microsoft.NETCore.App.Runtime.AOT.linux-x64.Cross.wasi-wasm'):
+            for pack in ('Microsoft.NET.Runtime.MonoTargets.Sdk', f'Microsoft.NETCore.App.Runtime.AOT.{rid}.Cross.wasi-wasm'):
                 if not (stage / 'dotnet/packs' / pack / runtime_version / 'Sdk/Sdk.props').is_file():
                     parser.error(f'pinned SDK did not provide expected WASI build pack {pack} {runtime_version}')
         (stage / 'bin').mkdir()
@@ -181,6 +187,13 @@ def main():
             shutil.copytree(args.packages, release / 'packages')
             readme = (root / 'scripts/developer-preview-readme.md').read_text()
             readme = readme.replace('@PACKAGE_VERSION@', args.package_version)
+            readme = readme.replace('@RUNTIME_IDENTIFIER@', rid)
+            prerequisites = ('Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) '
+                             'for your Mac architecture. Docker, Xcode and Homebrew are not required to use this SDK.'
+                             if rid.startswith('osx-') else
+                             'On Ubuntu 24.04, install the bootstrap .NET SDK and its native dependencies:\n\n'
+                             '```sh\nsudo apt-get install -y dotnet-sdk-10.0\n```')
+            readme = readme.replace('@SDK_PREREQUISITES@', prerequisites)
             (release / 'package-version.txt').write_text(args.package_version + '\n')
             (release / 'README.md').write_text(readme)
             sample = release / 'samples/aspnet-todo'

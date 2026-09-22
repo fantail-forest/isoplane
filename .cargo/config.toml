@@ -23,6 +23,10 @@
 [build]
 build-dir = "{workspace-root}/target/build"
 
+[net]
+# Use the developer's Git/SSH authentication for private source dependencies.
+git-fetch-with-cli = true
+
 [env]
 # Managed guests have substantial private memories. Bound libtest concurrency
 # even on hosts reporting hundreds of CPUs; an explicit environment overrides it.

@@ -16,7 +16,7 @@
     <Error Condition="'$(IsoplaneGuestCompilerVersion)' != '' AND '$(NETCoreSdkPortableRuntimeIdentifier)' != '$(IsoplaneGuestCompilerRuntimeIdentifier)'" Text="This supplied NativeAOT compiler supports $(IsoplaneGuestCompilerRuntimeIdentifier); the current SDK runs on $(NETCoreSdkPortableRuntimeIdentifier)." />
   </Target>
   <PropertyGroup>
-    <IsoplaneContainerBuild Condition="'$(IsoplaneContainerBuild)' == ''">$([MSBuild]::IsOSPlatform('OSX'))</IsoplaneContainerBuild>
+    <IsoplaneContainerBuild Condition="'$(IsoplaneContainerBuild)' == ''">false</IsoplaneContainerBuild>
     <IsoplaneOffline Condition="'$(IsoplaneOffline)' == ''">false</IsoplaneOffline>
     <NuGetAudit Condition="'$(IsoplaneOffline)' == 'true'">false</NuGetAudit>
     <RestoreSources Condition="'$(IsoplaneOffline)' == 'true'">$(MSBuildThisFileDirectory)Build</RestoreSources>

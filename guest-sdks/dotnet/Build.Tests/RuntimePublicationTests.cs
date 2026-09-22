@@ -5,6 +5,16 @@ using Xunit;
 public sealed class RuntimePublicationTests : MsbuildTests
 {
     [Fact]
+    public async Task native_compilation_is_the_default_on_every_host()
+    {
+        var project = WriteProject(new XElement("Import",
+            new XAttribute("Project", Path.Combine(SdkDirectory(), "Isoplane.NativeAot.props"))));
+        var result = await Run(Msbuild(project, "-getProperty:IsoplaneContainerBuild"));
+        Assert.True(result.Exit == 0 && result.Output.Trim() == "false",
+            "Ordinary NativeAOT builds must use the packaged native compiler without requiring Docker: " + result.Output);
+    }
+
+    [Fact]
     public async Task an_unchanged_pal_build_preserves_objects_and_registers_them_for_linking()
     {
         var project = PalProject();

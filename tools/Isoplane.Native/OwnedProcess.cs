@@ -35,7 +35,7 @@ internal sealed class OwnedProcess : IDisposable
 
     internal static unsafe OwnedProcess Start(ProcessStartInfo child, TimeSpan grace)
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Local process ownership is supported on Linux and Windows.");
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Local process ownership is supported on Linux, macOS and Windows.");
         NativeRuntime.EnsureLoaded();
         var settings = JsonSerializer.SerializeToUtf8Bytes(new
         {

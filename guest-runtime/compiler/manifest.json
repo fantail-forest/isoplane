@@ -9,6 +9,14 @@
     "win-x64": {
       "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler.LLVM",
       "sha256": "9b0f21f9a711d071b13a55ea2d94a8ac126ab0bdc43d4d994e8f0462d6bffd79"
+    },
+    "osx-arm64": {
+      "package": "runtime.osx-arm64.Microsoft.DotNet.ILCompiler.LLVM",
+      "metadata_package": "runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM"
+    },
+    "osx-x64": {
+      "package": "runtime.osx-x64.Microsoft.DotNet.ILCompiler.LLVM",
+      "metadata_package": "runtime.linux-x64.Microsoft.DotNet.ILCompiler.LLVM"
     }
   },
   "llvm_source_sha256": "2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651"

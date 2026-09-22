@@ -21,6 +21,8 @@ BACKEND = 'tools/libclrjit_universal_llvm32_x64.so'
 
 
 def backend_name(rid):
+    if rid.startswith('osx-'):
+        return f"tools/libclrjit_universal_llvm32_{rid.removeprefix('osx-')}.dylib"
     return 'tools/clrjit_universal_llvm32_x64.dll' if rid == 'win-x64' else BACKEND
 
 
@@ -36,8 +38,14 @@ def digest(path):
 def manifest():
     result = json.loads((HERE / 'manifest.json').read_text())
     platforms = result.pop('platforms')
-    if platform.system() == 'Windows':
-        result.update(platforms['win-x64'], runtime_identifier='win-x64')
+    system = platform.system()
+    architecture = {'x86_64': 'x64', 'amd64': 'x64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(platform.machine().lower())
+    operating_system = {'Windows': 'win', 'Darwin': 'osx', 'Linux': 'linux'}.get(system)
+    rid = f'{operating_system}-{architecture}'
+    if rid != 'linux-x64':
+        if rid not in platforms:
+            raise ValueError(f'unsupported compiler build host: {system} {platform.machine()}')
+        result.update(platforms[rid], runtime_identifier=rid)
     source = (HERE.parent / 'manifest.env').read_text()
     for key in ('RUNTIMELAB_COMMIT', 'RUNTIMELAB_TARBALL_URL', 'RUNTIMELAB_TARBALL_SHA256'):
         result[key] = re.search(r'^' + key + r'=(.+)$', source, re.MULTILINE).group(1)
@@ -120,7 +128,7 @@ def compose(upstream, backend, managed, output):
             if len(original.namelist()) != len(set(original.namelist())):
                 raise ValueError('duplicate upstream compiler entries')
             for entry in original.infolist():
-                if entry.filename == '.signature.p7s':
+                if entry.filename == '.signature.p7s' or (spec.get('metadata_package') and entry.filename.startswith('tools/')):
                     continue
                 data = original.read(entry)
                 if entry.filename in files:
@@ -133,10 +141,18 @@ def compose(upstream, backend, managed, output):
                     if repository.get('commit') != spec['RUNTIMELAB_COMMIT']:
                         raise ValueError('managed compiler and backend sources differ')
                     root.find('./n:metadata/n:version', ns).text = version
+                    root.find('./n:metadata/n:id', ns).text = spec['package']
+                    data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+                if entry.filename == '[Content_Types].xml' and spec.get('metadata_package'):
+                    root = ET.fromstring(data)
+                    ns = root.tag.split('}')[0][1:]
+                    extensions = {item.get('Extension') for item in root}
+                    for extension in sorted({path.suffix.lstrip('.') for path in files.values()} - extensions - {''}):
+                        ET.SubElement(root, f'{{{ns}}}Default', Extension=extension, ContentType='application/octet-stream')
                     data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
                 result.writestr(entry, data)
             for name, path in files.items():
-                if name not in original.namelist():
+                if spec.get('metadata_package') or name not in original.namelist():
                     entry = zipfile.ZipInfo(name)
                     entry.external_attr = (0o100755 if path.name == 'ilc' else 0o100644) << 16
                     result.writestr(entry, path.read_bytes())
@@ -155,8 +171,8 @@ def compose(upstream, backend, managed, output):
     return verify(output, True)
 
 
-def prepare_native_cache(tree, target_os):
-    directory = tree / f'artifacts/obj/coreclr/{target_os}.x64.Release'
+def prepare_native_cache(tree, target_os, architecture='x64'):
+    directory = tree / f'artifacts/obj/coreclr/{target_os}.{architecture}.Release'
     cache = directory / 'CMakeCache.txt'
     if not cache.exists():
         return
@@ -171,10 +187,9 @@ def prepare_native_cache(tree, target_os):
 
 def build(args):
     spec = manifest()
-    if platform.system() not in ('Linux', 'Windows') or platform.machine().lower() not in ('x86_64', 'amd64'):
-        raise ValueError('the compiler backend build supports Linux x64 and Windows x64')
     windows = platform.system() == 'Windows'
-    target_os = 'windows' if windows else 'linux'
+    target_os = {'win': 'windows', 'linux': 'linux', 'osx': 'osx'}[spec['runtime_identifier'].split('-')[0]]
+    architecture = spec['runtime_identifier'].split('-')[1]
     llvm_config = args.llvm / ('bin/llvm-config.exe' if windows else 'bin/llvm-config')
     version = subprocess.check_output([str(llvm_config), '--version'], text=True).strip()
     if version != spec['llvm_version']:
@@ -184,20 +199,20 @@ def build(args):
     fetch(spec['RUNTIMELAB_TARBALL_URL'], archive, spec['RUNTIMELAB_TARBALL_SHA256'])
     tree = args.work / 'source'
     subprocess.run([sys.executable, str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches')], check=True)
-    prepare_native_cache(tree, target_os)
+    prepare_native_cache(tree, target_os, architecture)
     environment = os.environ.copy()
     environment.update(LLVM_CMAKE_CONFIG=str(args.llvm / 'lib/cmake/llvm'),
                        DOTNET_CLI_USE_MSBUILD_SERVER='0', MSBUILDDISABLENODEREUSE='1',
                        UseSharedCompilation='false')
-    command = ['./src/coreclr/build-runtime.sh', '-x64', '-release', '-os', 'linux', '-ninja', '-component', 'llvmjit', '-cmakeargs', '-DFEATURE_EVENTSOURCE_XPLAT=0']
+    command = ['./src/coreclr/build-runtime.sh', f'-{architecture}', '-release', '-os', target_os, '-numproc', str(args.jobs), '-ninja', '-component', 'llvmjit', '-cmakeargs', '-DFEATURE_EVENTSOURCE_XPLAT=0']
     if windows:
         command = ['cmd', '/c', 'src\\coreclr\\build-runtime.cmd', '-x64', '-release', '-component', 'llvmjit']
-        environment.setdefault('NumberOfCores', str(os.cpu_count()))
+        environment['NumberOfCores'] = str(args.jobs)
     with (args.work / 'build.log').open('w') as log:
         subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
     with tempfile.TemporaryDirectory(prefix='managed-publish-', dir=args.work) as published:
         command = ['./dotnet.sh', 'publish', 'src/coreclr/tools/aot/ILCompiler/ILCompiler_publish.csproj', '-c', 'Release',
-                   '-p:TargetArchitecture=x64', f'-p:TargetOS={target_os}', '-p:UseNativeAotForComponents=false', '-p:UseBootstrap=false', f'-p:PublishDir={Path(published).as_posix()}/']
+                   f'-maxcpucount:{args.jobs}', f'-p:TargetArchitecture={architecture}', f'-p:TargetOS={target_os}', '-p:UseNativeAotForComponents=false', '-p:UseBootstrap=false', f'-p:PublishDir={Path(published).as_posix()}/']
         if windows:
             command = ['cmd', '/c', 'dotnet.cmd', *command[1:]]
         with (args.work / 'managed-build.log').open('w') as log:
@@ -206,9 +221,9 @@ def build(args):
         with urllib.request.urlopen(spec['source']) as response:
             index = json.load(response)
         base = next(resource['@id'] for resource in index['resources'] if resource['@type'].startswith('PackageBaseAddress/'))
-        name = spec['package'].lower()
+        name = spec.get('metadata_package', spec['package']).lower()
         fetch(f"{base}{name}/{spec['version']}/{name}.{spec['version']}.nupkg", upstream, spec['sha256'])
-        return compose(upstream, tree / f'artifacts/bin/coreclr/{target_os}.x64.Release' / Path(backend_name(spec['runtime_identifier'])).name,
+        return compose(upstream, tree / f'artifacts/bin/coreclr/{target_os}.{architecture}.Release' / Path(backend_name(spec['runtime_identifier'])).name,
                        Path(published), args.output)
 
 
@@ -222,8 +237,11 @@ def main():
     item = sub.add_parser('build')
     item.add_argument('--output', type=Path, default=HERE.parent / 'out/compiler')
     item.add_argument('--work', type=Path, default=HERE.parent / 'work/compiler')
+    item.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8), help='maximum parallel compiler build workers')
     item.add_argument('--llvm', type=Path, default=Path('/usr/lib/llvm-18'))
     args = parser.parse_args()
+    if args.action == 'build' and args.jobs < 1:
+        parser.error('--jobs must be positive')
     try:
         result = build(args) if args.action == 'build' else verify(args.output, args.action == 'verify-current')
         print(result['version'])

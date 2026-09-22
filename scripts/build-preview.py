@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the complete Linux x64 developer preview from committed HEAD at the declared release version.
+"""Build the complete Linux or macOS developer preview from committed HEAD at the declared release version.
 
     python3 scripts/build-preview.py [--cache DIR] [--output DIR]
 
@@ -22,14 +22,16 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_IDENTIFIER = 'linux-x64'
-NATIVE_LIBRARY = 'libisoplane_native.so'
+RUNTIME_IDENTIFIER = ('osx-' + {'arm64': 'arm64', 'x86_64': 'x64'}.get(platform.machine(), 'unsupported')
+                      if platform.system() == 'Darwin' else 'linux-x64')
+NATIVE_LIBRARY = 'libisoplane_native.dylib' if platform.system() == 'Darwin' else 'libisoplane_native.so'
 PROJECTS = {
     'Isoplane.Sdk': 'guest-sdks/dotnet/Isoplane.Sdk.csproj',
     'Isoplane.AspNetCore': 'guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj',
@@ -308,7 +310,7 @@ def existing_release(release, archive, receipt_path, revision):
     return False
 
 
-def build(root, cache, releases, logs):
+def build(root, cache, releases, logs, args):
     revision = source_revision(root)
     epoch = int(output(['git', 'show', '-s', '--format=%ct', revision], root))
     source = cache / 'source'
@@ -322,8 +324,10 @@ def build(root, cache, releases, logs):
         return
     candidates = [Path(line[9:]) for line in output(['git', 'worktree', 'list', '--porcelain'], root).splitlines()
                   if line.startswith('worktree ')]
-    runtime_output = prepare_runtime(source, candidates, logs)
-    sdk, sdk_identity = prepare_sdk(source, cache, logs)
+    runtime_output = (load(source / 'scripts/macos-build.py').prepare(
+        load(source / 'scripts/build-preview.py'), source, cache, logs, args) if platform.system() == 'Darwin'
+        else prepare_runtime(source, candidates, logs))
+    sdk, sdk_identity = prepare_sdk(source, cache, logs, RUNTIME_IDENTIFIER)
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1',
@@ -356,10 +360,10 @@ def build(root, cache, releases, logs):
     notices = cache / 'notices'
     if notices.exists():
         shutil.rmtree(notices)
-    run(['python3', source / 'scripts/toolchain-notices.py', '--wasm-tools-source', wasm_sources[0].parent,
+    run([sys.executable, source / 'scripts/toolchain-notices.py', '--wasm-tools-source', wasm_sources[0].parent,
          '--runtime-work', source / 'guest-runtime/work', '--wasi-sdk', source / 'guest-runtime/work/wasi-sdk',
          '--managed-source', source, '--output', notices], source, logs / 'notices.log', environment)
-    run(['python3', source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output,
+    run([sys.executable, source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output,
          '--wasi-sdk', source / 'guest-runtime/work/wasi-sdk', '--wasm-tools', wasm_tools,
          '--native-library', native_library, '--dotnet-root', sdk,
          '--notices', notices, '--packages', packages, '--package-version', version,
@@ -393,10 +397,34 @@ def main():
                         help='build cache shared between releases: SDK download, cargo target, packages')
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases',
                         help='where the release directory, archive and checksum are written')
+    parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
+    parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
+    parser.add_argument('--llvm', type=Path, help='LLVM development build matching the compiler pin (macOS)')
+    parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()
-    if platform.system() != 'Linux' or platform.machine() != 'x86_64':
-        raise SystemExit('build-preview requires a Linux x64 builder')
+    if platform.system() == 'Darwin':
+        if RUNTIME_IDENTIFIER not in ('osx-arm64', 'osx-x64'):
+            parser.error('macOS builds require an ARM64 or x64 host')
+        if not args.runtime_artifact or not args.runtime_sha256 or not args.llvm:
+            parser.error('macOS builds require --runtime-artifact, --runtime-sha256 and --llvm')
+        if not re.fullmatch('[a-fA-F0-9]{64}', args.runtime_sha256):
+            parser.error('--runtime-sha256 must contain 64 hexadecimal digits')
+        args.runtime_sha256 = args.runtime_sha256.lower()
+        args.llvm = args.llvm.resolve()
+    elif platform.system() != 'Linux' or platform.machine() != 'x86_64':
+        parser.error('build-preview requires Linux x64 or macOS')
+    elif args.runtime_artifact or args.runtime_sha256 or args.llvm:
+        parser.error('runtime artifact and LLVM options currently apply to macOS builds')
+    if args.jobs < 1:
+        parser.error('--jobs must be positive')
+    os.environ['CARGO_BUILD_JOBS'] = str(args.jobs)
     cache = args.cache.resolve()
+    if platform.system() == 'Darwin':
+        for variable, directory in [('CARGO_HOME', 'cargo'), ('NUGET_PACKAGES', 'nuget'),
+                                    ('TMPDIR', 'tmp'), ('DOTNET_CLI_HOME', 'dotnet-home')]:
+            path = cache / directory
+            path.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault(variable, str(path))
     releases = args.output.resolve()
     logs = cache / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
@@ -404,7 +432,7 @@ def main():
     with (cache / '.lock').open('w') as lock:
         load(ROOT / 'scripts/fixture-tools.py').lock_file(lock)
         try:
-            build(ROOT, cache, releases, logs)
+            build(ROOT, cache, releases, logs, args)
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
             raise SystemExit(f'preview build failed: {error}; see {logs}') from error
 

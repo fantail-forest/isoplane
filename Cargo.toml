@@ -27,6 +27,7 @@ rust-version = "1.88"
 [workspace.dependencies]
 csbindgen = "=1.9.8"
 procfs = { version = "0.18", default-features = false }
+libproc = "0.14.11"
 fs4 = "1.1.0"
 portable-pty = "0.9.0"
 isoplane-abi       = { path = "crates/isoplane-abi" }

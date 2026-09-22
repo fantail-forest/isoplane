@@ -1,0 +1,10 @@
+{
+  "osx-arm64": {
+    "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-29/wasi-sdk-29.0-arm64-macos.tar.gz",
+    "sha256": "e11552913e3f99e834d7fe7da1bd081abaf764759ed76b6097a34c63fc83665e"
+  },
+  "osx-x64": {
+    "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-29/wasi-sdk-29.0-x86_64-macos.tar.gz",
+    "sha256": "d0de2fd3ea5c57060efa87e4356c164bec3689972f2386f0c9a89c58e10cec8d"
+  }
+}

@@ -70,12 +70,11 @@ public sealed class ProcessLifetimeTests
         using var process = Isoplane.Processes.OwnedProcess.Start(start, TimeSpan.FromSeconds(30));
         Assert.True(await process.StandardOutput.ReadLineAsync(fixture.Cancellation) == "ready",
             "The child must hold its cleanup gate before its parent exits.");
-        var statPath = $"/proc/{process.Id}/stat";
         while (true)
         {
-            Assert.True(File.Exists(statPath), "The leader must remain unreaped while its child is finishing cleanup.");
-            var stat = await File.ReadAllTextAsync(statPath, fixture.Cancellation);
-            if (stat[(stat.LastIndexOf(')') + 2)..].StartsWith("Z ", StringComparison.Ordinal)) break;
+            var state = await fixture.ProcessStateAsync(process.Id);
+            Assert.True(state is not null, "The leader must remain unreaped while its child is finishing cleanup.");
+            if (state.StartsWith("Z", StringComparison.Ordinal)) break;
             await Task.Delay(10, fixture.Cancellation);
         }
         Assert.False(process.HasExited, "The command must await the live child's cleanup after the leader exits.");
@@ -116,7 +115,8 @@ public sealed class ProcessLifetimeTests
                 File.Copy(file, Path.Combine(Directory, Path.GetFileName(file)));
             var runtimeDirectory = Path.Combine(Directory, "runtime");
             System.IO.Directory.CreateDirectory(runtimeDirectory);
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "runtime", "libisoplane_native.so"), Path.Combine(runtimeDirectory, "libisoplane_native.so"));
+            var library = Isoplane.Native.NativeRuntime.LibraryFilename;
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "runtime", library), Path.Combine(runtimeDirectory, library));
             var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, WorkingDirectory = Directory };
             start.ArgumentList.Add(Path.Combine(Directory, Path.GetFileName(typeof(OwnedChild).Assembly.Location)));
             start.ArgumentList.Add("--run-process");
@@ -148,16 +148,21 @@ public sealed class ProcessLifetimeTests
         internal async Task AssertChildStoppedAsync()
         {
             var pid = await WaitForChildAsync();
-            var statPath = $"/proc/{pid}/stat";
-            while (File.Exists(statPath))
-            {
-                string stat;
-                try { stat = await File.ReadAllTextAsync(statPath, Cancellation); }
-                catch (FileNotFoundException) { return; }
-                if (stat[(stat.LastIndexOf(')') + 2)..].StartsWith("Z ", StringComparison.Ordinal))
-                    return;
+            while (await ProcessStateAsync(pid) is { } state && !state.StartsWith("Z", StringComparison.Ordinal))
                 await Task.Delay(10, Cancellation);
-            }
+        }
+
+        internal async Task<string?> ProcessStateAsync(int pid)
+        {
+            var start = new ProcessStartInfo("ps") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (var argument in new[] { "-o", "stat=", "-p", pid.ToString() })
+                start.ArgumentList.Add(argument);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not inspect the owned process.");
+            var output = process.StandardOutput.ReadToEndAsync(Cancellation);
+            var errors = process.StandardError.ReadToEndAsync(Cancellation);
+            await process.WaitForExitAsync(Cancellation);
+            Assert.True(process.ExitCode is 0 or 1, "Process-state inspection must succeed or report an absent PID: " + await errors);
+            return process.ExitCode == 1 ? null : (await output).Trim();
         }
 
         public void Dispose()

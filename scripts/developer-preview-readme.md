@@ -1,15 +1,11 @@
-# Isoplane Linux developer preview
+# Isoplane developer preview
 
-This release targets Linux x64 on Ubuntu 24.04. It contains `release.json`,
+This release targets @RUNTIME_IDENTIFIER@. It contains `release.json`,
 the package feed (`packages/`), the toolchain archive (`toolchain.tgz`) and a
 sample. Every Isoplane package carries the version in `package-version.txt`;
 `release.json` records the source revision and the checksum of each component.
 
-Install the bootstrap .NET SDK, which brings every native library the toolchain needs:
-
-```sh
-sudo apt-get install -y dotnet-sdk-10.0
-```
+@SDK_PREREQUISITES@
 
 Then install the CLI as a global .NET tool and let it install the rest:
 

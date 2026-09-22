@@ -68,12 +68,14 @@ internal sealed class WorkloadInstallation(string dotnet, Func<string, Task<bool
         var elevated = !reused && await RequiresElevationAsync(sdk.Root, cancellation);
         if (owned)
         {
-            if (!elevated)
+            if (elevated)
+                await RunAsync("sudo", ["--", "mkdir", "-p", directory], Path.GetTempPath(), cancellation);
+            else
                 Directory.CreateDirectory(directory);
             foreach (var name in new[] { "WorkloadManifest.json", "WorkloadManifest.targets" })
             {
                 if (elevated)
-                    await RunAsync("sudo", ["--", "install", "-D", "-m", "644", Path.Combine(bundle, name), Path.Combine(directory, name)], Path.GetTempPath(), cancellation);
+                    await RunAsync("sudo", ["--", "install", "-m", "644", Path.Combine(bundle, name), Path.Combine(directory, name)], Path.GetTempPath(), cancellation);
                 else
                     File.Copy(Path.Combine(bundle, name), Path.Combine(directory, name), overwrite: true);
             }
