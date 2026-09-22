@@ -6,12 +6,16 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class DoctorTests
 {
-    [Fact]
-    public async Task Doctor_announces_checks_before_reporting_a_missing_installation()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Doctor_announces_checks_before_reporting_an_unusable_installation(bool interrupted)
     {
         var home = Directory.CreateTempSubdirectory("isoplane-doctor-").FullName;
         try
         {
+            if (interrupted) File.WriteAllText(Path.Combine(home, "current.json"), "{");
+            var before = Directory.GetFiles(home).ToDictionary(path => path, File.ReadAllText);
             var start = new ProcessStartInfo("dotnet")
             {
                 UseShellExecute = false,
@@ -32,6 +36,9 @@ public sealed class DoctorTests
                 Assert.True((await errors).StartsWith("Checking toolchain integrity...", StringComparison.Ordinal),
                     "Doctor must announce its work before an installation check can fail.");
                 Assert.True(string.IsNullOrEmpty(await output), "A failed doctor must not report a ready toolchain.");
+                Assert.True((await errors).Contains("isoplane setup", StringComparison.Ordinal), "An incomplete installation needs a repair command.");
+                Assert.True(Directory.GetFiles(home).Length == before.Count && before.All(entry => File.ReadAllText(entry.Key) == entry.Value),
+                    "Doctor must leave missing or interrupted installations unchanged.");
             }
             finally
             {
@@ -84,7 +91,7 @@ public sealed class DoctorTests
     public async Task A_failed_tool_check_retains_stdout_and_stderr_diagnostics()
     {
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Processes.CheckAsync(
-            "/bin/sh", ["-c", "echo version-detail; echo missing-library >&2; exit 7"],
+            "dotnet", [typeof(OwnedChild).Assembly.Location, "--doctor-tool", "7"],
             AppContext.BaseDirectory, CancellationToken.None));
         Assert.True(error.Message.Contains("version-detail", StringComparison.Ordinal)
             && error.Message.Contains("missing-library", StringComparison.Ordinal)

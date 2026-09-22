@@ -24,7 +24,7 @@ internal sealed class WorkloadInstallation(string dotnet, Func<string, Task<bool
 
     internal async Task<WorkloadSdk> DiscoverAsync(CancellationToken cancellation)
     {
-        var version = (await RunAsync(dotnet, ["--version"], Path.GetTempPath(), cancellation)).Trim();
+        var version = (await RunAsync(dotnet, ["--version"], Environment.CurrentDirectory, cancellation)).Trim();
         var sdkRoot = Path.GetDirectoryName(Path.GetFullPath(dotnet))!;
         var band = FeatureBand(version);
         var userLocal = File.Exists(Path.Combine(sdkRoot, "metadata", "workloads", band, "userlocal"));

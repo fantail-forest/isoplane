@@ -2,9 +2,11 @@
 title: Troubleshoot local development
 ---
 
-Start with `isoplane doctor` in the terminal where the application fails. Keep
-its output, the selected configuration, and the first build or runtime error
-when reporting a problem.
+Start with `isoplane doctor` from the application directory in the terminal where
+it fails. Doctor checks the selected .NET SDK, SDK registration, installed files,
+native tools and saved-session permissions without repairing them or requiring
+login. Keep its output, the selected configuration, and the first build or runtime
+error when reporting a problem.
 
 ## `dotnet tool install` cannot find `DotnetToolSettings.xml`
 
@@ -21,8 +23,10 @@ that root. `dotnet --info` shows which SDK and runtime identifier are active.
 ## Command or SDK not found
 
 Check that `~/.dotnet/tools` is on `PATH` so your shell can find `isoplane`.
-`dotnet --info` shows your selected SDK. Isoplane uses that SDK's workload
-installation; after switching SDK feature bands, run `isoplane setup` again.
+`dotnet --info` shows your selected SDK. On Linux and macOS, Isoplane uses that
+SDK's workload installation; after switching SDK feature bands, run
+`isoplane setup` again. On Windows, setup maintains an MSI installation;
+Isoplane does not appear in `dotnet workload list`.
 Projects do not need a machine-specific SDK path.
 
 ## Missing or damaged toolchain

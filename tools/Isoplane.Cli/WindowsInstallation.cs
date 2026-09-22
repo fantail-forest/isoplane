@@ -63,7 +63,7 @@ internal sealed class WindowsInstallation : ISdkInstallation
             await RunInstallerAsync("msiexec.exe", ["/x", productCode, "/passive", "/norestart"], cancellation);
     }
 
-    private static bool IsInstalled(string productCode)
+    internal static bool IsInstalled(string productCode)
     {
         using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + productCode);
         return key is not null;

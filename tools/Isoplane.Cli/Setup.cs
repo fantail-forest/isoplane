@@ -257,7 +257,16 @@ internal static class Setup
 /// <summary>Proves an installed toolchain runs on this machine by running its tools, as doctor does.</summary>
 internal static class Readiness
 {
+    internal static Task<WorkloadSdk> SelectedSdkAsync(CancellationToken cancellation) =>
+        new WorkloadInstallation(DotnetRegistrations.BootstrapDotnet(), SetupMachine.ConfirmOnTerminal, false).DiscoverAsync(cancellation);
+
     internal static async Task ProveAsync(string toolchain, CancellationToken cancellation)
+    {
+        await SelectedSdkAsync(cancellation);
+        await ProveToolsAsync(toolchain, cancellation);
+    }
+
+    internal static async Task ProveToolsAsync(string toolchain, CancellationToken cancellation)
     {
         Toolchain.ProbeCompiler(toolchain);
         NativeRuntime.EnsureLoaded();
