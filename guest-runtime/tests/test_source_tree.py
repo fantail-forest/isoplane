@@ -61,6 +61,18 @@ class SourceTreeTests(unittest.TestCase):
                        and any(arg in ['maintenance', 'gc'] for arg in event.get('argv', []))]
         self.assertEqual(maintenance, [], 'temporary source repositories must not spawn detached maintenance writers')
 
+    def test_reconciliation_preserves_lf_despite_windows_checkout_defaults(self):
+        self.write_archive('old\n', {'.gitattributes': '* text=auto\n'})
+        env = dict(os.environ, GIT_CONFIG_COUNT='2',
+                   GIT_CONFIG_KEY_0='core.autocrlf', GIT_CONFIG_VALUE_0='true',
+                   GIT_CONFIG_KEY_1='core.eol', GIT_CONFIG_VALUE_1='crlf')
+        for value in ('first', 'second'):
+            self.write_patch(value)
+            result = self.run_source(env=env)
+            self.assertEqual(result.returncode, 0, 'source reconciliation must tolerate Windows Git defaults: ' + result.stderr)
+            self.assertEqual((self.tree / 'value.txt').read_bytes(), (value + '\n').encode(),
+                             'source reconciliation must not convert the pinned LF bytes to CRLF')
+
     def test_ignored_archive_files_are_tracked_and_local_changes_are_refused(self):
         self.write_archive('old\n', {'.gitignore': '*.rsp\n', 'Directory.Build.rsp': 'upstream'})
         self.materialize()

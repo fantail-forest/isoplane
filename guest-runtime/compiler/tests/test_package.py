@@ -12,6 +12,33 @@ compiler = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(compiler)
 
 
+class NativeCacheTests(unittest.TestCase):
+    def test_moved_native_build_directories_are_reconfigured(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary)
+            directory = tree / 'artifacts/obj/coreclr/linux.x64.Release'
+            directory.mkdir(parents=True)
+            cache = directory / 'CMakeCache.txt'
+            cache.write_text(f'CMAKE_HOME_DIRECTORY:INTERNAL={tree / "src/coreclr"}\n'
+                             f'CMAKE_CACHEFILE_DIR:INTERNAL={tree / "old-directory"}\n')
+            source = tree / 'source-input'
+            source.write_text('preserve')
+            compiler.prepare_native_cache(tree, 'linux')
+            self.assertFalse(directory.exists(), 'relocated native intermediates must be rebuilt')
+            self.assertEqual(source.read_text(), 'preserve', 'cache repair must preserve source inputs')
+
+    def test_native_builds_in_the_same_location_remain_incremental(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            tree = Path(temporary)
+            directory = tree / 'artifacts/obj/coreclr/windows.x64.Release'
+            directory.mkdir(parents=True)
+            cache = directory / 'CMakeCache.txt'
+            cache.write_text(f'CMAKE_HOME_DIRECTORY:INTERNAL={tree / "src/coreclr"}\n'
+                             f'CMAKE_CACHEFILE_DIR:INTERNAL={directory}\n')
+            compiler.prepare_native_cache(tree, 'windows')
+            self.assertTrue(cache.exists(), 'a cache at its original location must remain reusable')
+
+
 class CompilerPackageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='isoplane-compiler-package-')

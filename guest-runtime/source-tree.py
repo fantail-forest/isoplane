@@ -14,7 +14,7 @@ import uuid
 
 
 def git(tree, *args, **kwargs):
-    return subprocess.run(["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-C", str(tree), *args], check=True, text=True,
+    return subprocess.run(["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-C", str(tree), *args], check=True, text=True,
                           stdout=subprocess.PIPE, **kwargs).stdout.strip()
 
 

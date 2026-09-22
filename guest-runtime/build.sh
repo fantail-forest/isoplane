@@ -21,6 +21,16 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=manifest.env
 source "$HERE/manifest.env"
+BUILD_HOST=linux
+ICU_HOST=Linux
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    BUILD_HOST=windows
+    ICU_HOST=MinGW
+    WASI_SDK_URL="$WASI_SDK_WINDOWS_URL"
+    WASI_SDK_SHA256="$WASI_SDK_WINDOWS_SHA256"
+    ;;
+esac
 WORK="$HERE/work"
 OUT="$HERE/out"
 RUNTIME="$WORK/runtime"
@@ -65,7 +75,7 @@ stage_acquire() {
   fetch "$RUNTIME_TARBALL_URL" "$RUNTIME_TARBALL_SHA256" "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz"
   fetch "$RUNTIMELAB_TARBALL_URL" "$RUNTIMELAB_TARBALL_SHA256" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz"
   fetch "$OPENSSL_TARBALL_URL" "$OPENSSL_TARBALL_SHA256" "$DOWNLOADS/$OPENSSL_TAG.tar.gz"
-  fetch "$WASI_SDK_URL" "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz"
+  fetch "$WASI_SDK_URL" "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
   fetch "$ICU_SOURCE_URL" "$ICU_SOURCE_SHA256" "$DOWNLOADS/icu-$ICU_SOURCE_COMMIT.tar.gz"
   fetch "$ICU_MONO_TRANSPORT_URL" "$ICU_MONO_TRANSPORT_SHA256" "$DOWNLOADS/icu-mono-$ICU_MONO_TRANSPORT_VERSION.nupkg"
   fetch "$ICU_NATIVEAOT_TRANSPORT_URL" "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$DOWNLOADS/icu-nativeaot-$ICU_NATIVEAOT_TRANSPORT_VERSION.nupkg"
@@ -78,10 +88,10 @@ stage_toolchain() {
     echo "    wasi-sdk $WASI_SDK_VERSION already unpacked"
     return
   fi
-  verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz"
+  verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
   rm -rf "$WASI_SDK"
   mkdir -p "$WASI_SDK"
-  tar --strip-components=1 -xzf "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-linux.tar.gz" -C "$WASI_SDK"
+  tar --strip-components=1 -xzf "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz" -C "$WASI_SDK"
   echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
   touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
   echo "$WASI_SDK_SHA256" > "$WASI_SDK/.isoplane-archive-sha256"
@@ -168,16 +178,25 @@ stage_icu() {
     cd "$ICU_BUILD"
     unset ICU_DATA_FILTER_FILE
     if [ ! -f Makefile ]; then
-      "$ICU/icu/icu4c/source/runConfigureICU" Linux --disable-tests --disable-samples --disable-shared --enable-static --with-data-packaging=archive
+      configure_environment=()
+      if [ "$BUILD_HOST" = windows ]; then
+        configure_environment+=("CXXFLAGS=${CXXFLAGS:--O2} -std=gnu++11")
+      fi
+      env "${configure_environment[@]}" "$ICU/icu/icu4c/source/runConfigureICU" "$ICU_HOST" --disable-tests --disable-samples --disable-shared --enable-static --with-data-packaging=archive
     fi
-    make -j"$(nproc)"
+    make_arguments=()
+    if [ "$BUILD_HOST" = windows ]; then
+      # ICU's MinGW linker rules omit the static-library prefix.
+      make_arguments+=(STATIC_PREFIX= STATIC_PREFIX_WHEN_USED=)
+    fi
+    make -j"$(nproc)" "${make_arguments[@]}"
     [ -f "data/out/$ICU_DATA_FILE" ] || { echo "the ICU build produced no data/out/$ICU_DATA_FILE" >&2; exit 1; }
     verify_archive "$ICU_MONO_TRANSPORT_SHA256" "$mono_archive"
     verify_archive "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$nativeaot_archive"
     rm -rf "$OUT/icu"
     mkdir -p "$OUT/icu/mono" "$OUT/icu/nativeaot"
-    unzip -q "$mono_archive" 'runtimes/wasi-wasm/native/*' -d "$OUT/icu/mono"
-    unzip -q "$nativeaot_archive" 'runtimes/wasi-wasm/native/*' -d "$OUT/icu/nativeaot"
+    unzip -q "$mono_archive" 'runtimes/wasi-wasm/native/**' -d "$OUT/icu/mono"
+    unzip -q "$nativeaot_archive" 'runtimes/wasi-wasm/native/**' -d "$OUT/icu/nativeaot"
     cp "data/out/$ICU_DATA_FILE" "$ICU_MONO_NATIVE/lib/icudt.dat"
     cp "data/out/$ICU_DATA_FILE" "$ICU_NATIVEAOT_NATIVE/lib/icudt.dat"
     icu_source verify
@@ -244,6 +263,38 @@ complete_pack_build() {
   echo "$expected" > "$receipt"
 }
 
+openssl_cmake_args() {
+  local root="$OUT/openssl" cache="$WORK/$(basename "$PWD")-openssl.cmake"
+  if [ "$BUILD_HOST" = windows ]; then root="$(cygpath -m "$root")"; fi
+  cat > "$cache" <<EOF
+set(OPENSSL_ROOT_DIR "$root" CACHE PATH "" FORCE)
+set(OPENSSL_INCLUDE_DIR "$root/include" CACHE PATH "" FORCE)
+set(OPENSSL_CRYPTO_LIBRARY "$root/lib/libcrypto.a" CACHE FILEPATH "" FORCE)
+set(OPENSSL_SSL_LIBRARY "$root/lib/libssl.a" CACHE FILEPATH "" FORCE)
+set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "" FORCE)
+EOF
+  printf '%s' "-C$cache"
+}
+
+build_runtime() {
+  if [ "$BUILD_HOST" = windows ]; then
+    local arguments=() argument
+    while [ "$#" -gt 0 ]; do
+      argument="$1"
+      shift
+      if [ "$argument" = -cmakeargs ]; then
+        argument="-cmakeargs:$1"
+        shift
+      fi
+      arguments+=("${argument//$HERE/$(cygpath -m "$HERE")}")
+    done
+    WASI_SDK_PATH="$(cygpath -m "$WASI_SDK")/" MSYS2_ARG_CONV_EXCL='*' \
+      powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$PWD/eng/build.ps1")" "${arguments[@]}"
+  else
+    WASI_SDK_PATH="$WASI_SDK/" ./build.sh "$@"
+  fi
+}
+
 stage_runtime() {
   echo "==> runtime (log: $LOGS/runtime-build.log)"
   require_build_inputs
@@ -256,8 +307,8 @@ stage_runtime() {
   # rather than stamping "dev" or "ci"; nothing else about it applies here.
   (
     cd "$RUNTIME"
-    WASI_SDK_PATH="$WASI_SDK/" DOTNET_CLI_USE_MSBUILD_SERVER=0 \
-    ./build.sh -os wasi -subset mono+libs+packs -c Release -bl \
+    DOTNET_CLI_USE_MSBUILD_SERVER=0 \
+    build_runtime -os wasi -subset mono+libs+packs -c Release -bl \
       /nodeReuse:false /p:UseSharedCompilation=false \
       /p:OfficialBuild=true "/p:OfficialBuildId=$PACK_BUILD_ID" \
       "/p:PatchVersion=$PACK_PATCH" "/p:PreReleaseVersionLabel=$PACK_VERSION_LABEL" \
@@ -265,7 +316,7 @@ stage_runtime() {
       /p:EnableSourceLink=false \
       "/p:WasiOpenSslLibDir=$OUT/openssl/lib" \
       "/p:_IcuDir=$ICU_MONO_NATIVE" "/p:ICULibDir=$ICU_MONO_NATIVE/lib" \
-      -cmakeargs "-DOPENSSL_ROOT_DIR=$OUT/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE"
+      -cmakeargs "$(openssl_cmake_args)"
   ) > "$LOGS/runtime-build.log" 2>&1
   complete_pack_build "$build_inputs" "$WORK/runtime-build-inputs" runtime_source
   local shipping="$RUNTIME/artifacts/packages/Release/Shipping" version
@@ -287,8 +338,8 @@ stage_nativeaot() {
   stamp_pack_version "$nativeaot_version_file"
   (
     cd "$RUNTIMELAB"
-    WASI_SDK_PATH="$WASI_SDK/" DOTNET_CLI_USE_MSBUILD_SERVER=0 \
-    ./build.sh -os wasi -arch wasm -subset clr.aot+libs+nativeaot.packages -c Release -bl \
+    DOTNET_CLI_USE_MSBUILD_SERVER=0 \
+    build_runtime -os wasi -arch wasm -subset clr.aot+libs+nativeaot.packages -c Release -bl \
       "/p:_IcuDir=$ICU_NATIVEAOT_NATIVE" \
       /nodeReuse:false /p:UseSharedCompilation=false \
       /p:OfficialBuild=true "/p:OfficialBuildId=$PACK_BUILD_ID" \
@@ -296,7 +347,7 @@ stage_nativeaot() {
       "/p:PreReleaseVersionIteration=$PACK_ITERATION" \
       /p:EnableSourceLink=false \
       "/p:WasiOpenSslLibDir=$OUT/openssl/lib" \
-      -cmakeargs "-DOPENSSL_ROOT_DIR=$OUT/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE"
+      -cmakeargs "$(openssl_cmake_args)"
   ) > "$LOGS/nativeaot-build.log" 2>&1
   complete_pack_build "$build_inputs" "$WORK/nativeaot-build-inputs" nativeaot_source
   local version

@@ -1,6 +1,8 @@
 """Release assembly rejects mixed identities, stale pins and corrupted cached outputs."""
 import importlib.util
 import json
+import os
+import shutil
 from pathlib import Path
 import subprocess
 import tarfile
@@ -11,6 +13,28 @@ import zipfile
 spec = importlib.util.spec_from_file_location('build_preview', Path(__file__).parents[1] / 'build-preview.py')
 preview = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preview)
+
+
+class CommandTests(unittest.TestCase):
+    def test_build_tools_are_resolved_from_the_build_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            if os.name == 'nt':
+                original = Path(os.environ['SystemRoot']) / 'System32/cmd.exe'
+                name = 'isoplane-build-tool.exe'
+                arguments = ['/d', '/c', 'echo build-environment-tool']
+            else:
+                original = Path('/bin/sh')
+                name = 'isoplane-build-tool'
+                arguments = ['-c', 'echo build-environment-tool']
+            tool = directory / name
+            shutil.copyfile(original, tool)
+            tool.chmod(0o755)
+            environment = dict(os.environ, PATH=str(directory))
+            log = directory / 'command.log'
+            preview.run([name, *arguments], directory, log, environment)
+            self.assertEqual(log.read_text().strip(), 'build-environment-tool',
+                             'the command runner must find tools in the supplied build environment')
 
 
 class ReleaseTests(unittest.TestCase):

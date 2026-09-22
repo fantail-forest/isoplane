@@ -103,7 +103,7 @@ def author(toolchain, version, output):
 
 
 
-def write_release(toolchain, bundle, packages, version, revision, destination):
+def write_release(toolchain, bundle, packages, version, revision, destination, epoch=None):
     root = Path(__file__).resolve().parent.parent
     spec = importlib.util.spec_from_file_location('build_preview', root / 'scripts/build-preview.py')
     preview = importlib.util.module_from_spec(spec)
@@ -124,7 +124,8 @@ def write_release(toolchain, bundle, packages, version, revision, destination):
                         raise ValueError(f'MSI CLI differs from the release package: {relative}')
     if destination.exists():
         raise ValueError('release output must not already exist')
-    epoch = int(subprocess.check_output(['git', 'show', '-s', '--format=%ct', revision], cwd=root, text=True))
+    if epoch is None:
+        epoch = int(subprocess.check_output(['git', 'show', '-s', '--format=%ct', revision], cwd=root, text=True))
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.windows-release-', dir=destination.parent) as temporary:
         stage = Path(temporary) / 'release'
@@ -150,6 +151,7 @@ def main():
     parser.add_argument('--release', type=Path, help='write a complete setup release from the bundle and six NuGet packages')
     parser.add_argument('--packages', type=Path)
     parser.add_argument('--revision', help='source commit shared by all six NuGet packages')
+    parser.add_argument('--source-date-epoch', type=int, help='source commit timestamp when packaging an exported source tree')
     args = parser.parse_args()
     if args.bundle and not args.vc_redist:
         parser.error('--bundle requires --vc-redist')
@@ -175,7 +177,7 @@ def main():
         (args.bundle / 'toolchain.json').write_text(json.dumps(manifest, indent=2) + '\n')
 
     if args.release:
-        write_release(args.toolchain, args.bundle, args.packages, args.version, args.revision, args.release)
+        write_release(args.toolchain, args.bundle, args.packages, args.version, args.revision, args.release, args.source_date_epoch)
 
 
 if __name__ == '__main__':

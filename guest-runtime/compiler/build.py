@@ -155,6 +155,20 @@ def compose(upstream, backend, managed, output):
     return verify(output, True)
 
 
+def prepare_native_cache(tree, target_os):
+    directory = tree / f'artifacts/obj/coreclr/{target_os}.x64.Release'
+    cache = directory / 'CMakeCache.txt'
+    if not cache.exists():
+        return
+    entries = dict(line.split('=', 1) for line in cache.read_text().splitlines()
+                   if line.startswith(('CMAKE_HOME_DIRECTORY:INTERNAL=', 'CMAKE_CACHEFILE_DIR:INTERNAL=')))
+    expected = {'CMAKE_HOME_DIRECTORY:INTERNAL': tree / 'src/coreclr',
+                'CMAKE_CACHEFILE_DIR:INTERNAL': directory}
+    if any(key not in entries or Path(entries[key]).resolve() != path.resolve()
+           for key, path in expected.items()):
+        shutil.rmtree(directory)
+
+
 def build(args):
     spec = manifest()
     if platform.system() not in ('Linux', 'Windows') or platform.machine().lower() not in ('x86_64', 'amd64'):
@@ -170,6 +184,7 @@ def build(args):
     fetch(spec['RUNTIMELAB_TARBALL_URL'], archive, spec['RUNTIMELAB_TARBALL_SHA256'])
     tree = args.work / 'source'
     subprocess.run([sys.executable, str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches')], check=True)
+    prepare_native_cache(tree, target_os)
     environment = os.environ.copy()
     environment['LLVM_CMAKE_CONFIG'] = str(args.llvm / 'lib/cmake/llvm')
     command = ['./src/coreclr/build-runtime.sh', '-x64', '-release', '-os', 'linux', '-ninja', '-component', 'llvmjit', '-cmakeargs', '-DFEATURE_EVENTSOURCE_XPLAT=0']

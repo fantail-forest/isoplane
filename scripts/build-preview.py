@@ -12,7 +12,6 @@ release; from another revision it is refused until the version is moved with
 scripts/release-version.py.
 """
 import argparse
-import fcntl
 import gzip
 import hashlib
 import importlib.util
@@ -59,8 +58,11 @@ def output(command, cwd=ROOT):
 
 def run(command, cwd, log, env=None):
     print(f'{log.stem}: {log}', flush=True)
+    command = [str(arg) for arg in command]
+    if env is not None:
+        command[0] = shutil.which(command[0], path=env.get('PATH')) or command[0]
     with log.open('w') as stream:
-        subprocess.run([str(arg) for arg in command], cwd=cwd, env=env,
+        subprocess.run(command, cwd=cwd, env=env,
                        stdout=stream, stderr=subprocess.STDOUT, check=True)
 
 
@@ -132,19 +134,26 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
     with urllib.request.urlopen(metadata_url, timeout=60) as response:
         releases = json.load(response)
     sdk = next(sdk for release in releases['releases'] for sdk in release.get('sdks', []) if sdk['version'] == version)
-    archive = next(file for file in sdk['files'] if file['rid'] == runtime_identifier and file['name'].endswith('.tar.gz'))
-    path = cache / f'dotnet-{version}.tar.gz'
+    windows = runtime_identifier.startswith('win-')
+    suffix = '.zip' if windows else '.tar.gz'
+    archive = next(file for file in sdk['files'] if file['rid'] == runtime_identifier and file['name'].endswith(suffix))
+    path = cache / f'dotnet-{version}{suffix}'
     download(archive['url'], path, archive['hash'].lower(), 'sha512')
     if directory.exists():
         shutil.rmtree(directory)
     directory.mkdir()
-    with tarfile.open(path) as bundle:
-        bundle.extractall(directory, filter='data')
+    if windows:
+        with zipfile.ZipFile(path) as bundle:
+            bundle.extractall(directory)
+    else:
+        with tarfile.open(path) as bundle:
+            bundle.extractall(directory, filter='data')
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(directory), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')
-    run([directory / 'dotnet', 'workload', 'install', 'wasi-experimental', '--skip-manifest-update',
-         '--source', 'https://api.nuget.org/v3/index.json'], source, logs / 'sdk-workload.log', environment)
+    if not windows:
+        run([directory / 'dotnet', 'workload', 'install', 'wasi-experimental', '--skip-manifest-update',
+             '--source', 'https://api.nuget.org/v3/index.json'], source, logs / 'sdk-workload.log', environment)
     identity = {'version': version, 'runtimeIdentifier': runtime_identifier, 'url': archive['url'], 'sha512': archive['hash'].lower(),
                 'files': inventory(directory)}
     receipt.write_text(json.dumps(identity, indent=2) + '\n')
@@ -393,7 +402,7 @@ def main():
     logs.mkdir(parents=True, exist_ok=True)
     releases.mkdir(parents=True, exist_ok=True)
     with (cache / '.lock').open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        load(ROOT / 'scripts/fixture-tools.py').lock_file(lock)
         try:
             build(ROOT, cache, releases, logs)
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
