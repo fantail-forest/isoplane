@@ -50,3 +50,6 @@
 007-wasi-native-link-input-selection.patch
 # omit ../runtime/033-wasi-native-symbol-inventory.patch -- Mono table generation is not used by the NativeAOT framework pack.
 ../runtime/034-wasi-windows-native-version.patch
+
+008-wasi-memory-limit.patch
+# omit ../runtime/035-wasi-memory-limit.patch -- Mono memory queries are not used by NativeAOT; fork patch008 supplies its GC query.

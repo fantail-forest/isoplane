@@ -22,6 +22,7 @@ pub struct Recorder {
 pub struct TestBindings {
     pub rec: Recorder,
     pub init_sandbox: bool,
+    pub memory_limit_bytes: Option<u64>,
     pub next_future: u64,
     pub(crate) next_response: i64,
     pub fill_byte: u8,
@@ -38,6 +39,7 @@ impl TestBindings {
         Self {
             rec,
             init_sandbox: false,
+            memory_limit_bytes: None,
             next_future: 1,
             next_response: 1,
             fill_byte: 0xAB,
@@ -54,6 +56,10 @@ impl TestBindings {
 }
 
 impl HostBindings for TestBindings {
+    fn memory_limit_bytes(&self) -> Option<u64> {
+        self.memory_limit_bytes
+    }
+
     fn call_future(&mut self, call: ImportCall<'_>) -> u64 {
         self.note(&call);
         let id = self.next_future;

@@ -297,3 +297,13 @@ fn preparation_identity_binds_the_plan_memory_default() {
         "different implicit memory budgets must not share preparation identity"
     );
 }
+
+#[test]
+fn preparation_identity_binds_the_guest_visible_engine_memory_ceiling() {
+    let wasm = wasm(42);
+    let mut input = request(&wasm);
+    let before = input.identity().expect("original memory identity");
+    input.engine.max_memory_bytes *= 2;
+    assert_ne!(before, input.identity().expect("changed memory identity"),
+        "a runtime initialized with another visible memory ceiling must not reuse captured GC state");
+}

@@ -47,6 +47,7 @@ FIXTURES=(
   "isoplane_guest_dotnet_hashing|$ROOT/dotnet/out/isoplane_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:IsoplaneHashingProbe=true -p:IlcResilient=false"
   "isoplane_guest_dotnet_trust|$ROOT/dotnet/out/isoplane_guest_dotnet_trust.wasm|$ROOT/dotnet|-p:IsoplaneTrustProbe=true -p:IlcResilient=false"
   "isoplane_guest_dotnet_randomness|$ROOT/dotnet/out/isoplane_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:IsoplaneRandomnessProbe=true -p:IlcResilient=false"
+  "isoplane_guest_dotnet_memory|$ROOT/dotnet/out/isoplane_guest_dotnet_memory.wasm|$ROOT/dotnet|-p:IsoplaneMemoryProbe=true -p:IsoplaneMemoryMaxBytes=4294967296 -p:IsoplaneGuestMemoryBytes=4294967296"
   "isoplane_guest_dotnet_config|$ROOT/dotnet/out/isoplane_guest_dotnet_config.wasm|$ROOT/dotnet|-p:IsoplaneConfigProbe=true"
   "isoplane_guest_dotnet_failing_boot|$ROOT/dotnet/out/isoplane_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:IsoplaneFailingBoot=true"
   "isoplane_guest_dotnet_network_refusal|$ROOT/dotnet/out/isoplane_guest_dotnet_network_refusal.wasm|$ROOT/dotnet|-p:IsoplaneNetworkRefusalProbe=true -p:IlcResilient=false"
@@ -71,6 +72,7 @@ FIXTURES=(
 # probes the engine and host tests drive in both runtimes. The stock, Durable
 # Instance and ASP.NET flavours are NativeAOT-only for now.
 MONO_FIXTURES=(
+  isoplane_guest_dotnet_memory
   isoplane_guest_dotnet_activation
   isoplane_guest_dotnet_certificates
   isoplane_guest_dotnet_streaming

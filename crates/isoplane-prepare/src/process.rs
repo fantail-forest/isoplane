@@ -35,6 +35,7 @@ impl BuildRequest {
         hash.update(&postcard::to_allocvec(&self.limits)?);
         hash.update(&postcard::to_allocvec(&self.guest_memory_bytes)?);
         hash.update(&postcard::to_allocvec(&self.validation_limits)?);
+        hash.update(&self.engine.max_memory_bytes.to_le_bytes());
         hash.update(&postcard::to_allocvec(&self.engine.platform_files)?);
         hash.update(&postcard::to_allocvec(&self.application_files)?);
         Ok(isoplane_engine::prepared::PreparedIdentity {

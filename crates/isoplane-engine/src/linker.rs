@@ -105,6 +105,7 @@ fn invoke(c: &mut Caller<'_, StoreState>, def: &'static ImportDef, raw: &[u64]) 
     }
 
     match def.name {
+        "memory_limit_bytes" => return Ok(c.data().limits.max_memory_bytes as u64),
         "socket_call" | "poll_call" => {
             return crate::pal::native_io::packet(
                 c,

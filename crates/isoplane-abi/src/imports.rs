@@ -120,6 +120,9 @@ pub const IMPORTS: &[ImportDef] = &[
         ..imp!("filesystem_call", Core, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
         "read-only filesystem operations over the host-declared platform files; arguments are canonical scalars in a guest u64 array; all filesystem records remain in guest memory") },
     // ---- core -------------------------------------------------------------
+    ImportDef { init_visible: true, buf: BufSpec::None,
+        ..imp!("memory_limit_bytes", Core, Sig { params: &[], results: &[I64] }, SYNC,
+        "effective total linear-memory ceiling in bytes, including the module maximum; available before runtime initialization so guest collectors observe the enforced budget") },
     ImportDef { init_visible: true, ..imp!("abort", Core, BUF_TO_VOID, SYNC,
         "guest panic; available at init so a failed pre-initialization reports usefully rather than \
          trapping anonymously") },

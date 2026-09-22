@@ -52,6 +52,10 @@
     <DefineConstants>$(DefineConstants);ISOPLANE_RANDOMNESS_PROBE</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(IsoplaneMemoryProbe)' == 'true'">
+    <DefineConstants>$(DefineConstants);ISOPLANE_MEMORY_PROBE</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(IsoplaneConfigProbe)' == 'true'">
     <DefineConstants>$(DefineConstants);ISOPLANE_CONFIG_PROBE</DefineConstants>
   </PropertyGroup>

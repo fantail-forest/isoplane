@@ -315,3 +315,47 @@ fn local_debug_artifact_marker_matches_the_sdk_emitter() {
         "the SDK debug artifact marker must match the host contract"
     );
 }
+
+#[test]
+fn mono_memory_accounting_uses_the_contracts_wasm_page_size() {
+    let patch = include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch");
+    let expression = format!(
+        "(guint64)__builtin_wasm_memory_size (0) * {};",
+        isoplane_abi::WASM_PAGE_SIZE
+    );
+    assert!(
+        patch.contains(&expression),
+        "the Mono memory query must convert wasm pages using the host contract's page size"
+    );
+}
+
+#[test]
+fn native_memory_queries_match_the_host_import_signature() {
+    let definition = imports::lookup("memory_limit_bytes")
+        .expect("the native collectors must have a canonical memory query");
+    assert_eq!(
+        (definition.sig.params, definition.sig.results),
+        (&[][..], &[Ty::I64][..]),
+        "the native collectors declare a parameterless 64-bit memory query"
+    );
+    let attribute = format!(
+        "import_module(\"{}\"), import_name(\"{}\")",
+        imports::HOST_MODULE,
+        definition.name
+    );
+    for (patch, declaration) in [
+        (
+            include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch"),
+            "extern guint64 isoplane_memory_limit_bytes (void);",
+        ),
+        (
+            include_str!("../../../guest-runtime/patches/runtimelab/008-wasi-memory-limit.patch"),
+            "uint64_t isoplane_memory_limit_bytes();",
+        ),
+    ] {
+        assert!(
+            patch.contains(&attribute) && patch.contains(declaration),
+            "each native collector must bind the canonical import as an unsigned 64-bit byte count"
+        );
+    }
+}

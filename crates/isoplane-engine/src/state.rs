@@ -89,8 +89,11 @@ impl ResourceLimiter for Limits {
         &mut self,
         _current: usize,
         desired: usize,
-        _maximum: Option<usize>,
+        maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
+        if let Some(maximum) = maximum {
+            self.max_memory_bytes = self.max_memory_bytes.min(maximum);
+        }
         let ok = desired <= self.max_memory_bytes;
         if !ok {
             // `memory.grow` returns -1 rather than trapping, so the fault

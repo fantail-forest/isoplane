@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 
-#if ISOPLANE_LOG_PROBE
+#if ISOPLANE_MEMORY_PROBE
+using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.MemoryProbe>>;
+#elif ISOPLANE_LOG_PROBE
 using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.LogProbe>>;
 #elif ISOPLANE_STREAMING_PROBE
 using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.StreamingProbe>>;

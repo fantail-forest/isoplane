@@ -1,0 +1,84 @@
+--- a/src/coreclr/gc/wasm/gcenv.wasm.cpp
++++ b/src/coreclr/gc/wasm/gcenv.wasm.cpp
+@@ -128,31 +128,29 @@
+ {
+ }
+ 
++#ifdef TARGET_WASI
++extern "C" __attribute__((import_module("isoplane"), import_name("memory_limit_bytes")))
++uint64_t isoplane_memory_limit_bytes();
++#endif
++
+ uint64_t GetTotalPhysicalMemory_Wasm()
+ {
+ #ifdef TARGET_BROWSER
+     // Note that Emscripten takes care not to return a value larger than max<size_t> here.
+     return emscripten_get_heap_max();
+ #else // TARGET_WASI
+-    // WASI doesn't have any API that could return the maximum memory size.
+-    // The best we can do here is use the value we set as default --maximum-memory.
+-    return 2 * 1024 * 1024 * 1024ULL; // 2GB.
++    return isoplane_memory_limit_bytes();
+ #endif // TARGET_WASI
+ }
+ 
+-size_t GetRestrictedPhysicalMemoryLimit()
++uint64_t GetRestrictedPhysicalMemoryLimit()
+ {
+     // We must return a valid value here since you can't "overcommit" memory in WASM.
+     return GetTotalPhysicalMemory_Wasm();
+ }
+ 
+-bool GetPhysicalMemoryUsed(size_t* val)
++bool GetPhysicalMemoryUsed(uint64_t* val)
+ {
+-    *val = __builtin_wasm_memory_size(0) * OS_PAGE_SIZE;
+-    if (*val == 0)
+-    {
+-        // This overflow can happen when all 4GB of memory are in use.
+-        *val = GetTotalPhysicalMemory_Wasm();
+-    }
++    *val = static_cast<uint64_t>(__builtin_wasm_memory_size(0)) * OS_PAGE_SIZE;
+     return true;
+ }
+--- a/src/coreclr/gc/unix/gcenv.unix.cpp
++++ b/src/coreclr/gc/unix/gcenv.unix.cpp
+@@ -120,10 +120,15 @@
+ 
+ uint64_t GetTotalPhysicalMemory_Wasm();
+ 
++#ifdef TARGET_WASM
++uint64_t GetRestrictedPhysicalMemoryLimit();
++bool GetPhysicalMemoryUsed(uint64_t* val);
++#else
+ size_t GetRestrictedPhysicalMemoryLimit();
+ bool GetPhysicalMemoryUsed(size_t* val);
+-
+-static size_t g_RestrictedPhysicalMemoryLimit = 0;
++#endif
++
++static uint64_t g_RestrictedPhysicalMemoryLimit = 0;
+ 
+ uint32_t g_pageSizeUnixInl = 0;
+ 
+@@ -1048,7 +1053,7 @@
+ //  specified, it returns amount of actual physical memory.
+ uint64_t GCToOSInterface::GetPhysicalMemoryLimit(bool* is_restricted)
+ {
+-    size_t restricted_limit;
++    uint64_t restricted_limit;
+     if (is_restricted)
+         *is_restricted = false;
+ 
+@@ -1207,7 +1212,11 @@
+     uint64_t available = 0;
+     uint32_t load = 0;
+ 
++#ifdef TARGET_WASM
++    uint64_t used;
++#else
+     size_t used;
++#endif
+     if (restricted_limit != 0)
+     {
+         // Get the physical memory in use - from it, we can get the physical memory available.

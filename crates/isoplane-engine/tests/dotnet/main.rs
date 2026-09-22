@@ -12,6 +12,7 @@ mod activation;
 mod certificates;
 mod hashing;
 mod managed_async;
+mod memory;
 mod randomness;
 mod streaming;
 

@@ -1,0 +1,46 @@
+--- a/src/mono/mono/utils/memfuncs.c
++++ b/src/mono/mono/utils/memfuncs.c
+@@ -250,10 +250,17 @@
+ 
+ #define _DEFAULT_MEM_SIZE 134217728
+ 
++#ifdef HOST_WASI
++__attribute__((import_module("isoplane"), import_name("memory_limit_bytes")))
++extern guint64 isoplane_memory_limit_bytes (void);
++#endif
++
+ guint64
+ mono_determine_physical_ram_size (void)
+ {
+-#if defined (TARGET_WIN32)
++#if defined (HOST_WASI)
++	return isoplane_memory_limit_bytes ();
++#elif defined (TARGET_WIN32)
+ 	MEMORYSTATUSEX memstat;
+ 
+ 	memstat.dwLength = sizeof (memstat);
+@@ -344,7 +351,11 @@
+ guint64
+ mono_determine_physical_ram_available_size (void)
+ {
+-#if defined (TARGET_WIN32)
++#if defined (HOST_WASI)
++	guint64 total = isoplane_memory_limit_bytes ();
++	guint64 committed = (guint64)__builtin_wasm_memory_size (0) * 65536;
++	return total > committed ? total - committed : 0;
++#elif defined (TARGET_WIN32)
+ 	MEMORYSTATUSEX memstat;
+ 
+ 	memstat.dwLength = sizeof (memstat);
+--- a/src/mono/wasi/runtime/CMakeLists.txt
++++ b/src/mono/wasi/runtime/CMakeLists.txt
+@@ -8,6 +8,9 @@
+ set(CMAKE_EXECUTABLE_SUFFIX ".wasm")
+ add_executable(dotnet ../../browser/runtime/runtime.c ../../browser/runtime/pinvoke.c driver.c main.c stubs.c synthetic-pthread.c)
+ 
++# Isoplane imports require a core module, including in the pack's default runner.
++target_link_options(dotnet PRIVATE "-Wl,--skip-wit-component")
++
+ target_include_directories(dotnet PUBLIC ${MONO_INCLUDES} ../../wasm/runtime ${MONO_OBJ_INCLUDES} ${CMAKE_CURRENT_BINARY_DIR}/include/wasm)
+ target_compile_options(dotnet PUBLIC @${NATIVE_BIN_DIR}/src/wasi-default.rsp @${NATIVE_BIN_DIR}/src/wasi-compile.rsp -DGEN_PINVOKE=1)
+ 
