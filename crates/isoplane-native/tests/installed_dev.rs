@@ -110,14 +110,7 @@ async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_time
     dev.stop();
 }
 
-fn installed_debug_acceptance(mode: &str) {
-    let launcher = std::env::var_os("ISOPLANE_DEBUG_ADAPTER_LAUNCHER")
-        .expect("set ISOPLANE_DEBUG_ADAPTER_LAUNCHER to the external Mono DAP adapter launcher");
-    let python = std::env::var_os("ISOPLANE_DAP_PYTHON").expect(
-        "set ISOPLANE_DAP_PYTHON to a Python interpreter with debugpy installed for DAP framing",
-    );
-    let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
+fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::PathBuf {
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     let modified = original.replace(
@@ -125,7 +118,16 @@ fn installed_debug_acceptance(mode: &str) {
         "app.MapGet(\"/\", Handle);",
     );
     let position = modified.rfind('}').unwrap();
-    let handler = r#"
+    let handler = if mode == "features" {
+        include_str!("common/debug_features.cs")
+    } else if mode == "library" {
+        "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
+    } else if mode == "protocol" {
+        include_str!("common/debug_protocol.cs")
+    } else if mode == "watchpoints" {
+        include_str!("common/debug_watchpoints.cs")
+    } else {
+        r#"
     private static async Task<string> Handle()
     {
         int answer = 42;
@@ -135,7 +137,8 @@ fn installed_debug_acceptance(mode: &str) {
         bool resumed = true;
         return resumed ? answer.ToString() : throw new InvalidOperationException("continuation did not run");
     }
-"#;
+"#
+    };
     std::fs::write(
         &source,
         format!(
@@ -146,8 +149,70 @@ fn installed_debug_acceptance(mode: &str) {
         ),
     )
     .unwrap();
+    source
+}
+
+fn write_debug_library(directory: &std::path::Path, app: &std::path::Path) -> std::path::PathBuf {
+    let library = directory.join("library");
+    std::fs::create_dir(&library).unwrap();
+    std::fs::write(library.join("Library.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><DebugType>portable</DebugType><Optimize>false</Optimize></PropertyGroup></Project>").unwrap();
+    let library_source = library.join("Calculator.cs");
+    std::fs::write(&library_source, include_str!("common/debug_library.cs")).unwrap();
+    let project = std::fs::read_dir(app)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "csproj")
+        })
+        .unwrap();
+    let xml = std::fs::read_to_string(&project).unwrap().replace("</Project>",
+        "<ItemGroup><ProjectReference Include=\"../library/Library.csproj\" /></ItemGroup></Project>");
+    std::fs::write(project, xml).unwrap();
+    library_source
+}
+
+fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str) -> Dev {
+    if mode == "dotnet" {
+        let mut command = std::process::Command::new("dotnet");
+        let mut paths = vec![cli.parent().unwrap().to_owned()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        command
+            .args([
+                "run",
+                "--no-launch-profile",
+                "-c",
+                "IsoplaneInterpretedDebug",
+                "-p:IsoplaneDebug=true",
+                "--",
+                "--json",
+                "--port",
+                "0",
+            ])
+            .current_dir(app)
+            .env("ISOPLANE_CLI", cli)
+            .env("PATH", std::env::join_paths(paths).unwrap());
+        Dev::spawn(&mut command, std::time::Duration::from_secs(600), false)
+    } else {
+        Dev::start_managed_with_args(app, cli, &["--debug", "--no-watch"])
+    }
+}
+
+fn installed_debug_acceptance(mode: &str) {
+    let python = isoplane_fixtures::debugger_python();
+    let directory = tempfile::tempdir().unwrap();
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let source = write_debug_application(&app, mode);
+    let debug_source = if mode == "library" {
+        write_debug_library(directory.path(), &app)
+    } else {
+        source
+    };
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut dev = Dev::start_managed_with_args(&app, &cli, &["--debug", "--no-watch"]);
+    let mut dev = start_debug_session(&app, &cli, mode);
     let metadata = dev
         .debugger
         .as_ref()
@@ -156,15 +221,15 @@ fn installed_debug_acceptance(mode: &str) {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
     let result = std::process::Command::new(python)
         .arg(driver)
-        .arg(launcher)
+        .arg(&cli)
         .arg(metadata["endpoint"].as_str().unwrap())
         .arg(&dev.url)
-        .arg(source)
+        .arg(debug_source)
         .arg(dev.pid().to_string())
         .arg(mode)
         .arg(metadata["module"].as_str().unwrap())
         .output()
-        .expect("run the real external Mono DAP adapter acceptance driver");
+        .expect("run the installed modern DAP adapter acceptance driver");
     assert!(
         result.status.success(),
         "installed debug {mode} acceptance failed: {}{}\nRuntime output:\n{}",
@@ -186,16 +251,12 @@ fn installed_debug_acceptance(mode: &str) {
     );
 }
 
-// TODO(#105): Restore this test when the modern .NET adapter and its test prerequisites are packaged.
 #[test]
-#[ignore = "requires the modern .NET debugger adapter and packaged test prerequisites (#105)"]
 fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
     installed_debug_acceptance("continue");
 }
 
-// TODO(#105): Restore this test when the modern .NET adapter and its test prerequisites are packaged.
 #[test]
-#[ignore = "requires the modern .NET debugger adapter and packaged test prerequisites (#105)"]
 fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
     installed_debug_acceptance("stop");
 }
@@ -232,4 +293,29 @@ fn installed_debug_options_reject_watch_and_nativeaot_before_publication() {
             "invalid debug options must not create a session"
         );
     }
+}
+
+#[test]
+fn installed_debugging_evaluates_and_edits_values_with_conditional_breakpoints() {
+    installed_debug_acceptance("features");
+}
+
+#[test]
+fn installed_watchpoints_observe_managed_field_and_array_changes_between_source_lines() {
+    installed_debug_acceptance("watchpoints");
+}
+
+#[test]
+fn installed_debugger_rejects_invalid_watchpoint_commands_without_losing_the_session() {
+    installed_debug_acceptance("protocol");
+}
+
+#[test]
+fn dotnet_run_starts_an_inspectable_interpreted_debug_session() {
+    installed_debug_acceptance("dotnet");
+}
+
+#[test]
+fn installed_debugging_binds_source_and_inspects_locals_in_referenced_projects() {
+    installed_debug_acceptance("library");
 }

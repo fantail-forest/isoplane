@@ -1,0 +1,353 @@
+using System.Net;
+using System.Net.Sockets;
+using Isoplane.Debugging;
+using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
+using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
+using Newtonsoft.Json.Linq;
+using Xunit;
+
+namespace Isoplane.Debugging.Tests;
+
+public sealed class DebugAdapterTests
+{
+    [Fact]
+    public async Task initialization_offers_managed_watchpoints_without_raw_memory_controls()
+    {
+        await using var client = await Client.StartAsync();
+        var capabilities = await client.Send(new InitializeRequest());
+        Assert.True(capabilities.SupportsDataBreakpoints == true, "The editor must offer managed watchpoints.");
+        Assert.True(capabilities.SupportsDataBreakpointBytes == false, "The editor must hide unsupported address and byte-count watchpoint controls.");
+    }
+
+    [Theory]
+    [InlineData("192.168.0.1", 1234)]
+    [InlineData("::1", 1234)]
+    [InlineData("127.0.0.1", 0)]
+    [InlineData("127.0.0.1", 65536)]
+    public async Task attach_rejects_endpoints_outside_the_owned_loopback_shape(string address, int port)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(Attach(address, port)));
+        Assert.True(error.Message.Contains("session-owned address", StringComparison.Ordinal), "Unsafe endpoints must identify the session-owned loopback requirement.");
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task unsupported_source_coordinates_fail_before_attachment(bool lines, bool columns)
+    {
+        await using var client = await Client.StartAsync();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new InitializeRequest
+        {
+            Args = { LinesStartAt1 = lines, ColumnsStartAt1 = columns }
+        }));
+        Assert.True(error.Message.Contains("one-based", StringComparison.Ordinal), "Unsupported editor coordinates must receive an actionable protocol error.");
+    }
+
+    [Fact]
+    public async Task a_second_initialization_is_rejected_without_losing_the_connection()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Initialize());
+        Assert.True(error.Message.Contains("already initialized", StringComparison.Ordinal), "Initialization must describe the duplicate request.");
+        Assert.False(client.Adapter.Failed, "An invalid editor request must not become a fatal adapter error.");
+    }
+
+    [Fact]
+    public async Task attachment_requires_initialization()
+    {
+        await using var client = await Client.StartAsync();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(Attach("127.0.0.1", 1234)));
+        Assert.True(error.Message.Contains("Initialize", StringComparison.Ordinal), "Attachment must require the editor handshake first.");
+    }
+
+    [Fact]
+    public async Task detaching_without_ending_the_guest_is_explicitly_unsupported()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } }));
+        Assert.True(error.Message.Contains("terminateDebuggee", StringComparison.Ordinal), "Detachment must name the supported way to stop the session.");
+    }
+
+    [Fact]
+    public async Task configuration_requires_an_attached_session()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new ConfigurationDoneRequest()));
+        Assert.True(error.Message.Contains("attached session", StringComparison.Ordinal), "Configuration cannot start a guest before an endpoint is supplied.");
+    }
+
+    [Theory]
+    [InlineData("relative.cs", 1)]
+    [InlineData("/application.cs", 0)]
+    public async Task invalid_breakpoint_locations_are_rejected(string source, int line)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new SetBreakpointsRequest
+        {
+            Args = { Source = new Source { Path = source }, Breakpoints = [new SourceBreakpoint { Line = line }] }
+        }));
+        Assert.True(error.Message.Contains("absolute", StringComparison.Ordinal) || error.Message.Contains("positive line", StringComparison.Ordinal),
+            "Invalid breakpoints must be diagnosed before changing the guest.");
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("a + 1")]
+    [InlineData("999999999999999999999999")]
+    public async Task malformed_hit_conditions_receive_an_editor_error(string condition)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new SetBreakpointsRequest
+        {
+            Args = { Source = new Source { Path = Path.GetFullPath("Application.cs") }, Breakpoints = [new SourceBreakpoint { Line = 1, HitCondition = condition }] }
+        }));
+        Assert.True(error.Message.Contains("positive count", StringComparison.Ordinal), "Invalid hit conditions must explain the supported syntax.");
+    }
+
+    [Fact]
+    public async Task function_breakpoints_require_a_qualified_method()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new SetFunctionBreakpointsRequest
+        {
+            Args = { Breakpoints = [new Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages.FunctionBreakpoint { Name = "Method" }] }
+        }));
+        Assert.True(error.Message.Contains("Type.Method", StringComparison.Ordinal), "A function breakpoint must identify its declaring type.");
+    }
+
+    [Fact]
+    public async Task unknown_exception_filters_are_not_silently_ignored()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new SetExceptionBreakpointsRequest { Args = { Filters = ["unknown"] } }));
+        Assert.True(error.Message.Contains("all or uncaught", StringComparison.Ordinal), "The debugger must name its supported exception filters.");
+    }
+
+    [Fact]
+    public async Task variables_cannot_be_read_while_the_guest_is_not_paused()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new VariablesRequest { Args = { VariablesReference = 1 } }));
+        Assert.True(error.Message.Contains("not paused", StringComparison.Ordinal), "Variable access must require a current pause.");
+    }
+
+    [Fact]
+    public async Task data_breakpoint_inspection_requires_a_current_pause()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new DataBreakpointInfoRequest { Args = { Name = "sample.Value" } }));
+        Assert.True(error.Message.Contains("not paused", StringComparison.Ordinal), "A storage location cannot be resolved without a guest frame.");
+    }
+
+    [Fact]
+    public async Task empty_data_breakpoints_can_be_configured_before_the_guest_starts()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var result = await client.Send(new SetDataBreakpointsRequest { Args = { Breakpoints = [] } });
+        Assert.True(result.Breakpoints.Count == 0, "Initial editor configuration must accept an empty data breakpoint set.");
+    }
+
+    [Fact]
+    public async Task data_breakpoints_reject_locations_from_another_session()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new SetDataBreakpointsRequest
+        {
+            Args = { Breakpoints = [new DataBreakpoint { DataId = "stale" }] }
+        }));
+        Assert.True(error.Message.Contains("no longer available", StringComparison.Ordinal), "A stale data identifier must request a fresh selection.");
+    }
+
+    [Theory]
+    [InlineData(DataBreakpointAccessType.Read)]
+    [InlineData(DataBreakpointAccessType.ReadWrite)]
+    public async Task data_breakpoints_do_not_claim_read_watchpoint_support(DataBreakpointAccessType access)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new SetDataBreakpointsRequest
+        {
+            Args = { Breakpoints = [new DataBreakpoint { DataId = "stale", AccessType = access }] }
+        }));
+        Assert.True(error.Message.Contains("read watchpoints", StringComparison.Ordinal), "Read access must receive an explicit unsupported response.");
+    }
+
+    [Fact]
+    public async Task pause_requires_a_running_guest()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new PauseRequest { Args = { ThreadId = 1 } }));
+        Assert.True(error.Message.Contains("running guest", StringComparison.Ordinal), "Pause must explain that no guest is running.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task an_owned_session_cannot_be_attached_or_started_twice(bool configure)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var attached = client.Send(Attach("127.0.0.1", port));
+        await client.Initialized.Task.WaitAsync(client.Cancellation);
+        if (configure) await client.Send(new ConfigurationDoneRequest());
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => configure
+            ? client.Send(new ConfigurationDoneRequest()) : client.Send(Attach("127.0.0.1", port)));
+        Assert.True(error.Message.Contains(configure ? "one attached session" : "already owns", StringComparison.Ordinal),
+            "The adapter must reject an attempt to replace or restart its owned session.");
+        client.Adapter.Stop();
+        await Assert.ThrowsAsync<ProtocolException>(() => attached);
+    }
+
+    [Theory]
+    [InlineData("adapter")]
+    [InlineData("editor-default")]
+    [InlineData("editor-terminate")]
+    public async Task stopping_during_the_guest_handshake_closes_the_owned_connection(string stop)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endpoint = (IPEndPoint)listener.LocalEndpoint;
+        var attached = client.Send(Attach("127.0.0.1", endpoint.Port));
+        await client.Initialized.Task.WaitAsync(client.Cancellation);
+        await client.Send(new ConfigurationDoneRequest());
+        using var peer = await listener.AcceptTcpClientAsync(client.Cancellation);
+        if (stop == "adapter") client.Adapter.Stop();
+        else await client.Send(new DisconnectRequest { Args = { TerminateDebuggee = stop == "editor-terminate" ? true : null } });
+        await client.Adapter.DisposeAsync().AsTask().WaitAsync(client.Cancellation);
+        try { await attached; }
+        catch (ProtocolException error) { client.Diagnostics.WriteLine("Expected cancelled attachment: " + error.Message); }
+        var buffer = new byte[64];
+        try
+        {
+            int received;
+            do { received = await peer.GetStream().ReadAsync(buffer, client.Cancellation); } while (received != 0);
+        }
+        catch (IOException error) { client.Diagnostics.WriteLine("Expected closed debugger transport: " + error.Message); }
+        Assert.False(client.Adapter.Failed, "An explicitly stopped handshake must release ownership without reporting an unexpected adapter failure.");
+    }
+
+    private static AttachRequest Attach(string address, int port) => new()
+    {
+        Args = { ConfigurationProperties = new Dictionary<string, JToken> { ["address"] = address, ["port"] = port } }
+    };
+
+    private sealed class Client : IAsyncDisposable
+    {
+        private readonly TcpClient editor;
+        private readonly TcpClient adapter;
+        private readonly Editor host;
+        private DebugProtocolHost Protocol => host.Protocol;
+        private readonly CancellationTokenSource lifetime = new(TimeSpan.FromSeconds(30));
+        internal GuestDebugAdapter Adapter { get; }
+        internal StringWriter Diagnostics { get; } = new();
+        internal TaskCompletionSource Initialized { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal CancellationToken Cancellation => lifetime.Token;
+
+        private Client(TcpClient editor, TcpClient adapter)
+        {
+            this.editor = editor;
+            this.adapter = adapter;
+            Adapter = new GuestDebugAdapter(adapter.GetStream(), adapter.GetStream(), Diagnostics);
+            host = new Editor(editor.GetStream(), Initialized, Diagnostics);
+            Adapter.Protocol.Run();
+            Protocol.LogMessage += (_, message) => Diagnostics.WriteLine(message.Category + ": " + message.Message);
+            Adapter.Protocol.LogMessage += (_, message) => Diagnostics.WriteLine(message.Category + ": " + message.Message);
+            Protocol.Run();
+        }
+
+        internal static async Task<Client> StartAsync()
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var editor = new TcpClient();
+            try
+            {
+                await editor.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+                return new Client(editor, await listener.AcceptTcpClientAsync());
+            }
+            catch { editor.Dispose(); throw; }
+        }
+
+        internal Task<InitializeResponse> Initialize() => Send(new InitializeRequest
+        {
+            Args = { AdapterID = "isoplane", LinesStartAt1 = true, ColumnsStartAt1 = true }
+        });
+
+        internal Task<TResponse> Send<TArguments, TResponse>(DebugRequestWithResponse<TArguments, TResponse> request)
+            where TArguments : DebugRequestArguments, new() where TResponse : ResponseBody
+        {
+            var result = new TaskCompletionSource<TResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Protocol.SendRequest(request, (_, value) => result.TrySetResult(value), (_, error) => result.TrySetException(error), Cancellation);
+            return Observe(result.Task);
+        }
+
+        internal Task Send<TArguments>(DebugRequest<TArguments> request) where TArguments : DebugRequestArguments, new()
+        {
+            var result = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Protocol.SendRequest(request, _ => result.TrySetResult(), (_, error) => result.TrySetException(error), Cancellation);
+            return Observe(result.Task);
+        }
+
+        private async Task<T> Observe<T>(Task<T> task)
+        {
+            try { return await task.WaitAsync(Cancellation); }
+            catch (OperationCanceledException error) { throw new TimeoutException("DAP request did not complete: " + Diagnostics, error); }
+        }
+
+        private async Task Observe(Task task)
+        {
+            try { await task.WaitAsync(Cancellation); }
+            catch (OperationCanceledException error) { throw new TimeoutException("DAP request did not complete: " + Diagnostics, error); }
+        }
+
+        /// <summary>Stops both protocol peers and releases the owned transport.</summary>
+        public async ValueTask DisposeAsync()
+        {
+            editor.Dispose();
+            adapter.Dispose();
+            Protocol.Stop();
+            await Adapter.DisposeAsync().AsTask().WaitAsync(Cancellation);
+            await Task.Run(Protocol.WaitForReader).WaitAsync(TimeSpan.FromSeconds(30));
+            await Task.Run(Adapter.Protocol.WaitForReader).WaitAsync(TimeSpan.FromSeconds(30));
+            lifetime.Dispose();
+        }
+    }
+
+    private sealed class Editor : DebugAdapterHostBase
+    {
+        private readonly TaskCompletionSource initialized;
+        private readonly TextWriter diagnostics;
+
+        internal Editor(Stream stream, TaskCompletionSource initialized, TextWriter diagnostics)
+        {
+            this.initialized = initialized;
+            this.diagnostics = diagnostics;
+            InitializeProtocolHost(stream, stream);
+        }
+
+        protected override void HandleProtocolError(Exception error) => diagnostics.WriteLine(error);
+
+        protected override void HandleInitializedEvent(InitializedEvent message) => initialized.TrySetResult();
+        protected override void HandleTerminatedEvent(TerminatedEvent message) => diagnostics.WriteLine("The debugger session terminated.");
+    }
+}

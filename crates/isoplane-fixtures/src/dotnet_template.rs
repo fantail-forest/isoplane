@@ -132,6 +132,28 @@ fn run(command: &mut Command) {
     );
 }
 
+/// Provisions the pinned DAP framing library in a locked, shared test environment.
+pub fn debugger_python() -> PathBuf {
+    let root = super::repo_root();
+    let output = Command::new("python3")
+        .arg(root.join("scripts/fixture-tools.py"))
+        .arg("dap-python")
+        .arg(root)
+        .output()
+        .expect("Python with venv and pip is required for debugger acceptance tests");
+    assert!(
+        output.status.success(),
+        "the pinned debugger test dependency must install: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("debugger Python path is UTF-8")
+            .trim(),
+    )
+}
+
 /// Installs the packaged managed CLI with native local support into a local tool directory.
 pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
     stage_packages(destination);

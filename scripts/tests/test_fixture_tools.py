@@ -70,6 +70,20 @@ class FixtureReceipts(unittest.TestCase):
         (generated / "generated.cs").write_text("generated")
         self.assertTrue(self.fresh(), "build intermediates must not cause perpetual rebuilds")
 
+    def test_editor_test_downloads_do_not_invalidate_sources(self):
+        downloaded = self.source / ".vscode-test" / "editor"
+        downloaded.mkdir(parents=True)
+        (downloaded / "executable").write_bytes(b"downloaded editor")
+        self.assertTrue(self.fresh(), "editor test downloads are not fixture source inputs")
+
+    def test_submodule_metadata_is_ignored_but_dependency_source_is_hashed(self):
+        dependency = self.source / "dependency"
+        dependency.mkdir()
+        (dependency / ".git").write_text("gitdir: /another/worktree/.git/modules/dependency")
+        self.assertTrue(self.fresh(), "submodule checkout metadata must not invalidate compiled artifacts")
+        (dependency / "Backend.cs").write_text("class Backend {}")
+        self.assertFalse(self.fresh(), "the submodule's source must still participate in fixture identity")
+
     def test_source_directories_are_not_excluded_by_name_prefix(self):
         source = self.source / "binary-resources"
         source.mkdir()

@@ -1,0 +1,30 @@
+'use strict';
+const vscode = require('vscode');
+
+function activate(context) {
+    context.subscriptions.push(
+        vscode.debug.registerDebugConfigurationProvider('isoplane', {
+            resolveDebugConfigurationWithSubstitutedVariables(_folder, configuration) {
+                const port = Number(configuration.port);
+                if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                    throw new Error('Enter the debugger port printed by your local Isoplane debug session.');
+                }
+                return { ...configuration, address: '127.0.0.1', port };
+            }
+        }),
+        vscode.debug.registerDebugAdapterDescriptorFactory('isoplane', {
+            createDebugAdapterDescriptor(session) {
+                return new vscode.DebugAdapterExecutable(session.configuration.cliPath || 'isoplane', ['debug-adapter']);
+            }
+        }),
+        vscode.commands.registerCommand('isoplane.debugPort', () => vscode.window.showInputBox({
+            prompt: 'Debugger port printed by the local Isoplane debug session',
+            validateInput(value) {
+                const port = Number(value);
+                return Number.isInteger(port) && port >= 1 && port <= 65535 ? undefined : 'Enter a port from 1 to 65535.';
+            }
+        }))
+    );
+}
+
+module.exports = { activate };

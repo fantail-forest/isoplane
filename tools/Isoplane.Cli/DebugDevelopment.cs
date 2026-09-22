@@ -33,7 +33,7 @@ internal static class DebugDevelopment
             if (options.Json)
                 Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module = artifacts.Module, symbols = artifacts.Symbols }));
             else
-                Console.WriteLine($"Attach an external Mono debugger to {endpoint}; this session serves one HTTP request.");
+                Console.WriteLine($"Debugger target: {endpoint}. Connect your editor through isoplane debug-adapter; this session serves one HTTP request.");
             var projectInputs = new LocalProject(options.Directory);
             await using var host = new LocalSession(await File.ReadAllBytesAsync(artifacts.Module, cancellation),
                 projectInputs.SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime")),

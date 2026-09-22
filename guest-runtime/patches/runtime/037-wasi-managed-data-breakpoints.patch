@@ -1,0 +1,369 @@
+diff --git a/src/mono/mono/component/debugger-agent.c b/src/mono/mono/component/debugger-agent.c
+index 5316df99981..eed740d9aa8 100644
+--- a/src/mono/mono/component/debugger-agent.c
++++ b/src/mono/mono/component/debugger-agent.c
+@@ -336,6 +336,7 @@ static gint32 agent_inited;
+ 
+ #ifdef HOST_WASI
+ static int wasi_suspend_count;
++static void reset_managed_data_breakpoints (void);
+ #endif
+ 
+ #ifndef DISABLE_SOCKET_TRANSPORT
+@@ -2637,6 +2638,8 @@ resume_vm (void)
+ 	mono_loader_unlock ();
+ #else
+ 	g_assert (wasi_suspend_count > 0);
++	if (wasi_suspend_count == 1)
++		reset_managed_data_breakpoints ();
+ 	wasi_suspend_count--;
+ #endif
+ }
+@@ -5347,6 +5350,249 @@ buffer_add_value (Buffer *buf, MonoType *t, void *addr, MonoDomain *domain)
+ 	buffer_add_value_full (buf, t, addr, domain, FALSE, NULL, 1);
+ }
+ 
++#ifdef HOST_WASI
++typedef struct {
++	int id;
++	MonoGCHandle owner;
++	MonoGCHandle previous_value;
++	MonoClass *value_class;
++	MonoClassField *field;
++	int index;
++	guint8 *static_data;
++	MonoType *type;
++	Buffer previous;
++	Buffer current;
++	gboolean hit;
++} ManagedDataBreakpoint;
++
++static GPtrArray *managed_data_breakpoints;
++
++static void
++free_managed_data_breakpoints (GPtrArray *breakpoints)
++{
++	if (!breakpoints)
++		return;
++	for (guint i = 0; i < breakpoints->len; i++) {
++		ManagedDataBreakpoint *watch = (ManagedDataBreakpoint *)g_ptr_array_index (breakpoints, i);
++		if (watch->owner)
++			mono_gchandle_free_internal (watch->owner);
++		if (watch->previous_value)
++			mono_gchandle_free_internal (watch->previous_value);
++		buffer_free (&watch->previous);
++		buffer_free (&watch->current);
++		g_free (watch);
++	}
++	g_ptr_array_free (breakpoints, TRUE);
++}
++
++static guint8 *
++managed_data_breakpoint_address (ManagedDataBreakpoint *watch)
++{
++	guint8 *address = watch->static_data;
++	if (watch->owner) {
++		MonoObject *owner = mono_gchandle_get_target_internal (watch->owner);
++		if (watch->field)
++			address = (guint8 *)owner + m_field_get_offset (watch->field);
++		else {
++			MonoArray *array = (MonoArray *)owner;
++			address = (guint8 *)array->vector + (gsize)watch->index * mono_array_element_size (owner->vtable->klass);
++		}
++	}
++	return address;
++}
++
++static void
++snapshot_managed_data_breakpoint (ManagedDataBreakpoint *watch, Buffer *value)
++{
++	guint8 *address = managed_data_breakpoint_address (watch);
++	if (watch->previous_value) {
++		MonoObject *previous = mono_gchandle_get_target_internal (watch->previous_value);
++		mono_value_copy_internal (mono_object_unbox_internal (previous), address, watch->value_class);
++	} else if (MONO_TYPE_IS_REFERENCE (watch->type))
++		buffer_add_objid (value, *(MonoObject **)address);
++	else
++		buffer_add_value (value, watch->type, address, mono_domain_get ());
++}
++
++static void
++reset_managed_data_breakpoints (void)
++{
++	if (!managed_data_breakpoints)
++		return;
++	for (guint i = 0; i < managed_data_breakpoints->len; i++) {
++		ManagedDataBreakpoint *watch = (ManagedDataBreakpoint *)g_ptr_array_index (managed_data_breakpoints, i);
++		watch->previous.p = watch->previous.buf;
++		snapshot_managed_data_breakpoint (watch, &watch->previous);
++		watch->hit = FALSE;
++	}
++}
++
++static ErrorCode
++read_managed_data_breakpoint (guint8 **p, guint8 *end, ManagedDataBreakpoint *watch)
++{
++	ErrorCode err = ERR_NONE;
++	if (end - *p < 13)
++		return ERR_INVALID_ARGUMENT;
++	watch->id = decode_int (*p, p, end);
++	int kind = decode_byte (*p, p, end);
++	int object_id = decode_objid (*p, p, end);
++	if (watch->id <= 0 || (kind != MDBGPROT_DATA_BREAKPOINT_FIELD && kind != MDBGPROT_DATA_BREAKPOINT_ARRAY))
++		return ERR_INVALID_ARGUMENT;
++	MonoObject *owner = NULL;
++	if (object_id) {
++		err = get_object (object_id, &owner);
++		if (err != ERR_NONE)
++			return err;
++	}
++	if (kind == MDBGPROT_DATA_BREAKPOINT_FIELD) {
++		guint8 *field_packet = *p;
++		int field_id = decode_id (*p, p, end);
++		if (field_id <= 0 || !ids [ID_FIELD] || GINT_TO_UINT32 (field_id) > ids [ID_FIELD]->len)
++			return ERR_INVALID_FIELDID;
++		watch->field = decode_fieldid (field_packet, p, end, NULL, &err);
++		if (err != ERR_NONE)
++			return err;
++		MonoClassField *field = watch->field;
++		if (m_field_is_from_update (field) || mono_class_field_is_special_static (field))
++			return ERR_INVALID_FIELDID;
++		watch->type = field->type;
++		if (field->type->attrs & FIELD_ATTRIBUTE_STATIC) {
++			ERROR_DECL (error);
++			if (owner || (field->type->attrs & FIELD_ATTRIBUTE_LITERAL))
++				return ERR_INVALID_FIELDID;
++			MonoVTable *vtable = mono_class_vtable_checked (m_field_get_parent (field), error);
++			if (!is_ok (error)) {
++				mono_error_cleanup (error);
++				return ERR_INVALID_FIELDID;
++			}
++			watch->static_data = (guint8 *)mono_vtable_get_static_field_data (vtable) + m_field_get_offset (field);
++		} else if (!owner || !mono_class_is_assignable_from_internal (m_field_get_parent (field), owner->vtable->klass)) {
++			return ERR_INVALID_FIELDID;
++		}
++	} else {
++		watch->index = decode_int (*p, p, end);
++		if (!owner || !m_class_get_rank (owner->vtable->klass))
++			return ERR_INVALID_OBJECT;
++		if (watch->index < 0 || GINT_TO_UINT32 (watch->index) >= ((MonoArray *)owner)->max_length)
++			return ERR_INVALID_ARGUMENT;
++		watch->type = m_class_get_byval_arg (m_class_get_element_class (owner->vtable->klass));
++	}
++	if (owner)
++		watch->owner = mono_gchandle_new_internal (owner, FALSE);
++	MonoClass *value_class = mono_class_from_mono_type_internal (watch->type);
++	if (!MONO_TYPE_IS_REFERENCE (watch->type) && m_class_has_references (value_class)) {
++		ERROR_DECL (error);
++		MonoObject *previous = mono_object_new_checked (value_class, error);
++		if (!is_ok (error)) {
++			mono_error_cleanup (error);
++			return ERR_INVALID_ARGUMENT;
++		}
++		watch->value_class = value_class;
++		watch->previous_value = mono_gchandle_new_internal (previous, FALSE);
++	}
++	buffer_init (&watch->previous, 32);
++	buffer_init (&watch->current, 32);
++	snapshot_managed_data_breakpoint (watch, &watch->previous);
++	return ERR_NONE;
++}
++
++static ErrorCode
++managed_data_breakpoint_command (guint8 *p, guint8 *end, Buffer *buf)
++{
++	if (wasi_suspend_count == 0)
++		return ERR_NOT_SUSPENDED;
++	if (p == end)
++		return ERR_INVALID_ARGUMENT;
++	int operation = decode_byte (p, &p, end);
++	if (operation == MDBGPROT_DATA_BREAKPOINT_TAKE_HITS) {
++		if (p != end)
++			return ERR_INVALID_ARGUMENT;
++		int count = 0;
++		if (managed_data_breakpoints) {
++			for (guint i = 0; i < managed_data_breakpoints->len; i++)
++				if (((ManagedDataBreakpoint *)g_ptr_array_index (managed_data_breakpoints, i))->hit)
++					count++;
++		}
++		buffer_add_int (buf, count);
++		if (managed_data_breakpoints) {
++			for (guint i = 0; i < managed_data_breakpoints->len; i++) {
++				ManagedDataBreakpoint *watch = (ManagedDataBreakpoint *)g_ptr_array_index (managed_data_breakpoints, i);
++				if (watch->hit)
++					buffer_add_int (buf, watch->id);
++				watch->hit = FALSE;
++			}
++		}
++		return ERR_NONE;
++	}
++	if (operation != MDBGPROT_DATA_BREAKPOINT_SET || end - p < 4)
++		return ERR_INVALID_ARGUMENT;
++	int count = decode_int (p, &p, end);
++	if (count < 0 || count > (end - p) / 13)
++		return ERR_INVALID_ARGUMENT;
++	GPtrArray *next = g_ptr_array_new ();
++	ErrorCode err = ERR_NONE;
++	for (int i = 0; i < count; i++) {
++		ManagedDataBreakpoint *watch = g_new0 (ManagedDataBreakpoint, 1);
++		g_ptr_array_add (next, watch);
++		err = read_managed_data_breakpoint (&p, end, watch);
++		if (err != ERR_NONE)
++			break;
++		for (int j = 0; j < i; j++) {
++			if (((ManagedDataBreakpoint *)g_ptr_array_index (next, j))->id == watch->id)
++				err = ERR_INVALID_ARGUMENT;
++		}
++		if (err != ERR_NONE)
++			break;
++	}
++	if (p != end)
++		err = ERR_INVALID_ARGUMENT;
++	if (err != ERR_NONE) {
++		free_managed_data_breakpoints (next);
++		return err;
++	}
++	free_managed_data_breakpoints (managed_data_breakpoints);
++	managed_data_breakpoints = next;
++	return ERR_NONE;
++}
++#endif
++
++static gboolean
++check_managed_data_breakpoints (void)
++{
++#ifdef HOST_WASI
++	if (!managed_data_breakpoints || managed_data_breakpoints->len == 0 || wasi_suspend_count > 0
++		|| mono_wasm_is_breakpoint_and_stepping_disabled ())
++		return FALSE;
++	gboolean changed = FALSE;
++	for (guint i = 0; i < managed_data_breakpoints->len; i++) {
++		ManagedDataBreakpoint *watch = (ManagedDataBreakpoint *)g_ptr_array_index (managed_data_breakpoints, i);
++		if (watch->previous_value) {
++			MonoObject *previous = mono_gchandle_get_target_internal (watch->previous_value);
++			if (memcmp (managed_data_breakpoint_address (watch), mono_object_unbox_internal (previous),
++				mono_class_value_size (watch->value_class, NULL)) != 0) {
++				watch->hit = TRUE;
++				changed = TRUE;
++				snapshot_managed_data_breakpoint (watch, &watch->previous);
++			}
++			continue;
++		}
++		watch->current.p = watch->current.buf;
++		snapshot_managed_data_breakpoint (watch, &watch->current);
++		if (buffer_len (&watch->current) != buffer_len (&watch->previous)
++			|| memcmp (watch->current.buf, watch->previous.buf, buffer_len (&watch->current)) != 0) {
++			watch->hit = TRUE;
++			changed = TRUE;
++		}
++		Buffer previous = watch->previous;
++		watch->previous = watch->current;
++		watch->current = previous;
++	}
++	return changed;
++#else
++	return FALSE;
++#endif
++}
++
+ static gboolean
+ obj_is_of_type (MonoObject *obj, MonoType *t)
+ {
+@@ -6320,6 +6566,8 @@ dispose_vm (void)
+ 		resume_vm ();
+ #ifdef HOST_WASI
+ 	wasi_suspend_count = 0;
++	free_managed_data_breakpoints (managed_data_breakpoints);
++	managed_data_breakpoints = NULL;
+ #endif
+ 	disconnected = TRUE;
+ 	vm_start_event_sent = FALSE;
+@@ -7179,6 +7427,12 @@ static ErrorCode
+ vm_commands (int command, int id, guint8 *p, guint8 *end, Buffer *buf)
+ {
+ 	switch (command) {
++	case MDBGPROT_CMD_VM_MANAGED_DATA_BREAKPOINTS:
++#ifdef HOST_WASI
++		return managed_data_breakpoint_command (p, end, buf);
++#else
++		return ERR_NOT_IMPLEMENTED;
++#endif
+ 	case CMD_VM_VERSION: {
+ 		char *build_info, *version;
+ 
+@@ -11320,6 +11574,7 @@ debugger_agent_add_function_pointers(MonoComponentDebugger* fn_table)
+ 	fn_table->transport_handshake = debugger_agent_transport_handshake;
+ 	fn_table->send_enc_delta = send_enc_delta;
+ 	fn_table->debugger_enabled = debugger_agent_enabled;
++	fn_table->check_data_breakpoints = check_managed_data_breakpoints;
+ #if defined(HOST_WASI)
+ 	fn_table->receive_and_process_command_from_debugger_agent = mono_debugger_agent_receive_and_process_command;
+ 	fn_table->mono_wasm_breakpoint_hit = mono_wasi_breakpoint_hit;
+diff --git a/src/mono/mono/component/debugger-protocol.h b/src/mono/mono/component/debugger-protocol.h
+index 478e2417ada..758540757d2 100644
+--- a/src/mono/mono/component/debugger-protocol.h
++++ b/src/mono/mono/component/debugger-protocol.h
+@@ -40,9 +40,20 @@ typedef enum {
+ 	MDBGPROT_CMD_GET_ASSEMBLY_BYTES = 20, //wasm specific
+ 	MDBGPROT_CMD_GET_ENC_CAPABILITIES = 21,
+ 	MDBGPROT_CMD_VM_GET_OBJECT_ID_BY_ADDRESS = 22,
+-	MDBGPROT_CMD_GET_INTERNAL_TYPE_CLASS = 23
++	MDBGPROT_CMD_GET_INTERNAL_TYPE_CLASS = 23,
++	MDBGPROT_CMD_VM_MANAGED_DATA_BREAKPOINTS = 24
+ } MdbgProtCmdVM;
+ 
++typedef enum {
++	MDBGPROT_DATA_BREAKPOINT_SET = 1,
++	MDBGPROT_DATA_BREAKPOINT_TAKE_HITS = 2
++} MdbgProtManagedDataBreakpointOperation;
++
++typedef enum {
++	MDBGPROT_DATA_BREAKPOINT_FIELD = 1,
++	MDBGPROT_DATA_BREAKPOINT_ARRAY = 2
++} MdbgProtManagedDataBreakpointLocation;
++
+ typedef enum {
+ 	MDBGPROT_CMD_SET_VM = 1,
+ 	MDBGPROT_CMD_SET_OBJECT_REF = 9,
+diff --git a/src/mono/mono/component/debugger-stub.c b/src/mono/mono/component/debugger-stub.c
+index 28c1cc36caa..7591e2429d3 100644
+--- a/src/mono/mono/component/debugger-stub.c
++++ b/src/mono/mono/component/debugger-stub.c
+@@ -100,6 +100,7 @@ static MonoComponentDebugger fn_table = {
+ 	//wasi
+ 	&stub_receive_and_process_command_from_debugger_agent,
+ 	&stub_debugger_enabled,
++	&stub_debugger_enabled,
+ };
+ 
+ static bool
+diff --git a/src/mono/mono/component/debugger.h b/src/mono/mono/component/debugger.h
+index 9543bba8978..98101e64e5e 100644
+--- a/src/mono/mono/component/debugger.h
++++ b/src/mono/mono/component/debugger.h
+@@ -200,6 +200,7 @@ typedef struct MonoComponentDebugger {
+ 	//wasi
+ 	gboolean (*receive_and_process_command_from_debugger_agent) (void);
+ 	gboolean (*debugger_enabled) (void);
++	gboolean (*check_data_breakpoints) (void);
+ } MonoComponentDebugger;
+ 
+ 
+diff --git a/src/mono/mono/mini/interp/interp.c b/src/mono/mono/mini/interp/interp.c
+index 0a12875dcce..4b51519b774 100644
+--- a/src/mono/mono/mini/interp/interp.c
++++ b/src/mono/mono/mini/interp/interp.c
+@@ -4121,6 +4121,13 @@ main_loop:
+ #if PROFILE_INTERP
+ 		frame->imethod->opcounts++;
+ 		total_executed_opcodes++;
++#endif
++#ifdef HOST_WASI
++		if (debugger_enabled && mono_component_debugger ()->check_data_breakpoints ()) {
++			frame->state.ip = ip + 1;
++			do_debugger_tramp (mono_component_debugger ()->user_break, frame);
++			CHECK_RESUME_STATE (context);
++		}
+ #endif
+ 		MintOpcode opcode;
+ 		DUMP_INSTR();

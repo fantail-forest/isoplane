@@ -103,6 +103,28 @@ def download(url, destination, expected, algorithm='sha256'):
         raise ValueError(f'download hash differs: {destination}')
 
 
+def export_git_tree(root, revision, destination, archive, log):
+    run(['git', 'archive', '--format=tar', '-o', archive, revision], root, log)
+    with tarfile.open(archive) as tree:
+        tree.extractall(destination, filter='data')
+    archive.unlink()
+    entries = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=root)
+    for entry in entries.split(b'\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split(b'\t', 1)
+        mode, _, commit = metadata.decode().split()
+        if mode != '160000':
+            continue
+        path = Path(os.fsdecode(name))
+        repository = root / path
+        if not (repository / '.git').exists():
+            raise ValueError(f'initialize source dependencies with git submodule update --init --recursive: {path}')
+        target = destination / path
+        target.mkdir(parents=True, exist_ok=True)
+        export_git_tree(repository, commit, target, archive, log)
+
+
 def export_source(root, source, cache, revision, logs):
     preserved = cache / 'runtime-build'
     preserved.mkdir(exist_ok=True)
@@ -114,10 +136,7 @@ def export_source(root, source, cache, revision, logs):
         shutil.rmtree(source)
     source.mkdir()
     source_tar = cache / 'source.tar'
-    run(['git', 'archive', '--format=tar', '-o', source_tar, revision], root, logs / 'source.log')
-    with tarfile.open(source_tar) as tree:
-        tree.extractall(source, filter='data')
-    source_tar.unlink()
+    export_git_tree(root, revision, source, source_tar, logs / 'source.log')
     for path in preserved.iterdir():
         path.rename(source / 'guest-runtime' / path.name)
     preserved.rmdir()

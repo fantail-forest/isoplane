@@ -13,6 +13,7 @@ x64 and Windows x64. macOS packages are not yet validated.
 From the repository root, build and pack into a local feed:
 
 ```sh
+git submodule update --init tools/debugger-libs
 dotnet pack tools/Isoplane.Cli -o /tmp/isoplane-preview-feed
 dotnet tool install Isoplane.Cli --version "$(scripts/release-version.py show)" --tool-path /tmp/isoplane-tools --add-source /tmp/isoplane-preview-feed
 /tmp/isoplane-tools/isoplane --version
