@@ -90,9 +90,21 @@ scripts/clean                                      # Reclaim build intermediates
 ```
 
 **IMPORTANT**: Redirect long-running command output (`cargo build`,
-`cargo test`, the guest builds) to a file and read the
-file. Don't pipe into `head`, `grep`, or `tail` and re-run when the filter
+`cargo test`, the guest builds) to a file and read it after the command
+finishes. Don't pipe into `head`, `grep`, or `tail` and re-run when the filter
 misses.
+
+**IMPORTANT**: Wait for long-running operations to complete; do not repeatedly
+peek at log files, poll process or job status, or narrate incremental output
+while they run. Use a completion notification or a wait that returns on exit,
+and arrange a bounded timeout to wake you if the operation hangs or its
+completion monitor fails to notify you. Choose that timeout from prior observed
+runtime or a reasonable estimate for the operation, with margin; do not use
+short, recurring checks as a substitute. Do independent useful work while it
+runs, or wait. Inspect the exit status and saved output on completion. If the
+timeout expires or a failure notification arrives, inspect enough to diagnose
+the problem and choose a concrete recovery action or a revised, justified
+wait; do not fall back to repeated progress polling.
 
 **IMPORTANT**: Have a test that needs a guest fixture build it when it is missing or stale, through one shared fixture helper and nothing else. Make the helper safe to call from concurrently running test binaries, and make sure a nested build can never wait on a lock its parent holds. When the toolchain to build a fixture is absent, fail the test naming the missing tool; never skip.
 
