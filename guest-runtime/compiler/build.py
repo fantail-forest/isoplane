@@ -186,7 +186,9 @@ def build(args):
     subprocess.run([sys.executable, str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches')], check=True)
     prepare_native_cache(tree, target_os)
     environment = os.environ.copy()
-    environment['LLVM_CMAKE_CONFIG'] = str(args.llvm / 'lib/cmake/llvm')
+    environment.update(LLVM_CMAKE_CONFIG=str(args.llvm / 'lib/cmake/llvm'),
+                       DOTNET_CLI_USE_MSBUILD_SERVER='0', MSBUILDDISABLENODEREUSE='1',
+                       UseSharedCompilation='false')
     command = ['./src/coreclr/build-runtime.sh', '-x64', '-release', '-os', 'linux', '-ninja', '-component', 'llvmjit', '-cmakeargs', '-DFEATURE_EVENTSOURCE_XPLAT=0']
     if windows:
         command = ['cmd', '/c', 'src\\coreclr\\build-runtime.cmd', '-x64', '-release', '-component', 'llvmjit']
