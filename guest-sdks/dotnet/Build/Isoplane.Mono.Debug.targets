@@ -9,7 +9,12 @@
     <LinkerArg Include="-Wl,--wrap=printf,--wrap=fprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=puts,--wrap=fputs" />
   </ItemGroup>
   <Target Name="IsoplaneMonoDebugNative" AfterTargets="IsoplaneMonoNativeEntry">
-    <IsoplaneMonoDebugSymbols Symbols="$(IntermediateOutputPath)linked/$(AssemblyName).pdb" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplaneMonoDir)mono_debug.h" />
+    <ItemGroup>
+      <_IsoplaneDebugSymbols Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == '$(AssemblyName).pdb'" />
+      <_IsoplaneDependencyDebugSymbols Include="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' AND '%(Filename)' != '$(AssemblyName)'" />
+    </ItemGroup>
+    <Error Condition="'@(_IsoplaneDebugSymbols->Count())' != '1'" Text="isoplane: local debugging requires exactly one application portable PDB selected for publication." />
+    <IsoplaneMonoDebugSymbols Symbols="@(_IsoplaneDebugSymbols)" DependencySymbols="@(_IsoplaneDependencyDebugSymbols)" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplaneMonoDir)mono_debug.h" />
     <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="#define ISOPLANE_LOCAL_DEBUG 1" Overwrite="false" />
     <ItemGroup>
       <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_debug_pal.c;$(_IsoplaneSdkDirectory)native/mono_debug_log.c" />
@@ -21,7 +26,7 @@
       <_IsoplanePublishedSymbols>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.pdb'))</_IsoplanePublishedSymbols>
       <_IsoplanePublishedDebugManifest>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.debug.xml'))</_IsoplanePublishedDebugManifest>
     </PropertyGroup>
-    <Copy SourceFiles="$(IntermediateOutputPath)linked/$(AssemblyName).pdb" DestinationFiles="$(_IsoplanePublishedSymbols)" />
+    <Copy SourceFiles="@(_IsoplaneDebugSymbols)" DestinationFiles="$(_IsoplanePublishedSymbols)" />
     <IsoplaneMonoDebugManifest Module="$(NativeBinary)" Symbols="$(_IsoplanePublishedSymbols)" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplanePublishedDebugManifest)" />
     <ItemGroup><FileWrites Include="$(_IsoplanePublishedSymbols);$(_IsoplanePublishedDebugManifest)" /></ItemGroup>
   </Target>

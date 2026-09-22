@@ -15,10 +15,10 @@ extern const char *mono_class_get_name(void *);
 extern const char *mono_class_get_namespace(void *);
 __attribute__((import_module("isoplane"), import_name("abort"))) extern void host_abort(uint8_t *, int32_t);
 #ifdef ISOPLANE_LOCAL_DEBUG
-#include "mono_debug.h"
 extern void mono_wasm_enable_debugging(int);
 extern int mono_jit_parse_options(int, char **);
 extern int mono_wasm_add_assembly(const char *, const unsigned char *, unsigned int);
+#include "mono_debug.h"
 #endif
 static void *klass;
 static void fail(const char *message)
@@ -39,7 +39,7 @@ static void boot(void)
     if (initialize_runtime() != 0) fail("Mono initialization failed");
 #ifdef ISOPLANE_LOCAL_DEBUG
     // Bundle initialization must precede registering symbols for its assembly.
-    mono_wasm_add_assembly(ISOPLANE_MONO_ASSEMBLY ".pdb", isoplane_debug_symbols, sizeof(isoplane_debug_symbols));
+    isoplane_register_debug_symbols();
 #endif
     void *assembly = mono_wasm_assembly_load(ISOPLANE_MONO_ASSEMBLY);
     if (!assembly) fail("Managed IL app assembly missing");
