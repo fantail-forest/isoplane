@@ -203,6 +203,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
                 new XElement("_hostPackageName", host),
                 new XElement("_targetPackageName", target),
                 new XElement("NETCoreSdkRuntimeIdentifier", "linux-x64"),
+                new XElement("NETCoreSdkPortableRuntimeIdentifier", "linux-x64"),
                 new XElement("IsoplaneGuestCompilerVersion", "1.0.0-host"),
                 new XElement("IsoplaneGuestCompilerSha512", "host digest"),
                 new XElement("IsoplaneGuestNativeAotPackVersion", "2.0.0-target"),

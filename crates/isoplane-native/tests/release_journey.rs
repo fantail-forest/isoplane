@@ -739,13 +739,20 @@ fn repeated_setup_changes_nothing_and_uninstall_sdk_removes_exactly_what_setup_r
         "removal must report completion:\n{removal}"
     );
     let after = machine.home_inventory();
+    // Keep the coordination file: unlinking it can let concurrent commands lock different inodes.
     let leftovers: Vec<&String> = after
         .iter()
-        .filter(|path| !before.contains(path) && path.as_str() != "/home/dev/.isoplane")
+        .filter(|path| {
+            !before.contains(path)
+                && !matches!(
+                    path.as_str(),
+                    "/home/dev/.isoplane" | "/home/dev/.isoplane/setup.lock"
+                )
+        })
         .collect();
     assert!(
         leftovers.is_empty(),
-        "uninstall-sdk must leave nothing setup created:\n{leftovers:?}"
+        "uninstall-sdk must leave no installed SDK resources:\n{leftovers:?}"
     );
     assert!(
         !machine.templates().contains("isoplane-web"),
