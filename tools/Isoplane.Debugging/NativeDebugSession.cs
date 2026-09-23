@@ -27,14 +27,23 @@ public static class NativeDebugSession
                 var arguments = request.Arguments?.Data ?? new Dictionary<string, JToken>();
                 if (request.Command == "cancel") throw new ProtocolException("Native debugger request cancellation is not supported by this session.");
                 lock (gate) state.Validate(request.Command, arguments);
-                var forwarded = new Request(request.Command);
-                forwarded.Args.Data = arguments;
+                if (request.Command is "setExpression" or "stepInTargets" or "setDataBreakpoints" or "completions" or "exceptionInfo")
+                    throw new ProtocolException($"Native debugger request {request.Command} is not supported by this session.");
+                if (request.Command == "launch") NativeDebuggerRequests.ConfigureLaunch(arguments);
+                bool managed = NativeDebuggerRequests.IsManaged(request.Command);
+                var forwarded = new Request(managed ? "evaluate" : request.Command);
+                forwarded.Args.Data = managed ? NativeDebuggerRequests.Encode(request.Command, arguments) : arguments;
                 backend.SendRequest(forwarded, (_, response) =>
                 {
-                    var body = response ?? new Response();
-                    if (request.Command == "initialize") body.Data["supportsCancelRequest"] = false;
-                    lock (gate) state.Inspect(request.Command, arguments, body.Data);
-                    request.SetResponse(body);
+                    try
+                    {
+                        var body = response ?? new Response();
+                        if (managed) body.Data = NativeDebuggerRequests.Decode(body.Data);
+                        if (request.Command == "initialize") NativeDebuggerRequests.Capabilities(body.Data);
+                        lock (gate) state.Inspect(request.Command, arguments, body.Data);
+                        request.SetResponse(body);
+                    }
+                    catch (ProtocolException error) { request.SetError(error); }
                 }, (_, error) => request.SetError(error));
             }
             catch (ProtocolException error) { request.SetError(error); }

@@ -1,4 +1,4 @@
-"""Prove native source debugging through the installed CLI and GDB's DAP server."""
+"""Prove native source debugging through the installed CLI and LLDB's DAP server."""
 import concurrent.futures
 import json
 import http.client
@@ -25,6 +25,7 @@ stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()
 deferred = []
 sequence = 0
+request_commands = {}
 
 
 def read():
@@ -41,27 +42,29 @@ threading.Thread(target=read, daemon=True).start()
 def send(command, arguments):
     global sequence
     sequence += 1
+    request_commands[sequence] = command
     stream.write_json({"seq": sequence, "type": "request", "command": command, "arguments": arguments})
     return sequence
 
 
-def until(predicate):
+def until(predicate, allow_terminated=False):
     for index, value in enumerate(deferred):
         if predicate(value):
             return deferred.pop(index)
-    deadline = time.monotonic() + 600
+    deadline = time.monotonic() + 120
     while True:
         value = messages.get(timeout=max(0, deadline - time.monotonic()))
         print(json.dumps(value), flush=True)
         assert not value.get("closed"), "native adapter closed before the expected debugger result"
         if predicate(value):
             return value
-        assert value.get("event") != "terminated", "the native guest exited before the expected debugger operation"
+        assert allow_terminated or value.get("event") != "terminated", "the native guest exited before the expected debugger operation"
         deferred.append(value)
 
 
 def response(identifier):
-    value = until(lambda item: item.get("type") == "response" and item.get("request_seq") == identifier)
+    value = until(lambda item: item.get("type") == "response" and item.get("request_seq") == identifier,
+                  allow_terminated=request_commands.pop(identifier) == "disconnect")
     assert value.get("success"), f"native adapter rejected a required operation: {value}"
     return value.get("body", {})
 
@@ -104,9 +107,9 @@ try:
     before = next(index + 1 for index, line in enumerate(lines) if ("int total =" if mode == "async" else "return result;" if mode == "library" else "answer *= 2;") in line)
     after = next(index + 1 for index, line in enumerate(lines) if ("return total;" if mode == "async" else "return result;" if mode == "library" else "return answer +") in line)
     response(send("initialize", {"adapterID": "isoplane", "pathFormat": "path", "linesStartAt1": True, "columnsStartAt1": True}))
-    until(lambda item: item.get("event") == "initialized")
     launch = send("launch", {"program": launcher, "cwd": app, "args": ["dev", "--project", app,
         "--configuration", "IsoplaneNativeAotDebug", "--debug", "--no-watch", "--guest-runtime", "nativeaot", "--port", "0", "--json"]})
+    until(lambda item: item.get("event") == "initialized")
     response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [{"line": before}]}))
     response(send("configurationDone", {}))
     response(launch)
@@ -186,6 +189,9 @@ try:
                     response(send("setVariable", {"variablesReference": local_scope, "name": "answer", "value": "30"}))
                     response(send("next", {"threadId": thread}))
                     until(lambda item: item.get("event") == "stopped")
+                    stale = send("scopes", {"frameId": frame["id"]})
+                    rejected = until(lambda item: item.get("request_seq") == stale)
+                    assert not rejected.get("success"), "resuming must invalidate frame handles from the previous pause"
                     frame = response(send("stackTrace", {"threadId": thread}))["stackFrames"][0]
                     assert frame["line"] == after and frame["source"]["path"] == source, "native next must advance one C# source line"
                     assert response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))["result"] == "60", "the guest must execute with the edited local"

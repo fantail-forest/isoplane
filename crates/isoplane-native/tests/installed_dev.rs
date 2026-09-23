@@ -308,7 +308,7 @@ fn installed_native_debug_acceptance(mode: &str) {
             isoplane_fixtures::guest_runtime_feed(),
         )
         .output()
-        .expect("native debugging requires GDB 16+; editor tests also require Node and xvfb-run");
+        .expect("native debugging requires LLDB with Python support; editor tests also require Node and xvfb-run");
     assert!(
         result.status.success(),
         "installed NativeAOT debug {mode} acceptance failed: {}{}",
