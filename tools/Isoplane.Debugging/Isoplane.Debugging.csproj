@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Backend/**/*.cs" />
+    <Compile Include="../BuildProtocol/AsyncDebugSymbols.cs" Link="AsyncDebugSymbols.cs" />
     <ProjectReference Include="../debugger-libs/Mono.Debugging.Soft/Mono.Debugging.Soft.csproj" />
     <PackageReference Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" Version="18.0.10427.1" />
     <PackageReference Include="Mono.Cecil" Version="$(NuGetVersionCecil)" />

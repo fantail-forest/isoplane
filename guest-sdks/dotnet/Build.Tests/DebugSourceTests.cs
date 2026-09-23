@@ -20,6 +20,15 @@ public sealed class DebugSourceTests : MsbuildTests
         var names = index.RootElement.EnumerateArray().Select(method => method.GetProperty("Name").GetString()).ToArray();
         Assert.True(!names.Contains("DebugSourceTests.HiddenMethod"), "Debugger-hidden methods must be excluded even when they share an application source file.");
         if (!exclude) Assert.True(names.Contains("DebugSourceTests.stack_sources_come_from_portable_symbols_and_exclude_runtime_entrypoints"), "Async methods must retain their original C# names in the source index.");
+        if (!exclude)
+        {
+            var asyncMethod = index.RootElement.EnumerateArray().Single(method => method.GetProperty("Name").GetString()
+                == "DebugSourceTests.stack_sources_come_from_portable_symbols_and_exclude_runtime_entrypoints");
+            var suspension = asyncMethod.GetProperty("Async").GetProperty("Awaits").EnumerateArray().Single();
+            int expectedLine = Array.FindIndex(File.ReadAllLines(SourcePath()), line => line.Contains("var result = await Run", StringComparison.Ordinal)) + 1;
+            Assert.True(suspension.GetProperty("Line").GetInt32() == expectedLine,
+                "The async source index must locate the suspended await rather than its generated continuation.");
+        }
         HiddenMethod();
         Assert.True(sources.Contains(SourcePath()) != exclude,
             "Customer sources must be visible unless identified as SDK-generated runtime entrypoints.");

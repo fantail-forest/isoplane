@@ -9,7 +9,7 @@ def memory_base(frame=None):
     while frame is not None:
         try:
             return frame.read_var("__vmctx")["memory"]
-        except gdb.error:
+        except (gdb.error, ValueError):
             # Native transition frames do not describe a guest memory context.
             frame = frame.older()
     raise gdb.GdbError("The selected stack has no guest memory context.")

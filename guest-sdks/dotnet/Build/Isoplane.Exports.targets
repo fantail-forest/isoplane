@@ -2,6 +2,7 @@
   <Target Name="IsoplaneGenerateExports" BeforeTargets="CoreCompile" Condition="'$(IsoplaneManagedBundleBuild)' != 'true'">
     <PropertyGroup>
       <_IsoplaneExportsPath>$(IntermediateOutputPath)Isoplane.Exports.g.cs</_IsoplaneExportsPath>
+      <_IsoplaneDebugScope Condition="'$(IsoplaneLocalDebug)' == 'true'">using var __isoplaneAsyncState = Isoplane.Runtime.AsyncDebugging.Enter();</_IsoplaneDebugScope>
       <_IsoplaneExportsSource><![CDATA[
 #nullable enable
 using System.Runtime.InteropServices;
@@ -14,23 +15,23 @@ internal static class IsoplaneGeneratedExports {
 #if !ISOPLANE_MONO
   [UnmanagedCallersOnly(EntryPoint="isoplane_alloc")]
 #endif
-  public static int Alloc(int size, int align) => Guest.Alloc(size, align);
+  public static int Alloc(int size, int align) { $(_IsoplaneDebugScope) return Guest.Alloc(size, align); }
 #if !ISOPLANE_MONO
   [UnmanagedCallersOnly(EntryPoint="isoplane_handle")]
 #endif
-  public static long Handle(int ptr, int len) => Guest.Handle(ptr, len);
+  public static long Handle(int ptr, int len) { $(_IsoplaneDebugScope) return Guest.Handle(ptr, len); }
 #if !ISOPLANE_MONO
   [UnmanagedCallersOnly(EntryPoint="isoplane_wake")]
 #endif
-  public static long Wake(long future, int ptr, int len) => Guest.Wake(future, ptr, len);
+  public static long Wake(long future, int ptr, int len) { $(_IsoplaneDebugScope) return Guest.Wake(future, ptr, len); }
 #if !ISOPLANE_MONO
   [UnmanagedCallersOnly(EntryPoint="isoplane_initialize")]
 #endif
-  public static long Initialize() => Guest.Initialize();
+  public static long Initialize() { $(_IsoplaneDebugScope) return Guest.Initialize(); }
 #if !ISOPLANE_MONO
   [UnmanagedCallersOnly(EntryPoint="isoplane_gc_hint")]
 #endif
-  public static void GcHint(int pressure) => Guest.GcHint(pressure);
+  public static void GcHint(int pressure) { $(_IsoplaneDebugScope) Guest.GcHint(pressure); }
 }
 ]]></_IsoplaneExportsSource>
     </PropertyGroup>

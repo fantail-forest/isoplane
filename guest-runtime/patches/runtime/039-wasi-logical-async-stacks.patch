@@ -1,0 +1,104 @@
+diff --git a/src/libraries/System.Private.CoreLib/src/System/Threading/Tasks/Task.cs b/src/libraries/System.Private.CoreLib/src/System/Threading/Tasks/Task.cs
+--- a/src/libraries/System.Private.CoreLib/src/System/Threading/Tasks/Task.cs
++++ b/src/libraries/System.Private.CoreLib/src/System/Threading/Tasks/Task.cs
+@@ -170,6 +170,69 @@
+         // m_continuationObject is set to this when the task completes.
+         private static readonly object s_taskCompletionSentinel = new object();
+ 
++#if TARGET_WASI
++        internal static AsyncDebugState? s_isoplaneAsyncState;
++
++        internal sealed class AsyncDebugState
++        {
++            internal AsyncDebugFrame? Frames;
++        }
++
++        internal static object EnableIsoplaneAsyncDebugging() => s_isoplaneAsyncState ??= new AsyncDebugState();
++
++        internal sealed class AsyncDebugFrame
++        {
++            internal readonly Task Operation;
++            internal object StateMachine;
++            internal readonly string StateMachineType;
++            internal Task Awaited;
++            internal AsyncDebugFrame? Next;
++
++            internal AsyncDebugFrame(Task operation, object stateMachine, Task awaited, AsyncDebugFrame? next)
++            {
++                Operation = operation;
++                StateMachine = stateMachine;
++                StateMachineType = stateMachine.GetType().FullName!;
++                Awaited = awaited;
++                Next = next;
++            }
++        }
++
++        [DynamicDependency(nameof(EnableIsoplaneAsyncDebugging))]
++        private void RecordAsyncAwait(IAsyncStateMachineBox box)
++        {
++            if (box is not Task operation) return;
++            AsyncDebugState state = s_isoplaneAsyncState!;
++            object stateMachine = box.GetStateMachineObject();
++            for (AsyncDebugFrame? frame = state.Frames; frame != null; frame = frame.Next)
++            {
++                if (ReferenceEquals(frame.Operation, operation))
++                {
++                    frame.StateMachine = stateMachine;
++                    frame.Awaited = this;
++                    return;
++                }
++            }
++            state.Frames = new AsyncDebugFrame(operation, stateMachine, this, state.Frames);
++        }
++
++        private void ForgetAsyncFrame()
++        {
++            AsyncDebugState state = s_isoplaneAsyncState!;
++            AsyncDebugFrame? previous = null;
++            for (AsyncDebugFrame? frame = state.Frames; frame != null; frame = frame.Next)
++            {
++                if (ReferenceEquals(frame.Operation, this))
++                {
++                    if (previous == null) state.Frames = frame.Next;
++                    else previous.Next = frame.Next;
++                    return;
++                }
++                previous = frame;
++            }
++        }
++#endif
++
+         // A private flag that would be set (only) by the debugger
+         // When true the Async Causality logging trace is enabled as well as a dictionary to relate operation ids with Tasks
+         internal static bool s_asyncDebuggingEnabled; // false by default
+@@ -2485,6 +2548,10 @@
+             Action continuationAction, bool continueOnCapturedContext, bool flowExecutionContext)
+         {
+             Debug.Assert(continuationAction != null);
++#if TARGET_WASI
++            if (s_isoplaneAsyncState is not null && AsyncMethodBuilderCore.TryGetContinuationTask(continuationAction) is IAsyncStateMachineBox box)
++                RecordAsyncAwait(box);
++#endif
+ 
+             // Create the best AwaitTaskContinuation object given the request.
+             // If this remains null by the end of the function, we can use the
+@@ -2556,6 +2623,9 @@
+         internal void UnsafeSetContinuationForAwait(IAsyncStateMachineBox stateMachineBox, bool continueOnCapturedContext)
+         {
+             Debug.Assert(stateMachineBox != null);
++#if TARGET_WASI
++            if (s_isoplaneAsyncState is not null) RecordAsyncAwait(stateMachineBox);
++#endif
+ 
+             // This code path doesn't emit all expected TPL-related events, such as for continuations.
+             // It's expected that all callers check whether events are enabled before calling this function,
+@@ -3441,6 +3511,9 @@
+         /// </summary>
+         internal void FinishContinuations()
+         {
++#if TARGET_WASI
++            if (s_isoplaneAsyncState is not null) ForgetAsyncFrame();
++#endif
+             // Atomically store the fact that this task is completing.  From this point on, the adding of continuations will
+             // result in the continuations being run/launched directly rather than being added to the continuation list.
+             // Then if we grabbed any continuations, run them.

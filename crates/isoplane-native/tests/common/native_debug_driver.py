@@ -16,6 +16,7 @@ import urllib.parse
 
 from debugpy.common.messaging import JsonIOStream
 
+import debug_async_stack
 import debug_library
 
 launcher, app, source, mode = sys.argv[1:]
@@ -124,6 +125,7 @@ try:
                 stopped = until(lambda item: item.get("event") == "stopped")
                 thread = stopped["body"]["threadId"]
             if mode == "async":
+                debug_async_stack.inspect(source, send, lambda identifier: {"body": response(identifier)}, thread, until)
                 frames = response(send("stackTrace", {"threadId": thread}))["stackFrames"]
                 assert frames and all(frame.get("source", {}).get("path") == source for frame in frames), "the native stack must contain only customer source frames after host reentry"
                 frame = frames[0]
@@ -140,7 +142,7 @@ try:
                 assert {value["name"]: value["value"] for value in sample} == {"Value": "7", "Name": '\"hello\"'}, "saved async object references must remain inspectable"
                 response(send("setVariable", {"variablesReference": local_scope, "name": "answer", "value": "30"}))
                 response(send("continue", {"threadId": thread}))
-                finish_request(http_result, b"63")
+                finish_request(http_result, b"71")
             elif mode != "library":
                 frames = response(send("stackTrace", {"threadId": thread}))["stackFrames"]
                 assert len(frames) == 2 and all(frame.get("source", {}).get("path") == source for frame in frames), "native stacks must preserve customer callers and hide runtime frames"

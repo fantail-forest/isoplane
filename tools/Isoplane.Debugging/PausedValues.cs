@@ -5,27 +5,41 @@ using Dap = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 
 namespace Isoplane.Debugging;
 
-internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate)
+internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, Mono.Debugging.Soft.SoftDebuggerSession session)
 {
     private readonly Dictionary<int, Frame> frames = [];
     private readonly Dictionary<int, VariableSet> variables = [];
     internal int ThreadId => checked((int)stopped.Thread.Id);
 
+    private List<Frame>? visibleFrames;
+
     internal StackTraceResponse StackTrace(StackTraceArguments arguments)
     {
         RequireThread(arguments.ThreadId);
-        var trace = stopped.Backtrace;
+        if (visibleFrames is null)
+        {
+            visibleFrames = [];
+            for (int index = 0; index < stopped.Backtrace.FrameCount; index++)
+            {
+                visibleFrames.Add(new Frame(stopped.Backtrace.GetFrame(index), index));
+                if (index == 0)
+                    visibleFrames.AddRange(AsyncFrames.Read(session).Select(frame => new Frame(null, null, frame)));
+            }
+        }
+        var trace = visibleFrames;
         int start = arguments.StartFrame ?? 0;
         int count = arguments.Levels ?? 0;
         if (start < 0 || count < 0) throw new ProtocolException("Stack frame offset and count cannot be negative.");
         var result = new List<Dap.StackFrame>();
-        int end = count == 0 ? trace.FrameCount : (int)Math.Min(trace.FrameCount, (long)start + count);
+        int end = count == 0 ? trace.Count : (int)Math.Min(trace.Count, (long)start + count);
         for (int index = start; index < end; index++)
         {
-            var frame = trace.GetFrame(index);
+            var frame = trace[index];
             int id = allocate();
-            frames.Add(id, new Frame(frame, index));
-            var location = frame.SourceLocation;
+            frames.Add(id, frame);
+            var location = frame.Async is { } suspended
+                ? new SourceLocation(suspended.Method.Name + " [awaiting]", suspended.Location.Source, suspended.Location.Line, suspended.Location.Column, suspended.Location.Line, suspended.Location.Column)
+                : frame.Physical.SourceLocation;
             result.Add(new Dap.StackFrame
             {
                 Id = id, Name = location.MethodName,
@@ -33,14 +47,14 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate)
                 Source = string.IsNullOrEmpty(location.FileName) ? null : new Source { Path = location.FileName }
             });
         }
-        return new StackTraceResponse { StackFrames = result, TotalFrames = trace.FrameCount };
+        return new StackTraceResponse { StackFrames = result, TotalFrames = trace.Count };
     }
 
     internal ScopesResponse Scopes(int frameId)
     {
         if (!frames.TryGetValue(frameId, out var frame)) throw new ProtocolException("The stack frame is not part of the current pause.");
         int id = allocate();
-        variables.Add(id, new VariableSet(frame.Value.GetAllLocals, frame.Index, null));
+        variables.Add(id, new VariableSet(frame.Locals, frame.Index, null));
         return new ScopesResponse { Scopes = [new Scope { Name = "Locals", VariablesReference = id, Expensive = false }] };
     }
 
@@ -60,6 +74,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate)
     internal SetVariableResponse SetVariable(SetVariableArguments arguments)
     {
         if (!variables.TryGetValue(arguments.VariablesReference, out var read)) throw new ProtocolException("The variable reference is not part of the current pause.");
+        if (read.FrameIndex is null) SavedLocalAssignment.RequireLiteral(arguments.Value);
         var matches = read.Read().Where(value => value.Name == arguments.Name).ToArray();
         if (matches.Length != 1) throw new ProtocolException("The named variable is missing or ambiguous in this scope.");
         Assign(matches[0], arguments.Value);
@@ -78,7 +93,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate)
     private ObjectValue Evaluate(string expression, int? frameId)
     {
         if (string.IsNullOrWhiteSpace(expression)) throw new ProtocolException("An expression is required.");
-        var frame = FrameFor(frameId).Value;
+        var frame = FrameFor(frameId).Physical;
         var options = EvaluationOptions.DefaultOptions;
         var value = frame.GetExpressionValue(expression, options);
         if (value.IsEvaluating && !value.WaitHandle.WaitOne(options.EvaluationTimeout))
@@ -123,7 +138,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate)
         };
     }
 
-    private Variable Variable(ObjectValue value, int frameIndex, string expression)
+    private Variable Variable(ObjectValue value, int? frameIndex, string expression)
     {
         int reference = 0;
         if (value.HasChildren)
@@ -138,19 +153,26 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate)
     {
         if (arguments.AsAddress == true || arguments.Bytes is not null)
             throw new ProtocolException("Data breakpoints support managed fields and array elements, not raw memory.");
-        if (arguments.VariablesReference is not > 0) return (FrameFor(arguments.FrameId).Index, arguments.Name);
+        if (arguments.VariablesReference is not > 0) return (RequirePhysicalIndex(FrameFor(arguments.FrameId).Index), arguments.Name);
         if (!variables.TryGetValue(arguments.VariablesReference.Value, out var set))
             throw new ProtocolException("The variable reference is not part of the current pause.");
         var matches = set.Read().Where(value => value.Name == arguments.Name).ToArray();
         if (matches.Length != 1) throw new ProtocolException("The named variable is missing or ambiguous in this scope.");
-        return (set.FrameIndex, set.Expression(matches[0]));
+        return (RequirePhysicalIndex(set.FrameIndex), set.Expression(matches[0]));
     }
+
+    private static int RequirePhysicalIndex(int? index) => index
+        ?? throw new ProtocolException("Data breakpoints cannot be configured from a suspended async caller.");
 
     private Frame FrameFor(int? frameId) => frameId is null ? new Frame(stopped.Backtrace.GetFrame(0), 0)
         : frames.TryGetValue(frameId.Value, out var known) ? known : throw new ProtocolException("The stack frame is not part of the current pause.");
 
-    private sealed record Frame(Mono.Debugging.Client.StackFrame Value, int Index);
-    private sealed record VariableSet(Func<ObjectValue[]> Read, int FrameIndex, string? ParentExpression)
+    private sealed record Frame(Mono.Debugging.Client.StackFrame? Value, int? Index, AsyncFrame? Async = null)
+    {
+        internal Mono.Debugging.Client.StackFrame Physical => Value ?? throw new ProtocolException("Expression evaluation is not supported in a suspended async caller.");
+        internal ObjectValue[] Locals() => Async is null ? Physical.GetAllLocals() : Async.Locals();
+    }
+    private sealed record VariableSet(Func<ObjectValue[]> Read, int? FrameIndex, string? ParentExpression)
     {
         internal string Expression(ObjectValue value) => ParentExpression is null ? value.Name : ParentExpression + value.ChildSelector;
     }

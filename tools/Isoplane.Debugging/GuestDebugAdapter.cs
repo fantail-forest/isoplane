@@ -221,7 +221,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             if (step?.Enabled == true) step.Disable();
             reason = StoppedEvent.ReasonValue.Pause;
         }
-        var state = new PausedValues(args, Allocate);
+        var state = new PausedValues(args, Allocate, session);
         var hits = dataBreakpoints.TakeHits(state);
         if (hits.IsDataStop)
         {

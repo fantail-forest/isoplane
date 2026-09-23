@@ -69,11 +69,11 @@ public sealed class DebugSources : Microsoft.Build.Utilities.Task
             var name = TypeName(assembly, original.GetDeclaringType()) + "." + assembly.GetString(original.Name);
             foreach (var document in debug.GetSequencePoints().Where(point => !point.IsHidden && !point.Document.IsNil).GroupBy(point => point.Document))
                 sources.Add(new SourceMethod(metadata.GetString(metadata.GetDocument(document.Key).Name),
-                    name, document.Min(point => point.StartLine), document.Max(point => point.EndLine)));
+                    name, document.Min(point => point.StartLine), document.Max(point => point.EndLine), Isoplane.Build.AsyncDebugSymbols.Read(assembly, metadata, handle)));
         }
     }
 
-    private sealed record SourceMethod(string Source, string Name, int StartLine, int EndLine);
+    private sealed record SourceMethod(string Source, string Name, int StartLine, int EndLine, Isoplane.Build.AsyncDebugSymbols.Method? Async);
 
     private static string TypeName(MetadataReader metadata, TypeDefinitionHandle handle)
     {

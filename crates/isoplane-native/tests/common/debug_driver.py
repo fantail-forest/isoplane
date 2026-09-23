@@ -16,6 +16,7 @@ import urllib.request
 import urllib.parse
 
 from debugpy.common.messaging import JsonIOStream
+import debug_async_stack
 import debug_library
 import debug_features
 import debug_watchpoints
@@ -26,7 +27,7 @@ if mode == "protocol":
     root = Path(__file__).resolve().parents[4]
     driver = subprocess.check_output([sys.executable, str(root / "scripts/fixture-tools.py"), "debugger-protocol", str(root)], text=True).strip()
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
-scenario = {"features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library}.get(mode)
+scenario = {"features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack}.get(mode)
 adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()

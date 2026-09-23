@@ -9,6 +9,7 @@ from gdb.FrameDecorator import FrameDecorator
 
 sys.path.insert(0, str(Path(__file__).parent))
 import isoplane_values
+import isoplane_async
 
 
 class SavedLocal:
@@ -53,6 +54,7 @@ class ApplicationFrames:
 
     def __init__(self):
         self.sources = None
+        self.async_methods = {}
 
     def filter(self, frames):
         if self.sources is None:
@@ -62,9 +64,12 @@ class ApplicationFrames:
                 with index.open() as stream:
                     for method in json.load(stream):
                         self.sources.setdefault(os.path.normpath(method["Source"]), []).append(method)
+                        if method.get("Async") is not None:
+                            self.async_methods[method["Async"]["StateMachineType"]] = method["Async"]
             if not self.sources:
                 self.sources = None
                 raise gdb.GdbError("The local session has no application source index.")
+        first = True
         for frame in frames:
             source, line = frame.filename(), frame.line()
             if source is None or line is None:
@@ -74,7 +79,11 @@ class ApplicationFrames:
             if matches:
                 # A nested lambda can share its enclosing method's source range.
                 method = min(matches, key=lambda method: method["EndLine"] - method["StartLine"])
-                yield ApplicationFrame(frame, method)
+                application = ApplicationFrame(frame, method)
+                yield application
+                if first and method.get("Async") is not None:
+                    yield from isoplane_async.callers(application, self.async_methods)
+                first = False
 
 
 gdb.frame_filters[ApplicationFrames.name] = ApplicationFrames()

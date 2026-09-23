@@ -39,40 +39,29 @@ internal static class NativeDebugAdapter
             "-iex", "handle SIG34 nostop noprint pass"],
             Environment.CurrentDirectory, captureOutput: true,
             environment: new Dictionary<string, string> { [SessionDirectoryVariable] = directory });
-        var input = ForwardInputAsync(Console.OpenStandardInput(), process.StandardInput.BaseStream, lifetime.Token);
-        var output = process.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput(), lifetime.Token);
+        var relay = Isoplane.Debugging.NativeDebugSession.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(),
+            process.StandardInput.BaseStream, process.StandardOutput.BaseStream, lifetime.Token);
         var exited = process.WaitForExitAsync(lifetime.Token);
         try
         {
-            var completed = await Task.WhenAny(input, output, exited);
+            var completed = await Task.WhenAny(relay, exited);
             await completed;
-            if (completed == input)
+            if (completed == relay)
             {
-                await input;
+                await relay;
                 process.StandardInput.Close();
             }
             await exited;
-            await output;
+            await relay;
             return process.ExitCode;
         }
         finally
         {
             lifetime.Cancel();
             await Processes.StopAsync(process);
-            try { await Task.WhenAll(input, output); }
+            try { await relay; }
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         }
     }
 
-    private static async Task ForwardInputAsync(Stream input, Stream output, CancellationToken cancellation)
-    {
-        var bytes = new byte[8192];
-        while (true)
-        {
-            var count = await input.ReadAsync(bytes.AsMemory(), cancellation).AsTask().WaitAsync(cancellation);
-            if (count == 0) return;
-            await output.WriteAsync(bytes.AsMemory(0, count), cancellation);
-            await output.FlushAsync(cancellation);
-        }
-    }
 }

@@ -1,13 +1,14 @@
     private static async Task<string> Handle()
     {
-        int result = await Outer(21);
-        return result.ToString();
+        int seed = 21;
+        int result = await Outer(seed);
+        return (result + seed - 21).ToString();
     }
 
     private static async Task<int> Outer(int input)
     {
         int outer = input + 1;
-        int result = await Inner(outer);
+        int result = await Inner(outer).ConfigureAwait(false);
         return result + outer;
     }
 

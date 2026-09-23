@@ -120,7 +120,7 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
-    } else if mode == "native-async" {
+    } else if mode == "native-async" || mode == "async-stack" {
         include_str!("common/native_debug_async.cs")
     } else if mode == "native" {
         include_str!("common/native_debug_values.cs")
@@ -258,6 +258,11 @@ fn installed_debug_acceptance(mode: &str) {
 #[test]
 fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
     installed_debug_acceptance("continue");
+}
+
+#[test]
+fn interpreted_debugging_reconstructs_suspended_async_callers() {
+    installed_debug_acceptance("async-stack");
 }
 
 #[cfg(target_os = "linux")]
