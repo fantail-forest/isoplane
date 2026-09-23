@@ -27,9 +27,11 @@ internal static class NativeDebugAdapter
     private static async Task<int> RunOwnedAsync(string directory, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var environment = new Dictionary<string, string> { [SessionDirectoryVariable] = directory };
+        if (OperatingSystem.IsWindows()) environment["_NO_DEBUG_HEAP"] = "1";
         using var process = Processes.Start("lldb-dap", [],
             Environment.CurrentDirectory, captureOutput: true,
-            environment: new Dictionary<string, string> { [SessionDirectoryVariable] = directory });
+            environment: environment);
         var relay = Isoplane.Debugging.NativeDebugSession.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(),
             process.StandardInput.BaseStream, process.StandardOutput.BaseStream, lifetime.Token);
         var exited = process.WaitForExitAsync(lifetime.Token);

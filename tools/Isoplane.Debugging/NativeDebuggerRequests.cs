@@ -39,7 +39,7 @@ internal static class NativeDebuggerRequests
             "settings set symbols.enable-external-lookup false",
             "settings set plugin.jit-loader.gdb.enable on",
             "settings set target.inline-breakpoint-strategy always",
-            "script import os; lldb.debugger.HandleCommand('command script import ' + chr(34) + os.path.join(os.environ['ISOPLANE_NATIVE_DEBUG_DIRECTORY'], 'isoplane_lldb.py').replace('\\\\', '/') + chr(34))");
+            "script import os, sys; sys.path.insert(0, os.environ['ISOPLANE_NATIVE_DEBUG_DIRECTORY']); import isoplane_lldb; isoplane_lldb.__lldb_init_module(lldb.debugger, {})");
         arguments["preRunCommands"] = new JArray(
             "process handle -s false -n false -p true SIGSEGV SIGILL");
     }
