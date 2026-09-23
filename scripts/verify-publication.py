@@ -38,6 +38,7 @@ class Downloads:
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         self.opener = urllib.request.build_opener(NoRedirect())
+        self.opener.addheaders = [('User-Agent', 'Isoplane-Release-Verifier/0.1')]
 
     def fetch(self, key, output, limit):
         with self.opener.open(f'{ORIGIN}/{key}', timeout=120) as response:

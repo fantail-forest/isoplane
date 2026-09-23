@@ -113,6 +113,9 @@ class DownloadTransportTests(unittest.TestCase):
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                if self.headers.get('User-Agent') != 'Isoplane-Release-Verifier/0.1':
+                    self.send_error(403)
+                    return
                 if self.path == '/redirect':
                     self.send_response(302)
                     self.send_header('Location', '/artifact')
@@ -123,6 +126,9 @@ class DownloadTransportTests(unittest.TestCase):
                 self.wfile.write(b'package bytes')
 
             def do_HEAD(self):
+                if self.headers.get('User-Agent') != 'Isoplane-Release-Verifier/0.1':
+                    self.send_error(403)
+                    return
                 self.send_response(200 if self.path == '/artifact' else 404)
                 self.end_headers()
 
