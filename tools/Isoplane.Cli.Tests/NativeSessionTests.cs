@@ -135,6 +135,19 @@ public sealed class NativeSessionTests
             "Compiler storage must not resolve relative to an application checkout.");
     }
 
+    [Fact]
+    public void a_session_cannot_select_native_and_interpreted_debugging_together()
+    {
+        using var directory = new SessionDirectory();
+        var options = JsonNode.Parse(directory.Options)!;
+        options["native_debug"] = true;
+        options["debug_endpoint"] = "127.0.0.1:12345";
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            LocalPreparation.Prepare(ModuleValidationTests.Module, JsonSerializer.SerializeToUtf8Bytes(options)));
+        Assert.True(failure.Message.Contains("either native or interpreted debugging", StringComparison.Ordinal),
+            "An ambiguous debugger selection must fail before acquiring session resources.");
+    }
+
     [Theory]
     [InlineData("--port", "0")]
     [InlineData("--guest-runtime", "mono")]

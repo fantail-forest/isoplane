@@ -98,7 +98,7 @@ wasm-encoder = { version = "0.244", features = ["wasmparser"] }
 # Engine construction and module validation apply guest capability restrictions.
 wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "5d2fff464e9735e337f69494db1e26fa14ee158c", default-features = false, features = [
     "anyhow", "runtime", "std", "cranelift", "winch", "pooling-allocator", "call-hook",
-    "backtrace", "demangle", "addr2line", "parallel-compilation", "profiling", "gc", "gc-null",
+    "backtrace", "demangle", "addr2line", "parallel-compilation", "profiling", "gc", "gc-null", "debug-builtins",
 ] }
 wat         = "1"
 tempfile    = "3"

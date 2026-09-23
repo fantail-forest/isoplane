@@ -44,10 +44,16 @@ pub(crate) struct Options {
     log_filter: Option<String>,
     port: Option<u16>,
     debug_endpoint: Option<SocketAddr>,
+    #[serde(default)]
+    native_debug: bool,
 }
 
 impl Options {
     fn inputs(&self) -> anyhow::Result<Inputs> {
+        anyhow::ensure!(
+            !self.native_debug || self.debug_endpoint.is_none(),
+            "a session must select either native or interpreted debugging"
+        );
         anyhow::ensure!(
             !self.manifest.name.trim().is_empty(),
             "local application name is empty"
@@ -174,7 +180,7 @@ impl Session {
         let mut app = prepared.start().await?;
         let current_proxy = Arc::new(RwLock::new(app.proxy.clone()));
         let mut connections = JoinSet::new();
-        let debug = options.debug_endpoint.is_some();
+        let debug = options.debug_endpoint.is_some() || options.native_debug;
         let admitted = Arc::new(AtomicBool::new(false));
         let result = async {
             if self.cancellation.is_cancelled() { return Ok(()); }
@@ -188,7 +194,7 @@ impl Session {
                         let replacement = async {
                         anyhow::ensure!(update.options.state_directory == options.state_directory
                             && update.options.manifest.name == options.manifest.name
-                            && update.options.debug_endpoint.is_none(), "reload cannot change local session identity or debugger mode");
+                            && update.options.debug_endpoint.is_none() && !update.options.native_debug, "reload cannot change local session identity or debugger mode");
                             let inputs = update.options.inputs()?;
                             prepare(update.wasm, &update.options, inputs).await
                         }.await;
@@ -248,12 +254,14 @@ async fn prepare(wasm: Vec<u8>, options: &Options, inputs: Inputs) -> anyhow::Re
     )?;
     let preparation_configuration = configuration.clone();
     let debug = options.debug_endpoint.map(DebugPeer::new).transpose()?;
+    let local_debug = debug.is_some() || options.native_debug;
+    let native_debug = options.native_debug;
     let directory = inputs.state_directory.clone();
     let subscriber = tracing::dispatcher::get_default(Clone::clone);
     let prepared = tokio::task::spawn_blocking(move || {
         tracing::dispatcher::with_default(&subscriber, || {
-            if debug.is_some() {
-                Prepared::build_debug(&inputs, &wasm)
+            if local_debug {
+                Prepared::build_debug(&inputs, &wasm, native_debug)
             } else {
                 Prepared::build(&inputs, &wasm, &preparation_configuration)
             }

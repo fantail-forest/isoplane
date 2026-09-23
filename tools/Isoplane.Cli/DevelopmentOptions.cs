@@ -70,8 +70,6 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException("--debug cannot be combined with --no-build.");
         if (debug && watch)
             throw new ArgumentException("--debug requires --no-watch; each debug session handles one request.");
-        if (debug && guestRuntime == GuestRuntimeProfile.NativeAot)
-            throw new ArgumentException("--debug requires the Mono guest runtime.");
         if (!System.IO.Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}");
         if (!File.Exists(Path.Combine(directory, "isoplane.toml")))

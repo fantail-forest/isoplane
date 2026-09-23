@@ -2,8 +2,8 @@
   <UsingTask TaskName="IsoplaneMonoDebugSymbols" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoDebugSymbols.cs" /></Task>
   </UsingTask>
-  <UsingTask TaskName="IsoplaneMonoDebugManifest" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
-    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)MonoDebugManifest.cs" /></Task>
+  <UsingTask TaskName="IsoplaneDebugManifest" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task><Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)DebugManifest.cs" /></Task>
   </UsingTask>
   <ItemGroup>
     <LinkerArg Include="-Wl,--wrap=printf,--wrap=fprintf,--wrap=vprintf,--wrap=vfprintf,--wrap=puts,--wrap=fputs" />
@@ -27,7 +27,7 @@
       <_IsoplanePublishedDebugManifest>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.debug.xml'))</_IsoplanePublishedDebugManifest>
     </PropertyGroup>
     <Copy SourceFiles="@(_IsoplaneDebugSymbols)" DestinationFiles="$(_IsoplanePublishedSymbols)" />
-    <IsoplaneMonoDebugManifest Module="$(NativeBinary)" Symbols="$(_IsoplanePublishedSymbols)" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplanePublishedDebugManifest)" />
+    <IsoplaneDebugManifest Module="$(NativeBinary)" Symbols="$(_IsoplanePublishedSymbols)" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplanePublishedDebugManifest)" />
     <ItemGroup><FileWrites Include="$(_IsoplanePublishedSymbols);$(_IsoplanePublishedDebugManifest)" /></ItemGroup>
   </Target>
 </Project>

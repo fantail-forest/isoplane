@@ -99,16 +99,22 @@ impl Prepared {
         self.compiled
     }
     /// Validates and compiles a marked debug module without pre-initialization.
-    pub fn build_debug(project: &Project, wasm: &[u8]) -> Result<Self, super::Error> {
-        Self::prepare_debug(project, wasm).map_err(super::Error::Preparation)
+    /// `native_symbols` exposes guest DWARF to the process's native debugger.
+    pub fn build_debug(
+        project: &Project,
+        wasm: &[u8],
+        native_symbols: bool,
+    ) -> Result<Self, super::Error> {
+        Self::prepare_debug(project, wasm, native_symbols).map_err(super::Error::Preparation)
     }
 
-    fn prepare_debug(project: &Project, wasm: &[u8]) -> anyhow::Result<Self> {
+    fn prepare_debug(project: &Project, wasm: &[u8], native_symbols: bool) -> anyhow::Result<Self> {
         validate(project, wasm, true)?;
         let manifest = project.manifest.clone();
         let version = blake3::hash(wasm).to_hex().to_string();
         let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(
             isoplane_engine::EngineConfig {
+                native_debug: native_symbols,
                 pooling: false,
                 max_memory_bytes: manifest.memory_max_bytes(),
                 platform_files: project.platform_files.clone(),

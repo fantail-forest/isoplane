@@ -5,6 +5,13 @@ function activate(context) {
     context.subscriptions.push(
         vscode.debug.registerDebugConfigurationProvider('isoplane', {
             resolveDebugConfigurationWithSubstitutedVariables(_folder, configuration) {
+                if (configuration.request === 'launch') {
+                    if (!configuration.project) throw new Error('Select the Isoplane project directory to debug.');
+                    const args = ['dev', '--project', configuration.project, '--configuration', configuration.configuration || 'IsoplaneNativeAotDebug',
+                        '--debug', '--no-watch', '--guest-runtime', 'nativeaot'];
+                    if (configuration.httpPort !== undefined) args.push('--port', String(configuration.httpPort));
+                    return { ...configuration, program: configuration.cliPath || 'isoplane', args, cwd: configuration.project };
+                }
                 const port = Number(configuration.port);
                 if (!Number.isInteger(port) || port < 1 || port > 65535) {
                     throw new Error('Enter the debugger port printed by your local Isoplane debug session.');
@@ -14,7 +21,8 @@ function activate(context) {
         }),
         vscode.debug.registerDebugAdapterDescriptorFactory('isoplane', {
             createDebugAdapterDescriptor(session) {
-                return new vscode.DebugAdapterExecutable(session.configuration.cliPath || 'isoplane', ['debug-adapter']);
+                return new vscode.DebugAdapterExecutable(session.configuration.cliPath || 'isoplane',
+                    session.configuration.request === 'launch' ? ['debug-adapter', '--nativeaot'] : ['debug-adapter']);
             }
         }),
         vscode.commands.registerCommand('isoplane.debugPort', () => vscode.window.showInputBox({

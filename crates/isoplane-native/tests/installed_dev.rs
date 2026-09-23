@@ -120,6 +120,8 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
+    } else if mode == "native" {
+        "    private static string Handle()\n    {\n        int answer = 21;\n        answer *= 2;\n        return answer.ToString();\n    }\n"
     } else if mode == "library" {
         "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
     } else if mode == "protocol" {
@@ -256,21 +258,77 @@ fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
     installed_debug_acceptance("continue");
 }
 
+#[cfg(target_os = "linux")]
+fn installed_native_debug_acceptance(mode: &str) {
+    let python = isoplane_fixtures::debugger_python();
+    let directory = tempfile::tempdir().unwrap();
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let source = write_debug_application(&app, "native");
+    let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/common/native_debug_driver.py");
+    let mut command = if mode == "editor" {
+        let mut command = std::process::Command::new("xvfb-run");
+        command
+            .args(["-a", "node"])
+            .arg(isoplane_fixtures::debugger_editor())
+            .arg("--native")
+            .env("ISOPLANE_TEST_CLI", &cli)
+            .env("ISOPLANE_TEST_NATIVE_PROJECT", &app);
+        command
+    } else {
+        let mut command = std::process::Command::new(python);
+        command.arg(driver).arg(cli).arg(&app).arg(source).arg(mode);
+        command
+    };
+    let result = command
+        .env(
+            "ISOPLANE_GUEST_RUNTIME_FEED",
+            isoplane_fixtures::guest_runtime_feed(),
+        )
+        .output()
+        .expect("native debugging requires GDB 16+; editor tests also require Node and xvfb-run");
+    assert!(
+        result.status.success(),
+        "installed NativeAOT debug {mode} acceptance failed: {}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn installed_nativeaot_debugging_binds_source_edits_a_local_and_steps() {
+    installed_native_debug_acceptance("continue");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn stopping_a_paused_nativeaot_guest_removes_the_owned_session() {
+    installed_native_debug_acceptance("stop");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn vscode_launches_nativeaot_and_stops_at_a_customer_source_breakpoint() {
+    installed_native_debug_acceptance("editor");
+}
+
 #[test]
 fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
     installed_debug_acceptance("stop");
 }
 
 #[test]
-fn installed_debug_options_reject_watch_and_nativeaot_before_publication() {
+fn installed_debug_options_reject_watch_and_unbuilt_modules_before_publication() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
     for (arguments, diagnostic) in [
         (vec!["--debug"], "--debug requires --no-watch"),
         (
-            vec!["--debug", "--no-watch", "--guest-runtime", "nativeaot"],
-            "--debug requires the Mono guest runtime",
+            vec!["--debug", "--no-watch", "--no-build"],
+            "--debug cannot be combined with --no-build.",
         ),
     ] {
         let result = std::process::Command::new(&cli)

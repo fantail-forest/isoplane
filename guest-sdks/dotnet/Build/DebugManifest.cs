@@ -6,15 +6,15 @@ using System.Text;
 using Microsoft.Build.Framework;
 
 /// <summary>Records the exact module and symbols delivered to a local debug session.</summary>
-public sealed class IsoplaneMonoDebugManifest : Microsoft.Build.Utilities.Task
+public sealed class IsoplaneDebugManifest : Microsoft.Build.Utilities.Task
 {
     private const string LocalDebugSection = "isoplane.local-debug";
 
     /// <summary>The final raw guest module.</summary>
     [Required] public string Module { get; set; } = "";
-    /// <summary>The copied post-trim portable PDB.</summary>
+    /// <summary>The symbol artifact: a portable PDB for interpretation or the DWARF-bearing native module.</summary>
     [Required] public string Symbols { get; set; } = "";
-    /// <summary>The validated session-owned debugger peer.</summary>
+    /// <summary>The validated interpreted debugger peer, or native debugging transport identifier.</summary>
     [Required] public string Endpoint { get; set; } = "";
     /// <summary>The output XML manifest.</summary>
     [Required] public string Output { get; set; } = "";

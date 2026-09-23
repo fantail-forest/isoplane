@@ -178,3 +178,26 @@ pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
         .current_dir(destination));
     tools.join("isoplane")
 }
+
+/// Builds the editor test dependencies under the shared fixture lock.
+/// Fails with the missing tool or installation log when Node/npm cannot run.
+pub fn debugger_editor() -> PathBuf {
+    let root = super::repo_root();
+    let output = Command::new("python3")
+        .arg(root.join("scripts/fixture-tools.py"))
+        .arg("debugger-editor")
+        .arg(&root)
+        .output()
+        .expect("python3 and npm are required to build the editor fixture");
+    assert!(
+        output.status.success(),
+        "editor fixture dependencies must install: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("editor fixture path is UTF-8")
+            .trim(),
+    )
+}
