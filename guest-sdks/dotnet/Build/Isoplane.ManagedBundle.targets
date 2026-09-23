@@ -2,14 +2,15 @@
   <Target Name="IsoplaneResolveManagedPlatform">
     <ItemGroup>
       <_IsoplaneBundleAspNetReference Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(IsoplaneAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' != ''" />
-      <IsoplaneBundlePlatformReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == 'Microsoft.NETCore.App' OR '%(ReferencePath.NuGetPackageId)' == 'Isoplane.Sdk' OR '%(ReferencePath.NuGetPackageId)' == 'Isoplane.AspNetCore'" />
+      <!-- The runtime binds its SDK assemblies by name, however the project referenced them. -->
+      <IsoplaneBundlePlatformReference Include="@(ReferencePath)" Condition="'%(ReferencePath.FrameworkReferenceName)' == 'Microsoft.NETCore.App' OR '%(ReferencePath.Filename)' == 'Isoplane.Sdk' OR '%(ReferencePath.Filename)' == 'Isoplane.AspNetCore'" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplaneManagedBundle" DependsOnTargets="Build;IsoplaneResolveManagedPlatform">
     <Error Condition="'$(IsoplaneManagedBundleBuild)' != 'true'" Text="Use isoplane bundle to build managed deployment input." />
     <Error Condition="'$(IsoplaneApplicationFactory)' == ''" Text="Set IsoplaneApplicationFactory to the application's public static factory method." />
     <ItemGroup>
-      <IsoplaneBundleAssembly Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.Sdk' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.AspNetCore'" />
+      <IsoplaneBundleAssembly Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.Filename)' != 'Isoplane.Sdk' AND '%(ReferenceCopyLocalPaths.Filename)' != 'Isoplane.AspNetCore'" />
       <_IsoplaneBundleAspNetReference Remove="@(IsoplaneBundleAssembly)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
       <IsoplaneBundleAssembly Include="@(_IsoplaneBundleAspNetReference)" />
       <IsoplaneBundleAssembly Remove="@(IsoplaneBundlePlatformReference)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />

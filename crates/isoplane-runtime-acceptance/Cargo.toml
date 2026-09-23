@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
-description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution, cryptography and HTTP integrations driven through the real host reactor"
+description = "Acceptance tests for the source-built guest runtime: its scheduling, socket, name-resolution, cryptography and HTTP integrations, and application packages on the shared interpreter runtime, driven through the real host reactor"
 
 [dependencies]
 
@@ -29,5 +29,10 @@ isoplane-abi = { workspace = true, features = ["host"] }
 isoplane-engine = { workspace = true }
 isoplane-fixtures = { workspace = true }
 isoplane-harness = { workspace = true }
+isoplane-prepare = { workspace = true }
+blake3 = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio-util = { workspace = true }
 isoplane-host = { workspace = true }
 isoplane-proxy = { workspace = true }

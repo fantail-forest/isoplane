@@ -71,6 +71,8 @@ pub struct Initialized {
     pub passes: u32,
     /// Bounded log output from the successful pass.
     pub logs: Vec<String>,
+    /// Whether preparation compiled the submitted module rather than reusing the supplied cache's compilation.
+    pub compiled: bool,
 }
 
 /// Execute a validated application under the supplied worker engine in a preparation process.
@@ -130,17 +132,21 @@ pub(crate) fn initialize_with_cache(
     let mut deferred_reasons = Vec::new();
     let mut capability_refusals = 0;
     let instrumented = bake::instrument(wasm).map_err(PrepareError::State)?;
-    let template = match cache {
-        Some(cache) => cache
-            .load(engine, &instrumented.wasm)
-            .map(|(template, _compiled)| template),
+    let (template, compiled) = match cache {
+        Some(cache) => cache.load(engine, &instrumented.wasm),
         None => match capture {
             CaptureMode::Portable => engine.load_template(&instrumented.wasm),
             #[cfg(target_os = "linux")]
             CaptureMode::Layered(_) => engine.load_layer_source(&instrumented.wasm),
-        },
+        }
+        .map(|template| (template, true)),
     }
-    .and_then(|template| template.with_application_files(application_files.clone()))
+    .and_then(|(template, compiled)| {
+        Ok((
+            template.with_application_files(application_files.clone())?,
+            compiled,
+        ))
+    })
     .map_err(PrepareError::State)?;
     let reactor = request
         .network
@@ -270,6 +276,8 @@ pub(crate) fn initialize_with_cache(
                     seed_reads: state.lock().seed_reads,
                     passes: 0,
                     logs: Vec::new(),
+                    // Without an initializer the original module is compiled for the template.
+                    compiled: true,
                 },
             });
         }
@@ -375,6 +383,7 @@ pub(crate) fn initialize_with_cache(
                 seed_reads: state.seed_reads,
                 passes: pass,
                 logs,
+                compiled,
             },
         });
     }

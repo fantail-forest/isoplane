@@ -317,6 +317,22 @@ fn local_debug_artifact_marker_matches_the_sdk_emitter() {
 }
 
 #[test]
+fn the_mono_runtime_loader_reads_packages_where_the_host_serves_them() {
+    let source = sdk_file("../MonoRuntime/src/PackageLoader.cs");
+    let prefix = "public const string Root = \"";
+    let root = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix))
+        .and_then(|value| value.strip_suffix("\";"))
+        .expect("the package loader must declare its package root");
+    assert_eq!(
+        root,
+        isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT,
+        "the shared runtime must look for the package where the host serves it"
+    );
+}
+
+#[test]
 fn mono_memory_accounting_uses_the_contracts_wasm_page_size() {
     let patch = include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch");
     let expression = format!(

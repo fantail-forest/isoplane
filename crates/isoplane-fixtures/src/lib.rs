@@ -205,6 +205,29 @@ pub fn runtime_acceptance_for(runtime: GuestRuntime) -> Vec<u8> {
     read(&path)
 }
 
+const PACKAGES: &str = "guest-runtime/tests/packages";
+
+/// The application-independent Mono runtime, `guest-sdks/dotnet/MonoRuntime`,
+/// published with the source-built pack and built if missing or stale. It
+/// runs whichever package the host serves it.
+pub fn mono_runtime() -> Vec<u8> {
+    let path = build_selected(&format!("{PACKAGES}/build.sh"), Some("runtime"), None)
+        .join(PACKAGES)
+        .join("out/isoplane_mono_runtime.wasm");
+    assert_attributed_to_feed(&path, GuestRuntime::Mono);
+    read(&path)
+}
+
+/// The package fixture `guest-runtime/tests/packages/<name>` as `isoplane
+/// bundle` writes it, unpacked into a directory holding `application.json`
+/// and `assemblies/`, built if missing or stale.
+pub fn mono_package(name: &str) -> PathBuf {
+    build_selected(&format!("{PACKAGES}/build.sh"), Some(name), None)
+        .join(PACKAGES)
+        .join("out")
+        .join(name)
+}
+
 /// The unoptimised NativeAOT compiler regression guest, rebuilt when its
 /// source or verified compiler changes.
 pub fn compiler_acceptance() -> Vec<u8> {

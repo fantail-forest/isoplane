@@ -59,6 +59,13 @@ __pycache__/
 /guest-runtime/tests/guest/obj/
 /guest-runtime/tests/guest/src/bin/
 /guest-runtime/tests/guest/src/obj/
+/guest-runtime/tests/packages/out/
+/guest-runtime/tests/packages/obj/
+/guest-runtime/tests/packages/**/bin/
+/guest-runtime/tests/packages/**/obj/
+/guest-sdks/dotnet/MonoRuntime/obj/
+/guest-sdks/dotnet/MonoRuntime/src/bin/
+/guest-sdks/dotnet/MonoRuntime/src/obj/
 /guests/dotnet/out/**/*.runtime
 *.wasm.fixture.json
 

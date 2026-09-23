@@ -4,6 +4,11 @@
 use crate::imports::{Sig, Ty};
 use crate::pal::{Delegation, Disposition, PalDef, FS_PREOPENS, FS_TYPES};
 
+/// Where the host serves an interpreted application's package, its
+/// `application.json` and `assemblies/` laid out as in the managed bundle,
+/// for the shared Mono runtime's loader to read during initialization.
+pub const APPLICATION_PACKAGE_ROOT: &str = "/.isoplane/package";
+
 /// The only Isoplane entry used by the native filesystem PAL wrappers.
 pub const IMPORT: &str = "filesystem_call";
 
