@@ -44,9 +44,9 @@ internal static class Processes
         }
     }
 
-    internal static async Task CheckAsync(string executable, IEnumerable<string> arguments, string directory, CancellationToken cancellation)
+    internal static async Task CheckAsync(string executable, IEnumerable<string> arguments, string directory, CancellationToken cancellation, IReadOnlyDictionary<string, string>? environment = null)
     {
-        using var process = Start(executable, arguments, directory, captureOutput: true, captureErrors: true);
+        using var process = Start(executable, arguments, directory, captureOutput: true, captureErrors: true, environment: environment);
         var output = process.StandardOutput.ReadToEndAsync(cancellation);
         var errors = process.StandardError.ReadToEndAsync(cancellation);
         try

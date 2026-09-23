@@ -1,6 +1,9 @@
 """Prove native source debugging through the installed CLI and LLDB's DAP server."""
 import concurrent.futures
 import json
+import os
+import shlex
+import xml.etree.ElementTree as ET
 import http.client
 from pathlib import Path
 import queue
@@ -20,6 +23,14 @@ import debug_async_stack
 import debug_library
 
 launcher, app, source, mode = sys.argv[1:]
+environment_file = Path(app) / "native-debug-python-environment.json"
+environment_file.write_text(json.dumps({name: value for name, value in os.environ.items() if name.upper().startswith("PYTHON")}))
+project = next(Path(app).glob("*.csproj"))
+document = ET.parse(project)
+target = ET.SubElement(document.getroot(), "Target", Name="VerifyDebuggerEnvironment", BeforeTargets="PrepareForBuild")
+command = [sys.executable, str(Path(__file__).with_name("native_debug_environment.py")), str(environment_file)]
+ET.SubElement(target, "Exec", Command=subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command))
+document.write(project, encoding="unicode")
 adapter = subprocess.Popen([launcher, "debug-adapter", "--nativeaot"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()

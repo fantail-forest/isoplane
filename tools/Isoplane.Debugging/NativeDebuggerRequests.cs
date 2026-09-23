@@ -32,10 +32,21 @@ internal static class NativeDebuggerRequests
         return body.Properties().ToDictionary(property => property.Name, property => property.Value);
     }
 
-    internal static void ConfigureLaunch(IDictionary<string, JToken> arguments)
+    internal static void ConfigureLaunch(IDictionary<string, JToken> arguments, IReadOnlyDictionary<string, string> environment)
     {
+        var inherited = new Dictionary<string, string>(environment,
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        if (arguments.TryGetValue("env", out var configured) && configured is JObject overrides)
+            foreach (var variable in overrides.Properties())
+            {
+                if (variable.Value.Type == JTokenType.Null) inherited.Remove(variable.Name);
+                else inherited[variable.Name] = variable.Value.Value<string>()
+                    ?? throw new ProtocolException($"Invalid environment value for {variable.Name}.");
+            }
+        arguments["env"] = JObject.FromObject(inherited);
         arguments["disableASLR"] = false;
         arguments["initCommands"] = new JArray(
+            "settings set target.inherit-env false",
             "settings set symbols.enable-external-lookup false",
             "settings set plugin.jit-loader.gdb.enable on",
             "settings set target.inline-breakpoint-strategy always",

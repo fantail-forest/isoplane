@@ -9,8 +9,8 @@ namespace Isoplane.Debugging;
 /// <summary>Forwards native debugger messages while preserving the semantics of suspended managed frames.</summary>
 public static class NativeDebugSession
 {
-    /// <summary>Relays one editor connection until either peer closes or cancellation stops both protocol readers.</summary>
-    public static async Task RunAsync(Stream editorInput, Stream editorOutput, Stream debuggerInput, Stream debuggerOutput, CancellationToken cancellation)
+    /// <summary>Relays one editor connection, using the supplied CLI environment for debuggee launches instead of the debugger process environment.</summary>
+    public static async Task RunAsync(Stream editorInput, Stream editorOutput, Stream debuggerInput, Stream debuggerOutput, CancellationToken cancellation, IReadOnlyDictionary<string, string> launchEnvironment)
     {
         using var input = new DebuggerInput(editorInput);
         var editor = new DebugProtocolClient(input, editorOutput, false, DebugProtocolOptions.AllowWildcardRegistrations);
@@ -29,7 +29,7 @@ public static class NativeDebugSession
                 lock (gate) state.Validate(request.Command, arguments);
                 if (request.Command is "setExpression" or "stepInTargets" or "setDataBreakpoints" or "completions" or "exceptionInfo")
                     throw new ProtocolException($"Native debugger request {request.Command} is not supported by this session.");
-                if (request.Command == "launch") NativeDebuggerRequests.ConfigureLaunch(arguments);
+                if (request.Command == "launch") NativeDebuggerRequests.ConfigureLaunch(arguments, launchEnvironment);
                 bool managed = NativeDebuggerRequests.IsManaged(request.Command);
                 var forwarded = new Request(managed ? "evaluate" : request.Command);
                 forwarded.Args.Data = managed ? NativeDebuggerRequests.Encode(request.Command, arguments) : arguments;

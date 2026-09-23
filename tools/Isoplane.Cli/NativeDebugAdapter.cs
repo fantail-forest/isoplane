@@ -6,7 +6,8 @@ internal static class NativeDebugAdapter
 
     internal static async Task<int> RunAsync(CancellationToken cancellation)
     {
-        await Processes.CheckAsync("lldb-dap", ["--help"], Environment.CurrentDirectory, cancellation);
+        var debugger = NativeDebuggerToolchain.Resolve(Toolchain.Selected(Toolchain.Home));
+        await Processes.CheckAsync(debugger.Executable, ["--help"], Environment.CurrentDirectory, cancellation, debugger.Environment);
         var directory = Directory.CreateTempSubdirectory("isoplane-native-debug-");
         try
         {
@@ -19,21 +20,25 @@ internal static class NativeDebugAdapter
                 await using var script = File.Create(Path.Combine(directory.FullName, name[prefix.Length..]));
                 await resource.CopyToAsync(script, cancellation);
             }
-            return await RunOwnedAsync(directory.FullName, cancellation);
+            return await RunOwnedAsync(debugger, directory.FullName, cancellation);
         }
         finally { directory.Delete(recursive: true); }
     }
 
-    private static async Task<int> RunOwnedAsync(string directory, CancellationToken cancellation)
+    private static async Task<int> RunOwnedAsync(NativeDebuggerToolchain debugger, string directory, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var environment = new Dictionary<string, string> { [SessionDirectoryVariable] = directory };
-        if (OperatingSystem.IsWindows()) environment["_NO_DEBUG_HEAP"] = "1";
-        using var process = Processes.Start("lldb-dap", [],
+        var launchEnvironment = System.Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+            .ToDictionary(entry => (string)entry.Key, entry => (string)entry.Value!);
+        launchEnvironment[SessionDirectoryVariable] = directory;
+        if (OperatingSystem.IsWindows()) launchEnvironment["_NO_DEBUG_HEAP"] = "1";
+        var environment = new Dictionary<string, string>(launchEnvironment);
+        foreach (var (name, value) in debugger.Environment) environment[name] = value;
+        using var process = Processes.Start(debugger.Executable, [],
             Environment.CurrentDirectory, captureOutput: true,
             environment: environment);
         var relay = Isoplane.Debugging.NativeDebugSession.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput(),
-            process.StandardInput.BaseStream, process.StandardOutput.BaseStream, lifetime.Token);
+            process.StandardInput.BaseStream, process.StandardOutput.BaseStream, lifetime.Token, launchEnvironment);
         var exited = process.WaitForExitAsync(lifetime.Token);
         try
         {

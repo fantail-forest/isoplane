@@ -8,6 +8,23 @@ namespace Isoplane.Debugging.Tests;
 public sealed class NativeDebuggerRequestsTests
 {
     [Fact]
+    public void guest_launch_preserves_the_application_environment_without_debugger_python_settings()
+    {
+        var original = new Dictionary<string, string> { ["PATH"] = "/customer/bin", ["KEEP"] = "original", ["REMOVE"] = "original" };
+        var arguments = new Dictionary<string, JToken>
+        {
+            ["env"] = new JObject { ["KEEP"] = "override", ["REMOVE"] = JValue.CreateNull(), ["NEW"] = "value" }
+        };
+        NativeDebuggerRequests.ConfigureLaunch(arguments, original);
+        var environment = (JObject)arguments["env"];
+        Assert.True(((JArray)arguments["initCommands"]).Values<string>().Contains("settings set target.inherit-env false") && environment.Value<string>("PATH") == "/customer/bin"
+            && !environment.ContainsKey("PYTHONHOME"), "The application must inherit the CLI environment, not LLDB's bundled Python or library paths.");
+        Assert.True(environment.Value<string>("KEEP") == "override" && environment.Value<string>("NEW") == "value"
+            && !environment.ContainsKey("REMOVE"), "Explicit launch environment overrides and removals must still apply.");
+        Assert.True(original["KEEP"] == "original" && original.ContainsKey("REMOVE"), "Launch overrides must not mutate the CLI environment snapshot.");
+    }
+
+    [Fact]
     public void managed_expressions_cross_the_command_boundary_as_data()
     {
         const string expression = "\"quoted\"; `script print('unwanted')\n🌲";

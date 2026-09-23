@@ -47,12 +47,13 @@ class WorkloadPackageTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory(prefix='isoplane-workload-package-') as temporary:
                     root = Path(temporary)
                     source = root / 'toolchain'
-                    files = ['cli/Isoplane.Cli.dll', 'bin/wasm-tools', 'dotnet/dotnet']
+                    files = ['cli/Isoplane.Cli.dll', 'bin/wasm-tools', 'debugger/bin/lldb-dap', 'debugger/python/bin/python3', 'dotnet/dotnet']
                     for name in files:
                         path = source / name
                         path.parent.mkdir(parents=True, exist_ok=True)
                         path.write_bytes(b'payload')
-                    (source / 'bin/wasm-tools').chmod(0o755)
+                    for name in ('bin/wasm-tools', 'debugger/bin/lldb-dap', 'debugger/python/bin/python3'):
+                        (source / name).chmod(0o755)
                     for name in ['Microsoft.NET.Runtime.MonoTargets.Sdk',
                                  f'Microsoft.NETCore.App.Runtime.AOT.{rid}.Cross.wasi-wasm']:
                         pack = source / 'dotnet/packs' / name / '10.0.11'
@@ -84,7 +85,8 @@ class WorkloadPackageTests(unittest.TestCase):
                             self.assertEqual(identity, package_id, 'the NuGet identity must match workload installation records')
                             self.assertFalse(any(entry.startswith('dotnet/') for entry in archive.namelist()), 'the workload must not ship a replacement .NET installation')
                             if name == 'Isoplane.Toolchain':
-                                self.assertTrue(archive.getinfo('bin/wasm-tools').external_attr >> 16 & 0o111, 'native tools must retain executable permissions')
+                                for executable in ('bin/wasm-tools', 'debugger/bin/lldb-dap', 'debugger/python/bin/python3'):
+                                    self.assertTrue(archive.getinfo(executable).external_attr >> 16 & 0o111, 'the installed tools and debugger runtime must retain executable permissions')
 
 
 if __name__ == '__main__':
