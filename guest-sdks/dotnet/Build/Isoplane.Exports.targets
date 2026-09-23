@@ -35,6 +35,6 @@ internal static class IsoplaneGeneratedExports {
 ]]></_IsoplaneExportsSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_IsoplaneExportsPath)" Lines="$([MSBuild]::Escape($(_IsoplaneExportsSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <ItemGroup><Compile Include="$(_IsoplaneExportsPath)" /></ItemGroup>
+    <ItemGroup><Compile Include="$(_IsoplaneExportsPath)" IsoplaneRuntimeSource="true" /></ItemGroup>
   </Target>
 </Project>

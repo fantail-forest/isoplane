@@ -16,6 +16,8 @@ import urllib.parse
 
 from debugpy.common.messaging import JsonIOStream
 
+import debug_library
+
 launcher, app, source, mode = sys.argv[1:]
 adapter = subprocess.Popen([launcher, "debug-adapter", "--nativeaot"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
@@ -79,10 +81,27 @@ def request_http(url):
         return reply.status, reply.read()
 
 
+def stop_adapter():
+    if adapter.poll() is None:
+        adapter.terminate()
+    try:
+        adapter.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        adapter.kill()
+        adapter.wait()
+
+
+def finish_request(result, expected):
+    assert result.result(timeout=120) == (200, expected), "the native request must complete with the inspected or edited guest state"
+    until(lambda item: item.get("event") == "terminated")
+    response(send("disconnect", {}))
+    assert adapter.wait(timeout=30) == 0, "the native adapter must exit cleanly after request completion"
+
+
 try:
     lines = Path(source).read_text().splitlines()
-    before = next(index + 1 for index, line in enumerate(lines) if "answer *= 2;" in line)
-    after = next(index + 1 for index, line in enumerate(lines) if "return answer.ToString();" in line)
+    before = next(index + 1 for index, line in enumerate(lines) if ("int total =" if mode == "async" else "return result;" if mode == "library" else "answer *= 2;") in line)
+    after = next(index + 1 for index, line in enumerate(lines) if ("return total;" if mode == "async" else "return result;" if mode == "library" else "return answer +") in line)
     response(send("initialize", {"adapterID": "isoplane", "pathFormat": "path", "linesStartAt1": True, "columnsStartAt1": True}))
     until(lambda item: item.get("event") == "initialized")
     launch = send("launch", {"program": launcher, "cwd": app, "args": ["dev", "--project", app,
@@ -96,44 +115,82 @@ try:
     session_root = module.parent.parent
     ready = output_event("ready")
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as requests:
-        http_result = requests.submit(request_http, ready["url"])
-        stopped = until(lambda item: item.get("event") == "stopped")
-        thread = stopped["body"]["threadId"]
-        frame = response(send("stackTrace", {"threadId": thread}))["stackFrames"][0]
-        assert frame["line"] == before and frame["source"]["path"] == source, "the breakpoint must stop in actual NativeAOT C# source"
-        local_scope = None
-        for scope in response(send("scopes", {"frameId": frame["id"]}))["scopes"]:
-            values = response(send("variables", {"variablesReference": scope["variablesReference"]}))["variables"]
-            if any(value["name"] == "answer" and value["value"] == "21" for value in values):
-                local_scope = scope["variablesReference"]
-        assert local_scope is not None, "the NativeAOT local must be inspectable before stepping"
-        if mode == "stop":
-            response(send("disconnect", {"terminateDebuggee": True}))
-            assert adapter.wait(timeout=30) == 0, "stopping a paused native guest must release the adapter"
-            try:
-                http_result.result(timeout=30)
-            except (concurrent.futures.TimeoutError, socket.timeout) as error:
-                raise AssertionError("the paused HTTP request did not observe session termination") from error
-            except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.IncompleteRead):
-                print("paused native HTTP connection terminated", flush=True)
-            except urllib.error.URLError as error:
-                assert isinstance(error.reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)), f"HTTP failure did not prove termination: {error}"
+        try:
+            http_result = requests.submit(request_http, ready["url"])
+            if mode == "library":
+                debug_library.exercise(source, send, lambda identifier: {"body": response(identifier)}, until)
+                finish_request(http_result, debug_library.EXPECTED_RESPONSE)
             else:
-                raise AssertionError("a killed guest cannot complete its HTTP request")
-        else:
-            evaluated = response(send("evaluate", {"expression": "answer + 1", "frameId": frame["id"], "context": "watch"}))
-            assert evaluated["result"] == "22", "native watch expressions must read the stopped local"
-            response(send("setVariable", {"variablesReference": local_scope, "name": "answer", "value": "30"}))
-            response(send("next", {"threadId": thread}))
-            until(lambda item: item.get("event") == "stopped")
-            frame = response(send("stackTrace", {"threadId": thread}))["stackFrames"][0]
-            assert frame["line"] == after and frame["source"]["path"] == source, "native next must advance one C# source line"
-            assert response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))["result"] == "60", "the guest must execute with the edited local"
-            response(send("continue", {"threadId": thread}))
-            assert http_result.result(timeout=120) == (200, b"60"), "continued NativeAOT code must produce the actual edited HTTP response"
-            until(lambda item: item.get("event") == "terminated")
-            response(send("disconnect", {}))
-            assert adapter.wait(timeout=30) == 0, "the native adapter must exit cleanly after request completion"
+                stopped = until(lambda item: item.get("event") == "stopped")
+                thread = stopped["body"]["threadId"]
+            if mode == "async":
+                frames = response(send("stackTrace", {"threadId": thread}))["stackFrames"]
+                assert frames and all(frame.get("source", {}).get("path") == source for frame in frames), "the native stack must contain only customer source frames after host reentry"
+                frame = frames[0]
+                assert frame["line"] == before, "the resumed async frame must retain its C# source location"
+                assert frame["name"].endswith(".Inner"), "the async stack must name the original C# method"
+                locals_by_name = {}
+                for scope in response(send("scopes", {"frameId": frame["id"]}))["scopes"]:
+                    if scope["name"] == "Locals":
+                        local_scope = scope["variablesReference"]
+                        locals_by_name = {value["name"]: value for value in response(send("variables", {"variablesReference": local_scope}))["variables"]}
+                assert locals_by_name["answer"]["value"] == "22", "the async locals view must recover values saved before await"
+                assert not any(name.startswith("__") for name in locals_by_name), "async locals must hide compiler and host bookkeeping"
+                sample = response(send("variables", {"variablesReference": locals_by_name["sample"]["variablesReference"]}))["variables"]
+                assert {value["name"]: value["value"] for value in sample} == {"Value": "7", "Name": '\"hello\"'}, "saved async object references must remain inspectable"
+                response(send("setVariable", {"variablesReference": local_scope, "name": "answer", "value": "30"}))
+                response(send("continue", {"threadId": thread}))
+                finish_request(http_result, b"63")
+            elif mode != "library":
+                frames = response(send("stackTrace", {"threadId": thread}))["stackFrames"]
+                assert len(frames) == 2 and all(frame.get("source", {}).get("path") == source for frame in frames), "native stacks must preserve customer callers and hide runtime frames"
+                page = response(send("stackTrace", {"threadId": thread, "startFrame": 1, "levels": 1}))["stackFrames"]
+                assert page == [frames[1]], "stack pagination must count visible customer frames"
+                frame = frames[0]
+                assert frame["line"] == before and frame["source"]["path"] == source, "the breakpoint must stop in actual NativeAOT C# source"
+                local_scope = None
+                for scope in response(send("scopes", {"frameId": frame["id"]}))["scopes"]:
+                    values = response(send("variables", {"variablesReference": scope["variablesReference"]}))["variables"]
+                    if any(value["name"] == "answer" and value["value"] == "21" for value in values):
+                        local_scope = scope["variablesReference"]
+                        locals_by_name = {value["name"]: value for value in values}
+                assert local_scope is not None, "the NativeAOT local must be inspectable before stepping"
+                assert "__vmctx" not in locals_by_name, "host memory bookkeeping must not appear as a customer local"
+                if mode == "stop":
+                    response(send("disconnect", {"terminateDebuggee": True}))
+                    assert adapter.wait(timeout=30) == 0, "stopping a paused native guest must release the adapter"
+                    try:
+                        http_result.result(timeout=30)
+                    except (concurrent.futures.TimeoutError, socket.timeout) as error:
+                        raise AssertionError("the paused HTTP request did not observe session termination") from error
+                    except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.IncompleteRead):
+                        print("paused native HTTP connection terminated", flush=True)
+                    except urllib.error.URLError as error:
+                        assert isinstance(error.reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)), f"HTTP failure did not prove termination: {error}"
+                    else:
+                        raise AssertionError("a killed guest cannot complete its HTTP request")
+                else:
+                    sample = locals_by_name["sample"]
+                    members = response(send("variables", {"variablesReference": sample["variablesReference"]}))["variables"]
+                    assert {value["name"]: value["value"] for value in members} == {"Value": "14", "Name": '"hello 🌲"'}, "managed objects must show fields and decoded strings without runtime headers"
+                    numbers = locals_by_name["numbers"]
+                    elements = response(send("variables", {"variablesReference": numbers["variablesReference"]}))["variables"]
+                    assert [value["value"] for value in elements] == ["3", "7"], "managed arrays must expose indexed elements"
+                    assert locals_by_name["absent"]["value"] == "null", "managed null references must not be shown as WASM pointer wrappers"
+                    response(send("setVariable", {"variablesReference": sample["variablesReference"], "name": "Value", "value": "18"}))
+                    response(send("setVariable", {"variablesReference": numbers["variablesReference"], "name": "[1]", "value": "9"}))
+                    evaluated = response(send("evaluate", {"expression": "answer + 1", "frameId": frame["id"], "context": "watch"}))
+                    assert evaluated["result"] == "22", "native watch expressions must read the stopped local"
+                    response(send("setVariable", {"variablesReference": local_scope, "name": "answer", "value": "30"}))
+                    response(send("next", {"threadId": thread}))
+                    until(lambda item: item.get("event") == "stopped")
+                    frame = response(send("stackTrace", {"threadId": thread}))["stackFrames"][0]
+                    assert frame["line"] == after and frame["source"]["path"] == source, "native next must advance one C# source line"
+                    assert response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))["result"] == "60", "the guest must execute with the edited local"
+                    response(send("continue", {"threadId": thread}))
+                    finish_request(http_result, b"66")
+        finally:
+            stop_adapter()
     assert not module.exists() and not session_root.exists(), "the adapter must remove its native debug artifacts even after a paused stop"
     address = urllib.parse.urlsplit(ready["url"])
     with socket.socket() as connection:
@@ -142,10 +199,4 @@ try:
     assert not Path(app, manifest["module"]).exists(), "debug publication must not replace the ordinary module"
     print("native debug acceptance passed: " + mode, flush=True)
 finally:
-    if adapter.poll() is None:
-        adapter.terminate()
-    try:
-        adapter.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        adapter.kill()
-        adapter.wait()
+    stop_adapter()

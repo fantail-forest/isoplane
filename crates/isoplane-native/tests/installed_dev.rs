@@ -120,8 +120,10 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
+    } else if mode == "native-async" {
+        include_str!("common/native_debug_async.cs")
     } else if mode == "native" {
-        "    private static string Handle()\n    {\n        int answer = 21;\n        answer *= 2;\n        return answer.ToString();\n    }\n"
+        include_str!("common/native_debug_values.cs")
     } else if mode == "library" {
         "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
     } else if mode == "protocol" {
@@ -264,7 +266,21 @@ fn installed_native_debug_acceptance(mode: &str) {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let source = write_debug_application(&app, "native");
+    let source = write_debug_application(
+        &app,
+        if mode == "async" {
+            "native-async"
+        } else if mode == "library" {
+            "library"
+        } else {
+            "native"
+        },
+    );
+    let source = if mode == "library" {
+        write_debug_library(directory.path(), &app)
+    } else {
+        source
+    };
     let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/common/native_debug_driver.py");
     let mut command = if mode == "editor" {
@@ -300,6 +316,18 @@ fn installed_native_debug_acceptance(mode: &str) {
 #[cfg(target_os = "linux")]
 fn installed_nativeaot_debugging_binds_source_edits_a_local_and_steps() {
     installed_native_debug_acceptance("continue");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn nativeaot_async_debugging_shows_customer_frames_after_host_reentry() {
+    installed_native_debug_acceptance("async");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn nativeaot_debugging_keeps_referenced_customer_frames_and_locals() {
+    installed_native_debug_acceptance("library");
 }
 
 #[test]
