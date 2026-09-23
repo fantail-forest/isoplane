@@ -1,5 +1,8 @@
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +15,32 @@ spec.loader.exec_module(workload)
 
 
 class WorkloadPackageTests(unittest.TestCase):
+    def test_package_dates_do_not_depend_on_timezone_or_future_source_dates(self):
+        with tempfile.TemporaryDirectory(prefix='isoplane-package-dates-') as temporary:
+            root = Path(temporary)
+            source = root / 'tool'
+            source.write_bytes(b'executable payload')
+            source.chmod(0o755)
+            os.utime(source, (2208988800, 2208988800))
+            archives = []
+            for index, timezone in enumerate(('UTC', 'Pacific/Auckland', 'America/Los_Angeles')):
+                destination = root / f'{index}.zip'
+                subprocess.run([sys.executable, '-c',
+                                "import pathlib, runpy, sys, zipfile; "
+                                "m = runpy.run_path(sys.argv[1]); "
+                                "z = zipfile.ZipFile(sys.argv[3], 'w'); "
+                                "m['write_package_file'](z, pathlib.Path(sys.argv[2]), 'tool'); "
+                                "z.writestr(m['package_entry']('Sdk/Sdk.props'), b'<Project />'); z.close()",
+                                str(Path(workload.__file__).resolve()), str(source), str(destination)],
+                               env=dict(os.environ, TZ=timezone), check=True, timeout=30)
+                with zipfile.ZipFile(destination) as archive:
+                    self.assertEqual(archive.read('tool'), source.read_bytes(), 'timestamp normalization must preserve tool contents')
+                    self.assertTrue(archive.getinfo('tool').external_attr >> 16 & 0o111, 'timestamp normalization must preserve executable permissions')
+                    for entry in archive.infolist():
+                        self.assertEqual(entry.date_time, (1980, 1, 1, 0, 0, 0), 'pack inputs must remain older than build outputs regardless of extraction timezone')
+                archives.append(destination.read_bytes())
+            self.assertTrue(all(archive == archives[0] for archive in archives), 'package metadata must be independent of the packaging timezone')
+
     def test_workload_packs_own_only_isoplane_assets_and_preserve_native_executables(self):
         for rid in ('linux-x64', 'osx-arm64', 'osx-x64'):
             with self.subTest(rid=rid):
@@ -47,6 +76,8 @@ class WorkloadPackageTests(unittest.TestCase):
                         if pack['kind'] == 'template':
                             continue
                         with zipfile.ZipFile(output / 'packages' / f'{package_id}.1.2.3.nupkg') as archive:
+                            self.assertTrue(all(entry.date_time == (1980, 1, 1, 0, 0, 0) for entry in archive.infolist()),
+                                            'generated and copied pack files must never inherit build-host timestamps')
                             nuspecs = [entry for entry in archive.namelist() if entry.endswith('.nuspec')]
                             self.assertEqual(len(nuspecs), 1, 'a repackaged SDK must carry only its own package identity')
                             identity = ET.fromstring(archive.read(nuspecs[0])).findtext('metadata/id')

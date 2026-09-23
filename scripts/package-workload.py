@@ -10,6 +10,25 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
+def package_entry(name, mode=0o100644):
+    """Create a ZIP entry whose timestamp is independent of the build host."""
+    # ZIP dates have no offset; workload extraction can interpret local dates as UTC.
+    entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    entry.create_system = 3
+    entry.external_attr = mode << 16
+    entry.compress_type = zipfile.ZIP_DEFLATED
+    return entry
+
+
+def write_package_file(archive, source, name):
+    """Stream a tool into the package while preserving its executable permissions."""
+    metadata = source.stat()
+    entry = package_entry(name, metadata.st_mode)
+    entry.file_size = metadata.st_size
+    with source.open('rb') as input_file, archive.open(entry, 'w') as output_file:
+        shutil.copyfileobj(input_file, output_file)
+
+
 def metadata(package_id, version):
     package = ET.Element('package')
     values = ET.SubElement(package, 'metadata')
@@ -43,19 +62,19 @@ def package(toolchain, templates, version, output):
     feed = output / 'packages'
     feed.mkdir()
     with zipfile.ZipFile(feed / f'{package_id}.{version}.nupkg', 'w', zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(f'{package_id}.nuspec', metadata(package_id, version))
+        archive.writestr(package_entry(f'{package_id}.nuspec'), metadata(package_id, version))
         generated = {'Sdk/Sdk.props': sdk_properties(), 'Sdk/Sdk.targets': b'<Project />\n'}
         for name, content in generated.items():
-            archive.writestr(name, content)
+            archive.writestr(package_entry(name), content)
         for entry in manifest['files']:
             relative = entry['path']
             if relative.startswith('dotnet/'):
                 continue
-            archive.write(toolchain / relative, relative)
+            write_package_file(archive, toolchain / relative, relative)
         installed = dict(manifest, files=[entry for entry in manifest['files'] if not entry['path'].startswith('dotnet/')])
         installed['files'].extend({'path': name, 'sha256': hashlib.sha256(content).hexdigest(), 'executable': False}
                                   for name, content in generated.items())
-        archive.writestr('toolchain.json', json.dumps(installed, indent=2) + '\n')
+        archive.writestr(package_entry('toolchain.json'), json.dumps(installed, indent=2) + '\n')
     packs = {
         'Isoplane.Toolchain': {'kind': 'sdk', 'version': version, 'alias-to': {rid: package_id}},
         'Isoplane.Templates': {'kind': 'template', 'version': version},
@@ -66,10 +85,10 @@ def package(toolchain, templates, version, output):
             raise ValueError(f'The assembled toolchain is missing {source_id} {stock_version}')
         pack_id = f'{name}.{rid}'
         with zipfile.ZipFile(feed / f'{pack_id}.{version}.nupkg', 'w', zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(f'{pack_id}.nuspec', metadata(pack_id, version))
+            archive.writestr(package_entry(f'{pack_id}.nuspec'), metadata(pack_id, version))
             for file in sorted(source.rglob('*')):
                 if file.is_file() and file.suffix not in ('.nupkg', '.nuspec'):
-                    archive.write(file, file.relative_to(source).as_posix())
+                    write_package_file(archive, file, file.relative_to(source).as_posix())
         packs[name] = {'kind': 'sdk', 'version': version, 'alias-to': {rid: pack_id}}
     shutil.copyfile(templates, feed / f'Isoplane.Templates.{version}.nupkg')
     definition = {
