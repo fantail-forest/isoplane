@@ -133,11 +133,11 @@ internal static class AssemblyClosure
         return string.Join(".", names.Where(name => name.Length != 0));
     }
 
-    internal static IEnumerable<ConformanceDiagnostic> Diagnostics(IEnumerable<InspectedAssembly> assemblies)
+    internal static IEnumerable<ConformanceDiagnostic> Diagnostics(IEnumerable<InspectedAssembly> assemblies, bool warnOnNativeImports = false)
     {
         foreach (var assembly in assemblies.OrderBy(item => item.Identity.Key, StringComparer.Ordinal))
         {
-            foreach (var import in assembly.NativeImports.OrderBy(item => item.Member, StringComparer.Ordinal))
+            foreach (var import in (warnOnNativeImports ? assembly.NativeImports : []).OrderBy(item => item.Member, StringComparer.Ordinal))
                 yield return new("ISOPLANE1001", $"Assembly '{assembly.Identity.Name}', member '{import.Member}' declares native import '{import.Library}!{import.EntryPoint}'. " +
                     "The declaration is permitted; an unsupported native call fails if reached. Use managed .NET APIs for platform services. Conformance rules: 1.");
             foreach (var method in assembly.Methods.OrderBy(method => method.Type, StringComparer.Ordinal).ThenBy(method => method.Name, StringComparer.Ordinal))

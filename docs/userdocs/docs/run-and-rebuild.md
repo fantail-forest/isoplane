@@ -32,6 +32,30 @@ Test the configuration you intend to use, even if you normally iterate with
 the interpreted configuration. See [execution modes](execution-modes.md) when a
 NativeAOT build exposes different compatibility requirements.
 
+## Control compatibility warnings
+
+Thread-start (`ISOPLANE1002`) and synchronous-wait (`ISOPLANE1003`) warnings
+cover your application and project references by default. Packaged dependencies
+are inspected for valid metadata but do not produce these advisory warnings.
+Native-import declarations (`ISOPLANE1001`) are silent by default because a
+declaration alone does not establish that an unsupported call will execute.
+
+To inspect dependencies or enable native-declaration warnings, set the desired
+properties in your project or `Directory.Build.props`:
+
+```xml
+<PropertyGroup>
+  <IsoplaneAnalyzeDependencies>true</IsoplaneAnalyzeDependencies>
+  <IsoplaneWarnOnNativeImports>true</IsoplaneWarnOnNativeImports>
+</PropertyGroup>
+```
+
+Use `NoWarn` to suppress individual codes, `WarningsAsErrors` to promote them,
+or `TreatWarningsAsErrors` with `WarningsNotAsErrors` for blanket promotion with
+exceptions. For example, `<NoWarn>$(NoWarn);ISOPLANE1003</NoWarn>` suppresses
+synchronous-wait warnings. These settings affect advisory diagnostics only;
+assembly validation and sandbox restrictions still apply.
+
 ## Watch for source changes
 
 ```bash

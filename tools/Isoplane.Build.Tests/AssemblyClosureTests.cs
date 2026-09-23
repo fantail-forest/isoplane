@@ -102,7 +102,7 @@ public sealed class AssemblyClosureTests : IDisposable
     }
 
     [Fact]
-    public void An_unused_native_declaration_in_a_dependency_is_diagnosed_without_rejecting_the_assembly()
+    public void An_unused_native_declaration_is_diagnosed_only_when_enabled()
     {
         var dependency = Compile("PortableDependency", """
             namespace Portable;
@@ -119,12 +119,13 @@ public sealed class AssemblyClosureTests : IDisposable
         var application = Compile("Customer", "public static class Factory { public static object Create() => Portable.Library.Value(); }", [dependency]);
         var inputs = AssemblyClosure.Application([AssemblyClosure.InspectFile(application), AssemblyClosure.InspectFile(dependency)]);
         AssemblyClosure.Validate(inputs, Platform);
-        var diagnostics = AssemblyClosure.Diagnostics(inputs.Values).Select(item => item.ToString()).ToArray();
+        Assert.True(!AssemblyClosure.Diagnostics(inputs.Values).Any(), "Native declarations must be silent by default.");
+        var diagnostics = AssemblyClosure.Diagnostics(inputs.Values, warnOnNativeImports: true).Select(item => item.ToString()).ToArray();
         Assert.True(diagnostics.Length == 1 && diagnostics[0].Contains("ISOPLANE1001", StringComparison.Ordinal)
             && diagnostics[0].Contains("PortableDependency", StringComparison.Ordinal)
             && diagnostics[0].Contains("Portable.Library.Native.Read", StringComparison.Ordinal)
             && diagnostics[0].Contains("platform-only!native_value", StringComparison.Ordinal),
-            "The shared local/backend diagnostic must identify a transitive native declaration without executing or rejecting the library.");
+            "The opt-in diagnostic must identify a transitive native declaration without executing or rejecting the library.");
     }
 
     [Fact]
