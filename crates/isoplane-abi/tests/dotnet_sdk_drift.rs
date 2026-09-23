@@ -302,7 +302,7 @@ fn managed_entropy_chunks_match_the_host_out_buffer_limit() {
 
 #[test]
 fn local_debug_artifact_marker_matches_the_sdk_emitter() {
-    let source = sdk_file("../Build/MonoDebugManifest.cs");
+    let source = sdk_file("../Build/DebugManifest.cs");
     let prefix = "private const string LocalDebugSection = \"";
     let marker = source
         .lines()
