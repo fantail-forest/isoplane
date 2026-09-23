@@ -321,7 +321,10 @@ impl LocalApp {
         if matches!(prepared.activator, PreparedActivator::Debug(_)) {
             config.wall_ms_cap = isoplane_host::debug::DEBUG_BUDGET_MS;
         }
-        let cell = Cell::new(config, services)?;
+        let snapshots = Arc::new(isoplane_hibernate::snapshot::LocalSnapshotStorage::new(
+            scratch.path().join("snapshots"),
+        )?);
+        let cell = Cell::with_snapshot_storage(config, services, snapshots)?;
         let debug = match &prepared.activator {
             PreparedActivator::Debug(activator) => Some(activator.clone()),
             PreparedActivator::Ordinary(_) => None,

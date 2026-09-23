@@ -6,6 +6,6 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Isoplane.Sdk" Version="0.1.0-preview.1" />
+    <PackageReference Include="Isoplane.Sdk" Version="0.1.0-preview.2" />
   </ItemGroup>
 </Project>

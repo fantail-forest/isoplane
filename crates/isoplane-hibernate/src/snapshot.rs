@@ -26,7 +26,7 @@ pub enum SnapshotError {
         source: io::Error,
     },
     /// The filesystem did not back the requested capacity with allocated blocks.
-    #[error("snapshot storage at {path} allocated {allocated:?}, requested {requested:?}")]
+    #[error("snapshot storage at {path} could only reserve {allocated_bytes} of {requested_bytes} bytes", allocated_bytes = .allocated.0, requested_bytes = .requested.0)]
     Unreserved {
         /// Storage directory.
         path: PathBuf,
@@ -136,9 +136,36 @@ impl SnapshotStorage for LocalSnapshotStorage {
         &self,
         capacity: SnapshotBytes,
     ) -> Result<Box<dyn SnapshotReservation>, SnapshotError> {
-        self.reserve_with(capacity, FileExt::allocate)
+        self.reserve_with(capacity, allocate_snapshot)
             .map(|reservation| Box::new(reservation) as Box<dyn SnapshotReservation>)
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn allocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
+    file.allocate(bytes)
+}
+
+#[cfg(target_os = "macos")]
+fn allocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
+    use nix::{fcntl, libc};
+
+    // F_ALLOCATECONTIG can succeed with a partial allocation. Admission needs
+    // all blocks reserved, regardless of whether they are contiguous.
+    let mut allocation = libc::fstore_t {
+        fst_flags: libc::F_ALLOCATEALL,
+        fst_posmode: libc::F_PEOFPOSMODE,
+        fst_offset: 0,
+        fst_length: bytes.try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "snapshot exceeds file capacity",
+            )
+        })?,
+        fst_bytesalloc: 0,
+    };
+    fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut allocation))?;
+    file.set_len(bytes)
 }
 
 struct LocalSnapshotReservation {
@@ -196,6 +223,24 @@ impl SnapshotReservation for LocalSnapshotReservation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guest_sized_reservation_owns_all_blocks_before_saving() {
+        let root = tempfile::tempdir().expect("create snapshot directory");
+        let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
+        let capacity = SnapshotBytes(135_071_379);
+        let reservation = storage
+            .reserve_with(capacity, allocate_snapshot)
+            .expect("reserve an unaligned guest-sized snapshot");
+        assert!(
+            reservation
+                .file
+                .allocated_size()
+                .expect("inspect allocated blocks")
+                >= capacity.0,
+            "guest admission must own the entire reservation, not a partial contiguous extent"
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

@@ -27,15 +27,7 @@ try
     }
     if (args is ["uninstall-sdk"])
         return await SdkRemoval.RunAsync(Toolchain.Home, dotnet => new DotnetRegistrations(dotnet, Toolchain.Home), cancellation.Token);
-    if (args is ["doctor"])
-    {
-        Console.Error.WriteLine("Checking toolchain integrity...");
-        var installed = await Toolchain.DiagnoseAsync(Toolchain.Home, cancellation.Token, Path.Combine(AppContext.BaseDirectory, "runtime"));
-        Console.Error.WriteLine("Checking NativeAOT compiler dependencies...");
-        await Readiness.ProveAsync(installed, cancellation.Token);
-        Console.WriteLine("Your Isoplane toolchain is ready.");
-        return 0;
-    }
+    if (args is ["doctor"]) return await EnvironmentDoctor.RunAsync(cancellation.Token);
     if (args[0] == "doctor") return ModuleDoctor.Run(args);
     if (args[0] == "bundle")
     {

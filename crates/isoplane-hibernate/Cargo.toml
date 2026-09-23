@@ -17,5 +17,8 @@ postcard = { workspace = true }
 fs4 = { workspace = true }
 tempfile = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+nix = { workspace = true }
+
 [dev-dependencies]
 libc = { workspace = true }

@@ -1,4 +1,8 @@
 <Project>
+  <PropertyGroup>
+    <IsoplaneAnalyzeDependencies Condition="'$(IsoplaneAnalyzeDependencies)' == ''">false</IsoplaneAnalyzeDependencies>
+    <IsoplaneWarnOnNativeImports Condition="'$(IsoplaneWarnOnNativeImports)' == ''">false</IsoplaneWarnOnNativeImports>
+  </PropertyGroup>
   <UsingTask TaskName="Isoplane.Conformance.InspectManagedAssemblies"
              AssemblyFile="$(MSBuildThisFileDirectory)../Conformance/Isoplane.Conformance.dll" />
   <UsingTask TaskName="Isoplane.Conformance.DebugSources"
@@ -6,6 +10,9 @@
   <Target Name="IsoplaneInspectManagedAssemblies" AfterTargets="CoreCompile" DependsOnTargets="IsoplaneResolveManagedPlatform"
           Condition="'$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
     <ItemGroup>
+      <_IsoplaneConformanceApplication Include="@(IntermediateAssembly)" />
+      <_IsoplaneConformanceApplication Include="@(ReferenceCopyLocalPaths)"
+          Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference' OR '%(ReferenceCopyLocalPaths.MSBuildSourceProjectFile)' != ''" />
       <_IsoplaneConformanceAssembly Include="@(IntermediateAssembly)" />
       <_IsoplaneConformanceAssembly Include="@(ReferenceCopyLocalPaths)"
                                 Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.Sdk' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.AspNetCore'" />
@@ -13,7 +20,11 @@
       <_IsoplaneConformanceAssembly Remove="@(RuntimePackAsset)" />
       <_IsoplaneRuntimeSources Include="@(Compile)" Condition="'%(Compile.IsoplaneRuntimeSource)' == 'true'" />
     </ItemGroup>
-    <Isoplane.Conformance.InspectManagedAssemblies Assemblies="@(_IsoplaneConformanceAssembly)" />
+    <Isoplane.Conformance.InspectManagedAssemblies Assemblies="@(_IsoplaneConformanceAssembly)"
+        ApplicationAssemblies="@(_IsoplaneConformanceApplication)"
+        AnalyzeDependencies="$(IsoplaneAnalyzeDependencies)" WarnOnNativeImports="$(IsoplaneWarnOnNativeImports)"
+        NoWarn="$(NoWarn)" WarningsAsErrors="$(WarningsAsErrors)"
+        WarningsNotAsErrors="$(WarningsNotAsErrors)" TreatWarningsAsErrors="$([MSBuild]::ValueOrDefault('$(TreatWarningsAsErrors)', 'false'))" />
     <Isoplane.Conformance.DebugSources Condition="'$(IsoplaneLocalDebug)' == 'true' AND '$(IsoplaneGuestRuntime)' == 'NativeAOT'"
         Assemblies="@(_IsoplaneConformanceAssembly)" Application="@(IntermediateAssembly)"
         RuntimeSources="@(_IsoplaneRuntimeSources)"
