@@ -13,7 +13,10 @@ def configure(source, send, response):
 def exercise(source, send, response, until):
     event = until(lambda item: item.get('event') == 'stopped')['body']
     assert event['reason'] == 'breakpoint', 'the referenced library must bind its source breakpoint'
-    frame = response(send('stackTrace', {'threadId': event['threadId']}))['body']['stackFrames'][0]
+    frames = response(send('stackTrace', {'threadId': event['threadId']}))['body']['stackFrames']
+    assert all(not frame['name'].startswith(('System.', 'Microsoft.AspNetCore.', 'Isoplane.')) for frame in frames), 'runtime and SDK frames must not appear in the customer stack'
+    assert any(frame['name'].endswith('.Application.Handle') for frame in frames), 'filtering runtime frames must retain the customer caller of a referenced library'
+    frame = frames[0]
     assert same_source(frame['source']['path'], source) and 'Calculator.Work' in frame['name'], 'the debugger must stop in the referenced project source'
     scopes = response(send('scopes', {'frameId': frame['id']}))['body']['scopes']
     scope = next(scope['variablesReference'] for scope in scopes if scope['name'] == 'Locals')

@@ -28,7 +28,7 @@ internal sealed record AsyncFrame(ObjectMirror State, AsyncDebugSymbols.Method M
 
 internal static class AsyncFrames
 {
-    internal static IReadOnlyList<AsyncFrame> Read(SoftDebuggerSession session)
+    internal static IReadOnlyList<AsyncFrame> Read(SoftDebuggerSession session, GuestCode code)
     {
         var threads = session.VirtualMachine.GetThreads();
         if (threads.Count != 1) throw new ProtocolException("Async stack reconstruction requires one guest thread.");
@@ -66,7 +66,7 @@ internal static class AsyncFrames
                 }
                 var method = state.Type.GetMethod("MoveNext");
                 var assembly = method.DeclaringType.Assembly;
-                var pdb = assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
+                var pdb = code.Contains(method) && assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
                 if (pdb is not null)
                 {
                     using var pe = new PEReader(new MemoryStream(assembly.GetMetadataBlob()));

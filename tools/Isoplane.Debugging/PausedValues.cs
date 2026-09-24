@@ -16,17 +16,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     internal StackTraceResponse StackTrace(StackTraceArguments arguments)
     {
         RequireThread(arguments.ThreadId);
-        if (visibleFrames is null)
-        {
-            visibleFrames = [];
-            for (int index = 0; index < stopped.Backtrace.FrameCount; index++)
-            {
-                visibleFrames.Add(new Frame(stopped.Backtrace.GetFrame(index), index));
-                if (index == 0)
-                    visibleFrames.AddRange(AsyncFrames.Read(session).Select(frame => new Frame(null, null, frame)));
-            }
-        }
-        var trace = visibleFrames;
+        var trace = visibleFrames ??= ReadFrames();
         int start = arguments.StartFrame ?? 0;
         int count = arguments.Levels ?? 0;
         if (start < 0 || count < 0) throw new ProtocolException("Stack frame offset and count cannot be negative.");
@@ -48,6 +38,22 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
             });
         }
         return new StackTraceResponse { StackFrames = result, TotalFrames = trace.Count };
+    }
+
+    private List<Frame> ReadFrames()
+    {
+        var code = new GuestCode(session.VirtualMachine);
+        var physical = session.VirtualMachine.GetThreads().Single(thread => thread.Id == stopped.Thread.Id).GetFrames();
+        var result = new List<Frame>();
+        for (int index = 0; index < stopped.Backtrace.FrameCount; index++)
+        {
+            var frame = stopped.Backtrace.GetFrame(index);
+            if (!frame.IsExternalCode && !frame.IsDebuggerHidden && physical[index].Method is { } method && code.Contains(method))
+                result.Add(new Frame(frame, index));
+            if (index == 0)
+                result.AddRange(AsyncFrames.Read(session, code).Select(caller => new Frame(null, null, caller)));
+        }
+        return result;
     }
 
     internal ScopesResponse Scopes(int frameId)
