@@ -59,64 +59,140 @@ impl BaselineRequest {
 pub struct RuntimeBaseline(Arc<Loaded>);
 
 struct Loaded {
-    engine: IsoplaneEngine,
+    engine: Arc<IsoplaneEngine>,
     template: Template,
     identity: PreparedIdentity,
-    product: BuildProduct,
+}
+
+/// A runtime baseline as preparation produced it.
+pub struct PreparedBaseline {
+    /// The baseline, loaded for preparing applications over it.
+    pub baseline: RuntimeBaseline,
+    /// The baseline as preparation output: what a consumer publishes and
+    /// loads before loading any application layer over it.
+    pub product: BuildProduct,
+}
+
+/// An application prepared over a runtime baseline.
+pub struct PreparedApplication {
+    /// The layer as preparation output, which loads over the published baseline.
+    pub product: BuildProduct,
+    /// The layer already loaded over the baseline in the baseline's engine,
+    /// as preparation verified it.
+    pub template: Template,
 }
 
 impl RuntimeBaseline {
-    /// The baseline as preparation output: what a consumer publishes and
-    /// loads before loading any application layer over it.
-    pub fn product(&self) -> &BuildProduct {
-        &self.0.product
+    /// Initialize only `wasm`'s runtime, through its `isoplane_initialize_runtime`
+    /// export, in the caller's thread, compiling through `cache` when given.
+    /// Fails at [`BuildStage::Baseline`] if that initialization reads entropy
+    /// or reaches a capability the sandbox refuses, since every application
+    /// over the baseline would then share its result.
+    pub fn prepare(
+        wasm: &[u8],
+        request: &BaselineRequest,
+        cache: Option<&isoplane_engine::CompilationCache>,
+    ) -> Result<PreparedBaseline, WorkerFailure> {
+        let request = &request.0;
+        let identity = validate(wasm, request)
+            .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
+        let engine = IsoplaneEngine::new(request.engine.clone())
+            .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
+        let capture = crate::initialize::CaptureMode::RuntimeBaseline { wasm, identity };
+        let (product, template) = produce(&engine, request, cache, identity, capture)?;
+        let template = template.ok_or_else(|| {
+            WorkerFailure::new(
+                BuildStage::Initialization,
+                anyhow::anyhow!("a runtime baseline needs a module with an initializer"),
+            )
+        })?;
+        Ok(PreparedBaseline {
+            baseline: Self(Arc::new(Loaded {
+                engine: Arc::new(engine),
+                template,
+                identity,
+            })),
+            product,
+        })
+    }
+
+    /// A baseline published from [`RuntimeBaseline::prepare`]'s output and
+    /// loaded by the caller into `engine` under `request`'s identity. Fails
+    /// if `template` is not a runtime baseline, which still runs the
+    /// application's initializer.
+    pub fn loaded(
+        engine: Arc<IsoplaneEngine>,
+        template: Template,
+        request: &BaselineRequest,
+    ) -> Result<Self, PrepareError> {
+        if !template.has_initialize() {
+            return Err(PrepareError::InvalidRequest(
+                "a runtime baseline must still run the application's initializer",
+            ));
+        }
+        let identity = request.identity().map_err(PrepareError::Encoding)?;
+        Ok(Self(Arc::new(Loaded {
+            engine,
+            template,
+            identity,
+        })))
+    }
+
+    /// Initialize `request`'s application on this baseline in the caller's
+    /// thread and capture only what it changed, as a layer over it. Runs no
+    /// compilation. Fails at [`BuildStage::Input`] unless this baseline was
+    /// prepared from `request.baseline()`, or if the request asks for a
+    /// portable module, which a layer does not have.
+    pub fn prepare_application(
+        &self,
+        request: &BuildRequest,
+    ) -> Result<PreparedApplication, WorkerFailure> {
+        let identity = layer_identity(self, request)
+            .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
+        let capture = crate::initialize::CaptureMode::Over {
+            base: self.0.template.clone(),
+            identity,
+        };
+        let (product, template) = produce(&self.0.engine, request, None, identity, capture)?;
+        let template = template.ok_or_else(|| {
+            WorkerFailure::new(
+                BuildStage::Initialization,
+                anyhow::anyhow!("an application over a runtime baseline needs its initializer"),
+            )
+        })?;
+        Ok(PreparedApplication { product, template })
+    }
+
+    /// The identity the baseline was prepared under.
+    pub fn identity(&self) -> PreparedIdentity {
+        self.0.identity
+    }
+
+    /// The engine the baseline and every [`PreparedApplication::template`]
+    /// over it are loaded in.
+    pub fn engine(&self) -> &Arc<IsoplaneEngine> {
+        &self.0.engine
     }
 }
 
 impl LocalPreparation {
-    /// Initialize only `wasm`'s runtime, through its `isoplane_initialize_runtime`
-    /// export. Fails at [`BuildStage::Baseline`] if that initialization reads
-    /// entropy or reaches a capability the sandbox refuses, since every
-    /// application over the baseline would then share its result.
+    /// [`RuntimeBaseline::prepare`] on this provider's preparation thread and cache.
     pub async fn prepare_runtime_baseline(
         &self,
         wasm: &[u8],
         request: &BaselineRequest,
         cancellation: &CancellationToken,
-    ) -> Result<RuntimeBaseline, PrepareError> {
+    ) -> Result<PreparedBaseline, PrepareError> {
         let wasm = wasm.to_vec();
-        let request = request.0.clone();
+        let request = request.clone();
         self.run(cancellation, move |cache| {
-            let identity = validate(&wasm, &request)
-                .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
-            let engine = IsoplaneEngine::new(request.engine.clone())
-                .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
-            let capture = crate::initialize::CaptureMode::RuntimeBaseline {
-                wasm: &wasm,
-                identity,
-            };
-            let (product, template) = produce(&engine, &request, cache, identity, capture)?;
-            let template = template.ok_or_else(|| {
-                WorkerFailure::new(
-                    BuildStage::Initialization,
-                    anyhow::anyhow!("a runtime baseline needs a module with an initializer"),
-                )
-            })?;
-            Ok(RuntimeBaseline(Arc::new(Loaded {
-                engine,
-                template,
-                identity,
-                product,
-            })))
+            RuntimeBaseline::prepare(&wasm, &request, cache)
         })
         .await
     }
 
-    /// Initialize `request`'s application on `baseline` and capture only what
-    /// it changed, as a layer that loads over the published baseline. Runs no
-    /// compilation. Fails at [`BuildStage::Input`] unless `baseline` was
-    /// prepared from `request.baseline()`, or if the request asks for a
-    /// portable module, which a layer does not have.
+    /// [`RuntimeBaseline::prepare_application`] on this provider's preparation
+    /// thread, returning only the layer's preparation output.
     pub async fn prepare_over(
         &self,
         baseline: &RuntimeBaseline,
@@ -126,13 +202,7 @@ impl LocalPreparation {
         let baseline = baseline.clone();
         let request = request.clone();
         self.run(cancellation, move |_| {
-            let identity = layer_identity(&baseline, &request)
-                .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
-            let capture = crate::initialize::CaptureMode::Over {
-                base: baseline.0.template.clone(),
-                identity,
-            };
-            Ok(produce(&baseline.0.engine, &request, None, identity, capture)?.0)
+            Ok(baseline.prepare_application(&request)?.product)
         })
         .await
     }

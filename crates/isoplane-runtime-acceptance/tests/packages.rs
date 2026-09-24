@@ -541,11 +541,11 @@ async fn a_debug_runtime_without_a_debug_session_is_refused() {
 #[cfg(target_os = "linux")]
 mod over_the_runtime_baseline {
     use super::*;
-    use isoplane_prepare::RuntimeBaseline;
+    use isoplane_prepare::PreparedBaseline;
 
     /// The shared runtime prepared once to the end of its own initializer, for
     /// packages prepared with [`request`].
-    async fn runtime_baseline(preparation: &LocalPreparation, runtime: &[u8]) -> RuntimeBaseline {
+    async fn runtime_baseline(preparation: &LocalPreparation, runtime: &[u8]) -> PreparedBaseline {
         preparation
             .prepare_runtime_baseline(
                 runtime,
@@ -562,13 +562,13 @@ mod over_the_runtime_baseline {
     /// cell receives them.
     async fn layer_over(
         preparation: &LocalPreparation,
-        baseline: &RuntimeBaseline,
+        baseline: &PreparedBaseline,
         runtime: &[u8],
         files: Vec<PlatformFile>,
     ) -> (PreparedTemplate, PreparedTemplate) {
         let request = request(runtime, files);
         let layer = preparation
-            .prepare_over(baseline, &request, &CancellationToken::new())
+            .prepare_over(&baseline.baseline, &request, &CancellationToken::new())
             .await
             .unwrap_or_else(|error| panic!("the package must prepare over the baseline: {error}"));
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
@@ -578,7 +578,7 @@ mod over_the_runtime_baseline {
             .expect("the baseline's identity");
         // SAFETY: LocalPreparation in this process produced these bytes.
         let base = unsafe {
-            engine.decode_builder_output(baseline.product().prepared_bytes(), base_identity)
+            engine.decode_builder_output(baseline.product.prepared_bytes(), base_identity)
         }
         .expect("the baseline must decode");
         let loaded = {

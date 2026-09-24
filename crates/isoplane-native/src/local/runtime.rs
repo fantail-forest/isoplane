@@ -1,7 +1,10 @@
 //! One project's guest execution and local bindings, with no node control plane.
 
+mod baseline;
 mod compressed_module;
 mod preparation_cache;
+
+pub use baseline::Baselines;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -33,22 +36,25 @@ pub struct Prepared {
 }
 
 impl Prepared {
-    /// Validates and pre-initializes an ordinary local application.
+    /// Validates and pre-initializes an ordinary local application. An
+    /// application package is prepared over the runtime baseline `baselines`
+    /// holds, where the platform maps layers.
     pub fn build(
         project: &Project,
         wasm: &[u8],
         configuration: &isoplane_host::bindings::RuntimeConfiguration,
+        baselines: &Baselines,
     ) -> Result<Self, super::Error> {
-        Self::prepare(project, wasm, configuration).map_err(super::Error::Preparation)
+        Self::prepare(project, wasm, configuration, baselines).map_err(super::Error::Preparation)
     }
 
     fn prepare(
         project: &Project,
         wasm: &[u8],
         configuration: &isoplane_host::bindings::RuntimeConfiguration,
+        baselines: &Baselines,
     ) -> anyhow::Result<Self> {
         let manifest = project.manifest.clone();
-        let report = validate(project, wasm, false)?;
         let mut settings = Vec::new();
         configuration.write_json(&mut settings)?;
         let mut identity = blake3::Hasher::new();
@@ -56,6 +62,11 @@ impl Prepared {
         identity.update(&settings);
         preparation_cache::hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
+        let admit = || validate(project, wasm, false).map(drop);
+        if let Some(prepared) = baselines.prepare(project, wasm, &settings, &version, admit) {
+            return prepared;
+        }
+        let report = validate(project, wasm, false)?;
         let template = if report.has_initialize() {
             preparation_cache::template(project, wasm, &settings, || {
                 preinitialize(project, wasm, &settings)
@@ -63,29 +74,13 @@ impl Prepared {
         } else {
             wasm.to_vec()
         };
-        let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(
-            isoplane_engine::EngineConfig {
-                pooling: false,
-                max_memory_bytes: manifest.memory_max_bytes(),
-                platform_files: project.platform_files.clone(),
-                ..Default::default()
-            },
-        )?);
-        let module = ModuleId::new(&manifest.name, &version);
-        let runtime_identity = blake3::hash(&std::fs::read(&project.runtime_library)?);
-        // SAFETY: LocalProject selects private per-user compiler storage outside the
-        // checkout. Only the engine's atomic compiler writes populate these entries;
-        // neither application manifests nor portable artifacts supply native code.
-        let cache = unsafe {
-            isoplane_engine::CompilationCache::from_trusted_directory(
-                project
-                    .compilation_directory
-                    .join(runtime_identity.to_hex().as_str()),
-            )
-        }?;
-        let (template, compiled) = cache.load(&engine, &template)?;
+        let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(engine_configuration(
+            project,
+        ))?);
+        let (template, compiled) = compilation_cache(project)?.load(&engine, &template)?;
         let template = template.with_application_files(project.application_files.clone())?;
         tracing::info!(compiled, "local native compilation ready");
+        let module = ModuleId::new(&manifest.name, &version);
         let activator = Arc::new(EngineActivator::new(engine, template, module));
         Ok(Self {
             activator: PreparedActivator::Ordinary(activator),
@@ -139,6 +134,32 @@ impl Prepared {
             compiled: true,
         })
     }
+}
+
+fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {
+    isoplane_engine::EngineConfig {
+        pooling: false,
+        max_memory_bytes: project.manifest.memory_max_bytes(),
+        platform_files: project.platform_files.clone(),
+        ..Default::default()
+    }
+}
+
+/// The project's compiler-owned storage for its native runtime library.
+fn runtime_directory(project: &Project) -> anyhow::Result<std::path::PathBuf> {
+    let runtime_identity = blake3::hash(&std::fs::read(&project.runtime_library)?);
+    Ok(project
+        .compilation_directory
+        .join(runtime_identity.to_hex().as_str()))
+}
+
+/// The project's compiled modules, kept per native runtime library.
+fn compilation_cache(project: &Project) -> anyhow::Result<isoplane_engine::CompilationCache> {
+    let directory = runtime_directory(project)?;
+    // SAFETY: LocalProject selects private per-user compiler storage outside the
+    // checkout. Only the engine's atomic compiler writes populate these entries;
+    // neither application manifests nor portable artifacts supply native code.
+    unsafe { isoplane_engine::CompilationCache::from_trusted_directory(directory) }
 }
 
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {

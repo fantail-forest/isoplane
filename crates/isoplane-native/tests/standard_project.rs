@@ -137,10 +137,16 @@ async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     first.stop();
     let mut second = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
     let diagnostics = second.diagnostics();
+    // Linux prepares a package over a published runtime baseline; other
+    // platforms reuse the whole initialized module.
+    let reuse = if cfg!(target_os = "linux") {
+        "reusing the local runtime baseline"
+    } else {
+        "reusing local pre-initialized WASM"
+    };
     assert!(
-        diagnostics.contains("reusing local pre-initialized WASM")
-            && diagnostics.contains("\"compiled\":false"),
-        "an unchanged run must reuse the initialized template and its native compilation:\n{diagnostics}"
+        diagnostics.contains(reuse) && diagnostics.contains("\"compiled\":false"),
+        "an unchanged run must reuse its prepared state and native compilation:\n{diagnostics}"
     );
     let response = reqwest::get(&second.url)
         .await

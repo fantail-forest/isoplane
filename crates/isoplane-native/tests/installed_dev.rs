@@ -105,6 +105,44 @@ async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_time
     dev.stop();
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let mut dev = Dev::start_managed_with_args(&app, &cli, &["--guest-runtime", "mono"]);
+    let source = app.join("Application.cs");
+    let original = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(
+        &source,
+        original.replace("Hello from Isoplane!", "Prepared over the baseline"),
+    )
+    .unwrap();
+    dev.wait_event("reloaded");
+    let diagnostics = dev.diagnostics();
+    let layered: Vec<&str> = diagnostics
+        .lines()
+        .filter(|line| line.contains("local preparation over the runtime baseline ready"))
+        .collect();
+    assert_eq!(
+        layered.len(),
+        2,
+        "the first preparation and the reload must each prepare only the package's layer:\n{diagnostics}"
+    );
+    assert!(
+        layered[1].contains("\"compiled\":false")
+            && !diagnostics.contains("local native compilation ready"),
+        "a package reload must compile nothing:\n{diagnostics}"
+    );
+    let body = reqwest::get(&dev.url).await.unwrap().text().await.unwrap();
+    assert_eq!(
+        body, "Prepared over the baseline",
+        "the reload must serve the edited package"
+    );
+    dev.stop();
+}
+
 #[tokio::test]
 async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
     let directory = tempfile::tempdir().unwrap();

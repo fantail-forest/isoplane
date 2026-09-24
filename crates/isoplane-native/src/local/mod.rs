@@ -4,7 +4,7 @@ pub mod debug;
 mod destinations;
 mod runtime;
 
-pub use runtime::{LocalApp, Prepared};
+pub use runtime::{Baselines, LocalApp, Prepared};
 
 /// Resolved application inputs; callers own project discovery and publication.
 #[derive(Clone)]

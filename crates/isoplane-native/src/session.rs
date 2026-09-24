@@ -12,10 +12,11 @@ use tokio::sync::Notify;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::local::{debug::DebugPeer, Inputs, LocalApp, Prepared};
+use crate::local::{debug::DebugPeer, Baselines, Inputs, LocalApp, Prepared};
 
 pub(crate) struct Session {
     pub cancellation: CancellationToken,
+    baselines: Baselines,
     pending: Mutex<Option<Update>>,
     changed: Notify,
     started: AtomicBool,
@@ -125,7 +126,7 @@ pub(crate) fn prepare_local(wasm: &[u8], options: &[u8]) -> anyhow::Result<Vec<u
     let configuration = isoplane_host::bindings::RuntimeConfiguration::from_json(
         &serde_json::to_vec(&options.configuration)?,
     )?;
-    let prepared = Prepared::build(&inputs, wasm, &configuration)?;
+    let prepared = Prepared::build(&inputs, wasm, &configuration, &Baselines::default())?;
     Ok(serde_json::to_vec(
         &serde_json::json!({"compiled": prepared.compiled()}),
     )?)
@@ -138,6 +139,7 @@ impl Session {
             pending: Mutex::new(None),
             changed: Notify::new(),
             started: AtomicBool::new(false),
+            baselines: Baselines::default(),
         }
     }
 
@@ -202,7 +204,7 @@ impl Session {
         ))
         .await?;
         let address = listener.local_addr()?;
-        let prepared = prepare(wasm.to_vec(), &options, inputs).await?;
+        let prepared = prepare(wasm.to_vec(), &options, inputs, &self.baselines).await?;
         let mut app = prepared.start().await?;
         let current_proxy = Arc::new(RwLock::new(app.proxy.clone()));
         let mut connections = JoinSet::new();
@@ -222,7 +224,7 @@ impl Session {
                             && update.options.manifest.name == options.manifest.name
                             && update.options.debug_endpoint.is_none() && !update.options.native_debug, "reload cannot change local session identity or debugger mode");
                             let inputs = update.options.inputs()?;
-                            prepare(update.wasm, &update.options, inputs).await
+                            prepare(update.wasm, &update.options, inputs, &self.baselines).await
                         }.await;
                         match replacement {
                             Ok(next) => {
@@ -274,7 +276,13 @@ impl PendingApp {
     }
 }
 
-async fn prepare(wasm: Vec<u8>, options: &Options, inputs: Inputs) -> anyhow::Result<PendingApp> {
+async fn prepare(
+    wasm: Vec<u8>,
+    options: &Options,
+    inputs: Inputs,
+    baselines: &Baselines,
+) -> anyhow::Result<PendingApp> {
+    let baselines = baselines.clone();
     let configuration = isoplane_host::bindings::RuntimeConfiguration::from_json(
         &serde_json::to_vec(&options.configuration)?,
     )?;
@@ -289,7 +297,7 @@ async fn prepare(wasm: Vec<u8>, options: &Options, inputs: Inputs) -> anyhow::Re
             if local_debug {
                 Prepared::build_debug(&inputs, &wasm, native_debug)
             } else {
-                Prepared::build(&inputs, &wasm, &preparation_configuration)
+                Prepared::build(&inputs, &wasm, &preparation_configuration, &baselines)
             }
         })
     })

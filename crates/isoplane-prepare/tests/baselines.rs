@@ -10,7 +10,7 @@ use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 use isoplane_prepare::{
     BuildProduct, BuildRequest, BuildStage, LocalPreparation, PortableTemplate, Preparation,
-    PrepareError, RuntimeBaseline, RuntimeProfile,
+    PrepareError, PreparedBaseline, RuntimeBaseline, RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -43,14 +43,14 @@ fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
     }
 }
 
-async fn baseline(wasm: &[u8], request: &BuildRequest) -> Result<RuntimeBaseline, PrepareError> {
+async fn baseline(wasm: &[u8], request: &BuildRequest) -> Result<PreparedBaseline, PrepareError> {
     LocalPreparation::new()
         .expect("local preparation")
         .prepare_runtime_baseline(wasm, &request.baseline(), &CancellationToken::new())
         .await
 }
 
-fn stage_of(result: Result<RuntimeBaseline, PrepareError>) -> BuildStage {
+fn stage_of(result: Result<PreparedBaseline, PrepareError>) -> BuildStage {
     match result {
         Ok(_) => panic!("the runtime baseline must be refused"),
         Err(PrepareError::Rejected(failure)) => failure.stage,
@@ -102,7 +102,7 @@ async fn an_application_layer_preserves_initialized_state_outside_its_fresh_seed
         .await
         .expect("the runtime stage must prepare as a baseline");
     let layer = preparation
-        .prepare_over(&runtime, &request, &CancellationToken::new())
+        .prepare_over(&runtime.baseline, &request, &CancellationToken::new())
         .await
         .expect("the application must prepare over its baseline");
     let engine = common::engine();
@@ -117,7 +117,7 @@ async fn an_application_layer_preserves_initialized_state_outside_its_fresh_seed
     );
     let base = load(
         &engine,
-        runtime.product(),
+        &runtime.product,
         request
             .baseline()
             .identity()
@@ -151,14 +151,14 @@ async fn a_module_without_a_runtime_stage_is_prepared_over_its_uninitialized_bas
         .expect("a module without a runtime stage must still prepare a baseline");
     let layer = LocalPreparation::new()
         .expect("local preparation")
-        .prepare_over(&runtime, &request, &CancellationToken::new())
+        .prepare_over(&runtime.baseline, &request, &CancellationToken::new())
         .await
         .expect("the application must prepare over its baseline");
     let engine = common::engine();
     let directory = tempfile::tempdir().expect("publication");
     let base = load(
         &engine,
-        runtime.product(),
+        &runtime.product,
         request
             .baseline()
             .identity()
@@ -234,7 +234,7 @@ async fn an_application_is_refused_over_a_baseline_prepared_for_other_limits() {
         ..request
     };
     assert_eq!(
-        layer_refusal(&runtime, &other).await,
+        layer_refusal(&runtime.baseline, &other).await,
         BuildStage::Input,
         "a layer must be prepared over the baseline its own runtime, engine and limits derive"
     );
@@ -250,7 +250,7 @@ async fn an_application_over_a_baseline_cannot_return_a_portable_module() {
         ..request
     };
     assert_eq!(
-        layer_refusal(&runtime, &portable).await,
+        layer_refusal(&runtime.baseline, &portable).await,
         BuildStage::Input,
         "a layer has no portable module to return"
     );
