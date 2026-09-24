@@ -1,0 +1,331 @@
+diff --git a/src/mono/browser/runtime/pinvoke.c b/src/mono/browser/runtime/pinvoke.c
+index c82033cd2d8..bca40ae4cd4 100644
+--- a/src/mono/browser/runtime/pinvoke.c
++++ b/src/mono/browser/runtime/pinvoke.c
+@@ -32,10 +32,24 @@ table_compare_name (const void *t1, const void *t2)
+ void*
+ wasm_dl_lookup_pinvoke_table (const char *name)
+ {
+-	PinvokeImport needle = { name, NULL };
++	PinvokeImport needle = { name, NULL, NULL };
+ 	return bsearch (&needle, pinvoke_tables, (sizeof (pinvoke_tables) / sizeof (PinvokeTable)), sizeof (PinvokeTable), table_compare_name);
+ }
+ 
++int
++wasm_dl_pinvoke_signature_matches (void *func, const char *signature)
++{
++	for (int i = 0; i < sizeof (pinvoke_tables) / sizeof (PinvokeTable); ++i) {
++		for (int j = 0; j < pinvoke_tables [i].count; ++j) {
++			PinvokeImport *entry = &pinvoke_tables [i].imports [j];
++			/* An entry without a recorded signature cannot be checked. */
++			if (entry->func == func && (!entry->signature || !strcmp (entry->signature, signature)))
++				return 1;
++		}
++	}
++	return 0;
++}
++
+ int
+ wasm_dl_is_pinvoke_table (void *handle)
+ {
+diff --git a/src/mono/browser/runtime/pinvoke.h b/src/mono/browser/runtime/pinvoke.h
+index a2d32dfa2c9..7c5caee14a1 100644
+--- a/src/mono/browser/runtime/pinvoke.h
++++ b/src/mono/browser/runtime/pinvoke.h
+@@ -6,6 +6,8 @@
+ typedef struct {
+ 	const char *name;
+ 	void *func;
++	/* Interpreter-to-native signature of the declarations that produced this entry. */
++	const char *signature;
+ } PinvokeImport;
+ 
+ typedef struct {
+@@ -31,6 +33,9 @@ wasm_dl_lookup_pinvoke_table (const char *name);
+ int
+ wasm_dl_is_pinvoke_table (void *handle);
+ 
++int
++wasm_dl_pinvoke_signature_matches (void *func, const char *signature);
++
+ void*
+ wasm_dl_get_native_to_interp (uint32_t token, const char *key, void *extra_arg);
+ 
+@@ -42,6 +47,14 @@ typedef void* (*MonoWasmNativeToInterpCallback) (char * cookie);
+ void
+ mono_wasm_install_interp_to_native_callback (MonoWasmNativeToInterpCallback cb);
+ 
++typedef int (*MonoWasmPInvokeSignatureCheck) (void *method, void *addr);
++
++void
++mono_wasm_install_pinvoke_signature_check (MonoWasmPInvokeSignatureCheck check);
++
++int
++mono_wasm_signature_cookie (void *sig, char *cookie, int size);
++
+ typedef struct _MonoInterpMethodArguments MonoInterpMethodArguments;
+ 
+ int 
+diff --git a/src/mono/browser/runtime/runtime.c b/src/mono/browser/runtime/runtime.c
+index 49dae17f502..f845fd76266 100644
+--- a/src/mono/browser/runtime/runtime.c
++++ b/src/mono/browser/runtime/runtime.c
+@@ -143,7 +143,9 @@ icall_table_lookup (MonoMethod *method, char *classname, char *methodname, char
+ 		funcs = System_icall_funcs;
+ 	}
+ #endif
+-	assert (indexes);
++	/* Only the runtime's own images carry internal calls; a missing one is a MissingMethodException. */
++	if (!indexes)
++		return NULL;
+ 
+ 	void *p = bsearch (&token_idx, indexes, indexes_size, 4, compare_int);
+ 	if (!p) {
+@@ -280,7 +282,7 @@ wasm_dl_symbol (void *handle, const char *name, char **err, void *user_data)
+ 	}
+ #endif
+ 	PinvokeTable* index = (PinvokeTable*)handle;
+-	PinvokeImport key = { name, NULL };
++	PinvokeImport key = { name, NULL, NULL };
+     PinvokeImport* result = (PinvokeImport *)bsearch(&key, index->imports, index->count, sizeof(PinvokeImport), import_compare_name);
+     if (!result) {
+         // *err = g_strdup_printf ("Symbol not found: %s", name);
+@@ -289,6 +291,19 @@ wasm_dl_symbol (void *handle, const char *name, char **err, void *user_data)
+     return result->func;
+ }
+ 
++/*
++ * A declaration binds a table entry only with the entry's own signature: a
++ * call through a differently typed pointer traps on wasm's typed indirect call.
++ */
++static int
++wasm_pinvoke_signature_check (void *method, void *addr)
++{
++	char declared [32];
++	if (!mono_wasm_signature_cookie (mono_method_signature ((MonoMethod *)method), declared, sizeof (declared)))
++		return 0;
++	return wasm_dl_pinvoke_signature_matches (addr, declared);
++}
++
+ MonoDomain *
+ mono_wasm_load_runtime_common (int debug_level, MonoLogCallback log_callback, const char *interp_opts)
+ {
+@@ -298,6 +313,7 @@ mono_wasm_load_runtime_common (int debug_level, MonoLogCallback log_callback, co
+ 
+ 	mono_dl_fallback_register (wasm_dl_load, wasm_dl_symbol, NULL, NULL);
+ 	mono_wasm_install_get_native_to_interp_tramp (get_native_to_interp);
++	mono_wasm_install_pinvoke_signature_check (wasm_pinvoke_signature_check);
+ 
+ #ifdef GEN_PINVOKE
+ 	mono_wasm_install_interp_to_native_callback (mono_wasm_interp_to_native_callback);
+diff --git a/src/mono/mono/metadata/icall.c b/src/mono/mono/metadata/icall.c
+index 182ede96e90..52351ac83a1 100644
+--- a/src/mono/mono/metadata/icall.c
++++ b/src/mono/mono/metadata/icall.c
+@@ -6985,7 +6985,10 @@ mono_lookup_internal_call_full_with_flags (MonoMethod *method, gboolean warn_on_
+ 		if (res)
+ 			goto exit;
+ 
+-		if (warn_on_missing) {
++		/* Outside corlib a missing internal call is the declaring assembly's error, reported by
++		 * MissingMethodException rather than as runtime/library skew; on WASI the banner would
++		 * also end the guest, whose host provides no console. */
++		if (warn_on_missing && m_class_get_image (method->klass) == mono_defaults.corlib) {
+ 			g_warning ("cant resolve internal call to \"%s\" (tested without signature also)", mname);
+ 			g_print ("\nYour mono runtime and class libraries are out of sync.\n");
+ 			g_print ("The out of sync library is: %s\n", m_class_get_image (method->klass)->name);
+diff --git a/src/mono/mono/metadata/native-library.c b/src/mono/mono/metadata/native-library.c
+index 4da97338201..cc3765dd454 100644
+--- a/src/mono/mono/metadata/native-library.c
++++ b/src/mono/mono/metadata/native-library.c
+@@ -193,6 +193,16 @@ pinvoke_probe_convert_status_to_error (MonoLookupPInvokeStatus *status, MonoErro
+ /**
+  * mono_lookup_pinvoke_call:
+  */
++#ifdef HOST_WASM
++static MonoWasmPInvokeSignatureCheck pinvoke_signature_check;
++
++void
++mono_wasm_install_pinvoke_signature_check (MonoWasmPInvokeSignatureCheck check)
++{
++	pinvoke_signature_check = check;
++}
++#endif
++
+ gpointer
+ mono_lookup_pinvoke_call (MonoMethod *method, const char **exc_class, const char **exc_arg)
+ {
+@@ -933,6 +943,15 @@ retry_with_libcoreclr:
+ 		status_out->err_arg = g_strdup (new_import);
+ 		goto exit;
+ 	}
++#ifdef HOST_WASM
++	if (pinvoke_signature_check && !pinvoke_signature_check (method, addr)) {
++		/* No entry point with this declaration's signature exists. */
++		status_out->err_code = LOOKUP_PINVOKE_ERR_NO_SYM;
++		status_out->err_arg = g_strdup (new_import);
++		addr = NULL;
++		goto exit;
++	}
++#endif
+ 	piinfo->addr = addr;
+ 
+ exit:
+diff --git a/src/mono/mono/metadata/native-library.h b/src/mono/mono/metadata/native-library.h
+index 9a794a5bb8a..ba3793133ef 100644
+--- a/src/mono/mono/metadata/native-library.h
++++ b/src/mono/mono/metadata/native-library.h
+@@ -38,4 +38,11 @@ mono_loader_install_pinvoke_override (PInvokeOverrideFn override_fn);
+ char *
+ mono_fixup_symbol_name (const char *prefix, const char *key, const char *suffix);
+ 
++#ifdef HOST_WASM
++typedef int (*MonoWasmPInvokeSignatureCheck) (void *method, void *addr);
++
++MONO_API void
++mono_wasm_install_pinvoke_signature_check (MonoWasmPInvokeSignatureCheck check);
++#endif
++
+ #endif
+diff --git a/src/mono/mono/mini/aot-runtime-wasm.c b/src/mono/mono/mini/aot-runtime-wasm.c
+index 9620d11bc46..55d0b18d827 100644
+--- a/src/mono/mono/mini/aot-runtime-wasm.c
++++ b/src/mono/mono/mini/aot-runtime-wasm.c
+@@ -156,18 +156,22 @@ compare_icall_tramp (const void *key, const void *elem)
+ 	return strcmp (key, *(void**)elem);
+ }
+ 
+-gpointer
+-mono_wasm_get_interp_to_native_trampoline (MonoMethodSignature *sig)
++/*
++ * Writes SIG's interpreter-to-native cookie into COOKIE, NUL terminated.
++ * Returns FALSE when it does not fit in SIZE bytes.
++ */
++MONO_API int
++mono_wasm_signature_cookie (MonoMethodSignature *sig, char *cookie, int size)
+ {
+-	char cookie [32];
+ 	int c_count, offset = 1;
+ 	gboolean is_byref_return = 0;
+ 
+-	memset (cookie, 0, 32);
++	memset (cookie, 0, size);
+ 	cookie [0] = type_to_c (sig->ret, &is_byref_return);
+ 
+ 	c_count = sig->param_count + sig->hasthis + is_byref_return + 1;
+-	g_assert (c_count < sizeof (cookie)); //ensure we don't overflow the local
++	if (c_count >= size)
++		return FALSE;
+ 
+ 	if (is_byref_return) {
+ 		cookie[0] = 'V';
+@@ -183,7 +187,23 @@ mono_wasm_get_interp_to_native_trampoline (MonoMethodSignature *sig)
+ 	for (int i = 0; i < sig->param_count; ++i) {
+ 		cookie [offset + i] = type_to_c (sig->params [i], NULL);
+ 	}
++	return TRUE;
++}
+ 
++gboolean
++mono_wasm_has_interp_to_native_trampoline (MonoMethodSignature *sig)
++{
++	char cookie [32];
++	return mono_wasm_signature_cookie (sig, cookie, sizeof (cookie)) && mono_wasm_interp_to_native_callback (cookie);
++}
++
++gpointer
++mono_wasm_get_interp_to_native_trampoline (MonoMethodSignature *sig)
++{
++	char cookie [32];
++	/* The interpreter refuses a native call without a bridge when it compiles the caller. */
++	if (!mono_wasm_signature_cookie (sig, cookie, sizeof (cookie)))
++		g_error ("CANNOT HANDLE INTERP ICALL SIG of %d parameters\n", sig->param_count);
+ 	void *p = mono_wasm_interp_to_native_callback (cookie);
+ 	if (!p)
+ 		g_error ("CANNOT HANDLE INTERP ICALL SIG %s\n", cookie);
+diff --git a/src/mono/mono/mini/interp/interp.h b/src/mono/mono/mini/interp/interp.h
+index a09111c490b..399c7ef3364 100644
+--- a/src/mono/mono/mini/interp/interp.h
++++ b/src/mono/mono/mini/interp/interp.h
+@@ -62,6 +62,9 @@ MONO_API void mono_ee_interp_init (const char *);
+ gpointer
+ mono_wasm_get_interp_to_native_trampoline (MonoMethodSignature *sig);
+ 
++gboolean
++mono_wasm_has_interp_to_native_trampoline (MonoMethodSignature *sig);
++
+ gpointer
+ mono_wasm_get_native_to_interp_trampoline (MonoMethod *method, gpointer extra_arg);
+ 
+diff --git a/src/mono/mono/mini/interp/transform.c b/src/mono/mono/mini/interp/transform.c
+index 57c9893a0c2..bf927fa459f 100644
+--- a/src/mono/mono/mini/interp/transform.c
++++ b/src/mono/mono/mini/interp/transform.c
+@@ -4145,6 +4145,11 @@ interp_transform_call (TransformData *td, MonoMethod *method, MonoMethod *target
+ 				interp_ins_set_sregs2 (td->last_ins, fp_sreg, MINT_CALL_ARGS_SREG);
+ 				td->last_ins->data [0] = get_data_item_index (td, (void *)csignature);
+ 			} else if (native) {
++#ifdef HOST_WASM
++				/* A signature without an interpreter-to-native bridge cannot be called on this runtime. */
++				if (!mono_wasm_has_interp_to_native_trampoline (csignature))
++					interp_generate_void_throw (td, MONO_JIT_ICALL_mono_throw_platform_not_supported);
++#endif
+ 				interp_add_ins (td, MINT_CALLI_NAT);
+ 
+ 				InterpMethod *imethod = NULL;
+@@ -8595,7 +8600,18 @@ retry_emit:
+ 						interp_ins_set_dreg (td->last_ins, td->sp [-1].var);
+ 					} else {
+ 						/* push a pointer to a trampoline that calls m */
+-						gpointer entry = mini_get_interp_callbacks ()->create_method_pointer (m, TRUE, error);
++						ERROR_DECL (pointer_error);
++						gpointer entry = mini_get_interp_callbacks ()->create_method_pointer (m, TRUE, pointer_error);
++						if (!is_ok (pointer_error)) {
++							/* No native-to-managed transition exists: fail where the pointer is taken, not where it is called. */
++							mono_interp_error_cleanup (pointer_error);
++							interp_generate_void_throw (td, MONO_JIT_ICALL_mono_throw_platform_not_supported);
++							interp_add_ins (td, MINT_LDNULL);
++							push_simple_type (td, STACK_TYPE_MP);
++							interp_ins_set_dreg (td->last_ins, td->sp [-1].var);
++							td->ip += 5;
++							break;
++						}
+ #if SIZEOF_VOID_P == 8
+ 						interp_add_ins (td, MINT_LDC_I8);
+ 						WRITE64_INS (td->last_ins, 0, &entry);
+diff --git a/src/tasks/WasmAppBuilder/PInvokeTableGenerator.cs b/src/tasks/WasmAppBuilder/PInvokeTableGenerator.cs
+index dede28aff28..fd0df64b0d5 100644
+--- a/src/tasks/WasmAppBuilder/PInvokeTableGenerator.cs
++++ b/src/tasks/WasmAppBuilder/PInvokeTableGenerator.cs
+@@ -146,7 +146,7 @@ private void EmitPInvokeTable(StreamWriter w, SortedDictionary<string, string> m
+                 .Where(l => l.Module == module && !l.Skip)
+                 .OrderBy(l => l.EntryPoint, StringComparer.Ordinal)
+                 .GroupBy(d => d.EntryPoint, StringComparer.Ordinal)
+-                .Select(l => $"{{\"{EscapeLiteral(l.Key)}\", {CEntryPoint(l.First())}}}, // {ListRefs(l)}{w.NewLine}    ")
++                .Select(l => $"{{\"{EscapeLiteral(l.Key)}\", {CEntryPoint(l.First())}, {SignatureLiteral(l.First())}}}, // {ListRefs(l)}{w.NewLine}    ")
+                 .ToList();
+ 
+             moduleImports[module] = imports;
+@@ -154,7 +154,7 @@ private void EmitPInvokeTable(StreamWriter w, SortedDictionary<string, string> m
+                 $$"""
+ 
+                 static PinvokeImport {{_fixupSymbolName(module)}}_imports [] = {
+-                    {{string.Join("", imports)}}{NULL, NULL}
++                    {{string.Join("", imports)}}{NULL, NULL, NULL}
+                 };
+ 
+                 """);
+@@ -186,6 +186,13 @@ static bool ShouldTreatAsVariadic(PInvoke[] candidates)
+         }
+     }
+ 
++    // The interpreter-to-native signature the runtime checks a later declaration against.
++    private string SignatureLiteral(PInvoke pinvoke)
++    {
++        string? signature = SignatureMapper.MethodToSignature(pinvoke.Method, Log);
++        return signature is null ? "NULL" : $"\"{signature}\"";
++    }
++
+     private string CEntryPoint(PInvoke pinvoke)
+     {
+         if (pinvoke.WasmLinkage)

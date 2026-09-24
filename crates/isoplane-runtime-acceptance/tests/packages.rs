@@ -357,3 +357,63 @@ async fn a_missing_factory_is_refused() {
         "the declared factory must exist: {detail}"
     );
 }
+
+/// The `native` package's outcome for one transition, before and after a
+/// Store restoration.
+async fn native_use(path: &str) -> String {
+    answer_across_restored_stores(package("native"), path).await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_package_pinvoke_matching_a_runtime_declaration_is_called() {
+    assert_eq!(
+        native_use("/declared").await,
+        "called/called",
+        "a package may call a native entry point the runtime itself declares, with the same signature"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_package_pinvoke_with_a_mismatched_signature_is_refused() {
+    assert_eq!(
+        native_use("/mismatched").await,
+        "EntryPointNotFoundException/EntryPointNotFoundException",
+        "a declaration disagreeing with the native entry point's signature must be refused, not trap"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_package_pinvoke_with_a_signature_the_runtime_never_bridges_is_refused() {
+    assert_eq!(
+        native_use("/unbridged").await,
+        "EntryPointNotFoundException/EntryPointNotFoundException",
+        "a signature the runtime has no bridge for must be refused, not abort the guest"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_package_internal_call_is_refused() {
+    assert_eq!(
+        native_use("/internal-call").await,
+        "MissingMethodException/MissingMethodException",
+        "an internal call outside the runtime's own images must be refused, not abort the guest"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_package_unmanaged_callback_pointer_is_refused() {
+    assert_eq!(
+        native_use("/callback-pointer").await,
+        "PlatformNotSupportedException/PlatformNotSupportedException",
+        "a package's own [UnmanagedCallersOnly] method must not become a native pointer"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_package_delegate_marshalled_to_a_function_pointer_is_refused() {
+    assert_eq!(
+        native_use("/delegate-pointer").await,
+        "PlatformNotSupportedException/PlatformNotSupportedException",
+        "a package's delegate must not become a native pointer"
+    );
+}
