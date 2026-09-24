@@ -10,6 +10,7 @@ pub(super) struct ModuleEntry {
     pub(super) activator: Arc<dyn Activator>,
     pub(super) pool: InstancePool,
     pub(super) meters: Arc<Meters>,
+    pub(super) endpoint_exceptions: Arc<[std::net::SocketAddr]>,
 }
 
 /// The cell's bookkeeping for one resident instance.
@@ -71,7 +72,19 @@ impl Cell {
         activator: Arc<dyn Activator>,
         manifest: AppManifest,
     ) -> crate::Result<()> {
-        self.register_execution(tenant, activator, manifest, None)
+        self.register_execution(tenant, activator, manifest, None, Arc::new([]))
+    }
+
+    /// Registers a module whose instances may also reach `exceptions`, exact
+    /// peers the node's destination policy refuses.
+    pub fn register_module_with_exceptions(
+        self: &Arc<Self>,
+        tenant: &str,
+        activator: Arc<dyn Activator>,
+        manifest: AppManifest,
+        exceptions: Arc<[std::net::SocketAddr]>,
+    ) -> crate::Result<()> {
+        self.register_execution(tenant, activator, manifest, None, exceptions)
     }
 
     /// Registers a fresh local debug guest with no idle pooling or capture.
@@ -92,6 +105,7 @@ impl Cell {
             activator,
             manifest,
             Some(crate::debug::DEBUG_BUDGET_MS),
+            Arc::new([]),
         )
     }
 
@@ -101,6 +115,7 @@ impl Cell {
         activator: Arc<dyn Activator>,
         manifest: AppManifest,
         debug_cpu_ms: Option<u32>,
+        endpoint_exceptions: Arc<[std::net::SocketAddr]>,
     ) -> crate::Result<()> {
         anyhow::ensure!(
             !tenant.trim().is_empty(),
@@ -131,6 +146,7 @@ impl Cell {
             ),
             activator,
             meters: Arc::new(Meters::new()),
+            endpoint_exceptions,
         };
         self.modules.write().insert(module, Arc::new(entry));
         Ok(())
@@ -159,6 +175,7 @@ impl Cell {
             Some(self.rt.clone()),
         );
         context.limits = entry.manifest.effective_limits();
+        context.endpoint_exceptions = entry.endpoint_exceptions.clone();
         context.configure_resources(self.cfg.guest_resources);
         Arc::new(context)
     }

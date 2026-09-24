@@ -300,7 +300,7 @@ mod tests {
         operation
             .retain_permit(
                 policy
-                    .check_owned("http://upstream.test/", None)
+                    .check_owned("http://upstream.test/", crate::egress::Reach::default())
                     .await
                     .expect("the destination must pass policy"),
             )
@@ -349,7 +349,7 @@ mod tests {
         fetch
             .retain_permit(
                 policy
-                    .check_owned("http://upstream.test/", None)
+                    .check_owned("http://upstream.test/", crate::egress::Reach::default())
                     .await
                     .expect("the destination must pass policy"),
             )

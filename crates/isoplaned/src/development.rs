@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use isoplane_host::bindings::{RuntimeConfiguration, RuntimeConfigurationError};
-pub(crate) use isoplane_host::egress::AdditionalDestinations as WorkerDestinations;
 use serde::{Deserialize, Serialize};
 
 /// File references and endpoint exceptions for one established application owner.
@@ -19,7 +18,7 @@ pub struct ApplicationSettings {
     pub application: String,
     /// Flat string-valued JSON, using colon-delimited .NET configuration keys.
     pub user_secrets_file: Option<PathBuf>,
-    /// Exact additional destinations, applied only inside this application's worker.
+    /// Exact additional destinations, reachable only by this application's instances.
     #[serde(default)]
     pub allowed_destinations: Vec<SocketAddr>,
 }
@@ -30,8 +29,6 @@ pub(crate) enum SettingsError {
     Owner,
     #[error("development destinations need a concrete IP address and nonzero port")]
     Destination,
-    #[error("development destination exceptions require supervised application workers")]
-    InProcess,
     #[error("reading development runtime settings: {0}")]
     Read(#[from] std::io::Error),
     #[error(transparent)]
@@ -52,19 +49,6 @@ pub(crate) fn validate(config: &crate::config::NodeConfig) -> Result<(), Setting
                 return Err(SettingsError::Destination);
             }
         }
-    }
-    Ok(())
-}
-
-pub(crate) fn reject_in_process_destinations(
-    config: &crate::config::NodeConfig,
-) -> Result<(), SettingsError> {
-    if config
-        .development_applications
-        .iter()
-        .any(|entry| !entry.allowed_destinations.is_empty())
-    {
-        return Err(SettingsError::InProcess);
     }
     Ok(())
 }
@@ -130,25 +114,9 @@ impl RuntimeSettingsSource for DevelopmentFiles {
     }
 }
 
-pub(crate) struct WorkerSettings {
-    pub tenant: String,
-    pub application: String,
-    pub settings: RuntimeSettings,
-}
-
-impl RuntimeSettingsSource for WorkerSettings {
-    fn settings(&self, owner: SettingsOwner<'_>) -> Result<RuntimeSettings, SettingsError> {
-        if self.tenant != owner.tenant || self.application != owner.application {
-            return Err(SettingsError::Owner);
-        }
-        Ok(self.settings.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use isoplane_host::egress::DestinationPolicy;
 
     fn configuration(path: PathBuf) -> crate::NodeConfig {
         let mut config = crate::NodeConfig::dev_default();
@@ -233,7 +201,7 @@ mod tests {
                     .expect("fresh settings")
             ),
             second,
-            "a subsequent worker start must read the current file"
+            "a later registration must read the current file"
         );
     }
 
@@ -251,7 +219,7 @@ mod tests {
         config.development_applications.push(sibling);
         DevelopmentFiles::open(&config).expect("startup validates every dependency");
         std::fs::remove_file(sibling_path).expect("sibling file removed after startup");
-        let source = DevelopmentFiles::configured(&config).expect("worker settings source");
+        let source = DevelopmentFiles::configured(&config).expect("settings source");
         assert_eq!(
             bytes(
                 source
@@ -310,7 +278,7 @@ mod tests {
             };
             assert!(
                 matches!(error, SettingsError::Configuration(_)),
-                "invalid files must fail before worker start"
+                "invalid files must fail before the node starts"
             );
             assert!(
                 !error.to_string().contains("test-private"),
@@ -325,15 +293,8 @@ mod tests {
     }
 
     #[test]
-    fn exceptions_are_exact_and_require_an_isolated_worker() {
+    fn destination_exceptions_must_be_exact_endpoints() {
         let mut config = configuration(PathBuf::from("unused"));
-        assert!(
-            matches!(
-                reject_in_process_destinations(&config),
-                Err(SettingsError::InProcess)
-            ),
-            "in-process apps cannot share configured exceptions"
-        );
         for invalid in ["0.0.0.0:5432", "224.0.0.1:5432", "127.0.0.1:0"] {
             config.development_applications[0].allowed_destinations =
                 vec![invalid.parse().expect("endpoint")];
@@ -342,66 +303,5 @@ mod tests {
                 "invalid destination must be refused"
             );
         }
-        let destinations = WorkerDestinations {
-            endpoints: vec!["127.0.0.1:5432".parse().expect("endpoint")],
-            baseline: Arc::new(isoplane_host::egress::PublicDestinations),
-        };
-        assert!(
-            destinations
-                .authorize("127.0.0.1:5432".parse().expect("endpoint"))
-                .is_ok(),
-            "configured endpoint must be reachable"
-        );
-        assert!(
-            destinations
-                .authorize_resolution("127.0.0.1".parse().expect("ip"))
-                .is_ok(),
-            "configured resolution must be reachable"
-        );
-        for denied in ["127.0.0.1:5433", "127.0.0.2:5432"] {
-            assert!(
-                destinations
-                    .authorize(denied.parse().expect("endpoint"))
-                    .is_err(),
-                "unconfigured endpoints remain denied"
-            );
-        }
-        assert!(
-            destinations
-                .authorize_resolution("127.0.0.2".parse().expect("ip"))
-                .is_err(),
-            "unconfigured private resolution remains denied"
-        );
-    }
-
-    #[test]
-    fn a_worker_refuses_settings_for_another_owner() {
-        let source = WorkerSettings {
-            tenant: "tenant-a".into(),
-            application: "app-a".into(),
-            settings: RuntimeSettings::default(),
-        };
-        assert_eq!(
-            bytes(
-                source
-                    .settings(SettingsOwner {
-                        tenant: "tenant-a",
-                        application: "app-a"
-                    })
-                    .expect("owner")
-            ),
-            b"{}",
-            "worker serves its established owner"
-        );
-        assert!(
-            matches!(
-                source.settings(SettingsOwner {
-                    tenant: "tenant-b",
-                    application: "app-a"
-                }),
-                Err(SettingsError::Owner)
-            ),
-            "a worker cannot install a sibling tenant"
-        );
     }
 }

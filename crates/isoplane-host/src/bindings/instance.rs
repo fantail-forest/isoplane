@@ -60,6 +60,8 @@ pub struct InstanceCtx {
     pub(super) guest_resources: GuestResourceLimits,
     pub lifecycle: HandlerLifecycle,
     pub allowlist: Option<Vec<String>>,
+    /// Exact peers an operator lets this application reach where the node's policy refuses.
+    pub endpoint_exceptions: Arc<[std::net::SocketAddr]>,
     pub meters: Arc<Meters>,
     /// `None` in tests that exercise the slot machinery without a cell.
     pub rt: Option<Arc<CellRuntime>>,
@@ -136,6 +138,7 @@ impl InstanceCtx {
             guest_resources: GuestResourceLimits::default(),
             lifecycle: tenancy.lifecycle,
             allowlist: tenancy.allowlist,
+            endpoint_exceptions: Arc::new([]),
             meters,
             rt,
             clock_ms: AtomicU64::new(0),

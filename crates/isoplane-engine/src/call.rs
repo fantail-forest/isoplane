@@ -135,6 +135,7 @@ pub(crate) fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
             // slice; still a budget kill from the tenant's point of view.
             T::Interrupt | T::OutOfFuel => TrapKind::BudgetExceeded,
             T::UnreachableCodeReached => TrapKind::GuestPanic,
+            T::MappedStorageFault => TrapKind::StorageFault,
             T::AllocationTooLarge => TrapKind::OutOfMemory,
             T::StackOverflow
             | T::MemoryOutOfBounds
@@ -181,6 +182,7 @@ pub(crate) fn trap_code_of_kind(k: TrapKind) -> TrapCode {
         | TrapKind::Tombstoned
         | TrapKind::Sandbox
         | TrapKind::CpuClockUnavailable
+        | TrapKind::StorageFault
         | TrapKind::Other => TrapCode::Unknown,
     }
 }

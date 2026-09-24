@@ -96,3 +96,75 @@ fn a_guest_cannot_fetch_a_private_address() {
     drop(rx);
     r.cell.shutdown();
 }
+
+#[test]
+fn an_endpoint_exception_lets_only_its_own_application_reach_a_private_peer() {
+    let r = rig_resolving(CellConfig::for_test("exceptions"), "10.0.0.5:80");
+    let fetching = |name: &str| {
+        Arc::new(FakeActivator::named(
+            ModuleId::new(name, "v1"),
+            FakeBehaviour::program([Step::Fetch {
+                url: "http://10.0.0.5/".into(),
+                times: 1,
+            }]),
+        ))
+    };
+    let excepted = fetching("database-client");
+    let other = fetching("neighbour");
+    r.cell
+        .register_module_with_exceptions(
+            "acme",
+            excepted.clone(),
+            manifest(
+                "database-client",
+                HandlerLifecycle::Fresh,
+                Limits::default(),
+            ),
+            Arc::new(["10.0.0.5:80".parse().expect("endpoint")]),
+        )
+        .unwrap();
+    r.cell
+        .register_module(
+            "acme",
+            other.clone(),
+            manifest("neighbour", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+    let mut pending = Vec::new();
+    for act in [&excepted, &other] {
+        let module = act.module().clone();
+        pending.push(
+            r.cell
+                .submit(
+                    &module,
+                    Target::Handler {
+                        route: "/query".into(),
+                    },
+                    http(&r.cell, &module, "/query"),
+                )
+                .unwrap(),
+        );
+        assert!(
+            wait_for(|| !act.wakes().is_empty(), Duration::from_secs(5)),
+            "the guest was never told what happened to its fetch"
+        );
+    }
+    assert!(
+        !matches!(
+            excepted.wakes()[0].1,
+            ResultRecord::Err(FutureError::Denied(_))
+        ),
+        "the application granted the exception must reach its private peer: {:?}",
+        excepted.wakes()[0].1
+    );
+    assert!(
+        matches!(
+            other.wakes()[0].1,
+            ResultRecord::Err(FutureError::Denied(_))
+        ),
+        "another application on the same cell must not inherit the exception: {:?}",
+        other.wakes()[0].1
+    );
+    drop(pending);
+    r.cell.shutdown();
+}

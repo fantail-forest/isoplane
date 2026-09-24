@@ -3,6 +3,7 @@
 mod files;
 #[cfg(target_os = "linux")]
 mod layer;
+pub(crate) mod native;
 pub(crate) mod prefetch;
 #[cfg(target_os = "linux")]
 mod residency;
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{IsoplaneEngine, Template};
 
-pub use files::{PreparedPayload, PreparedStorage, ReadAhead};
+pub use files::{PreparedPayload, ReadAhead};
 
 const FORMAT: u32 = 7;
 const MAGIC: [u8; 8] = *b"ISOPPREP";
@@ -119,7 +120,7 @@ impl IsoplaneEngine {
             .map_err(PreparedError::Engine)?;
         let native = template
             .inner
-            .module
+            .module()
             .serialize()
             .map_err(|e| PreparedError::Engine(e.into()))?;
         let state = state::State::capture(&template);
@@ -172,22 +173,6 @@ impl IsoplaneEngine {
         Ok(prepared)
     }
 
-    /// Checks local prepared state and reads it into immutable owned allocations.
-    /// Backing-file failures are returned before native execution; no file mapping survives admission.
-    #[tracing::instrument(name = "template_load", skip_all, fields(mode = "owned"))]
-    /// # Safety
-    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
-    /// Checksums do not establish compiler origin.
-    pub unsafe fn load_prepared(
-        &self,
-        directory: &Path,
-        expected: PreparedIdentity,
-    ) -> Result<Template> {
-        let manifest = files::read_manifest(directory)?;
-        self.check_prepared(&manifest, expected)?;
-        self.load_prepared_owned(directory, manifest)
-    }
-
     /// Checks a local manifest and returns the exact content digest recorded by selection.
     pub fn prepared_manifest_sha256(&self, directory: &Path) -> Result<[u8; 32]> {
         let (manifest, digest) = files::read_manifest_receipt(directory)?;
@@ -195,9 +180,12 @@ impl IsoplaneEngine {
         Ok(digest)
     }
 
-    /// Restore the selected local artifact without compilation or initialization.
-    #[tracing::instrument(name = "template_load", skip_all, fields(mode = "owned"))]
+    /// Maps the selected local artifact without compilation or
+    /// initialization, as [`IsoplaneEngine::load_prepared`] does.
+    ///
     /// # Safety
+    /// As for [`IsoplaneEngine::load_prepared`].
+    #[tracing::instrument(name = "template_load", skip_all)]
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
     pub unsafe fn restore_prepared(
@@ -205,9 +193,11 @@ impl IsoplaneEngine {
         directory: &Path,
         manifest_sha256: [u8; 32],
         runtime_profile: [u8; 32],
+        prefetch: &[ReadAhead],
     ) -> Result<Template> {
         let manifest = self.catalog_manifest(directory, manifest_sha256, runtime_profile)?;
-        self.load_prepared_owned(directory, manifest)
+        // SAFETY: the caller upholds this function's contract, which is the mapping's.
+        unsafe { self.map_prepared(directory, manifest, prefetch) }
     }
 
     /// Checks a selection receipt without reading native code or baseline payloads.
@@ -239,54 +229,24 @@ impl IsoplaneEngine {
         Ok(manifest)
     }
 
-    fn load_prepared_owned(&self, directory: &Path, manifest: Manifest) -> Result<Template> {
-        let payloads = files::read_payloads(directory, &manifest)?;
-        let [native, baseline, state] = payloads;
-        let state: state::State = postcard::from_bytes(&state)?;
-        #[cfg(target_os = "linux")]
-        let layer_bytes = baseline.clone();
-        let image = crate::image::MemoryImage::from_storage(
-            crate::image::ImageStorage::Owned(baseline),
-            self.inner.cfg.max_memory_bytes as usize,
-        )
-        .map_err(PreparedError::Invalid)?;
-        state.validate(&image, self.inner.cfg.max_memory_bytes)?;
-        let module = tracing::info_span!("template_native_deserialize")
-            .in_scope(|| {
-                // SAFETY: the caller guarantees local compiler origin; verified owned payloads cannot change.
-                unsafe { wasmtime::Module::deserialize(&self.inner.wasmtime, &native) }
-            })
-            .map_err(|e| PreparedError::Engine(e.into()))?;
-        #[cfg(target_os = "linux")]
-        let layer = if image.is_layer() {
-            Some(layer::from_owned(&layer_bytes, &image)?)
-        } else {
-            None
-        };
-        let template = self.finish_prepared(module, manifest, state, image)?;
-        #[cfg(target_os = "linux")]
-        let template = {
-            let mut template = template;
-            if let Some(layer) = layer {
-                layer::attach(&mut template, layer)?;
-            }
-            template
-        };
-        Ok(template)
-    }
-
-    /// Verifies local payload hashes, then maps the same open files.
+    /// Checks a published local template and its payload hashes, then
+    /// maps the same open baseline and state files. Native code is loaded from
+    /// a private copy taken as it was verified; when a live template of this
+    /// engine already holds the native payload the manifest records, it shares
+    /// that module without reading this artifact's copy.
+    ///
+    /// On Linux, a read of the mapped baseline that fails after verification ends only the
+    /// operation that made it: a guest call traps or a host operation fails with a storage
+    /// fault, and the template refuses further activation until it is loaded again.
     ///
     /// # Safety
-    /// The caller must prevent changes to the backing file contents for the lifetime of every
-    /// returned template and instance; publication read-only permissions are not an isolation boundary.
-    /// The caller must run this engine and every use of the returned template in a supervised
-    /// application worker process. Backing storage corruption can cause SIGBUS even after
-    /// verification; the supervisor must contain worker death and fail affected requests.
-    #[tracing::instrument(name = "template_load", skip_all, fields(mode = "mapped"))]
+    /// The caller must prevent changes to the baseline and state file contents for the lifetime
+    /// of every returned template and instance; publication read-only permissions are not an
+    /// isolation boundary.
+    #[tracing::instrument(name = "template_load", skip_all)]
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
-    pub unsafe fn load_prepared_mapped(
+    pub unsafe fn load_prepared(
         &self,
         directory: &Path,
         expected: PreparedIdentity,
@@ -294,10 +254,28 @@ impl IsoplaneEngine {
     ) -> Result<Template> {
         let manifest = files::read_manifest(directory)?;
         self.check_prepared(&manifest, expected)?;
-        let files = files::open_verified(directory, &manifest)?;
+        // SAFETY: the caller upholds this function's contract, which is the mapping's.
+        unsafe { self.map_prepared(directory, manifest, prefetch) }
+    }
+
+    /// # Safety
+    /// As for [`IsoplaneEngine::load_prepared`].
+    unsafe fn map_prepared(
+        &self,
+        directory: &Path,
+        manifest: Manifest,
+        prefetch: &[ReadAhead],
+    ) -> Result<Template> {
+        let native_hash = manifest.files[0].hash;
+        let held = self.inner.natives.get(&native_hash);
+        let files = files::open_verified(directory, &manifest, held.is_none())?;
         files::advise(&files, &manifest, prefetch)?;
-        let activation_prefetch = prefetch::Payloads::new(&files, directory)?;
-        let [native, baseline, state] = files;
+        let activation_prefetch = prefetch::Payloads::new(files.each(), directory)?;
+        let files::Verified {
+            native,
+            baseline,
+            state,
+        } = files;
         #[cfg(target_os = "linux")]
         let layer_file = baseline
             .try_clone()
@@ -316,19 +294,29 @@ impl IsoplaneEngine {
             source,
         })?;
         let state: state::State = postcard::from_bytes(&state)?;
-        let image = crate::MemoryImage::from_storage(
-            crate::image::ImageStorage::Mapped(baseline),
-            self.inner.cfg.max_memory_bytes as usize,
-        )
-        .map_err(PreparedError::Invalid)?;
+        let baseline =
+            crate::image::ImageStorage::mapped(baseline).map_err(|source| PreparedError::Io {
+                operation: "watch baseline",
+                path: directory.join(BASELINE),
+                source,
+            })?;
+        let image =
+            crate::MemoryImage::from_storage(baseline, self.inner.cfg.max_memory_bytes as usize)
+                .map_err(PreparedError::Invalid)?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
-        let module = tracing::info_span!("template_native_deserialize")
-            .in_scope(|| {
-                // SAFETY: the caller guarantees local compiler origin for this verified held file and
-                // unchanged contents for the module lifetime and contains I/O faults.
-                unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native) }
-            })
-            .map_err(|e| PreparedError::Engine(e.into()))?;
+        let native = match (held, native) {
+            (Some(held), _) => held,
+            (None, Some(native)) => {
+                let module = tracing::info_span!("template_native_deserialize")
+                    .in_scope(|| {
+                        // SAFETY: the caller guarantees local compiler origin; the private copy matches the manifest.
+                        unsafe { native.deserialize(&self.inner.wasmtime) }
+                    })
+                    .map_err(|e| PreparedError::Engine(e.into()))?;
+                self.inner.natives.insert(native_hash, module)
+            }
+            (None, None) => return Err(PreparedError::Invalid("native payload was not verified")),
+        };
         #[cfg(target_os = "linux")]
         let layer = if image.is_layer() {
             Some(layer::from_file(layer_file, &image)?)
@@ -336,7 +324,7 @@ impl IsoplaneEngine {
             None
         };
         let activation_prefetch = activation_prefetch.select(&state.prefetch)?;
-        let template = self.finish_prepared(module, manifest, state, image)?;
+        let template = self.finish_prepared(native, manifest, state, image)?;
         #[cfg(target_os = "linux")]
         let template = {
             let mut template = template;

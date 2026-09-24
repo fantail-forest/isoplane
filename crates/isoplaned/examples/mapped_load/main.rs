@@ -24,15 +24,7 @@ struct Input {
 }
 
 fn main() -> anyhow::Result<()> {
-    if std::env::args().any(|arg| arg == "--worker") {
-        return measure();
-    }
-    let status = std::process::Command::new(std::env::current_exe()?)
-        .arg("--worker")
-        .stdin(std::process::Stdio::inherit())
-        .status()?;
-    anyhow::ensure!(status.success(), "mapped-load worker failed: {status}");
-    Ok(())
+    measure()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -112,9 +104,8 @@ fn measure() -> anyhow::Result<()> {
             let started = Instant::now();
             // SAFETY: the local preparation engine compiled the native payload above, and this run owns
             // its private directory. Cache eviction does not modify the published contents.
-            // The supervising parent reports mapped-storage faults from this worker.
             let template = unsafe {
-                engine.load_prepared_mapped(
+                engine.load_prepared(
                     &directory,
                     identity,
                     if mode == "evicted-read-ahead" {

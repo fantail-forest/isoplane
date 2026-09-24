@@ -20,8 +20,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="isoplane-node-package-") as temporary:
         stage = Path(temporary)
-        for name in ("isoplaned", "isoplane-app-worker"):
-            shutil.copy2(args.binaries / name, stage / name)
+        shutil.copy2(args.binaries / "isoplaned", stage / "isoplaned")
         for name in ("isoplaned.service", "install-node.sh"):
             shutil.copy2(Path(__file__).with_name(name), stage / name)
         shutil.copy2(args.profiles, stage / "profiles.json")

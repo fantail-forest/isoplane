@@ -15,23 +15,50 @@ const LAYER_MAGIC: &[u8; 8] = b"ISOPPKD1";
 
 pub(crate) enum ImageStorage {
     Owned(Vec<u8>),
-    Mapped(memmap2::Mmap),
+    /// A mapped baseline file. Its watch outlives the mapping, so a range is
+    /// never watched after it is unmapped.
+    Mapped {
+        #[cfg(target_os = "linux")]
+        watch: crate::storage_fault::Watch,
+        bytes: memmap2::Mmap,
+    },
+}
+
+impl ImageStorage {
+    /// Maps a baseline whose failed page-ins read as zeros and mark it failed.
+    pub(crate) fn mapped(bytes: memmap2::Mmap) -> std::io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        let watch = {
+            let start = bytes.as_ptr() as usize;
+            crate::storage_fault::Watch::new(
+                start..start + bytes.len(),
+                crate::storage_fault::Access::Read,
+            )?
+        };
+        Ok(Self::Mapped {
+            #[cfg(target_os = "linux")]
+            watch,
+            bytes,
+        })
+    }
 }
 
 impl AsRef<[u8]> for ImageStorage {
     fn as_ref(&self) -> &[u8] {
         match self {
             Self::Owned(bytes) => bytes,
-            Self::Mapped(bytes) => bytes,
+            Self::Mapped { bytes, .. } => bytes,
         }
     }
 }
 
 /// Sparse memory shared by templates and instances; zero gaps allocate no payload.
+/// The run index is decoded at construction, so after it only payload bytes
+/// are read from storage.
 #[derive(Clone)]
 pub struct MemoryImage {
     len: usize,
-    run_count: usize,
+    runs: Arc<[Run]>,
     payload_offset: usize,
     storage: Arc<ImageStorage>,
 }
@@ -121,14 +148,12 @@ impl MemoryImage {
 
     #[cfg(target_os = "linux")]
     pub(crate) fn layer_extents(&self) -> Vec<wasmtime::CowMemoryExtent> {
-        (0..self.run_count)
-            .map(|index| {
-                let run = self.run(index);
-                wasmtime::CowMemoryExtent {
-                    file_offset: (self.payload_offset + run.start) as u64,
-                    memory_offset: run.off,
-                    length: run.len,
-                }
+        self.runs
+            .iter()
+            .map(|run| wasmtime::CowMemoryExtent {
+                file_offset: (self.payload_offset + run.start) as u64,
+                memory_offset: run.off,
+                length: run.len,
             })
             .collect()
     }
@@ -140,8 +165,7 @@ impl MemoryImage {
 
     /// Iterates stored regions in logical address order, without expanding zero gaps.
     pub fn regions(&self) -> impl Iterator<Item = (usize, &[u8])> {
-        (0..self.run_count).map(|index| {
-            let run = self.run(index);
+        self.runs.iter().map(|run| {
             (
                 run.off,
                 &self.encoded()
@@ -198,8 +222,8 @@ impl MemoryImage {
         encoded.extend_from_slice(&bytes);
         Self {
             len: dense.len(),
-            run_count: runs.len(),
             payload_offset: HEADER_BYTES + runs.len() * RUN_BYTES,
+            runs: runs.into(),
             storage: std::sync::Arc::new(ImageStorage::Owned(encoded)),
         }
     }
@@ -242,6 +266,7 @@ impl MemoryImage {
             }
             let mut logical_end = 0usize;
             let mut physical = Vec::new();
+            let mut runs = Vec::with_capacity(run_count);
             for index in 0..run_count {
                 let position = HEADER_BYTES + index * RUN_BYTES;
                 let off = number(bytes, position)?;
@@ -261,6 +286,11 @@ impl MemoryImage {
                     return Err("packed layer extent exceeds bounds");
                 }
                 physical.push(start..end);
+                runs.push(Run {
+                    off,
+                    start,
+                    len: size,
+                });
             }
             physical.sort_by_key(|range| range.start);
             let mut physical_end = 0;
@@ -275,7 +305,7 @@ impl MemoryImage {
             }
             return Ok(Self {
                 len,
-                run_count,
+                runs: runs.into(),
                 payload_offset,
                 storage: Arc::new(storage),
             });
@@ -296,6 +326,7 @@ impl MemoryImage {
         }
         let mut previous_end = 0;
         let mut payload_end = 0;
+        let mut runs = Vec::with_capacity(run_count);
         for index in 0..run_count {
             let position = HEADER_BYTES + index * RUN_BYTES;
             let off = number(bytes, position)?;
@@ -314,30 +345,32 @@ impl MemoryImage {
                 return Err("sparse region exceeds payload");
             }
             previous_end = end;
+            runs.push(Run {
+                off,
+                start,
+                len: size,
+            });
         }
         if payload_end != payload_bytes {
             return Err("sparse payload contains unindexed bytes");
         }
         Ok(Self {
             len,
-            run_count,
+            runs: runs.into(),
             payload_offset,
             storage: Arc::new(storage),
         })
     }
 
-    fn run(&self, index: usize) -> Run {
-        let position = HEADER_BYTES + index * RUN_BYTES;
-        // The constructor validates every index before the immutable storage is retained.
-        let field = |offset| {
-            let mut bytes = [0; 8];
-            bytes.copy_from_slice(&self.encoded()[offset..offset + 8]);
-            u64::from_le_bytes(bytes) as usize
-        };
-        Run {
-            off: field(position),
-            start: field(position + 8),
-            len: field(position + 16),
+    /// Whether a read of this image's mapped storage failed, so a comparison
+    /// or copy made from it since is wrong.
+    pub fn storage_failed(&self) -> bool {
+        match self.storage.as_ref() {
+            ImageStorage::Owned(_) => false,
+            #[cfg(target_os = "linux")]
+            ImageStorage::Mapped { watch, .. } => watch.faulted(),
+            #[cfg(not(target_os = "linux"))]
+            ImageStorage::Mapped { .. } => false,
         }
     }
 
@@ -351,7 +384,7 @@ impl MemoryImage {
     }
     #[cfg(test)]
     fn runs(&self) -> usize {
-        self.run_count
+        self.runs.len()
     }
 
     /// Compares a live page with the baseline, treating grown memory as zero.
@@ -362,20 +395,9 @@ impl MemoryImage {
         let Some(end) = off.checked_add(live.len()) else {
             return false;
         };
-        let mut low = 0;
-        let mut high = self.run_count;
-        while low < high {
-            let mid = low + (high - low) / 2;
-            let run = self.run(mid);
-            if run.off + run.len <= off {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
+        let low = self.runs.partition_point(|run| run.off + run.len <= off);
         let mut cursor = off;
-        for index in low..self.run_count {
-            let run = self.run(index);
+        for run in &self.runs[low..] {
             if run.off >= end {
                 break;
             }
@@ -427,7 +449,7 @@ impl std::fmt::Debug for MemoryImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryImage")
             .field("len", &self.len)
-            .field("runs", &self.run_count)
+            .field("runs", &self.runs.len())
             .field("bytes", &self.encoded().len())
             .finish()
     }

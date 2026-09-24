@@ -294,6 +294,7 @@ mod queue_tests {
             pool: InstancePool::new(activator.clone(), HandlerLifecycle::Reuse, 1),
             activator,
             meters: Arc::new(crate::meters::Meters::new()),
+            endpoint_exceptions: Arc::new([]),
         });
         let completion = super::super::DispatchCompletion::new(
             entry,

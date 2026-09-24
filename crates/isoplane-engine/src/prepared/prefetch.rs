@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use super::{PreparedError, Result, PAYLOAD_NAMES};
 
-pub(crate) struct Payloads(Vec<Payload>);
+/// Retained payload files for activation prefetch. A payload is absent when
+/// the engine holds it in memory, as it does native code.
+pub(crate) struct Payloads(Vec<Option<Payload>>);
 
 struct Payload {
     ranges: Vec<std::ops::Range<u64>>,
@@ -16,11 +18,14 @@ struct Payload {
 }
 
 impl Payloads {
-    pub(super) fn new(files: &[File; 3], directory: &Path) -> Result<Self> {
+    pub(super) fn new(files: [Option<&File>; 3], directory: &Path) -> Result<Self> {
         let payloads = files
-            .iter()
+            .into_iter()
             .zip(PAYLOAD_NAMES)
             .map(|(file, name)| {
+                let Some(file) = file else {
+                    return Ok(None);
+                };
                 let path = directory.join(name);
                 let file = file.try_clone().map_err(|source| PreparedError::Io {
                     operation: "retain prefetch file",
@@ -35,23 +40,26 @@ impl Payloads {
                         source,
                     })?
                     .len();
-                Ok(Payload {
+                Ok(Some(Payload {
                     ranges: Vec::new(),
                     file,
                     path,
                     length_bytes,
-                })
+                }))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Self(payloads))
     }
 
+    /// Keeps the learned `ranges`, dropping those in a payload already held.
     pub(super) fn select(mut self, ranges: &[super::ReadAhead]) -> Result<Self> {
-        for payload in &mut self.0 {
+        for payload in self.0.iter_mut().flatten() {
             payload.ranges.clear();
         }
         for range in ranges {
-            let payload = &mut self.0[range.payload.index()];
+            let Some(payload) = &mut self.0[range.payload.index()] else {
+                continue;
+            };
             let end = range
                 .offset_bytes
                 .checked_add(range.length_bytes)
@@ -61,7 +69,7 @@ impl Payloads {
             }
             payload.ranges.push(range.offset_bytes..end);
         }
-        for payload in &mut self.0 {
+        for payload in self.0.iter_mut().flatten() {
             payload.ranges.sort_by_key(|range| range.start);
             if payload
                 .ranges
@@ -78,6 +86,7 @@ impl Payloads {
         let total_bytes: u64 = self
             .0
             .iter()
+            .flatten()
             .flat_map(|p| &p.ranges)
             .map(|r| r.end - r.start)
             .sum();
@@ -85,7 +94,7 @@ impl Payloads {
             .entered();
         // Bounded scratch space warms the file cache without retaining a second template copy.
         let mut scratch = vec![0; 64 * 1024];
-        for payload in &self.0 {
+        for payload in self.0.iter().flatten() {
             for range in &payload.ranges {
                 read_range(&payload.file, range.clone(), &mut scratch).map_err(|source| {
                     PreparedError::Io {
@@ -181,12 +190,13 @@ mod tests {
     }
 
     fn payloads() -> Payloads {
-        let files = std::array::from_fn(|_| {
+        let files: [File; 3] = std::array::from_fn(|_| {
             let mut file = tempfile::tempfile().expect("payload");
             file.write_all(b"abcdefghijklmnopq").expect("payload bytes");
             file
         });
-        Payloads::new(&files, Path::new("test-payloads")).expect("retained payloads")
+        Payloads::new(files.each_ref().map(Some), Path::new("test-payloads"))
+            .expect("retained payloads")
     }
 
     fn native_range(offset_bytes: u64, length_bytes: u64) -> super::super::ReadAhead {
@@ -247,15 +257,17 @@ mod tests {
             .select(&[native_range(3, 1), native_range(1, 2)])
             .expect("adjacent ranges");
         assert_eq!(
-            selected.0[0].ranges,
+            selected.0[0].as_ref().expect("native payload").ranges,
             vec![1..3, 3..4],
             "selected ranges must be ordered"
         );
         selected.0[0]
+            .as_ref()
+            .expect("native payload")
             .file
             .set_len(4)
             .expect("remove unselected suffix");
-        for payload in &selected.0[1..] {
+        for payload in selected.0[1..].iter().flatten() {
             payload.file.set_len(0).expect("remove unselected payload");
         }
         selected

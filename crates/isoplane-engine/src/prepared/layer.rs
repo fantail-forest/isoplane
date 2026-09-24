@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::{
     files, state::State, Manifest, PreparedError, PreparedIdentity, PreparedPayload,
-    PreparedStorage, PreparedTemplate, ReadAhead, Result, FORMAT, MAGIC,
+    PreparedTemplate, ReadAhead, Result, FORMAT, MAGIC,
 };
 use crate::{Instance, InstanceOps, IsoplaneEngine, Template};
 
@@ -14,10 +14,10 @@ impl IsoplaneEngine {
     /// Compile once, then map the unchanged code before observing initialization's working set.
     pub fn load_layer_source(&self, wasm: &[u8]) -> crate::Result<Template> {
         let source = self.load_template(wasm)?;
-        let file = compiled_file(&source.inner.module.serialize()?)?;
-        // SAFETY: this engine compiled these bytes; the memfd is sealed against changes.
-        let module =
-            unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, file) }?;
+        let mut copy = super::native::NativeCopy::new()?;
+        copy.write_all(&source.inner.module().serialize()?)?;
+        // SAFETY: this engine compiled these bytes.
+        let module = unsafe { copy.deserialize(&self.inner.wasmtime) }?;
         self.finish_template(
             module,
             source.hash,
@@ -57,7 +57,7 @@ impl IsoplaneEngine {
                 "layer requires its own successfully completed initializer",
             ));
         }
-        let native_range = template.inner.module.image_range();
+        let native_range = template.inner.module().image_range();
         let native_address = native_range.start as usize;
         let native_length = native_range.end as usize - native_address;
         let native_ranges = super::residency::present_ranges(native_address, native_length)
@@ -100,7 +100,7 @@ impl IsoplaneEngine {
         let payloads = [
             template
                 .inner
-                .module
+                .module()
                 .serialize()
                 .map_err(|error| PreparedError::Engine(error.into()))?,
             image.encoded().to_vec(),
@@ -134,11 +134,10 @@ impl IsoplaneEngine {
     pub unsafe fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
         let directory = tempfile::tempdir().map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
-        product.publish(&path, PreparedStorage::VerifiedCopy)?;
-        unsafe {
-            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
-            self.load_prepared(&path, product.manifest.identity)
-        }
+        product.publish(&path)?;
+        // SAFETY: the directory is private to this call and nothing writes its published files;
+        // removing it with the call's end unlinks them, which leaves the mappings intact.
+        unsafe { self.load_prepared(&path, product.manifest.identity, &[]) }
     }
 }
 
@@ -152,16 +151,6 @@ pub(super) fn from_file(
         .map_err(|error| PreparedError::Engine(error.into()))
 }
 
-pub(super) fn from_owned(
-    bytes: &[u8],
-    image: &crate::MemoryImage,
-) -> Result<wasmtime::CowMemoryImage> {
-    let mut file = tempfile::tempfile().map_err(|error| PreparedError::Engine(error.into()))?;
-    file.write_all(bytes)
-        .map_err(|error| PreparedError::Engine(error.into()))?;
-    from_file(file, image)
-}
-
 pub(super) fn attach(template: &mut Template, image: wasmtime::CowMemoryImage) -> Result<()> {
     Arc::get_mut(&mut template.inner)
         .ok_or(PreparedError::Invalid(
@@ -169,53 +158,4 @@ pub(super) fn attach(template: &mut Template, image: wasmtime::CowMemoryImage) -
         ))?
         .initialization_layer = Some(image);
     Ok(())
-}
-
-fn compiled_file(bytes: &[u8]) -> std::io::Result<File> {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    // SAFETY: the NUL-terminated name is valid and the flags request a new owned descriptor.
-    let descriptor = unsafe {
-        libc::memfd_create(
-            c"isoplane-initialization-code".as_ptr(),
-            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
-        )
-    };
-    if descriptor < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: memfd_create returned a new descriptor, transferred exactly once into File.
-    let mut file = unsafe { File::from_raw_fd(descriptor) };
-    file.write_all(bytes)?;
-    // SAFETY: the descriptor is live and these seals prevent mutations after the code is mapped.
-    let result = unsafe {
-        libc::fcntl(
-            file.as_raw_fd(),
-            libc::F_ADD_SEALS,
-            libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL,
-        )
-    };
-    if result < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(file)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::os::unix::fs::FileExt;
-
-    #[test]
-    fn compiled_source_is_sealed_against_mutation() -> std::io::Result<()> {
-        let file = compiled_file(b"compiled source")?;
-        assert!(
-            file.write_at(b"changed", 0).is_err(),
-            "mapped compiler output must be immutable"
-        );
-        assert!(
-            file.set_len(0).is_err(),
-            "mapped compiler output must not be truncated"
-        );
-        Ok(())
-    }
 }

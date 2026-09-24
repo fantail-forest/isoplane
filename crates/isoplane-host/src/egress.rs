@@ -18,6 +18,15 @@ use std::sync::Arc;
 
 use isoplane_abi::host::PinnedTarget;
 
+/// What one application may reach through the node's egress policy.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Reach<'a> {
+    /// Hosts the application restricts itself to; `None` leaves the node's policy to decide.
+    pub allowlist: Option<&'a [String]>,
+    /// Exact peers an operator lets this application reach where the node's policy refuses.
+    pub exceptions: &'a [SocketAddr],
+}
+
 /// Authorizes concrete peers after name resolution and before any application data.
 pub trait DestinationPolicy: Send + Sync + 'static {
     /// Refuse addresses outside the node's supported outbound capability.
@@ -302,9 +311,9 @@ impl HostEgressPolicy {
     pub(crate) async fn resolve_name(
         &self,
         name: &str,
-        allowlist: Option<&[String]>,
+        reach: Reach<'_>,
     ) -> Result<Vec<IpAddr>, EgressError> {
-        if !Self::allowlisted(name, allowlist) {
+        if !Self::allowlisted(name, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(name.to_owned()).into());
         }
         self.resolutions.fetch_add(1, Ordering::Relaxed);
@@ -313,7 +322,13 @@ impl HostEgressPolicy {
             return Err(DnsError::NoAddress.into());
         }
         for address in &addresses {
-            self.destinations.authorize_resolution(address.ip())?;
+            if !reach
+                .exceptions
+                .iter()
+                .any(|exception| exception.ip() == address.ip())
+            {
+                self.destinations.authorize_resolution(address.ip())?;
+            }
         }
         Ok(addresses.into_iter().map(|address| address.ip()).collect())
     }
@@ -329,7 +344,7 @@ impl HostEgressPolicy {
         owner: &ConnectionOwner,
         destination: SocketAddr,
     ) -> Result<tokio::net::TcpStream, ConnectionError> {
-        self.destinations.authorize(destination)?;
+        self.authorize(destination, owner.exceptions())?;
         let stream = self.connections_factory.connect(owner, destination).await?;
         let peer = stream.peer_addr()?;
         if connection::canonical_destination(peer)?
@@ -340,7 +355,7 @@ impl HostEgressPolicy {
                 actual: peer,
             });
         }
-        self.destinations.authorize(peer)?;
+        self.authorize(peer, owner.exceptions())?;
         Ok(stream)
     }
 
@@ -350,15 +365,23 @@ impl HostEgressPolicy {
         self
     }
 
+    fn authorize(&self, address: SocketAddr, exceptions: &[SocketAddr]) -> Result<(), DenyReason> {
+        if exceptions.contains(&address) {
+            Ok(())
+        } else {
+            self.destinations.authorize(address)
+        }
+    }
+
     /// Reserve quota for a checked numeric socket destination, without performing DNS.
     pub(crate) fn check_socket(
         self: &Arc<Self>,
         address: SocketAddr,
-        allowlist: Option<&[String]>,
+        reach: Reach<'_>,
     ) -> Result<ConnectionPermit, DenyReason> {
-        self.destinations.authorize(address)?;
+        self.authorize(address, reach.exceptions)?;
         let host = address.ip().to_string();
-        if !Self::allowlisted(&host, allowlist) {
+        if !Self::allowlisted(&host, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(host));
         }
         if self.bytes.load(Ordering::Relaxed) >= self.max_bytes {
@@ -380,9 +403,9 @@ impl HostEgressPolicy {
     pub(crate) async fn check_owned(
         self: &Arc<Self>,
         url: &str,
-        allowlist: Option<&[String]>,
+        reach: Reach<'_>,
     ) -> Result<CheckedConnection, EgressError> {
-        self.check_typed(url, allowlist)
+        self.check_typed(url, reach)
             .await
             .map(|target| CheckedConnection {
                 target,
@@ -445,10 +468,10 @@ impl HostEgressPolicy {
     pub async fn check_typed(
         &self,
         url: &str,
-        allowlist: Option<&[String]>,
+        reach: Reach<'_>,
     ) -> Result<PinnedTarget, EgressError> {
         let parsed = parse_url(url)?;
-        if !Self::allowlisted(&parsed.host, allowlist) {
+        if !Self::allowlisted(&parsed.host, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(parsed.host).into());
         }
         if self.bytes.load(Ordering::Relaxed) >= self.max_bytes {
@@ -465,7 +488,7 @@ impl HostEgressPolicy {
         // Every address, not the first: a client that falls back to a second
         // address would otherwise reach a private one.
         for address in &addrs {
-            self.destinations.authorize(*address)?;
+            self.authorize(*address, reach.exceptions)?;
         }
         let taken = self
             .connections
@@ -534,6 +557,14 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip)), port)
     }
 
+    /// A reach restricted to `list`, with no exceptions.
+    fn only(list: &[String]) -> Reach<'_> {
+        Reach {
+            allowlist: Some(list),
+            exceptions: &[],
+        }
+    }
+
     fn policy(r: impl Resolver) -> HostEgressPolicy {
         HostEgressPolicy::new(Box::new(r), 100, 1 << 30)
     }
@@ -556,7 +587,7 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let policy = policy(CountingFailure(calls.clone()));
         let result = policy
-            .resolve_name("forbidden.test", Some(&["allowed.test".into()]))
+            .resolve_name("forbidden.test", only(&["allowed.test".into()]))
             .await;
         assert!(
             matches!(result, Err(EgressError::Denied(DenyReason::NotAllowlisted(ref host))) if host == "forbidden.test"),
@@ -584,7 +615,7 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let policy = policy(CountingFailure(calls.clone()));
         let result = policy
-            .resolve_name("allowed.test", Some(&["allowed.test".into()]))
+            .resolve_name("allowed.test", only(&["allowed.test".into()]))
             .await;
         assert!(
             matches!(result, Err(EgressError::Dns(error)) if error.kind() == isoplane_abi::native_io::DnsFailure::Temporary),
@@ -615,7 +646,7 @@ mod tests {
         ] {
             let p = policy(Fixed(vec![sa(ip, 80)]));
             let err = p
-                .check_typed("http://target.example/", None)
+                .check_typed("http://target.example/", Reach::default())
                 .await
                 .expect_err("a private address must be refused");
             assert!(
@@ -625,7 +656,9 @@ mod tests {
         }
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 80)]));
         assert!(
-            p.check_typed("http://example.com/", None).await.is_ok(),
+            p.check_typed("http://example.com/", Reach::default())
+                .await
+                .is_ok(),
             "a public address is dialable"
         );
     }
@@ -636,7 +669,7 @@ mod tests {
             let ip: IpAddr = lit.trim_matches(['[', ']']).parse().expect("literal");
             let p = policy(Fixed(vec![SocketAddr::new(ip, 80)]));
             let err = p
-                .check_typed(&format!("http://{lit}/"), None)
+                .check_typed(&format!("http://{lit}/"), Reach::default())
                 .await
                 .expect_err("a private v6 address must be refused");
             assert!(
@@ -653,7 +686,7 @@ mod tests {
             vec![sa([127, 0, 0, 1], 443)],
         ]));
         let pinned = p
-            .check_typed("https://rebind.example/", None)
+            .check_typed("https://rebind.example/", Reach::default())
             .await
             .expect("the first answer is public");
         assert_eq!(
@@ -676,7 +709,7 @@ mod tests {
             sa([192, 168, 0, 5], 80),
         ]));
         let err = p
-            .check_typed("http://mixed.example/", None)
+            .check_typed("http://mixed.example/", Reach::default())
             .await
             .expect_err("an answer with a private address must be refused");
         assert!(
@@ -691,7 +724,7 @@ mod tests {
         for url in ["file:///etc/passwd", "gopher://x/", "ftp://x/"] {
             assert!(
                 matches!(
-                    p.check_typed(url, None).await,
+                    p.check_typed(url, Reach::default()).await,
                     Err(EgressError::Denied(DenyReason::Scheme(_)))
                 ),
                 "{url} is not dialable"
@@ -699,7 +732,8 @@ mod tests {
         }
         assert!(
             matches!(
-                p.check_typed("http://user:pw@example.com/", None).await,
+                p.check_typed("http://user:pw@example.com/", Reach::default())
+                    .await,
                 Err(EgressError::Denied(DenyReason::Malformed(_)))
             ),
             "userinfo in the authority is refused"
@@ -714,7 +748,7 @@ mod tests {
             ("::ffff:93.184.216.34", "93.184.216.34"),
         ] {
             let address = SocketAddr::new(destination.parse().expect("fixture IP"), 443);
-            let permit = policy.check_socket(address, Some(&[allowed.to_owned()]));
+            let permit = policy.check_socket(address, only(&[allowed.to_owned()]));
             assert!(permit.is_ok(), "numeric allowlist must admit its exact IPv4/mapped equivalent: {allowed} -> {destination}");
             drop(permit);
         }
@@ -725,7 +759,7 @@ mod tests {
             "64:ff9b::5db8:d822",
         ] {
             let address = SocketAddr::new(destination.parse().expect("fixture IP"), 443);
-            assert!(matches!(policy.check_socket(address, Some(&["93.184.216.34".to_owned()])), Err(DenyReason::NotAllowlisted(_))),
+            assert!(matches!(policy.check_socket(address, only(&["93.184.216.34".to_owned()])), Err(DenyReason::NotAllowlisted(_))),
                 "numeric equivalence must not authorize a different or merely embedded address: {destination}");
         }
         assert_eq!(
@@ -743,7 +777,7 @@ mod tests {
             .expect("fixture socket address");
         assert!(
             matches!(
-                policy.check_socket(destination, Some(&["127.0.0.1".to_owned()])),
+                policy.check_socket(destination, only(&["127.0.0.1".to_owned()])),
                 Err(DenyReason::PrivateAddress(_))
             ),
             "an equivalent numeric allowlist must not bypass the private destination policy"
@@ -760,25 +794,25 @@ mod tests {
         let p = policy(Fixed(vec![sa([93, 184, 216, 34], 443)]));
         let list = vec!["api.example.com".to_string(), "*.cdn.example".to_string()];
         assert!(
-            p.check_typed("https://api.example.com/x", Some(&list))
+            p.check_typed("https://api.example.com/x", only(&list))
                 .await
                 .is_ok(),
             "an exact entry matches"
         );
         assert!(
-            p.check_typed("https://a.cdn.example/x", Some(&list))
+            p.check_typed("https://a.cdn.example/x", only(&list))
                 .await
                 .is_ok(),
             "a wildcard matches a subdomain"
         );
         assert!(
-            p.check_typed("https://cdn.example/x", Some(&list))
+            p.check_typed("https://cdn.example/x", only(&list))
                 .await
                 .is_ok(),
             "a wildcard matches its bare suffix"
         );
         let err = p
-            .check_typed("https://evil.example/x", Some(&list))
+            .check_typed("https://evil.example/x", only(&list))
             .await
             .expect_err("a host off the list is refused");
         assert!(
@@ -786,7 +820,7 @@ mod tests {
             "the refusal names the host"
         );
         assert!(
-            p.check_typed("https://notcdn.example/x", Some(&list))
+            p.check_typed("https://notcdn.example/x", only(&list))
                 .await
                 .is_err(),
             "`*.cdn.example` is not a raw suffix match"
@@ -801,16 +835,20 @@ mod tests {
             1 << 30,
         );
         assert!(
-            p.check_typed("http://a.example/", None).await.is_ok(),
+            p.check_typed("http://a.example/", Reach::default())
+                .await
+                .is_ok(),
             "the first connection"
         );
         assert!(
-            p.check_typed("http://a.example/", None).await.is_ok(),
+            p.check_typed("http://a.example/", Reach::default())
+                .await
+                .is_ok(),
             "the second connection"
         );
         assert!(
             matches!(
-                p.check_typed("http://a.example/", None).await,
+                p.check_typed("http://a.example/", Reach::default()).await,
                 Err(EgressError::Denied(DenyReason::ConnectionQuota {
                     limit: 2
                 }))
@@ -819,7 +857,9 @@ mod tests {
         );
         p.release_connection();
         assert!(
-            p.check_typed("http://a.example/", None).await.is_ok(),
+            p.check_typed("http://a.example/", Reach::default())
+                .await
+                .is_ok(),
             "a released connection frees the slot"
         );
     }
@@ -828,7 +868,9 @@ mod tests {
     async fn a_denied_target_does_not_burn_quota() {
         let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([10, 0, 0, 1], 80)])), 1, 1 << 30);
         assert!(
-            p.check_typed("http://internal/", None).await.is_err(),
+            p.check_typed("http://internal/", Reach::default())
+                .await
+                .is_err(),
             "the target is private"
         );
         assert_eq!(p.connections(), 0, "a refused target holds no slot");
@@ -842,7 +884,7 @@ mod tests {
             1 << 30,
         ));
         let connection = policy
-            .check_owned("http://example.test/", None)
+            .check_owned("http://example.test/", Reach::default())
             .await
             .expect("the public destination must acquire connection quota");
         let (started, running) = tokio::sync::oneshot::channel();

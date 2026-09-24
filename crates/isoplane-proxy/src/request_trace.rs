@@ -1,47 +1,19 @@
-//! Independent local request traces joined across forwarding by an opaque request ID.
+//! Request traces carrying an opaque host-generated request ID that joins a request's logs.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use bytes::Buf;
 use hyper::body::{Body, Frame, SizeHint};
-use hyper::header::{HeaderMap, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
 
-const REQUEST_ID: &str = "x-isoplane-internal-request-id";
-
-/// Whether request IDs were assigned by the host's forwarding boundary.
-#[derive(Clone, Copy, Debug, Default)]
-pub enum RequestOrigin {
-    /// Replace client-supplied correlation values.
-    #[default]
-    Public,
-    /// Accept the host ID on the private application-worker listener.
-    Forwarded,
-}
-
-/// Host-generated correlation identity, separate from either process's trace ID.
+/// Host-generated correlation identity, separate from the trace ID.
 #[derive(Clone, Copy, Debug)]
 struct RequestId(u128);
 
 impl std::fmt::Display for RequestId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:032x}", self.0)
-    }
-}
-
-impl RequestId {
-    fn take(headers: &mut HeaderMap, origin: RequestOrigin) -> Self {
-        let supplied = headers.remove(REQUEST_ID);
-        let accepted = match origin {
-            RequestOrigin::Public => None,
-            RequestOrigin::Forwarded => supplied
-                .as_ref()
-                .and_then(|value| value.to_str().ok())
-                .filter(|value| value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit()))
-                .and_then(|value| u128::from_str_radix(value, 16).ok()),
-        };
-        Self(accepted.unwrap_or_else(rand::random))
     }
 }
 
@@ -53,26 +25,10 @@ pub struct RequestTrace {
 }
 
 impl RequestTrace {
-    /// Replace untrusted IDs and carry the new host ID to the private worker.
-    pub fn frontend<B>(request: &mut Request<B>) -> Self {
-        let id = RequestId::take(request.headers_mut(), RequestOrigin::Public);
-        request.headers_mut().insert(
-            REQUEST_ID,
-            HeaderValue::from_str(&id.to_string())
-                .expect("a fixed-width hexadecimal request ID is a valid header"),
-        );
+    pub(crate) fn new<B>(request: &Request<B>) -> Self {
+        let id = RequestId(rand::random());
         Self {
-            span: tracing::info_span!(parent: None, "frontend_request", request_id = %id,
-                status = tracing::field::Empty, outcome = tracing::field::Empty),
-            finished: false,
-            head_request: request.method() == Method::HEAD,
-        }
-    }
-
-    pub(crate) fn worker<B>(request: &mut Request<B>, origin: RequestOrigin) -> Self {
-        let id = RequestId::take(request.headers_mut(), origin);
-        Self {
-            span: tracing::info_span!(parent: None, "worker_request", request_id = %id,
+            span: tracing::info_span!(parent: None, "request", request_id = %id,
                 status = tracing::field::Empty, outcome = tracing::field::Empty),
             finished: false,
             head_request: request.method() == Method::HEAD,

@@ -1,4 +1,5 @@
-//! Pressure reclamation across local cells.
+//! Node-wide ordering over the node's cells.
+
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -69,8 +70,6 @@ impl Participant for Local {
     }
 }
 
-
-
 pub(crate) fn local_candidate(
     cells: &crate::real::RealCells,
     kind: ReclaimKind,
@@ -108,7 +107,7 @@ pub(crate) async fn reclaim_local(
     tokio::task::spawn_blocking(move || cell.reclaim_candidate(candidate.instance)).await?
 }
 
-/// Orders reclamation candidates from the host's local cells.
+/// One ordering authority for every cell a node owns.
 pub(crate) struct Coordinator {
     participants: parking_lot::Mutex<Vec<Arc<dyn Participant>>>,
     round: tokio::sync::Mutex<()>,
@@ -144,7 +143,6 @@ impl Coordinator {
         }
         coordinator
     }
-
 
     pub(crate) fn start(
         self: &Arc<Self>,
@@ -391,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_cells_idle_candidates_precede_older_unfinished_work() {
+    async fn every_workers_idle_candidates_precede_older_unfinished_work() {
         let attempts = Arc::new(parking_lot::Mutex::new(vec![]));
         let coordinator = coordinator(vec![
             participant(
@@ -410,7 +408,7 @@ mod tests {
         assert_eq!(
             *attempts.lock(),
             vec![3, 2, 1],
-            "local LRU must drain completed work across cells before unfinished work"
+            "node-wide LRU must drain completed work across workers before unfinished work"
         );
     }
 
@@ -437,7 +435,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unavailable_participant_does_not_block_reclamation_in_healthy_participants() {
+    async fn an_unavailable_worker_does_not_block_reclamation_in_healthy_workers() {
         let attempts = Arc::new(parking_lot::Mutex::new(vec![]));
         let mut unavailable = participant(vec![candidate(1, 1, ReclaimKind::Idle)], &attempts);
         unavailable.unavailable = true;
@@ -452,7 +450,7 @@ mod tests {
         assert_eq!(
             *attempts.lock(),
             vec![2],
-            "an unavailable participant cannot starve reachable eligible instances"
+            "an unavailable worker cannot starve reachable eligible instances"
         );
     }
 
@@ -486,5 +484,181 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_real_http_request_wakes_after_pressure_driven_snapshot_capture() {
+        use isoplane_abi::result::ResultRecord;
+        use isoplane_host::LifecycleTier;
 
+        let directory = tempfile::tempdir().expect("create owned node snapshot directory");
+        let mut config = crate::NodeConfig::dev_default();
+        config.data_dir = directory.path().to_path_buf();
+        config.engine.max_instances = 2;
+        config.engine.max_memory_mib = 16;
+        config.engine.guard_mib = 16;
+        config.host.hibernate.handler_after_ms = 0;
+        let application = config.apps.remove(0);
+        config.cells.retain(|cell| cell.name == application.cell);
+        let app = application.name.clone();
+        let version = application.versions[0].id.clone();
+        let tenant = application.tenant.clone();
+        let hostname = application.hosts[0].clone();
+        let lifecycle = application.lifecycle;
+        let limits = application.limits;
+        config.apps = vec![application];
+        let node = crate::Node::build(config).expect("assemble a real node");
+        // This test drives reclamation itself, under a pressure it controls.
+        node.background.cancel();
+        let real = node
+            .real
+            .as_ref()
+            .expect("node must use real cells")
+            .clone();
+        let response = isoplane_abi::encode(&isoplane_abi::dispatch::ResponseHead {
+            status: 200,
+            headers: vec![],
+            body: b"resumed".to_vec(),
+            streaming: false,
+        })
+        .expect("encode the fixture HTTP response");
+        let escaped: String = response
+            .iter()
+            .map(|byte| format!("\\{byte:02x}"))
+            .collect();
+        let pending = isoplane_abi::status::PollStatus::Pending.encode();
+        let wasm = wat::parse_str(format!(r#"(module
+            (import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))
+            (import "isoplane" "resp_new" (func $response (param i32 i32) (result i32)))
+            (memory (export "memory") 2 2)
+            (global $phase (export "phase") (mut i32) (i32.const 0))
+            (data (i32.const 1024) "{escaped}")
+            (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 16384))
+            (func (export "isoplane_handle") (param i32 i32) (result i64)
+                (global.set $phase (i32.const 1))
+                (i32.store (i32.const 8192) (i32.const 123456))
+                (drop (call $timer (i64.const 600000)))
+                (i64.const {pending}))
+            (func (export "isoplane_wake") (param i64 i32 i32) (result i64)
+                (if (i32.ne (global.get $phase) (i32.const 1)) (then unreachable))
+                (if (i32.ne (i32.load (i32.const 8192)) (i32.const 123456)) (then unreachable))
+                (i64.shl (i64.extend_i32_u (call $response (i32.const 1024) (i32.const {}))) (i64.const 32))))"#, response.len()))
+            .expect("assemble the returned-stack continuation fixture");
+        let template = real
+            .engine()
+            .load_template(&wasm)
+            .expect("load real guest template");
+        let manifest = serde_json::from_value(serde_json::json!({
+            "name": app, "handlers": { "lifecycle": lifecycle }, "limits": limits,
+            "guest_memory_bytes": 2 * isoplane_abi::WASM_PAGE_SIZE,
+        }))
+        .expect("fixture manifest must describe its memory ceiling");
+        real.install_prepared(&app, &version, &tenant, manifest, template)
+            .await
+            .expect("register the real guest for local snapshot capture");
+        let cell = real.cells().first().expect("one real cell").clone();
+        let pressure = Arc::new(ControlledPressure(std::sync::atomic::AtomicU64::new(100)));
+        let coordinator = Coordinator {
+            participants: parking_lot::Mutex::new(vec![Arc::new(Local(Arc::downgrade(&real)))]),
+            round: tokio::sync::Mutex::new(()),
+            pressure: pressure.clone(),
+            policy: node.cfg.host.hibernate,
+            reclaiming: Default::default(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind owned HTTP listener");
+        let address = listener.local_addr().expect("read owned HTTP endpoint");
+        let serving = tokio::spawn(node.clone().serve(listener));
+        let request = tokio::spawn(async move {
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("build local HTTP client")
+                .get(format!("http://{address}/"))
+                .header("host", hostname)
+                .send()
+                .await
+                .expect("real HTTP dispatch must finish")
+        });
+        let (instance, future) = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                let candidate = cell
+                    .reclamation_candidates(isoplane_host::now_ms())
+                    .into_iter()
+                    .find(|candidate| candidate.kind == ReclaimKind::Active);
+                let futures = cell.futures().live_guest_future_ids();
+                if let (Some(candidate), [future]) = (candidate, futures.as_slice()) {
+                    break (candidate.instance, *future);
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the HTTP guest must return and wait on one host future");
+        coordinator
+            .reclaim_memory()
+            .await
+            .expect("sample healthy memory");
+        assert_eq!(
+            cell.instance_state(instance),
+            Some(LifecycleTier::Parked),
+            "healthy memory must retain the waiting guest's resident Store"
+        );
+        pressure.0.store(0, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while cell.instance_state(instance) != Some(LifecycleTier::Hibernated) {
+                coordinator
+                    .reclaim_memory()
+                    .await
+                    .expect("pressure policy must capture the real candidate");
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pressure must release the waiting guest Store");
+        assert_eq!(
+            cell.futures().live_guest_future_ids(),
+            vec![future],
+            "automatic pressure capture must preserve the pending host wake source"
+        );
+        cell.complete_future(future, ResultRecord::Ok(vec![]));
+        let response = tokio::time::timeout(Duration::from_secs(60), request)
+            .await
+            .expect("host completion must wake the HTTP request")
+            .expect("join HTTP client");
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::OK,
+            "the restored continuation must finish the original HTTP response"
+        );
+        assert_eq!(
+            response.bytes().await.expect("read HTTP body").as_ref(),
+            b"resumed",
+            "pressure restoration must preserve the guest's modified memory and global state"
+        );
+        assert_eq!(
+            cell.metrics().hibernation_wakes,
+            1,
+            "the HTTP continuation must actually restore a reserved snapshot"
+        );
+        node.shutdown();
+        serving
+            .await
+            .expect("join real listener")
+            .expect("listener shutdown must succeed");
+        drop(cell);
+        drop(real);
+        tokio::task::spawn_blocking(move || drop(node))
+            .await
+            .expect("drop the cell runtime outside its async executor");
+    }
+
+    struct ControlledPressure(std::sync::atomic::AtomicU64);
+    impl MemoryPressureSource for ControlledPressure {
+        fn sample(&self) -> Result<MemorySample, MemoryPressureError> {
+            Ok(MemorySample {
+                available: MemoryBytes(self.0.load(std::sync::atomic::Ordering::SeqCst)),
+                total: MemoryBytes(100),
+            })
+        }
+    }
 }

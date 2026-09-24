@@ -83,14 +83,14 @@ impl State {
 impl IsoplaneEngine {
     pub(super) fn finish_prepared(
         &self,
-        module: wasmtime::Module,
+        native: Arc<super::native::SharedNative>,
         manifest: Manifest,
         state: State,
         image: MemoryImage,
     ) -> Result<Template> {
         let filesystem_files = state.filesystem(&self.inner.cfg.platform_files)?;
         let (pal_linker, pal_composed) = self
-            .template_linker(&module)
+            .template_linker(&native.module)
             .map_err(PreparedError::Engine)?;
         Ok(Template {
             hash: ModuleHash(manifest.module_hash),
@@ -101,7 +101,7 @@ impl IsoplaneEngine {
                 activation_prefetch: None,
                 application_files: state.application_files,
                 filesystem_files,
-                module,
+                native,
                 pal_linker,
                 pal_composed,
                 image: Arc::new(image),
@@ -113,6 +113,7 @@ impl IsoplaneEngine {
                 table_nullness: state.table_nullness,
                 has_gc_hint: state.has_gc_hint,
                 has_initialize: state.has_initialize,
+                failed_storage: Default::default(),
             }),
         })
     }

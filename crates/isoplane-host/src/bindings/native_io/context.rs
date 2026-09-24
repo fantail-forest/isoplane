@@ -31,7 +31,8 @@ pub(crate) trait Context {
     fn runtime(&self) -> Option<Runtime>;
     fn tenant(&self) -> &str;
     fn instance(&self) -> InstanceId;
-    fn allowlist(&self) -> Option<&[String]>;
+    fn reach(&self) -> crate::egress::Reach<'_>;
+    fn connection_owner(&self) -> std::io::Result<crate::egress::ConnectionOwner>;
     fn alloc(&self, import: &'static str) -> Option<u64>;
 }
 
@@ -51,8 +52,17 @@ impl Context for CellBindings {
     fn instance(&self) -> InstanceId {
         self.ctx.instance
     }
-    fn allowlist(&self) -> Option<&[String]> {
-        self.ctx.allowlist.as_deref()
+    fn reach(&self) -> crate::egress::Reach<'_> {
+        crate::egress::Reach {
+            allowlist: self.ctx.allowlist.as_deref(),
+            exceptions: &self.ctx.endpoint_exceptions,
+        }
+    }
+    fn connection_owner(&self) -> std::io::Result<crate::egress::ConnectionOwner> {
+        Ok(
+            crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance)?
+                .with_exceptions(self.ctx.endpoint_exceptions.clone()),
+        )
     }
     fn alloc(&self, import: &'static str) -> Option<u64> {
         self.alloc(import)

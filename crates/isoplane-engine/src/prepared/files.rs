@@ -4,18 +4,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::native::NativeCopy;
 use super::{
     Manifest, PreparedError, PreparedTemplate, Result, MANIFEST, PAYLOAD_NAMES,
 };
-
-/// Storage policy chosen explicitly when publishing prepared artifacts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PreparedStorage {
-    /// Read-only published files, verified before mapping from operator-controlled storage.
-    Mapped,
-    /// Locally compiled files, read into owned memory before execution.
-    VerifiedCopy,
-}
 
 /// One payload in the fixed prepared-artifact schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -82,12 +74,9 @@ fn io(operation: &'static str, path: &Path, source: std::io::Error) -> PreparedE
 }
 
 impl PreparedTemplate {
-    /// Atomically publishes a new directory; existing versions are never overwritten.
-    pub fn publish(
-        &self,
-        directory: &Path,
-        storage: PreparedStorage,
-    ) -> Result<()> {
+    /// Atomically publishes a new directory of read-only payloads; existing
+    /// versions are never overwritten.
+    pub fn publish(&self, directory: &Path) -> Result<()> {
         let parent = directory.parent().ok_or(PreparedError::Invalid(
             "publication directory has no parent",
         ))?;
@@ -102,14 +91,12 @@ impl PreparedTemplate {
         for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
             let path = temporary.path().join(name);
             write_new(&path, &self.payloads[index])?;
-            if storage == PreparedStorage::Mapped {
-                let mut permissions = std::fs::metadata(&path)
-                    .map_err(|e| io("stat published payload", &path, e))?
-                    .permissions();
-                permissions.set_readonly(true);
-                std::fs::set_permissions(&path, permissions)
-                    .map_err(|e| io("make published payload read-only", &path, e))?;
-            }
+            let mut permissions = std::fs::metadata(&path)
+                .map_err(|e| io("stat published payload", &path, e))?
+                .permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&path, permissions)
+                .map_err(|e| io("make published payload read-only", &path, e))?;
         }
         let metadata = postcard::to_allocvec(&self.manifest)?;
         write_new(&temporary.path().join(MANIFEST), &metadata)?;
@@ -165,61 +152,71 @@ pub(super) fn read_manifest_receipt(
     ))
 }
 
-pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Vec<u8>; 3]> {
-    let mut payloads = std::array::from_fn(|_| Vec::new());
-    for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
-        let _payload = tracing::info_span!(
-            "template_payload_read_verify",
-            payload = *name,
-            bytes = manifest.files[index].bytes
-        )
-        .entered();
-        let path = directory.join(name);
-        let file = File::open(&path).map_err(|e| io("open payload", &path, e))?;
-        let record = &manifest.files[index];
-        if file
-            .metadata()
-            .map_err(|e| io("stat payload", &path, e))?
-            .len()
-            != record.bytes
-        {
-            return Err(PreparedError::Invalid(
-                "payload length differs from manifest",
-            ));
-        }
-        file.take(
-            record
-                .bytes
-                .checked_add(1)
-                .ok_or(PreparedError::Invalid("payload length overflow"))?,
-        )
-        .read_to_end(&mut payloads[index])
-        .map_err(|e| io("read payload", &path, e))?;
-        if payloads[index].len() as u64 != record.bytes
-            || blake3::hash(&payloads[index]).as_bytes() != &record.hash
-        {
-            return Err(PreparedError::Invalid(
-                "payload differs from manifest",
-            ));
-        }
-    }
-    Ok(payloads)
+/// A mapped template's payloads, verified against its manifest: the
+/// native code copied into memory, the baseline and state as files to map.
+/// The native copy is absent when the engine already holds the module the
+/// manifest records, so it is neither read nor verified again.
+pub(super) struct Verified {
+    pub native: Option<NativeCopy>,
+    pub baseline: File,
+    pub state: File,
 }
 
-pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[File; 3]> {
+impl Verified {
+    /// The payload files still read from storage, in `PAYLOAD_NAMES` order.
+    pub fn each(&self) -> [Option<&File>; 3] {
+        [None, Some(&self.baseline), Some(&self.state)]
+    }
+}
+
+/// Opens and verifies the payloads, copying the native one only when `native`.
+pub(super) fn open_verified(
+    directory: &Path,
+    manifest: &Manifest,
+    native: bool,
+) -> Result<Verified> {
     // The payloads verify concurrently, each hashed across cores, so a cold
     // load waits on the largest payload's read rather than the sum of the
     // single-threaded hashes.
-    let [native, baseline, state] = std::thread::scope(|scope| {
-        [0, 1, 2]
-            .map(|index| scope.spawn(move || open_verified_payload(directory, manifest, index)))
-            .map(|handle| {
-                handle
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    // Each payload's span nests under the caller's load, as it did on one thread.
+    let parent = tracing::Span::current();
+    std::thread::scope(|scope| {
+        let native = native.then(|| {
+            spawn_under(scope, &parent, || {
+                let mut copy =
+                    NativeCopy::new().map_err(|e| io("copy native payload", directory, e))?;
+                open_verified_payload(directory, manifest, 0, &mut copy)?;
+                Ok(copy)
             })
-    });
-    Ok([native?, baseline?, state?])
+        });
+        let file = |index| {
+            spawn_under(scope, &parent, move || {
+                open_verified_payload(directory, manifest, index, &mut std::io::sink())
+            })
+        };
+        let baseline = file(1);
+        let state = file(2);
+        Ok(Verified {
+            native: native.map(join).transpose()?,
+            baseline: join(baseline)?,
+            state: join(state)?,
+        })
+    })
+}
+
+fn spawn_under<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    parent: &tracing::Span,
+    verify: impl FnOnce() -> Result<T> + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, Result<T>> {
+    let parent = parent.clone();
+    scope.spawn(move || parent.in_scope(verify))
+}
+
+fn join<T>(handle: std::thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// A few hashing threads: more costs more in coordination than it saves on a
@@ -238,7 +235,14 @@ fn hash_pool() -> Result<&'static rayon::ThreadPool> {
     Ok(POOL.get_or_init(|| pool))
 }
 
-fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) -> Result<File> {
+/// Verifies one payload against the manifest, writing each block it hashes
+/// to `copy`.
+fn open_verified_payload(
+    directory: &Path,
+    manifest: &Manifest,
+    index: usize,
+    copy: &mut impl Write,
+) -> Result<File> {
     const READ_BYTES: usize = 8 << 20;
     let _payload = tracing::info_span!(
         "template_payload_verify",
@@ -276,6 +280,8 @@ fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) ->
             ));
         }
         hash_pool()?.install(|| hash.update_rayon(&buffer[..read]));
+        copy.write_all(&buffer[..read])
+            .map_err(|e| io("copy verified payload", &path, e))?;
     }
     if bytes != record.bytes || hash.finalize().as_bytes() != &record.hash {
         return Err(PreparedError::Invalid(
@@ -288,7 +294,9 @@ fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) ->
 }
 
 #[tracing::instrument(name = "template_read_ahead", skip_all, fields(ranges = ranges.len()))]
-pub(super) fn advise(files: &[File; 3], manifest: &Manifest, ranges: &[ReadAhead]) -> Result<()> {
+/// Asks the kernel to read `ranges` ahead. A range in a payload the engine
+/// holds in memory is validated but not read.
+pub(super) fn advise(files: &Verified, manifest: &Manifest, ranges: &[ReadAhead]) -> Result<()> {
     let mut ordered: Vec<_> = ranges.iter().collect();
     ordered.sort_by_key(|range| (range.payload, range.offset_bytes));
     let mut previous = None;
@@ -314,7 +322,9 @@ pub(super) fn advise(files: &[File; 3], manifest: &Manifest, ranges: &[ReadAhead
         previous = Some((range.payload, end));
     }
     for range in ordered {
-        advise_file(&files[range.payload.index()], range)?;
+        if let Some(file) = files.each()[range.payload.index()] {
+            advise_file(file, range)?;
+        }
     }
     Ok(())
 }
@@ -377,20 +387,17 @@ mod tests {
         engine
             .prepare_template(&wasm, identity)
             .expect("prepare")
-            .publish(
-                &directory.path().join("version"),
-                PreparedStorage::Mapped,
-            )
+            .publish(&directory.path().join("version"))
             .expect("mapped publication");
         (directory, identity, engine)
     }
 
     #[test]
-    fn verification_and_mapping_keep_the_same_inode_after_path_replacement() {
+    fn the_native_code_loaded_is_the_code_verified_after_path_replacement() {
         let (directory, _, engine) = fixture();
         let path = directory.path().join("version");
         let manifest = read_manifest(&path).expect("manifest");
-        let files = open_verified(&path, &manifest).expect("verify held files");
+        let files = open_verified(&path, &manifest, true).expect("verify held files");
         std::fs::rename(path.join(super::super::NATIVE), path.join("old-native"))
             .expect("replace path");
         std::fs::write(
@@ -398,17 +405,16 @@ mod tests {
             b"replacement is not native code",
         )
         .expect("replacement");
-        let [native, _, _] = files;
-        // SAFETY: the fixture locally compiled this exact verified held immutable native file.
+        let native = files.native.expect("the native payload was requested");
+        // SAFETY: the fixture locally compiled these bytes, and verification checked the private copy.
         let module =
-            unsafe { wasmtime::Module::deserialize_open_file(&engine.inner.wasmtime, native) }
-                .expect("map original held inode");
+            unsafe { native.deserialize(&engine.inner.wasmtime) }.expect("load the verified copy");
         assert!(
             module.get_export("memory").is_some(),
-            "the held native inode must survive path replacement"
+            "the verified native code must survive path replacement"
         );
         assert!(
-            open_verified(&path, &manifest).is_err(),
+            open_verified(&path, &manifest, true).is_err(),
             "a later load must reject the replacement"
         );
     }
@@ -442,7 +448,7 @@ mod tests {
             std::fs::write(&payload, changed).expect("replace payload");
             assert!(
                 matches!(
-                    open_verified(&path, &manifest),
+                    open_verified(&path, &manifest, true),
                     Err(PreparedError::Invalid(_))
                 ),
                 "mapping must reject same-length tampering in {name}"
@@ -456,7 +462,7 @@ mod tests {
         let (directory, _, _) = fixture();
         let path = directory.path().join("version");
         let manifest = read_manifest(&path).expect("manifest");
-        let files = open_verified(&path, &manifest).expect("files");
+        let files = open_verified(&path, &manifest, true).expect("files");
         for ranges in [
             vec![ReadAhead {
                 payload: PreparedPayload::Native,

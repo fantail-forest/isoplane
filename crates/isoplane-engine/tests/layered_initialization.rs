@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use isoplane_engine::prepared::{PreparedIdentity, PreparedStorage, PreparedTemplate};
+use isoplane_engine::prepared::{PreparedIdentity, PreparedTemplate};
 use isoplane_engine::{Completion, CpuBudget, Instance, InstanceOps, IsoplaneEngine, Template};
 
 fn identity() -> PreparedIdentity {
@@ -64,9 +64,7 @@ fn layer_publication_preserves_compiled_code_and_restores_globals_and_memory() {
     let product = capture(&engine, &source, &mut instance);
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("layer");
-    product
-        .publish(&path, PreparedStorage::Mapped)
-        .expect("publish");
+    product.publish(&path).expect("publish");
     assert_eq!(
         std::fs::read(path.join("template.cwasm")).expect("native payload"),
         native_before,
@@ -75,7 +73,7 @@ fn layer_publication_preserves_compiled_code_and_restores_globals_and_memory() {
     drop(instance);
     drop(source);
     // SAFETY: the test owns the published files and never changes their contents.
-    let restored = unsafe { engine.load_prepared_mapped(&path, identity(), &[]) }
+    let restored = unsafe { engine.load_prepared(&path, identity(), &[]) }
         .expect("load layer from published files");
     assert!(
         !restored.has_initialize(),

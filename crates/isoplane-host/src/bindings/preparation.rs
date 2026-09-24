@@ -118,8 +118,14 @@ impl Context for PreparationIo {
     fn instance(&self) -> InstanceId {
         self.config.owner.instance()
     }
-    fn allowlist(&self) -> Option<&[String]> {
-        self.config.allowlist.as_deref()
+    fn reach(&self) -> crate::egress::Reach<'_> {
+        crate::egress::Reach {
+            allowlist: self.config.allowlist.as_deref(),
+            exceptions: self.config.owner.exceptions(),
+        }
+    }
+    fn connection_owner(&self) -> std::io::Result<crate::egress::ConnectionOwner> {
+        Ok(self.config.owner.clone())
     }
     fn alloc(&self, import: &'static str) -> Option<u64> {
         self.runtime

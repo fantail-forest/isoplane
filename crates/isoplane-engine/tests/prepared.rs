@@ -2,8 +2,30 @@
 mod common;
 
 use common::*;
-use isoplane_engine::prepared::{PreparedError, PreparedIdentity, PreparedStorage};
+use isoplane_engine::prepared::{PreparedError, PreparedIdentity};
 use isoplane_engine::InstanceOps;
+
+/// Maps a template published at `path`.
+fn load(
+    engine: &isoplane_engine::IsoplaneEngine,
+    path: &std::path::Path,
+    expected: PreparedIdentity,
+) -> Result<isoplane_engine::Template, PreparedError> {
+    // SAFETY: callers use this test fixture's local compiler output and private storage;
+    // they change files only before loading to check refusal, and retain mapped backing.
+    unsafe { engine.load_prepared(path, expected, &[]) }
+}
+
+/// Maps a locally compiled fixture selected by its receipt.
+fn restore(
+    engine: &isoplane_engine::IsoplaneEngine,
+    path: &std::path::Path,
+    manifest_sha256: [u8; 32],
+    runtime_profile: [u8; 32],
+) -> Result<isoplane_engine::Template, PreparedError> {
+    // SAFETY: as for `load`.
+    unsafe { engine.restore_prepared(path, manifest_sha256, runtime_profile, &[]) }
+}
 
 fn identity(wasm: &[u8]) -> PreparedIdentity {
     PreparedIdentity {
@@ -35,14 +57,8 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
         .expect("prepare");
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("version");
-    prepared
-        .publish(&path, PreparedStorage::VerifiedCopy)
-        .expect("publish");
-    let loaded = unsafe {
-        // SAFETY: this test compiled the artifact into its own private fixture storage.
-        engine.load_prepared(&path, identity(&wasm))
-    }
-    .expect("load");
+    prepared.publish(&path).expect("publish");
+    let loaded = load(&engine, &path, identity(&wasm)).expect("load");
     assert_eq!(
         loaded.memory_image_arc(),
         expected.memory_image_arc(),
@@ -64,37 +80,6 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
 }
 
 #[test]
-fn mapped_prepared_state_activates_from_compiled_files() {
-    let engine = test_engine();
-    let wasm = guest(
-        4,
-        "",
-        r#"(data (i32.const 9000) "mapped memory")"#,
-        DONE,
-        DONE,
-    );
-    let expected = engine.load_template(&wasm).expect("portable template");
-    let directory = tempfile::tempdir().expect("directory");
-    let path = directory.path().join("version");
-    engine
-        .prepare_template(&wasm, identity(&wasm))
-        .expect("prepare")
-        .publish(&path, PreparedStorage::Mapped)
-        .expect("publish");
-    // SAFETY: this test owns the trusted files and leaves their contents unchanged until
-    // the mappings are dropped; any mapping fault terminates only this test process.
-    let loaded = unsafe { engine.load_prepared_mapped(&path, identity(&wasm), &[]) }
-        .expect("map locally compiled template");
-    let mut instance = activate(&engine, &loaded);
-    let mut original = activate(&engine, &expected);
-    assert_eq!(
-        instance.memory(),
-        original.memory(),
-        "mapped activation must preserve the captured initial memory"
-    );
-}
-
-#[test]
 fn changed_payloads_are_rejected_when_the_manifest_is_unchanged() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
@@ -107,19 +92,11 @@ fn changed_payloads_are_rejected_when_the_manifest_is_unchanged() {
         .enumerate()
     {
         let path = directory.path().join(index.to_string());
-        prepared
-            .publish(&path, PreparedStorage::VerifiedCopy)
-            .expect("publish");
-        let payload = path.join(name);
-        let mut bytes = std::fs::read(&payload).expect("read");
-        bytes[0] ^= 1;
-        std::fs::write(payload, bytes).expect("alter payload");
+        prepared.publish(&path).expect("publish");
+        tamper(&path.join(name));
         assert!(
             matches!(
-                unsafe {
-                    // SAFETY: this test compiled the artifact into its own private fixture storage.
-                    engine.load_prepared(&path, identity(&wasm))
-                },
+                load(&engine, &path, identity(&wasm)),
                 Err(PreparedError::Invalid(_))
             ),
             "changed {name} must be rejected before native execution"
@@ -136,16 +113,13 @@ fn an_unexpected_runtime_profile_is_rejected() {
     engine
         .prepare_template(&wasm, identity(&wasm))
         .expect("prepare")
-        .publish(&path, PreparedStorage::VerifiedCopy)
+        .publish(&path)
         .expect("publish");
     let mut other = identity(&wasm);
     other.runtime_profile[0] ^= 1;
     assert!(
         matches!(
-            unsafe {
-                // SAFETY: this test compiled the artifact into its own private fixture storage.
-                engine.load_prepared(&path, other)
-            },
+            load(&engine, &path, other),
             Err(PreparedError::Incompatible(_))
         ),
         "runtime compatibility must be checked before native deserialization"
@@ -161,16 +135,13 @@ fn another_initialization_context_cannot_substitute_a_prepared_template() {
     engine
         .prepare_template(&wasm, identity(&wasm))
         .expect("prepare")
-        .publish(&path, PreparedStorage::VerifiedCopy)
+        .publish(&path)
         .expect("publish");
     let mut other = identity(&wasm);
     other.initialization_hash[0] ^= 1;
     assert!(
         matches!(
-            unsafe {
-                // SAFETY: this test compiled the artifact into its own private fixture storage.
-                engine.load_prepared(&path, other)
-            },
+            load(&engine, &path, other),
             Err(PreparedError::Incompatible(_))
         ),
         "identical source/runtime must not admit another initialization configuration"
@@ -204,10 +175,7 @@ fn compiled_artifact() -> (
     engine
         .prepare_template(&wasm, expected)
         .expect("prepare")
-        .publish(
-            &directory.path().join("version"),
-            PreparedStorage::VerifiedCopy,
-        )
+        .publish(&directory.path().join("version"))
         .expect("publish");
     (engine, directory, expected)
 }
@@ -219,11 +187,8 @@ fn receipt_restoration_checks_the_exact_manifest_and_runtime() {
     let digest = engine
         .prepared_manifest_sha256(&path)
         .expect("content receipt");
-    let restored = unsafe {
-        // SAFETY: this test compiled the artifact into its own private fixture storage.
-        engine.restore_prepared(&path, digest, expected.runtime_profile)
-    }
-    .expect("the receipt must select compiled state without input hashes supplied separately");
+    let restored = restore(&engine, &path, digest, expected.runtime_profile)
+        .expect("the receipt must select compiled state without input hashes supplied separately");
     assert!(
         activate(&engine, &restored).memory().len() >= 4 * 65536,
         "receipt restoration must produce an activatable template"
@@ -235,14 +200,12 @@ fn receipt_restoration_rejects_a_different_manifest_digest() {
     let (engine, directory, expected) = compiled_artifact();
     assert!(
         matches!(
-            unsafe {
-                // SAFETY: this test compiled the artifact into its own private fixture storage.
-                engine.restore_prepared(
-                    &directory.path().join("version"),
-                    [0; 32],
-                    expected.runtime_profile,
-                )
-            },
+            restore(
+                &engine,
+                &directory.path().join("version"),
+                [0; 32],
+                expected.runtime_profile
+            ),
             Err(PreparedError::Incompatible("catalog manifest digest"))
         ),
         "an artifact selected by a different receipt must not execute"
@@ -256,10 +219,7 @@ fn receipt_restoration_rejects_a_different_runtime_profile() {
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
     assert!(
         matches!(
-            unsafe {
-                // SAFETY: this test compiled the artifact into its own private fixture storage.
-                engine.restore_prepared(&path, digest, [0; 32])
-            },
+            restore(&engine, &path, digest, [0; 32]),
             Err(PreparedError::Incompatible("catalog runtime profile"))
         ),
         "the selected runtime must match the compiled prepared state"
@@ -302,7 +262,7 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
     engine
         .prepare_template(&wasm, identity)
         .expect("prepare")
-        .publish(&path, PreparedStorage::VerifiedCopy)
+        .publish(&path)
         .expect("publish");
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
     for name in ["template.cwasm", "baseline.bin", "state.bin"] {
@@ -316,11 +276,7 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
         "receipt checks must not materialize native code or baseline pages"
     );
     assert!(
-        unsafe {
-            // SAFETY: this test compiled the artifact into its own private fixture storage.
-            engine.restore_prepared(&path, digest, identity.runtime_profile)
-        }
-        .is_err(),
+        restore(&engine, &path, digest, identity.runtime_profile).is_err(),
         "a manifest receipt alone must not qualify missing executable payloads"
     );
 }
@@ -363,7 +319,7 @@ fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
     engine
         .prepare_template(&wasm, expected)
         .expect("prepare without profiling")
-        .publish(&path, PreparedStorage::VerifiedCopy)
+        .publish(&path)
         .expect("publish");
     let dump = std::path::PathBuf::from(format!("jit-{}.dump", std::process::id()));
     assert!(
@@ -375,11 +331,8 @@ fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
         ..small_engine_config()
     })
     .expect("profiled engine");
-    let template = unsafe {
-        // SAFETY: this test compiled the artifact into its own private fixture storage.
-        profiled.load_prepared(&path, expected)
-    }
-    .expect("profiling must accept the existing unprofiled artifact identity");
+    let template = load(&profiled, &path, expected)
+        .expect("profiling must accept the existing unprofiled artifact identity");
     assert_eq!(
         activate(&profiled, &template).memory().len(),
         4 * 65536,
@@ -409,5 +362,92 @@ fn preparation_settings_do_not_enable_execution_process_profiling() {
     assert_eq!(
         restored.max_memory_bytes, config.max_memory_bytes,
         "excluding process-local diagnostics must preserve preparation memory limits"
+    );
+}
+
+/// Publishes `wasm` prepared under `identity` as a mapped artifact at `path`.
+fn publish_mapped(
+    engine: &isoplane_engine::IsoplaneEngine,
+    wasm: &[u8],
+    identity: PreparedIdentity,
+    path: &std::path::Path,
+) {
+    engine
+        .prepare_template(wasm, identity)
+        .expect("prepare")
+        .publish(path)
+        .expect("publish");
+}
+
+/// Flips the first byte of a published payload, keeping its length.
+fn tamper(payload: &std::path::Path) {
+    let mut bytes = std::fs::read(payload).expect("read payload");
+    bytes[0] ^= 1;
+    std::fs::remove_file(payload).expect("remove read-only payload");
+    std::fs::write(payload, bytes).expect("write changed payload");
+}
+
+/// Two artifacts of one module whose manifests record the same native
+/// payload under different initialization identities.
+fn sharing_artifacts(
+    engine: &isoplane_engine::IsoplaneEngine,
+    directory: &std::path::Path,
+) -> (Vec<u8>, [(std::path::PathBuf, PreparedIdentity); 2]) {
+    let wasm = guest(
+        4,
+        "",
+        r#"(data (i32.const 9000) "shared native")"#,
+        DONE,
+        DONE,
+    );
+    let first = identity(&wasm);
+    let second = PreparedIdentity {
+        initialization_hash: [4; 32],
+        ..first
+    };
+    let artifacts = [
+        (directory.join("first"), first),
+        (directory.join("second"), second),
+    ];
+    for (path, identity) in &artifacts {
+        publish_mapped(engine, &wasm, *identity, path);
+    }
+    (wasm, artifacts)
+}
+
+#[test]
+fn a_template_shares_native_code_its_engine_already_holds_without_reading_its_own_copy() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("directory");
+    let (wasm, [(first, first_identity), (second, second_identity)]) =
+        sharing_artifacts(&engine, directory.path());
+    tamper(&second.join("template.cwasm"));
+    let held = load(&engine, &first, first_identity).expect("map the first template");
+    let shared = load(&engine, &second, second_identity)
+        .expect("a template must share the native code its engine already verified and holds");
+    let expected = engine.load_template(&wasm).expect("portable template");
+    let mut instance = activate(&engine, &shared);
+    let mut original = activate(&engine, &expected);
+    assert_eq!(
+        instance.memory(),
+        original.memory(),
+        "a template sharing native code must keep its own captured initial memory"
+    );
+    drop(held);
+}
+
+#[test]
+fn a_native_payload_is_verified_again_once_no_template_holds_it() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("directory");
+    let (_, [(first, first_identity), (second, second_identity)]) =
+        sharing_artifacts(&engine, directory.path());
+    tamper(&second.join("template.cwasm"));
+    let held = load(&engine, &first, first_identity).expect("map the first template");
+    drop(held);
+    let refused = load(&engine, &second, second_identity);
+    assert!(
+        matches!(refused, Err(PreparedError::Invalid(_))),
+        "once no template holds the native code, a changed copy must be rejected"
     );
 }

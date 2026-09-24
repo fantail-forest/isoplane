@@ -445,6 +445,9 @@ impl InstanceOps for FakeInstance {
     fn memory_len(&self) -> usize {
         self.memory.len()
     }
+    fn storage_failed(&self) -> bool {
+        false
+    }
     fn capture_mutable_state(&mut self) -> anyhow::Result<InstanceImage> {
         Ok(InstanceImage {
             globals: self.image.globals.clone(),

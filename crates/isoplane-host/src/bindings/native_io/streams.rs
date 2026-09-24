@@ -237,7 +237,7 @@ mod tests {
                 .with_destinations(Arc::new(OwnedPeer(address))),
         );
         let permit = policy
-            .check_socket(address, None)
+            .check_socket(address, crate::egress::Reach::default())
             .expect("the exact owned peer must acquire quota");
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let mut context =

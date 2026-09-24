@@ -39,12 +39,18 @@ Take secrets and keys through an interface with a production implementation. Kee
 
 ## Verify before you map
 
-Establish an artifact's controlled compiler origin and compatibility before the engine maps it, and have the code path that maps it state those preconditions in its `SAFETY` comment and enforce it in its caller. Reject truncated or tampered artifacts at admission. Keep published backing files
-under operator control and unchanged for the lifetime of their mappings. Contain
-later mapped-storage faults in the supervised worker process. Filesystem-specific
-integrity features are not a prerequisite for artifact storage.
+Establish an artifact's controlled compiler origin and compatibility before the engine maps it, and have the code path that maps it state those preconditions in its `SAFETY` comment and enforce them in its caller. Reject truncated or tampered artifacts at admission. Keep published backing files
+under operator control and unchanged for the lifetime of their mappings. Map
+templates; do not copy them into private memory. Contain a later mapped-storage
+fault to the operation that hits it: turn the fault signal into a trap for the
+guest's call when wasm code reads the page, and when host code reads it, let
+the read complete and fail that host operation when it ends. Keep executable
+code off storage that can fail beneath it: a fault in code cannot be contained
+to one guest. Serve every application's guests from the node's shared process
+and thread pool. Filesystem-specific integrity features are not a prerequisite
+for artifact storage.
 
-**Not this:** An unsafe load whose caller cannot establish compiler origin or preserve its backing files.
+**Not this:** An unsafe load whose caller cannot establish compiler origin or preserve its backing files. A process per application or version to contain storage faults: it gives up the density the shared runtime exists for.
 
 **Exception:** None.
 

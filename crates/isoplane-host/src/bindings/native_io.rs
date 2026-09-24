@@ -131,7 +131,9 @@ mod tests {
                 .unwrap()
                 .with_destinations(Arc::new(EndpointPeer(remote))),
         );
-        let permit = policy.check_socket(remote, None).unwrap();
+        let permit = policy
+            .check_socket(remote, crate::egress::Reach::default())
+            .unwrap();
         let (mut resources, bindings) = resources(1);
         let socket = resources
             .insert(Resource::Socket(Socket {
@@ -1002,16 +1004,18 @@ impl Resources {
             .ok_or(Error::Unsupported("outbound connect without reactor"))?
             .clone();
         let policy = runtime.egress.clone();
-        let owner =
-            crate::egress::ConnectionOwner::new(bindings.tenant().to_owned(), bindings.instance())
-                .map_err(Error::from)?;
+        let owner = bindings.connection_owner().map_err(Error::from)?;
+        let reach = bindings.reach();
         let permit = policy
             .check_socket(
                 destination,
-                if self.has_resolved_address(destination.ip()) {
-                    None
-                } else {
-                    bindings.allowlist()
+                crate::egress::Reach {
+                    allowlist: if self.has_resolved_address(destination.ip()) {
+                        None
+                    } else {
+                        reach.allowlist
+                    },
+                    exceptions: reach.exceptions,
                 },
             )
             .map_err(|reason| Error::Denied(reason.to_string()))?;

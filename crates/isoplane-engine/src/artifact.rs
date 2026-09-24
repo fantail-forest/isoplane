@@ -48,7 +48,7 @@ impl IsoplaneEngine {
         let t = self.load_template(template_wasm)?;
         let cwasm = t
             .inner
-            .module
+            .module()
             .serialize()
             .map_err(anyhow::Error::from)
             .context("serializing compiled template")?;
@@ -328,7 +328,7 @@ impl IsoplaneEngine {
                 activation_prefetch: None,
                 application_files: crate::PlatformFiles::default(),
                 filesystem_files: self.inner.cfg.platform_files.clone(),
-                module,
+                native: Arc::new(crate::prepared::native::SharedNative { module }),
                 pal_linker,
                 pal_composed,
                 image,
@@ -340,6 +340,7 @@ impl IsoplaneEngine {
                 table_nullness,
                 has_gc_hint,
                 has_initialize,
+                failed_storage: Default::default(),
             }),
         })
     }

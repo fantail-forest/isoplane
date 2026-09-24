@@ -22,6 +22,10 @@ use crate::{DispatchOutcome, EngineInner, InstanceImage, Result, TrapInfo};
 /// `reset` can drop the whole thing, returning the slot to the pool, and build
 /// a fresh one while the caller's `Instance` stays valid.
 pub(crate) struct Live {
+    /// Watches memory mapped from the template's storage; declared first so
+    /// the range is released before the store frees it.
+    #[cfg(target_os = "linux")]
+    pub(crate) storage: Option<crate::storage_fault::Watch>,
     pub(crate) store: Store<StoreState>,
     pub(crate) memory: Memory,
     pub(crate) f_alloc: TypedFunc<(i32, i32), i32>,
@@ -240,6 +244,36 @@ impl Instance {
             }
         };
 
+        // Host code that read failed storage beneath this instance saw zeros in
+        // its place, so whatever the call returned was computed from memory the
+        // instance does not hold.
+        #[cfg(target_os = "linux")]
+        let (status, trap) = if live
+            .storage
+            .as_ref()
+            .is_some_and(crate::storage_fault::Watch::faulted)
+        {
+            (
+                PollStatus::Trapped {
+                    code: trap_code_of_kind(TrapKind::StorageFault),
+                },
+                Some(TrapInfo {
+                    kind: TrapKind::StorageFault,
+                    message: "host code read this instance's memory after the template storage \
+                              beneath it failed"
+                        .to_string(),
+                }),
+            )
+        } else {
+            (status, trap)
+        };
+        if trap
+            .as_ref()
+            .is_some_and(|trap| trap.kind == TrapKind::StorageFault)
+        {
+            self.template.fail_storage();
+        }
+
         let violation = live.store.data().violation;
         let grace_at_ns = live.store.data().grace_at_ns;
         let grace_deferrals = live.store.data().grace_deferrals;
@@ -332,6 +366,10 @@ pub trait InstanceOps {
     fn is_capture_eligible(&self) -> bool;
     /// Linear memory; empty for an instance with no live store.
     fn memory(&mut self) -> &mut [u8];
+    /// Whether host code read storage beneath this instance after it failed,
+    /// so its memory, or a comparison against its template, is no longer what
+    /// execution produced. Hibernation asks after reading memory.
+    fn storage_failed(&self) -> bool;
     fn memory_len(&self) -> usize;
     /// Globals and tables. Linear memory is diffed by `isoplane-hibernate`.
     fn capture_mutable_state(&mut self) -> Result<InstanceImage>;
@@ -398,6 +436,9 @@ impl InstanceOps for Instance {
             );
         }
         let live = anyhow::Context::context(self.live.take(), "instance has no live store")?;
+        // Released before the store frees the memory the next instance may reuse.
+        #[cfg(target_os = "linux")]
+        drop(live.storage);
         let mut data = live.store.into_data();
         data.memory = None;
         data.wasm_depth = 0;
@@ -446,6 +487,19 @@ impl InstanceOps for Instance {
         self.tombstone.is_none()
             && live.store.data().wasm_depth == 0
             && self.last.is_some_and(|c| c.instance_survives())
+    }
+
+    fn storage_failed(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if self
+            .live
+            .as_ref()
+            .and_then(|live| live.storage.as_ref())
+            .is_some_and(crate::storage_fault::Watch::faulted)
+        {
+            return true;
+        }
+        self.template.storage_failed()
     }
 
     fn memory(&mut self) -> &mut [u8] {
