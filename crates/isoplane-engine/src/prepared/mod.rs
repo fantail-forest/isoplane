@@ -235,14 +235,16 @@ impl IsoplaneEngine {
     /// engine already holds the native payload the manifest records, it shares
     /// that module without reading this artifact's copy.
     ///
-    /// On Linux, a read of the mapped baseline that fails after verification ends only the
-    /// operation that made it: a guest call traps or a host operation fails with a storage
-    /// fault, and the template refuses further activation until it is loaded again.
+    /// On Linux, watched SIGBUS/BUS_ADRERR faults from lost whole baseline pages mark the
+    /// template storage-failed; further activation is refused until it is loaded again.
     ///
     /// # Safety
-    /// The caller must prevent changes to the baseline and state file contents for the lifetime
-    /// of every returned template and instance; publication read-only permissions are not an
-    /// isolation boundary.
+    /// Keep state and readable baseline bytes unchanged for every returned template and
+    /// instance; publication read-only permissions are not an isolation boundary.
+    /// On Linux, loss of whole baseline backing pages is a supported failure only through
+    /// watched reads, which mark the template storage-failed. Such data is invalid and must
+    /// not be used for capture or further activation. Partial-page truncation and byte
+    /// overwrites remain forbidden, as do native-code and state-file mutation.
     #[tracing::instrument(name = "template_load", skip_all)]
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.

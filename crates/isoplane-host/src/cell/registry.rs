@@ -152,6 +152,17 @@ impl Cell {
         Ok(())
     }
 
+    /// Stops admitting work for `module` and discards its idle instances. Work
+    /// already running holds the module until it finishes. Returns whether the
+    /// module was registered.
+    pub fn retire_module(&self, module: &ModuleId) -> bool {
+        let Some(entry) = self.modules.write().remove(module) else {
+            return false;
+        };
+        entry.pool.retire();
+        true
+    }
+
     pub fn meters(&self, module: &ModuleId) -> Option<Arc<Meters>> {
         self.modules.read().get(module).map(|m| m.meters.clone())
     }

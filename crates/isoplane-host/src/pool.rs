@@ -68,6 +68,9 @@ pub struct InstancePool {
     reset_candidates: Mutex<IdleList>,
     max_idle: usize,
     live: AtomicU64,
+    /// Set once the module is retired; instances released afterwards are
+    /// discarded instead of pooled.
+    retired: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -124,7 +127,17 @@ impl InstancePool {
             reset_candidates: Mutex::new(IdleList::default()),
             max_idle,
             live: AtomicU64::new(0),
+            retired: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Discards the idle instances and every instance released from now on.
+    /// Returns how many idle instances were discarded.
+    pub fn retire(&self) -> usize {
+        // Set before draining takes each list lock, and read under that lock by
+        // `release`, so an instance released concurrently is drained or refused.
+        self.retired.store(true, Ordering::Release);
+        self.drain_idle()
     }
 
     pub fn live(&self) -> u64 {
@@ -266,7 +279,9 @@ impl InstancePool {
                 }
                 slot.park(crate::now_ms());
                 let mut w = self.warm.lock();
-                if w.slots.len() + w.claimed < self.max_idle {
+                if !self.retired.load(Ordering::Acquire)
+                    && w.slots.len() + w.claimed < self.max_idle
+                {
                     w.slots.push(slot);
                 } else {
                     drop(w);
@@ -278,7 +293,9 @@ impl InstancePool {
                 slot.ctx.release_native_resources();
                 slot.park(crate::now_ms());
                 let mut candidates = self.reset_candidates.lock();
-                if candidates.slots.len() + candidates.claimed < self.max_idle {
+                if !self.retired.load(Ordering::Acquire)
+                    && candidates.slots.len() + candidates.claimed < self.max_idle
+                {
                     candidates.slots.push(slot);
                 } else {
                     drop(candidates);
@@ -337,6 +354,30 @@ mod tests {
             lifecycle,
             16,
         )
+    }
+
+    #[test]
+    fn an_instance_released_after_retirement_is_discarded_not_pooled() {
+        for lifecycle in [HandlerLifecycle::Reuse, HandlerLifecycle::Fresh] {
+            let p = pool(lifecycle);
+            let (slot, _) = p.acquire(|id| ctx_for(id, lifecycle)).expect("acquire");
+            p.retire();
+            let RequestEnd::Disposed(disposition) = decide(lifecycle, Completion::Done, false)
+            else {
+                panic!("a completed request must dispose of its instance");
+            };
+            p.release(slot.clone(), disposition);
+            assert_eq!(
+                p.idle_counts(),
+                (0, 0),
+                "{lifecycle:?}: a retired module must not pool a released instance"
+            );
+            assert_eq!(
+                slot.state(),
+                crate::slot::LifecycleTier::Discarded,
+                "{lifecycle:?}: the released instance must be discarded"
+            );
+        }
     }
 
     #[test]

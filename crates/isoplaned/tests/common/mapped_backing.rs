@@ -1,6 +1,7 @@
 //! Fault injection into files owned by an individual test fixture.
 
 use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -19,4 +20,11 @@ pub fn truncate(path: &Path) {
     writable(path)
         .set_len(0)
         .expect("truncate the owned mapped fixture");
+}
+
+/// Writes `bytes` back into the file, as storage that recovers from a failure would.
+pub fn restore(path: &Path, bytes: &[u8]) {
+    writable(path)
+        .write_all(bytes)
+        .expect("restore the owned mapped fixture");
 }
