@@ -12,21 +12,46 @@ use isoplane_engine::{
 use crate::pool::Activator;
 use crate::ModuleId;
 
+/// A reload produced a template other than the one it replaces, whose
+/// hibernation deltas it could not restore.
+#[derive(Debug, thiserror::Error)]
+#[error("reloading module {module} produced a different template")]
+pub struct ReloadedTemplateDiffers {
+    pub module: ModuleId,
+}
+
+/// Loads a module's template again from its local prepared artifact.
+pub type TemplateReload = Box<dyn Fn() -> crate::Result<Template> + Send + Sync>;
+
 pub struct EngineActivator {
     engine: Arc<IsoplaneEngine>,
-    template: Template,
+    template: parking_lot::RwLock<Arc<Template>>,
     module: ModuleId,
-    image: Arc<MemoryImage>,
+    reload: Option<TemplateReload>,
 }
 
 impl EngineActivator {
     pub fn new(engine: Arc<IsoplaneEngine>, template: Template, module: ModuleId) -> Self {
-        let image = template.memory_image_arc();
         Self {
             engine,
-            template,
+            template: parking_lot::RwLock::new(Arc::new(template)),
             module,
-            image,
+            reload: None,
+        }
+    }
+
+    /// An activator that loads its template again through `reload` once a read
+    /// of the template's mapped storage has failed, rather than refusing every
+    /// later activation.
+    pub fn reloading(
+        engine: Arc<IsoplaneEngine>,
+        template: Template,
+        module: ModuleId,
+        reload: TemplateReload,
+    ) -> Self {
+        Self {
+            reload: Some(reload),
+            ..Self::new(engine, template, module)
         }
     }
 
@@ -63,11 +88,33 @@ impl EngineActivator {
     }
 
     pub(crate) fn activate_raw(&self, bindings: Box<dyn HostBindings>) -> crate::Result<Instance> {
-        self.engine.activate(&self.template, bindings)
+        self.engine.activate(&*self.current()?, bindings)
     }
 
-    pub fn template(&self) -> &Template {
-        &self.template
+    pub fn template(&self) -> Arc<Template> {
+        self.template.read().clone()
+    }
+
+    /// The template to activate, reloaded first if its storage has failed.
+    fn current(&self) -> crate::Result<Arc<Template>> {
+        let template = self.template();
+        let Some(reload) = self.reload.as_ref().filter(|_| template.storage_failed()) else {
+            return Ok(template);
+        };
+        let mut current = self.template.write();
+        if !current.storage_failed() {
+            return Ok(current.clone());
+        }
+        let reloaded = Arc::new(reload()?);
+        if reloaded.hash != current.hash {
+            return Err(ReloadedTemplateDiffers {
+                module: self.module.clone(),
+            }
+            .into());
+        }
+        tracing::info!(module = %self.module, "template reloaded after its storage failed");
+        *current = reloaded.clone();
+        Ok(reloaded)
     }
 }
 
@@ -76,23 +123,23 @@ impl Activator for EngineActivator {
         &self.module
     }
     fn module_hash(&self) -> ModuleHash {
-        self.template.hash
+        self.template.read().hash
     }
     fn imports(&self, module: &str, name: &str) -> bool {
-        self.template.imports(module, name)
+        self.template.read().imports(module, name)
     }
     fn abi_rev(&self) -> u32 {
-        self.template.abi_rev
+        self.template.read().abi_rev
     }
     fn template_image(&self) -> Arc<MemoryImage> {
-        self.image.clone()
+        self.template.read().memory_image_arc()
     }
     fn snapshot_size_bound(&self, max_memory_bytes: u64) -> anyhow::Result<u64> {
         Ok(crate::hibernate_capture::snapshot_size_bound(
             crate::hibernate_capture::SnapshotShape {
                 max_memory_bytes: max_memory_bytes
                     .min(self.engine.configuration().max_memory_bytes),
-                mutable_globals: self.template.mutable_global_count(),
+                mutable_globals: self.template.read().mutable_global_count(),
             },
         )?)
     }
@@ -100,7 +147,7 @@ impl Activator for EngineActivator {
         &self,
         bindings: Box<dyn HostBindings>,
     ) -> anyhow::Result<Box<dyn InstanceOps + Send>> {
-        let inst: Instance = self.engine.activate(&self.template, bindings)?;
+        let inst: Instance = self.engine.activate(&*self.current()?, bindings)?;
         Ok(Box::new(inst))
     }
 }
@@ -152,6 +199,98 @@ mod tests {
         assert!(
             smaller < expected,
             "a smaller per-instance memory ceiling must reduce the reservation"
+        );
+    }
+
+    struct Unused;
+
+    impl HostBindings for Unused {
+        fn call_future(&mut self, _: isoplane_engine::ImportCall<'_>) -> u64 {
+            panic!("a refused activation must not run the guest")
+        }
+
+        fn call_sync(&mut self, _: isoplane_engine::ImportCall<'_>) -> i64 {
+            panic!("a refused activation must not run the guest")
+        }
+
+        fn slice_clock_ms(&self) -> u64 {
+            0
+        }
+    }
+
+    fn guest(marker: i32) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"(module
+            (memory (export "memory") 1)
+            (data (i32.const 64) "\{marker:02x}")
+            (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
+            (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 0))
+            (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0)))"#
+        ))
+        .expect("guest must parse")
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_reload_that_yields_a_different_template_is_refused() {
+        use isoplane_engine::prepared::PreparedIdentity;
+        use std::os::unix::fs::PermissionsExt;
+        let engine = Arc::new(
+            IsoplaneEngine::new(EngineConfig {
+                max_instances: 2,
+                max_memory_bytes: 2 << 20,
+                guard_size_bytes: 64 << 20,
+                ..EngineConfig::default()
+            })
+            .expect("engine must initialize"),
+        );
+        let identity = PreparedIdentity {
+            input_hash: [1; 32],
+            runtime_profile: [2; 32],
+            initialization_hash: [3; 32],
+        };
+        let directory = tempfile::tempdir().expect("artifact directory");
+        let path = directory.path().join("version");
+        engine
+            .prepare_template(&guest(1), identity)
+            .expect("prepare")
+            .publish(&path)
+            .expect("publish");
+        // SAFETY: this engine compiled the artifact into this private directory.
+        // Native code and state stay unchanged. Only whole baseline pages are
+        // lost; the Linux read watch contains that fault and marks the template
+        // failed before any guest execution below.
+        let template =
+            unsafe { engine.load_prepared(&path, identity, &[]) }.expect("map the template");
+        let baseline = path.join("baseline.bin");
+        std::fs::set_permissions(&baseline, std::fs::Permissions::from_mode(0o600))
+            .expect("make the baseline writable");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&baseline)
+            .and_then(|file| file.set_len(0))
+            .expect("truncate the baseline");
+        template
+            .memory_image_arc()
+            .page_eq(0, &[0; isoplane_engine::PAGE]);
+        assert!(
+            template.storage_failed(),
+            "the fixture must fail the template's storage"
+        );
+        let other = engine.clone();
+        let activator = EngineActivator::reloading(
+            engine.clone(),
+            template,
+            ModuleId::new("reloaded", "v1"),
+            Box::new(move || other.load_template(&guest(2))),
+        );
+        let refused = match activator.activate_raw(Box::new(Unused)) {
+            Ok(_) => panic!("a reload must not swap in another module's template"),
+            Err(error) => error,
+        };
+        assert!(
+            refused.is::<ReloadedTemplateDiffers>(),
+            "the refusal must name the mismatched reload: {refused:#}"
         );
     }
 }

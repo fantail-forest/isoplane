@@ -421,7 +421,7 @@ mod tests {
             "guest_memory_bytes": 2 * isoplane_abi::WASM_PAGE_SIZE,
         }))
         .expect("fixture manifest must describe its memory ceiling");
-        real.install_prepared(&app, &version, &tenant, manifest, template)
+        real.install_prepared(&app, &version, &tenant, manifest, template, None)
             .await
             .expect("register the real guest for local snapshot capture");
         let cell = real.cells().first().expect("one real cell").clone();

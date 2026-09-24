@@ -51,6 +51,20 @@ fn baseline(data: &Path, deployed: &isoplaned::real::Deployed) -> PathBuf {
     panic!("the deployment's artifact directory must exist under the node's data")
 }
 
+/// Deploys `name` as `acme`'s prepared application answering its own name.
+async fn deploy(real: &isoplaned::real::RealCells, name: &str) -> isoplaned::real::Deployed {
+    real.deploy_locally(
+        name,
+        "v1",
+        "acme",
+        manifest(name),
+        &initialized(name.as_bytes()),
+        Default::default(),
+    )
+    .await
+    .expect("deploy a prepared application")
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_storage_beneath_one_application_fails_only_its_requests() {
     let directory = tempfile::tempdir().expect("owned node files");
@@ -61,28 +75,8 @@ async fn failed_storage_beneath_one_application_fails_only_its_requests() {
     cfg.apps.push(ledger);
     let node = Node::build(cfg).expect("real node");
     let real = node.real.clone().expect("real cells");
-    let quotes = real
-        .deploy_locally(
-            "quotes",
-            "v1",
-            "acme",
-            manifest("quotes"),
-            &initialized(b"quotes"),
-            Default::default(),
-        )
-        .await
-        .expect("deploy the application whose storage fails");
-    real.deploy_locally(
-        "ledger",
-        "v1",
-        "acme",
-        manifest("ledger"),
-        &initialized(b"ledger"),
-        Default::default(),
-    )
-    .await
-    .expect("deploy the neighbouring application");
-    let failed = baseline(directory.path(), &quotes);
+    let failed = baseline(directory.path(), &deploy(&real, "quotes").await);
+    deploy(&real, "ledger").await;
     drop(real);
     let rig = serve(node, directory).await;
     assert_eq!(
@@ -102,6 +96,37 @@ async fn failed_storage_beneath_one_application_fails_only_its_requests() {
         get(rig.proxy, "ledger.isoplane.dev", "/").await.body,
         "ledger",
         "another application in the same process must keep serving"
+    );
+    rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_application_serves_again_once_its_failed_storage_reads_back() {
+    let directory = tempfile::tempdir().expect("owned node files");
+    let node = Node::build(config(directory.path())).expect("real node");
+    let real = node.real.clone().expect("real cells");
+    let failed = baseline(directory.path(), &deploy(&real, "quotes").await);
+    drop(real);
+    let original = std::fs::read(&failed).expect("read the published baseline");
+    let rig = serve(node, directory).await;
+    assert_eq!(
+        get(rig.proxy, "quotes.isoplane.dev", "/").await.body,
+        "quotes",
+        "the application must serve while its storage is intact"
+    );
+    mapped_backing::truncate(&failed);
+    assert!(
+        get(rig.proxy, "quotes.isoplane.dev", "/")
+            .await
+            .body
+            .starts_with("storage_fault"),
+        "the read of failed storage must fail its request"
+    );
+    mapped_backing::restore(&failed, &original);
+    assert_eq!(
+        get(rig.proxy, "quotes.isoplane.dev", "/").await.body,
+        "quotes",
+        "once its artifact verifies again, the application must serve without a node restart"
     );
     rig.shutdown().await;
 }

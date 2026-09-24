@@ -62,6 +62,8 @@ pub struct RealCells {
     modules: RwLock<HashSet<ModuleId>>,
     /// app -> tenant.
     tenants: Arc<RwLock<HashMap<String, String>>>,
+    /// The only way a module reaches a cell.
+    deployer: Arc<crate::deploy::Deployer>,
 }
 
 /// What a real node keeps on disk.
@@ -101,6 +103,8 @@ impl RealCells {
     }
 
     /// Registers a prepared template without acquiring artifacts or invoking preparation.
+    /// With the receipt of its published artifact, the template is restored from it again
+    /// once a read of its mapped storage fails.
     pub async fn install_prepared(
         &self,
         app: &str,
@@ -108,10 +112,23 @@ impl RealCells {
         tenant: &str,
         manifest: isoplane_abi::config::AppManifest,
         template: isoplane_engine::Template,
+        receipt: Option<crate::deploy::PreparedReceipt>,
     ) -> anyhow::Result<ModuleId> {
         let cell = self.cell_for(app)?;
         let module = ModuleId::new(app, version);
-        let activator = EngineActivator::new(self.engine.clone(), template, module.clone());
+        let activator = match receipt {
+            Some(receipt) => {
+                let deployer = self.deployer.clone();
+                let engine = self.engine.clone();
+                EngineActivator::reloading(
+                    self.engine.clone(),
+                    template,
+                    module.clone(),
+                    Box::new(move || deployer.restore_prepared(&engine, &receipt)),
+                )
+            }
+            None => EngineActivator::new(self.engine.clone(), template, module.clone()),
+        };
         let settings = self
             .runtime_settings
             .settings(crate::development::SettingsOwner {
