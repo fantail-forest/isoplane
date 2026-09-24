@@ -27,6 +27,8 @@ mod layout;
 mod linker;
 mod meter;
 mod state;
+#[cfg(target_os = "linux")]
+mod storage_fault;
 mod watchdog;
 mod wtconfig;
 
@@ -42,7 +44,7 @@ pub use meter::clock_read_failures;
 pub use meter::try_thread_cpu_nanos;
 pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
 pub use snapshot::InstanceImage;
-pub use template::{ModuleHash, Template, DEFERRED_INIT_SECTION};
+pub use template::{ModuleHash, Template, TemplateStorageFailed, DEFERRED_INIT_SECTION};
 
 use state::StoreState;
 
@@ -148,6 +150,9 @@ impl IsoplaneEngine {
     /// threads or shared memory.
     pub fn new(cfg: EngineConfig) -> Result<Self> {
         budget::check_grace_deliverable(cfg.epoch_tick_us)?;
+        // Before wasmtime installs its own handler, so wasmtime passes on the faults it does not claim.
+        #[cfg(target_os = "linux")]
+        storage_fault::install()?;
         let wasmtime = wtconfig::build_engine(&cfg)?;
         wtconfig::assert_feature_set(&wasmtime)?;
         let linker = linker::build_linker(&wasmtime).map_err(anyhow::Error::from)?;

@@ -83,6 +83,9 @@ impl isoplane_engine::InstanceOps for PanicsOnDispatch {
     fn memory_len(&self) -> usize {
         0
     }
+    fn storage_failed(&self) -> bool {
+        false
+    }
     fn capture_mutable_state(&mut self) -> anyhow::Result<isoplane_engine::InstanceImage> {
         Ok(Default::default())
     }

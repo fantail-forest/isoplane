@@ -29,6 +29,10 @@ pub enum CaptureRefused {
     StackNotEmptyAfterHint,
     /// The live instance retains state that the current delta format cannot preserve.
     UnrepresentableState(isoplane_engine::snapshot::SnapshotError),
+    /// Capture read the instance's memory or its template's baseline from
+    /// storage that had failed, so the delta is wrong. The instance has been
+    /// destroyed.
+    StorageFailed,
     Failed(String),
     /// Local publication failed; the resident instance remains owned.
     SnapshotWrite(String),
@@ -69,7 +73,7 @@ pub(crate) fn capture_in_context(
     env: CaptureEnv<'_>,
 ) -> Result<LocalCapture, CaptureRefused> {
     let template = env.activator.template_image();
-    let (captured, gc_hint_us) = capture_with(slot, &env, |instance, image| {
+    let (captured, gc_hint_us) = capture_with(slot, &env, &template, |instance, image| {
         let started = std::time::Instant::now();
         let identity = local_snapshot::Identity {
             module: env.activator.module_hash(),
@@ -113,6 +117,7 @@ pub(crate) fn capture_in_context(
 fn capture_with<T>(
     slot: &Arc<Slot>,
     env: &CaptureEnv<'_>,
+    template: &isoplane_engine::MemoryImage,
     finish: impl FnOnce(
         &mut (dyn isoplane_engine::InstanceOps + Send),
         isoplane_engine::InstanceImage,
@@ -192,6 +197,10 @@ fn capture_with<T>(
     })?;
 
     let finished = finish(guard.instance(), image)?;
+    if guard.instance().storage_failed() || template.storage_failed() {
+        guard.destroy();
+        return Err(CaptureRefused::StorageFailed);
+    }
     Ok((finished, gc_hint_us))
 }
 
@@ -208,6 +217,7 @@ mod tests {
         memory: Vec<u8>,
         gc_upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
         pending_upload: Option<crate::bindings::request_body::RequestRead>,
+        storage_failed: bool,
     }
 
     impl HintEndsIn {
@@ -284,6 +294,9 @@ mod tests {
         fn memory_len(&self) -> usize {
             self.memory.len()
         }
+        fn storage_failed(&self) -> bool {
+            self.storage_failed
+        }
         fn capture_mutable_state(&mut self) -> anyhow::Result<isoplane_engine::InstanceImage> {
             anyhow::ensure!(!self.tombstoned, "tombstoned");
             Ok(isoplane_engine::InstanceImage {
@@ -351,6 +364,7 @@ mod tests {
                 memory: (*self.template).clone(),
                 gc_upload: None,
                 pending_upload: None,
+                storage_failed: false,
             }))
         }
     }
@@ -544,6 +558,33 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_that_read_failed_storage_is_refused_and_destroys_the_instance() {
+        let (initial, act) = parked_slot(Completion::Done);
+        let slot = Arc::new(Slot::new(
+            initial.id,
+            initial.ctx.clone(),
+            Box::new(HintEndsIn {
+                how: Completion::Done,
+                tombstoned: false,
+                memory: vec![0; isoplane_abi::WASM_PAGE_SIZE],
+                gc_upload: None,
+                pending_upload: None,
+                storage_failed: true,
+            }),
+        ));
+        slot.park(0);
+        assert_eq!(
+            try_capture(&slot, &act).err(),
+            Some(CaptureRefused::StorageFailed),
+            "a delta computed from failed storage must never be kept"
+        );
+        assert!(
+            slot.is_tombstoned(),
+            "an instance whose memory read failed storage must not run again"
+        );
+    }
+
+    #[test]
     fn a_guest_that_parks_inside_its_gc_hint_stays_resident() {
         let (slot, act) = parked_slot(Completion::Parked);
         assert_eq!(
@@ -633,6 +674,7 @@ mod tests {
                 memory: vec![0; isoplane_abi::WASM_PAGE_SIZE],
                 gc_upload: Some(source),
                 pending_upload: None,
+                storage_failed: false,
             }),
         ));
         slot.park(0);

@@ -113,6 +113,7 @@ impl IsoplaneEngine {
                 table_nullness: state.table_nullness,
                 has_gc_hint: state.has_gc_hint,
                 has_initialize: state.has_initialize,
+                failed_storage: Default::default(),
             }),
         })
     }

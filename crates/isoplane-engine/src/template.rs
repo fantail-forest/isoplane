@@ -74,13 +74,32 @@ pub(crate) struct TemplateInner {
     pub table_nullness: Vec<Vec<bool>>,
     pub has_gc_hint: bool,
     pub has_initialize: bool,
+    /// Set when an instance's call read this template's mapped storage after it failed.
+    pub failed_storage: std::sync::atomic::AtomicBool,
 }
 
 impl TemplateInner {
     pub(crate) fn module(&self) -> &Module {
         &self.native.module
     }
+
+    pub(crate) fn storage_failed(&self) -> bool {
+        self.failed_storage
+            .load(std::sync::atomic::Ordering::Acquire)
+            || self.image.storage_failed()
+    }
+
+    pub(crate) fn fail_storage(&self) {
+        self.failed_storage
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
 }
+
+/// Activation refused because a read of the template's mapped storage failed:
+/// its instances would run on memory it no longer holds. Load it again.
+#[derive(Debug, thiserror::Error)]
+#[error("the template's mapped storage failed a read; load it again before activating it")]
+pub struct TemplateStorageFailed;
 
 impl Template {
     /// Bind immutable application files to an inactive template and its snapshot identity.
@@ -112,6 +131,12 @@ impl Template {
             .module()
             .imports()
             .any(|import| import.module() == module && import.name() == name)
+    }
+
+    /// Whether a read of this template's mapped storage failed. It then refuses
+    /// activation, and a hibernation delta compared against it is wrong.
+    pub fn storage_failed(&self) -> bool {
+        self.inner.storage_failed()
     }
 
     /// The pre-initialised linear memory, shared rather than copied.

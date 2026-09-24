@@ -172,6 +172,9 @@ pub enum TrapKind {
     Tombstoned,
     /// A host CPU clock read failed, so execution could not enforce its budget.
     CpuClockUnavailable,
+    /// Storage beneath the instance's mapped template failed a read: the
+    /// platform's fault, not the guest's.
+    StorageFault,
     Other,
 }
 
@@ -185,6 +188,7 @@ impl TrapKind {
             TrapKind::CapabilityViolation => "capability_violation",
             TrapKind::Tombstoned => "tombstoned",
             TrapKind::CpuClockUnavailable => "cpu_clock_unavailable",
+            TrapKind::StorageFault => "storage_fault",
             TrapKind::Other => "trap",
         }
     }

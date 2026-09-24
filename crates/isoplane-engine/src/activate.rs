@@ -18,6 +18,9 @@ impl IsoplaneEngine {
     /// Map the template copy-on-write and bind `b` as this instance's import
     /// vtable.
     pub fn activate(&self, t: &Template, b: Box<dyn HostBindings>) -> Result<Instance> {
+        if t.inner.storage_failed() {
+            return Err(crate::TemplateStorageFailed.into());
+        }
         if let Some(payloads) = &t.inner.activation_prefetch {
             payloads.read_all()?;
         }
@@ -55,6 +58,9 @@ pub(crate) fn instantiate(
     t: &Arc<TemplateInner>,
     mut data: StoreState,
 ) -> Result<Live> {
+    if t.storage_failed() {
+        return Err(crate::TemplateStorageFailed.into());
+    }
     let activation = tracing::info_span!(
         "activation",
         linear_memory_bytes = tracing::field::Empty,
@@ -215,6 +221,8 @@ pub(crate) fn instantiate(
     }
 
     #[cfg(target_os = "linux")]
+    let mut storage = None;
+    #[cfg(target_os = "linux")]
     if let Some(layer) = &t.initialization_layer {
         let _restore = tracing::info_span!("activation_layer_restore").entered();
         let pages = memory.size(&store);
@@ -224,6 +232,11 @@ pub(crate) fn instantiate(
         // SAFETY: instantiation owns the idle Store, and the verified immutable image
         // matches the captured memory size. No guest entry occurs before all globals restore.
         unsafe { memory.restore_cow_image(&mut store, layer) }?;
+        let start = memory.data_ptr(&store) as usize;
+        storage = Some(crate::storage_fault::Watch::new(
+            start..start + memory.data_size(&store),
+            crate::storage_fault::Access::ReadWrite,
+        )?);
         for (global, (_, value)) in globals.iter().zip(&t.mut_globals) {
             global.set(&mut store, wasmtime::Val::from(*value))?;
         }
@@ -236,6 +249,8 @@ pub(crate) fn instantiate(
     activation.record("linear_memory_bytes", memory.data_size(&store));
 
     Ok(Live {
+        #[cfg(target_os = "linux")]
+        storage,
         store,
         memory,
         f_alloc,

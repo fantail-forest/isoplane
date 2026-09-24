@@ -340,6 +340,7 @@ impl IsoplaneEngine {
                 table_nullness,
                 has_gc_hint,
                 has_initialize,
+                failed_storage: Default::default(),
             }),
         })
     }

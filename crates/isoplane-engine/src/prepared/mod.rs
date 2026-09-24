@@ -283,13 +283,14 @@ impl IsoplaneEngine {
     /// holds the native payload the manifest records, it shares that module
     /// without reading this artifact's copy.
     ///
+    /// On Linux, a read of the mapped baseline that fails after verification ends only the
+    /// operation that made it: a guest call traps or a host operation fails with a storage
+    /// fault, and the template refuses further activation until it is loaded again.
+    ///
     /// # Safety
     /// The caller must prevent changes to the baseline and state file contents for the lifetime
     /// of every returned template and instance; publication read-only permissions are not an
     /// isolation boundary.
-    /// The caller must run this engine and every use of the returned template in a supervised
-    /// application worker process. Backing storage corruption can cause SIGBUS even after
-    /// verification; the supervisor must contain worker death and fail affected requests.
     #[tracing::instrument(name = "template_load", skip_all, fields(mode = "mapped"))]
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
@@ -329,11 +330,15 @@ impl IsoplaneEngine {
             source,
         })?;
         let state: state::State = postcard::from_bytes(&state)?;
-        let image = crate::MemoryImage::from_storage(
-            crate::image::ImageStorage::Mapped(baseline),
-            self.inner.cfg.max_memory_bytes as usize,
-        )
-        .map_err(PreparedError::Invalid)?;
+        let baseline =
+            crate::image::ImageStorage::mapped(baseline).map_err(|source| PreparedError::Io {
+                operation: "watch baseline",
+                path: directory.join(BASELINE),
+                source,
+            })?;
+        let image =
+            crate::MemoryImage::from_storage(baseline, self.inner.cfg.max_memory_bytes as usize)
+                .map_err(PreparedError::Invalid)?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
         let native = match (held, native) {
             (Some(held), _) => held,

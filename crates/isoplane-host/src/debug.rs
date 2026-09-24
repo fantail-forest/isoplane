@@ -208,6 +208,9 @@ impl InstanceOps for DebugInstance {
     fn memory_len(&self) -> usize {
         self.instance.memory_len()
     }
+    fn storage_failed(&self) -> bool {
+        self.instance.storage_failed()
+    }
     fn capture_mutable_state(&mut self) -> anyhow::Result<InstanceImage> {
         anyhow::bail!("local debugger instances cannot be captured")
     }
