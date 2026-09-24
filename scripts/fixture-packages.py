@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Build the installed SDK/CLI fixture packages once per source and toolchain identity."""
 
-import fcntl
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -35,8 +34,8 @@ def package_feed(root):
     target.mkdir(parents=True, exist_ok=True)
     packages = target / "packages"
     receipt = target / "packages.json"
-    with (target / "build.lock").open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+    with (target / "build.lock").open("a+b") as handle:
+        tools.lock_file(handle)
         outputs = sorted(packages.glob("*.nupkg"))
         if outputs and tools.is_fresh(receipt, identity, outputs):
             return packages
