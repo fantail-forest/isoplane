@@ -1,4 +1,4 @@
-<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.2">
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.3">
   <PropertyGroup>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AssemblyName>isoplane_guest_aspnet</AssemblyName>

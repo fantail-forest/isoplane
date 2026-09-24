@@ -113,6 +113,8 @@ def build(args):
     revision = preview.source_revision(ROOT)
     epoch = int(preview.output(['git', 'show', '-s', '--format=%ct', revision]))
     version = preview.release_version(ROOT)
+    if args.runtime_modules:
+        load('shared-runtime-modules').verify(args.runtime_modules.resolve(), version, revision)
     cache = args.cache.resolve()
     logs = cache / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
@@ -185,6 +187,15 @@ def build(args):
     native = cache / 'target/release/isoplane_native.dll'
     wasm_version = re.search(r'cargo install --locked wasm-tools@([^\s]+)', (source / 'Dockerfile').read_text()).group(1)
     run(['cargo', 'install', '--locked', f'wasm-tools@{wasm_version}', '--root', cache / 'tools'], 'wasm-tools')
+    runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else cache / 'runtime-modules'
+    if not args.runtime_modules:
+        if runtime_modules.exists():
+            shutil.rmtree(runtime_modules)
+        environment['PATH'] = str(cache / 'tools/bin') + os.pathsep + environment['PATH']
+        run([args.msys_root.resolve() / 'usr/bin/bash.exe', '-lc', 'exec bash "$@"', 'isoplane-shared-runtime',
+             (source / 'guest-sdks/dotnet/MonoRuntime/build.sh').as_posix(), '--output', runtime_modules.as_posix(),
+             '--source-revision', revision], 'shared-runtime')
+    load('shared-runtime-modules').verify(runtime_modules, version, revision, runtime_output / 'feed')
     packages = cache / 'packages'
     if packages.exists():
         shutil.rmtree(packages)
@@ -193,7 +204,7 @@ def build(args):
         run([sdk / 'dotnet.exe', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native}'], 'pack-' + name)
+             f'-p:IsoplaneNativePath={native}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'], 'pack-' + name)
     preview.verify_packages(packages, version, revision, native, 'win-x64')
     runtime_version = re.search(r'^RUNTIME_TAG=v(.+)$', (runtime / 'manifest.env').read_text(), re.MULTILINE).group(1)
     mono = stock_pack('Microsoft.NET.Runtime.MonoTargets.Sdk', runtime_version, cache)
@@ -244,6 +255,7 @@ def main():
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
     parser.add_argument('--llvm', type=Path, help='reuse a matching LLVM development build; otherwise build the pinned LLVM sources')
     parser.add_argument('--vc-redist', type=Path)
+    parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--runtime-artifact', help='shared runtime archive file or HTTPS URL; omitted to build from source')
     parser.add_argument('--runtime-sha256', help='required checksum for --runtime-artifact')
     parser.add_argument('--check-prerequisites', action='store_true', help='check local build tools without starting a build')

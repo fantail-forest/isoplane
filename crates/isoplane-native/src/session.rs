@@ -44,6 +44,8 @@ pub(crate) struct Options {
     log_filter: Option<String>,
     port: Option<u16>,
     debug_endpoint: Option<SocketAddr>,
+    /// The application package loaded by the shared runtime.
+    package: Option<PathBuf>,
 }
 
 impl Options {
@@ -68,13 +70,35 @@ impl Options {
                     && !address.ip().is_multicast()),
             "development services must name individual IP addresses and nonzero ports"
         );
+        let application_files = match &self.package {
+            Some(package) => {
+                anyhow::ensure!(
+                    package.is_absolute(),
+                    "the application package path must be absolute"
+                );
+                let archive = std::fs::read(package).with_context(|| {
+                    format!("reading the application package {}", package.display())
+                })?;
+                isoplane_prepare::package::application_files(&archive).with_context(|| {
+                    format!("serving the application package {}", package.display())
+                })?
+            }
+            None => isoplane_engine::PlatformFiles::default(),
+        };
         let trust = isoplane_trust::TrustBundle::load(&self.trust)?;
-        let platform_files =
-            isoplane_engine::PlatformFiles::new(vec![isoplane_engine::PlatformFile {
-                path: isoplane_trust::GUEST_PATH.into(),
-                bytes: trust.pem().into(),
-                modified_ns: trust.modified_ns(),
-            }])?;
+        let mut files = vec![isoplane_engine::PlatformFile {
+            path: isoplane_trust::GUEST_PATH.into(),
+            bytes: trust.pem().into(),
+            modified_ns: trust.modified_ns(),
+        }];
+        if let Some(endpoint) = self.debug_endpoint {
+            files.push(isoplane_engine::PlatformFile {
+                path: isoplane_abi::filesystem::DEBUG_AGENT_PATH.into(),
+                bytes: endpoint.to_string().into_bytes().into(),
+                modified_ns: 0,
+            });
+        }
+        let platform_files = isoplane_engine::PlatformFiles::new(files)?;
         Ok(Inputs {
             manifest: self.manifest.clone(),
             state_directory: self.state_directory.clone(),
@@ -83,6 +107,7 @@ impl Options {
             init_sandbox: self.init_sandbox,
             allow_endpoints: self.allow_endpoints.clone(),
             platform_files,
+            application_files,
         })
     }
 }

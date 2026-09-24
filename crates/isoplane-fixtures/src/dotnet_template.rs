@@ -57,9 +57,17 @@ pub fn release_version() -> String {
     version.trim().to_owned()
 }
 
-/// Installs the packaged ASP.NET template into an isolated hive and creates a consumer.
-/// The returned project resolves Isoplane packages exclusively from its local feed.
+/// Installs the packaged ASP.NET template into an isolated hive and creates a
+/// consumer for its interpreted configurations. The returned project resolves
+/// Isoplane packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
+    template_project(
+        destination,
+        &[("isoplane-guest-runtime", crate::guest_runtime_feed())],
+    )
+}
+
+fn template_project(destination: &Path, feeds: &[(&str, PathBuf)]) -> PathBuf {
     let root = super::repo_root();
     let packages = stage_packages(destination);
     std::fs::copy(root.join("global.json"), destination.join("global.json"))
@@ -85,16 +93,13 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         .args(["--name", "template-packages", "--configfile"])
         .arg(&config));
     let mut runtime_mapping = String::new();
-    for (name, feed) in [
-        ("isoplane-guest-runtime", crate::guest_runtime_feed()),
-        ("isoplane-guest-compiler", crate::guest_compiler_feed()),
-    ] {
+    for (name, feed) in feeds {
         run(Command::new("dotnet")
             .args(["nuget", "add", "source"])
-            .arg(&feed)
+            .arg(feed)
             .args(["--name", name, "--configfile"])
             .arg(&config));
-        let patterns: String = super::package_ids(&feed)
+        let patterns: String = super::package_ids(feed)
             .iter()
             .map(|id| format!("<package pattern=\"{id}\" />"))
             .collect();

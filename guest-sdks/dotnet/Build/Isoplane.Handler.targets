@@ -5,12 +5,7 @@
       <_IsoplaneHandlerPath>$(IntermediateOutputPath)Isoplane.Handler.g.cs</_IsoplaneHandlerPath>
       <_IsoplaneHandlerSource><![CDATA[
 #nullable enable
-internal sealed class IsoplaneGeneratedRouter : Isoplane.Durable.IIsoplaneRouter {
-  private Isoplane.Durable.IIsoplaneHandler? handler;
-  public void Boot() { handler = global::$(IsoplaneApplicationFactory)(); }
-  public System.Threading.Tasks.Task<Isoplane.Response> Route(Isoplane.Abi.DispatchRecord record, Isoplane.Ctx context) =>
-    handler!.HandleAsync(Isoplane.Request.FromDispatch(record), context);
-}
+internal sealed class IsoplaneGeneratedRouter() : Isoplane.Durable.HandlerFactoryRouter(global::$(IsoplaneApplicationFactory));
 ]]></_IsoplaneHandlerSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_IsoplaneHandlerPath)" Lines="$([MSBuild]::Escape($(_IsoplaneHandlerSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />

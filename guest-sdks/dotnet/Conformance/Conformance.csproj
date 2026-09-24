@@ -1,4 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project>
+  <!-- Guest builds load this host task from a fixed path; transitive restores must use that same path. -->
+  <PropertyGroup><UseArtifactsOutput>false</UseArtifactsOutput></PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>Isoplane.Conformance</AssemblyName>
@@ -14,4 +17,5 @@
     <Compile Include="../../../tools/BuildProtocol/AssemblyClosure.cs" Link="AssemblyClosure.cs" />
     <Compile Include="../../../tools/BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
   </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 </Project>

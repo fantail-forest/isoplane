@@ -335,6 +335,8 @@ def build(root, cache, releases, logs, args):
     source = cache / 'source'
     export_source(root, source, cache, revision, logs)
     version = release_version(source)
+    if args.runtime_modules:
+        load(root / 'scripts/shared-runtime-modules.py').verify(args.runtime_modules.resolve(), version, revision)
     release = releases / release_name(version)
     archive = release.with_name(release.name + '.tgz')
     receipt_path = release.with_name(release.name + '.receipt.json')
@@ -361,6 +363,14 @@ def build(root, cache, releases, logs, args):
     wasm_tools = cache / 'tools/bin/wasm-tools'
     if output([wasm_tools, '--version']) != f'wasm-tools {wasm_version}':
         raise ValueError('installed wasm-tools version differs from the pin')
+    runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else cache / 'runtime-modules'
+    if not args.runtime_modules:
+        if runtime_modules.exists():
+            shutil.rmtree(runtime_modules)
+        run(['bash', source / 'guest-sdks/dotnet/MonoRuntime/build.sh', '--output', runtime_modules,
+             '--source-revision', revision], source,
+            logs / 'shared-runtime.log', dict(environment, PATH=str(wasm_tools.parent) + os.pathsep + environment['PATH']))
+    load(source / 'scripts/shared-runtime-modules.py').verify(runtime_modules, version, revision, runtime_output / 'feed')
     packages = cache / 'packages'
     if packages.exists():
         shutil.rmtree(packages)
@@ -370,7 +380,8 @@ def build(root, cache, releases, logs, args):
         run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native_library}'], source, logs / f'pack-{name}.log', environment)
+             f'-p:IsoplaneNativePath={native_library}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
+            source, logs / f'pack-{name}.log', environment)
     verify_packages(packages, version, revision, native_library)
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     wasm_sources = list((cargo_home / 'registry/src').glob(f'*/wasm-tools-{wasm_version}/Cargo.toml'))
@@ -418,6 +429,7 @@ def main():
                         help='where the release directory, archive and checksum are written')
     parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
     parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
+    parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--llvm', type=Path, help='LLVM development build matching the compiler pin (macOS)')
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()

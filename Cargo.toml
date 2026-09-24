@@ -74,7 +74,7 @@ cpu-time    = "1.0"
 windows-sys = { version = "0.61", features = ["Win32_System_Performance", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_Security"] }
 win32job = "2.0.3"
 zstd        = "0.13"
-blake3      = "1"
+blake3      = { version = "1", features = ["rayon"] }
 hex         = "0.4"
 rand        = "0.9"
 scc            = "3.8"    # the future table's maps, on the wake path
@@ -90,6 +90,7 @@ hyper-util  = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 bytes       = "1"
 flate2      = "1"
+tar         = { version = "0.4", default-features = false }
 aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"

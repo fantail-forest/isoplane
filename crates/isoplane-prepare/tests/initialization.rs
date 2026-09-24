@@ -9,11 +9,11 @@ fn baking_preserves_grown_memory_hidden_globals_and_static_tables() {
     let prepared = initialize(&engine(), &wasm, &request())
         .expect("complete initialized state must round-trip through the bake oracle");
     assert_eq!(
-        prepared.passes, 1,
+        prepared.initialized.passes, 1,
         "pure initialization must finish in one pass"
     );
     assert!(
-        prepared.deferred.is_empty(),
+        prepared.initialized.deferred.is_empty(),
         "pure initialization must not defer units"
     );
     let template = engine()
@@ -69,7 +69,7 @@ fn runtime_bringup_answers_deterministic_clock_without_widening_unit_policy() {
     request.sandbox = InitSandbox::RuntimeBringUp;
     let result = initialize(&engine(), &wasm, &request).expect("runtime clock admission");
     assert_eq!(
-        result.pal_calls,
+        result.initialized.pal_calls,
         vec![("clock_now_coarse".to_string(), 1)],
         "the report must count the admitted runtime clock exactly once"
     );
@@ -116,21 +116,21 @@ fn a_forbidden_unit_replays_from_pristine_state_and_is_deferred() {
     let result = initialize(&engine(), &wasm, &request)
         .expect("a forbidden unit must defer with a pristine replay");
     assert_eq!(
-        result.deferred,
+        result.initialized.deferred,
         vec![7],
         "the forbidden unit must be recorded explicitly"
     );
     assert_eq!(
-        result.capability_refusals, 1,
+        result.initialized.capability_refusals, 1,
         "the report must retain the rejected pass's refusal"
     );
     assert_eq!(
-        result.deferred_reasons,
+        result.initialized.deferred_reasons,
         vec![(7, "clock_now_coarse".to_string())],
         "the report must identify why the unit was deferred"
     );
     assert_eq!(
-        result.passes, 2,
+        result.initialized.passes, 2,
         "deferring a unit must replay initialization"
     );
     let template = engine()
@@ -308,6 +308,7 @@ fn initialization_identity_changes_with_the_declared_trust_snapshot() {
         limits: isoplane_abi::config::Limits::default(),
         initialization: request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
+        portable_template: isoplane_prepare::PortableTemplate::Returned,
     };
     let old = request.identity().expect("initial identity");
     request.engine.platform_files =
@@ -340,6 +341,7 @@ fn initialization_identity_binds_application_content_independently_of_the_runtim
         limits: isoplane_abi::config::Limits::default(),
         initialization: request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
+        portable_template: isoplane_prepare::PortableTemplate::Returned,
     };
     let before = request.identity().expect("original identity");
     request.application_files =
@@ -379,7 +381,7 @@ fn a_module_without_initialization_retains_its_runtime_table_operations() {
         "no initializer means no portable module rewrite"
     );
     assert_eq!(
-        result.passes, 0,
+        result.initialized.passes, 0,
         "a module without an initializer cannot execute preparation passes"
     );
 }

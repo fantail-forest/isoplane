@@ -3,9 +3,10 @@
 mod bake;
 mod initialize;
 mod network;
+pub mod package;
 pub use network::InitializationNetwork;
 
-pub use initialize::{initialize, Initialization, Initialized};
+pub use initialize::{initialize, Initialization, Initialized, InitializedModule};
 
 /// Preparation failures classified independently of guest error text.
 #[derive(Debug, thiserror::Error)]
@@ -54,7 +55,7 @@ pub enum PrepareError {
 mod profile;
 pub use profile::{ManagedComponents, ManagedMode, RuntimeProfile};
 mod process;
-pub use process::BuildRequest;
+pub use process::{BuildRequest, PortableTemplate};
 
 mod failure;
 pub use failure::{BuildStage, WorkerFailure};

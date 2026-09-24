@@ -58,3 +58,4 @@
 # omit ../runtime/038-wasi-debugger-suspended-stack.patch -- Interpreter stack capture is specific to the Mono soft debugger.
 
 ../runtime/039-wasi-logical-async-stacks.patch
+# omit ../runtime/040-wasi-native-dispatch-refusals.patch -- Mono interpreter and P/Invoke-table checks; NativeAOT binds P/Invokes at compile time.

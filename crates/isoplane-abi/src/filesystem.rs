@@ -4,6 +4,20 @@
 use crate::imports::{Sig, Ty};
 use crate::pal::{Delegation, Disposition, PalDef, FS_PREOPENS, FS_TYPES};
 
+/// The directory the host reserves for files it serves on an application's
+/// behalf. None of the application's own content is served beneath it.
+pub const HOST_ROOT: &str = "/.isoplane";
+
+/// Where the host serves an interpreted application's package, its
+/// `application.json` and `assemblies/` laid out as in the managed bundle,
+/// for the shared Mono runtime's loader to read during initialization.
+pub const APPLICATION_PACKAGE_ROOT: &str = "/.isoplane/package";
+
+/// Where the host serves a local debug session's debugger endpoint,
+/// `127.0.0.1:<port>`, for a debug runtime to connect its agent to. Only a
+/// local debug session serves it, so no prepared template captures it.
+pub const DEBUG_AGENT_PATH: &str = "/.isoplane/debug-agent";
+
 /// The only Isoplane entry used by the native filesystem PAL wrappers.
 pub const IMPORT: &str = "filesystem_call";
 
@@ -137,5 +151,15 @@ mod tests {
     #[test]
     fn native_filesystem_wrappers_match_the_single_abi_definition() {
         assert_eq!(super::native_wrappers(), include_str!("../../../guest-sdks/dotnet/native/isoplane_filesystem.h"), "regenerate the native filesystem wrappers with cargo run -p isoplane-abi --example filesystem_header");
+    }
+
+    #[test]
+    fn host_served_files_lie_beneath_the_host_root() {
+        for path in [super::APPLICATION_PACKAGE_ROOT, super::DEBUG_AGENT_PATH] {
+            assert!(
+                path.starts_with(&format!("{}/", super::HOST_ROOT)),
+                "refusing application content beneath the host root must keep it from shadowing {path}"
+            );
+        }
     }
 }

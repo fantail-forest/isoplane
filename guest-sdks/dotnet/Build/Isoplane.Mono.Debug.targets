@@ -14,7 +14,7 @@
       <_IsoplaneDependencyDebugSymbols Include="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb' AND '%(Filename)' != '$(AssemblyName)'" />
     </ItemGroup>
     <Error Condition="'@(_IsoplaneDebugSymbols->Count())' != '1'" Text="isoplane: local debugging requires exactly one application portable PDB selected for publication." />
-    <IsoplaneMonoDebugSymbols Symbols="@(_IsoplaneDebugSymbols)" DependencySymbols="@(_IsoplaneDependencyDebugSymbols)" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplaneMonoDir)mono_debug.h" />
+    <IsoplaneMonoDebugSymbols Symbols="@(_IsoplaneDebugSymbols)" DependencySymbols="@(_IsoplaneDependencyDebugSymbols)" Output="$(_IsoplaneMonoDir)mono_debug.h" />
     <WriteLinesToFile File="$(_IsoplaneMonoDir)mono_assembly.h" Lines="#define ISOPLANE_LOCAL_DEBUG 1" Overwrite="false" />
     <ItemGroup>
       <NativeFileReference Include="$(_IsoplaneSdkDirectory)native/isoplane_debug_pal.c;$(_IsoplaneSdkDirectory)native/mono_debug_log.c" />
@@ -27,7 +27,7 @@
       <_IsoplanePublishedDebugManifest>$([System.IO.Path]::ChangeExtension('$(NativeBinary)', '.debug.xml'))</_IsoplanePublishedDebugManifest>
     </PropertyGroup>
     <Copy SourceFiles="@(_IsoplaneDebugSymbols)" DestinationFiles="$(_IsoplanePublishedSymbols)" />
-    <IsoplaneDebugManifest Module="$(NativeBinary)" Symbols="$(_IsoplanePublishedSymbols)" Endpoint="$(IsoplaneDebugEndpoint)" Output="$(_IsoplanePublishedDebugManifest)" />
+    <IsoplaneDebugManifest Module="$(NativeBinary)" Symbols="$(_IsoplanePublishedSymbols)" Output="$(_IsoplanePublishedDebugManifest)" />
     <ItemGroup><FileWrites Include="$(_IsoplanePublishedSymbols);$(_IsoplanePublishedDebugManifest)" /></ItemGroup>
   </Target>
 </Project>

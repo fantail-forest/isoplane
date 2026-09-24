@@ -15,7 +15,7 @@ public sealed class DebugRunTests : MsbuildTests
             "The debugger must preserve the selected project configuration.");
         Assert.True(result.Output.Contains("--debug --no-watch", StringComparison.Ordinal), "The run target must start an owned debug session.");
         Assert.False(result.Output.Contains("--no-build", StringComparison.Ordinal),
-            "Debugging must publish a fresh session-owned module with its allocated endpoint.");
+            "Debugging must build a fresh application package for its owned session.");
     }
 
     [Fact]

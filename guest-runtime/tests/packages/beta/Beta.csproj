@@ -1,0 +1,21 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <!--
+    A package whose closure differs from alpha's in every way the runtime
+    must not care about: a project dependency with generic value types, a
+    NuGet closure, a satellite assembly, and BCL paths reaching compression,
+    cryptography and JSON serialization.
+  -->
+  <Import Project="../Package.props" />
+  <PropertyGroup>
+    <AssemblyName>Beta</AssemblyName>
+    <IsoplaneApplicationFactory>Beta.Handler.Create</IsoplaneApplicationFactory>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="library/**/*.cs" />
+    <ProjectReference Include="library/Beta.Library.csproj" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../Package.targets" />
+</Project>

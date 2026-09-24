@@ -207,43 +207,84 @@ pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Ve
 }
 
 pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[File; 3]> {
-    let open = |index: usize| {
-        let _payload = tracing::info_span!(
-            "template_payload_verify",
-            payload = PAYLOAD_NAMES[index],
-            bytes = manifest.files[index].bytes
-        )
-        .entered();
-        let path = directory.join(PAYLOAD_NAMES[index]);
-        let mut file = File::open(&path).map_err(|e| io("open payload", &path, e))?;
-        let record = &manifest.files[index];
-        if file
-            .metadata()
-            .map_err(|e| io("stat immutable payload", &path, e))?
-            .len()
-            != record.bytes
-        {
-            return Err(PreparedError::Invalid(
-                "immutable payload differs from manifest",
-            ));
-        }
-        let mut hash = blake3::Hasher::new();
-        let limit = record
-            .bytes
-            .checked_add(1)
-            .ok_or(PreparedError::Invalid("payload length overflow"))?;
-        let bytes = std::io::copy(&mut (&mut file).take(limit), &mut hash)
+    // The payloads verify concurrently, each hashed across cores, so a cold
+    // load waits on the largest payload's read rather than the sum of the
+    // single-threaded hashes.
+    let [native, baseline, state] = std::thread::scope(|scope| {
+        [0, 1, 2]
+            .map(|index| scope.spawn(move || open_verified_payload(directory, manifest, index)))
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+    });
+    Ok([native?, baseline?, state?])
+}
+
+/// A few hashing threads: more costs more in coordination than it saves on a
+/// payload read in large blocks.
+fn hash_pool() -> Result<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    if let Some(pool) = POOL.get() {
+        return Ok(pool);
+    }
+    let threads = std::thread::available_parallelism().map_or(1, |cores| cores.get().min(8));
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|index| format!("payload-hash-{index}"))
+        .build()
+        .map_err(|error| PreparedError::Engine(error.into()))?;
+    Ok(POOL.get_or_init(|| pool))
+}
+
+fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) -> Result<File> {
+    const READ_BYTES: usize = 8 << 20;
+    let _payload = tracing::info_span!(
+        "template_payload_verify",
+        payload = PAYLOAD_NAMES[index],
+        bytes = manifest.files[index].bytes
+    )
+    .entered();
+    let path = directory.join(PAYLOAD_NAMES[index]);
+    let mut file = File::open(&path).map_err(|e| io("open payload", &path, e))?;
+    let record = &manifest.files[index];
+    if file
+        .metadata()
+        .map_err(|e| io("stat immutable payload", &path, e))?
+        .len()
+        != record.bytes
+    {
+        return Err(PreparedError::Invalid(
+            "immutable payload differs from manifest",
+        ));
+    }
+    let mut hash = blake3::Hasher::new();
+    let mut buffer = vec![0; READ_BYTES];
+    let mut bytes = 0_u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
             .map_err(|e| io("verify payload", &path, e))?;
-        if bytes != record.bytes || hash.finalize().as_bytes() != &record.hash {
+        if read == 0 {
+            break;
+        }
+        bytes += read as u64;
+        if bytes > record.bytes {
             return Err(PreparedError::Invalid(
                 "payload differs from manifest",
             ));
         }
-        file.rewind()
-            .map_err(|e| io("rewind verified payload", &path, e))?;
-        Ok(file)
-    };
-    Ok([open(0)?, open(1)?, open(2)?])
+        hash_pool()?.install(|| hash.update_rayon(&buffer[..read]));
+    }
+    if bytes != record.bytes || hash.finalize().as_bytes() != &record.hash {
+        return Err(PreparedError::Invalid(
+            "payload differs from manifest",
+        ));
+    }
+    file.rewind()
+        .map_err(|e| io("rewind verified payload", &path, e))?;
+    Ok(file)
 }
 
 #[tracing::instrument(name = "template_read_ahead", skip_all, fields(ranges = ranges.len()))]

@@ -25,7 +25,10 @@ internal sealed class LocalProject
     internal string Module => manifest.TryGetValue("module", out var module) && module is string path && !string.IsNullOrWhiteSpace(path)
         ? Path.GetFullPath(path, directory) : throw new ArgumentException("isoplane.toml must name the module to execute.");
 
-    internal byte[] SessionOptions(ushort? port, Dictionary<string, string> configuration, string? debugEndpoint = null, string? debugDirectory = null)
+    /// <summary>Where <c>isoplane dev</c> builds an interpreted project's package.</summary>
+    internal string Package => Path.Combine(directory, ".isoplane", "package", "application.tar");
+
+    internal byte[] SessionOptions(ushort? port, Dictionary<string, string> configuration, string? debugEndpoint = null, string? debugDirectory = null, string? package = null)
     {
         var development = manifest.TryGetValue("dev", out var dev) && dev is TomlTable table ? table : new TomlTable();
         var trust = development.TryGetValue("trust", out var configuredTrust) && configuredTrust is TomlTable trustTable ? trustTable : new TomlTable();
@@ -43,6 +46,7 @@ internal sealed class LocalProject
             ["log_filter"] = Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",
             ["debug_endpoint"] = debugEndpoint,
             ["trust"] = trust,
+            ["package"] = package,
         };
         if (development.TryGetValue("init_sandbox", out var sandbox)) settings["init_sandbox"] = sandbox;
         if (development.TryGetValue("allow_endpoints", out var endpoints)) settings["allow_endpoints"] = endpoints;

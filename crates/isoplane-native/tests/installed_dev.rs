@@ -8,11 +8,6 @@ use common::Dev;
 async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
     let dir = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(dir.path());
-    let manifest_path = app.join("isoplane.toml");
-    let manifest_text = std::fs::read_to_string(&manifest_path).unwrap();
-    let mut manifest: toml::Value = toml::from_str(&manifest_text).unwrap();
-    manifest["module"] = toml::Value::String("dist/nested/customer.wasm".into());
-    std::fs::write(&manifest_path, toml::to_string(&manifest).unwrap()).unwrap();
     let cli = isoplane_fixtures::managed_cli(dir.path(), &app);
     let mut dev = Dev::start_managed(&app, &cli);
     let client = reqwest::Client::builder()
@@ -106,6 +101,42 @@ async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_time
         response.text().await.unwrap(),
         "async-ready",
         "the async Mono route must return its expected response body"
+    );
+    dev.stop();
+}
+
+#[tokio::test]
+async fn an_installed_template_streams_an_upload_through_the_shared_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = isoplane_fixtures::aspnet_project(directory.path());
+    let source = app.join("Application.cs");
+    let original = std::fs::read_to_string(&source).unwrap();
+    std::fs::write(
+        &source,
+        original.replace(
+            "return app;",
+            "app.MapPost(\"/upload\", async (Microsoft.AspNetCore.Http.HttpRequest request) => { long total = 0; var buffer = new byte[4096]; int read; while ((read = await request.Body.ReadAsync(buffer)) != 0) total += read; return $\"received:{total}\"; }); return app;",
+        ),
+    )
+    .unwrap();
+    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
+    let mut dev = Dev::start_managed(&app, &cli);
+    let body = vec![b'x'; 3 * 1024 * 1024];
+    let response = reqwest::Client::new()
+        .post(format!("{}/upload", dev.url))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the shared runtime must route an upload to the package's ASP.NET endpoint"
+    );
+    assert_eq!(
+        response.text().await.unwrap(),
+        "received:3145728",
+        "the package's endpoint must read the whole body the runtime streams to it"
     );
     dev.stop();
 }
@@ -229,7 +260,7 @@ fn installed_debug_acceptance(mode: &str) {
         .arg(debug_source)
         .arg(dev.pid().to_string())
         .arg(mode)
-        .arg(metadata["module"].as_str().unwrap())
+        .arg(metadata["package"].as_str().unwrap())
         .output()
         .expect("run the installed modern DAP adapter acceptance driver");
     assert!(

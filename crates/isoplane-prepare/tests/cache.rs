@@ -36,6 +36,7 @@ fn request(wasm: &[u8]) -> BuildRequest {
         limits: isoplane_abi::config::Limits::default(),
         initialization: common::request(),
         input_hash: *blake3::hash(wasm).as_bytes(),
+        portable_template: isoplane_prepare::PortableTemplate::Returned,
     }
 }
 fn files(directory: &Path) -> Vec<PathBuf> {
@@ -86,7 +87,11 @@ async fn compiled_input_is_reused_while_each_initialization_draws_a_fresh_seed_a
     for (product, config) in [(first, b"first".as_slice()), (second, b"second".as_slice())] {
         let engine = common::engine();
         let template = engine
-            .load_template(&product.initialized.wasm)
+            .load_template(
+                product
+                    .portable_template()
+                    .expect("a requested portable template is returned"),
+            )
             .expect("initialized output");
         let memory = template.memory_image_arc().to_dense();
         seeds.push(memory[64..80].to_vec());

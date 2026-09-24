@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Build the shared Mono runtime modules the Isoplane.Sdk package carries, the
+# production runtime and the local-debug one, and runtime-build.json recording
+# the SDK version, source revision and Mono pack they were built from.
+# Usage: guest-sdks/dotnet/MonoRuntime/build.sh --output DIRECTORY [--source-revision REVISION]
+# The revision defaults to the checkout's HEAD, marked +dirty when it has changes.
+# Serialised with the other C# guest builds: they share the SDK project's
+# intermediate files.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/../../.." && pwd)"
+LOCK="$ROOT/guests/.build-dotnet.lock"
+if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$HERE/build.sh" ]; then
+  exec python3 "$ROOT/scripts/fixture-tools.py" lock "$LOCK" "$HERE/build.sh" "$@"
+fi
+
+OUTPUT=""
+REVISION=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) OUTPUT="${2:?--output needs a directory}"; shift 2 ;;
+    --source-revision) REVISION="${2:?--source-revision needs a revision}"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$OUTPUT" ] || { echo "missing --output DIRECTORY" >&2; exit 2; }
+command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the shared runtime cannot be built." >&2; exit 1; }
+
+mkdir -p "$OUTPUT"
+OUTPUT="$(cd "$OUTPUT" && pwd)"
+# Symbols stay in the interpreter's module so a trap names its frames.
+ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
+  -p:WasmNativeStrip=false --artifacts-path "$HERE/obj/production"
+ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime.Debug "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
+  -p:WasmNativeStrip=false -p:IsoplaneLocalDebug=true --artifacts-path "$HERE/obj/debug"
+for module in Isoplane.MonoRuntime Isoplane.MonoRuntime.Debug; do
+  [ -f "$OUTPUT/$module.wasm.runtime" ] \
+    || { echo "FATAL: the $module publish recorded no Mono pack identity" >&2; exit 1; }
+done
+python3 "$HERE/receipt.py" "$OUTPUT" "$ROOT" ${REVISION:+"$REVISION"}

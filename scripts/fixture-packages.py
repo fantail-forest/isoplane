@@ -12,13 +12,22 @@ SPEC = importlib.util.spec_from_file_location("fixture_tools", Path(__file__).wi
 tools = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tools)
 
+def shared_runtime(root):
+    """The SDK's shared runtime, built under the C# fixture lock, which this
+    script never holds."""
+    subprocess.run(["bash", str(root / "guest-runtime/tests/packages/build.sh"), "--if-stale", "--fixture", "runtime"],
+                   cwd=root, check=True, stdout=sys.stderr)
+    return root / "guest-runtime/tests/packages/out/runtime"
+
+
 def package_feed(root):
     root = Path(root).resolve()
+    runtime = shared_runtime(root)
     sources = [root / name for name in (
         "guest-sdks/dotnet", "tools", "crates", ".cargo", "Cargo.toml",
         "Cargo.lock", "Directory.Build.props", "global.json", "nuget.config",
         "scripts/fixture-tools.py", "scripts/fixture-packages.py",
-    )]
+    )] + sorted(runtime.glob("Isoplane.MonoRuntime*.wasm*"))
     toolchains = subprocess.check_output(["dotnet", "--version"], cwd=root)
     toolchains += subprocess.check_output(["rustc", "-vV"], cwd=root)
     identity = hashlib.sha256(tools.fingerprint(sources).encode() + toolchains).hexdigest()
@@ -42,7 +51,8 @@ def package_feed(root):
             for project in projects:
                 result = subprocess.run(
                     ["dotnet", "pack", str(root / project), "--artifacts-path",
-                     str(target / "artifacts"), "-o", str(packages), "--disable-build-servers"],
+                     str(target / "artifacts"), "-o", str(packages), "--disable-build-servers",
+                     f"-p:IsoplaneRuntimeModuleDirectory={runtime}"],
                     cwd=root, stdout=output, stderr=subprocess.STDOUT,
                 )
                 if result.returncode != 0:

@@ -14,8 +14,6 @@ public sealed class IsoplaneDebugManifest : Microsoft.Build.Utilities.Task
     [Required] public string Module { get; set; } = "";
     /// <summary>The application portable PDB.</summary>
     [Required] public string Symbols { get; set; } = "";
-    /// <summary>The validated session-owned debugger endpoint.</summary>
-    [Required] public string Endpoint { get; set; } = "";
     /// <summary>The output XML manifest.</summary>
     [Required] public string Output { get; set; } = "";
 
@@ -33,7 +31,6 @@ public sealed class IsoplaneDebugManifest : Microsoft.Build.Utilities.Task
         using (var writer = XmlWriter.Create(Output, new XmlWriterSettings { Indent = true }))
         {
             writer.WriteStartElement("LocalDebug");
-            writer.WriteAttributeString("endpoint", Endpoint);
             WriteFile(writer, "Module", Module);
             WriteFile(writer, "Symbols", Symbols);
             writer.WriteEndElement();

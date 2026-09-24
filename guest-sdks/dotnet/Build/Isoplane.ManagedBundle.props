@@ -1,4 +1,9 @@
 <Project>
+  <!-- An interpreted application builds as a package for the SDK's shared
+       runtime. A local debug session still publishes its own module. -->
+  <PropertyGroup>
+    <IsoplaneManagedBundleBuild Condition="'$(IsoplaneManagedBundleBuild)' == '' AND '$(IsoplaneGuestRuntime)' == 'Mono' AND '$(IsoplaneLocalDebug)' != 'true'">true</IsoplaneManagedBundleBuild>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(IsoplaneManagedBundleBuild)' == 'true'">
     <OutputType>Library</OutputType>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>

@@ -1,6 +1,4 @@
-using System.Security.Cryptography;
 using System.Text.Json;
-using System.Xml.Linq;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -11,7 +9,6 @@ internal static class DebugDevelopment
     {
         if (await Development.RuntimeProfileAsync(options, cancellation) != GuestRuntimeProfile.Mono)
             throw new ArgumentException("Debugging currently requires an explicitly selected interpreted project configuration; NativeAOT debugging is not supported.");
-        var ordinaryModule = new LocalProject(options.Directory).Module;
         var session = Path.Combine(options.Directory, ".isoplane", "debug", Guid.NewGuid().ToString("N"));
         try
         {
@@ -20,26 +17,7 @@ internal static class DebugDevelopment
             else
                 Directory.CreateDirectory(session, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             await using var relay = new DebugRelay(cancellation);
-            var endpoint = relay.Endpoint.ToString();
-            var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
-            List<string> publication = ["publish", project, "-c", options.Configuration, "-o", session, "--disable-build-servers",
-                "-p:IsoplaneLocalDebug=true", "-p:IsoplaneDebugEndpoint=" + endpoint];
-            var result = await Processes.RunAsync("dotnet", publication, options.Directory, cancellation, redirectOutput: options.Json);
-            if (result != 0)
-                return result;
-            var artifacts = ReadArtifacts(session, endpoint);
-            if (Path.GetFullPath(artifacts.Module) == Path.GetFullPath(ordinaryModule))
-                throw new InvalidOperationException("A debug session must not replace the ordinary application module.");
-            if (options.Json)
-                Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module = artifacts.Module, symbols = artifacts.Symbols }));
-            else
-                Console.WriteLine($"Debugger target: {endpoint}. Connect your editor through isoplane debug-adapter; this session serves one HTTP request.");
-            var projectInputs = new LocalProject(options.Directory);
-            await using var host = new LocalSession(await File.ReadAllBytesAsync(artifacts.Module, cancellation),
-                projectInputs.SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime")),
-                message => LocalEvents.Write(message, options.Json));
-            await RunHostAsync(host, relay, cancellation);
-            return 0;
+            return await RunPackageAsync(options, session, relay.Endpoint.ToString(), relay, cancellation);
         }
         finally
         {
@@ -53,6 +31,32 @@ internal static class DebugDevelopment
                 Console.Error.WriteLine($"isoplane: could not remove debug session {session}: {error.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// Debugs an interpreted project's package on the SDK's local-debug runtime,
+    /// which connects its agent to <paramref name="endpoint"/> through the relay.
+    /// </summary>
+    private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string endpoint, DebugRelay relay, CancellationToken cancellation)
+    {
+        var package = Path.Combine(session, "application.tar");
+        SharedRuntime runtime;
+        try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package), cancellation); }
+        catch (InvalidOperationException error)
+        {
+            Console.Error.WriteLine($"isoplane: package build failed: {error.Message}");
+            return 1;
+        }
+        var module = runtime.DebugModule;
+        if (options.Json)
+            Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module, package, runtime = "mono" }));
+        else
+            Console.WriteLine($"Debugger target: {endpoint}. Connect your editor through isoplane debug-adapter; this session serves one HTTP request.");
+        await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
+            new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
+            message => LocalEvents.Write(message, options.Json));
+        await RunHostAsync(host, relay, cancellation);
+        return 0;
     }
 
     internal static async Task RunHostAsync(LocalSession host, DebugRelay relay, CancellationToken cancellation)
@@ -70,36 +74,4 @@ internal static class DebugDevelopment
             await host.Completion;
         }
     }
-
-    private static DebugArtifacts ReadArtifacts(string directory, string endpoint)
-    {
-        var manifests = Directory.GetFiles(directory, "*.debug.xml");
-        if (manifests.Length != 1)
-            throw new InvalidOperationException("Debug publication must produce one module/symbol manifest.");
-        XElement? root;
-        try { root = XDocument.Load(manifests[0]).Root; }
-        catch (System.Xml.XmlException error)
-        {
-            throw new InvalidOperationException("Debug publication produced an invalid module/symbol manifest.", error);
-        }
-        if (root is null || root.Name != "LocalDebug" || (string?)root.Attribute("endpoint") != endpoint)
-            throw new InvalidOperationException("Debug publication does not identify this session's debugger endpoint.");
-        return new(ReadArtifact(directory, root.Element("Module")), ReadArtifact(directory, root.Element("Symbols")));
-    }
-
-    private static string ReadArtifact(string directory, XElement? element)
-    {
-        var name = (string?)element?.Attribute("file");
-        var expected = (string?)element?.Attribute("sha256");
-        if (string.IsNullOrWhiteSpace(name) || Path.GetFileName(name) != name || string.IsNullOrWhiteSpace(expected))
-            throw new InvalidOperationException("Debug publication must identify each session artifact and its hash.");
-        var path = Path.Combine(directory, name);
-        using var contents = File.OpenRead(path);
-        var actual = Convert.ToHexString(SHA256.HashData(contents));
-        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"Debug artifact {name} does not match the published module/symbol pair.");
-        return path;
-    }
-
-    private sealed record DebugArtifacts(string Module, string Symbols);
 }

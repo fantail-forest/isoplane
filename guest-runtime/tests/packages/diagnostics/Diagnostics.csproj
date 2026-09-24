@@ -1,0 +1,12 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <!-- A package whose requests make the Mono runtime itself report: a
+       fail-fast and a fatal interpreter error. -->
+  <Import Project="../Package.props" />
+  <PropertyGroup>
+    <AssemblyName>Diagnostics</AssemblyName>
+    <IsoplaneApplicationFactory>Diagnostics.Handler.Create</IsoplaneApplicationFactory>
+  </PropertyGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../Package.targets" />
+</Project>
