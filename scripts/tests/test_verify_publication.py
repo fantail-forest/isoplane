@@ -52,7 +52,11 @@ class PublicationTests(unittest.TestCase):
     def package(self, package_id):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w') as archive:
-            archive.writestr('package.nuspec', f'<package><metadata><id>{package_id}</id><version>{self.version}</version></metadata></package>')
+            archive.writestr('package.nuspec', f'<package><metadata><id>{package_id}</id><version>{self.version}</version><repository commit="{self.manifest["sourceRevision"]}" /></metadata></package>')
+            if package_id in ('Isoplane.Cli', 'Isoplane.Native'):
+                for rid, name in publication.NATIVE_LIBRARIES.items():
+                    prefix = f'runtimes/{rid}/native/' if package_id == 'Isoplane.Native' else 'tools/net10.0/any/runtime/'
+                    archive.writestr(prefix + name, b'native')
         return stream.getvalue()
 
     def verify(self, expected=None):
@@ -78,6 +82,25 @@ class PublicationTests(unittest.TestCase):
     def test_wrong_nuspec_identity_is_rejected(self):
         self.manifest['packages']['Isoplane.Sdk'] = self.objects.put(self.package_key('Isoplane.Sdk'), self.package('Isoplane.Wrong'))
         with self.assertRaisesRegex(ValueError, 'identity mismatch'):
+            self.verify()
+
+    def test_wrong_package_source_revision_is_rejected(self):
+        self.manifest['sourceRevision'] = 'b' * 40
+        wrong = self.package('Isoplane.Sdk')
+        self.manifest['sourceRevision'] = 'a' * 40
+        self.manifest['packages']['Isoplane.Sdk'] = self.objects.put(self.package_key('Isoplane.Sdk'), wrong)
+        with self.assertRaisesRegex(ValueError, 'source revision mismatch'):
+            self.verify()
+
+    def test_missing_platform_native_library_is_rejected(self):
+        original = self.package('Isoplane.Cli')
+        stream = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(stream, 'w') as destination:
+            for entry in source.infolist():
+                if not entry.filename.endswith('.dylib'):
+                    destination.writestr(entry, source.read(entry))
+        self.manifest['packages']['Isoplane.Cli'] = self.objects.put(self.package_key('Isoplane.Cli'), stream.getvalue())
+        with self.assertRaisesRegex(ValueError, 'missing native asset for osx-arm64'):
             self.verify()
 
     def test_missing_package_is_rejected(self):

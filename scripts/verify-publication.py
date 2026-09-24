@@ -11,7 +11,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ORIGIN = 'https://releases.isoplane.dev'
-PLATFORMS = ('linux-x64', 'win-x64', 'osx-arm64')
+NATIVE_LIBRARIES = {'linux-x64': 'libisoplane_native.so', 'win-x64': 'isoplane_native.dll', 'osx-arm64': 'libisoplane_native.dylib'}
+PLATFORMS = tuple(NATIVE_LIBRARIES)
 
 
 def require(condition, message):
@@ -68,7 +69,7 @@ def fetch_checked(downloads, key, expected, path, limit):
         require(hashlib.file_digest(stream, 'sha256').hexdigest() == expected, f'{key}: SHA256 mismatch')
 
 
-def verify_nuspec(path, package_id, version):
+def verify_nuspec(path, package_id, version, revision):
     with zipfile.ZipFile(path) as archive:
         specs = [entry for entry in archive.infolist() if entry.filename.endswith('.nuspec')]
         require(len(specs) == 1 and specs[0].file_size <= 1024 * 1024, 'expected one bounded NuSpec')
@@ -77,6 +78,13 @@ def verify_nuspec(path, package_id, version):
             element.tag = element.tag.rsplit('}', 1)[-1]
         require(root.findtext('metadata/id') == package_id and root.findtext('metadata/version') == version,
                 f'{path.name}: NuSpec identity mismatch')
+        repository = root.find('metadata/repository')
+        require(repository is not None and repository.get('commit') == revision, f'{path.name}: source revision mismatch')
+        if package_id in ('Isoplane.Cli', 'Isoplane.Native'):
+            for rid, name in NATIVE_LIBRARIES.items():
+                prefix = f'runtimes/{rid}/native/' if package_id == 'Isoplane.Native' else 'tools/net10.0/any/runtime/'
+                require(prefix + name in archive.namelist() and archive.getinfo(prefix + name).file_size > 0,
+                        f'{path.name}: missing native asset for {rid}')
 
 
 def verify(version, manifest_sha256, directory, downloads):
@@ -105,7 +113,7 @@ def verify(version, manifest_sha256, directory, downloads):
         filename = f'{package_id}.{version}.nupkg'
         path = directory / filename
         fetch_checked(downloads, f'nuget/{version}/{filename}', packages[package_id], path, 1024 ** 3)
-        verify_nuspec(path, package_id, version)
+        verify_nuspec(path, package_id, version, revision)
         ordered.append(str(path.resolve()))
     (directory / 'packages.json').write_text(json.dumps(ordered) + '\n')
 
