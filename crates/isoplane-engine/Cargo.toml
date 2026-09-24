@@ -10,6 +10,7 @@ description = "wasmtime embedding: template pre-init, instance slots, CoW activa
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 tracing = { workspace = true }
 isoplane-abi = { workspace = true, features = ["host"] }
 wasmtime = { workspace = true }
@@ -32,6 +33,7 @@ libc = { workspace = true }
 # engine bug.
 wat = { workspace = true }
 isoplane-fixtures = { workspace = true }
+serde_json = { workspace = true }
 
 [build-dependencies]
 toml.workspace = true
