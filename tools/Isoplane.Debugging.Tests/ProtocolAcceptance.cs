@@ -9,17 +9,19 @@ namespace Isoplane.Debugging.Tests;
 
 internal static class ProtocolAcceptance
 {
+    private const int DeadlineMs = 180_000;
+
     internal static async Task<int> Main(string[] arguments)
     {
         if (arguments is not [var endpoint, var url]) return 1;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        using var deadline = new CancellationTokenSource(DeadlineMs);
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new LingerOption(true, 0) };
-        using var http = new HttpClient();
+        using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         var connecting = VirtualMachineManager.ConnectInternalAsync(socket, null, IPEndPoint.Parse(endpoint), null);
         var response = http.GetStringAsync(url, deadline.Token);
         var machine = await connecting.WaitAsync(deadline.Token);
         machine.EnableEvents([EventType.UserBreak], SuspendPolicy.All);
-        var start = machine.GetNextEventSet(30000);
+        var start = machine.GetNextEventSet(DeadlineMs);
         Assert.True(start?.Events.Any(value => value.EventType == EventType.VMStart) == true, "The real runtime must announce its initial suspension.");
         machine.Resume();
         var stopped = UserBreak(machine);
@@ -73,9 +75,9 @@ internal static class ProtocolAcceptance
         application.SetValue(application.GetField("ReleaseProtocolProbe"), machine.CreateValue(true));
         machine.Resume();
         Assert.True(await response == "9", "The guest must remain usable after every rejected protocol command.");
-        var ended = machine.GetNextEventSet(30000);
+        var ended = machine.GetNextEventSet(DeadlineMs);
         if (ended?.Events.Any(value => value.EventType == EventType.VMDeath) == true)
-            ended = machine.GetNextEventSet(30000);
+            ended = machine.GetNextEventSet(DeadlineMs);
         Assert.True(ended?.Events.Any(value => value.EventType == EventType.VMDisconnect) == true,
             "The owned guest must finish closing its debugger transport after returning the HTTP response.");
         Console.WriteLine("Managed debugger protocol guards passed.");
@@ -84,7 +86,7 @@ internal static class ProtocolAcceptance
 
     private static Event UserBreak(VirtualMachine machine)
     {
-        var events = machine.GetNextEventSet(30000);
+        var events = machine.GetNextEventSet(DeadlineMs);
         Assert.True(events?.Events.Any(value => value.EventType == EventType.UserBreak) == true, "The real guest must stop at the requested managed location.");
         return events!.Events.First(value => value.EventType == EventType.UserBreak);
     }

@@ -70,7 +70,7 @@ pub use product::{prepare_in_current_process, BuildProduct, LocalPreparation, Pr
 #[cfg(target_os = "linux")]
 mod baseline;
 #[cfg(target_os = "linux")]
-pub use baseline::{BaselineRequest, RuntimeBaseline};
+pub use baseline::{BaselineRequest, PreparedApplication, PreparedBaseline, RuntimeBaseline};
 
 pub mod preinit;
 pub use preinit::{PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};
