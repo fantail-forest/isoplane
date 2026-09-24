@@ -100,16 +100,28 @@ impl PreparedTemplate {
         }
         let metadata = postcard::to_allocvec(&self.manifest)?;
         write_new(&temporary.path().join(MANIFEST), &metadata)?;
-        File::open(temporary.path())
-            .and_then(|f| f.sync_all())
+        sync_directory(temporary.path())
             .map_err(|e| io("sync staging directory", temporary.path(), e))?;
         std::fs::rename(temporary.path(), directory)
             .map_err(|e| io("publish directory", directory, e))?;
-        File::open(parent)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| io("sync parent", parent, e))?;
+        sync_directory(parent).map_err(|e| io("sync parent", parent, e))?;
         Ok(())
     }
+}
+
+fn sync_directory(path: &Path) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+
+        // Directory handles require backup semantics; FlushFileBuffers requires write access.
+        options.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    #[cfg(not(windows))]
+    options.read(true);
+    options.open(path)?.sync_all()
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {

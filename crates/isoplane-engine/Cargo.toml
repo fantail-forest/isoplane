@@ -28,6 +28,9 @@ tempfile = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [dev-dependencies]
 # Hand-written .wat fixtures, so a guest-SDK bug is never mistaken for an
 # engine bug.
