@@ -5,16 +5,15 @@ use std::time::Duration;
 
 use isoplane_host::cell::{ReclaimCandidate, ReclaimKind};
 use isoplane_host::memory_pressure::{MemoryPressureSource, SystemMemoryPressure};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Candidate {
-    pub cell: String,
-    pub instance: ReclaimCandidate,
+#[derive(Debug, Clone)]
+struct Candidate {
+    cell: String,
+    instance: ReclaimCandidate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct Cursor {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Cursor {
     last_used_ms: u64,
     cell: String,
     instance: isoplane_host::InstanceId,
@@ -30,86 +29,65 @@ impl Candidate {
     }
 }
 
+/// Where the coordinator finds and reclaims instances: the node's cells.
 #[async_trait::async_trait]
-trait Participant: Send + Sync {
-    fn is_alive(&self) -> bool;
-    async fn candidate(
+trait Instances: Send + Sync {
+    /// The least recently used candidate of `kind` ordered after `after`.
+    fn candidate(
         &self,
         kind: ReclaimKind,
         now_ms: u64,
-        after: Option<Cursor>,
-    ) -> anyhow::Result<Option<Candidate>>;
+        after: Option<&Cursor>,
+    ) -> Option<Candidate>;
     async fn reclaim(&self, candidate: Candidate) -> anyhow::Result<bool>;
 }
 
 struct Local(Weak<crate::real::RealCells>);
 
 #[async_trait::async_trait]
-impl Participant for Local {
-    fn is_alive(&self) -> bool {
-        self.0.strong_count() > 0
-    }
-
-    async fn candidate(
+impl Instances for Local {
+    fn candidate(
         &self,
         kind: ReclaimKind,
         now_ms: u64,
-        after: Option<Cursor>,
-    ) -> anyhow::Result<Option<Candidate>> {
-        Ok(self
-            .0
-            .upgrade()
-            .and_then(|cells| local_candidate(&cells, kind, now_ms, after.as_ref())))
+        after: Option<&Cursor>,
+    ) -> Option<Candidate> {
+        let cells = self.0.upgrade()?;
+        cells
+            .cells()
+            .iter()
+            .flat_map(|cell| {
+                cell.reclamation_candidates(now_ms)
+                    .into_iter()
+                    .filter(move |candidate| candidate.kind == kind)
+                    .map(move |instance| Candidate {
+                        cell: cell.cfg.name.clone(),
+                        instance,
+                    })
+            })
+            .filter(|candidate| after.is_none_or(|cursor| candidate.cursor() > *cursor))
+            .min_by_key(Candidate::cursor)
     }
 
     async fn reclaim(&self, candidate: Candidate) -> anyhow::Result<bool> {
         let Some(cells) = self.0.upgrade() else {
             return Ok(false);
         };
-        reclaim_local(&cells, candidate).await
+        let Some(cell) = cells
+            .cells()
+            .iter()
+            .find(|cell| cell.cfg.name == candidate.cell)
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        tokio::task::spawn_blocking(move || cell.reclaim_candidate(candidate.instance)).await?
     }
-}
-
-pub(crate) fn local_candidate(
-    cells: &crate::real::RealCells,
-    kind: ReclaimKind,
-    now_ms: u64,
-    after: Option<&Cursor>,
-) -> Option<Candidate> {
-    cells
-        .cells()
-        .iter()
-        .flat_map(|cell| {
-            cell.reclamation_candidates(now_ms)
-                .into_iter()
-                .filter(move |candidate| candidate.kind == kind)
-                .map(move |instance| Candidate {
-                    cell: cell.cfg.name.clone(),
-                    instance,
-                })
-        })
-        .filter(|candidate| after.is_none_or(|cursor| candidate.cursor() > *cursor))
-        .min_by_key(Candidate::cursor)
-}
-
-pub(crate) async fn reclaim_local(
-    cells: &crate::real::RealCells,
-    candidate: Candidate,
-) -> anyhow::Result<bool> {
-    let Some(cell) = cells
-        .cells()
-        .iter()
-        .find(|cell| cell.cfg.name == candidate.cell)
-        .cloned()
-    else {
-        return Ok(false);
-    };
-    tokio::task::spawn_blocking(move || cell.reclaim_candidate(candidate.instance)).await?
 }
 
 /// One ordering authority for every cell a node owns.
 pub(crate) struct Coordinator {
-    participants: parking_lot::Mutex<Vec<Arc<dyn Participant>>>,
+    instances: Arc<dyn Instances>,
     round: tokio::sync::Mutex<()>,
     pressure: Arc<dyn MemoryPressureSource>,
     policy: isoplane_host::hibernate_policy::HibernateConfig,
@@ -125,7 +103,7 @@ impl Coordinator {
             cell.set_node_coordinated_reclamation();
         }
         let coordinator = Arc::new(Self {
-            participants: parking_lot::Mutex::new(vec![Arc::new(Local(Arc::downgrade(cells)))]),
+            instances: Arc::new(Local(Arc::downgrade(cells))),
             round: tokio::sync::Mutex::new(()),
             pressure: Arc::new(SystemMemoryPressure),
             policy,
@@ -173,54 +151,12 @@ impl Coordinator {
         });
     }
 
-    fn participants(&self) -> Vec<Arc<dyn Participant>> {
-        let mut participants = self.participants.lock();
-        participants.retain(|participant| participant.is_alive());
-        participants.clone()
-    }
-
-    async fn oldest(
-        participants: &[Arc<dyn Participant>],
-        kind: ReclaimKind,
-        now_ms: u64,
-        cursors: &[Option<Cursor>],
-        failed: &mut [bool],
-    ) -> anyhow::Result<Option<(usize, Candidate)>> {
-        let mut oldest: Option<(usize, Candidate)> = None;
-        for (index, participant) in participants.iter().enumerate() {
-            if failed[index] {
-                continue;
-            }
-            let candidate = match participant
-                .candidate(kind, now_ms, cursors[index].clone())
-                .await
-            {
-                Ok(candidate) => candidate,
-                Err(error) => {
-                    failed[index] = true;
-                    tracing::warn!(%error, "node reclamation participant unavailable for this round");
-                    continue;
-                }
-            };
-            let Some(candidate) = candidate else { continue };
-            if oldest
-                .as_ref()
-                .is_none_or(|(_, current)| candidate.cursor() < current.cursor())
-            {
-                oldest = Some((index, candidate));
-            }
-        }
-        Ok(oldest)
-    }
-
     #[tracing::instrument(name = "node_memory_reclamation", skip_all)]
     async fn reclaim_memory(&self) -> anyhow::Result<()> {
         use std::sync::atomic::Ordering;
-        let participants = self.participants();
         let now_ms = isoplane_host::now_ms();
-        let mut failed = vec![false; participants.len()];
-        let mut idle_cursors = vec![None; participants.len()];
-        let mut active_cursors = vec![None; participants.len()];
+        let mut idle = None;
+        let mut active = None;
         loop {
             let _round = self.round.lock().await;
             let sample = self.pressure.sample()?;
@@ -231,33 +167,27 @@ impl Coordinator {
             if !reclaim {
                 return Ok(());
             }
-            let (selected, cursors) = match Self::oldest(
-                &participants,
-                ReclaimKind::Idle,
-                now_ms,
-                &idle_cursors,
-                &mut failed,
-            )
-            .await?
+            // Completed work goes before unfinished work, each oldest first.
+            let candidate = match self
+                .instances
+                .candidate(ReclaimKind::Idle, now_ms, idle.as_ref())
             {
-                Some(candidate) => (Some(candidate), &mut idle_cursors),
-                None => (
-                    Self::oldest(
-                        &participants,
-                        ReclaimKind::Active,
-                        now_ms,
-                        &active_cursors,
-                        &mut failed,
-                    )
-                    .await?,
-                    &mut active_cursors,
-                ),
+                Some(candidate) => {
+                    idle = Some(candidate.cursor());
+                    candidate
+                }
+                None => match self
+                    .instances
+                    .candidate(ReclaimKind::Active, now_ms, active.as_ref())
+                {
+                    Some(candidate) => {
+                        active = Some(candidate.cursor());
+                        candidate
+                    }
+                    None => return Ok(()),
+                },
             };
-            let Some((index, candidate)) = selected else {
-                return Ok(());
-            };
-            cursors[index] = Some(candidate.cursor());
-            if let Err(error) = participants[index].reclaim(candidate).await {
+            if let Err(error) = self.instances.reclaim(candidate).await {
                 tracing::warn!(%error, "node reclamation candidate refused; continuing with later candidates");
             }
         }
@@ -266,21 +196,14 @@ impl Coordinator {
     #[tracing::instrument(name = "node_storage_reclamation", skip_all)]
     pub(crate) async fn reclaim_storage(&self) -> anyhow::Result<bool> {
         let _round = self.round.lock().await;
-        let participants = self.participants();
         let now_ms = isoplane_host::now_ms();
-        let mut failed = vec![false; participants.len()];
-        let mut cursors = vec![None; participants.len()];
-        while let Some((index, candidate)) = Self::oldest(
-            &participants,
-            ReclaimKind::HibernatedIdle,
-            now_ms,
-            &cursors,
-            &mut failed,
-        )
-        .await?
+        let mut after = None;
+        while let Some(candidate) =
+            self.instances
+                .candidate(ReclaimKind::HibernatedIdle, now_ms, after.as_ref())
         {
-            cursors[index] = Some(candidate.cursor());
-            match participants[index].reclaim(candidate).await {
+            after = Some(candidate.cursor());
+            match self.instances.reclaim(candidate).await {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
                 Err(error) => tracing::warn!(%error, "node snapshot eviction candidate refused"),
@@ -305,38 +228,27 @@ mod tests {
         }
     }
 
-    struct TestParticipant {
+    struct TestInstances {
         candidates: parking_lot::Mutex<Vec<Candidate>>,
-        attempts: Arc<parking_lot::Mutex<Vec<u64>>>,
+        attempts: parking_lot::Mutex<Vec<u64>>,
         refused: Option<u64>,
-        unavailable: bool,
     }
 
     #[async_trait::async_trait]
-    impl Participant for TestParticipant {
-        fn is_alive(&self) -> bool {
-            true
-        }
-
-        async fn candidate(
+    impl Instances for TestInstances {
+        fn candidate(
             &self,
             kind: ReclaimKind,
             _now_ms: u64,
-            after: Option<Cursor>,
-        ) -> anyhow::Result<Option<Candidate>> {
-            anyhow::ensure!(!self.unavailable, "participant transport unavailable");
-            Ok(self
-                .candidates
+            after: Option<&Cursor>,
+        ) -> Option<Candidate> {
+            self.candidates
                 .lock()
                 .iter()
                 .filter(|candidate| candidate.instance.kind == kind)
-                .filter(|candidate| {
-                    after
-                        .as_ref()
-                        .is_none_or(|cursor| candidate.cursor() > *cursor)
-                })
+                .filter(|candidate| after.is_none_or(|cursor| candidate.cursor() > *cursor))
                 .min_by_key(|candidate| candidate.cursor())
-                .cloned())
+                .cloned()
         }
 
         async fn reclaim(&self, candidate: Candidate) -> anyhow::Result<bool> {
@@ -361,115 +273,73 @@ mod tests {
         }
     }
 
-    fn coordinator(participants: Vec<TestParticipant>) -> Coordinator {
-        Coordinator {
-            participants: parking_lot::Mutex::new(
-                participants
-                    .into_iter()
-                    .map(|participant| Arc::new(participant) as Arc<dyn Participant>)
-                    .collect(),
-            ),
+    fn coordinator(
+        candidates: Vec<Candidate>,
+        refused: Option<u64>,
+    ) -> (Coordinator, Arc<TestInstances>) {
+        let instances = Arc::new(TestInstances {
+            candidates: parking_lot::Mutex::new(candidates),
+            attempts: Default::default(),
+            refused,
+        });
+        let coordinator = Coordinator {
+            instances: instances.clone(),
             round: tokio::sync::Mutex::new(()),
             pressure: Arc::new(Pressure),
             policy: Default::default(),
             reclaiming: Default::default(),
-        }
-    }
-
-    fn participant(
-        candidates: Vec<Candidate>,
-        attempts: &Arc<parking_lot::Mutex<Vec<u64>>>,
-    ) -> TestParticipant {
-        TestParticipant {
-            candidates: parking_lot::Mutex::new(candidates),
-            attempts: attempts.clone(),
-            refused: None,
-            unavailable: false,
-        }
+        };
+        (coordinator, instances)
     }
 
     #[tokio::test]
-    async fn every_workers_idle_candidates_precede_older_unfinished_work() {
-        let attempts = Arc::new(parking_lot::Mutex::new(vec![]));
-        let coordinator = coordinator(vec![
-            participant(
-                vec![
-                    candidate(1, 1, ReclaimKind::Active),
-                    candidate(2, 20, ReclaimKind::Idle),
-                ],
-                &attempts,
-            ),
-            participant(vec![candidate(3, 10, ReclaimKind::Idle)], &attempts),
-        ]);
+    async fn idle_candidates_precede_older_unfinished_work() {
+        let (coordinator, instances) = coordinator(
+            vec![
+                candidate(1, 1, ReclaimKind::Active),
+                candidate(2, 20, ReclaimKind::Idle),
+                candidate(3, 10, ReclaimKind::Idle),
+            ],
+            None,
+        );
         coordinator
             .reclaim_memory()
             .await
-            .expect("reclaim across participants");
+            .expect("reclaim under pressure");
         assert_eq!(
-            *attempts.lock(),
+            *instances.attempts.lock(),
             vec![3, 2, 1],
-            "node-wide LRU must drain completed work across workers before unfinished work"
+            "node-wide LRU must drain completed work before unfinished work"
         );
     }
 
     #[tokio::test]
     async fn an_oldest_capture_refusal_does_not_starve_later_eligible_candidates() {
-        let attempts = Arc::new(parking_lot::Mutex::new(vec![]));
-        let mut first = participant(
+        let (coordinator, instances) = coordinator(
             vec![
                 candidate(1, 1, ReclaimKind::Idle),
                 candidate(2, 2, ReclaimKind::Idle),
+                candidate(3, 0, ReclaimKind::Active),
             ],
-            &attempts,
+            Some(1),
         );
-        first.refused = Some(1);
-        let coordinator = coordinator(vec![
-            first,
-            participant(vec![candidate(3, 0, ReclaimKind::Active)], &attempts),
-        ]);
         coordinator
             .reclaim_memory()
             .await
             .expect("continue after capture refusal");
-        assert_eq!(*attempts.lock(), vec![1, 2, 3], "a refused oldest candidate must be attempted once while later idle candidates retain priority");
+        assert_eq!(*instances.attempts.lock(), vec![1, 2, 3], "a refused oldest candidate must be attempted once while later idle candidates retain priority");
     }
 
     #[tokio::test]
-    async fn an_unavailable_worker_does_not_block_reclamation_in_healthy_workers() {
-        let attempts = Arc::new(parking_lot::Mutex::new(vec![]));
-        let mut unavailable = participant(vec![candidate(1, 1, ReclaimKind::Idle)], &attempts);
-        unavailable.unavailable = true;
-        let coordinator = coordinator(vec![
-            unavailable,
-            participant(vec![candidate(2, 2, ReclaimKind::Idle)], &attempts),
-        ]);
-        coordinator
-            .reclaim_memory()
-            .await
-            .expect("continue with healthy participants");
-        assert_eq!(
-            *attempts.lock(),
-            vec![2],
-            "an unavailable worker cannot starve reachable eligible instances"
+    async fn storage_reclamation_discards_only_the_oldest_idle_snapshot() {
+        let (coordinator, instances) = coordinator(
+            vec![
+                candidate(1, 1, ReclaimKind::Active),
+                candidate(2, 20, ReclaimKind::HibernatedIdle),
+                candidate(3, 10, ReclaimKind::HibernatedIdle),
+            ],
+            None,
         );
-    }
-
-    #[tokio::test]
-    async fn storage_reclamation_discards_only_the_globally_oldest_idle_snapshot() {
-        let attempts = Arc::new(parking_lot::Mutex::new(vec![]));
-        let coordinator = coordinator(vec![
-            participant(
-                vec![
-                    candidate(1, 1, ReclaimKind::Active),
-                    candidate(2, 20, ReclaimKind::HibernatedIdle),
-                ],
-                &attempts,
-            ),
-            participant(
-                vec![candidate(3, 10, ReclaimKind::HibernatedIdle)],
-                &attempts,
-            ),
-        ]);
         assert!(
             coordinator
                 .reclaim_storage()
@@ -478,9 +348,9 @@ mod tests {
             "an idle snapshot must release capacity for admission"
         );
         assert_eq!(
-            *attempts.lock(),
+            *instances.attempts.lock(),
             vec![3],
-            "storage admission may discard only the globally oldest completed snapshot"
+            "storage admission may discard only the oldest completed snapshot"
         );
     }
 
@@ -557,7 +427,7 @@ mod tests {
         let cell = real.cells().first().expect("one real cell").clone();
         let pressure = Arc::new(ControlledPressure(std::sync::atomic::AtomicU64::new(100)));
         let coordinator = Coordinator {
-            participants: parking_lot::Mutex::new(vec![Arc::new(Local(Arc::downgrade(&real)))]),
+            instances: Arc::new(Local(Arc::downgrade(&real))),
             round: tokio::sync::Mutex::new(()),
             pressure: pressure.clone(),
             policy: node.cfg.host.hibernate,
