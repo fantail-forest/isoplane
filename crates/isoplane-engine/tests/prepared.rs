@@ -1,7 +1,10 @@
 //! Prepared templates execute through the same activation/capture interface as portable input.
 mod common;
+#[path = "common/dispatch.rs"]
+mod dispatch;
 
 use common::*;
+use dispatch::http_dispatch;
 use isoplane_engine::prepared::{PreparedError, PreparedIdentity, PreparedStorage};
 use isoplane_engine::InstanceOps;
 
@@ -503,5 +506,42 @@ fn a_native_payload_is_verified_again_once_no_template_holds_it() {
     assert!(
         matches!(refused, Err(PreparedError::Invalid(_))),
         "once no template holds the native code, a changed copy must be rejected"
+    );
+}
+
+/// Shrinks a published payload in place, as failed storage under a live
+/// mapping would.
+#[cfg(target_os = "linux")]
+fn truncate(payload: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(payload, std::fs::Permissions::from_mode(0o600))
+        .expect("make payload writable");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(payload)
+        .and_then(|file| file.set_len(0))
+        .expect("truncate payload");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_mapped_template_keeps_running_after_its_native_payload_is_truncated() {
+    let engine = test_engine();
+    let wasm = guest(4, "", "", DONE, DONE);
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("version");
+    publish_mapped(&engine, &wasm, identity(&wasm), &path);
+    // SAFETY: the test changes only the native payload, which the engine must
+    // not read again once it has verified it.
+    let template = unsafe { engine.load_prepared_mapped(&path, identity(&wasm), &[]) }
+        .expect("map the template");
+    truncate(&path.join("template.cwasm"));
+    let mut instance = activate(&engine, &template);
+    assert_eq!(
+        instance
+            .dispatch(&http_dispatch(1), isoplane_engine::CpuBudget::http())
+            .completion,
+        isoplane_engine::Completion::Done,
+        "compiled code must not depend on its payload file once verified"
     );
 }

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::{PreparedError, Result, PAYLOAD_NAMES};
 
 /// Retained payload files for activation prefetch. A payload is absent when
-/// the engine already holds it resident through a shared native module.
+/// the engine holds it in memory, as it does native code.
 pub(crate) struct Payloads(Vec<Option<Payload>>);
 
 struct Payload {

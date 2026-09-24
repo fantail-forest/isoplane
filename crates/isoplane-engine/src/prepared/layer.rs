@@ -14,10 +14,10 @@ impl IsoplaneEngine {
     /// Compile once, then map the unchanged code before observing initialization's working set.
     pub fn load_layer_source(&self, wasm: &[u8]) -> crate::Result<Template> {
         let source = self.load_template(wasm)?;
-        let file = compiled_file(&source.inner.module().serialize()?)?;
-        // SAFETY: this engine compiled these bytes; the memfd is sealed against changes.
-        let module =
-            unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, file) }?;
+        let mut copy = super::native::NativeCopy::new()?;
+        copy.write_all(&source.inner.module().serialize()?)?;
+        // SAFETY: this engine compiled these bytes.
+        let module = unsafe { copy.deserialize(&self.inner.wasmtime) }?;
         self.finish_template(
             module,
             source.hash,
@@ -169,53 +169,4 @@ pub(super) fn attach(template: &mut Template, image: wasmtime::CowMemoryImage) -
         ))?
         .initialization_layer = Some(image);
     Ok(())
-}
-
-fn compiled_file(bytes: &[u8]) -> std::io::Result<File> {
-    use std::os::fd::{AsRawFd, FromRawFd};
-    // SAFETY: the NUL-terminated name is valid and the flags request a new owned descriptor.
-    let descriptor = unsafe {
-        libc::memfd_create(
-            c"isoplane-initialization-code".as_ptr(),
-            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
-        )
-    };
-    if descriptor < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: memfd_create returned a new descriptor, transferred exactly once into File.
-    let mut file = unsafe { File::from_raw_fd(descriptor) };
-    file.write_all(bytes)?;
-    // SAFETY: the descriptor is live and these seals prevent mutations after the code is mapped.
-    let result = unsafe {
-        libc::fcntl(
-            file.as_raw_fd(),
-            libc::F_ADD_SEALS,
-            libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL,
-        )
-    };
-    if result < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(file)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::os::unix::fs::FileExt;
-
-    #[test]
-    fn compiled_source_is_sealed_against_mutation() -> std::io::Result<()> {
-        let file = compiled_file(b"compiled source")?;
-        assert!(
-            file.write_at(b"changed", 0).is_err(),
-            "mapped compiler output must be immutable"
-        );
-        assert!(
-            file.set_len(0).is_err(),
-            "mapped compiler output must not be truncated"
-        );
-        Ok(())
-    }
 }

@@ -277,15 +277,16 @@ impl IsoplaneEngine {
         Ok(template)
     }
 
-    /// Verifies local payload hashes, then maps the same open files.
-    /// When a live template of this engine already holds the native payload
-    /// the manifest records, it shares that module without reading this
-    /// artifact's copy.
+    /// Verifies local payload hashes, then maps the same open
+    /// baseline and state files. Native code is loaded from a private copy
+    /// taken as it was verified; when a live template of this engine already
+    /// holds the native payload the manifest records, it shares that module
+    /// without reading this artifact's copy.
     ///
     /// # Safety
-    /// The caller must prevent changes to the backing file contents for the lifetime of every
-    /// returned template and instance, including artifacts loaded earlier whose native code a
-    /// later template shares; publication read-only permissions are not an isolation boundary.
+    /// The caller must prevent changes to the baseline and state file contents for the lifetime
+    /// of every returned template and instance; publication read-only permissions are not an
+    /// isolation boundary.
     /// The caller must run this engine and every use of the returned template in a supervised
     /// application worker process. Backing storage corruption can cause SIGBUS even after
     /// verification; the supervisor must contain worker death and fail affected requests.
@@ -339,11 +340,8 @@ impl IsoplaneEngine {
             (None, Some(native)) => {
                 let module = tracing::info_span!("template_native_deserialize")
                     .in_scope(|| {
-                        // SAFETY: the caller guarantees local compiler origin for this verified held file and
-                        // guarantees unchanged contents for the module lifetime and contains I/O faults.
-                        unsafe {
-                            wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, native)
-                        }
+                        // SAFETY: the caller guarantees local compiler origin; the private copy matches the manifest.
+                        unsafe { native.deserialize(&self.inner.wasmtime) }
                     })
                     .map_err(|e| PreparedError::Engine(e.into()))?;
                 self.inner.natives.insert(native_hash, module)

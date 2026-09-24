@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::native::NativeCopy;
 use super::{
     Manifest, PreparedError, PreparedTemplate, Result, MANIFEST, PAYLOAD_NAMES,
 };
@@ -206,27 +207,24 @@ pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Ve
     Ok(payloads)
 }
 
-/// A mapped template's three payload files, verified against its recorded
-/// manifest. The native payload is absent when the engine already holds the
-/// module its manifest records, so it is neither read nor verified again.
+/// A mapped template's payloads, verified against its manifest: the
+/// native code copied into memory, the baseline and state as files to map.
+/// The native copy is absent when the engine already holds the module the
+/// manifest records, so it is neither read nor verified again.
 pub(super) struct Verified {
-    pub native: Option<File>,
+    pub native: Option<NativeCopy>,
     pub baseline: File,
     pub state: File,
 }
 
 impl Verified {
-    /// The payload files in `PAYLOAD_NAMES` order.
+    /// The payload files still read from storage, in `PAYLOAD_NAMES` order.
     pub fn each(&self) -> [Option<&File>; 3] {
-        [
-            self.native.as_ref(),
-            Some(&self.baseline),
-            Some(&self.state),
-        ]
+        [None, Some(&self.baseline), Some(&self.state)]
     }
 }
 
-/// Opens and verifies the payloads, the native one only when `native`.
+/// Opens and verifies the payloads, copying the native one only when `native`.
 pub(super) fn open_verified(
     directory: &Path,
     manifest: &Manifest,
@@ -238,26 +236,42 @@ pub(super) fn open_verified(
     // Each payload's span nests under the caller's load, as it did on one thread.
     let parent = tracing::Span::current();
     std::thread::scope(|scope| {
-        let open = |index: usize| {
-            let parent = parent.clone();
-            scope.spawn(move || {
-                parent.in_scope(|| open_verified_payload(directory, manifest, index))
+        let native = native.then(|| {
+            spawn_under(scope, &parent, || {
+                let mut copy =
+                    NativeCopy::new().map_err(|e| io("copy native payload", directory, e))?;
+                open_verified_payload(directory, manifest, 0, &mut copy)?;
+                Ok(copy)
+            })
+        });
+        let file = |index| {
+            spawn_under(scope, &parent, move || {
+                open_verified_payload(directory, manifest, index, &mut std::io::sink())
             })
         };
-        let join = |handle: std::thread::ScopedJoinHandle<'_, Result<File>>| {
-            handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        };
-        let native = native.then(|| open(0));
-        let baseline = open(1);
-        let state = open(2);
+        let baseline = file(1);
+        let state = file(2);
         Ok(Verified {
             native: native.map(join).transpose()?,
             baseline: join(baseline)?,
             state: join(state)?,
         })
     })
+}
+
+fn spawn_under<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    parent: &tracing::Span,
+    verify: impl FnOnce() -> Result<T> + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, Result<T>> {
+    let parent = parent.clone();
+    scope.spawn(move || parent.in_scope(verify))
+}
+
+fn join<T>(handle: std::thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// A few hashing threads: more costs more in coordination than it saves on a
@@ -276,7 +290,14 @@ fn hash_pool() -> Result<&'static rayon::ThreadPool> {
     Ok(POOL.get_or_init(|| pool))
 }
 
-fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) -> Result<File> {
+/// Verifies one payload against the manifest, writing each block it hashes
+/// to `copy`.
+fn open_verified_payload(
+    directory: &Path,
+    manifest: &Manifest,
+    index: usize,
+    copy: &mut impl Write,
+) -> Result<File> {
     const READ_BYTES: usize = 8 << 20;
     let _payload = tracing::info_span!(
         "template_payload_verify",
@@ -314,6 +335,8 @@ fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) ->
             ));
         }
         hash_pool()?.install(|| hash.update_rayon(&buffer[..read]));
+        copy.write_all(&buffer[..read])
+            .map_err(|e| io("copy verified payload", &path, e))?;
     }
     if bytes != record.bytes || hash.finalize().as_bytes() != &record.hash {
         return Err(PreparedError::Invalid(
@@ -327,7 +350,7 @@ fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) ->
 
 #[tracing::instrument(name = "template_read_ahead", skip_all, fields(ranges = ranges.len()))]
 /// Asks the kernel to read `ranges` ahead. A range in a payload the engine
-/// already holds is validated but not read.
+/// holds in memory is validated but not read.
 pub(super) fn advise(files: &Verified, manifest: &Manifest, ranges: &[ReadAhead]) -> Result<()> {
     let mut ordered: Vec<_> = ranges.iter().collect();
     ordered.sort_by_key(|range| (range.payload, range.offset_bytes));
@@ -428,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn verification_and_mapping_keep_the_same_inode_after_path_replacement() {
+    fn the_native_code_loaded_is_the_code_verified_after_path_replacement() {
         let (directory, _, engine) = fixture();
         let path = directory.path().join("version");
         let manifest = read_manifest(&path).expect("manifest");
@@ -441,13 +464,12 @@ mod tests {
         )
         .expect("replacement");
         let native = files.native.expect("the native payload was requested");
-        // SAFETY: the fixture locally compiled this exact verified held immutable native file.
+        // SAFETY: the fixture locally compiled these bytes, and verification checked the private copy.
         let module =
-            unsafe { wasmtime::Module::deserialize_open_file(&engine.inner.wasmtime, native) }
-                .expect("map original held inode");
+            unsafe { native.deserialize(&engine.inner.wasmtime) }.expect("load the verified copy");
         assert!(
             module.get_export("memory").is_some(),
-            "the held native inode must survive path replacement"
+            "the verified native code must survive path replacement"
         );
         assert!(
             open_verified(&path, &manifest, true).is_err(),

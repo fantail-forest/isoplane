@@ -2,10 +2,13 @@
 //! directions across the guest boundary.
 
 mod common;
+#[path = "common/dispatch.rs"]
+mod dispatch;
 
 use std::sync::atomic::Ordering;
 
 use common::*;
+use dispatch::http_dispatch;
 use isoplane_engine::{Completion, CpuBudget, InstanceOps};
 
 fn read_u64(m: &[u8], off: usize) -> u64 {
@@ -14,26 +17,6 @@ fn read_u64(m: &[u8], off: usize) -> u64 {
 
 fn import(name: &str, params: &str, results: &str) -> String {
     format!(r#"(import "isoplane" "{name}" (func ${name} {params} {results}))"#)
-}
-
-/// A `DispatchRecord` with nothing interesting in it.
-fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
-    use isoplane_abi::dispatch::*;
-    DispatchRecord {
-        dispatch_id: id,
-        kind: DispatchKind::Http(HttpRequest {
-            method: "GET".into(),
-            url: "https://example.test/x".into(),
-            path: "/x".into(),
-            query: vec![],
-            headers: vec![("host".into(), "example.test".into())],
-            body: vec![],
-        }),
-        trace: TraceContext::default(),
-        cancel_future: 0,
-        cpu_budget_ms: 30_000,
-        now_ms: 1_700_000_000_000,
-    }
 }
 
 // ---------------------------------------------------------------------------
