@@ -403,6 +403,70 @@ async fn a_package_delegate_marshalled_to_a_function_pointer_is_refused() {
     );
 }
 
+/// The first dispatch of `path` on the prepared `diagnostics` package, and
+/// what the guest logged.
+async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>) {
+    isoplane_harness::LogCapture::global();
+    let runtime = isoplane_fixtures::mono_runtime();
+    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
+    let (product, request) = prepare(&preparation, &runtime, package("diagnostics"))
+        .await
+        .unwrap_or_else(|error| panic!("the diagnostics package must prepare: {error}"));
+    let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
+    let identity = request.identity().expect("the preparation identity");
+    // SAFETY: LocalPreparation in this process produced these bytes.
+    let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
+        .expect("the prepared template must decode");
+    let reactor = no_egress::reactor_without_egress(7300);
+    reactor.context.begin_slice(1, 1);
+    // SAFETY: LocalPreparation in this process produced the native code.
+    let mut guest = unsafe { ReturnedGuest::prepared(prepared, &reactor) };
+    let outcome = guest.start(path);
+    let logs = reactor
+        .context
+        .emitted_logs()
+        .into_iter()
+        .map(|record| record.fields)
+        .collect();
+    (outcome, logs)
+}
+
+#[tokio::test]
+async fn a_runtime_fail_fast_logs_its_reason_before_ending_the_instance() {
+    let (outcome, logs) = diagnose("/fail-fast").await;
+    assert_eq!(
+        outcome.completion,
+        Completion::Trapped,
+        "a fail-fast must end the instance: {outcome:?}"
+    );
+    let line = |text: &str| logs.iter().position(|line| line.contains(text));
+    let (Some(terminated), Some(reason)) = (
+        line("Process terminated."),
+        line("the diagnostics package gave up"),
+    ) else {
+        panic!("the runtime's fail-fast warnings must reach the guest log: {logs:?}; {outcome:?}");
+    };
+    assert!(
+        terminated < reason,
+        "a runtime warning must not end the instance before the next one is logged: {logs:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_fatal_runtime_error_ends_the_instance_with_its_message() {
+    let (outcome, logs) = diagnose("/invalid-il").await;
+    let trap = outcome
+        .trap
+        .as_ref()
+        .unwrap_or_else(|| panic!("a fatal runtime error must end the instance: {outcome:?}"));
+    // The runtime is built without fatal message text; its report names the
+    // source location instead.
+    assert!(
+        trap.message.contains("interp/transform.c:"),
+        "the instance must end with the runtime's own report, not a console write: {trap:?}; logs: {logs:?}"
+    );
+}
+
 /// The debug runtime's first dispatch under the debug session file `agent`,
 /// or none, with the alpha package served.
 fn debug_boot(agent: Option<&str>) -> isoplane_engine::DispatchOutcome {

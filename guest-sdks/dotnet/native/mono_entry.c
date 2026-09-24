@@ -16,6 +16,12 @@ extern void *mono_object_get_class(void *);
 extern const char *mono_class_get_name(void *);
 extern const char *mono_class_get_namespace(void *);
 __attribute__((import_module("isoplane"), import_name("abort"))) extern void host_abort(uint8_t *, int32_t);
+__attribute__((import_module("isoplane"), import_name("log_emit"))) extern void host_log(int32_t, const char *, int32_t);
+typedef void (*MonoLogCallback)(const char *, const char *, const char *, int32_t, void *);
+typedef void (*MonoPrintCallback)(const char *, int32_t);
+extern void mono_trace_set_log_handler(MonoLogCallback, void *);
+extern void mono_trace_set_print_handler(MonoPrintCallback);
+extern void mono_trace_set_printerr_handler(MonoPrintCallback);
 #ifdef ISOPLANE_LOCAL_DEBUG
 extern void mono_wasm_enable_debugging(int);
 extern int mono_jit_parse_options(int, char **);
@@ -28,6 +34,38 @@ static void fail(const char *message)
     host_abort((uint8_t *)message, (int32_t)strlen(message));
     __builtin_trap();
 }
+// The host log's levels, trace 0 to error 4.
+static int32_t log_level(const char *level)
+{
+    if (!level) return 2;
+    if (strcmp(level, "error") == 0 || strcmp(level, "critical") == 0) return 4;
+    if (strcmp(level, "warning") == 0) return 3;
+    if (strcmp(level, "debug") == 0) return 1;
+    return 2;
+}
+
+static void emit(int32_t level, const char *text)
+{
+    size_t length = strlen(text);
+    while (length > 0 && text[length - 1] == '\n') length--;
+    if (length > 0) host_log(level, text, (int32_t)length);
+}
+
+// The runtime's own diagnostics go to the guest log; a fatal one ends the
+// instance with its message, since Mono expects no return from it.
+static void on_log(const char *domain, const char *level, const char *message, int32_t fatal, void *user_data)
+{
+    (void)domain;
+    (void)user_data;
+    if (fatal) fail(message);
+    emit(log_level(level), message);
+}
+
+static void on_print(const char *text, int32_t is_stdout)
+{
+    emit(is_stdout ? 2 : 3, text);
+}
+
 #ifdef ISOPLANE_LOCAL_DEBUG
 #define ISOPLANE_DEBUG_AGENT_PATH "/.isoplane/debug-agent"
 
@@ -67,6 +105,9 @@ static void boot(void)
 {
     if (klass) return;
     __wasm_call_ctors();
+    // The host serves no console, so runtime output goes to the guest log.
+    mono_trace_set_print_handler(on_print);
+    mono_trace_set_printerr_handler(on_print);
 #ifdef ISOPLANE_LOCAL_DEBUG
     mono_wasm_enable_debugging(1);
     char agent[96];
@@ -75,6 +116,8 @@ static void boot(void)
     mono_jit_parse_options(1, options);
 #endif
     if (initialize_runtime() != 0) fail("Mono initialization failed");
+    // Start-up installs the WASI driver's logger, which writes to the console.
+    mono_trace_set_log_handler(on_log, 0);
 #ifdef ISOPLANE_LOCAL_DEBUG
     // Bundle initialization must precede registering symbols for its assembly.
     isoplane_register_debug_symbols();
