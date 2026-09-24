@@ -18,7 +18,6 @@ class WindowsPackageTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.files = ['Sdk/Sdk.props', 'feed/Isoplane.GuestRuntime.props', 'compiler/Isoplane.GuestCompiler.props',
                       'cli/Isoplane.Cli.dll', 'cli/runtime/isoplane_native.dll', 'bin/wasm-tools.exe',
-                      'debugger/bin/lldb-dap.exe', 'debugger/bindings/lldb/__init__.py', 'debugger/python/python3.dll',
                       'wasi-sdk/bin/clang.exe', 'mono-targets/Sdk/Sdk.props', 'wasi-cross/Sdk/Sdk.props',
                       'templates/Isoplane.Templates.1.2.3-preview.1.nupkg']
         self.manifest = {'runtimeIdentifier': 'win-x64', 'files': []}

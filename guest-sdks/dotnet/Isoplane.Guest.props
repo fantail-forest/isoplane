@@ -47,6 +47,7 @@
   <Target Name="IsoplaneValidateRuntimeProfile" BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(TargetFramework)' != 'net10.0'" Text="This Isoplane SDK requires TargetFramework=net10.0." />
     <Error Condition="'$(IsoplaneContainerBuild)' != 'true' AND '$(RuntimeIdentifier)' != 'wasi-wasm'" Text="Isoplane applications require RuntimeIdentifier=wasi-wasm." />
+    <Error Condition="'$(IsoplaneLocalDebug)' == 'true' AND '$(IsoplaneGuestRuntime)' != 'Mono'" Text="Local debugging requires an interpreted project configuration (PublishAot=false)." />
     <Error Condition="'$(IsoplaneGuestRuntime)' != 'NativeAOT' AND '$(IsoplaneGuestRuntime)' != 'Mono'"
            Text="The project selected an unsupported guest runtime; choose an interpreted or NativeAOT project configuration." />
   </Target>

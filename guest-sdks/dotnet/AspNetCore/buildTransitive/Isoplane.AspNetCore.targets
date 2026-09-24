@@ -40,7 +40,7 @@ internal sealed class IsoplaneGeneratedRouter : Isoplane.Durable.IStreamingHttpR
 ]]></_IsoplaneEntrypointSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_IsoplaneEntrypoint)" Lines="$([MSBuild]::Escape($(_IsoplaneEntrypointSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <ItemGroup><Compile Include="$(_IsoplaneEntrypoint)" IsoplaneRuntimeSource="true" /></ItemGroup>
+    <ItemGroup><Compile Include="$(_IsoplaneEntrypoint)" /></ItemGroup>
   </Target>
   <Target Name="IsoplaneAspNetCoreFrameworkReferences" BeforeTargets="ProcessFrameworkReferences" DependsOnTargets="IsoplaneSelectAspNetCore">
     <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>

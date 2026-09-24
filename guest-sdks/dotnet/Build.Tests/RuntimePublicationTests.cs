@@ -249,7 +249,6 @@ public sealed class RuntimePublicationTests : MsbuildTests
     [Theory]
     [InlineData("IsoplaneInterpretedDebug", "false")]
     [InlineData("IsoplaneNativeAotRelease", "true")]
-    [InlineData("IsoplaneNativeAotDebug", "false")]
     public async Task template_configurations_select_their_named_optimization_mode(string configuration, string optimize)
     {
         var template = XDocument.Load(Path.Combine(SdkDirectory(), "Templates/content/aspnet/SampleApp.csproj"));
@@ -394,7 +393,6 @@ public sealed class RuntimePublicationTests : MsbuildTests
     [Theory]
     [InlineData("IsoplaneInterpretedDebug")]
     [InlineData("IsoplaneNativeAotRelease")]
-    [InlineData("IsoplaneNativeAotDebug")]
     public async Task dotnet_run_passes_the_selected_configuration_to_local_metadata_evaluation(string configuration)
     {
         var project = WriteProject(

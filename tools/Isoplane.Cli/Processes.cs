@@ -5,7 +5,7 @@ namespace Isoplane.Cli;
 
 internal static class Processes
 {
-    internal static OwnedProcess Start(string executable, IEnumerable<string> arguments, string directory, bool captureOutput = false, bool captureErrors = false, IReadOnlyDictionary<string, string>? environment = null)
+    internal static OwnedProcess Start(string executable, IEnumerable<string> arguments, string directory, bool captureOutput = false, bool captureErrors = false)
     {
         var start = new ProcessStartInfo(executable) { WorkingDirectory = directory, UseShellExecute = false, RedirectStandardOutput = captureOutput, RedirectStandardError = captureErrors };
         foreach (var argument in arguments)
@@ -13,8 +13,6 @@ internal static class Processes
         start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
         Toolchain.Apply(start);
-        if (environment is not null)
-            foreach (var (name, value) in environment) start.Environment[name] = value;
         start.Environment["ISOPLANE_CLI_ASSEMBLY"] = typeof(Processes).Assembly.Location;
         var cleanupGrace = executable == "dotnet" ? TimeSpan.FromSeconds(1) : TimeSpan.Zero;
         return OwnedProcess.Start(start, cleanupGrace);
@@ -44,9 +42,9 @@ internal static class Processes
         }
     }
 
-    internal static async Task CheckAsync(string executable, IEnumerable<string> arguments, string directory, CancellationToken cancellation, IReadOnlyDictionary<string, string>? environment = null)
+    internal static async Task CheckAsync(string executable, IEnumerable<string> arguments, string directory, CancellationToken cancellation)
     {
-        using var process = Start(executable, arguments, directory, captureOutput: true, captureErrors: true, environment: environment);
+        using var process = Start(executable, arguments, directory, captureOutput: true, captureErrors: true);
         var output = process.StandardOutput.ReadToEndAsync(cancellation);
         var errors = process.StandardError.ReadToEndAsync(cancellation);
         try

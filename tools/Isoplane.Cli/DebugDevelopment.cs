@@ -9,18 +9,18 @@ internal static class DebugDevelopment
 {
     internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
-        var native = await Development.RuntimeProfileAsync(options, cancellation) == GuestRuntimeProfile.NativeAot;
+        if (await Development.RuntimeProfileAsync(options, cancellation) != GuestRuntimeProfile.Mono)
+            throw new ArgumentException("Debugging currently requires an explicitly selected interpreted project configuration; NativeAOT debugging is not supported.");
         var ordinaryModule = new LocalProject(options.Directory).Module;
-        var root = native ? Environment.GetEnvironmentVariable(NativeDebugAdapter.SessionDirectoryVariable) : null;
-        var session = Path.Combine(root ?? Path.Combine(options.Directory, ".isoplane", "debug"), Guid.NewGuid().ToString("N"));
+        var session = Path.Combine(options.Directory, ".isoplane", "debug", Guid.NewGuid().ToString("N"));
         try
         {
             if (OperatingSystem.IsWindows())
                 Directory.CreateDirectory(session);
             else
                 Directory.CreateDirectory(session, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            await using var relay = native ? null : new DebugRelay(cancellation);
-            var endpoint = relay?.Endpoint.ToString() ?? "native";
+            await using var relay = new DebugRelay(cancellation);
+            var endpoint = relay.Endpoint.ToString();
             var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
             List<string> publication = ["publish", project, "-c", options.Configuration, "-o", session, "--disable-build-servers",
                 "-p:IsoplaneLocalDebug=true", "-p:IsoplaneDebugEndpoint=" + endpoint];
@@ -31,14 +31,12 @@ internal static class DebugDevelopment
             if (Path.GetFullPath(artifacts.Module) == Path.GetFullPath(ordinaryModule))
                 throw new InvalidOperationException("A debug session must not replace the ordinary application module.");
             if (options.Json)
-                Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module = artifacts.Module, symbols = artifacts.Symbols, runtime = native ? "nativeaot" : "mono" }));
-            else if (native)
-                Console.WriteLine("NativeAOT module published for the native debugger. This session serves one HTTP request.");
+                Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module = artifacts.Module, symbols = artifacts.Symbols }));
             else
                 Console.WriteLine($"Debugger target: {endpoint}. Connect your editor through isoplane debug-adapter; this session serves one HTTP request.");
             var projectInputs = new LocalProject(options.Directory);
             await using var host = new LocalSession(await File.ReadAllBytesAsync(artifacts.Module, cancellation),
-                projectInputs.SessionOptions(options.Port, [], native ? null : endpoint, Path.Combine(session, "runtime"), nativeDebug: native),
+                projectInputs.SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime")),
                 message => LocalEvents.Write(message, options.Json));
             await RunHostAsync(host, relay, cancellation);
             return 0;
@@ -57,12 +55,12 @@ internal static class DebugDevelopment
         }
     }
 
-    internal static async Task RunHostAsync(LocalSession host, DebugRelay? relay, CancellationToken cancellation)
+    internal static async Task RunHostAsync(LocalSession host, DebugRelay relay, CancellationToken cancellation)
     {
         using var stop = cancellation.Register(host.Stop);
         try
         {
-            if (relay is not null && await Task.WhenAny(host.Completion, relay.Completion) == relay.Completion)
+            if (await Task.WhenAny(host.Completion, relay.Completion) == relay.Completion)
                 await relay.Completion;
             await host.Completion;
         }

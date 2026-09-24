@@ -270,9 +270,6 @@ internal static class Readiness
     {
         Toolchain.ProbeCompiler(toolchain);
         NativeRuntime.EnsureLoaded();
-        Console.Error.WriteLine("Checking NativeAOT debugger...");
-        var debugger = NativeDebuggerToolchain.Resolve(toolchain);
-        await Processes.CheckAsync(debugger.Executable, ["--help"], toolchain, cancellation, debugger.Environment);
         foreach (var (name, path) in Probes)
         {
             Console.Error.WriteLine($"Checking {name}...");

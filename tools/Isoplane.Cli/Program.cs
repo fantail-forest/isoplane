@@ -11,14 +11,13 @@ try
     }
     if (args.Length == 0 || args is ["--help"] or ["-h"] or [_, "--help" or "-h"])
     {
-        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request for debugging.\nisoplane debug-adapter [--nativeaot]\nServe the Debug Adapter Protocol on standard input/output.\nisoplane setup [--source RELEASE_DIRECTORY|URL] [--yes]\nInstall the SDK matching this CLI; --yes installs missing native prerequisites without prompting.\nisoplane uninstall-sdk\nRemove everything setup installed, keeping the CLI.\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
+        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request for debugging.\nisoplane debug-adapter\nServe the Debug Adapter Protocol on standard input/output.\nisoplane setup [--source RELEASE_DIRECTORY|URL] [--yes]\nInstall the SDK matching this CLI; --yes installs missing native prerequisites without prompting.\nisoplane uninstall-sdk\nRemove everything setup installed, keeping the CLI.\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
         Console.WriteLine("isoplane prepare --project DIRECTORY --configuration CONFIGURATION --module FILE [--json]\nPrepare a built application for local execution without starting it.");
         Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
         return 0;
     }
     using var cancellation = new CommandCancellation();
     if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(cancellation.Token);
-    if (args is ["debug-adapter", "--nativeaot"]) return await NativeDebugAdapter.RunAsync(cancellation.Token);
     if (args[0] == "setup")
     {
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };

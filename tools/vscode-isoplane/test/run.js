@@ -10,7 +10,7 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'isoplane-editor-test-'));
 runTests({
     cachePath,
     extensionDevelopmentPath: path.resolve(__dirname, '..'),
-    extensionTestsPath: path.resolve(__dirname, process.argv.includes('--native') ? 'native-suite.js' : 'suite.js'),
+    extensionTestsPath: path.resolve(__dirname, 'suite.js'),
     launchArgs: ['--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--skip-welcome',
         '--user-data-dir=' + path.join(profile, 'user-data'), '--extensions-dir=' + path.join(profile, 'extensions')]
 }).catch(error => { console.error(error); process.exitCode = 1; })

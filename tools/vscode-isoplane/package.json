@@ -1,7 +1,7 @@
 {
   "name": "isoplane-debugger",
   "displayName": "Isoplane Debugger",
-  "description": "Debug local Isoplane .NET applications.",
+  "description": "Debug local interpreted Isoplane .NET applications.",
   "version": "0.1.0",
   "publisher": "fantail-forest",
   "license": "UNLICENSED",
@@ -17,7 +17,7 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "onDebugResolve:isoplane"
+    "onDebug:isoplane"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -50,34 +50,6 @@
                 "description": "Path to the installed Isoplane CLI executable."
               }
             }
-          },
-          "launch": {
-            "required": [
-              "project"
-            ],
-            "properties": {
-              "project": {
-                "type": "string",
-                "default": "${workspaceFolder}",
-                "description": "NativeAOT Isoplane project directory."
-              },
-              "configuration": {
-                "type": "string",
-                "default": "IsoplaneNativeAotDebug",
-                "description": "Project configuration; it must select NativeAOT."
-              },
-              "cliPath": {
-                "type": "string",
-                "default": "isoplane",
-                "description": "Path to the installed Isoplane CLI executable."
-              },
-              "httpPort": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 65535,
-                "description": "Local HTTP port; zero allocates a free port."
-              }
-            }
           }
         },
         "initialConfigurations": [
@@ -86,13 +58,6 @@
             "request": "attach",
             "name": "Attach to local Isoplane",
             "port": "${command:isoplane.debugPort}"
-          },
-          {
-            "type": "isoplane",
-            "request": "launch",
-            "name": "Debug NativeAOT Isoplane (Linux)",
-            "project": "${workspaceFolder}",
-            "configuration": "IsoplaneNativeAotDebug"
           }
         ],
         "configurationSnippets": [

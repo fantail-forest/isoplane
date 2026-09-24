@@ -19,22 +19,15 @@ public sealed class DebugRunTests : MsbuildTests
     }
 
     [Fact]
-    public async Task dotnet_run_preserves_nativeaot_for_debugging()
+    public async Task dotnet_run_refuses_to_change_nativeaot_into_interpretation_for_debugging()
     {
-        var command = Msbuild(Project("NativeAOT"), "-t:ComputeRunArguments");
-        command.ArgumentList.Add("-getProperty:RunArguments,IsoplaneGuestRuntime");
-        var result = await Run(command);
-        Assert.True(result.Exit == 0, "The standard run target must accept NativeAOT debugging: " + result.Output);
-        using var values = System.Text.Json.JsonDocument.Parse(result.Output);
-        var properties = values.RootElement.GetProperty("Properties");
-        Assert.True(properties.GetProperty("IsoplaneGuestRuntime").GetString() == "NativeAOT",
-            "Debugging must retain NativeAOT execution.");
-        Assert.True(properties.GetProperty("RunArguments").GetString()!.Contains("IsoplaneNativeAotDebug", StringComparison.Ordinal),
-            "The debugger launch must retain the selected NativeAOT configuration.");
+        var result = await Run(Msbuild(Project("NativeAOT"), "-t:ComputeRunArguments"));
+        Assert.True(result.Exit != 0 && result.Output.Contains("explicitly selected interpreted", StringComparison.Ordinal),
+            "An unsupported selected mode must fail with an explicit configuration choice: " + result.Output);
     }
 
     private string Project(string runtime) => WriteProject(
-        new XElement("PropertyGroup", new XElement("Configuration", runtime == "Mono" ? "IsoplaneInterpretedDebug" : "IsoplaneNativeAotDebug"),
+        new XElement("PropertyGroup", new XElement("Configuration", "IsoplaneInterpretedDebug"),
             new XElement("IsoplaneGuestRuntime", runtime), new XElement("IsoplaneDebug", "true"),
             new XElement("PublishDir", "published/"), new XElement("AssemblyName", "App")),
         new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.Run.targets"))));

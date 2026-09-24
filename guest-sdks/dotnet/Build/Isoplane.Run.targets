@@ -13,6 +13,10 @@
     </PropertyGroup>
     <Exec Command="$(_IsoplanePrepareCommand) prepare --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --module &quot;$(_IsoplanePreparedModule)&quot;" />
   </Target>
+  <Target Name="IsoplaneValidateRunDebugger" BeforeTargets="PrepareForBuild;ComputeRunArguments"
+          Condition="'$(IsoplaneDebug)' == 'true'">
+    <Error Condition="'$(IsoplaneGuestRuntime)' != 'Mono'" Text="Debugging requires an explicitly selected interpreted project configuration, such as IsoplaneInterpretedDebug. NativeAOT debugging is not supported." />
+  </Target>
   <Target Name="ComputeRunArguments">
     <PropertyGroup>
       <RunCommand>isoplane</RunCommand>

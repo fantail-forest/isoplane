@@ -4,17 +4,6 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class PrerequisitesTests
 {
-    [Theory]
-    [InlineData("libncurses.so.6", "libncurses6")]
-    [InlineData("libxml2.so.2", "libxml2")]
-    [InlineData("liblzma.so.5", "liblzma5")]
-    public void missing_debugger_dependencies_name_the_installable_package(string soname, string package)
-    {
-        var missing = Prerequisites.Missing(name => name != soname, _ => true);
-        Assert.True(missing.Count == 1 && missing[0].UbuntuPackage == package,
-            "Setup must diagnose each missing LLDB library with its Ubuntu package.");
-    }
-
     [Fact]
     public void Every_prerequisite_present_leaves_nothing_missing()
     {

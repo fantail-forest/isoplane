@@ -110,7 +110,6 @@ def prepare_llvm(cache, source, run):
 
 def build(args):
     preview = load('build-preview')
-    load('package-debugger').verify(args.debugger)
     revision = preview.source_revision(ROOT)
     epoch = int(preview.output(['git', 'show', '-s', '--format=%ct', revision]))
     version = preview.release_version(ROOT)
@@ -212,7 +211,7 @@ def build(args):
     toolchain = cache / 'toolchain'
     if toolchain.exists():
         shutil.rmtree(toolchain)
-    run([sys.executable, source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output, '--debugger', args.debugger.resolve(),
+    run([sys.executable, source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output,
          '--wasi-sdk', runtime / 'work/wasi-sdk', '--wasm-tools', cache / 'tools/bin/wasm-tools.exe',
          '--native-library', native, '--dotnet-root', sdk, '--notices', notices,
          '--cli-package', packages / f'Isoplane.Cli.{version}.nupkg',
@@ -240,7 +239,6 @@ def build(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--debugger', type=Path, help='verified package-debugger.py output')
     parser.add_argument('--cache', type=Path, default=ROOT / '.isoplane-dev/windows-build')
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases')
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
@@ -250,8 +248,6 @@ def main():
     parser.add_argument('--runtime-sha256', help='required checksum for --runtime-artifact')
     parser.add_argument('--check-prerequisites', action='store_true', help='check local build tools without starting a build')
     args = parser.parse_args()
-    if not args.check_prerequisites and not args.debugger:
-        parser.error('--debugger is required when building a release')
     if bool(args.runtime_artifact) != bool(args.runtime_sha256):
         parser.error('--runtime-artifact and --runtime-sha256 must be supplied together')
     if args.runtime_sha256:

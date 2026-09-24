@@ -120,11 +120,6 @@ fn build_release(worktree: &Path, root: &Path, output: &Path) -> Release {
     succeed(
         Command::new("python3")
             .arg(worktree.join("scripts/build-preview.py"))
-            .arg("--debugger")
-            .arg(
-                std::env::var_os("ISOPLANE_TEST_DEBUGGER")
-                    .map_or_else(|| root.join("guest-runtime/out/debugger"), PathBuf::from),
-            )
             .arg("--cache")
             .arg(root.join(".isoplane-dev/preview-build"))
             .arg("--output")

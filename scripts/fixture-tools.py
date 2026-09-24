@@ -103,26 +103,6 @@ def published_guest(directory):
 
 def main():
     action, *args = sys.argv[1:]
-    if action == "debugger-editor":
-        root = Path(args[0]).resolve()
-        extension = root / "tools" / "vscode-isoplane"
-        target = root / "target" / "debugger-editor"
-        target.mkdir(parents=True, exist_ok=True)
-        identity = fingerprint([extension / "package.json", extension / "package-lock.json"])
-        installed = extension / "node_modules" / ".package-lock.json"
-        with (target / "fixture.lock").open("a") as handle:
-            lock_file(handle)
-            receipt = target / "complete.json"
-            if not is_fresh(receipt, identity, [installed]):
-                log = target / "install.log"
-                with log.open("w") as output:
-                    result = subprocess.run(["npm", "ci"], cwd=extension,
-                                            stdout=output, stderr=subprocess.STDOUT, timeout=600)
-                if result.returncode:
-                    sys.exit(f"installing the editor test dependencies failed; see {log}")
-                write_receipt(receipt, identity, [installed])
-        print(extension / "test" / "run.js")
-        return 0
     if action == "dap-python":
         root = Path(args[0]).resolve()
         version = "1.8.20"

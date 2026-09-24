@@ -66,12 +66,6 @@
     <!-- The .NET SDK imports this once; the LLVM package also auto-imports it unless build assets are excluded. -->
     <ILCompilerTargetsPath Condition="Exists('$(NuGetPackageRoot)/microsoft.dotnet.ilcompiler.llvm/$(ILCompilerVersion)/build/Microsoft.DotNet.ILCompiler.SingleEntry.targets')">$(NuGetPackageRoot)/microsoft.dotnet.ilcompiler.llvm/$(ILCompilerVersion)/build/Microsoft.DotNet.ILCompiler.SingleEntry.targets</ILCompilerTargetsPath>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(IsoplaneLocalDebug)' == 'true'">
-    <DebugType>portable</DebugType>
-    <Optimize>false</Optimize>
-    <StripSymbols>false</StripSymbols>
-  </PropertyGroup>
-  <Import Project="Build/Isoplane.NativeAot.Debug.targets" Condition="'$(IsoplaneLocalDebug)' == 'true'" />
   <ItemGroup Condition="'$(IsoplaneContainerBuild)' != 'true'">
     <PackageReference Include="Microsoft.DotNet.ILCompiler.LLVM" Version="$(ILCompilerVersion)">
       <ExcludeAssets Condition="'$(PublishAot)' == 'true'">build</ExcludeAssets>

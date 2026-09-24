@@ -12,9 +12,9 @@ public sealed class IsoplaneDebugManifest : Microsoft.Build.Utilities.Task
 
     /// <summary>The final raw guest module.</summary>
     [Required] public string Module { get; set; } = "";
-    /// <summary>The symbol artifact: a portable PDB for interpretation or the DWARF-bearing native module.</summary>
+    /// <summary>The application portable PDB.</summary>
     [Required] public string Symbols { get; set; } = "";
-    /// <summary>The validated interpreted debugger peer, or native debugging transport identifier.</summary>
+    /// <summary>The validated session-owned debugger endpoint.</summary>
     [Required] public string Endpoint { get; set; } = "";
     /// <summary>The output XML manifest.</summary>
     [Required] public string Output { get; set; } = "";

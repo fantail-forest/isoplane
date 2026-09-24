@@ -15,7 +15,7 @@ public static class AsyncDebugging
     /// <summary>Keeps the debugger's async-state reference visible throughout a guest invocation.</summary>
     public readonly struct Scope : System.IDisposable
     {
-        /// <summary>The guest-owned await graph inspected by the native debugger.</summary>
+        /// <summary>The guest-owned await graph retained throughout the invocation.</summary>
         public readonly object State;
 
         internal Scope(object state) => State = state;

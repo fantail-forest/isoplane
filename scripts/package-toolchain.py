@@ -54,7 +54,6 @@ def make_world_readable(directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-output', type=Path, required=True, help='guest-runtime/out containing feed and packs')
-    parser.add_argument('--debugger', type=Path, required=True, help='verified package-debugger.py output')
     parser.add_argument('--wasi-sdk', type=Path, required=True)
     parser.add_argument('--wasm-tools', type=Path, required=True)
     parser.add_argument('--native-library', type=Path, required=True, help='built isoplane-native library matching the CLI package')
@@ -97,10 +96,6 @@ def main():
         verify_native_pair(args.cli_package, args.native_library)
     except ValueError as error:
         parser.error(str(error))
-    specification = importlib.util.spec_from_file_location('package_debugger', root / 'scripts/package-debugger.py')
-    debugger = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(debugger)
-    debugger.verify(args.debugger)
     sdk = json.loads((root / 'global.json').read_text())['sdk']['version']
     runtime_version = re.search(r'^RUNTIME_TAG=v(.+)$', (root / 'guest-runtime/manifest.env').read_text(), re.MULTILINE).group(1)
     expected_wasi = re.search(r'^WASI_SDK_VERSION=(.+)$', (root / 'guest-runtime/manifest.env').read_text(), re.MULTILINE).group(1)
@@ -126,7 +121,7 @@ def main():
         stage = release / 'toolchain' if args.packages else release
         stage.mkdir(parents=True)
         for source, name in [(args.runtime_output / 'feed', 'feed'), (args.runtime_output / 'packs', 'packs'), (args.runtime_output / 'compiler', 'compiler'),
-                             (args.wasi_sdk, 'wasi-sdk'), (args.notices, 'notices'), (args.debugger, 'debugger')]:
+                             (args.wasi_sdk, 'wasi-sdk'), (args.notices, 'notices')]:
             shutil.copytree(source, stage / name, symlinks=False)
         if windows:
             (stage / 'templates').mkdir()

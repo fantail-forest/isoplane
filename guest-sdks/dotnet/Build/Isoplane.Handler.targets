@@ -14,6 +14,6 @@ internal sealed class IsoplaneGeneratedRouter : Isoplane.Durable.IIsoplaneRouter
 ]]></_IsoplaneHandlerSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_IsoplaneHandlerPath)" Lines="$([MSBuild]::Escape($(_IsoplaneHandlerSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <ItemGroup><Compile Include="$(_IsoplaneHandlerPath)" IsoplaneRuntimeSource="true" /></ItemGroup>
+    <ItemGroup><Compile Include="$(_IsoplaneHandlerPath)" /></ItemGroup>
   </Target>
 </Project>

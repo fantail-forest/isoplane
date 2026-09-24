@@ -26,33 +26,8 @@ An existing launch configuration can specify the port directly:
 
 Set `cliPath` in that configuration if `isoplane` is not on VS Code's PATH.
 
-On Linux, NativeAOT uses a launch configuration and requires `lldb-dap` with
-Python support on VS Code's PATH (tested with LLDB 20.1.2). SDK setup does not install it.
-The generated project provides `IsoplaneNativeAotDebug`:
-
-```json
-{
-  "type": "isoplane",
-  "request": "launch",
-  "name": "Debug NativeAOT Isoplane",
-  "project": "${workspaceFolder}",
-  "configuration": "IsoplaneNativeAotDebug"
-}
-```
-
-Set a C# source breakpoint, launch, and make a request to the HTTP address
-printed in the Debug Console. NativeAOT supports source stepping, inspecting
-and editing scalar locals, and native debugger watch expressions. It does not
-provide the interpreted adapter's C# expression evaluator, managed field/array
-data breakpoints, or managed async stepping. The installed NativeAOT editor tests
-currently cover Linux.
-
 For development, run `npm ci` and `npm run package` in this directory. Install
 the resulting VSIX with VS Code's **Extensions: Install from VSIX** command.
 `ISOPLANE_TEST_CLI=/absolute/path/to/isoplane npm test` exercises registration
 and the real CLI adapter inside VS Code. Linux CI needs a display, such as
 `xvfb-run -a npm test`.
-The installed NativeAOT editor journey runs through
-`cargo test -p isoplane-native --test installed_dev vscode_launches_nativeaot`;
-it builds its fixture and editor dependencies through the shared helpers and
-requires LLDB with Python support, Node/npm and `xvfb-run`.

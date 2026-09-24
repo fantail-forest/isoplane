@@ -23,9 +23,6 @@ internal static class Prerequisites
         new("libstdc++", ["libstdc++.so.6"], "the .NET SDK and the WebAssembly compiler", "libstdc++6"),
         new("zstd", ["libzstd.so.1"], "the NativeAOT compiler backend", "libzstd1"),
         new("terminfo", ["libtinfo.so.6"], "the NativeAOT compiler backend", "libtinfo6"),
-        new("ncurses", ["libncurses.so.6"], "the NativeAOT debugger", "libncurses6"),
-        new("libxml2", ["libxml2.so.2"], "the NativeAOT debugger", "libxml2"),
-        new("liblzma", ["liblzma.so.5"], "the NativeAOT debugger", "liblzma5"),
         new("CA certificates", [], "downloads and TLS connections", "ca-certificates"),
     ];
 

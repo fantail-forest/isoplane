@@ -218,7 +218,6 @@ internal static class Toolchain
     internal static string[] RequiredFiles() => [
         "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
         "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools" + ExecutableExtension, "wasi-sdk/bin/clang" + ExecutableExtension,
-        "debugger/debugger.json", "debugger/bin/lldb-dap" + ExecutableExtension, "debugger/bindings/lldb/__init__.py",
         "feed/Isoplane.GuestRuntime.props",
         "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/" + CompilerProbeName
     ];

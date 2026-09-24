@@ -13,9 +13,7 @@
 
 mod dotnet_template;
 
-pub use dotnet_template::{
-    aspnet_project, debugger_editor, debugger_python, managed_cli, release_version,
-};
+pub use dotnet_template::{aspnet_project, debugger_python, managed_cli, release_version};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

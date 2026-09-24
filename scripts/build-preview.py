@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the complete Linux or macOS developer preview from committed HEAD at the declared release version.
 
-    python3 scripts/build-preview.py --debugger DIR [--cache DIR] [--output DIR]
+    python3 scripts/build-preview.py [--cache DIR] [--output DIR]
 
 The result is one release directory (release.json, the package feed, the
 toolchain archive, samples and README), plus its archive, checksum and build
@@ -330,7 +330,6 @@ def existing_release(release, archive, receipt_path, revision):
 
 
 def build(root, cache, releases, logs, args):
-    load(root / 'scripts/package-debugger.py').verify(args.debugger)
     revision = source_revision(root)
     epoch = int(output(['git', 'show', '-s', '--format=%ct', revision], root))
     source = cache / 'source'
@@ -383,7 +382,7 @@ def build(root, cache, releases, logs, args):
     run([sys.executable, source / 'scripts/toolchain-notices.py', '--wasm-tools-source', wasm_sources[0].parent,
          '--runtime-work', source / 'guest-runtime/work', '--wasi-sdk', source / 'guest-runtime/work/wasi-sdk',
          '--managed-source', source, '--output', notices], source, logs / 'notices.log', environment)
-    run([sys.executable, source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output, '--debugger', args.debugger.resolve(),
+    run([sys.executable, source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output,
          '--wasi-sdk', source / 'guest-runtime/work/wasi-sdk', '--wasm-tools', wasm_tools,
          '--native-library', native_library, '--dotnet-root', sdk,
          '--notices', notices, '--packages', packages, '--package-version', version,
@@ -413,7 +412,6 @@ def build(root, cache, releases, logs, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--debugger', type=Path, required=True, help='verified package-debugger.py output')
     parser.add_argument('--cache', type=Path, default=ROOT / '.isoplane-dev/preview-build',
                         help='build cache shared between releases: SDK download, cargo target, packages')
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases',
