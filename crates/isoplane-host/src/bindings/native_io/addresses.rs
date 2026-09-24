@@ -33,13 +33,20 @@ impl Addresses {
         let state = Arc::new(Mutex::new(State::Pending));
         let completion = runtime.clone();
         let answer = state.clone();
-        let allowlist = bindings.allowlist().map(<[String]>::to_vec);
+        let allowlist = bindings.reach().allowlist.map(<[String]>::to_vec);
+        let exceptions = bindings.reach().exceptions.to_vec();
         let tenant = bindings.tenant().to_owned();
         let instance = bindings.instance();
         let task = runtime.reactor.spawn(async move {
             let result = completion
                 .egress
-                .resolve_name(&name, allowlist.as_deref())
+                .resolve_name(
+                    &name,
+                    crate::egress::Reach {
+                        allowlist: allowlist.as_deref(),
+                        exceptions: &exceptions,
+                    },
+                )
                 .await
                 .map_err(|error| match error {
                     crate::egress::EgressError::Denied(reason) => {

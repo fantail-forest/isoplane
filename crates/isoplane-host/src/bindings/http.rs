@@ -91,7 +91,7 @@ impl CellBindings {
         }
         let owner =
             match crate::egress::ConnectionOwner::new(self.ctx.tenant.clone(), self.ctx.instance) {
-                Ok(owner) => owner,
+                Ok(owner) => owner.with_exceptions(self.ctx.endpoint_exceptions.clone()),
                 Err(error) => {
                     return self
                         .settle_now(id, ResultRecord::Err(FutureError::Io(error.to_string())))
@@ -104,11 +104,21 @@ impl CellBindings {
         };
         let handle = operation.handle();
         let allowlist = self.ctx.allowlist.clone();
+        let exceptions = self.ctx.endpoint_exceptions.clone();
         let tenant = self.ctx.tenant.clone();
         let rt2 = rt.clone();
         let task = rt.reactor.spawn(async move {
             let svc = rt2.services.clone();
-            let checked = svc.egress.check_owned(&req.url, allowlist.as_deref()).await;
+            let checked = svc
+                .egress
+                .check_owned(
+                    &req.url,
+                    crate::egress::Reach {
+                        allowlist: allowlist.as_deref(),
+                        exceptions: &exceptions,
+                    },
+                )
+                .await;
             let res = match checked {
                 Ok(pinned) => {
                     let target = pinned.target();

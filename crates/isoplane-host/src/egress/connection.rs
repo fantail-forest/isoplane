@@ -8,6 +8,7 @@ use tokio::net::TcpStream;
 pub struct ConnectionOwner {
     tenant: String,
     instance: crate::InstanceId,
+    exceptions: std::sync::Arc<[SocketAddr]>,
 }
 
 impl ConnectionOwner {
@@ -19,7 +20,22 @@ impl ConnectionOwner {
                 "outbound connection has no tenant identity",
             ));
         }
-        Ok(Self { tenant, instance })
+        Ok(Self {
+            tenant,
+            instance,
+            exceptions: std::sync::Arc::new([]),
+        })
+    }
+
+    /// Lets this owner reach `exceptions` where the node's destination policy refuses them.
+    pub fn with_exceptions(mut self, exceptions: std::sync::Arc<[SocketAddr]>) -> Self {
+        self.exceptions = exceptions;
+        self
+    }
+
+    /// Exact peers this owner may reach where the node's destination policy refuses them.
+    pub fn exceptions(&self) -> &[SocketAddr] {
+        &self.exceptions
     }
 
     /// Tenant established by the host's dispatch routing.
@@ -187,6 +203,38 @@ mod tests {
     #[tokio::test]
     async fn a_mapped_hostname_ipv4_peer_does_not_require_ipv6() {
         ipv4_round_trip(true, true).await;
+    }
+
+    #[tokio::test]
+    async fn an_owners_exception_admits_exactly_its_private_peer() {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let peer = listener.local_addr().unwrap();
+        let policy = crate::egress::HostEgressPolicy::system(2, 1024).unwrap();
+        let stranger = ConnectionOwner::new("stranger".into(), crate::InstanceId(1)).unwrap();
+        assert!(
+            matches!(
+                policy.connect(&stranger, peer).await,
+                Err(ConnectionError::Denied(_))
+            ),
+            "the public policy must refuse a loopback peer to an owner without an exception"
+        );
+        let excepted = ConnectionOwner::new("excepted".into(), crate::InstanceId(2))
+            .unwrap()
+            .with_exceptions(std::sync::Arc::new([peer]));
+        assert!(
+            policy.connect(&excepted, peer).await.is_ok(),
+            "an owner's exception must admit its exact peer"
+        );
+        let neighbour = SocketAddr::new(peer.ip(), peer.port().wrapping_add(1));
+        assert!(
+            matches!(
+                policy.connect(&excepted, neighbour).await,
+                Err(ConnectionError::Denied(_))
+            ),
+            "an exception must not admit another port on the same address"
+        );
     }
 
     #[test]
