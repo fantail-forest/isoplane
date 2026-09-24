@@ -210,9 +210,16 @@ pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[Fi
     // The payloads verify concurrently, each hashed across cores, so a cold
     // load waits on the largest payload's read rather than the sum of the
     // single-threaded hashes.
+    // Each payload's span nests under the caller's load, as it did on one thread.
+    let parent = tracing::Span::current();
     let [native, baseline, state] = std::thread::scope(|scope| {
         [0, 1, 2]
-            .map(|index| scope.spawn(move || open_verified_payload(directory, manifest, index)))
+            .map(|index| {
+                let parent = parent.clone();
+                scope.spawn(move || {
+                    parent.in_scope(|| open_verified_payload(directory, manifest, index))
+                })
+            })
             .map(|handle| {
                 handle
                     .join()
