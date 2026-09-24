@@ -18,7 +18,20 @@ public sealed class ManagedBundleTests : MsbuildTests
             new XElement("PropertyGroup", new XElement("TargetFramework", "net10.0"), new XElement("PackageId", packageId))))
             .Save(Path.Combine(dependency.FullName, "Dependency.csproj"));
         File.WriteAllText(Path.Combine(dependency.FullName, "Code.cs"), "public static class Dependency { public static string Value => \"value\"; }");
-        File.WriteAllText(Path.Combine(directory, "NuGet.Config"), "<configuration><packageSources><clear/><add key=\"local\" value=\"packages\"/></packageSources></configuration>");
+        File.WriteAllText(Path.Combine(directory, "NuGet.Config"), $"""
+            <configuration>
+              <packageSources>
+                <clear/>
+                <add key="local" value="packages"/>
+                <add key="nuget.org" value="https://api.nuget.org/v3/index.json"/>
+              </packageSources>
+              <packageSourceMapping>
+                <clear/>
+                <packageSource key="local"><package pattern="{packageId}"/></packageSource>
+                <packageSource key="nuget.org"><package pattern="*"/></packageSource>
+              </packageSourceMapping>
+            </configuration>
+            """);
         Directory.CreateDirectory(Path.Combine(directory, "packages"));
         if (packageReference)
         {

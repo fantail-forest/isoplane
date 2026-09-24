@@ -46,10 +46,12 @@ public sealed class ReleaseTests
         using var fixture = new ToolchainBundle();
         var path = Path.Combine(fixture.Release, Release.ManifestName);
         var manifest = JsonSerializer.Deserialize<ReleaseManifest>(await File.ReadAllTextAsync(path), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(manifest with { RuntimeIdentifier = "osx-arm64" }));
+        var foreignPlatform = manifest.RuntimeIdentifier == "osx-arm64" ? "linux-x64" : "osx-arm64";
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(manifest with { RuntimeIdentifier = foreignPlatform }));
         var source = ReleaseSource.Open(fixture.Release, Client);
-        var error = Assert.Throws<InvalidOperationException>(() => Release.RequireThisPlatform(Release.ReadAsync(source, CancellationToken.None).Result, source));
-        Assert.Contains("osx-arm64", error.Message);
+        var foreignManifest = await Release.ReadAsync(source, CancellationToken.None);
+        var error = Assert.Throws<InvalidOperationException>(() => Release.RequireThisPlatform(foreignManifest, source));
+        Assert.True(error.Message.Contains(foreignPlatform, StringComparison.Ordinal), "A foreign release must be rejected with the platform it targets.");
     }
 
     [Fact]
