@@ -87,17 +87,13 @@ async fn observe_body(end: End) -> Fields {
             async move {
                 let (stream, _) = listener.accept().await.expect("request connection");
                 let service =
-                    service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| {
+                    service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                         let receiver = receive
                             .lock()
                             .expect("receiver lock")
                             .take()
                             .expect("one request");
-                        let trace = RequestTrace::worker(&mut request, RequestOrigin::Public);
-                        assert!(
-                            !request.headers().contains_key(REQUEST_ID),
-                            "correlation headers cannot reach guest dispatch"
-                        );
+                        let trace = RequestTrace::new(&request);
                         let body = StreamBody::new(futures::stream::unfold(
                             receiver,
                             |mut receiver| async move {
@@ -132,7 +128,6 @@ async fn observe_body(end: End) -> Fields {
             "GET"
         })
         .uri("/")
-        .header(REQUEST_ID, "ffffffffffffffffffffffffffffffff")
         .body(Empty::<Bytes>::new())
         .expect("request");
     let mut body = client
@@ -239,55 +234,6 @@ async fn a_failed_http_body_closes_its_request_trace_as_body_error() {
         "body_error",
         "body errors cannot be relabelled as successful EOF"
     );
-}
-
-#[test]
-fn a_forwarded_id_is_consumed_only_at_the_trusted_ingress() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        REQUEST_ID,
-        HeaderValue::from_static("1234567890abcdef1234567890abcdef"),
-    );
-    let id = RequestId::take(&mut headers, RequestOrigin::Forwarded);
-    assert_eq!(
-        id.to_string(),
-        "1234567890abcdef1234567890abcdef",
-        "the private worker must preserve host correlation"
-    );
-    assert!(
-        !headers.contains_key(REQUEST_ID),
-        "the private correlation must be removed before guest dispatch"
-    );
-}
-
-#[test]
-fn malformed_forwarded_ids_are_replaced_and_removed() {
-    for value in [
-        "",
-        "abc",
-        "fffffffffffffffffffffffffffffffff",
-        "gggggggggggggggggggggggggggggggg",
-    ] {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            REQUEST_ID,
-            HeaderValue::from_str(value).expect("test header"),
-        );
-        let id = RequestId::take(&mut headers, RequestOrigin::Forwarded).to_string();
-        assert_eq!(
-            id.len(),
-            32,
-            "replacement correlation must have the fixed host ID width"
-        );
-        assert!(
-            id.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "replacement correlation must contain only hexadecimal digits"
-        );
-        assert!(
-            !headers.contains_key(REQUEST_ID),
-            "malformed private headers must not reach guest dispatch"
-        );
-    }
 }
 
 #[tokio::test]

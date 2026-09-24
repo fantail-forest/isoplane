@@ -5,6 +5,9 @@
 mod common;
 #[path = "real_node/egress.rs"]
 mod egress;
+#[cfg(target_os = "linux")]
+#[path = "real_node/mapped_storage.rs"]
+mod mapped_storage;
 
 use common::preparation::LocalDeployment;
 use common::{config, get, manifest, serve, start_with, Rig};

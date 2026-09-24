@@ -26,8 +26,7 @@ pub type Body = UnsyncBoxBody<Bytes, anyhow::Error>;
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
-    /// Trust host correlation only on the private application-worker listener.
-    pub request_origin: crate::request_trace::RequestOrigin,
+    /// Address for the plaintext application HTTP listener.
     pub listen: SocketAddr,
     pub shed: ShedConfig,
 }
@@ -35,7 +34,6 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         ProxyConfig {
-            request_origin: crate::request_trace::RequestOrigin::Public,
             listen: ([127, 0, 0, 1], 8787).into(),
             shed: ShedConfig::default(),
         }
@@ -47,7 +45,6 @@ pub struct Proxy {
     pub dispatcher: Arc<dyn Dispatcher>,
     pub metrics: Arc<ProxyMetrics>,
     admission: Arc<AdmissionControl>,
-    pub(crate) cfg: ProxyConfig,
     shutdown: tokio_util::sync::CancellationToken,
     pub(crate) transports: tokio_util::task::TaskTracker,
 }
@@ -75,7 +72,6 @@ impl Proxy {
             routes,
             dispatcher,
             metrics,
-            cfg,
             shutdown: tokio_util::sync::CancellationToken::new(),
             transports: tokio_util::task::TaskTracker::new(),
         })
@@ -142,10 +138,10 @@ impl Proxy {
 
     pub async fn handle(
         self: Arc<Self>,
-        mut req: Request<Incoming>,
+        req: Request<Incoming>,
         peer: SocketAddr,
     ) -> Result<Response<Body>, hyper::Error> {
-        let trace = crate::request_trace::RequestTrace::worker(&mut req, self.cfg.request_origin);
+        let trace = crate::request_trace::RequestTrace::new(&req);
         if self.shutdown.is_cancelled() {
             return Ok(trace
                 .response(text(

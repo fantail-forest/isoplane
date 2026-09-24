@@ -118,7 +118,12 @@ impl RealCells {
                 tenant,
                 application: app,
             })?;
-        cell.register_module(tenant, Arc::new(activator), manifest)?;
+        cell.register_module_with_exceptions(
+            tenant,
+            Arc::new(activator),
+            manifest,
+            settings.allowed_destinations.into(),
+        )?;
         cell.set_runtime_configuration(tenant, &module, settings.configuration)?;
         self.tenants
             .write()

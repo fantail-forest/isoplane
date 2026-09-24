@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
-    /// Per-application local development file references and exact worker endpoints.
+    /// Per-application local development file references and exact endpoint exceptions.
     #[cfg(feature = "real-backends")]
     #[serde(default)]
     pub development_applications: Vec<crate::development::ApplicationSettings>,
@@ -461,7 +461,7 @@ name = "cell-1"
 
     #[cfg(feature = "real-backends")]
     #[test]
-    fn host_limits_survive_the_worker_configuration_round_trip() {
+    fn host_limits_survive_the_printed_configuration_round_trip() {
         let mut config = NodeConfig::dev_default();
         config.host.guest_resources.native_handles = 2;
         config.host.guest_resources.log_bytes_per_dispatch = 7;
@@ -469,31 +469,31 @@ name = "cell-1"
         config.network.connections = 2;
         config.network.egress_bytes = 19;
         config.host.wall_ms_cap = 60_000;
-        let encoded = toml::to_string(&config).expect("node serializes for application workers");
-        let restored = NodeConfig::from_toml(&encoded).expect("worker reads its configuration");
+        let encoded = toml::to_string(&config).expect("the node prints its merged configuration");
+        let restored = NodeConfig::from_toml(&encoded).expect("the printed configuration loads");
         assert_eq!(
             restored.host.guest_resources.native_handles, 2,
-            "worker must preserve handle budget"
+            "the printed configuration must preserve handle budget"
         );
         assert_eq!(
             restored.host.guest_resources.log_bytes_per_dispatch, 7,
-            "worker must preserve log budget"
+            "the printed configuration must preserve log budget"
         );
         assert_eq!(
             restored.host.queue_depth_per_worker, 3,
-            "worker must preserve queue budget"
+            "the printed configuration must preserve queue budget"
         );
         assert_eq!(
             restored.network.connections, 2,
-            "worker must preserve connection budget"
+            "the printed configuration must preserve connection budget"
         );
         assert_eq!(
             restored.network.egress_bytes, 19,
-            "worker must preserve egress budget"
+            "the printed configuration must preserve egress budget"
         );
         assert_eq!(
             restored.host.wall_ms_cap, 60_000,
-            "worker must preserve the dispatch wall limit"
+            "the printed configuration must preserve the dispatch wall limit"
         );
     }
 
