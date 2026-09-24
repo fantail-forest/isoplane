@@ -10,7 +10,8 @@ use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
 use isoplane_prepare::{
     BuildProduct, BuildRequest, BuildStage, LocalPreparation, PortableTemplate, Preparation,
-    PrepareError, PreparedBaseline, RuntimeBaseline, RuntimeProfile,
+    PrepareError, PreparedBaseline, PublishedBaseline, RuntimeBaseline, RuntimeProfile,
+    WorkerFailure,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -43,18 +44,14 @@ fn request(wasm: &[u8], sandbox: InitSandbox) -> BuildRequest {
     }
 }
 
-async fn baseline(wasm: &[u8], request: &BuildRequest) -> Result<PreparedBaseline, PrepareError> {
-    LocalPreparation::new()
-        .expect("local preparation")
-        .prepare_runtime_baseline(wasm, &request.baseline(), &CancellationToken::new())
-        .await
+async fn baseline(wasm: &[u8], request: &BuildRequest) -> Result<PreparedBaseline, WorkerFailure> {
+    RuntimeBaseline::prepare(wasm, &request.baseline(), None)
 }
 
-fn stage_of(result: Result<PreparedBaseline, PrepareError>) -> BuildStage {
+fn stage_of(result: Result<PreparedBaseline, WorkerFailure>) -> BuildStage {
     match result {
         Ok(_) => panic!("the runtime baseline must be refused"),
-        Err(PrepareError::Rejected(failure)) => failure.stage,
-        Err(error) => panic!("the refusal must be the preparation's structured one: {error}"),
+        Err(failure) => failure.stage,
     }
 }
 
@@ -101,10 +98,11 @@ async fn an_application_layer_preserves_initialized_state_outside_its_fresh_seed
     let runtime = baseline(&wasm, &request)
         .await
         .expect("the runtime stage must prepare as a baseline");
-    let layer = preparation
-        .prepare_over(&runtime.baseline, &request, &CancellationToken::new())
-        .await
-        .expect("the application must prepare over its baseline");
+    let layer = runtime
+        .baseline
+        .prepare_application(&request)
+        .expect("the application must prepare over its baseline")
+        .product;
     let engine = common::engine();
     let directory = tempfile::tempdir().expect("publication");
     let identity = request.identity().expect("the application's identity");
@@ -149,11 +147,11 @@ async fn a_module_without_a_runtime_stage_is_prepared_over_its_uninitialized_bas
     let runtime = baseline(&wasm, &request)
         .await
         .expect("a module without a runtime stage must still prepare a baseline");
-    let layer = LocalPreparation::new()
-        .expect("local preparation")
-        .prepare_over(&runtime.baseline, &request, &CancellationToken::new())
-        .await
-        .expect("the application must prepare over its baseline");
+    let layer = runtime
+        .baseline
+        .prepare_application(&request)
+        .expect("the application must prepare over its baseline")
+        .product;
     let engine = common::engine();
     let directory = tempfile::tempdir().expect("publication");
     let base = load(
@@ -211,14 +209,9 @@ async fn a_runtime_stage_reaching_a_refused_capability_is_refused_as_a_baseline(
 }
 
 async fn layer_refusal(runtime: &RuntimeBaseline, request: &BuildRequest) -> BuildStage {
-    match LocalPreparation::new()
-        .expect("local preparation")
-        .prepare_over(runtime, request, &CancellationToken::new())
-        .await
-    {
+    match runtime.prepare_application(request) {
         Ok(_) => panic!("the layer must be refused"),
-        Err(PrepareError::Rejected(failure)) => failure.stage,
-        Err(error) => panic!("the refusal must be the preparation's structured one: {error}"),
+        Err(failure) => failure.stage,
     }
 }
 
@@ -254,4 +247,112 @@ async fn an_application_over_a_baseline_cannot_return_a_portable_module() {
         BuildStage::Input,
         "a layer has no portable module to return"
     );
+}
+
+/// `wasm`'s runtime baseline, prepared through `preparation` and published as
+/// a local baseline, with the digest of its published manifest.
+async fn published_baseline(
+    preparation: &dyn Preparation,
+    engine: &IsoplaneEngine,
+    wasm: &[u8],
+    request: &BuildRequest,
+    directory: &std::path::Path,
+) -> (PublishedBaseline, Template) {
+    let product = preparation
+        .prepare_runtime_baseline(wasm, &request.baseline(), &CancellationToken::new())
+        .await
+        .expect("the runtime stage must prepare as a baseline");
+    let identity = request
+        .baseline()
+        .identity()
+        .expect("the baseline's identity");
+    let base = load(engine, &product, identity, None, directory);
+    let digest = engine
+        .prepared_manifest_sha256(directory)
+        .expect("the published manifest digest");
+    // SAFETY: this test's LocalPreparation produced the private baseline;
+    // its native code, state and mapped bytes remain unchanged while in use.
+    (
+        unsafe { PublishedBaseline::new(directory.to_path_buf(), digest) },
+        base,
+    )
+}
+
+#[tokio::test]
+async fn a_published_baseline_layer_preserves_initialized_state_outside_its_fresh_seed() {
+    let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
+    let request = request(&wasm, InitSandbox::Sealed);
+    let preparation = LocalPreparation::new().expect("local preparation");
+    let engine = common::engine();
+    let directory = tempfile::tempdir().expect("publication");
+    let (published, base) = published_baseline(
+        &preparation,
+        &engine,
+        &wasm,
+        &request,
+        &directory.path().join("base"),
+    )
+    .await;
+    let layer = preparation
+        .prepare_over(&published, &request, &CancellationToken::new())
+        .await
+        .expect("the application must prepare over the published baseline");
+    let whole = preparation
+        .prepare(&wasm, &request, &CancellationToken::new())
+        .await
+        .expect("the whole initialization must prepare");
+    let identity = request.identity().expect("the application's identity");
+    let layer = load(
+        &engine,
+        &layer,
+        identity,
+        Some(&base),
+        &directory.path().join("layer"),
+    );
+    let whole = load(
+        &engine,
+        &whole,
+        identity,
+        None,
+        &directory.path().join("whole"),
+    );
+    // APPLICATION writes its independently drawn 16-byte seed only at 64..80.
+    let layer_memory = layer.memory_image_arc().to_dense();
+    let whole_memory = whole.memory_image_arc().to_dense();
+    assert_eq!(
+        (&layer_memory[..64], &layer_memory[80..]),
+        (&whole_memory[..64], &whole_memory[80..]),
+        "published-baseline and whole initialization must preserve the same state outside the fresh application seed"
+    );
+}
+
+#[tokio::test]
+async fn an_application_is_refused_when_the_supplied_baseline_digest_differs() {
+    let wasm = staged::staged_guest(SEED, RUNTIME, APPLICATION);
+    let request = request(&wasm, InitSandbox::Sealed);
+    let preparation = LocalPreparation::new().expect("local preparation");
+    let directory = tempfile::tempdir().expect("publication");
+    let (published, _base) = published_baseline(
+        &preparation,
+        &common::engine(),
+        &wasm,
+        &request,
+        &directory.path().join("base"),
+    )
+    .await;
+    // SAFETY: this test's LocalPreparation produced the private baseline;
+    // its native code, state and mapped bytes remain unchanged while in use.
+    let other = unsafe { PublishedBaseline::new(published.directory().to_path_buf(), [0; 32]) };
+    match preparation
+        .prepare_over(&other, &request, &CancellationToken::new())
+        .await
+    {
+        Ok(_) => panic!("a baseline without its recorded digest must be refused"),
+        Err(PrepareError::Rejected(failure)) => assert_eq!(
+            failure.stage,
+            BuildStage::Input,
+            "a baseline with a different supplied manifest digest must be refused before its native code loads"
+        ),
+        Err(error) => panic!("the refusal must be the preparation's structured one: {error}"),
+    }
 }

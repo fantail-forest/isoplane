@@ -44,6 +44,29 @@ pub trait Preparation: Send + Sync {
         request: &BuildRequest,
         cancellation: &CancellationToken,
     ) -> Result<BuildProduct, PrepareError>;
+
+    /// Initialize only `wasm`'s runtime stage and return it as the baseline
+    /// `request` names. Fails at [`BuildStage::Baseline`] if that stage reads
+    /// entropy or reaches a capability the sandbox refuses.
+    #[cfg(target_os = "linux")]
+    async fn prepare_runtime_baseline(
+        &self,
+        wasm: &[u8],
+        request: &crate::BaselineRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<BuildProduct, PrepareError>;
+
+    /// Initialize `request`'s application over `baseline` and return only
+    /// what it changed, as a layer that loads over that baseline. Nothing is
+    /// compiled. Fails at [`BuildStage::Input`] unless `baseline` has its
+    /// recorded digest and is the baseline `request` derives.
+    #[cfg(target_os = "linux")]
+    async fn prepare_over(
+        &self,
+        baseline: &crate::PublishedBaseline,
+        request: &BuildRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<BuildProduct, PrepareError>;
 }
 
 /// Local preparation using the shared sandbox engine and initialization implementation.
@@ -112,6 +135,39 @@ impl Preparation for LocalPreparation {
         let request = request.clone();
         self.run(cancellation, move |cache| prepare(&wasm, &request, cache))
             .await
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn prepare_runtime_baseline(
+        &self,
+        wasm: &[u8],
+        request: &crate::BaselineRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<BuildProduct, PrepareError> {
+        let wasm = wasm.to_vec();
+        let request = request.clone();
+        self.run(cancellation, move |cache| {
+            Ok(crate::RuntimeBaseline::prepare(&wasm, &request, cache)?.product)
+        })
+        .await
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn prepare_over(
+        &self,
+        baseline: &crate::PublishedBaseline,
+        request: &BuildRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<BuildProduct, PrepareError> {
+        let baseline = baseline.clone();
+        let request = request.clone();
+        self.run(cancellation, move |_| {
+            let loaded = baseline
+                .load(&request)
+                .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
+            Ok(loaded.prepare_application(&request)?.product)
+        })
+        .await
     }
 }
 

@@ -559,36 +559,36 @@ async fn a_debug_runtime_without_a_debug_session_is_refused() {
 #[cfg(target_os = "linux")]
 mod over_the_runtime_baseline {
     use super::*;
-    use isoplane_prepare::PreparedBaseline;
+    use isoplane_prepare::{PreparedBaseline, RuntimeBaseline};
 
     /// The shared runtime prepared once to the end of its own initializer, for
     /// packages prepared with [`request`].
-    async fn runtime_baseline(preparation: &LocalPreparation, runtime: &[u8]) -> PreparedBaseline {
-        preparation
-            .prepare_runtime_baseline(
-                runtime,
-                &request(runtime, Vec::new()).baseline(),
-                &CancellationToken::new(),
-            )
-            .await
-            .unwrap_or_else(|error| {
-                panic!("the shared runtime must prepare as a baseline: {error}")
-            })
+    fn runtime_baseline(runtime: &[u8]) -> PreparedBaseline {
+        RuntimeBaseline::prepare(
+            runtime,
+            &request(runtime, Vec::new()).baseline(),
+            Some(&shared_cache()),
+        )
+        .unwrap_or_else(|failure| {
+            panic!("the shared runtime must prepare as a baseline: {failure:?}")
+        })
     }
 
     /// `files` prepared as a layer over `baseline`, with the baseline, both as a
     /// cell receives them.
-    async fn layer_over(
-        preparation: &LocalPreparation,
+    fn layer_over(
         baseline: &PreparedBaseline,
         runtime: &[u8],
         files: Vec<PlatformFile>,
     ) -> (PreparedTemplate, PreparedTemplate) {
         let request = request(runtime, files);
-        let layer = preparation
-            .prepare_over(&baseline.baseline, &request, &CancellationToken::new())
-            .await
-            .unwrap_or_else(|error| panic!("the package must prepare over the baseline: {error}"));
+        let layer = baseline
+            .baseline
+            .prepare_application(&request)
+            .unwrap_or_else(|failure| {
+                panic!("the package must prepare over the baseline: {failure:?}")
+            })
+            .product;
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
         let base_identity = request
             .baseline()
@@ -619,8 +619,8 @@ mod over_the_runtime_baseline {
         let (whole, request) = prepare(&preparation, &runtime, package("alpha"))
             .await
             .expect("alpha must prepare whole");
-        let baseline = runtime_baseline(&preparation, &runtime).await;
-        let (base, layer) = layer_over(&preparation, &baseline, &runtime, package("alpha")).await;
+        let baseline = runtime_baseline(&runtime);
+        let (base, layer) = layer_over(&baseline, &runtime, package("alpha"));
         let whole_reactor = no_egress::reactor_without_egress(7300);
         whole_reactor.context.begin_slice(1, 1);
         let whole = finish_across_restored_stores(
@@ -656,12 +656,9 @@ mod over_the_runtime_baseline {
     #[tokio::test(start_paused = true)]
     async fn packages_over_one_runtime_baseline_each_answer_across_restored_stores() {
         let runtime = isoplane_fixtures::mono_runtime();
-        let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-        let baseline = runtime_baseline(&preparation, &runtime).await;
-        let (alpha_base, alpha) =
-            layer_over(&preparation, &baseline, &runtime, package("alpha")).await;
-        let (beta_base, beta) =
-            layer_over(&preparation, &baseline, &runtime, package("beta")).await;
+        let baseline = runtime_baseline(&runtime);
+        let (alpha_base, alpha) = layer_over(&baseline, &runtime, package("alpha"));
+        let (beta_base, beta) = layer_over(&baseline, &runtime, package("beta"));
         let alpha_reactor = no_egress::reactor_without_egress(7300);
         alpha_reactor.context.begin_slice(1, 1);
         let alpha = finish_across_restored_stores(

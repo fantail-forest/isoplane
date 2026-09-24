@@ -5,12 +5,11 @@ use std::sync::Arc;
 
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{IsoplaneEngine, Template};
-use tokio_util::sync::CancellationToken;
 
 use crate::product::{produce, validate};
 use crate::{
-    BuildProduct, BuildRequest, BuildStage, Initialization, LocalPreparation, PortableTemplate,
-    PrepareError, WorkerFailure,
+    BuildProduct, BuildRequest, BuildStage, Initialization, PortableTemplate, PrepareError,
+    WorkerFailure,
 };
 
 /// What a runtime's own initialization sees: an application's request
@@ -50,6 +49,64 @@ impl BaselineRequest {
     /// The identity the baseline is prepared, published and loaded under.
     pub fn identity(&self) -> Result<PreparedIdentity, postcard::Error> {
         self.0.identity()
+    }
+
+    /// The request as a worker receives it; its own `baseline()` is itself.
+    pub(crate) fn build_request(&self) -> &BuildRequest {
+        &self.0
+    }
+}
+
+/// A runtime baseline published in a directory, identified by the manifest
+/// digest recorded by local selection.
+#[derive(Clone)]
+pub struct PublishedBaseline {
+    directory: std::path::PathBuf,
+    manifest_sha256: [u8; 32],
+}
+
+impl PublishedBaseline {
+    /// # Safety
+    /// Nothing may change or remove the files in `directory` while any
+    /// preparation or template uses the baseline: preparation maps them and
+    /// runs the native code they hold.
+    pub unsafe fn new(directory: std::path::PathBuf, manifest_sha256: [u8; 32]) -> Self {
+        Self {
+            directory,
+            manifest_sha256,
+        }
+    }
+
+    /// Where the baseline is published.
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
+    }
+
+    /// The digest the baseline's manifest must have.
+    pub fn manifest_sha256(&self) -> [u8; 32] {
+        self.manifest_sha256
+    }
+
+    /// Loads the baseline for preparing `request`'s application over it.
+    /// Fails unless its manifest has the recorded digest and names the
+    /// baseline `request` derives, for this engine.
+    pub fn load(&self, request: &BuildRequest) -> anyhow::Result<RuntimeBaseline> {
+        let baseline = request.baseline();
+        let engine = IsoplaneEngine::new(request.engine.clone())?;
+        // SAFETY: `PublishedBaseline::new`'s caller keeps the directory's
+        // files unchanged while any preparation or template uses them.
+        let template = unsafe {
+            engine.restore_prepared_by_digest(
+                &self.directory,
+                self.manifest_sha256,
+                baseline.identity()?,
+            )
+        }?;
+        Ok(RuntimeBaseline::loaded(
+            Arc::new(engine),
+            template,
+            &baseline,
+        )?)
     }
 }
 
@@ -183,39 +240,6 @@ impl RuntimeBaseline {
     /// over it are loaded in.
     pub fn engine(&self) -> &Arc<IsoplaneEngine> {
         &self.0.engine
-    }
-}
-
-impl LocalPreparation {
-    /// [`RuntimeBaseline::prepare`] on this provider's preparation thread and cache.
-    pub async fn prepare_runtime_baseline(
-        &self,
-        wasm: &[u8],
-        request: &BaselineRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<PreparedBaseline, PrepareError> {
-        let wasm = wasm.to_vec();
-        let request = request.clone();
-        self.run(cancellation, move |cache| {
-            RuntimeBaseline::prepare(&wasm, &request, cache)
-        })
-        .await
-    }
-
-    /// [`RuntimeBaseline::prepare_application`] on this provider's preparation
-    /// thread, returning only the layer's preparation output.
-    pub async fn prepare_over(
-        &self,
-        baseline: &RuntimeBaseline,
-        request: &BuildRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<BuildProduct, PrepareError> {
-        let baseline = baseline.clone();
-        let request = request.clone();
-        self.run(cancellation, move |_| {
-            Ok(baseline.prepare_application(&request)?.product)
-        })
-        .await
     }
 }
 
