@@ -16,6 +16,13 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
+def copy_licenses(notices, destination):
+    """Ship SDK terms alongside the dependency licenses without changing either."""
+    license = Path(__file__).resolve().parents[1] / 'licenses/Isoplane-SDK-LICENSE.txt'
+    shutil.copyfile(license, destination / license.name)
+    shutil.copytree(notices, destination / 'notices', symlinks=False)
+
+
 def verify_native_pair(package_path, library):
     with zipfile.ZipFile(package_path) as package:
         entries = [entry for entry in package.namelist() if entry.endswith('/runtime/' + library.name)]
@@ -120,8 +127,9 @@ def main():
         release = Path(temporary) / 'release'
         stage = release / 'toolchain' if args.packages else release
         stage.mkdir(parents=True)
+        copy_licenses(args.notices, stage)
         for source, name in [(args.runtime_output / 'feed', 'feed'), (args.runtime_output / 'packs', 'packs'), (args.runtime_output / 'compiler', 'compiler'),
-                             (args.wasi_sdk, 'wasi-sdk'), (args.notices, 'notices')]:
+                             (args.wasi_sdk, 'wasi-sdk')]:
             shutil.copytree(source, stage / name, symlinks=False)
         if windows:
             (stage / 'templates').mkdir()

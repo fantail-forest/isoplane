@@ -27,4 +27,5 @@
       <Content Include="$(_PackagedTemplateProject)" Pack="true" PackagePath="content/content/aspnet/SampleApp.csproj" />
     </ItemGroup>
   </Target>
+  <Import Project="../../../licenses/SdkPackage.props" />
 </Project>

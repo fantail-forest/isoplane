@@ -36,4 +36,5 @@
       <None Include="$(_PackagedSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" />
     </ItemGroup>
   </Target>
+  <Import Project="../../../licenses/SdkPackage.props" />
 </Project>

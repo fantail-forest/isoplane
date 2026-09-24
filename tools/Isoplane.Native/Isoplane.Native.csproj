@@ -30,4 +30,5 @@
     <Exec Condition="'$(BuildNativeSupport)' == 'true'" Command="$(NativeBuildPython) &quot;$(MSBuildThisFileDirectory)../../scripts/fixture-tools.py&quot; isoplane-native &quot;$(MSBuildThisFileDirectory)../..&quot; $(NativeProfile)" />
     <Error Condition="!Exists('$(IsoplaneNativePath)')" Text="Build isoplane-native with cargo build -p isoplane-native, or set IsoplaneNativePath to its built library." />
   </Target>
+  <Import Project="../../licenses/SdkPackage.props" />
 </Project>

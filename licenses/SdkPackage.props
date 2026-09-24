@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <PackageLicenseFile>Isoplane-SDK-LICENSE.txt</PackageLicenseFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)Isoplane-SDK-LICENSE.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

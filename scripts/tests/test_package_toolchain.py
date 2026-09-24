@@ -9,6 +9,23 @@ package_toolchain = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package_toolchain)
 
 
+class LicenseTests(unittest.TestCase):
+    def test_toolchains_ship_the_sdk_terms_and_preserve_third_party_notices(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            notices = root / 'notices'
+            notices.mkdir()
+            (notices / 'dependency-license.txt').write_bytes(b'third-party terms')
+            stage = root / 'toolchain'
+            stage.mkdir()
+            package_toolchain.copy_licenses(notices, stage)
+            approved = Path(__file__).resolve().parents[2] / 'licenses/Isoplane-SDK-LICENSE.txt'
+            self.assertEqual((stage / approved.name).read_bytes(), approved.read_bytes(),
+                             'the toolchain and resulting MSI must include the approved SDK terms')
+            self.assertEqual((stage / 'notices/dependency-license.txt').read_bytes(), b'third-party terms',
+                             'the proprietary SDK license must not replace dependency licenses')
+
+
 class NativePairTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='isoplane-package-pair-')
