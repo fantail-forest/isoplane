@@ -202,6 +202,35 @@ impl IsoplaneEngine {
         Ok(prepared)
     }
 
+    /// Loads captured preparation output without compilation.
+    /// # Safety
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
+        unsafe {
+            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
+            self.load_prepared_product_in(product, &std::env::temp_dir())
+        }
+    }
+
+    /// Restore preparation output using temporary backing files within `storage`.
+    /// # Safety
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn load_prepared_product_in(
+        &self,
+        product: &PreparedTemplate,
+        storage: &std::path::Path,
+    ) -> Result<Template> {
+        let directory =
+            tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
+        let path = directory.path().join("prepared");
+        product.publish(&path)?;
+        // SAFETY: the directory is private to this call and nothing writes its published files;
+        // removing it with the call's end unlinks them, which leaves the mappings intact.
+        unsafe { self.load_prepared(&path, product.manifest.identity, &[]) }
+    }
+
     /// Checks a local manifest and returns the exact content digest recorded by selection.
     pub fn prepared_manifest_sha256(&self, directory: &Path) -> Result<[u8; 32]> {
         let (manifest, digest) = files::read_manifest_receipt(directory)?;
