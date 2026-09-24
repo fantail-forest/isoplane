@@ -206,27 +206,58 @@ pub(super) fn read_payloads(directory: &Path, manifest: &Manifest) -> Result<[Ve
     Ok(payloads)
 }
 
-pub(super) fn open_verified(directory: &Path, manifest: &Manifest) -> Result<[File; 3]> {
+/// A mapped template's three payload files, verified against its recorded
+/// manifest. The native payload is absent when the engine already holds the
+/// module its manifest records, so it is neither read nor verified again.
+pub(super) struct Verified {
+    pub native: Option<File>,
+    pub baseline: File,
+    pub state: File,
+}
+
+impl Verified {
+    /// The payload files in `PAYLOAD_NAMES` order.
+    pub fn each(&self) -> [Option<&File>; 3] {
+        [
+            self.native.as_ref(),
+            Some(&self.baseline),
+            Some(&self.state),
+        ]
+    }
+}
+
+/// Opens and verifies the payloads, the native one only when `native`.
+pub(super) fn open_verified(
+    directory: &Path,
+    manifest: &Manifest,
+    native: bool,
+) -> Result<Verified> {
     // The payloads verify concurrently, each hashed across cores, so a cold
     // load waits on the largest payload's read rather than the sum of the
     // single-threaded hashes.
     // Each payload's span nests under the caller's load, as it did on one thread.
     let parent = tracing::Span::current();
-    let [native, baseline, state] = std::thread::scope(|scope| {
-        [0, 1, 2]
-            .map(|index| {
-                let parent = parent.clone();
-                scope.spawn(move || {
-                    parent.in_scope(|| open_verified_payload(directory, manifest, index))
-                })
+    std::thread::scope(|scope| {
+        let open = |index: usize| {
+            let parent = parent.clone();
+            scope.spawn(move || {
+                parent.in_scope(|| open_verified_payload(directory, manifest, index))
             })
-            .map(|handle| {
-                handle
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            })
-    });
-    Ok([native?, baseline?, state?])
+        };
+        let join = |handle: std::thread::ScopedJoinHandle<'_, Result<File>>| {
+            handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        };
+        let native = native.then(|| open(0));
+        let baseline = open(1);
+        let state = open(2);
+        Ok(Verified {
+            native: native.map(join).transpose()?,
+            baseline: join(baseline)?,
+            state: join(state)?,
+        })
+    })
 }
 
 /// A few hashing threads: more costs more in coordination than it saves on a
@@ -295,7 +326,9 @@ fn open_verified_payload(directory: &Path, manifest: &Manifest, index: usize) ->
 }
 
 #[tracing::instrument(name = "template_read_ahead", skip_all, fields(ranges = ranges.len()))]
-pub(super) fn advise(files: &[File; 3], manifest: &Manifest, ranges: &[ReadAhead]) -> Result<()> {
+/// Asks the kernel to read `ranges` ahead. A range in a payload the engine
+/// already holds is validated but not read.
+pub(super) fn advise(files: &Verified, manifest: &Manifest, ranges: &[ReadAhead]) -> Result<()> {
     let mut ordered: Vec<_> = ranges.iter().collect();
     ordered.sort_by_key(|range| (range.payload, range.offset_bytes));
     let mut previous = None;
@@ -321,7 +354,9 @@ pub(super) fn advise(files: &[File; 3], manifest: &Manifest, ranges: &[ReadAhead
         previous = Some((range.payload, end));
     }
     for range in ordered {
-        advise_file(&files[range.payload.index()], range)?;
+        if let Some(file) = files.each()[range.payload.index()] {
+            advise_file(file, range)?;
+        }
     }
     Ok(())
 }
@@ -397,7 +432,7 @@ mod tests {
         let (directory, _, engine) = fixture();
         let path = directory.path().join("version");
         let manifest = read_manifest(&path).expect("manifest");
-        let files = open_verified(&path, &manifest).expect("verify held files");
+        let files = open_verified(&path, &manifest, true).expect("verify held files");
         std::fs::rename(path.join(super::super::NATIVE), path.join("old-native"))
             .expect("replace path");
         std::fs::write(
@@ -405,7 +440,7 @@ mod tests {
             b"replacement is not native code",
         )
         .expect("replacement");
-        let [native, _, _] = files;
+        let native = files.native.expect("the native payload was requested");
         // SAFETY: the fixture locally compiled this exact verified held immutable native file.
         let module =
             unsafe { wasmtime::Module::deserialize_open_file(&engine.inner.wasmtime, native) }
@@ -415,7 +450,7 @@ mod tests {
             "the held native inode must survive path replacement"
         );
         assert!(
-            open_verified(&path, &manifest).is_err(),
+            open_verified(&path, &manifest, true).is_err(),
             "a later load must reject the replacement"
         );
     }
@@ -449,7 +484,7 @@ mod tests {
             std::fs::write(&payload, changed).expect("replace payload");
             assert!(
                 matches!(
-                    open_verified(&path, &manifest),
+                    open_verified(&path, &manifest, true),
                     Err(PreparedError::Invalid(_))
                 ),
                 "mapping must reject same-length tampering in {name}"
@@ -463,7 +498,7 @@ mod tests {
         let (directory, _, _) = fixture();
         let path = directory.path().join("version");
         let manifest = read_manifest(&path).expect("manifest");
-        let files = open_verified(&path, &manifest).expect("files");
+        let files = open_verified(&path, &manifest, true).expect("files");
         for ranges in [
             vec![ReadAhead {
                 payload: PreparedPayload::Native,

@@ -411,3 +411,97 @@ fn preparation_settings_do_not_enable_execution_process_profiling() {
         "excluding process-local diagnostics must preserve preparation memory limits"
     );
 }
+
+/// Publishes `wasm` prepared under `identity` as a mapped artifact at `path`.
+fn publish_mapped(
+    engine: &isoplane_engine::IsoplaneEngine,
+    wasm: &[u8],
+    identity: PreparedIdentity,
+    path: &std::path::Path,
+) {
+    engine
+        .prepare_template(wasm, identity)
+        .expect("prepare")
+        .publish(path, PreparedStorage::Mapped)
+        .expect("publish");
+}
+
+/// Flips the first byte of a published payload, keeping its length.
+fn tamper(payload: &std::path::Path) {
+    let mut bytes = std::fs::read(payload).expect("read payload");
+    bytes[0] ^= 1;
+    std::fs::remove_file(payload).expect("remove read-only payload");
+    std::fs::write(payload, bytes).expect("write changed payload");
+}
+
+/// Two artifacts of one module whose manifests record the same native
+/// payload under different initialization identities.
+fn sharing_artifacts(
+    engine: &isoplane_engine::IsoplaneEngine,
+    directory: &std::path::Path,
+) -> (Vec<u8>, [(std::path::PathBuf, PreparedIdentity); 2]) {
+    let wasm = guest(
+        4,
+        "",
+        r#"(data (i32.const 9000) "shared native")"#,
+        DONE,
+        DONE,
+    );
+    let first = identity(&wasm);
+    let second = PreparedIdentity {
+        initialization_hash: [4; 32],
+        ..first
+    };
+    let artifacts = [
+        (directory.join("first"), first),
+        (directory.join("second"), second),
+    ];
+    for (path, identity) in &artifacts {
+        publish_mapped(engine, &wasm, *identity, path);
+    }
+    (wasm, artifacts)
+}
+
+#[test]
+fn a_template_shares_native_code_its_engine_already_holds_without_reading_its_own_copy() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("directory");
+    let (wasm, [(first, first_identity), (second, second_identity)]) =
+        sharing_artifacts(&engine, directory.path());
+    tamper(&second.join("template.cwasm"));
+    // SAFETY: this test owns the trusted files and changes only the second artifact's native
+    // payload, which the engine must never read while the first template holds the module.
+    let held = unsafe { engine.load_prepared_mapped(&first, first_identity, &[]) }
+        .expect("map the first template");
+    // SAFETY: as above.
+    let shared = unsafe { engine.load_prepared_mapped(&second, second_identity, &[]) }
+        .expect("a template must share the native code its engine already verified and holds");
+    let expected = engine.load_template(&wasm).expect("portable template");
+    let mut instance = activate(&engine, &shared);
+    let mut original = activate(&engine, &expected);
+    assert_eq!(
+        instance.memory(),
+        original.memory(),
+        "a template sharing native code must keep its own captured initial memory"
+    );
+    drop(held);
+}
+
+#[test]
+fn a_native_payload_is_verified_again_once_no_template_holds_it() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("directory");
+    let (_, [(first, first_identity), (second, second_identity)]) =
+        sharing_artifacts(&engine, directory.path());
+    tamper(&second.join("template.cwasm"));
+    // SAFETY: this test owns the trusted files and leaves the first artifact unchanged.
+    let held = unsafe { engine.load_prepared_mapped(&first, first_identity, &[]) }
+        .expect("map the first template");
+    drop(held);
+    // SAFETY: the engine must verify the changed payload and refuse it before mapping it.
+    let refused = unsafe { engine.load_prepared_mapped(&second, second_identity, &[]) };
+    assert!(
+        matches!(refused, Err(PreparedError::Invalid(_))),
+        "once no template holds the native code, a changed copy must be rejected"
+    );
+}

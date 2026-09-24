@@ -131,7 +131,7 @@ pub(crate) fn instantiate(
         t.pal_linker
             .as_ref()
             .unwrap_or(&engine.linker)
-            .instantiate(&mut store, &t.module)
+            .instantiate(&mut store, t.module())
             .map_err(anyhow::Error::from)
             .context("activating template")
     })?;

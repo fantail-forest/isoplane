@@ -14,7 +14,7 @@ impl IsoplaneEngine {
     /// Compile once, then map the unchanged code before observing initialization's working set.
     pub fn load_layer_source(&self, wasm: &[u8]) -> crate::Result<Template> {
         let source = self.load_template(wasm)?;
-        let file = compiled_file(&source.inner.module.serialize()?)?;
+        let file = compiled_file(&source.inner.module().serialize()?)?;
         // SAFETY: this engine compiled these bytes; the memfd is sealed against changes.
         let module =
             unsafe { wasmtime::Module::deserialize_open_file(&self.inner.wasmtime, file) }?;
@@ -57,7 +57,7 @@ impl IsoplaneEngine {
                 "layer requires its own successfully completed initializer",
             ));
         }
-        let native_range = template.inner.module.image_range();
+        let native_range = template.inner.module().image_range();
         let native_address = native_range.start as usize;
         let native_length = native_range.end as usize - native_address;
         let native_ranges = super::residency::present_ranges(native_address, native_length)
@@ -100,7 +100,7 @@ impl IsoplaneEngine {
         let payloads = [
             template
                 .inner
-                .module
+                .module()
                 .serialize()
                 .map_err(|error| PreparedError::Engine(error.into()))?,
             image.encoded().to_vec(),

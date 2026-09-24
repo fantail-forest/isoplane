@@ -133,6 +133,8 @@ pub(crate) struct EngineInner {
     pub(crate) linker: Linker<StoreState>,
     pub(crate) watchdog: watchdog::Watchdog,
     pub(crate) fingerprint: String,
+    /// Native code shared by templates whose manifests record the same payload.
+    pub(crate) natives: prepared::native::NativeIndex,
 }
 
 impl IsoplaneEngine {
@@ -158,6 +160,7 @@ impl IsoplaneEngine {
                 linker,
                 watchdog,
                 fingerprint,
+                natives: Default::default(),
             }),
         })
     }

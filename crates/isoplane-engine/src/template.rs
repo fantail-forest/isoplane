@@ -49,7 +49,9 @@ pub(crate) struct TemplateInner {
     pub activation_prefetch: Option<crate::prepared::prefetch::Payloads>,
     pub application_files: crate::PlatformFiles,
     pub filesystem_files: crate::PlatformFiles,
-    pub module: Module,
+    /// The compiled module. Prepared templates with the same native payload
+    /// share one, and holding it keeps its engine's index entry alive.
+    pub native: Arc<crate::prepared::native::SharedNative>,
     /// A linker carrying this module's WASI PAL adapter, or `None` when the
     /// module imports only `isoplane`. Per template because a trap stub is typed
     /// from the module's own declaration, and every instance shares it.
@@ -72,6 +74,12 @@ pub(crate) struct TemplateInner {
     pub table_nullness: Vec<Vec<bool>>,
     pub has_gc_hint: bool,
     pub has_initialize: bool,
+}
+
+impl TemplateInner {
+    pub(crate) fn module(&self) -> &Module {
+        &self.native.module
+    }
 }
 
 impl Template {
@@ -101,7 +109,7 @@ impl Template {
     /// Whether the compiled module declares this import, including mapped artifacts.
     pub fn imports(&self, module: &str, name: &str) -> bool {
         self.inner
-            .module
+            .module()
             .imports()
             .any(|import| import.module() == module && import.name() == name)
     }
