@@ -143,7 +143,8 @@ async fn prepare(
 }
 
 /// Prepares `files` on the shared runtime and answers `path` across a park
-/// and a Store restoration, returning the response body.
+/// on its host timer and a Store restoration at every later park, returning
+/// the response body.
 async fn answer_across_restored_stores(files: Vec<PlatformFile>, path: &str) -> String {
     isoplane_harness::LogCapture::global();
     let runtime = isoplane_fixtures::mono_runtime();
@@ -172,14 +173,7 @@ async fn answer_across_restored_stores(files: Vec<PlatformFile>, path: &str) -> 
     tokio::task::yield_now().await;
     tokio::time::advance(std::time::Duration::from_millis(60)).await;
     reactor.context.begin_slice(61, 1);
-    let resumed = guest.wake(&reactor).await;
-    assert_eq!(
-        resumed.completion,
-        Completion::Done,
-        "the package must finish after a Store restoration: {resumed:?}; logs: {:?}",
-        reactor.context.emitted_logs()
-    );
-    reactor.response_text(1)
+    guest.finish(&reactor, 8).await
 }
 
 /// The detail of a preparation the shared runtime's loader refused.
@@ -255,6 +249,24 @@ async fn a_packages_initialization_hook_runs_once_before_its_template_is_capture
     assert_eq!(
         report["Warmups"], 1,
         "the hook the package's factory registers must warm the template exactly once: {body}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_package_runs_on_the_shared_runtime_across_restored_stores() {
+    let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
+    assert!(
+        body.starts_with("hello, isoplane;"),
+        "the package's ASP.NET route must answer from its content file through the runtime's adapter: {body}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
+    let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
+    assert!(
+        body.ends_with("; warmups=1"),
+        "the warm-up the package's factory registers must reach its pipeline exactly once: {body}"
     );
 }
 

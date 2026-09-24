@@ -3,19 +3,23 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Isoplane.Build;
+using Isoplane.AspNetCore;
 using Isoplane.Durable;
+using Microsoft.AspNetCore.Builder;
 
 namespace Isoplane.MonoRuntime;
 
 /// <summary>
-/// The runtime's fixed application factory. It loads the application package
-/// the host serves beneath <see cref="Root"/> and returns the handler the
-/// package's manifest names. It runs during initialization, so the loaded
-/// assemblies are part of the captured template rather than of each instance.
+/// The runtime's fixed application loader. It loads the application package
+/// the host serves beneath <see cref="Root"/> and returns the router for the
+/// factory the package's manifest names. It runs during initialization, so the
+/// loaded assemblies are part of the captured template rather than of each
+/// instance.
 /// </summary>
 public static class PackageLoader
 {
@@ -26,13 +30,14 @@ public static class PackageLoader
     public const string Root = "/.isoplane/package";
 
     /// <summary>
-    /// Loads every package assembly into the default context and invokes the
-    /// declared factory. Throws when the manifest selects another execution
-    /// mode, when the runtime already supplies a package assembly's name, or
-    /// when the factory is not a public static parameterless method returning
-    /// <see cref="IIsoplaneHandler"/>.
+    /// Loads every package assembly into the default context and returns the
+    /// router the SDK generates for the declared factory, not yet booted.
+    /// Throws when the manifest selects another execution mode, when the
+    /// runtime already supplies a package assembly's name, or when the factory
+    /// is not a public static parameterless method returning
+    /// <see cref="IIsoplaneHandler"/> or an ASP.NET <c>WebApplication</c>.
     /// </summary>
-    public static IIsoplaneHandler Load()
+    public static IIsoplaneRouter Load()
     {
         ManagedApplication application = ReadManifest();
         Dictionary<string, string> assemblies = Index(Path.Combine(Root, "assemblies"));
@@ -41,7 +46,7 @@ public static class PackageLoader
             assemblies.TryGetValue(Key(name), out string? path) ? loading.LoadFromAssemblyPath(path) : null;
         foreach (KeyValuePair<string, string> assembly in assemblies.OrderBy(entry => entry.Key, StringComparer.Ordinal))
             RequireFromPackage(context, assembly.Key, assembly.Value);
-        return CreateHandler(context.LoadFromAssemblyName(new AssemblyName(application.Assembly)), application.Factory);
+        return CreateRouter(context.LoadFromAssemblyName(new AssemblyName(application.Assembly)), application.Factory);
     }
 
     private static ManagedApplication ReadManifest()
@@ -88,23 +93,32 @@ public static class PackageLoader
             throw Refuse(new PackageAssemblyConflictException($"package assembly '{key}' is supplied by the runtime"));
     }
 
-    private static IIsoplaneHandler CreateHandler(Assembly entry, string factory)
+    private static IIsoplaneRouter CreateRouter(Assembly entry, string factory)
     {
         int separator = factory.LastIndexOf('.');
         string typeName = separator > 0 ? factory[..separator] : "";
         Type? type = entry.GetExportedTypes().SingleOrDefault(candidate => candidate.FullName?.Replace('+', '.') == typeName);
         MethodInfo? method = type?.GetMethod(factory[(separator + 1)..], BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes);
-        if (method is null || method.IsGenericMethodDefinition || !typeof(IIsoplaneHandler).IsAssignableFrom(method.ReturnType))
-            throw Refuse(new PackageFactoryException($"'{factory}' is not a public static parameterless method of '{entry.GetName().Name}' returning IIsoplaneHandler"));
-        return method.CreateDelegate<Func<IIsoplaneHandler>>()()
-            ?? throw Refuse(new PackageFactoryException($"'{factory}' returned no handler"));
+        if (method is null || method.IsGenericMethodDefinition)
+            throw Refuse(new PackageFactoryException($"'{factory}' is not a public static parameterless method of '{entry.GetName().Name}'"));
+        if (typeof(IIsoplaneHandler).IsAssignableFrom(method.ReturnType))
+        {
+            Func<IIsoplaneHandler?> create = method.CreateDelegate<Func<IIsoplaneHandler?>>();
+            return new HandlerFactoryRouter(() => create()
+                ?? throw Refuse(new PackageFactoryException($"'{factory}' returned no handler")));
+        }
+        // Compared by name first: binding the type loads ASP.NET, which only
+        // an ASP.NET package carries.
+        if (method.ReturnType.FullName == WebApplications.TypeName)
+            return WebApplications.Router(method, factory);
+        throw Refuse(new PackageFactoryException($"'{factory}' returns '{method.ReturnType.FullName}', not IIsoplaneHandler or WebApplication"));
     }
 
     /// <summary>
     /// The export boundary reports only an exception's type, so the context
     /// of a refusal goes to the guest log first.
     /// </summary>
-    private static Exception Refuse(Exception refusal)
+    internal static Exception Refuse(Exception refusal)
     {
         Console.Error.WriteLine("application package refused: " + refusal.Message);
         return refusal;
@@ -117,6 +131,20 @@ public static class PackageLoader
 /// </summary>
 [JsonSerializable(typeof(ManagedApplication))]
 internal sealed partial class ManifestJson : JsonSerializerContext;
+
+/// <summary>ASP.NET applications, kept apart so only they bind ASP.NET.</summary>
+internal static class WebApplications
+{
+    internal const string TypeName = "Microsoft.AspNetCore.Builder.WebApplication";
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static IIsoplaneRouter Router(MethodInfo method, string factory)
+    {
+        if (method.ReturnType != typeof(WebApplication))
+            throw PackageLoader.Refuse(new PackageFactoryException($"'{factory}' returns a WebApplication the runtime's ASP.NET adapter does not bind"));
+        return new WebApplicationRouter(method.CreateDelegate<Func<WebApplication>>());
+    }
+}
 
 internal sealed class PackageManifestException(string message) : Exception(message);
 

@@ -1,0 +1,53 @@
+using System;
+using System.Globalization;
+using System.IO;
+using System.Threading.Tasks;
+using Isoplane;
+using Isoplane.AspNetCore;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Web;
+
+/// <summary>Minimal API routes over a singleton, a content file and a streamed upload.</summary>
+public static class Application
+{
+    /// <summary>The package's declared factory; warms the pipeline before template capture.</summary>
+    public static WebApplication Create()
+    {
+        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        builder.Services.AddSingleton<Greeter>();
+        var app = builder.Build();
+        app.MapGet("/hello/{name}", async (string name, Greeter greeter) =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+            return greeter.Greet(name);
+        });
+        app.MapGet("/warm", (Greeter greeter) => greeter.Warmups++);
+        app.MapPost("/upload", async (HttpRequest request) =>
+        {
+            long total = 0;
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = await request.Body.ReadAsync(buffer)) != 0)
+                total += read;
+            return "received:" + total.ToString(CultureInfo.InvariantCulture);
+        });
+        Initialization.Initializing += () => new IsoplaneApplication(app).WarmupAsync("/warm");
+        return app;
+    }
+}
+
+/// <summary>Greets with the content file the package serves at its content root.</summary>
+public sealed class Greeter
+{
+    private readonly string greeting = File.ReadAllText("/greeting.txt");
+
+    /// <summary>Warm-up requests served, all during initialization.</summary>
+    public int Warmups { get; set; }
+
+    /// <summary>The content file's greeting for <paramref name="name"/>, and the warm-up count.</summary>
+    public string Greet(string name) =>
+        greeting + ", " + name + "; warmups=" + Warmups.ToString(CultureInfo.InvariantCulture);
+}

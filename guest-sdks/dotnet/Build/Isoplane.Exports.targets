@@ -2,11 +2,12 @@
   <Target Name="IsoplaneGenerateExports" BeforeTargets="CoreCompile" Condition="'$(IsoplaneManagedBundleBuild)' != 'true'">
     <PropertyGroup>
       <_IsoplaneExportsPath>$(IntermediateOutputPath)Isoplane.Exports.g.cs</_IsoplaneExportsPath>
+      <IsoplaneRouter Condition="'$(IsoplaneRouter)' == ''">IsoplaneGeneratedRouter</IsoplaneRouter>
       <_IsoplaneDebugScope Condition="'$(IsoplaneLocalDebug)' == 'true'">using var __isoplaneAsyncState = Isoplane.Runtime.AsyncDebugging.Enter();</_IsoplaneDebugScope>
       <_IsoplaneExportsSource><![CDATA[
 #nullable enable
 using System.Runtime.InteropServices;
-using Guest = Isoplane.Abi.Exports<IsoplaneGeneratedRouter>;
+using Guest = Isoplane.Abi.Exports<global::$(IsoplaneRouter)>;
 internal static class IsoplaneGeneratedExports {
 #if ISOPLANE_MONO
   [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods, typeof(IsoplaneGeneratedExports))]

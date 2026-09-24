@@ -1,24 +1,6 @@
 <Project>
   <PropertyGroup><_IsoplaneAspNetCoreTargetsImported>true</_IsoplaneAspNetCoreTargetsImported></PropertyGroup>
-  <Target Name="IsoplaneSelectAspNetCore" BeforeTargets="ProcessFrameworkReferences;ResolveAssemblyReferences;IsoplaneResolveManagedPlatform"
-          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
-    <ItemGroup>
-      <_IsoplaneAspNetFramework Include="@(FrameworkReference)" Condition="'%(Identity)' == 'Microsoft.AspNetCore.App'" />
-      <_IsoplaneAspNetKnownFramework Include="@(KnownFrameworkReference)" Condition="'%(Identity)' == 'Microsoft.AspNetCore.App' AND '%(TargetFramework)' == '$(TargetFramework)'" />
-    </ItemGroup>
-    <PropertyGroup>
-      <IsoplaneAspNetCoreRuntimeVersion Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' == ''">@(_IsoplaneAspNetFramework->'%(RuntimeFrameworkVersion)')</IsoplaneAspNetCoreRuntimeVersion>
-      <IsoplaneAspNetCoreRuntimeVersion Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' == ''">$(RuntimeFrameworkVersion)</IsoplaneAspNetCoreRuntimeVersion>
-      <IsoplaneAspNetCoreRuntimeVersion Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' == ''">@(_IsoplaneAspNetKnownFramework->'%(LatestRuntimeFrameworkVersion)')</IsoplaneAspNetCoreRuntimeVersion>
-    </PropertyGroup>
-  </Target>
-  <Target Name="IsoplaneAspNetCoreDownloads" BeforeTargets="CollectPackageDownloads" DependsOnTargets="IsoplaneSelectAspNetCore"
-          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
-    <ItemGroup>
-      <PackageDownload Remove="Microsoft.AspNetCore.App.Runtime.linux-x64;Microsoft.AspNetCore.App.Ref" />
-      <PackageDownload Include="Microsoft.AspNetCore.App.Runtime.linux-x64;Microsoft.AspNetCore.App.Ref" Version="[$(IsoplaneAspNetCoreRuntimeVersion)]" />
-    </ItemGroup>
-  </Target>
+  <Import Project="Isoplane.AspNetCore.Framework.targets" />
   <Target Name="IsoplaneGenerateAspNetCoreEntrypoint" BeforeTargets="CoreCompile" Condition="'$(IsoplaneManagedBundleBuild)' != 'true'">
     <Error Condition="'$(IsoplaneApplicationFactory)' == ''" Code="ISOPLANE0079"
            Text="Set IsoplaneApplicationFactory to the fully qualified static method that builds and returns your WebApplication, for example MyApp.Application.Create." />
@@ -26,44 +8,11 @@
       <_IsoplaneEntrypoint>$(IntermediateOutputPath)Isoplane.AspNetCore.g.cs</_IsoplaneEntrypoint>
       <_IsoplaneEntrypointSource><![CDATA[
 #nullable enable
-using System.Runtime.InteropServices;
-using Guest = Isoplane.Abi.Exports<IsoplaneGeneratedRouter>;
-internal sealed class IsoplaneGeneratedRouter : Isoplane.Durable.IStreamingHttpRouter {
-  private Isoplane.AspNetCore.IsoplaneApplication? application;
-  public void Boot() { application = new(global::$(IsoplaneApplicationFactory)()); }
-  public bool StreamsRequest(Isoplane.RequestHead request) => true;
-  public System.Threading.Tasks.Task<Isoplane.Response> RouteStreamingAsync(Isoplane.StreamingRequest request, Isoplane.Ctx context) => application!.HandleStreamingAsync(request);
-  public System.Threading.Tasks.Task<Isoplane.Response> Route(Isoplane.Abi.DispatchRecord record, Isoplane.Ctx context) {
-    return application!.HandleAsync(Isoplane.Request.FromDispatch(record));
-  }
-}
+internal sealed class IsoplaneGeneratedRouter() : Isoplane.AspNetCore.WebApplicationRouter(global::$(IsoplaneApplicationFactory));
 ]]></_IsoplaneEntrypointSource>
     </PropertyGroup>
     <WriteLinesToFile File="$(_IsoplaneEntrypoint)" Lines="$([MSBuild]::Escape($(_IsoplaneEntrypointSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ItemGroup><Compile Include="$(_IsoplaneEntrypoint)" IsoplaneRuntimeSource="true" /></ItemGroup>
-  </Target>
-  <Target Name="IsoplaneAspNetCoreFrameworkReferences" BeforeTargets="ProcessFrameworkReferences" DependsOnTargets="IsoplaneSelectAspNetCore">
-    <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
-  </Target>
-  <Target Name="IsoplaneAspNetCoreFrameworkAssemblies" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="IsoplaneSelectAspNetCore;ResolvePackageAssets" Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
-    <ItemGroup>
-      <_IsoplaneAspNetAssembly Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(IsoplaneAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />
-    </ItemGroup>
-    <Error Condition="'@(_IsoplaneAspNetAssembly)' == ''" Text="isoplane: selected managed ASP.NET implementation pack missing; restore the project before publishing." />
-    <ItemGroup>
-      <_IsoplaneAspNetAssembly Remove="@(ResolvedCompileFileDefinitions)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
-      <Reference Include="@(_IsoplaneAspNetAssembly)" Private="true" />
-    </ItemGroup>
-  </Target>
-  <Target Name="IsoplaneAspNetCoreGenerator" BeforeTargets="CoreCompile" DependsOnTargets="IsoplaneSelectAspNetCore"
-          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Microsoft.AspNetCore.Http.RequestDelegateGenerator'" />
-      <Analyzer Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.ref/$(IsoplaneAspNetCoreRuntimeVersion)/analyzers/dotnet/cs/Microsoft.AspNetCore.Http.RequestDelegateGenerator.dll" />
-    </ItemGroup>
-  </Target>
-  <Target Name="IsoplaneAspNetCoreTransitiveFramework" AfterTargets="AddTransitiveFrameworkReferences">
-    <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
   </Target>
   <Import Project="../tools/Build/Isoplane.Exports.targets" Condition="'$(IsoplaneManagedBundleBuild)' != 'true'" />
 </Project>

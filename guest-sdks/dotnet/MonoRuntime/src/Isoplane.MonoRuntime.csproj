@@ -16,11 +16,12 @@
     <AssemblyName>Isoplane.MonoRuntime</AssemblyName>
     <RootNamespace>Isoplane.MonoRuntime</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
-    <IsoplaneApplicationFactory>Isoplane.MonoRuntime.PackageLoader.Load</IsoplaneApplicationFactory>
+    <IsoplaneRouter>Isoplane.MonoRuntime.PackageRouter</IsoplaneRouter>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../Isoplane.Sdk.csproj" />
+    <ProjectReference Include="../../AspNetCore/Isoplane.AspNetCore.csproj" />
     <Compile Include="../../../../tools/BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
   </ItemGroup>
 
@@ -32,9 +33,16 @@
       <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)" />
     </ItemGroup>
   </Target>
+  <!-- Isoplane.AspNetCore is runtime content; the ASP.NET it binds to is
+       package content, so an application chooses its ASP.NET patch release. -->
+  <Target Name="IsoplaneRuntimeLeavesAspNetToApplications" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(_IsoplaneAspNetAssembly)" />
+    </ItemGroup>
+  </Target>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <Import Project="../../Isoplane.Guest.targets" />
-  <Import Project="../../Build/Isoplane.Handler.targets" />
+  <Import Project="../../AspNetCore/buildTransitive/Isoplane.AspNetCore.Framework.targets" />
   <Import Project="../../Build/Isoplane.Exports.targets" />
 </Project>

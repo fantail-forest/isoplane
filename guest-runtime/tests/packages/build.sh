@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the application-independent Mono runtime module or one application
 # package fixture: the package is what `isoplane bundle` writes, unpacked.
-# Usage: guest-runtime/tests/packages/build.sh [--if-stale] --fixture runtime|alpha|beta|native
+# Usage: guest-runtime/tests/packages/build.sh [--if-stale] --fixture runtime|alpha|beta|native|web
 # Serialised with the other C# guest builds: they share the SDK project's
 # intermediate files.
 set -euo pipefail
@@ -21,14 +21,14 @@ while [ $# -gt 0 ]; do
     --if-stale) IF_STALE=1; shift ;;
     --fixture)
       case "${2:-}" in
-        runtime|alpha|beta|native) FIXTURE="$2" ;;
-        *) echo "unknown package fixture: ${2:-} (expected runtime, alpha, beta or native)" >&2; exit 2 ;;
+        runtime|alpha|beta|native|web) FIXTURE="$2" ;;
+        *) echo "unknown package fixture: ${2:-} (expected runtime, alpha, beta, native or web)" >&2; exit 2 ;;
       esac
       shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$FIXTURE" ] || { echo "missing --fixture runtime|alpha|beta|native" >&2; exit 2; }
+[ -n "$FIXTURE" ] || { echo "missing --fixture runtime|alpha|beta|native|web" >&2; exit 2; }
 
 FEED="${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/guest-runtime/out/feed}"
 if [ -n "${ISOPLANE_TEST_RUNTIME_FEED:-}" ]; then
