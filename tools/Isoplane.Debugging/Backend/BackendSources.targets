@@ -28,7 +28,8 @@
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/Connection.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.cs" Match="class Connection" Replacement="partial class Connection" />
     <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/VirtualMachine.cs" Destination="$(IntermediateOutputPath)Isoplane/VirtualMachine.cs" Match="class VirtualMachine : Mirror" Replacement="partial class VirtualMachine : Mirror" />
     <ItemGroup>
-      <Compile Remove="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs" />
+      <_IsoplaneDebuggerOriginal Include="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs" />
+      <Compile Remove="@(_IsoplaneDebuggerOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
       <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs" />
     </ItemGroup>
   </Target>
@@ -39,7 +40,7 @@
     <!-- Attribute arguments can contain guest objects collected after resume; only empty results are safe to cache. -->
     <IsoplanePrepareDebuggerSource Source="%(_IsoplaneAttributeSource.Identity)" Destination="$(IntermediateOutputPath)Isoplane/%(_IsoplaneAttributeSource.Filename).cs" Match="if (cattrs == null) {" Replacement="if (cattrs == null || cattrs.Length != 0) {" />
     <ItemGroup>
-      <Compile Remove="@(_IsoplaneAttributeSource)" />
+      <Compile Remove="@(_IsoplaneAttributeSource)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
       <Compile Include="@(_IsoplaneAttributeSource->'$(IntermediateOutputPath)Isoplane/%(Filename).cs')" />
     </ItemGroup>
   </Target>
@@ -49,7 +50,8 @@
       Match="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive);"
       Replacement="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive) ?? FindByName (type.GetFields (), f =&gt; f.Name, name, ctx.CaseSensitive);" />
     <ItemGroup>
-      <Compile Remove="FieldValueReference.cs;SoftDebuggerAdaptor.cs" />
+      <_IsoplaneFieldOriginal Include="FieldValueReference.cs;SoftDebuggerAdaptor.cs" />
+      <Compile Remove="@(_IsoplaneFieldOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
       <Compile Include="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs;$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs;$(MSBuildThisFileDirectory)ManagedFieldLocation.cs" />
     </ItemGroup>
   </Target>
