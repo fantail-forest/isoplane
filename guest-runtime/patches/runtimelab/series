@@ -53,3 +53,9 @@
 
 008-wasi-memory-limit.patch
 # omit ../runtime/035-wasi-memory-limit.patch -- Mono memory queries are not used by NativeAOT; fork patch008 supplies its GC query.
+# omit ../runtime/036-wasi-debugger-nested-suspension.patch -- Mono soft debugger suspension is not used by NativeAOT.
+# omit ../runtime/037-wasi-managed-data-breakpoints.patch -- Managed data breakpoints belong to the Mono interpreter debugger.
+# omit ../runtime/038-wasi-debugger-suspended-stack.patch -- Interpreter stack capture is specific to the Mono soft debugger.
+
+../runtime/039-wasi-logical-async-stacks.patch
+# omit ../runtime/040-wasi-native-dispatch-refusals.patch -- Mono interpreter and P/Invoke-table checks; NativeAOT binds P/Invokes at compile time.

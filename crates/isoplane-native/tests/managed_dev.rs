@@ -15,6 +15,7 @@ fn project(destination: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(
         app.join("Lifecycle.csproj"),
         r#"<Project>
+  <PropertyGroup><IsoplaneGuestRuntime>NativeAOT</IsoplaneGuestRuntime></PropertyGroup>
   <Target Name="Restore" />
   <Target Name="Publish">
     <Exec Condition="Exists('hold-publication')" Command="sh wait-build.sh" />

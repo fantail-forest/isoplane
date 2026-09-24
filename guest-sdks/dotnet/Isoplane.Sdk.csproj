@@ -41,6 +41,58 @@
     <None Include="Build/**" Exclude="Build/**/obj/**;Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
     <None Include="native/**" Pack="true" PackagePath="tools/native/" />
   </ItemGroup>
+  <!-- The shared runtimes interpreted applications run on, production and
+       local-debug. Their directory comes from guest-sdks/dotnet/MonoRuntime/build.sh,
+       whose receipt must name this SDK version, and in a release build this
+       source revision. The package records the receipt beside them. -->
+  <ItemGroup>
+    <_IsoplaneRuntimeModuleName Include="Isoplane.MonoRuntime;Isoplane.MonoRuntime.Debug" />
+  </ItemGroup>
+  <Target Name="IsoplanePackSharedRuntime" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <IsoplaneRuntimeModuleDirectory Condition="'$(IsoplaneRuntimeModuleDirectory)' == ''">$(ISOPLANE_RUNTIME_MODULE_DIRECTORY)</IsoplaneRuntimeModuleDirectory>
+      <_IsoplaneRuntimeDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneRuntimeModuleDirectory)'))</_IsoplaneRuntimeDirectory>
+      <_IsoplaneRuntimeReceipt>$(_IsoplaneRuntimeDirectory)runtime-build.json</_IsoplaneRuntimeReceipt>
+      <_IsoplaneRuntimeProvenance>$(IntermediateOutputPath)package/runtime.json</_IsoplaneRuntimeProvenance>
+    </PropertyGroup>
+    <ItemGroup>
+      <_IsoplaneRuntimeModule Include="@(_IsoplaneRuntimeModuleName->'$(_IsoplaneRuntimeDirectory)%(Identity).wasm')" />
+      <_IsoplaneMissingRuntime Include="@(_IsoplaneRuntimeModule)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'$(IsoplaneRuntimeModuleDirectory)' == '' OR '@(_IsoplaneMissingRuntime)' != '' OR !Exists('$(_IsoplaneRuntimeReceipt)')"
+           Text="Pack the SDK with -p:IsoplaneRuntimeModuleDirectory naming the output of guest-sdks/dotnet/MonoRuntime/build.sh, which holds Isoplane.MonoRuntime.wasm, Isoplane.MonoRuntime.Debug.wasm and runtime-build.json; without its shared runtimes the SDK cannot run or debug interpreted applications." />
+    <ReadLinesFromFile File="$(_IsoplaneRuntimeReceipt)">
+      <Output TaskParameter="Lines" PropertyName="_IsoplaneReceipt" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_IsoplaneReceiptVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(_IsoplaneReceipt)', '^.*"sdkVersion":"([^"]*)".*$', '$1'))</_IsoplaneReceiptVersion>
+      <_IsoplaneReceiptRevision>$([System.Text.RegularExpressions.Regex]::Replace('$(_IsoplaneReceipt)', '^.*"sourceRevision":"([^"]*)".*$', '$1'))</_IsoplaneReceiptRevision>
+      <_IsoplaneRuntimePack>$([System.Text.RegularExpressions.Regex]::Replace('$(_IsoplaneReceipt)', '^.*"monoPack":"([^"]*)".*$', '$1'))</_IsoplaneRuntimePack>
+    </PropertyGroup>
+    <Error Condition="'$(_IsoplaneReceiptVersion)' != '$(PackageVersion)'"
+           Text="The shared runtimes in $(IsoplaneRuntimeModuleDirectory) were built for SDK $(_IsoplaneReceiptVersion), not $(PackageVersion); rebuild them from this source." />
+    <Error Condition="'$(ContinuousIntegrationBuild)' == 'true' AND '$(_IsoplaneReceiptRevision)' != '$(SourceRevisionId)'"
+           Text="The shared runtimes in $(IsoplaneRuntimeModuleDirectory) were built from $(_IsoplaneReceiptRevision), not $(SourceRevisionId); rebuild them from this source." />
+    <GetFileHash Files="@(_IsoplaneRuntimeModule)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Items" ItemName="_IsoplaneHashedRuntime" />
+    </GetFileHash>
+    <ItemGroup>
+      <_IsoplaneHashedRuntime><Sha256>$([System.String]::Copy('%(FileHash)').ToLowerInvariant())</Sha256></_IsoplaneHashedRuntime>
+    </ItemGroup>
+    <Error Condition="!$(_IsoplaneReceipt.Contains('&quot;%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension)&quot;:&quot;%(_IsoplaneHashedRuntime.Sha256)&quot;'))"
+           Text="%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension) is not the module runtime-build.json records; rebuild the shared runtimes." />
+    <PropertyGroup>
+      <_IsoplaneRuntimePackVersion>$(_IsoplaneRuntimePack.Substring(0, $(_IsoplaneRuntimePack.IndexOf('@'))))</_IsoplaneRuntimePackVersion>
+      <_IsoplaneRuntimePackSha512>$(_IsoplaneRuntimePack.Substring($([MSBuild]::Add($(_IsoplaneRuntimePack.IndexOf('@sha512:')), 8))))</_IsoplaneRuntimePackSha512>
+      <_IsoplaneRuntimeModules>@(_IsoplaneHashedRuntime->'&quot;%(Filename)%(Extension)&quot;:{&quot;sha256&quot;:&quot;%(Sha256)&quot;}', ',')</_IsoplaneRuntimeModules>
+      <_IsoplaneRuntimeProvenanceJson>{&quot;sdkVersion&quot;:&quot;$(PackageVersion)&quot;,&quot;sourceRevision&quot;:&quot;$(_IsoplaneReceiptRevision)&quot;,&quot;monoPack&quot;:{&quot;version&quot;:&quot;$(_IsoplaneRuntimePackVersion)&quot;,&quot;sha512&quot;:&quot;$(_IsoplaneRuntimePackSha512)&quot;},&quot;modules&quot;:{$(_IsoplaneRuntimeModules)}}</_IsoplaneRuntimeProvenanceJson>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)package" />
+    <WriteLinesToFile File="$(_IsoplaneRuntimeProvenance)" Lines="$(_IsoplaneRuntimeProvenanceJson)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <None Include="@(_IsoplaneRuntimeModule);$(_IsoplaneRuntimeProvenance)" Pack="true" PackagePath="tools/runtime/" />
+    </ItemGroup>
+  </Target>
   <Target Name="StampCoreSdkVersion" BeforeTargets="_GetPackageFiles">
     <PropertyGroup><_CoreSdkProps>$(IntermediateOutputPath)package/Sdk.props</_CoreSdkProps></PropertyGroup>
     <MakeDir Directories="$(IntermediateOutputPath)package" />

@@ -1,0 +1,56 @@
+<Project>
+  <UsingTask TaskName="IsoplanePrepareDebuggerSource" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Source ParameterType="System.String" Required="true" />
+      <Destination ParameterType="System.String" Required="true" />
+      <Match ParameterType="System.String" Required="true" />
+      <Replacement ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var source = File.ReadAllText(Source);
+        var declaration = Match;
+        if (source.IndexOf(declaration, StringComparison.Ordinal) < 0
+            || source.IndexOf(declaration, StringComparison.Ordinal) != source.LastIndexOf(declaration, StringComparison.Ordinal))
+        {
+            Log.LogError("The pinned debugger source no longer has exactly one match for " + Match);
+            return false;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Destination));
+        var generated = source.Replace(declaration, Replacement);
+        if (!File.Exists(Destination) || File.ReadAllText(Destination) != generated)
+            File.WriteAllText(Destination, generated);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="IsoplanePrepareDebuggerSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/Connection.cs" Destination="$(IntermediateOutputPath)Isoplane/Connection.cs" Match="class Connection" Replacement="partial class Connection" />
+    <IsoplanePrepareDebuggerSource Source="Mono.Debugger.Soft/VirtualMachine.cs" Destination="$(IntermediateOutputPath)Isoplane/VirtualMachine.cs" Match="class VirtualMachine : Mirror" Replacement="partial class VirtualMachine : Mirror" />
+    <ItemGroup>
+      <Compile Remove="Mono.Debugger.Soft/Connection.cs;Mono.Debugger.Soft/VirtualMachine.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/Connection.cs;$(IntermediateOutputPath)Isoplane/VirtualMachine.cs;$(MSBuildThisFileDirectory)ManagedDataBreakpoint.cs" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneRefreshDebuggerAttributeSources" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugger.Soft'">
+    <ItemGroup>
+      <_IsoplaneAttributeSource Include="Mono.Debugger.Soft/FieldInfoMirror.cs;Mono.Debugger.Soft/PropertyInfoMirror.cs;Mono.Debugger.Soft/MethodMirror.cs;Mono.Debugger.Soft/TypeMirror.cs" />
+    </ItemGroup>
+    <!-- Attribute arguments can contain guest objects collected after resume; only empty results are safe to cache. -->
+    <IsoplanePrepareDebuggerSource Source="%(_IsoplaneAttributeSource.Identity)" Destination="$(IntermediateOutputPath)Isoplane/%(_IsoplaneAttributeSource.Filename).cs" Match="if (cattrs == null) {" Replacement="if (cattrs == null || cattrs.Length != 0) {" />
+    <ItemGroup>
+      <Compile Remove="@(_IsoplaneAttributeSource)" />
+      <Compile Include="@(_IsoplaneAttributeSource->'$(IntermediateOutputPath)Isoplane/%(Filename).cs')" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplanePrepareDebuggerFieldSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
+    <IsoplanePrepareDebuggerSource Source="FieldValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs" Match="class FieldValueReference" Replacement="partial class FieldValueReference" />
+    <IsoplanePrepareDebuggerSource Source="SoftDebuggerAdaptor.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs"
+      Match="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive);"
+      Replacement="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive) ?? FindByName (type.GetFields (), f =&gt; f.Name, name, ctx.CaseSensitive);" />
+    <ItemGroup>
+      <Compile Remove="FieldValueReference.cs;SoftDebuggerAdaptor.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs;$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs;$(MSBuildThisFileDirectory)ManagedFieldLocation.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

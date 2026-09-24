@@ -44,10 +44,19 @@ pub(crate) struct Options {
     log_filter: Option<String>,
     port: Option<u16>,
     debug_endpoint: Option<SocketAddr>,
+    #[serde(default)]
+    native_debug: bool,
+    /// The application package the module runs, as `isoplane bundle` writes
+    /// it; absent when the module carries its application.
+    package: Option<PathBuf>,
 }
 
 impl Options {
     fn inputs(&self) -> anyhow::Result<Inputs> {
+        anyhow::ensure!(
+            !self.native_debug || self.debug_endpoint.is_none(),
+            "a session must select either native or interpreted debugging"
+        );
         anyhow::ensure!(
             !self.manifest.name.trim().is_empty(),
             "local application name is empty"
@@ -68,13 +77,35 @@ impl Options {
                     && !address.ip().is_multicast()),
             "development services must name individual IP addresses and nonzero ports"
         );
+        let application_files = match &self.package {
+            Some(package) => {
+                anyhow::ensure!(
+                    package.is_absolute(),
+                    "the application package path must be absolute"
+                );
+                let archive = std::fs::read(package).with_context(|| {
+                    format!("reading the application package {}", package.display())
+                })?;
+                isoplane_prepare::package::application_files(&archive).with_context(|| {
+                    format!("serving the application package {}", package.display())
+                })?
+            }
+            None => isoplane_engine::PlatformFiles::default(),
+        };
         let trust = isoplane_trust::TrustBundle::load(&self.trust)?;
-        let platform_files =
-            isoplane_engine::PlatformFiles::new(vec![isoplane_engine::PlatformFile {
-                path: isoplane_trust::GUEST_PATH.into(),
-                bytes: trust.pem().into(),
-                modified_ns: trust.modified_ns(),
-            }])?;
+        let mut files = vec![isoplane_engine::PlatformFile {
+            path: isoplane_trust::GUEST_PATH.into(),
+            bytes: trust.pem().into(),
+            modified_ns: trust.modified_ns(),
+        }];
+        if let Some(endpoint) = self.debug_endpoint {
+            files.push(isoplane_engine::PlatformFile {
+                path: isoplane_abi::filesystem::DEBUG_AGENT_PATH.into(),
+                bytes: endpoint.to_string().into_bytes().into(),
+                modified_ns: 0,
+            });
+        }
+        let platform_files = isoplane_engine::PlatformFiles::new(files)?;
         Ok(Inputs {
             manifest: self.manifest.clone(),
             state_directory: self.state_directory.clone(),
@@ -83,6 +114,7 @@ impl Options {
             init_sandbox: self.init_sandbox,
             allow_endpoints: self.allow_endpoints.clone(),
             platform_files,
+            application_files,
         })
     }
 }
@@ -174,7 +206,7 @@ impl Session {
         let mut app = prepared.start().await?;
         let current_proxy = Arc::new(RwLock::new(app.proxy.clone()));
         let mut connections = JoinSet::new();
-        let debug = options.debug_endpoint.is_some();
+        let debug = options.debug_endpoint.is_some() || options.native_debug;
         let admitted = Arc::new(AtomicBool::new(false));
         let result = async {
             if self.cancellation.is_cancelled() { return Ok(()); }
@@ -188,7 +220,7 @@ impl Session {
                         let replacement = async {
                         anyhow::ensure!(update.options.state_directory == options.state_directory
                             && update.options.manifest.name == options.manifest.name
-                            && update.options.debug_endpoint.is_none(), "reload cannot change local session identity or debugger mode");
+                            && update.options.debug_endpoint.is_none() && !update.options.native_debug, "reload cannot change local session identity or debugger mode");
                             let inputs = update.options.inputs()?;
                             prepare(update.wasm, &update.options, inputs).await
                         }.await;
@@ -248,12 +280,14 @@ async fn prepare(wasm: Vec<u8>, options: &Options, inputs: Inputs) -> anyhow::Re
     )?;
     let preparation_configuration = configuration.clone();
     let debug = options.debug_endpoint.map(DebugPeer::new).transpose()?;
+    let local_debug = debug.is_some() || options.native_debug;
+    let native_debug = options.native_debug;
     let directory = inputs.state_directory.clone();
     let subscriber = tracing::dispatcher::get_default(Clone::clone);
     let prepared = tokio::task::spawn_blocking(move || {
         tracing::dispatcher::with_default(&subscriber, || {
-            if debug.is_some() {
-                Prepared::build_debug(&inputs, &wasm)
+            if local_debug {
+                Prepared::build_debug(&inputs, &wasm, native_debug)
             } else {
                 Prepared::build(&inputs, &wasm, &preparation_configuration)
             }

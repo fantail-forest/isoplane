@@ -49,30 +49,22 @@ internal static class Development
 
     private static async Task<int> RunOwnedAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
-        if (options.GuestRuntime is not null)
-            await RuntimeProfileAsync(options, cancellation);
+        var profile = await RuntimeProfileAsync(options, cancellation);
         if (options.Debug)
             return await DebugDevelopment.RunAsync(options, cancellation);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
+        LocalBuild build = profile == GuestRuntimeProfile.Mono ? new PackageBuild(options) : new ModuleBuild(options, changes);
         var result = 0;
         if (options.NoBuild)
-        {
-            var module = new LocalProject(options.Directory).Module;
-            changes.SetOutput(module);
-            if (options.Module is { } published)
-                PublishModule(published, module);
-            if (!File.Exists(module))
-                throw new InvalidOperationException($"No built module at {module}; run dotnet build first.");
-        }
+            build.UsePublished();
         else
-            result = await BuildAsync(options, changes, lifetime.Token);
+            result = await build.BuildAsync(lifetime.Token);
         if (result != 0)
             return result;
         var configuration = await LocalSecrets.ReadAsync(options, cancellation);
-        var project = new LocalProject(options.Directory);
-        await using var host = new LocalSession(await File.ReadAllBytesAsync(project.Module, lifetime.Token),
-            project.SessionOptions(options.Port, configuration), message => LocalEvents.Write(message, options.Json));
+        await using var host = new LocalSession(await build.ModuleAsync(lifetime.Token),
+            build.SessionOptions(configuration), message => LocalEvents.Write(message, options.Json));
         using var stopping = lifetime.Token.Register(host.Stop);
         var exited = host.Completion;
         try
@@ -92,11 +84,11 @@ internal static class Development
                 }
                 await changed;
                 using var buildLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                var build = BuildAsync(options, changes, buildLifetime.Token);
-                if (await Task.WhenAny(build, exited) == exited)
+                var rebuild = build.BuildAsync(buildLifetime.Token);
+                if (await Task.WhenAny(rebuild, exited) == exited)
                 {
                     buildLifetime.Cancel();
-                    try { await build; }
+                    try { await rebuild; }
                     catch (OperationCanceledException) when (buildLifetime.IsCancellationRequested)
                     {
                         Console.Error.WriteLine("isoplane: cancelled publication because the runtime exited.");
@@ -104,19 +96,87 @@ internal static class Development
                     await exited;
                     return 0;
                 }
-                if (await build != 0)
+                if (await rebuild != 0)
                     Console.Error.WriteLine("isoplane: rebuild failed; keeping the last working application. Edit the source to retry.");
                 else
-                {
-                    project = new LocalProject(options.Directory);
-                    host.Reload(await File.ReadAllBytesAsync(project.Module, lifetime.Token), project.SessionOptions(options.Port, configuration));
-                }
+                    host.Reload(await build.ModuleAsync(lifetime.Token), build.SessionOptions(configuration));
             }
         }
         finally
         {
             lifetime.Cancel();
             host.Stop();
+        }
+    }
+
+    /// <summary>What a session runs: the module, and for an interpreted project, the package it loads.</summary>
+    private abstract class LocalBuild(DevelopmentOptions options)
+    {
+        protected DevelopmentOptions Options { get; } = options;
+
+        /// <summary>Reuses what an earlier build published, for <c>--no-build</c>.</summary>
+        internal abstract void UsePublished();
+
+        internal abstract Task<int> BuildAsync(CancellationToken cancellation);
+
+        internal abstract Task<byte[]> ModuleAsync(CancellationToken cancellation);
+
+        internal abstract byte[] SessionOptions(Dictionary<string, string> configuration);
+    }
+
+    /// <summary>A NativeAOT project, published as a module of its own.</summary>
+    private sealed class ModuleBuild(DevelopmentOptions options, SourceChanges changes) : LocalBuild(options)
+    {
+        internal override void UsePublished()
+        {
+            var module = new LocalProject(Options.Directory).Module;
+            changes.SetOutput(module);
+            if (Options.Module is { } published)
+                PublishModule(published, module);
+            if (!File.Exists(module))
+                throw new InvalidOperationException($"No built module at {module}; run dotnet build first.");
+        }
+
+        internal override Task<int> BuildAsync(CancellationToken cancellation) => Development.BuildAsync(Options, changes, cancellation);
+
+        internal override Task<byte[]> ModuleAsync(CancellationToken cancellation) =>
+            File.ReadAllBytesAsync(new LocalProject(Options.Directory).Module, cancellation);
+
+        internal override byte[] SessionOptions(Dictionary<string, string> configuration) =>
+            new LocalProject(Options.Directory).SessionOptions(Options.Port, configuration);
+    }
+
+    /// <summary>An interpreted project, built as a package for the shared runtime its SDK carries.</summary>
+    private sealed class PackageBuild(DevelopmentOptions options) : LocalBuild(options)
+    {
+        private string? runtime;
+
+        internal override void UsePublished() =>
+            throw new ArgumentException("An interpreted project runs the package isoplane dev builds; omit --no-build and --module.");
+
+        internal override async Task<int> BuildAsync(CancellationToken cancellation)
+        {
+            var package = new LocalProject(Options.Directory).Package;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(package)!);
+                runtime = (await ManagedBundle.CreateAsync(new(Options.Directory, Options.Configuration, package), cancellation)).Module;
+                return 0;
+            }
+            catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+            {
+                Console.Error.WriteLine($"isoplane: package build failed: {error.Message}");
+                return 1;
+            }
+        }
+
+        internal override Task<byte[]> ModuleAsync(CancellationToken cancellation) =>
+            File.ReadAllBytesAsync(runtime ?? throw new InvalidOperationException("The package has not been built."), cancellation);
+
+        internal override byte[] SessionOptions(Dictionary<string, string> configuration)
+        {
+            var project = new LocalProject(Options.Directory);
+            return project.SessionOptions(Options.Port, configuration, package: project.Package);
         }
     }
 

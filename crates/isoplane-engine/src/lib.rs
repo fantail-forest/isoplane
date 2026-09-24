@@ -52,6 +52,10 @@ pub type Result<T> = anyhow::Result<T>;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct EngineConfig {
+    /// Expose guest DWARF to a native debugger in a local development process.
+    /// Never loaded from serialized production or preparation settings.
+    #[serde(skip)]
+    pub native_debug: bool,
     /// Emit Linux perf jitdump records in this process's working directory.
     /// Disabled by default and excluded from serialized preparation settings.
     #[serde(skip)]
@@ -97,6 +101,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
+            native_debug: false,
             perf_jitdump: false,
             max_instances: 10_000,
             total_tables: None,

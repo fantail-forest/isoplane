@@ -37,6 +37,54 @@ class CommandTests(unittest.TestCase):
                              'the command runner must find tools in the supplied build environment')
 
 
+class SourceExportTests(unittest.TestCase):
+    def test_source_export_includes_the_pinned_dependency_not_its_working_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root = directory / 'repository'
+            root.mkdir()
+
+            def git(repository, *arguments):
+                return subprocess.check_output(['git', '-c', 'user.name=Release Test',
+                                                '-c', 'user.email=release@example.invalid',
+                                                *arguments], cwd=repository, stderr=subprocess.STDOUT, text=True).strip()
+
+            git(root, 'init')
+            dependency = root / 'tools' / 'dependency'
+            dependency.mkdir(parents=True)
+            git(dependency, 'init')
+            (dependency / 'adapter.cs').write_text('pinned adapter')
+            git(dependency, 'add', '.')
+            git(dependency, 'commit', '-m', 'pinned dependency')
+            git(root, 'add', 'tools/dependency')
+            git(root, 'commit', '-m', 'pin dependency')
+            revision = git(root, 'rev-parse', 'HEAD')
+            (dependency / 'adapter.cs').write_text('different working tree')
+            git(dependency, 'commit', '-am', 'advance dependency')
+            cache = directory / 'cache'
+            cache.mkdir()
+            logs = directory / 'logs'
+            logs.mkdir()
+            source = cache / 'source'
+            preview.export_source(root, source, cache, revision, logs)
+            self.assertEqual((source / 'tools/dependency/adapter.cs').read_text(), 'pinned adapter',
+                             'release exports must include the exact dependency commit recorded by the parent')
+
+    def test_uninitialized_dependency_names_the_recovery_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
+            tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '-w', '--stdin'],
+                                           cwd=root, input=b'').strip().decode()
+            subprocess.run(['git', 'update-index', '--add', '--cacheinfo', f'160000,{tree},tools/missing'],
+                           cwd=root, check=True, capture_output=True)
+            revision = subprocess.check_output(['git', 'write-tree'], cwd=root).strip().decode()
+            destination = root / 'export'
+            destination.mkdir()
+            with self.assertRaisesRegex(ValueError, 'git submodule update --init --recursive'):
+                preview.export_git_tree(root, revision, destination, root / 'source.tar', root / 'source.log')
+
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

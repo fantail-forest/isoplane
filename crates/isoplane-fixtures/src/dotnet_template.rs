@@ -57,9 +57,28 @@ pub fn release_version() -> String {
     version.trim().to_owned()
 }
 
-/// Installs the packaged ASP.NET template into an isolated hive and creates a consumer.
-/// The returned project resolves Isoplane packages exclusively from its local feed.
+/// Installs the packaged ASP.NET template into an isolated hive and creates a
+/// consumer for its interpreted configurations. The returned project resolves
+/// Isoplane packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
+    template_project(
+        destination,
+        &[("isoplane-guest-runtime", crate::guest_runtime_feed())],
+    )
+}
+
+/// As [`aspnet_project`], able to build the NativeAOT configurations too.
+pub fn nativeaot_aspnet_project(destination: &Path) -> PathBuf {
+    template_project(
+        destination,
+        &[
+            ("isoplane-guest-runtime", crate::guest_runtime_feed()),
+            ("isoplane-guest-compiler", crate::guest_compiler_feed()),
+        ],
+    )
+}
+
+fn template_project(destination: &Path, feeds: &[(&str, PathBuf)]) -> PathBuf {
     let root = super::repo_root();
     let packages = stage_packages(destination);
     std::fs::copy(root.join("global.json"), destination.join("global.json"))
@@ -85,16 +104,13 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         .args(["--name", "template-packages", "--configfile"])
         .arg(&config));
     let mut runtime_mapping = String::new();
-    for (name, feed) in [
-        ("isoplane-guest-runtime", crate::guest_runtime_feed()),
-        ("isoplane-guest-compiler", crate::guest_compiler_feed()),
-    ] {
+    for (name, feed) in feeds {
         run(Command::new("dotnet")
             .args(["nuget", "add", "source"])
-            .arg(&feed)
+            .arg(feed)
             .args(["--name", name, "--configfile"])
             .arg(&config));
-        let patterns: String = super::package_ids(&feed)
+        let patterns: String = super::package_ids(feed)
             .iter()
             .map(|id| format!("<package pattern=\"{id}\" />"))
             .collect();
@@ -132,6 +148,28 @@ fn run(command: &mut Command) {
     );
 }
 
+/// Provisions the pinned DAP framing library in a locked, shared test environment.
+pub fn debugger_python() -> PathBuf {
+    let root = super::repo_root();
+    let output = Command::new("python3")
+        .arg(root.join("scripts/fixture-tools.py"))
+        .arg("dap-python")
+        .arg(root)
+        .output()
+        .expect("Python with venv and pip is required for debugger acceptance tests");
+    assert!(
+        output.status.success(),
+        "the pinned debugger test dependency must install: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("debugger Python path is UTF-8")
+            .trim(),
+    )
+}
+
 /// Installs the packaged managed CLI with native local support into a local tool directory.
 pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
     stage_packages(destination);
@@ -155,4 +193,27 @@ pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
         .arg(app.join("nuget.config"))
         .current_dir(destination));
     tools.join("isoplane")
+}
+
+/// Builds the editor test dependencies under the shared fixture lock.
+/// Fails with the missing tool or installation log when Node/npm cannot run.
+pub fn debugger_editor() -> PathBuf {
+    let root = super::repo_root();
+    let output = Command::new("python3")
+        .arg(root.join("scripts/fixture-tools.py"))
+        .arg("debugger-editor")
+        .arg(&root)
+        .output()
+        .expect("python3 and npm are required to build the editor fixture");
+    assert!(
+        output.status.success(),
+        "editor fixture dependencies must install: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("editor fixture path is UTF-8")
+            .trim(),
+    )
 }

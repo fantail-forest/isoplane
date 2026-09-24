@@ -54,6 +54,7 @@ impl Prepared {
         let mut identity = blake3::Hasher::new();
         identity.update(blake3::hash(wasm).as_bytes());
         identity.update(&settings);
+        preparation_cache::hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
         let template = if report.has_initialize() {
             preparation_cache::template(project, wasm, &settings, || {
@@ -83,6 +84,7 @@ impl Prepared {
             )
         }?;
         let (template, compiled) = cache.load(&engine, &template)?;
+        let template = template.with_application_files(project.application_files.clone())?;
         tracing::info!(compiled, "local native compilation ready");
         let activator = Arc::new(EngineActivator::new(engine, template, module));
         Ok(Self {
@@ -99,19 +101,28 @@ impl Prepared {
         self.compiled
     }
     /// Validates and compiles a marked debug module without pre-initialization.
-    pub fn build_debug(project: &Project, wasm: &[u8]) -> Result<Self, super::Error> {
-        Self::prepare_debug(project, wasm).map_err(super::Error::Preparation)
+    /// `native_symbols` exposes guest DWARF to the process's native debugger.
+    pub fn build_debug(
+        project: &Project,
+        wasm: &[u8],
+        native_symbols: bool,
+    ) -> Result<Self, super::Error> {
+        Self::prepare_debug(project, wasm, native_symbols).map_err(super::Error::Preparation)
     }
 
-    fn prepare_debug(project: &Project, wasm: &[u8]) -> anyhow::Result<Self> {
+    fn prepare_debug(project: &Project, wasm: &[u8], native_symbols: bool) -> anyhow::Result<Self> {
         validate(project, wasm, true)?;
         let manifest = project.manifest.clone();
-        let version = blake3::hash(wasm).to_hex().to_string();
+        let mut identity = blake3::Hasher::new();
+        identity.update(blake3::hash(wasm).as_bytes());
+        preparation_cache::hash_files(&mut identity, &project.application_files);
+        let version = identity.finalize().to_hex().to_string();
         let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(
             isoplane_engine::EngineConfig {
+                native_debug: native_symbols,
                 pooling: false,
                 max_memory_bytes: manifest.memory_max_bytes(),
-                platform_files: project.platform_files.clone(),
+                platform_files: project.served_files()?,
                 ..Default::default()
             },
         )?);
@@ -131,13 +142,14 @@ impl Prepared {
 }
 
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let files = project.served_files()?;
     Ok(isoplane_prepare::PreInitializer::new()
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
-        .with_engine_config(isoplane_engine::EngineConfig { pooling: false, max_memory_bytes: project.manifest.memory_max_bytes(), platform_files: project.platform_files.clone(), ..Default::default() })
+        .with_engine_config(isoplane_engine::EngineConfig { pooling: false, max_memory_bytes: project.manifest.memory_max_bytes(), platform_files: files.clone(), ..Default::default() })
         .with_network(initialization_network(project))
         .with_pal(project.init_sandbox)
         .with_runtime_configuration(configuration.to_vec())
-        .with_platform_files(project.platform_files.clone())
+        .with_platform_files(files)
         .run(wasm, &isoplane_prepare::PreInitRequest {
             module_hash: isoplane_engine::ModuleHash::of(wasm),
             init_blob: serde_json::to_vec(&project.manifest.init_visible_vars)?,

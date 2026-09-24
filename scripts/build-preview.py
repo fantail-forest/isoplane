@@ -103,6 +103,28 @@ def download(url, destination, expected, algorithm='sha256'):
         raise ValueError(f'download hash differs: {destination}')
 
 
+def export_git_tree(root, revision, destination, archive, log):
+    run(['git', 'archive', '--format=tar', '-o', archive, revision], root, log)
+    with tarfile.open(archive) as tree:
+        tree.extractall(destination, filter='data')
+    archive.unlink()
+    entries = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=root)
+    for entry in entries.split(b'\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split(b'\t', 1)
+        mode, _, commit = metadata.decode().split()
+        if mode != '160000':
+            continue
+        path = Path(os.fsdecode(name))
+        repository = root / path
+        if not (repository / '.git').exists():
+            raise ValueError(f'initialize source dependencies with git submodule update --init --recursive: {path}')
+        target = destination / path
+        target.mkdir(parents=True, exist_ok=True)
+        export_git_tree(repository, commit, target, archive, log)
+
+
 def export_source(root, source, cache, revision, logs):
     preserved = cache / 'runtime-build'
     preserved.mkdir(exist_ok=True)
@@ -114,10 +136,7 @@ def export_source(root, source, cache, revision, logs):
         shutil.rmtree(source)
     source.mkdir()
     source_tar = cache / 'source.tar'
-    run(['git', 'archive', '--format=tar', '-o', source_tar, revision], root, logs / 'source.log')
-    with tarfile.open(source_tar) as tree:
-        tree.extractall(source, filter='data')
-    source_tar.unlink()
+    export_git_tree(root, revision, source, source_tar, logs / 'source.log')
     for path in preserved.iterdir():
         path.rename(source / 'guest-runtime' / path.name)
     preserved.rmdir()
@@ -316,6 +335,8 @@ def build(root, cache, releases, logs, args):
     source = cache / 'source'
     export_source(root, source, cache, revision, logs)
     version = release_version(source)
+    if args.runtime_modules:
+        load(root / 'scripts/shared-runtime-modules.py').verify(args.runtime_modules.resolve(), version, revision)
     release = releases / release_name(version)
     archive = release.with_name(release.name + '.tgz')
     receipt_path = release.with_name(release.name + '.receipt.json')
@@ -342,6 +363,14 @@ def build(root, cache, releases, logs, args):
     wasm_tools = cache / 'tools/bin/wasm-tools'
     if output([wasm_tools, '--version']) != f'wasm-tools {wasm_version}':
         raise ValueError('installed wasm-tools version differs from the pin')
+    runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else cache / 'runtime-modules'
+    if not args.runtime_modules:
+        if runtime_modules.exists():
+            shutil.rmtree(runtime_modules)
+        run(['bash', source / 'guest-sdks/dotnet/MonoRuntime/build.sh', '--output', runtime_modules,
+             '--source-revision', revision], source,
+            logs / 'shared-runtime.log', dict(environment, PATH=str(wasm_tools.parent) + os.pathsep + environment['PATH']))
+    load(source / 'scripts/shared-runtime-modules.py').verify(runtime_modules, version, revision, runtime_output / 'feed')
     packages = cache / 'packages'
     if packages.exists():
         shutil.rmtree(packages)
@@ -351,7 +380,8 @@ def build(root, cache, releases, logs, args):
         run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native_library}'], source, logs / f'pack-{name}.log', environment)
+             f'-p:IsoplaneNativePath={native_library}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
+            source, logs / f'pack-{name}.log', environment)
     verify_packages(packages, version, revision, native_library)
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     wasm_sources = list((cargo_home / 'registry/src').glob(f'*/wasm-tools-{wasm_version}/Cargo.toml'))
@@ -399,6 +429,7 @@ def main():
                         help='where the release directory, archive and checksum are written')
     parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
     parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
+    parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--llvm', type=Path, help='LLVM development build matching the compiler pin (macOS)')
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()

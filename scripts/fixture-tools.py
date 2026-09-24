@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import venv
 
 
 def lock_file(handle):
@@ -35,8 +36,10 @@ def source_files(root):
         raise FileNotFoundError(f"fixture input does not exist: {root}")
     result = []
     for directory, dirs, files in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in ("obj", "obj-mono", "bin", "out", "target", ".git", "node_modules", "__pycache__"))
+        dirs[:] = sorted(d for d in dirs if d not in ("obj", "obj-mono", "bin", "out", "target", ".git", ".vscode-test", "node_modules", "__pycache__"))
         for name in sorted(files):
+            if name == ".git":
+                continue
             path = Path(directory) / name
             result.append(path)
     return result
@@ -100,6 +103,56 @@ def published_guest(directory):
 
 def main():
     action, *args = sys.argv[1:]
+    if action == "debugger-editor":
+        root = Path(args[0]).resolve()
+        extension = root / "tools" / "vscode-isoplane"
+        target = root / "target" / "debugger-editor"
+        target.mkdir(parents=True, exist_ok=True)
+        identity = fingerprint([extension / "package.json", extension / "package-lock.json"])
+        installed = extension / "node_modules" / ".package-lock.json"
+        with (target / "fixture.lock").open("a") as handle:
+            lock_file(handle)
+            receipt = target / "complete.json"
+            if not is_fresh(receipt, identity, [installed]):
+                log = target / "install.log"
+                with log.open("w") as output:
+                    result = subprocess.run(["npm", "ci"], cwd=extension,
+                                            stdout=output, stderr=subprocess.STDOUT, timeout=600)
+                if result.returncode:
+                    sys.exit(f"installing the editor test dependencies failed; see {log}")
+                write_receipt(receipt, identity, [installed])
+        print(extension / "test" / "run.js")
+        return 0
+    if action == "dap-python":
+        root = Path(args[0]).resolve()
+        version = "1.8.20"
+        identity = hashlib.sha256((sys.version + version).encode()).hexdigest()
+        target = root / "target" / "dap-python" / identity
+        target.mkdir(parents=True, exist_ok=True)
+        executable = target / ("Scripts/python.exe" if os.name == 'nt' else "bin/python")
+        with (target / "fixture.lock").open("a") as handle:
+            lock_file(handle)
+            receipt = target / "complete"
+            if not receipt.exists() or not executable.is_file():
+                venv.create(target, with_pip=True)
+                log = target / "install.log"
+                with log.open("w") as output:
+                    result = subprocess.run(
+                        [str(executable), "-m", "pip", "install", "--disable-pip-version-check", "debugpy==" + version],
+                        stdout=output, stderr=subprocess.STDOUT, timeout=600,
+                    )
+                if result.returncode:
+                    sys.exit(f"installing the pinned debugpy test dependency failed; see {log}")
+                receipt.write_text(version)
+            verification = subprocess.run(
+                [str(executable), "-c", "import debugpy; print(debugpy.__version__)"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if verification.returncode or verification.stdout.strip() != version:
+                receipt.unlink(missing_ok=True)
+                sys.exit(f"the pinned debugpy test environment is incomplete: {verification.stderr}")
+        print(executable)
+        return 0
     if action == "published-guest":
         try:
             print(published_guest(args[0]))
@@ -142,6 +195,24 @@ def main():
                 )
             if result.returncode != 0:
                 sys.exit(f"building native Isoplane support failed; see {log}:\n{log.read_text()}")
+        return 0
+    if action == "debugger-protocol":
+        root = Path(args[0]).resolve()
+        target = root / "target" / "debugger-protocol"
+        target.mkdir(parents=True, exist_ok=True)
+        assembly = target / "artifacts/bin/Isoplane.Debugging.Tests/debug/Isoplane.Debugging.Tests.dll"
+        with (target / "fixture.lock").open("a") as handle:
+            lock_file(handle)
+            log = target / "build.log"
+            with log.open("w") as output:
+                result = subprocess.run(
+                    ["dotnet", "build", str(root / "tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj"),
+                     "--artifacts-path", str(target / "artifacts"), "--disable-build-servers"],
+                    cwd=root, stdout=output, stderr=subprocess.STDOUT, timeout=600,
+                )
+            if result.returncode:
+                sys.exit(f"building the debugger protocol test driver failed; see {log}:\n{log.read_text()}")
+        print(assembly)
         return 0
     if action == "isoplane-cli":
         root = Path(args[0]).resolve()

@@ -1,0 +1,21 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.Web" />
+  <!--
+    An ASP.NET package: its ASP.NET assemblies travel in the package and bind
+    beneath the runtime's Isoplane.AspNetCore, and a content file is served
+    at the application's content root.
+  -->
+  <Import Project="../Package.props" />
+  <PropertyGroup>
+    <AssemblyName>Web</AssemblyName>
+    <IsoplaneApplicationFactory>Web.Application.Create</IsoplaneApplicationFactory>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
+    <Content Include="greeting.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
+  <Import Project="../../../../guest-sdks/dotnet/AspNetCore/buildTransitive/Isoplane.AspNetCore.Framework.targets" />
+  <Import Project="../Package.targets" />
+</Project>

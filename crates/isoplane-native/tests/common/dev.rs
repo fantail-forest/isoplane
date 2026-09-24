@@ -254,7 +254,8 @@ impl Dev {
         };
         assert!(
             status.success(),
-            "local dev must shut down cleanly: {status}"
+            "local dev must shut down cleanly: {status}\n{}",
+            self.diagnostics()
         );
     }
 }

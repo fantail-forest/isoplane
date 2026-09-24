@@ -23,9 +23,20 @@ pub struct Inputs {
     pub allow_endpoints: Vec<std::net::SocketAddr>,
     /// Host-provided files visible to the sandbox.
     pub platform_files: isoplane_engine::PlatformFiles,
+    /// The application package's files, for a module that runs a package
+    /// rather than carrying its application; empty otherwise.
+    pub application_files: isoplane_engine::PlatformFiles,
 }
 
 impl Inputs {
+    /// Every file the sandbox sees while it has no template to bind
+    /// application files to: during initialization and under a debugger.
+    fn served_files(
+        &self,
+    ) -> Result<isoplane_engine::PlatformFiles, isoplane_engine::PlatformFilesError> {
+        self.platform_files.merge(&self.application_files)
+    }
+
     fn tenant(&self) -> String {
         let identity = blake3::hash(self.state_directory.as_os_str().as_encoded_bytes());
         format!("local:{identity}")

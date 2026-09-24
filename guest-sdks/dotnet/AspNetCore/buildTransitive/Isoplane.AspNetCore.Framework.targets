@@ -1,0 +1,47 @@
+<Project>
+  <!-- Compiles against the Linux ASP.NET implementation assemblies, which a
+       Mono package or a NativeAOT link carries, in place of the shared
+       framework a wasm target cannot restore. -->
+  <Target Name="IsoplaneSelectAspNetCore" BeforeTargets="ProcessFrameworkReferences;ResolveAssemblyReferences;IsoplaneResolveManagedPlatform"
+          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
+    <ItemGroup>
+      <_IsoplaneAspNetFramework Include="@(FrameworkReference)" Condition="'%(Identity)' == 'Microsoft.AspNetCore.App'" />
+      <_IsoplaneAspNetKnownFramework Include="@(KnownFrameworkReference)" Condition="'%(Identity)' == 'Microsoft.AspNetCore.App' AND '%(TargetFramework)' == '$(TargetFramework)'" />
+    </ItemGroup>
+    <PropertyGroup>
+      <IsoplaneAspNetCoreRuntimeVersion Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' == ''">@(_IsoplaneAspNetFramework->'%(RuntimeFrameworkVersion)')</IsoplaneAspNetCoreRuntimeVersion>
+      <IsoplaneAspNetCoreRuntimeVersion Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' == ''">$(RuntimeFrameworkVersion)</IsoplaneAspNetCoreRuntimeVersion>
+      <IsoplaneAspNetCoreRuntimeVersion Condition="'$(IsoplaneAspNetCoreRuntimeVersion)' == ''">@(_IsoplaneAspNetKnownFramework->'%(LatestRuntimeFrameworkVersion)')</IsoplaneAspNetCoreRuntimeVersion>
+    </PropertyGroup>
+  </Target>
+  <Target Name="IsoplaneAspNetCoreDownloads" BeforeTargets="CollectPackageDownloads" DependsOnTargets="IsoplaneSelectAspNetCore"
+          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
+    <ItemGroup>
+      <PackageDownload Remove="Microsoft.AspNetCore.App.Runtime.linux-x64;Microsoft.AspNetCore.App.Ref" />
+      <PackageDownload Include="Microsoft.AspNetCore.App.Runtime.linux-x64;Microsoft.AspNetCore.App.Ref" Version="[$(IsoplaneAspNetCoreRuntimeVersion)]" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneAspNetCoreFrameworkReferences" BeforeTargets="ProcessFrameworkReferences" DependsOnTargets="IsoplaneSelectAspNetCore">
+    <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
+  </Target>
+  <Target Name="IsoplaneAspNetCoreFrameworkAssemblies" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="IsoplaneSelectAspNetCore;ResolvePackageAssets" Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
+    <ItemGroup>
+      <_IsoplaneAspNetAssembly Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.runtime.linux-x64/$(IsoplaneAspNetCoreRuntimeVersion)/runtimes/linux-x64/lib/net10.0/*.dll" />
+    </ItemGroup>
+    <Error Condition="'@(_IsoplaneAspNetAssembly)' == ''" Text="isoplane: selected managed ASP.NET implementation pack missing; restore the project before publishing." />
+    <ItemGroup>
+      <_IsoplaneAspNetAssembly Remove="@(ResolvedCompileFileDefinitions)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
+      <Reference Include="@(_IsoplaneAspNetAssembly)" Private="true" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneAspNetCoreGenerator" BeforeTargets="CoreCompile" DependsOnTargets="IsoplaneSelectAspNetCore"
+          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Microsoft.AspNetCore.Http.RequestDelegateGenerator'" />
+      <Analyzer Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.ref/$(IsoplaneAspNetCoreRuntimeVersion)/analyzers/dotnet/cs/Microsoft.AspNetCore.Http.RequestDelegateGenerator.dll" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IsoplaneAspNetCoreTransitiveFramework" AfterTargets="AddTransitiveFrameworkReferences">
+    <ItemGroup><FrameworkReference Remove="Microsoft.AspNetCore.App" /></ItemGroup>
+  </Target>
+</Project>

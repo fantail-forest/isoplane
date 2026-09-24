@@ -139,7 +139,7 @@ These rules are **non-negotiable**. If you can't satisfy a requirement without b
 | **No `unsafe`** except for operations that are unsafe by nature (FFI, memory mapping, deserialising native code)                                | Give every such block a `// SAFETY:` comment naming the invariant and where the caller enforces it. Put `#![forbid(unsafe_code)]` in every crate with no such operation. |
 | **No C# `DllImport` or `unsafe`** outside the SDK's one interop layer | None. |
 | **No test that cannot fail** (prints a figure and asserts nothing; asserts a constant against itself; downgrades a miss to a pass by default)   | None.                                                                                                                                                              |
-| **No test that is known to fail** committed without the fix that makes it pass | The two external-adapter CLI debugger tests are explicitly ignored by owner direction until #105 supplies the modern adapter and packaged prerequisites; restore them then. Otherwise, ignoring a known failure or asserting the defect is prohibited. |
+| **No test that is known to fail** committed without the fix that makes it pass | None. Ignoring a known failure or asserting the defect is prohibited. |
 
 ### Types
 

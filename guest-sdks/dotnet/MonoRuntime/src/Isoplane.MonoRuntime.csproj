@@ -1,0 +1,48 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
+  <!--
+    The application-independent Mono runtime: the interpreter, the BCL and the
+    SDK behind a fixed entry that loads whichever application package the host
+    serves. Its managed/native bridges come from those assemblies alone, so one
+    linked and compiled module serves every interpreted application.
+  -->
+  <PropertyGroup>
+    <IsoplaneGuestRuntime>Mono</IsoplaneGuestRuntime>
+  </PropertyGroup>
+  <Import Project="../../Isoplane.Guest.props" />
+
+  <PropertyGroup>
+    <AssemblyName>Isoplane.MonoRuntime</AssemblyName>
+    <RootNamespace>Isoplane.MonoRuntime</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsoplaneRouter>Isoplane.MonoRuntime.PackageRouter</IsoplaneRouter>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Isoplane.Sdk.csproj" />
+    <ProjectReference Include="../../AspNetCore/Isoplane.AspNetCore.csproj" />
+    <Compile Include="../../../../tools/BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
+  </ItemGroup>
+
+  <!-- The managed bundle treats the framework and the SDK as the platform and
+       carries every NuGet assembly, the SDK's dependencies included, in the
+       package; a runtime copy would shadow the package's. -->
+  <Target Name="IsoplaneRuntimeLeavesPackagesToApplications" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)" />
+    </ItemGroup>
+  </Target>
+  <!-- Isoplane.AspNetCore is runtime content; the ASP.NET it binds to is
+       package content, so an application chooses its ASP.NET patch release. -->
+  <Target Name="IsoplaneRuntimeLeavesAspNetToApplications" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(_IsoplaneAspNetAssembly)" />
+    </ItemGroup>
+  </Target>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../Isoplane.Guest.targets" />
+  <Import Project="../../AspNetCore/buildTransitive/Isoplane.AspNetCore.Framework.targets" />
+  <Import Project="../../Build/Isoplane.Exports.targets" />
+</Project>

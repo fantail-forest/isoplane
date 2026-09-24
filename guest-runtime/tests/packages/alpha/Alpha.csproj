@@ -1,0 +1,11 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <!-- The smallest package: a handler and nothing else. -->
+  <Import Project="../Package.props" />
+  <PropertyGroup>
+    <AssemblyName>Alpha</AssemblyName>
+    <IsoplaneApplicationFactory>Alpha.Handler.Create</IsoplaneApplicationFactory>
+  </PropertyGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../Package.targets" />
+</Project>

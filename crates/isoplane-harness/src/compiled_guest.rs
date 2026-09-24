@@ -70,15 +70,21 @@ impl CompiledGuests {
     }
 }
 
-pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEngine, Template) {
-    let engine = IsoplaneEngine::new(EngineConfig {
+/// The engine every returned guest runs on, serving `files`. Preparation
+/// output a returned guest loads must come from an engine configured alike.
+pub fn engine_configuration(files: PlatformFiles) -> EngineConfig {
+    EngineConfig {
         max_instances: 2,
         max_memory_bytes: 256 << 20,
         guard_size_bytes: 64 << 20,
         platform_files: files,
         ..EngineConfig::default()
-    })
-    .expect("the returned-guest engine must initialize");
+    }
+}
+
+pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEngine, Template) {
+    let engine = IsoplaneEngine::new(engine_configuration(files))
+        .expect("the returned-guest engine must initialize");
     static COMPILED: OnceLock<CompiledGuests> = OnceLock::new();
     let cache = COMPILED.get_or_init(|| {
         CompiledGuests::new(

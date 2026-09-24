@@ -72,7 +72,12 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
 
     c.memory_guard_size(cfg.guard_size_bytes);
     c.guard_before_linear_memory(false);
-    c.cranelift_opt_level(OptLevel::Speed);
+    c.debug_info(cfg.native_debug);
+    c.cranelift_opt_level(if cfg.native_debug {
+        OptLevel::None
+    } else {
+        OptLevel::Speed
+    });
     if cfg.spectre_mitigations {
         // Both default to on in Cranelift; set explicitly so a default flip
         // cannot silently disarm a security control.
@@ -174,6 +179,39 @@ pub(crate) fn engine_fingerprint(engine: &Engine, cfg: &EngineConfig) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_debugging_uses_a_distinct_compilation_identity() {
+        let mut config = EngineConfig {
+            pooling: false,
+            ..Default::default()
+        };
+        let ordinary = build_engine(&config).expect("the ordinary engine must build");
+        let ordinary_identity = engine_fingerprint(&ordinary, &config);
+        config.native_debug = true;
+        let debug = build_engine(&config).expect("the native debug engine must build");
+        assert_ne!(
+            ordinary_identity,
+            engine_fingerprint(&debug, &config),
+            "debug code must not reuse production compilation artifacts"
+        );
+        assert_feature_set(&debug)
+            .expect("native debugging must retain sandbox feature restrictions");
+    }
+
+    #[test]
+    fn serialized_engine_settings_do_not_enable_native_debugging() {
+        let config = EngineConfig {
+            native_debug: true,
+            ..Default::default()
+        };
+        let bytes = postcard::to_allocvec(&config).expect("engine settings must serialize");
+        let loaded: EngineConfig = postcard::from_bytes(&bytes).expect("engine settings must load");
+        assert!(
+            !loaded.native_debug,
+            "native debugging must require explicit local host construction"
+        );
+    }
 
     #[test]
     fn the_image_threshold_covers_the_configured_memory_ceiling() {

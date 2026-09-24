@@ -1,6 +1,8 @@
 mod common;
 
-use isoplane_prepare::{BuildRequest, LocalPreparation, Preparation, RuntimeProfile};
+use isoplane_prepare::{
+    BuildRequest, LocalPreparation, PortableTemplate, Preparation, RuntimeProfile,
+};
 use tokio_util::sync::CancellationToken;
 
 fn file_imports() -> String {
@@ -50,7 +52,7 @@ fn read_file() -> &'static str {
        (i32.store8 (i32.const 100) (i32.load8_u (i32.load (i32.const 1304))))"#
 }
 
-async fn preserves_application_state(provider: &dyn Preparation) {
+async fn preserves_application_state(provider: &dyn Preparation, portable: PortableTemplate) {
     let wasm = common::guest(
         &file_imports(),
         &format!("(global.set $state (i32.const 42)) {}", read_file()),
@@ -72,6 +74,7 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         limits: isoplane_abi::config::Limits::default(),
         initialization: common::request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
+        portable_template: portable,
     };
     let product = provider
         .prepare(&wasm, &request, &CancellationToken::new())
@@ -85,19 +88,6 @@ async fn preserves_application_state(provider: &dyn Preparation) {
         product.initialized.passes, 1,
         "the provider must run one successful initialization"
     );
-    let template = engine
-        .load_template(&product.initialized.wasm)
-        .expect("initialized portable result");
-    assert_eq!(
-        template.memory_image_arc().to_dense()[100],
-        b'a',
-        "initialization must read immutable application files through the PAL"
-    );
-    #[cfg(not(target_os = "linux"))]
-    let expected_hash = template
-        .with_application_files(request.application_files.clone())
-        .expect("bind expected files")
-        .hash;
     let identity = request.identity().expect("input identity");
     // SAFETY: the local trusted provider below produced these bytes.
     let prepared = unsafe { engine.decode_builder_output(product.prepared_bytes(), identity) }
@@ -113,17 +103,40 @@ async fn preserves_application_state(provider: &dyn Preparation) {
     let loaded = engine
         .load_prepared(&path, identity)
         .expect("load prepared output");
-    #[cfg(not(target_os = "linux"))]
+    let memory = loaded.memory_image_arc().to_dense();
     assert_eq!(
-        loaded.hash, expected_hash,
-        "prepared identity must include the exact application content"
+        memory[100], b'a',
+        "initialization must read immutable application files through the PAL"
     );
-    #[cfg(target_os = "linux")]
-    assert_eq!(
-        loaded.memory_image_arc().to_dense(),
-        template.memory_image_arc().to_dense(),
-        "the initialized layer must preserve the same memory as portable preparation"
-    );
+    match portable {
+        PortableTemplate::Returned => {
+            let template = engine
+                .load_template(
+                    product
+                        .portable_template()
+                        .expect("a requested portable template must be returned"),
+                )
+                .expect("initialized portable result");
+            assert_eq!(
+                template.memory_image_arc().to_dense(),
+                memory,
+                "the portable module must hold the same initialized memory as the prepared artifact"
+            );
+            #[cfg(not(target_os = "linux"))]
+            assert_eq!(
+                loaded.hash,
+                template
+                    .with_application_files(request.application_files.clone())
+                    .expect("bind expected files")
+                    .hash,
+                "prepared identity must include the exact application content"
+            );
+        }
+        PortableTemplate::Omitted => assert!(
+            product.portable_template().is_none(),
+            "a preparation must not return a portable template nobody requested"
+        ),
+    }
     assert!(
         !loaded.has_initialize(),
         "the provider must remove initialization from its output"
@@ -135,8 +148,21 @@ async fn preserves_application_state(provider: &dyn Preparation) {
 }
 
 #[tokio::test]
-async fn local_preparation_satisfies_the_shared_provider_contract() {
-    preserves_application_state(&LocalPreparation::new().expect("portable provider")).await;
+async fn local_preparation_returns_a_requested_portable_template_with_the_prepared_state() {
+    preserves_application_state(
+        &LocalPreparation::new().expect("local provider"),
+        PortableTemplate::Returned,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn local_preparation_omits_an_unrequested_portable_template_and_keeps_the_prepared_state() {
+    preserves_application_state(
+        &LocalPreparation::new().expect("local provider"),
+        PortableTemplate::Omitted,
+    )
+    .await;
 }
 
 #[cfg(target_os = "linux")]
@@ -167,6 +193,7 @@ async fn layered_preparation_accepts_a_guest_without_an_initializer() {
         limits: isoplane_abi::config::Limits::default(),
         initialization: common::request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
+        portable_template: PortableTemplate::Omitted,
     };
     let product = LocalPreparation::new()
         .expect("local provider")

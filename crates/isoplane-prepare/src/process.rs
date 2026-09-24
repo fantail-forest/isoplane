@@ -24,6 +24,19 @@ pub struct BuildRequest {
     pub initialization: Initialization,
     /// Digest of the submitted portable module.
     pub input_hash: [u8; 32],
+    /// Whether the product also carries the initialized portable module.
+    /// It does not affect the prepared identity.
+    pub portable_template: PortableTemplate,
+}
+
+/// Whether a preparation also returns the initialized portable module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PortableTemplate {
+    /// Return it, for a consumer that registers or recompiles the portable template.
+    Returned,
+    /// Omit it. Layered preparation then bakes no portable module; its
+    /// restored layer is still checked against the initialized instance.
+    Omitted,
 }
 
 impl BuildRequest {

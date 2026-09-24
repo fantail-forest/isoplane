@@ -8,6 +8,7 @@
 
 mod compiled_guest;
 
+pub use compiled_guest::engine_configuration;
 use compiled_guest::engine_serving;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,6 +16,7 @@ use std::time::Duration;
 use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::result::ResultRecord;
+use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{
     Completion, CpuBudget, DispatchOutcome, Instance, InstanceImage, InstanceOps, IsoplaneEngine,
     PlatformFiles, Template,
@@ -129,13 +131,39 @@ impl Reactor {
     }
 }
 
+/// What a guest's template is loaded from on each engine that serves it.
+#[derive(Clone)]
+enum Source {
+    Module(Arc<[u8]>),
+    Prepared(Arc<PreparedTemplate>),
+}
+
+impl Source {
+    fn serve(&self, files: PlatformFiles) -> (IsoplaneEngine, Template) {
+        match self {
+            Source::Module(module) => engine_serving(module, files),
+            Source::Prepared(prepared) => {
+                let engine = IsoplaneEngine::new(engine_configuration(files))
+                    .expect("the returned-guest engine must initialize");
+                let template = {
+                    // SAFETY: the private Source variants are constructed only by
+                    // ReturnedGuest's unsafe prepared/layered constructors, whose
+                    // callers establish controlled local compiler origin.
+                    unsafe { engine.load_prepared_product(prepared) }
+                }
+                .unwrap_or_else(|error| panic!("the prepared template must load: {error:#}"));
+                (engine, template)
+            }
+        }
+    }
+}
+
 /// A guest that returns to the host on an empty stack: parked or done, its
 /// Store is destroyed, and the next call restores it on another thread.
 pub struct ReturnedGuest {
     engine: IsoplaneEngine,
     template: Template,
-    module: Arc<[u8]>,
-    module_hash: isoplane_engine::ModuleHash,
+    source: Source,
     platform_files: PlatformFiles,
     context: Arc<InstanceCtx>,
     snapshot: Option<(InstanceImage, Vec<u8>)>,
@@ -144,12 +172,26 @@ pub struct ReturnedGuest {
 impl ReturnedGuest {
     /// Loads `module` for `reactor`'s instance.
     pub fn new(module: &[u8], reactor: &Reactor) -> Self {
-        let (engine, template) = engine_serving(module, reactor.platform_files.clone());
+        Self::serving(Source::Module(module.into()), reactor)
+    }
+
+    /// Serves trusted preparation output for `reactor`'s instance, as a cell
+    /// loads what its builder produced. The preparation must have used
+    /// [`engine_configuration`] with the reactor's platform files.
+    ///
+    /// # Safety
+    /// Every native payload must be unchanged output from controlled local preparation.
+    /// Customer-supplied or rewritten serialized native code is not admissible.
+    pub unsafe fn prepared(prepared: PreparedTemplate, reactor: &Reactor) -> Self {
+        Self::serving(Source::Prepared(Arc::new(prepared)), reactor)
+    }
+
+    fn serving(source: Source, reactor: &Reactor) -> Self {
+        let (engine, template) = source.serve(reactor.platform_files.clone());
         Self {
             engine,
             template,
-            module: module.into(),
-            module_hash: isoplane_engine::ModuleHash::of(module),
+            source,
             platform_files: reactor.platform_files.clone(),
             context: reactor.context.clone(),
             snapshot: None,
@@ -161,7 +203,7 @@ impl ReturnedGuest {
     /// this is a new node process serving the guest's saved state) and the
     /// guest's saved memory carries over unchanged.
     pub fn serve_platform_files(&mut self, files: PlatformFiles) {
-        let (engine, template) = engine_serving(&self.module, files.clone());
+        let (engine, template) = self.source.serve(files.clone());
         self.engine = engine;
         self.template = template;
         self.platform_files = files;
@@ -172,12 +214,11 @@ impl ReturnedGuest {
     /// holds the guest's cached state amounts to. This guest keeps its own
     /// copy.
     pub fn activated_from_image(&self, reactor: &Reactor) -> Self {
-        let (engine, template) = engine_serving(&self.module, self.platform_files.clone());
+        let (engine, template) = self.source.serve(self.platform_files.clone());
         Self {
             engine,
             template,
-            module: self.module.clone(),
-            module_hash: self.module_hash,
+            source: self.source.clone(),
             platform_files: self.platform_files.clone(),
             context: reactor.context.clone(),
             snapshot: self.snapshot.clone(),

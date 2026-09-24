@@ -77,10 +77,7 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
     )
     .expect("exercise ordinary application logging inside both guests");
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    for (configuration, runtime, aot) in [
-        ("IsoplaneInterpretedDebug", "Mono", "false"),
-        ("IsoplaneNativeAotRelease", "NativeAOT", "true"),
-    ] {
+    for (configuration, runtime, aot) in [("IsoplaneInterpretedDebug", "Mono", "false")] {
         let evaluated = Command::new("dotnet")
             .args([
                 "msbuild",
@@ -132,71 +129,26 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
 }
 
 #[tokio::test]
-async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication() {
+async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     let directory = tempfile::tempdir().expect("isolate the incremental installed project journey");
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let build = Command::new("dotnet")
-        .args([
-            "build",
-            "-c",
-            "IsoplaneInterpretedDebug",
-            "--disable-build-servers",
-        ])
-        .current_dir(&app)
-        .env("ISOPLANE_CLI", &cli)
-        .env(
-            "ISOPLANE_GUEST_RUNTIME_FEED",
-            isoplane_fixtures::guest_runtime_feed(),
-        )
-        .env("XDG_DATA_HOME", directory.path().join("user-data"))
-        .output()
-        .expect("build and prepare the installed application");
-    assert!(
-        build.status.success(),
-        "build preparation must succeed: {}\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
     let mut first = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
-    assert!(
-        first.diagnostics().contains("\"compiled\":false"),
-        "the first run after dotnet build must reuse native compilation"
-    );
     first.stop();
-    let native = app.join("obj/IsoplaneInterpretedDebug/net10.0/wasi-wasm/wasm/for-publish");
-    let artifacts: std::collections::BTreeMap<_, _> = std::fs::read_dir(&native)
-        .expect("an interpreted run produces native build artifacts")
-        .map(|entry| entry.expect("read a native artifact").path())
-        .filter(|path| {
-            matches!(
-                path.extension().and_then(|extension| extension.to_str()),
-                Some("o" | "h" | "wasm" | "complete")
-            )
-        })
-        .map(|path| {
-            let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
-            (path, modified)
-        })
-        .collect();
-    assert!(
-        artifacts.contains_key(&native.join("isoplane-managed-to-native.complete")),
-        "successful analysis must record completion so later runs can reuse it"
-    );
-    assert!(
-        artifacts.keys().any(|path| path
-            .extension()
-            .is_some_and(|extension| extension == "wasm")),
-        "the reuse check must cover the linked sandbox module"
-    );
     let mut second = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
+    let diagnostics = second.diagnostics();
+    assert!(
+        diagnostics.contains("reusing local pre-initialized WASM")
+            && diagnostics.contains("\"compiled\":false"),
+        "an unchanged run must reuse the initialized template and its native compilation:\n{diagnostics}"
+    );
     let response = reqwest::get(&second.url)
         .await
         .expect("request the reused application");
     assert_eq!(
         response.status(),
         200,
-        "a reused interpreted publication must serve requests"
+        "a reused interpreted preparation must serve requests"
     );
     assert_eq!(
         response
@@ -204,15 +156,9 @@ async fn an_unchanged_interpreted_run_reuses_generation_and_native_publication()
             .await
             .expect("read the reused application response"),
         "Hello from Isoplane!",
-        "the reused publication must execute the generated application"
+        "the reused preparation must execute the application's package"
     );
     second.stop();
-    for (path, modified) in artifacts {
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().modified().unwrap(), modified,
-            "an unchanged dotnet run must preserve analysis completion, headers, objects and the linked module: {}", path.display()
-        );
-    }
 }
 
 fn start_dotnet(

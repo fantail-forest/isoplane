@@ -65,3 +65,28 @@ public sealed class HandlerRouter<TApp> : IIsoplaneRouter
         return _app!.HandleAsync(new Request(d), ctx);
     }
 }
+
+/// <summary>
+/// Routes every dispatch, as a request, to the handler a factory builds once
+/// per wasm instance. This is the router the SDK generates for an application
+/// factory returning <see cref="IIsoplaneHandler"/>.
+/// </summary>
+public class HandlerFactoryRouter : IIsoplaneRouter
+{
+    private readonly System.Func<IIsoplaneHandler> _factory;
+    private IIsoplaneHandler? _handler;
+
+    /// <summary>Routes to the handler <paramref name="factory"/> returns at boot.</summary>
+    public HandlerFactoryRouter(System.Func<IIsoplaneHandler> factory) => _factory = factory;
+
+    /// <summary>
+    /// Builds the handler. Throws <see cref="System.InvalidOperationException"/>
+    /// when the factory returns none.
+    /// </summary>
+    public void Boot() => _handler = _factory()
+        ?? throw new System.InvalidOperationException("the application factory returned no handler");
+
+    /// <summary>Hands the dispatch to the handler as a request.</summary>
+    public Task<Response> Route(DispatchRecord d, Ctx ctx) =>
+        _handler!.HandleAsync(Request.FromDispatch(d), ctx);
+}

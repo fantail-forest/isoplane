@@ -123,7 +123,13 @@ impl Deployer {
         context: &PreparationContext<'_>,
     ) -> anyhow::Result<PreparedReceipt> {
         let publication = self
-            .prepare_publication(manifest, wasm, options, context)
+            .prepare_publication(
+                manifest,
+                wasm,
+                options,
+                context,
+                isoplane_prepare::PortableTemplate::Omitted,
+            )
             .await?;
         let _directory = publication.publication.keep();
         Ok(publication.receipt)
@@ -135,6 +141,7 @@ impl Deployer {
         wasm: &[u8],
         opts: &DeployOptions,
         context: &PreparationContext<'_>,
+        portable_template: isoplane_prepare::PortableTemplate,
     ) -> anyhow::Result<Publication> {
         admit_local(manifest, wasm)?;
         let mut runtime_config = Vec::new();
@@ -160,6 +167,7 @@ impl Deployer {
             plan: manifest.limits,
             initialization,
             input_hash: *blake3::hash(wasm).as_bytes(),
+            portable_template,
         };
         let identity = request.identity()?;
         let product = context

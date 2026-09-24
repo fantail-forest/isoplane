@@ -11,6 +11,7 @@
   <ItemGroup>
     <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" Private="false" />
     <Reference Include="Microsoft.Build.Utilities.Core" HintPath="$(MSBuildBinPath)/Microsoft.Build.Utilities.Core.dll" Private="false" />
+    <Compile Include="../../../tools/BuildProtocol/AsyncDebugSymbols.cs" Link="AsyncDebugSymbols.cs" />
     <Compile Include="../../../tools/BuildProtocol/AssemblyClosure.cs" Link="AssemblyClosure.cs" />
     <Compile Include="../../../tools/BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
   </ItemGroup>

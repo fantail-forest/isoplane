@@ -9,7 +9,7 @@
     <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" />
     <Reference Include="Microsoft.Build.Utilities.Core" HintPath="$(MSBuildBinPath)/Microsoft.Build.Utilities.Core.dll" />
     <Compile Include="../Build/MonoDebugSymbols.cs" Link="MonoDebugSymbols.cs" />
-    <Compile Include="../Build/MonoDebugManifest.cs" Link="MonoDebugManifest.cs" />
+    <Compile Include="../Build/DebugManifest.cs" Link="DebugManifest.cs" />
     <ProjectReference Include="../Isoplane.Sdk.csproj" />
     <ProjectReference Include="../Conformance/Conformance.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

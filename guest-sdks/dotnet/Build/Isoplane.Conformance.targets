@@ -5,6 +5,8 @@
   </PropertyGroup>
   <UsingTask TaskName="Isoplane.Conformance.InspectManagedAssemblies"
              AssemblyFile="$(MSBuildThisFileDirectory)../Conformance/Isoplane.Conformance.dll" />
+  <UsingTask TaskName="Isoplane.Conformance.DebugSources"
+             AssemblyFile="$(MSBuildThisFileDirectory)../Conformance/Isoplane.Conformance.dll" />
   <Target Name="IsoplaneInspectManagedAssemblies" AfterTargets="CoreCompile" DependsOnTargets="IsoplaneResolveManagedPlatform"
           Condition="'$(DesignTimeBuild)' != 'true' AND '$(WasmBuildingForNestedPublish)' != 'true'">
     <ItemGroup>
@@ -16,11 +18,18 @@
                                 Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.dll' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.Sdk' AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' != 'Isoplane.AspNetCore'" />
       <_IsoplaneConformanceAssembly Remove="@(IsoplaneBundlePlatformReference)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
       <_IsoplaneConformanceAssembly Remove="@(RuntimePackAsset)" />
+      <_IsoplaneRuntimeSources Include="@(Compile)" Condition="'%(Compile.IsoplaneRuntimeSource)' == 'true'" />
     </ItemGroup>
     <Isoplane.Conformance.InspectManagedAssemblies Assemblies="@(_IsoplaneConformanceAssembly)"
         ApplicationAssemblies="@(_IsoplaneConformanceApplication)"
         AnalyzeDependencies="$(IsoplaneAnalyzeDependencies)" WarnOnNativeImports="$(IsoplaneWarnOnNativeImports)"
         NoWarn="$(NoWarn)" WarningsAsErrors="$(WarningsAsErrors)"
         WarningsNotAsErrors="$(WarningsNotAsErrors)" TreatWarningsAsErrors="$([MSBuild]::ValueOrDefault('$(TreatWarningsAsErrors)', 'false'))" />
+    <Isoplane.Conformance.DebugSources Condition="'$(IsoplaneLocalDebug)' == 'true' AND '$(IsoplaneGuestRuntime)' == 'NativeAOT'"
+        Assemblies="@(_IsoplaneConformanceAssembly)" Application="@(IntermediateAssembly)"
+        RuntimeSources="@(_IsoplaneRuntimeSources)"
+        ApplicationSources="@(Compile)"
+        Output="$([System.IO.Path]::Combine('$(PublishDir)', 'isoplane.debug-sources.json'))" />
+    <ItemGroup Condition="'$(IsoplaneLocalDebug)' == 'true' AND '$(IsoplaneGuestRuntime)' == 'NativeAOT'"><FileWrites Include="$([System.IO.Path]::Combine('$(PublishDir)', 'isoplane.debug-sources.json'))" /></ItemGroup>
   </Target>
 </Project>

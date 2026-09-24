@@ -87,6 +87,7 @@ fn layered_preparation_captures_the_completed_async_initializer() {
         limits: isoplane_abi::config::Limits::default(),
         initialization: request(),
         input_hash: *blake3::hash(&wasm).as_bytes(),
+        portable_template: isoplane_prepare::PortableTemplate::Returned,
     };
     let product = isoplane_prepare::prepare_in_current_process(&wasm, &build).expect(
         "layered capture and fresh-instance state verification must succeed after the timer wake",
@@ -95,7 +96,13 @@ fn layered_preparation_captures_the_completed_async_initializer() {
         product.initialized.passes, 1,
         "asynchronous completion must not rerun the initializer"
     );
-    let portable = engine.load_template(&product.initialized.wasm).unwrap();
+    let portable = engine
+        .load_template(
+            product
+                .portable_template()
+                .expect("a requested portable template is returned"),
+        )
+        .unwrap();
     assert_eq!(
         portable.memory_image_arc().to_dense()[128],
         42,

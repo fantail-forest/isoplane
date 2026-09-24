@@ -1,0 +1,121 @@
+{
+  "name": "isoplane-debugger",
+  "displayName": "Isoplane Debugger",
+  "description": "Debug local Isoplane .NET applications.",
+  "version": "0.1.0",
+  "publisher": "fantail-forest",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fantail-forest/isoplane.git"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onDebugResolve:isoplane"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "debuggers": [
+      {
+        "type": "isoplane",
+        "label": "Isoplane",
+        "languages": [
+          "csharp"
+        ],
+        "configurationAttributes": {
+          "attach": {
+            "required": [
+              "port"
+            ],
+            "properties": {
+              "port": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 65535,
+                "description": "Debugger port printed by the local Isoplane debug session."
+              },
+              "cliPath": {
+                "type": "string",
+                "default": "isoplane",
+                "description": "Path to the installed Isoplane CLI executable."
+              }
+            }
+          },
+          "launch": {
+            "required": [
+              "project"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "default": "${workspaceFolder}",
+                "description": "NativeAOT Isoplane project directory."
+              },
+              "configuration": {
+                "type": "string",
+                "default": "IsoplaneNativeAotDebug",
+                "description": "Project configuration; it must select NativeAOT."
+              },
+              "cliPath": {
+                "type": "string",
+                "default": "isoplane",
+                "description": "Path to the installed Isoplane CLI executable."
+              },
+              "httpPort": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 65535,
+                "description": "Local HTTP port; zero allocates a free port."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "isoplane",
+            "request": "attach",
+            "name": "Attach to local Isoplane",
+            "port": "${command:isoplane.debugPort}"
+          },
+          {
+            "type": "isoplane",
+            "request": "launch",
+            "name": "Debug NativeAOT Isoplane (Linux)",
+            "project": "${workspaceFolder}",
+            "configuration": "IsoplaneNativeAotDebug"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Isoplane: attach to local guest",
+            "body": {
+              "type": "isoplane",
+              "request": "attach",
+              "name": "Attach to local Isoplane",
+              "port": "^\"${command:isoplane.debugPort}\""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node test/run.js",
+    "package": "vsce package --skip-license --out out/isoplane-debugger.vsix",
+    "prepackage": "node -e \"require('node:fs').mkdirSync('out', {recursive:true})\""
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0"
+  }
+}
