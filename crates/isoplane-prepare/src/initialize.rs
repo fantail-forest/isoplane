@@ -604,12 +604,10 @@ fn load(
     application_files: &isoplane_engine::PlatformFiles,
     capture: &CaptureMode<'_>,
 ) -> Result<(isoplane_engine::Template, Option<bake::Instrumented>, bool), PrepareError> {
-    let (wasm, layered) = match capture {
-        CaptureMode::Portable { wasm } => (wasm, false),
+    let wasm = match capture {
+        CaptureMode::Portable { wasm } => wasm,
         #[cfg(target_os = "linux")]
-        CaptureMode::Layered { wasm, .. } | CaptureMode::RuntimeBaseline { wasm, .. } => {
-            (wasm, true)
-        }
+        CaptureMode::Layered { wasm, .. } | CaptureMode::RuntimeBaseline { wasm, .. } => wasm,
         #[cfg(target_os = "linux")]
         CaptureMode::Over { base, .. } => {
             let template = base
@@ -620,12 +618,16 @@ fn load(
         }
     };
     let instrumented = bake::instrument(wasm).map_err(PrepareError::State)?;
-    let (template, compiled) = match (cache, layered) {
-        (Some(cache), _) => cache.load(engine, &instrumented.wasm),
-        (None, false) => engine.load_template(&instrumented.wasm).map(|t| (t, true)),
-        (None, true) => engine
-            .load_layer_source(&instrumented.wasm)
-            .map(|t| (t, true)),
+    let (template, compiled) = match cache {
+        Some(cache) => cache.load(engine, &instrumented.wasm),
+        None => match capture {
+            CaptureMode::Portable { .. } => engine.load_template(&instrumented.wasm),
+            #[cfg(target_os = "linux")]
+            CaptureMode::Layered { .. }
+            | CaptureMode::RuntimeBaseline { .. }
+            | CaptureMode::Over { .. } => engine.load_layer_source(&instrumented.wasm),
+        }
+        .map(|template| (template, true)),
     }
     .map_err(PrepareError::State)?;
     let template = template

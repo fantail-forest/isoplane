@@ -21,7 +21,7 @@ use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::{
     BuildProduct, BuildRequest, BuildStage, Initialization, LocalPreparation, PortableTemplate,
-    Preparation, PrepareError, RuntimeBaseline, RuntimeProfile,
+    Preparation, PrepareError, RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -536,130 +536,143 @@ async fn a_debug_runtime_without_a_debug_session_is_refused() {
     );
 }
 
-/// The shared runtime prepared once to the end of its own initializer, for
-/// packages prepared with [`request`].
-async fn runtime_baseline(preparation: &LocalPreparation, runtime: &[u8]) -> RuntimeBaseline {
-    preparation
-        .prepare_runtime_baseline(
-            runtime,
-            &request(runtime, Vec::new()).baseline(),
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap_or_else(|error| panic!("the shared runtime must prepare as a baseline: {error}"))
-}
+/// Packages prepared as layers over the shared runtime's baseline, which
+/// only Linux maps.
+#[cfg(target_os = "linux")]
+mod over_the_runtime_baseline {
+    use super::*;
+    use isoplane_prepare::RuntimeBaseline;
 
-/// `files` prepared as a layer over `baseline`, with the baseline, both as a
-/// cell receives them.
-async fn layer_over(
-    preparation: &LocalPreparation,
-    baseline: &RuntimeBaseline,
-    runtime: &[u8],
-    files: Vec<PlatformFile>,
-) -> (PreparedTemplate, PreparedTemplate) {
-    let request = request(runtime, files);
-    let layer = preparation
-        .prepare_over(baseline, &request, &CancellationToken::new())
-        .await
-        .unwrap_or_else(|error| panic!("the package must prepare over the baseline: {error}"));
-    let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
-    let base_identity = request
-        .baseline()
-        .identity()
-        .expect("the baseline's identity");
-    // SAFETY: LocalPreparation in this process produced these bytes.
-    let base =
-        unsafe { engine.decode_builder_output(baseline.product().prepared_bytes(), base_identity) }
-            .expect("the baseline must decode");
-    let loaded = {
-        // SAFETY: This product was decoded from LocalPreparation output in this test module.
-        unsafe { engine.load_prepared_product(&base) }
+    /// The shared runtime prepared once to the end of its own initializer, for
+    /// packages prepared with [`request`].
+    async fn runtime_baseline(preparation: &LocalPreparation, runtime: &[u8]) -> RuntimeBaseline {
+        preparation
+            .prepare_runtime_baseline(
+                runtime,
+                &request(runtime, Vec::new()).baseline(),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_or_else(|error| {
+                panic!("the shared runtime must prepare as a baseline: {error}")
+            })
     }
-    .expect("the baseline must load");
-    let identity = request.identity().expect("the layer's identity");
-    // SAFETY: LocalPreparation in this process produced these bytes.
-    let layer =
-        unsafe { engine.decode_builder_output_over(&loaded, layer.prepared_bytes(), identity) }
-            .expect("the layer must decode over its baseline");
-    (base, layer)
-}
 
-#[tokio::test]
-async fn a_layered_package_preserves_its_initialized_handler_response() {
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    let (whole, request) = prepare(&preparation, &runtime, package("alpha"))
-        .await
-        .expect("alpha must prepare whole");
-    let baseline = runtime_baseline(&preparation, &runtime).await;
-    let (base, layer) = layer_over(&preparation, &baseline, &runtime, package("alpha")).await;
-    let whole_reactor = no_egress::reactor_without_egress(7300);
-    whole_reactor.context.begin_slice(1, 1);
-    let whole = finish_across_restored_stores(
-        {
-            // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
-            unsafe { ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor) }
-        },
-        &whole_reactor,
-        "/greeting",
-    )
-    .await;
-    let layered_reactor = no_egress::reactor_without_egress(7301);
-    layered_reactor.context.begin_slice(1, 1);
-    let layered = finish_across_restored_stores(
-        {
-            // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
-            unsafe { ReturnedGuest::layered(base, layer, &layered_reactor) }
-        },
-        &layered_reactor,
-        "/greeting",
-    )
-    .await;
-    assert_eq!(
-        whole, "alpha:/greeting",
-        "the whole preparation must retain alpha's initialized handler"
-    );
-    assert_eq!(
-        layered, whole,
-        "layered and whole preparation must retain the same initialized handler response"
-    );
-}
+    /// `files` prepared as a layer over `baseline`, with the baseline, both as a
+    /// cell receives them.
+    async fn layer_over(
+        preparation: &LocalPreparation,
+        baseline: &RuntimeBaseline,
+        runtime: &[u8],
+        files: Vec<PlatformFile>,
+    ) -> (PreparedTemplate, PreparedTemplate) {
+        let request = request(runtime, files);
+        let layer = preparation
+            .prepare_over(baseline, &request, &CancellationToken::new())
+            .await
+            .unwrap_or_else(|error| panic!("the package must prepare over the baseline: {error}"));
+        let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
+        let base_identity = request
+            .baseline()
+            .identity()
+            .expect("the baseline's identity");
+        // SAFETY: LocalPreparation in this process produced these bytes.
+        let base = unsafe {
+            engine.decode_builder_output(baseline.product().prepared_bytes(), base_identity)
+        }
+        .expect("the baseline must decode");
+        let loaded = {
+            // SAFETY: This product was decoded from LocalPreparation output in this test module.
+            unsafe { engine.load_prepared_product(&base) }
+        }
+        .expect("the baseline must load");
+        let identity = request.identity().expect("the layer's identity");
+        // SAFETY: LocalPreparation in this process produced these bytes.
+        let layer =
+            unsafe { engine.decode_builder_output_over(&loaded, layer.prepared_bytes(), identity) }
+                .expect("the layer must decode over its baseline");
+        (base, layer)
+    }
 
-#[tokio::test(start_paused = true)]
-async fn packages_over_one_runtime_baseline_each_answer_across_restored_stores() {
-    let runtime = isoplane_fixtures::mono_runtime();
-    let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-    let baseline = runtime_baseline(&preparation, &runtime).await;
-    let (alpha_base, alpha) = layer_over(&preparation, &baseline, &runtime, package("alpha")).await;
-    let (beta_base, beta) = layer_over(&preparation, &baseline, &runtime, package("beta")).await;
-    let alpha_reactor = no_egress::reactor_without_egress(7300);
-    alpha_reactor.context.begin_slice(1, 1);
-    let alpha = finish_across_restored_stores(
-        {
-            // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
-            unsafe { ReturnedGuest::layered(alpha_base, alpha, &alpha_reactor) }
-        },
-        &alpha_reactor,
-        "/greeting",
-    )
-    .await;
-    let beta_reactor = no_egress::reactor_without_egress(7301);
-    beta_reactor.context.begin_slice(1, 1);
-    let beta = finish_across_restored_stores(
-        {
-            // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
-            unsafe { ReturnedGuest::layered(beta_base, beta, &beta_reactor) }
-        },
-        &beta_reactor,
-        "/beta",
-    )
-    .await;
-    assert_eq!(
-        alpha, "alpha:/greeting",
-        "alpha's layer must answer with its own handler over the shared baseline"
-    );
-    assert!(
-        beta.contains("\"Path\":\"/beta\""),
-        "beta's layer must answer with its own handler over the same baseline: {beta}"
-    );
+    #[tokio::test]
+    async fn a_layered_package_preserves_its_initialized_handler_response() {
+        let runtime = isoplane_fixtures::mono_runtime();
+        let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
+        let (whole, request) = prepare(&preparation, &runtime, package("alpha"))
+            .await
+            .expect("alpha must prepare whole");
+        let baseline = runtime_baseline(&preparation, &runtime).await;
+        let (base, layer) = layer_over(&preparation, &baseline, &runtime, package("alpha")).await;
+        let whole_reactor = no_egress::reactor_without_egress(7300);
+        whole_reactor.context.begin_slice(1, 1);
+        let whole = finish_across_restored_stores(
+            {
+                // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
+                unsafe { ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor) }
+            },
+            &whole_reactor,
+            "/greeting",
+        )
+        .await;
+        let layered_reactor = no_egress::reactor_without_egress(7301);
+        layered_reactor.context.begin_slice(1, 1);
+        let layered = finish_across_restored_stores(
+            {
+                // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
+                unsafe { ReturnedGuest::layered(base, layer, &layered_reactor) }
+            },
+            &layered_reactor,
+            "/greeting",
+        )
+        .await;
+        assert_eq!(
+            whole, "alpha:/greeting",
+            "the whole preparation must retain alpha's initialized handler"
+        );
+        assert_eq!(
+            layered, whole,
+            "layered and whole preparation must retain the same initialized handler response"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn packages_over_one_runtime_baseline_each_answer_across_restored_stores() {
+        let runtime = isoplane_fixtures::mono_runtime();
+        let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
+        let baseline = runtime_baseline(&preparation, &runtime).await;
+        let (alpha_base, alpha) =
+            layer_over(&preparation, &baseline, &runtime, package("alpha")).await;
+        let (beta_base, beta) =
+            layer_over(&preparation, &baseline, &runtime, package("beta")).await;
+        let alpha_reactor = no_egress::reactor_without_egress(7300);
+        alpha_reactor.context.begin_slice(1, 1);
+        let alpha = finish_across_restored_stores(
+            {
+                // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
+                unsafe { ReturnedGuest::layered(alpha_base, alpha, &alpha_reactor) }
+            },
+            &alpha_reactor,
+            "/greeting",
+        )
+        .await;
+        let beta_reactor = no_egress::reactor_without_egress(7301);
+        beta_reactor.context.begin_slice(1, 1);
+        let beta = finish_across_restored_stores(
+            {
+                // SAFETY: LocalPreparation/RuntimeBaseline produced both products through the local layer_over helper.
+                unsafe { ReturnedGuest::layered(beta_base, beta, &beta_reactor) }
+            },
+            &beta_reactor,
+            "/beta",
+        )
+        .await;
+        assert_eq!(
+            alpha, "alpha:/greeting",
+            "alpha's layer must answer with its own handler over the shared baseline"
+        );
+        assert!(
+            beta.contains("\"Path\":\"/beta\""),
+            "beta's layer must answer with its own handler over the same baseline: {beta}"
+        );
+    }
 }
