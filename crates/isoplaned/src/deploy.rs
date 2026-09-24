@@ -4,9 +4,17 @@ use std::path::Path;
 
 use isoplane_abi::config::AppManifest;
 
+#[cfg(target_os = "linux")]
+mod baseline;
+
+/// The file in a layered version's artifact directory naming its baseline.
+const BASELINE_FILE: &str = "baseline";
+
 /// Local compiler output store and preparation entry point.
 pub struct Deployer {
     root: std::path::PathBuf,
+    #[cfg(target_os = "linux")]
+    baselines: baseline::Baselines,
 }
 
 impl Deployer {
@@ -15,6 +23,8 @@ impl Deployer {
         private_artifact_directory(root)?;
         Ok(Self {
             root: root.to_path_buf(),
+            #[cfg(target_os = "linux")]
+            baselines: baseline::Baselines::default(),
         })
     }
 }
@@ -45,7 +55,8 @@ pub struct PreparationContext<'a> {
     pub cancellation: &'a tokio_util::sync::CancellationToken,
 }
 
-struct Publication {
+/// A published artifact directory, still owned until its caller keeps it.
+struct Published {
     publication: tempfile::TempDir,
     _publication_lock: std::fs::File,
     receipt: PreparedReceipt,
@@ -102,19 +113,33 @@ impl Deployer {
         let digest: [u8; 32] = hex::decode(&receipt.manifest_sha256)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("prepared manifest SHA256 must be 32 bytes"))?;
+        let artifact = self.root.join(&receipt.artifact_key.0);
+        let runtime_profile = receipt.runtime_profile.digest()?;
+        #[cfg(target_os = "linux")]
+        if let Some(name) = baseline::named_by(&artifact)? {
+            let base = self.base(engine, &name, runtime_profile)?;
+            // SAFETY: as below; the base is a published baseline this deployer never modifies.
+            return Ok(unsafe {
+                engine.restore_prepared_over(
+                    &base,
+                    &artifact.join("prepared"),
+                    digest,
+                    runtime_profile,
+                    &[],
+                )
+            }?);
+        }
         // SAFETY: this checked operator-owned root holds controlled local compiler output; publication
         // creates new files and never modifies payloads. The engine contains a later storage fault.
         Ok(unsafe {
-            engine.restore_prepared(
-                &self.root.join(&receipt.artifact_key.0).join("prepared"),
-                digest,
-                receipt.runtime_profile.digest()?,
-                &[],
-            )
+            engine.restore_prepared(&artifact.join("prepared"), digest, runtime_profile, &[])
         }?)
     }
 
     /// Prepare and publish a local immutable artifact.
+    /// On Linux, a module that separates its runtime's own initialization is
+    /// prepared as a layer over the runtime baseline this node publishes once
+    /// for it.
     pub async fn prepare_local(
         &self,
         manifest: &AppManifest,
@@ -122,8 +147,8 @@ impl Deployer {
         options: &DeployOptions,
         context: &PreparationContext<'_>,
     ) -> anyhow::Result<PreparedReceipt> {
-        let publication = self
-            .prepare_publication(
+        let (admitted, request, identity) = self
+            .admit_request(
                 manifest,
                 wasm,
                 options,
@@ -131,19 +156,59 @@ impl Deployer {
                 isoplane_prepare::PortableTemplate::Omitted,
             )
             .await?;
-        let _directory = publication.publication.keep();
-        Ok(publication.receipt)
+        #[cfg(target_os = "linux")]
+        if admitted.has_runtime_stage() {
+            let held = self.baseline(wasm, &request, context).await?;
+            let product = context
+                .provider
+                .prepare_over(&held.published, &request, context.cancellation)
+                .await?;
+            // SAFETY: as for whole output below.
+            let artifact = unsafe {
+                context.engine.decode_builder_output_over(
+                    &held.template,
+                    product.prepared_bytes(),
+                    identity,
+                )
+            }?;
+            let published =
+                self.publish(&artifact, manifest, options, context, Some(&held.name))?;
+            let _directory = published.publication.keep();
+            return Ok(published.receipt);
+        }
+        // Only Linux maps a layer over a baseline, so elsewhere every module prepares whole.
+        #[cfg(not(target_os = "linux"))]
+        drop(admitted);
+        let product = context
+            .provider
+            .prepare(wasm, &request, context.cancellation)
+            .await?;
+        // SAFETY: only the host-selected trusted Preparation provider supplies these bytes;
+        // source uploads never reach this decoder as native artifacts.
+        let artifact = unsafe {
+            context
+                .engine
+                .decode_builder_output(product.prepared_bytes(), identity)
+        }?;
+        let published = self.publish(&artifact, manifest, options, context, None)?;
+        let _directory = published.publication.keep();
+        Ok(published.receipt)
     }
 
-    async fn prepare_publication(
+    /// Admits `wasm` and builds the request that prepares it.
+    async fn admit_request(
         &self,
         manifest: &AppManifest,
         wasm: &[u8],
         opts: &DeployOptions,
         context: &PreparationContext<'_>,
         portable_template: isoplane_prepare::PortableTemplate,
-    ) -> anyhow::Result<Publication> {
-        admit_local(manifest, wasm)?;
+    ) -> anyhow::Result<(
+        isoplane_control::validator::ValidationReport,
+        isoplane_prepare::BuildRequest,
+        isoplane_engine::prepared::PreparedIdentity,
+    )> {
+        let admitted = admit_local(manifest, wasm)?;
         let mut runtime_config = Vec::new();
         context
             .runtime_configuration
@@ -170,23 +235,28 @@ impl Deployer {
             portable_template,
         };
         let identity = request.identity()?;
-        let product = context
-            .provider
-            .prepare(wasm, &request, context.cancellation)
-            .await?;
-        // SAFETY: only the host-selected trusted Preparation provider supplies these bytes;
-        // source uploads never reach this decoder as native artifacts.
-        let artifact = unsafe {
-            context
-                .engine
-                .decode_builder_output(product.prepared_bytes(), identity)
-        }?;
+        Ok((admitted, request, identity))
+    }
+
+    /// Publishes `artifact` in a new artifact directory, naming the baseline
+    /// it was prepared over, if any, and returns its content receipt.
+    fn publish(
+        &self,
+        artifact: &isoplane_engine::prepared::PreparedTemplate,
+        manifest: &AppManifest,
+        opts: &DeployOptions,
+        context: &PreparationContext<'_>,
+        baseline: Option<&str>,
+    ) -> anyhow::Result<Published> {
         let publication = tempfile::Builder::new()
             .prefix("artifact-")
             .tempdir_in(&self.root)?;
         let publication_lock = std::fs::File::create(publication.path().join("owner.lock"))?;
         fs4::FileExt::lock(&publication_lock)?;
         std::fs::write(publication.path().join("version"), &opts.version.0)?;
+        if let Some(name) = baseline {
+            std::fs::write(publication.path().join(BASELINE_FILE), name)?;
+        }
         let directory = publication.path().join("prepared");
         let clock = std::time::Instant::now();
         artifact.publish(&directory)?;
@@ -206,7 +276,7 @@ impl Deployer {
         };
         let publication_ms = clock.elapsed().as_secs_f64() * 1000.0;
         tracing::info!(publication_ms, "local compiler artifact published");
-        Ok(Publication {
+        Ok(Published {
             publication,
             _publication_lock: publication_lock,
             receipt,

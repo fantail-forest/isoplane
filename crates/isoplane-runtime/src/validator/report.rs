@@ -94,6 +94,15 @@ impl ValidationReport {
             .contains(&imports::exports::INITIALIZE)
     }
 
+    /// Whether the module separates its runtime's own initialization, so its
+    /// state can be prepared once as a baseline shared by applications.
+    pub fn has_runtime_stage(&self) -> bool {
+        self.has_initialize()
+            && self
+                .optional_exports
+                .contains(&imports::exports::INITIALIZE_RUNTIME)
+    }
+
     /// The capability manifest as a tenant reads it: powers granted by
     /// group, what was not requested, and what arrived through the PAL.
     pub fn manifest(&self) -> String {
