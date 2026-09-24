@@ -48,11 +48,9 @@ impl Initialization {
     }
 }
 
-/// Initialized portable bytes and explicit replay state, ready for trusted compilation.
+/// What initialization observed and the replay state it leaves.
 #[derive(Serialize, Deserialize)]
 pub struct Initialized {
-    /// Portable initialized module; its init export is removed.
-    pub wasm: Vec<u8>,
     /// Units deferred because they requested forbidden capabilities.
     pub deferred: Vec<u32>,
     /// CPU charged by the shared engine across all passes.
@@ -75,14 +73,23 @@ pub struct Initialized {
     pub compiled: bool,
 }
 
+/// A portable initialization: the initialized module, ready for trusted
+/// compilation, and what initialization observed.
+pub struct InitializedModule {
+    /// Portable initialized module; its init export is removed.
+    pub wasm: Vec<u8>,
+    /// What initialization observed and the replay state it leaves.
+    pub initialized: Initialized,
+}
+
 /// Execute a validated application under the supplied worker engine in a preparation process.
 /// Fails if initialization traps, exceeds a limit, or creates state the schema cannot preserve.
 pub fn initialize(
     engine: &IsoplaneEngine,
     wasm: &[u8],
     request: &Initialization,
-) -> Result<Initialized, PrepareError> {
-    initialize_with_cache(
+) -> Result<InitializedModule, PrepareError> {
+    let output = initialize_with_cache(
         engine,
         wasm,
         request,
@@ -90,21 +97,44 @@ pub fn initialize(
         &isoplane_engine::PlatformFiles::default(),
         None,
         CaptureMode::Portable,
-    )
-    .map(|output| output.initialized)
+    )?;
+    match output.captured {
+        Captured::Portable(wasm) => Ok(InitializedModule {
+            wasm,
+            initialized: output.initialized,
+        }),
+        #[cfg(target_os = "linux")]
+        Captured::Layered { .. } => Err(PrepareError::InvalidRequest(
+            "portable initialization captured a layer",
+        )),
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum CaptureMode {
     Portable,
     #[cfg(target_os = "linux")]
-    Layered(isoplane_engine::prepared::PreparedIdentity),
+    Layered {
+        identity: isoplane_engine::prepared::PreparedIdentity,
+        portable: crate::PortableTemplate,
+    },
+}
+
+/// What a capture produced, in the representation its mode asked for.
+pub(crate) enum Captured {
+    /// The initialized portable module, which portable consumers compile.
+    Portable(Vec<u8>),
+    /// The initialized layer, and the portable module only when requested.
+    #[cfg(target_os = "linux")]
+    Layered {
+        prepared: Box<isoplane_engine::prepared::PreparedTemplate>,
+        portable: Option<Vec<u8>>,
+    },
 }
 
 pub(crate) struct InitializationOutput {
     pub initialized: Initialized,
-    #[cfg(target_os = "linux")]
-    pub prepared: Option<isoplane_engine::prepared::PreparedTemplate>,
+    pub captured: Captured,
 }
 
 pub(crate) fn initialize_with_cache(
@@ -137,7 +167,7 @@ pub(crate) fn initialize_with_cache(
         None => match capture {
             CaptureMode::Portable => engine.load_template(&instrumented.wasm),
             #[cfg(target_os = "linux")]
-            CaptureMode::Layered(_) => engine.load_layer_source(&instrumented.wasm),
+            CaptureMode::Layered { .. } => engine.load_layer_source(&instrumented.wasm),
         }
         .map(|template| (template, true)),
     }
@@ -251,20 +281,22 @@ pub(crate) fn initialize_with_cache(
                 });
             }
         } else {
-            #[cfg(target_os = "linux")]
-            let prepared = match capture {
-                CaptureMode::Portable => None,
-                CaptureMode::Layered(identity) => Some(
-                    engine
-                        .prepare_template_with_files(wasm, identity, application_files.clone())
-                        .map_err(|error| PrepareError::State(error.into()))?,
-                ),
+            let captured = match capture {
+                CaptureMode::Portable => Captured::Portable(wasm.to_vec()),
+                #[cfg(target_os = "linux")]
+                CaptureMode::Layered { identity, portable } => Captured::Layered {
+                    prepared: Box::new(
+                        engine
+                            .prepare_template_with_files(wasm, identity, application_files.clone())
+                            .map_err(|error| PrepareError::State(error.into()))?,
+                    ),
+                    portable: (portable == crate::PortableTemplate::Returned)
+                        .then(|| wasm.to_vec()),
+                },
             };
             return Ok(InitializationOutput {
-                #[cfg(target_os = "linux")]
-                prepared,
+                captured,
                 initialized: Initialized {
-                    wasm: wasm.to_vec(),
                     deferred: Vec::new(),
                     cpu_ns,
                     preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
@@ -292,11 +324,28 @@ pub(crate) fn initialize_with_cache(
             })?
             .unwrap_or_default();
         let deferred: Vec<_> = deferred.into_iter().collect();
-        #[cfg(target_os = "linux")]
-        let prepared = match capture {
-            CaptureMode::Portable => None,
-            CaptureMode::Layered(identity) => Some(
-                engine
+        // Reinstantiation verifies captured state without invoking the initializer again.
+        let (restored_template, captured, representation) = match capture {
+            CaptureMode::Portable => {
+                let captured = instance
+                    .capture_mutable_state()
+                    .map_err(PrepareError::State)?;
+                let module = portable_module(
+                    &instrumented,
+                    instance.memory(),
+                    &captured.globals,
+                    &deferred,
+                    &prepared_resources,
+                )?;
+                let template = engine
+                    .load_template(&module)
+                    .and_then(|template| template.with_application_files(application_files.clone()))
+                    .map_err(PrepareError::State)?;
+                (template, captured, Captured::Portable(module))
+            }
+            #[cfg(target_os = "linux")]
+            CaptureMode::Layered { identity, portable } => {
+                let prepared = engine
                     .prepare_initialized_template(
                         &template,
                         &mut instance,
@@ -304,40 +353,34 @@ pub(crate) fn initialize_with_cache(
                         prepared_resources.clone(),
                         deferred.clone(),
                     )
-                    .map_err(|error| PrepareError::State(error.into()))?,
-            ),
-        };
-        let captured = instance
-            .capture_mutable_state()
-            .map_err(PrepareError::State)?;
-        let globals = captured_globals(&instrumented, &captured.globals)?;
-        let mut output = bake::bake(&instrumented.wasm, instance.memory(), &globals, &deferred)
-            .map_err(PrepareError::State)?;
-        let resources =
-            postcard::to_allocvec(&prepared_resources).map_err(PrepareError::Encoding)?;
-        wasm_encoder::Section::append_to(
-            &wasm_encoder::CustomSection {
-                name: isoplane_abi::native_io::PREPARED_RESOURCES_SECTION.into(),
-                data: resources.into(),
-            },
-            &mut output,
-        );
-        // Reinstantiation verifies captured state without invoking the initializer again.
-        let restored_template = match capture {
-            CaptureMode::Portable => engine
-                .load_template(&output)
-                .and_then(|template| template.with_application_files(application_files.clone()))
-                .map_err(PrepareError::State)?,
-            #[cfg(target_os = "linux")]
-            CaptureMode::Layered(_) => unsafe {
-                // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                engine.load_prepared_product(
-                    prepared
-                        .as_ref()
-                        .ok_or(PrepareError::InvalidRequest("missing initialized layer"))?,
+                    .map_err(|error| PrepareError::State(error.into()))?;
+                let captured = instance
+                    .capture_mutable_state()
+                    .map_err(PrepareError::State)?;
+                let portable = match portable {
+                    crate::PortableTemplate::Returned => Some(portable_module(
+                        &instrumented,
+                        instance.memory(),
+                        &captured.globals,
+                        &deferred,
+                        &prepared_resources,
+                    )?),
+                    crate::PortableTemplate::Omitted => None,
+                };
+                let template = unsafe {
+                    // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
+                    engine.load_prepared_product(&prepared)
+                }
+                .map_err(|error| PrepareError::State(error.into()))?;
+                (
+                    template,
+                    captured,
+                    Captured::Layered {
+                        prepared: Box::new(prepared),
+                        portable,
+                    },
                 )
             }
-            .map_err(|error| PrepareError::State(error.into()))?,
         };
         let mut restored = engine
             .activate_initialization(
@@ -370,10 +413,8 @@ pub(crate) fn initialize_with_cache(
         let state = state.lock();
         let logs = state.logs.clone();
         return Ok(InitializationOutput {
-            #[cfg(target_os = "linux")]
-            prepared,
+            captured: representation,
             initialized: Initialized {
-                wasm: output,
                 deferred,
                 cpu_ns,
                 preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
@@ -388,6 +429,29 @@ pub(crate) fn initialize_with_cache(
         });
     }
     Err(PrepareError::NoConvergence(request.max_passes))
+}
+
+/// The instrumented module with the initialized memory, globals and deferred
+/// units baked in, and the resources the host holds for it.
+fn portable_module(
+    instrumented: &bake::Instrumented,
+    memory: &[u8],
+    globals: &[isoplane_engine::snapshot::GlobalValue],
+    deferred: &[u32],
+    resources: &isoplane_abi::native_io::PreparedResources,
+) -> Result<Vec<u8>, PrepareError> {
+    let globals = captured_globals(instrumented, globals)?;
+    let mut module =
+        bake::bake(&instrumented.wasm, memory, &globals, deferred).map_err(PrepareError::State)?;
+    let resources = postcard::to_allocvec(resources).map_err(PrepareError::Encoding)?;
+    wasm_encoder::Section::append_to(
+        &wasm_encoder::CustomSection {
+            name: isoplane_abi::native_io::PREPARED_RESOURCES_SECTION.into(),
+            data: resources.into(),
+        },
+        &mut module,
+    );
+    Ok(module)
 }
 
 fn captured_globals(

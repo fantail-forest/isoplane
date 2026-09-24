@@ -178,7 +178,10 @@ impl PreInitializer {
                 max_passes: DEFAULT_INITIALIZATION_PASSES,
                 log_bytes: DEFAULT_INITIALIZATION_LOG_BYTES,
             };
-            let output = crate::initialize(&engine, wasm, &request).map_err(map_error)?;
+            let crate::InitializedModule {
+                wasm: template_wasm,
+                initialized: output,
+            } = crate::initialize(&engine, wasm, &request).map_err(map_error)?;
             let digest = BuildRequest {
                 guest_memory_bytes: self.memory_limit,
                 validation_limits: Default::default(),
@@ -194,13 +197,14 @@ impl PreInitializer {
                 },
                 initialization: request,
                 input_hash: req.module_hash.0,
+                portable_template: crate::PortableTemplate::Returned,
             }
             .identity()
             .map_err(|error| PreInitError::Trapped(error.into()))?
             .initialization_hash;
             Ok(PreInitOutcome {
-                template_bytes: output.wasm.len() as u64,
-                template_wasm: output.wasm,
+                template_bytes: template_wasm.len() as u64,
+                template_wasm,
                 deferred_units: output.deferred,
                 passes: output.passes,
                 init_cpu_ms: output.preparation_cpu_ns / 1_000_000,

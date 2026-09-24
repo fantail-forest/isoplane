@@ -11,19 +11,26 @@ use crate::{BuildRequest, BuildStage, Initialized, PrepareError, WorkerFailure};
 /// Complete preparation output and the actual work recorded by its producer.
 #[derive(Serialize, Deserialize)]
 pub struct BuildProduct {
-    /// Initialized portable state and replay observations.
+    /// What initialization observed and the replay state it leaves.
     pub initialized: Initialized,
     /// Initialization, compilation and state-verification wall time.
     pub preinit_ms: f64,
     /// Prepared-state encoding and, for portable output, final native compilation wall time.
     pub compile_ms: f64,
     prepared: Vec<u8>,
+    portable: Option<Vec<u8>>,
 }
 
 impl BuildProduct {
     /// Native and explicit-state transport for the matching engine's trusted decoder.
     pub fn prepared_bytes(&self) -> &[u8] {
         &self.prepared
+    }
+
+    /// The initialized portable module, with its init export removed, when the
+    /// request asked for it with [`crate::PortableTemplate::Returned`].
+    pub fn portable_template(&self) -> Option<&[u8]> {
+        self.portable.as_deref()
     }
 }
 
@@ -116,7 +123,10 @@ fn prepare(
         .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
     let start = Instant::now();
     #[cfg(target_os = "linux")]
-    let capture = crate::initialize::CaptureMode::Layered(identity);
+    let capture = crate::initialize::CaptureMode::Layered {
+        identity,
+        portable: request.portable_template,
+    };
     #[cfg(not(target_os = "linux"))]
     let capture = crate::initialize::CaptureMode::Portable;
     let output = crate::initialize::initialize_with_cache(
@@ -132,34 +142,34 @@ fn prepare(
         capture,
     )
     .map_err(|error| WorkerFailure::new(BuildStage::Initialization, error.into()))?;
-    let initialized = output.initialized;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
-    #[cfg(target_os = "linux")]
-    let prepared = output
-        .prepared
-        .ok_or_else(|| {
-            WorkerFailure::new(
-                BuildStage::Artifact,
-                anyhow::anyhow!("layered initialization did not capture a template"),
+    let (prepared, portable) = match output.captured {
+        #[cfg(target_os = "linux")]
+        crate::initialize::Captured::Layered { prepared, portable } => (
+            prepared
+                .encode_builder_output()
+                .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?,
+            portable,
+        ),
+        crate::initialize::Captured::Portable(module) => (
+            encode(
+                &engine,
+                &module,
+                identity,
+                request.application_files.clone(),
             )
-        })?
-        .encode_builder_output()
-        .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error.into()))?;
-    #[cfg(not(target_os = "linux"))]
-    let prepared = encode(
-        &engine,
-        &initialized.wasm,
-        identity,
-        request.application_files.clone(),
-    )
-    .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?;
+            .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?,
+            (request.portable_template == crate::PortableTemplate::Returned).then_some(module),
+        ),
+    };
     let compile_ms = start.elapsed().as_secs_f64() * 1000.0;
     Ok(BuildProduct {
-        initialized,
+        initialized: output.initialized,
         preinit_ms,
         compile_ms,
         prepared,
+        portable,
     })
 }
 
@@ -184,7 +194,6 @@ fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdent
     Ok(request.identity()?)
 }
 
-#[cfg(not(target_os = "linux"))]
 fn encode(
     engine: &IsoplaneEngine,
     wasm: &[u8],

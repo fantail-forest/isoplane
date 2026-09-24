@@ -19,8 +19,8 @@ use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile
 use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, BuildStage, Initialization, LocalPreparation, Preparation,
-    PrepareError, RuntimeProfile,
+    BuildProduct, BuildRequest, BuildStage, Initialization, LocalPreparation, PortableTemplate,
+    Preparation, PrepareError, RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -81,6 +81,7 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
             log_bytes: 16 * 1024,
         },
         input_hash: *blake3::hash(runtime).as_bytes(),
+        portable_template: PortableTemplate::Omitted,
     }
 }
 
