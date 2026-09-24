@@ -137,9 +137,11 @@ impl Deployer {
     }
 
     /// Prepare and publish a local immutable artifact.
-    /// On Linux, a module that separates its runtime's own initialization is
-    /// prepared as a layer over the runtime baseline this node publishes once
-    /// for it.
+    /// On Linux, every module with an initializer is prepared as a layer over
+    /// the runtime baseline this node publishes once for it: the state its
+    /// `isoplane_initialize_runtime` export leaves, or its uninitialized state
+    /// when it has none. A module without an initializer has no state to
+    /// capture and is prepared whole.
     pub async fn prepare_local(
         &self,
         manifest: &AppManifest,
@@ -157,7 +159,7 @@ impl Deployer {
             )
             .await?;
         #[cfg(target_os = "linux")]
-        if admitted.has_runtime_stage() {
+        if admitted.has_initialize() {
             let held = self.baseline(wasm, &request, context).await?;
             let product = context
                 .provider
