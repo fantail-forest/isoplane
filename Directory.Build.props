@@ -3,7 +3,7 @@
        the CLI tool and the generated template carry it; scripts/release-version.py
        moves it together with the in-repo SDK pins that must match. -->
   <PropertyGroup>
-    <Version>0.1.0-preview.2</Version>
+    <Version>0.1.0-preview.3</Version>
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>

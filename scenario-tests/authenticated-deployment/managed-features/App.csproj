@@ -1,4 +1,4 @@
-<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.2">
+<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.3">
   <PropertyGroup>
     <PublishAot>false</PublishAot>
     <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>

@@ -7,6 +7,6 @@
   </PropertyGroup>
   <Import Project="../buildTransitive/Isoplane.AspNetCore.props" Condition="'$(_IsoplaneAspNetCorePropsImported)' != 'true'" />
   <ItemGroup>
-    <PackageReference Include="Isoplane.AspNetCore" Version="0.1.0-preview.2" />
+    <PackageReference Include="Isoplane.AspNetCore" Version="0.1.0-preview.3" />
   </ItemGroup>
 </Project>
