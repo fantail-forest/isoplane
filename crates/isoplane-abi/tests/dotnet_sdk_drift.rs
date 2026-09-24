@@ -333,6 +333,22 @@ fn the_mono_runtime_loader_reads_packages_where_the_host_serves_them() {
 }
 
 #[test]
+fn the_mono_debug_runtime_reads_its_debugger_where_the_host_serves_it() {
+    let source = sdk_file("../native/mono_entry.c");
+    let prefix = "#define ISOPLANE_DEBUG_AGENT_PATH \"";
+    let path = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(prefix))
+        .and_then(|value| value.strip_suffix('"'))
+        .expect("the Mono entry must declare where it reads the debug session");
+    assert_eq!(
+        path,
+        isoplane_abi::filesystem::DEBUG_AGENT_PATH,
+        "a debug runtime must look for its debugger where a local debug session serves it"
+    );
+}
+
+#[test]
 fn mono_memory_accounting_uses_the_contracts_wasm_page_size() {
     let patch = include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch");
     let expression = format!(

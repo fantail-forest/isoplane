@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the application-independent Mono runtime module or one application
-# package fixture: the package is what `isoplane bundle` writes, unpacked.
+# package fixture: the package is the archive `isoplane bundle` writes.
 # Usage: guest-runtime/tests/packages/build.sh [--if-stale] --fixture runtime|alpha|beta|native|web
 # Serialised with the other C# guest builds: they share the SDK project's
 # intermediate files.
@@ -42,8 +42,9 @@ mkdir -p "$HERE/out"
 
 SDK="$ROOT/guest-sdks/dotnet"
 if [ "$FIXTURE" = runtime ]; then
-  OUT="$HERE/out/isoplane_mono_runtime.wasm"
-  OUTPUTS=("$OUT" "$OUT.runtime")
+  OUT="$HERE/out/runtime/Isoplane.MonoRuntime.wasm"
+  DEBUG="$HERE/out/runtime/Isoplane.MonoRuntime.Debug.wasm"
+  OUTPUTS=("$OUT" "$OUT.runtime" "$DEBUG" "$DEBUG.runtime" "$HERE/out/runtime/runtime-build.json")
   INPUTS=$(python3 "$TOOLS" fingerprint "$SDK" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
   if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
      && [ "$(cat "$OUT.runtime")" = "$(python3 "$TOOLS" runtime-identity "$FEED/Isoplane.GuestRuntime.props" mono)" ] \
@@ -51,23 +52,21 @@ if [ "$FIXTURE" = runtime ]; then
     echo "==> shared Mono runtime is up to date"
     exit 0
   fi
-  rm -f "$OUT"
-  # Symbols stay in the interpreter's module so a trap names its frames.
-  ISOPLANE_OUT_DIR="$HERE/out" ISOPLANE_OUT=isoplane_mono_runtime "$SDK/build-guest.sh" "$SDK/MonoRuntime" \
-    -p:WasmNativeStrip=false --artifacts-path "$HERE/obj/runtime"
+  rm -f "$OUT" "$DEBUG"
+  # This build already holds the lock the runtime's own script takes.
+  ISOPLANE_FIXTURE_LOCK="$SDK/MonoRuntime/build.sh" "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
 else
   OUT="$HERE/out/$FIXTURE"
   OUTPUTS=("$OUT.tar")
   INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/$FIXTURE" "$HERE/Package.props" "$HERE/Package.targets" "$SDK" "$ROOT/tools/Isoplane.Cli" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
-  if [ "$IF_STALE" = 1 ] && [ -f "$OUT/application.json" ] \
+  if [ "$IF_STALE" = 1 ] && [ -f "$OUT.tar" ] \
      && python3 "$TOOLS" fresh "$OUT.fixture.json" "$INPUTS" "${OUTPUTS[@]}"; then
     echo "==> package $FIXTURE is up to date"
     exit 0
   fi
   CLI="$(python3 "$TOOLS" isoplane-cli "$ROOT")"
-  rm -rf "$OUT" "$OUT.tar"
+  rm -f "$OUT.tar"
   dotnet "$CLI" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
-  python3 -c 'import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter="data")' "$OUT.tar" "$OUT"
 fi
 
 python3 "$TOOLS" record "$OUT.fixture.json" "$INPUTS" "${OUTPUTS[@]}"

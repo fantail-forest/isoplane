@@ -14,8 +14,8 @@ public sealed class IsoplaneDebugManifest : Microsoft.Build.Utilities.Task
     [Required] public string Module { get; set; } = "";
     /// <summary>The symbol artifact: a portable PDB for interpretation or the DWARF-bearing native module.</summary>
     [Required] public string Symbols { get; set; } = "";
-    /// <summary>The validated interpreted debugger peer, or native debugging transport identifier.</summary>
-    [Required] public string Endpoint { get; set; } = "";
+    /// <summary>The native debugging transport identifier; empty for an interpreted module, whose debugger the session serves it.</summary>
+    public string Endpoint { get; set; } = "";
     /// <summary>The output XML manifest.</summary>
     [Required] public string Output { get; set; } = "";
 
@@ -33,7 +33,7 @@ public sealed class IsoplaneDebugManifest : Microsoft.Build.Utilities.Task
         using (var writer = XmlWriter.Create(Output, new XmlWriterSettings { Indent = true }))
         {
             writer.WriteStartElement("LocalDebug");
-            writer.WriteAttributeString("endpoint", Endpoint);
+            if (Endpoint.Length != 0) writer.WriteAttributeString("endpoint", Endpoint);
             WriteFile(writer, "Module", Module);
             WriteFile(writer, "Symbols", Symbols);
             writer.WriteEndElement();

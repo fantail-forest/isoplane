@@ -3,6 +3,7 @@
 mod bake;
 mod initialize;
 mod network;
+pub mod package;
 pub use network::InitializationNetwork;
 
 pub use initialize::{initialize, Initialization, Initialized};

@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 extern void __wasm_call_ctors(void);
 extern int initialize_runtime(void);
 extern void *mono_wasm_assembly_load(const char *);
@@ -26,6 +28,40 @@ static void fail(const char *message)
     host_abort((uint8_t *)message, (int32_t)strlen(message));
     __builtin_trap();
 }
+#ifdef ISOPLANE_LOCAL_DEBUG
+#define ISOPLANE_DEBUG_AGENT_PATH "/.isoplane/debug-agent"
+
+// The session's debugger endpoint, which the host serves only to a local
+// debug session. Only a loopback port is taken from it, so the file cannot
+// choose any other agent option.
+static void debug_agent_options(char *options, size_t size)
+{
+    int file = open(ISOPLANE_DEBUG_AGENT_PATH, O_RDONLY);
+    if (file < 0) fail("local debugging requires the debug session the host serves");
+    char endpoint[32] = {0};
+    // A positioned read is a single descriptor read; a plain read goes through
+    // a stream the PAL serves without blocking, which can return nothing yet.
+    ssize_t read_bytes = pread(file, endpoint, sizeof(endpoint) - 1, 0);
+    close(file);
+    size_t length = read_bytes < 0 ? 0 : (size_t)read_bytes;
+    static const char prefix[] = "127.0.0.1:";
+    size_t start = sizeof(prefix) - 1;
+    unsigned long port = 0;
+    int valid = length > start && length - start <= 5 && memcmp(endpoint, prefix, start) == 0;
+    for (size_t index = start; valid && index < length; index++) {
+        valid = endpoint[index] >= '0' && endpoint[index] <= '9';
+        port = port * 10 + (unsigned long)(endpoint[index] - '0');
+    }
+    if (!valid || port < 1 || port > 65535) {
+        for (size_t index = 0; index < length; index++)
+            if (endpoint[index] < ' ' || endpoint[index] > '~') endpoint[index] = '?';
+        char message[96];
+        snprintf(message, sizeof(message), "the debug session must name 127.0.0.1:<port> from 1 to 65535, not '%s'", endpoint);
+        fail(message);
+    }
+    snprintf(options, size, "--debugger-agent=transport=dt_socket,address=127.0.0.1:%lu,server=n,suspend=y", port);
+}
+#endif
 
 static void boot(void)
 {
@@ -33,7 +69,9 @@ static void boot(void)
     __wasm_call_ctors();
 #ifdef ISOPLANE_LOCAL_DEBUG
     mono_wasm_enable_debugging(1);
-    char *options[] = {ISOPLANE_DEBUG_OPTIONS};
+    char agent[96];
+    debug_agent_options(agent, sizeof(agent));
+    char *options[] = {agent};
     mono_jit_parse_options(1, options);
 #endif
     if (initialize_runtime() != 0) fail("Mono initialization failed");

@@ -21,9 +21,11 @@ internal static class DebugDevelopment
                 Directory.CreateDirectory(session, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             await using var relay = native ? null : new DebugRelay(cancellation);
             var endpoint = relay?.Endpoint.ToString() ?? "native";
+            if (!native)
+                return await RunPackageAsync(options, session, endpoint, relay!, cancellation);
             var project = Directory.GetFiles(options.Directory, "*.csproj").Single();
             List<string> publication = ["publish", project, "-c", options.Configuration, "-o", session, "--disable-build-servers",
-                "-p:IsoplaneLocalDebug=true", "-p:IsoplaneDebugEndpoint=" + endpoint];
+                "-p:IsoplaneLocalDebug=true"];
             var result = await Processes.RunAsync("dotnet", publication, options.Directory, cancellation, redirectOutput: options.Json);
             if (result != 0)
                 return result;
@@ -55,6 +57,32 @@ internal static class DebugDevelopment
                 Console.Error.WriteLine($"isoplane: could not remove debug session {session}: {error.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// Debugs an interpreted project's package on the SDK's local-debug runtime,
+    /// which connects its agent to <paramref name="endpoint"/> through the relay.
+    /// </summary>
+    private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string endpoint, DebugRelay relay, CancellationToken cancellation)
+    {
+        var package = Path.Combine(session, "application.tar");
+        SharedRuntime runtime;
+        try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package), cancellation); }
+        catch (InvalidOperationException error)
+        {
+            Console.Error.WriteLine($"isoplane: package build failed: {error.Message}");
+            return 1;
+        }
+        var module = runtime.DebugModule;
+        if (options.Json)
+            Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module, package, runtime = "mono" }));
+        else
+            Console.WriteLine($"Debugger target: {endpoint}. Connect your editor through isoplane debug-adapter; this session serves one HTTP request.");
+        await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
+            new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
+            message => LocalEvents.Write(message, options.Json));
+        await RunHostAsync(host, relay, cancellation);
+        return 0;
     }
 
     internal static async Task RunHostAsync(LocalSession host, DebugRelay? relay, CancellationToken cancellation)

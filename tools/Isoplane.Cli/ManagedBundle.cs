@@ -29,9 +29,29 @@ internal sealed record BundleOptions(string Directory, string Configuration, str
     }
 }
 
+/// <summary>The runtimes an SDK carries for interpreted applications, in <paramref name="Directory"/>.</summary>
+internal sealed record SharedRuntime(string Directory)
+{
+    internal string Module => Require("Isoplane.MonoRuntime.wasm");
+
+    /// <summary>The runtime that connects its debugger agent to a local debug session.</summary>
+    internal string DebugModule => Require("Isoplane.MonoRuntime.Debug.wasm");
+
+    private string Require(string name)
+    {
+        var path = Path.Combine(Directory, name);
+        return File.Exists(path) ? path
+            : throw new InvalidOperationException($"The referenced Isoplane.Sdk has no shared runtime at '{path}'; restore an SDK that includes one, or set ISOPLANE_RUNTIME_DIRECTORY.");
+    }
+}
+
 internal static class ManagedBundle
 {
-    internal static async Task CreateAsync(BundleOptions options, CancellationToken cancellation)
+    /// <summary>
+    /// Builds the project's package into <see cref="BundleOptions.Output"/> and
+    /// returns the shared runtimes its referenced SDK carries.
+    /// </summary>
+    internal static async Task<SharedRuntime> CreateAsync(BundleOptions options, CancellationToken cancellation)
     {
         var projects = Directory.GetFiles(options.Directory, "*.csproj");
         if (projects.Length != 1) throw new ArgumentException("Select a directory containing exactly one application project with --project.");
@@ -42,12 +62,13 @@ internal static class ManagedBundle
             var exit = await Processes.RunAsync("dotnet", ["msbuild", projects[0], "-restore", "-target:IsoplaneManagedBundle",
                 "-nodeReuse:false", "-property:UseSharedCompilation=false",
                 "-property:IsoplaneManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
-                "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime",
+                "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime,IsoplaneRuntimeDirectory",
                 "-getItem:IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference",
                 "-getResultOutputFile:" + metadata, "-nologo"], options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(metadata, cancellation));
             await WriteAsync(document.RootElement, options.Output, cancellation);
+            return new(document.RootElement.GetProperty("Properties").GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "");
         }
         finally { temporary.Delete(recursive: true); }
     }

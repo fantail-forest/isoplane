@@ -5,35 +5,22 @@ using System.IO;
 using System.Text;
 using Microsoft.Build.Framework;
 
-/// <summary>Embeds the published application's portable symbols and owned debugger endpoint.</summary>
+/// <summary>Embeds the published assemblies' portable symbols.</summary>
 public sealed class IsoplaneMonoDebugSymbols : Microsoft.Build.Utilities.Task
 {
     /// <summary>The portable PDB selected for application publication.</summary>
     [Required] public string Symbols { get; set; } = "";
     /// <summary>Portable PDBs selected for referenced assemblies in the same publication.</summary>
     public ITaskItem[] DependencySymbols { get; set; } = Array.Empty<ITaskItem>();
-    /// <summary>The session-owned IPv4 loopback peer.</summary>
-    [Required] public string Endpoint { get; set; } = "";
     /// <summary>The generated native header.</summary>
     [Required] public string Output { get; set; } = "";
 
-    /// <summary>Validates the local endpoint and portable symbols before emitting native data.</summary>
+    /// <summary>Validates the portable symbols before emitting native data.</summary>
     public override bool Execute()
     {
-        const string prefix = "127.0.0.1:";
-        int port;
-        if (!Endpoint.StartsWith(prefix, StringComparison.Ordinal)
-            || !int.TryParse(Endpoint.Substring(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out port)
-            || port < 1 || port > 65535)
-        {
-            Log.LogError("isoplane: local debugging requires the session-owned endpoint 127.0.0.1:<port>, with port 1..65535.");
-            return false;
-        }
         byte[] bytes;
         if (!ReadSymbols(Symbols, out bytes)) return false;
         var header = new StringBuilder();
-        header.Append("#define ISOPLANE_DEBUG_OPTIONS \"--debugger-agent=transport=dt_socket,address=");
-        header.Append(Endpoint).AppendLine(",server=n,suspend=y\"");
         AppendData(header, "isoplane_debug_symbols", bytes);
         var registrations = new StringBuilder();
         registrations.AppendLine("mono_wasm_add_assembly(ISOPLANE_MONO_ASSEMBLY \".pdb\", isoplane_debug_symbols, sizeof(isoplane_debug_symbols));");

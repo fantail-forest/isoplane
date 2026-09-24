@@ -52,9 +52,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix="isoplane-aspnet-") as temporary:
         scratch = Path(temporary)
         packages = scratch / "packages"
+        # build-dotnet.sh holds the C# fixture lock the runtime script takes.
+        runtime_script = ROOT / "guest-sdks/dotnet/MonoRuntime/build.sh"
+        run("bash", str(runtime_script), "--output", str(scratch / "runtime"),
+            env=dict(os.environ, ISOPLANE_FIXTURE_LOCK=str(runtime_script)))
         for project in ["Isoplane.Sdk.csproj", "AspNetCore/Isoplane.AspNetCore.csproj"]:
             run("dotnet", "pack", str(ROOT / "guest-sdks/dotnet" / project),
-                "--artifacts-path", str(scratch / "artifacts"), "-o", str(packages))
+                "--artifacts-path", str(scratch / "artifacts"), "-o", str(packages),
+                f"-p:IsoplaneRuntimeModuleDirectory={scratch / 'runtime'}")
         # An installed package names the guest runtime feed the way a customer
         # does; here it is this checkout's, mapped by the ids it offers
         # (`<id>.<version>.nupkg`, the version being the first dotted segment

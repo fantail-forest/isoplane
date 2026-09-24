@@ -14,7 +14,8 @@
 mod dotnet_template;
 
 pub use dotnet_template::{
-    aspnet_project, debugger_editor, debugger_python, managed_cli, release_version,
+    aspnet_project, debugger_editor, debugger_python, managed_cli, nativeaot_aspnet_project,
+    release_version,
 };
 
 use std::collections::BTreeSet;
@@ -211,21 +212,37 @@ const PACKAGES: &str = "guest-runtime/tests/packages";
 /// published with the source-built pack and built if missing or stale. It
 /// runs whichever package the host serves it.
 pub fn mono_runtime() -> Vec<u8> {
-    let path = build_selected(&format!("{PACKAGES}/build.sh"), Some("runtime"), None)
-        .join(PACKAGES)
-        .join("out/isoplane_mono_runtime.wasm");
-    assert_attributed_to_feed(&path, GuestRuntime::Mono);
-    read(&path)
+    read(&mono_runtime_module())
 }
 
-/// The package fixture `guest-runtime/tests/packages/<name>` as `isoplane
-/// bundle` writes it, unpacked into a directory holding `application.json`
-/// and `assemblies/`, built if missing or stale.
+/// The path of the shared Mono runtime module, as the SDK package carries it
+/// beside its Mono pack identity, built if missing or stale.
+pub fn mono_runtime_module() -> PathBuf {
+    shared_runtime("Isoplane.MonoRuntime.wasm")
+}
+
+/// The shared runtime's local-debug variant, which connects its debugger
+/// agent to the session the host serves it.
+pub fn mono_debug_runtime() -> Vec<u8> {
+    read(&shared_runtime("Isoplane.MonoRuntime.Debug.wasm"))
+}
+
+fn shared_runtime(name: &str) -> PathBuf {
+    let path = build_selected(&format!("{PACKAGES}/build.sh"), Some("runtime"), None)
+        .join(PACKAGES)
+        .join("out/runtime")
+        .join(name);
+    assert_attributed_to_feed(&path, GuestRuntime::Mono);
+    path
+}
+
+/// The path of the package fixture `guest-runtime/tests/packages/<name>`,
+/// the archive `isoplane bundle` writes, built if missing or stale.
 pub fn mono_package(name: &str) -> PathBuf {
     build_selected(&format!("{PACKAGES}/build.sh"), Some(name), None)
         .join(PACKAGES)
         .join("out")
-        .join(name)
+        .join(format!("{name}.tar"))
 }
 
 /// The unoptimised NativeAOT compiler regression guest, rebuilt when its

@@ -361,6 +361,12 @@ def build(root, cache, releases, logs, args):
     wasm_tools = cache / 'tools/bin/wasm-tools'
     if output([wasm_tools, '--version']) != f'wasm-tools {wasm_version}':
         raise ValueError('installed wasm-tools version differs from the pin')
+    runtime_modules = cache / 'runtime-modules'
+    if runtime_modules.exists():
+        shutil.rmtree(runtime_modules)
+    run(['bash', source / 'guest-sdks/dotnet/MonoRuntime/build.sh', '--output', runtime_modules,
+         '--source-revision', revision], source,
+        logs / 'shared-runtime.log', dict(environment, PATH=str(wasm_tools.parent) + os.pathsep + environment['PATH']))
     packages = cache / 'packages'
     if packages.exists():
         shutil.rmtree(packages)
@@ -370,7 +376,8 @@ def build(root, cache, releases, logs, args):
         run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native_library}'], source, logs / f'pack-{name}.log', environment)
+             f'-p:IsoplaneNativePath={native_library}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
+            source, logs / f'pack-{name}.log', environment)
     verify_packages(packages, version, revision, native_library)
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     wasm_sources = list((cargo_home / 'registry/src').glob(f'*/wasm-tools-{wasm_version}/Cargo.toml'))

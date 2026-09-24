@@ -90,6 +90,7 @@ hyper-util  = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 bytes       = "1"
 flate2      = "1"
+tar         = { version = "0.4", default-features = false }
 aes-gcm     = "0.10"
 clap        = { version = "4", features = ["derive", "env"] }
 wasmparser  = "0.244"

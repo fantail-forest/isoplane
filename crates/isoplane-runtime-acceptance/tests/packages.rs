@@ -24,42 +24,14 @@ use isoplane_prepare::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// A package directory as the host serves it: the manifest and assemblies
-/// beneath the package root, any assets at the application's content root.
-fn served(package: &Path) -> Vec<PlatformFile> {
-    let mut files = Vec::new();
-    let mut pending = vec![package.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory).expect("the package directory is readable") {
-            let path = entry.expect("a package entry is readable").path();
-            if path.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            let relative = path
-                .strip_prefix(package)
-                .expect("a package file lies beneath the package")
-                .to_str()
-                .expect("package paths are UTF-8")
-                .to_owned();
-            let served = match relative.strip_prefix("assets/") {
-                Some(asset) => format!("/{asset}"),
-                None => format!("{APPLICATION_PACKAGE_ROOT}/{relative}"),
-            };
-            files.push(PlatformFile {
-                path: served,
-                bytes: std::fs::read(&path)
-                    .expect("a package file is readable")
-                    .into(),
-                modified_ns: 0,
-            });
-        }
-    }
-    files
-}
-
+/// The package fixture `name` as the host serves it.
 fn package(name: &str) -> Vec<PlatformFile> {
-    served(&isoplane_fixtures::mono_package(name))
+    let archive = std::fs::read(isoplane_fixtures::mono_package(name))
+        .expect("the package fixture is readable");
+    isoplane_prepare::package::application_files(&archive)
+        .unwrap_or_else(|error| panic!("the {name} package must map to served files: {error}"))
+        .files()
+        .to_vec()
 }
 
 /// `files` with the package file at `relative` replaced or added.
@@ -427,5 +399,62 @@ async fn a_package_delegate_marshalled_to_a_function_pointer_is_refused() {
         native_use("/delegate-pointer").await,
         "PlatformNotSupportedException/PlatformNotSupportedException",
         "a package's delegate must not become a native pointer"
+    );
+}
+
+/// The debug runtime's first dispatch under the debug session file `agent`,
+/// or none, with the alpha package served.
+fn debug_boot(agent: Option<&str>) -> isoplane_engine::DispatchOutcome {
+    let mut files = package("alpha");
+    if let Some(agent) = agent {
+        files.push(PlatformFile {
+            path: isoplane_abi::filesystem::DEBUG_AGENT_PATH.into(),
+            bytes: agent.as_bytes().into(),
+            modified_ns: 0,
+        });
+    }
+    let reactor = no_egress::reactor_without_egress(7300);
+    reactor.context.begin_slice(1, 1);
+    let mut guest = ReturnedGuest::new(&isoplane_fixtures::mono_debug_runtime(), &reactor);
+    guest.serve_platform_files(PlatformFiles::new(files).expect("valid debug session files"));
+    guest.start("/greeting")
+}
+
+fn refusal_message(outcome: &isoplane_engine::DispatchOutcome) -> String {
+    let trap = outcome
+        .trap
+        .as_ref()
+        .unwrap_or_else(|| panic!("the debug runtime must refuse to boot: {outcome:?}"));
+    assert_eq!(
+        trap.kind,
+        isoplane_engine::TrapKind::GuestPanic,
+        "the refusal must be the runtime's own abort: {trap:?}"
+    );
+    trap.message.clone()
+}
+
+#[tokio::test]
+async fn a_debug_runtime_refuses_a_session_naming_anything_but_a_loopback_port() {
+    for agent in [
+        "127.0.0.1:0",
+        "127.0.0.1:65536",
+        "127.0.0.1:42,server=y",
+        "192.168.0.1:1234",
+        "127.0.0.1:",
+    ] {
+        let message = refusal_message(&debug_boot(Some(agent)));
+        assert!(
+            message.contains("the debug session must name"),
+            "a session file must select only a loopback port, never other agent options ({agent}): {message}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_debug_runtime_without_a_debug_session_is_refused() {
+    let message = refusal_message(&debug_boot(None));
+    assert!(
+        message.contains("requires the debug session"),
+        "the debug runtime must run only where a local debug session serves its debugger: {message}"
     );
 }
