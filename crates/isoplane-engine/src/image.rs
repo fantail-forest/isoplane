@@ -12,6 +12,10 @@ const RUN_BYTES: usize = 24;
 const LAYER_ALIGNMENT: usize = 65536;
 #[cfg(target_os = "linux")]
 const LAYER_MAGIC: &[u8; 8] = b"ISOPPKD1";
+/// A packed layer over a base image: its runs hold only the pages that
+/// differ from the base, and every gap reads the base.
+#[cfg(target_os = "linux")]
+const OVERLAY_MAGIC: &[u8; 8] = b"ISOPOVL1";
 
 pub(crate) enum ImageStorage {
     Owned(Vec<u8>),
@@ -61,6 +65,8 @@ pub struct MemoryImage {
     runs: Arc<[Run]>,
     payload_offset: usize,
     storage: Arc<ImageStorage>,
+    /// The image an overlay's gaps read from.
+    base: Option<Arc<MemoryImage>>,
 }
 
 #[derive(Clone, Copy)]
@@ -101,41 +107,63 @@ impl MemoryImage {
         if end < dense.len() {
             cold.push(end..dense.len());
         }
-        let hot_bytes = hot.iter().map(|range| range.len()).sum::<usize>();
-        let mut runs = Vec::new();
-        let mut payload = Vec::with_capacity(dense.len());
-        for range in hot.into_iter().chain(cold) {
-            runs.push(Run {
-                off: range.start,
-                start: payload.len(),
-                len: range.len(),
-            });
-            payload.extend_from_slice(&dense[range]);
+        let encoded = encode_packed(LAYER_MAGIC, dense, dense.len(), hot, cold)?;
+        Self::from_storage(ImageStorage::Owned(encoded), dense.len())
+    }
+
+    /// Captures `dense` as an overlay over `base`: only pages that differ
+    /// from the base, and every page past its end, are stored. `selected`
+    /// orders the pages initialization touched first, as for a layer.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn from_overlay(
+        dense: &[u8],
+        base: &Arc<MemoryImage>,
+        selected: &[std::ops::Range<u64>],
+        max_memory_bytes: usize,
+    ) -> Result<Self, &'static str> {
+        if !base.is_full_layer() {
+            return Err("an overlay's base must be a complete layer");
         }
-        runs.sort_by_key(|run| run.off);
-        let header_bytes = HEADER_BYTES
-            .checked_add(
-                runs.len()
-                    .checked_mul(RUN_BYTES)
-                    .ok_or("layer index overflow")?,
-            )
-            .ok_or("layer index overflow")?;
-        let payload_offset = header_bytes
-            .checked_next_multiple_of(LAYER_ALIGNMENT)
-            .ok_or("layer header overflow")?;
-        let mut encoded = vec![0; payload_offset];
-        encoded[..8].copy_from_slice(LAYER_MAGIC);
-        for (offset, value) in [(8, dense.len()), (16, runs.len()), (24, hot_bytes)] {
-            encoded[offset..offset + 8].copy_from_slice(&(value as u64).to_le_bytes());
-        }
-        for (index, run) in runs.iter().enumerate() {
-            for (field, value) in [run.off, run.start, run.len].into_iter().enumerate() {
-                let offset = HEADER_BYTES + index * RUN_BYTES + field * 8;
-                encoded[offset..offset + 8].copy_from_slice(&(value as u64).to_le_bytes());
+        let mut differing: Vec<std::ops::Range<usize>> = Vec::new();
+        for page in 0..dense.len().div_ceil(PAGE) {
+            let start = page * PAGE;
+            let end = (start + PAGE).min(dense.len());
+            if end <= base.len() && base.page_eq(page, &dense[start..end]) {
+                continue;
+            }
+            match differing.last_mut() {
+                Some(last) if last.end == start => last.end = end,
+                _ => differing.push(start..end),
             }
         }
-        encoded.extend_from_slice(&payload);
-        Self::from_storage(ImageStorage::Owned(encoded), dense.len())
+        let mut hot = Vec::new();
+        let mut cold = Vec::new();
+        for range in differing {
+            let mut cursor = range.start;
+            for touched in selected {
+                let touched = usize::try_from(touched.start).map_err(|_| "range overflow")?
+                    ..usize::try_from(touched.end).map_err(|_| "range overflow")?;
+                let start = touched.start.max(cursor);
+                let end = touched.end.min(range.end);
+                if start >= end {
+                    continue;
+                }
+                if cursor < start {
+                    cold.push(cursor..start);
+                }
+                hot.push(start..end);
+                cursor = end;
+            }
+            if cursor < range.end {
+                cold.push(cursor..range.end);
+            }
+        }
+        let encoded = encode_packed(OVERLAY_MAGIC, dense, dense.len(), hot, cold)?;
+        Self::from_storage_over(
+            ImageStorage::Owned(encoded),
+            Some(base.clone()),
+            max_memory_bytes,
+        )
     }
 
     #[cfg(target_os = "linux")]
@@ -146,20 +174,53 @@ impl MemoryImage {
         start..start + u64::from_le_bytes(count)
     }
 
+    /// Where each range of memory maps from: this image's own file, as
+    /// `source`, and for an overlay's gaps, its base's file as source 0.
     #[cfg(target_os = "linux")]
-    pub(crate) fn layer_extents(&self) -> Vec<wasmtime::CowMemoryExtent> {
-        self.runs
-            .iter()
-            .map(|run| wasmtime::CowMemoryExtent {
-                file_offset: (self.payload_offset + run.start) as u64,
-                memory_offset: run.off,
-                length: run.len,
-            })
-            .collect()
+    pub(crate) fn layer_extents(&self, source: usize) -> Vec<wasmtime::CowMemorySourceExtent> {
+        let own = |run: &Run| wasmtime::CowMemorySourceExtent {
+            source,
+            file_offset: (self.payload_offset + run.start) as u64,
+            memory_offset: run.off,
+            length: run.len,
+        };
+        let Some(base) = &self.base else {
+            return self.runs.iter().map(own).collect();
+        };
+        let from_base = base.layer_extents(0);
+        let mut extents = Vec::new();
+        let mut cursor = 0;
+        let gap = |start: usize, end: usize, extents: &mut Vec<_>| {
+            for extent in &from_base {
+                let extent: &wasmtime::CowMemorySourceExtent = extent;
+                let lo = extent.memory_offset.max(start);
+                let hi = (extent.memory_offset + extent.length).min(end);
+                if lo < hi {
+                    extents.push(wasmtime::CowMemorySourceExtent {
+                        source: 0,
+                        file_offset: extent.file_offset + (lo - extent.memory_offset) as u64,
+                        memory_offset: lo,
+                        length: hi - lo,
+                    });
+                }
+            }
+        };
+        for run in self.runs.iter() {
+            gap(cursor, run.off, &mut extents);
+            extents.push(own(run));
+            cursor = run.off + run.len;
+        }
+        gap(cursor, self.len, &mut extents);
+        extents
     }
 
     #[cfg(target_os = "linux")]
     pub(crate) fn is_layer(&self) -> bool {
+        self.is_full_layer() || self.encoded().get(..8) == Some(OVERLAY_MAGIC.as_slice())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_full_layer(&self) -> bool {
         self.encoded().get(..8) == Some(LAYER_MAGIC.as_slice())
     }
 
@@ -225,6 +286,7 @@ impl MemoryImage {
             payload_offset: HEADER_BYTES + runs.len() * RUN_BYTES,
             runs: runs.into(),
             storage: std::sync::Arc::new(ImageStorage::Owned(encoded)),
+            base: None,
         }
     }
 
@@ -236,7 +298,28 @@ impl MemoryImage {
         storage: ImageStorage,
         max_memory_bytes: usize,
     ) -> Result<Self, &'static str> {
+        Self::from_storage_over(storage, None, max_memory_bytes)
+    }
+
+    /// Decodes stored image bytes; an overlay requires the `base` it was
+    /// captured over, and any other image refuses one.
+    pub(crate) fn from_storage_over(
+        storage: ImageStorage,
+        base: Option<Arc<MemoryImage>>,
+        max_memory_bytes: usize,
+    ) -> Result<Self, &'static str> {
         let bytes = storage.as_ref();
+        #[cfg(target_os = "linux")]
+        if bytes.get(..8) == Some(OVERLAY_MAGIC.as_slice()) {
+            let base = base.ok_or("an overlay needs the base it was captured over")?;
+            if !base.is_full_layer() {
+                return Err("an overlay's base must be a complete layer");
+            }
+            return Self::decode_overlay(storage, base, max_memory_bytes);
+        }
+        if base.is_some() {
+            return Err("only an overlay reads a base image");
+        }
         #[cfg(target_os = "linux")]
         if bytes.get(..8) == Some(LAYER_MAGIC.as_slice()) {
             let len = number(bytes, 8)?;
@@ -308,6 +391,7 @@ impl MemoryImage {
                 runs: runs.into(),
                 payload_offset,
                 storage: Arc::new(storage),
+                base: None,
             });
         }
         if bytes.get(..8) != Some(MAGIC.as_slice()) {
@@ -359,12 +443,103 @@ impl MemoryImage {
             runs: runs.into(),
             payload_offset,
             storage: Arc::new(storage),
+            base: None,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn decode_overlay(
+        storage: ImageStorage,
+        base: Arc<MemoryImage>,
+        max_memory_bytes: usize,
+    ) -> Result<Self, &'static str> {
+        let bytes = storage.as_ref();
+        let len = number(bytes, 8)?;
+        let run_count = number(bytes, 16)?;
+        let hot_bytes = number(bytes, 24)?;
+        let index_end = HEADER_BYTES
+            .checked_add(
+                run_count
+                    .checked_mul(RUN_BYTES)
+                    .ok_or("overlay index overflow")?,
+            )
+            .ok_or("overlay index overflow")?;
+        let payload_offset = index_end
+            .checked_next_multiple_of(LAYER_ALIGNMENT)
+            .ok_or("overlay header overflow")?;
+        let payload_bytes = bytes
+            .len()
+            .checked_sub(payload_offset)
+            .ok_or("overlay is shorter than its index")?;
+        if len == 0
+            || len > max_memory_bytes
+            || len % 65536 != 0
+            || hot_bytes > payload_bytes
+            || hot_bytes % PAGE != 0
+            || bytes
+                .get(index_end..payload_offset)
+                .is_none_or(|header| header.iter().any(|b| *b != 0))
+        {
+            return Err("invalid overlay dimensions or header");
+        }
+        let mut runs = Vec::with_capacity(run_count);
+        let mut physical = Vec::with_capacity(run_count);
+        let mut logical_end = 0usize;
+        for index in 0..run_count {
+            let position = HEADER_BYTES + index * RUN_BYTES;
+            let off = number(bytes, position)?;
+            let start = number(bytes, position + 8)?;
+            let size = number(bytes, position + 16)?;
+            if off < logical_end
+                || off % PAGE != 0
+                || start % PAGE != 0
+                || size == 0
+                || size % PAGE != 0
+                || (off > logical_end && off > base.len())
+            {
+                return Err("invalid overlay extent alignment, order or gap");
+            }
+            logical_end = off.checked_add(size).ok_or("overlay memory overflow")?;
+            let end = start.checked_add(size).ok_or("overlay payload overflow")?;
+            if logical_end > len || end > payload_bytes {
+                return Err("overlay extent exceeds bounds");
+            }
+            physical.push(start..end);
+            runs.push(Run {
+                off,
+                start,
+                len: size,
+            });
+        }
+        if logical_end < len && len > base.len() {
+            return Err("overlay leaves memory past its base unstored");
+        }
+        physical.sort_by_key(|range| range.start);
+        let mut physical_end = 0;
+        for range in physical {
+            if range.start != physical_end {
+                return Err("overlay payload overlaps or has gaps");
+            }
+            physical_end = range.end;
+        }
+        if physical_end != payload_bytes {
+            return Err("overlay payload contains unindexed bytes");
+        }
+        Ok(Self {
+            len,
+            runs: runs.into(),
+            payload_offset,
+            storage: Arc::new(storage),
+            base: Some(base),
         })
     }
 
     /// Whether a read of this image's mapped storage failed, so a comparison
     /// or copy made from it since is wrong.
     pub fn storage_failed(&self) -> bool {
+        if self.base.as_ref().is_some_and(|base| base.storage_failed()) {
+            return true;
+        }
         match self.storage.as_ref() {
             ImageStorage::Owned(_) => false,
             #[cfg(target_os = "linux")]
@@ -392,6 +567,17 @@ impl MemoryImage {
         let Some(off) = page.checked_mul(PAGE) else {
             return false;
         };
+        if let Some(base) = &self.base {
+            let index = self.runs.partition_point(|run| run.off + run.len <= off);
+            return match self.runs.get(index).filter(|run| run.off <= off) {
+                Some(run) => {
+                    let src = self.payload_offset + run.start + off - run.off;
+                    let available = (run.off + run.len - off).min(live.len());
+                    live.len() == available && live == &self.encoded()[src..src + available]
+                }
+                None => base.page_eq(page, live),
+            };
+        }
         let Some(end) = off.checked_add(live.len()) else {
             return false;
         };
@@ -417,12 +603,66 @@ impl MemoryImage {
 
     /// Expands the baseline for explicit inspection; activation never calls this.
     pub fn to_dense(&self) -> Vec<u8> {
-        let mut out = vec![0; self.len];
+        let mut out = match &self.base {
+            Some(base) => {
+                let mut dense = base.to_dense();
+                dense.resize(self.len, 0);
+                dense
+            }
+            None => vec![0; self.len],
+        };
         for (offset, bytes) in self.regions() {
             out[offset..offset + bytes.len()].copy_from_slice(bytes);
         }
         out
     }
+}
+
+/// Encodes a packed layer or overlay: `hot` ranges of `dense` first, then
+/// `cold`, with an index of every range sorted by memory offset.
+#[cfg(target_os = "linux")]
+fn encode_packed(
+    magic: &[u8; 8],
+    dense: &[u8],
+    len: usize,
+    hot: Vec<std::ops::Range<usize>>,
+    cold: Vec<std::ops::Range<usize>>,
+) -> Result<Vec<u8>, &'static str> {
+    let hot_bytes = hot.iter().map(|range| range.len()).sum::<usize>();
+    let mut runs = Vec::new();
+    let mut payload = Vec::new();
+    for range in hot.into_iter().chain(cold) {
+        runs.push(Run {
+            off: range.start,
+            start: payload.len(),
+            len: range.len(),
+        });
+        payload.extend_from_slice(&dense[range]);
+    }
+    runs.sort_by_key(|run| run.off);
+    let header_bytes = HEADER_BYTES
+        .checked_add(
+            runs.len()
+                .checked_mul(RUN_BYTES)
+                .ok_or("layer index overflow")?,
+        )
+        .ok_or("layer index overflow")?;
+    let payload_offset = header_bytes
+        .checked_next_multiple_of(LAYER_ALIGNMENT)
+        .ok_or("layer header overflow")?;
+    let mut encoded = vec![0; payload_offset];
+    encoded[..8].copy_from_slice(magic);
+    for (offset, value) in [(8, len), (16, runs.len()), (24, hot_bytes)] {
+        encoded[offset..offset + 8].copy_from_slice(&(value as u64).to_le_bytes());
+    }
+    for (index, run) in runs.iter().enumerate() {
+        for (field, value) in [run.off, run.start, run.len].into_iter().enumerate() {
+            let offset = HEADER_BYTES + index * RUN_BYTES + field * 8;
+            encoded[offset..offset + 8].copy_from_slice(&(value as u64).to_le_bytes());
+        }
+    }
+    encoded.extend_from_slice(&payload);
+    Ok(encoded)
 }
 
 fn number(bytes: &[u8], offset: usize) -> Result<usize, &'static str> {
@@ -457,6 +697,93 @@ impl std::fmt::Debug for MemoryImage {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    fn base_and_application(memory_bytes: usize) -> (std::sync::Arc<super::MemoryImage>, Vec<u8>) {
+        let mut base = vec![0; memory_bytes];
+        base[100] = 7;
+        base[5000] = 9;
+        let image = super::MemoryImage::from_layer(&base, &[]).expect("base layer");
+        let mut application = base.clone();
+        application[5000] = 10;
+        (std::sync::Arc::new(image), application)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_overlay_stores_only_changed_pages_and_reads_the_rest_from_its_base() {
+        let (base, application) = base_and_application(65536);
+        let overlay =
+            super::MemoryImage::from_overlay(&application, &base, &[], 65536).expect("overlay");
+        assert_eq!(overlay.runs(), 1, "only the changed page must be stored");
+        let restored = super::MemoryImage::from_storage_over(
+            super::ImageStorage::Owned(overlay.encoded().to_vec()),
+            Some(base.clone()),
+            65536,
+        )
+        .expect("a valid overlay decodes over its base");
+        assert_eq!(
+            restored.to_dense(),
+            application,
+            "an overlay must expand to its full memory"
+        );
+        assert!(
+            restored.page_eq(0, &application[..4096]) && restored.page_eq(1, &application[4096..8192]),
+            "hibernation must compare unchanged pages with the base and changed pages with the overlay"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_overlay_refuses_a_missing_base_a_layered_base_or_memory_past_its_base() {
+        let (base, application) = base_and_application(65536);
+        let overlay =
+            super::MemoryImage::from_overlay(&application, &base, &[], 65536).expect("overlay");
+        let bytes = overlay.encoded().to_vec();
+        assert!(
+            super::MemoryImage::from_storage(super::ImageStorage::Owned(bytes.clone()), 65536)
+                .is_err(),
+            "an overlay must refuse to decode without its base"
+        );
+        assert!(
+            super::MemoryImage::from_overlay(
+                &application,
+                &std::sync::Arc::new(overlay),
+                &[],
+                65536
+            )
+            .is_err(),
+            "an overlay's base must be a complete layer"
+        );
+        let (short, _) = base_and_application(65536);
+        let mut grown = application.clone();
+        grown.resize(2 * 65536, 0);
+        let past = super::MemoryImage::from_overlay(&grown, &short, &[], 2 * 65536)
+            .expect("memory past the base is stored");
+        let mut truncated = past.encoded().to_vec();
+        // Drop the last run's index entry and its payload, which is stored last: the
+        // memory past the base would then be read from a base that does not have it.
+        let runs = u64::from_le_bytes(truncated[16..24].try_into().expect("run count")) as usize;
+        let entry = super::HEADER_BYTES + (runs - 1) * super::RUN_BYTES;
+        let length = u64::from_le_bytes(
+            truncated[entry + 16..entry + 24]
+                .try_into()
+                .expect("run length"),
+        );
+        truncated[entry..entry + super::RUN_BYTES].fill(0);
+        truncated[16..24].copy_from_slice(&(runs as u64 - 1).to_le_bytes());
+        truncated.truncate(truncated.len() - length as usize);
+        assert_eq!(
+            super::MemoryImage::from_storage_over(
+                super::ImageStorage::Owned(truncated),
+                Some(short),
+                2 * 65536
+            )
+            .err(),
+            Some("overlay leaves memory past its base unstored"),
+            "an overlay must not leave memory past its base unstored"
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn packed_layer_round_trips_and_serves_the_hibernation_baseline() {

@@ -21,6 +21,7 @@ public static unsafe class Exports<TRouter>
     where TRouter : IIsoplaneRouter, new()
 {
     private static bool _booted;
+    private static bool _runtimeBooted;
     private static TRouter? _router;
     private static Task<Response>? _root;
     private static Task? _initialization;
@@ -30,11 +31,39 @@ public static unsafe class Exports<TRouter>
     private static void Boot()
     {
         if (_booted) return;
-        GuestConsole.Install();
-        SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
+        BootRuntime();
         _router = new TRouter();
         _router.Boot();
         _booted = true;
+    }
+
+    /// <summary>The part of <see cref="Boot"/> that loads no application code or data.</summary>
+    private static void BootRuntime()
+    {
+        if (_runtimeBooted) return;
+        GuestConsole.Install();
+        SynchronizationContext.SetSynchronizationContext(IsoplaneSynchronizationContext.Instance);
+        _runtimeBooted = true;
+    }
+
+    /// <summary>
+    /// The runtime-only pre-initialization entry point: the .NET runtime starts
+    /// and the guest's console and synchronization context install, but no
+    /// router, application package or application initialization runs. The
+    /// host can capture this state once as a baseline common to every
+    /// application on the same runtime, then continue with <see cref="Initialize"/>.
+    /// </summary>
+    public static long InitializeRuntime()
+    {
+        try
+        {
+            BootRuntime();
+            return PollStatus.Done(0);
+        }
+        catch (Exception error)
+        {
+            return Panic("runtime pre-initialization", error);
+        }
     }
 
     /// <summary>

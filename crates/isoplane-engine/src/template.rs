@@ -34,7 +34,9 @@ impl std::fmt::Display for ModuleHash {
 /// unit ids. Absent means nothing deferred.
 pub const DEFERRED_INIT_SECTION: &str = "isoplane.deferred-init";
 
-/// A compiled, pre-initialised module ready to be mapped into slots.
+/// A compiled, pre-initialised module ready to be mapped into slots. Clones
+/// share one compiled module and memory image.
+#[derive(Clone)]
 pub struct Template {
     pub hash: ModuleHash,
     /// A hibernation delta is valid only against its own module hash and ABI
@@ -46,7 +48,7 @@ pub struct Template {
 pub(crate) struct TemplateInner {
     #[cfg(target_os = "linux")]
     pub initialization_layer: Option<wasmtime::CowMemoryImage>,
-    pub activation_prefetch: Option<crate::prepared::prefetch::Payloads>,
+    pub activation_prefetch: Option<Arc<crate::prepared::prefetch::Payloads>>,
     pub application_files: crate::PlatformFiles,
     pub filesystem_files: crate::PlatformFiles,
     /// The compiled module. Prepared templates with the same native payload
@@ -76,6 +78,13 @@ pub(crate) struct TemplateInner {
     pub has_initialize: bool,
     /// Set when an instance's call read this template's mapped storage after it failed.
     pub failed_storage: std::sync::atomic::AtomicBool,
+    /// The module hash of the published artifact this template was loaded
+    /// from, from its verified manifest; a layer over this template names it.
+    pub prepared_hash: Option<[u8; 32]>,
+    /// The mapped baseline file a layer over this template maps its
+    /// unchanged pages from.
+    #[cfg(target_os = "linux")]
+    pub layer_source: Option<wasmtime::CowMemorySource>,
 }
 
 impl TemplateInner {
@@ -87,6 +96,33 @@ impl TemplateInner {
         self.failed_storage
             .load(std::sync::atomic::Ordering::Acquire)
             || self.image.storage_failed()
+    }
+
+    /// A copy that shares this template's code, memory and mapped storage.
+    fn share(&self) -> Self {
+        Self {
+            #[cfg(target_os = "linux")]
+            initialization_layer: self.initialization_layer.clone(),
+            activation_prefetch: self.activation_prefetch.clone(),
+            application_files: self.application_files.clone(),
+            filesystem_files: self.filesystem_files.clone(),
+            native: Arc::clone(&self.native),
+            pal_linker: self.pal_linker.clone(),
+            pal_composed: self.pal_composed.clone(),
+            image: Arc::clone(&self.image),
+            memory_pages: self.memory_pages,
+            deferred: self.deferred.clone(),
+            prepared_resources: self.prepared_resources.clone(),
+            mut_globals: self.mut_globals.clone(),
+            tables: self.tables.clone(),
+            table_nullness: self.table_nullness.clone(),
+            has_gc_hint: self.has_gc_hint,
+            has_initialize: self.has_initialize,
+            failed_storage: std::sync::atomic::AtomicBool::new(self.storage_failed()),
+            prepared_hash: self.prepared_hash,
+            #[cfg(target_os = "linux")]
+            layer_source: self.layer_source.clone(),
+        }
     }
 
     pub(crate) fn fail_storage(&self) {
@@ -102,14 +138,19 @@ impl TemplateInner {
 pub struct TemplateStorageFailed;
 
 impl Template {
-    /// Bind immutable application files to an inactive template and its snapshot identity.
-    /// Fails on host-path collisions or if the template is already shared or has application files.
+    /// Bind immutable application files to a template and its snapshot identity.
+    /// A template that is already shared, such as a runtime baseline, is left
+    /// unchanged: the result is a new template sharing its code and memory.
+    /// Fails on host-path collisions or if the template already has application files.
     pub fn with_application_files(mut self, files: crate::PlatformFiles) -> Result<Self> {
         if files.files().is_empty() {
             return Ok(self);
         }
+        if Arc::get_mut(&mut self.inner).is_none() {
+            self.inner = Arc::new(self.inner.share());
+        }
         let inner = Arc::get_mut(&mut self.inner)
-            .ok_or_else(|| anyhow::anyhow!("cannot change files on a shared template"))?;
+            .ok_or_else(|| anyhow::anyhow!("a new template is already shared"))?;
         anyhow::ensure!(
             inner.application_files.files().is_empty(),
             "template application files are already bound"

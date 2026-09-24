@@ -114,6 +114,9 @@ impl IsoplaneEngine {
                 has_gc_hint: state.has_gc_hint,
                 has_initialize: state.has_initialize,
                 failed_storage: Default::default(),
+                prepared_hash: None,
+                #[cfg(target_os = "linux")]
+                layer_source: None,
             }),
         })
     }

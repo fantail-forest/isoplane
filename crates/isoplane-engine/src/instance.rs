@@ -33,6 +33,7 @@ pub(crate) struct Live {
     pub(crate) f_wake: TypedFunc<(i64, i32, i32), i64>,
     pub(crate) f_gc_hint: Option<TypedFunc<i32, ()>>,
     pub(crate) f_initialize: Option<TypedFunc<(), i64>>,
+    pub(crate) f_initialize_runtime: Option<TypedFunc<(), i64>>,
     pub(crate) globals: Vec<Global>,
     pub(crate) tables: Vec<Table>,
     pub(crate) table_baseline: crate::capture::TableBaseline,
@@ -66,6 +67,7 @@ pub(crate) enum Entry<'a> {
     Wake(u64, &'a ResultRecord),
     GcHint(u8),
     Initialize,
+    InitializeRuntime,
 }
 
 impl Entry<'_> {
@@ -75,6 +77,7 @@ impl Entry<'_> {
             Entry::Wake(..) => "isoplane_wake",
             Entry::GcHint(_) => "isoplane_gc_hint",
             Entry::Initialize => "isoplane_initialize",
+            Entry::InitializeRuntime => "isoplane_initialize_runtime",
         }
     }
 }
@@ -121,6 +124,13 @@ impl Instance {
     /// template already ran it.
     pub fn run_initialize(&mut self, budget: CpuBudget) -> DispatchOutcome {
         self.slice(budget, Entry::Initialize)
+    }
+
+    /// Run `isoplane_initialize_runtime`, which starts only the guest's runtime,
+    /// before any application code or data loads. A guest without the export
+    /// has no separate runtime stage and completes at once.
+    pub fn run_initialize_runtime(&mut self, budget: CpuBudget) -> DispatchOutcome {
+        self.slice(budget, Entry::InitializeRuntime)
     }
 
     fn refuse(&self, kind: TrapKind, why: String) -> DispatchOutcome {

@@ -242,18 +242,32 @@ fn changed_application_bytes_are_rejected_before_loading() {
 }
 
 #[test]
-fn files_cannot_be_rebound_after_template_sharing_or_initial_binding() {
+fn binding_files_to_an_active_template_leaves_its_instances_namespace_unchanged() {
     let engine = IsoplaneEngine::new(small_engine_config()).expect("engine");
     let wasm = guest(&["config.json"]);
     let shared = engine.load_template(&wasm).expect("template");
-    let _instance = activate(&engine, &shared);
-    assert!(
-        shared
-            .with_application_files(files(&[("/config.json", b"late")]))
-            .is_err(),
+    let mut active = activate(&engine, &shared);
+    let bound = shared
+        .clone()
+        .with_application_files(files(&[("/config.json", b"late")]))
+        .expect("a shared template binds files as a new template");
+    assert_eq!(
+        result(&mut activate(&engine, &bound), 0),
+        b"late",
+        "the new template must serve the files bound to it"
+    );
+    active.dispatch(&dispatch(), CpuBudget::http());
+    assert_ne!(
+        active.memory()[1300],
+        0,
         "an active template's file namespace cannot change beneath an instance"
     );
-    let bound = template(&engine, &wasm, b"first");
+}
+
+#[test]
+fn a_template_cannot_replace_its_bound_files() {
+    let engine = IsoplaneEngine::new(small_engine_config()).expect("engine");
+    let bound = template(&engine, &guest(&["config.json"]), b"first");
     assert!(
         bound
             .with_application_files(files(&[("/config.json", b"replacement")]))

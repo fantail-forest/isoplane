@@ -119,10 +119,6 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     file.sync_all().map_err(|e| io("sync payload", path, e))
 }
 
-pub(super) fn read_manifest(directory: &Path) -> Result<Manifest> {
-    read_manifest_receipt(directory).map(|(manifest, _)| manifest)
-}
-
 #[tracing::instrument(name = "template_manifest_verify", skip_all)]
 pub(super) fn read_manifest_receipt(
     directory: &Path,
@@ -396,7 +392,7 @@ mod tests {
     fn the_native_code_loaded_is_the_code_verified_after_path_replacement() {
         let (directory, _, engine) = fixture();
         let path = directory.path().join("version");
-        let manifest = read_manifest(&path).expect("manifest");
+        let manifest = read_manifest_receipt(&path).expect("manifest").0;
         let files = open_verified(&path, &manifest, true).expect("verify held files");
         std::fs::rename(path.join(super::super::NATIVE), path.join("old-native"))
             .expect("replace path");
@@ -438,7 +434,7 @@ mod tests {
     fn mapping_rejects_same_length_payload_tampering() {
         let (directory, _, _) = fixture();
         let path = directory.path().join("version");
-        let manifest = read_manifest(&path).expect("manifest");
+        let manifest = read_manifest_receipt(&path).expect("manifest").0;
         for name in PAYLOAD_NAMES {
             let payload = path.join(name);
             let original = std::fs::read(&payload).expect("read payload");
@@ -461,7 +457,7 @@ mod tests {
     fn read_ahead_rejects_unbounded_or_overlapping_ranges() {
         let (directory, _, _) = fixture();
         let path = directory.path().join("version");
-        let manifest = read_manifest(&path).expect("manifest");
+        let manifest = read_manifest_receipt(&path).expect("manifest").0;
         let files = open_verified(&path, &manifest, true).expect("files");
         for ranges in [
             vec![ReadAhead {

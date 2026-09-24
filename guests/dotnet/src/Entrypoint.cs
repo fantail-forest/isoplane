@@ -43,7 +43,7 @@ using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Isoplane.App.A
 #endif
 
 /// <summary>
-/// This module's five core-wasm exports, each delegating to the SDK's
+/// This module's core-wasm exports, each delegating to the SDK's
 /// generic implementation; the <c>using Guest = …</c> alias above is the
 /// whole declaration. Under NativeAOT the methods carry
 /// <c>[UnmanagedCallersOnly]</c>, which cannot sit on a generic class, and
@@ -80,6 +80,11 @@ internal static class IsoplaneGeneratedExports
     [UnmanagedCallersOnly(EntryPoint = "isoplane_initialize")]
 #endif
     public static long Initialize() => Guest.Initialize();
+
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_initialize_runtime")]
+#endif
+    public static long InitializeRuntime() => Guest.InitializeRuntime();
 
 #if !ISOPLANE_MONO
     [UnmanagedCallersOnly(EntryPoint = "isoplane_gc_hint")]

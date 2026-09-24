@@ -172,6 +172,12 @@ int64_t isoplane_initialize(void)
     return *(int64_t *)mono_object_unbox(value);
 }
 
+int64_t isoplane_initialize_runtime(void)
+{
+    void *value = invoke("InitializeRuntime", 0, 0);
+    return *(int64_t *)mono_object_unbox(value);
+}
+
 void isoplane_gc_hint(int32_t pressure)
 {
     void *args[] = {&pressure};
