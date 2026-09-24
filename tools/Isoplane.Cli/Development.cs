@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -277,48 +276,4 @@ internal static class Development
     }
 
 
-}
-
-internal sealed class SourceChanges : IDisposable
-{
-    private readonly FileSystemWatcher watcher;
-    private string? output;
-
-    internal void SetOutput(string module) => Volatile.Write(ref output, Path.GetFullPath(module));
-    private readonly Channel<bool> changes = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
-    {
-        FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = true
-    });
-
-    internal SourceChanges(string directory)
-    {
-        watcher = new FileSystemWatcher(directory) { IncludeSubdirectories = true };
-        watcher.Changed += (_, e) => Observe(e.FullPath);
-        watcher.Created += (_, e) => Observe(e.FullPath);
-        watcher.Deleted += (_, e) => Observe(e.FullPath);
-        watcher.Renamed += (_, e) => { Observe(e.OldFullPath); Observe(e.FullPath); };
-        watcher.Error += (_, e) => changes.Writer.TryComplete(e.GetException());
-        watcher.EnableRaisingEvents = true;
-    }
-
-    private void Observe(string path)
-    {
-        if (IsSourceFile(path))
-            changes.Writer.TryWrite(true);
-    }
-
-    internal bool IsSourceFile(string path)
-    {
-        var module = Volatile.Read(ref output);
-        var fullPath = Path.GetFullPath(path);
-        if (fullPath == module || fullPath == module + ".runtime" || Directory.Exists(path))
-            return false;
-        var relative = Path.GetRelativePath(watcher.Path, path);
-        return !relative.Split(Path.DirectorySeparatorChar).Any(part => part.StartsWith('.') || part is "bin" or "obj" or "out" or "node_modules" or "target");
-    }
-
-    internal async Task WaitAsync(CancellationToken cancellation) => await changes.Reader.ReadAsync(cancellation);
-
-    public void Dispose() => watcher.Dispose();
 }
