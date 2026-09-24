@@ -79,13 +79,10 @@ fn memory_init_keeps_original_segment_indices_before_and_after_baking() {
     engine
         .prepare_template(&output.wasm, identity)
         .expect("native preparation")
-        .publish(
-            &path,
-            isoplane_engine::prepared::PreparedStorage::VerifiedCopy,
-        )
+        .publish(&path)
         .expect("local publication");
-    let template = engine
-        .load_prepared(&path, identity)
+    // SAFETY: nothing changes the published files while the template maps them.
+    let template = unsafe { engine.load_prepared(&path, identity, &[]) }
         .expect("native passive-data artifact");
     let mut live = engine
         .activate_initialization(&template, Box::new(NoImports))

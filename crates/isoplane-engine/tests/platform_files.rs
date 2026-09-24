@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 //! Host-declared platform files through the engine's real validator and
 //! linker: every allowed operation on a declared file and its implied
 //! directories, and every rejection boundary around them.

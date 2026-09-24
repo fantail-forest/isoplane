@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::{
     files, state::State, Manifest, PreparedError, PreparedIdentity, PreparedPayload,
-    PreparedStorage, PreparedTemplate, ReadAhead, Result, FORMAT, MAGIC,
+    PreparedTemplate, ReadAhead, Result, FORMAT, MAGIC,
 };
 use crate::{Instance, InstanceOps, IsoplaneEngine, Template};
 
@@ -134,11 +134,10 @@ impl IsoplaneEngine {
     pub unsafe fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
         let directory = tempfile::tempdir().map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
-        product.publish(&path, PreparedStorage::VerifiedCopy)?;
-        unsafe {
-            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
-            self.load_prepared(&path, product.manifest.identity)
-        }
+        product.publish(&path)?;
+        // SAFETY: the directory is private to this call and nothing writes its published files;
+        // removing it with the call's end unlinks them, which leaves the mappings intact.
+        unsafe { self.load_prepared(&path, product.manifest.identity, &[]) }
     }
 }
 
@@ -150,16 +149,6 @@ pub(super) fn from_file(
     // the image retains it and its mapping through every allocator slot that references it.
     unsafe { wasmtime::CowMemoryImage::from_file_extents(file, image.len(), image.layer_extents()) }
         .map_err(|error| PreparedError::Engine(error.into()))
-}
-
-pub(super) fn from_owned(
-    bytes: &[u8],
-    image: &crate::MemoryImage,
-) -> Result<wasmtime::CowMemoryImage> {
-    let mut file = tempfile::tempfile().map_err(|error| PreparedError::Engine(error.into()))?;
-    file.write_all(bytes)
-        .map_err(|error| PreparedError::Engine(error.into()))?;
-    from_file(file, image)
 }
 
 pub(super) fn attach(template: &mut Template, image: wasmtime::CowMemoryImage) -> Result<()> {

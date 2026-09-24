@@ -36,7 +36,6 @@ impl LocalDeployment for RealCells {
             wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
             max_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
-            storage: isoplane_engine::prepared::PreparedStorage::VerifiedCopy,
             cancellation: &cancellation,
         };
         manifest.name = app.to_string();

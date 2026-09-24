@@ -114,7 +114,7 @@ fn measure() -> anyhow::Result<()> {
             // its private directory. Cache eviction does not modify the published contents.
             // The supervising parent reports mapped-storage faults from this worker.
             let template = unsafe {
-                engine.load_prepared_mapped(
+                engine.load_prepared(
                     &directory,
                     identity,
                     if mode == "evicted-read-ahead" {

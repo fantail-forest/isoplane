@@ -9,7 +9,7 @@ use std::path::Path;
 
 use common::*;
 use dispatch::http_dispatch;
-use isoplane_engine::prepared::{PreparedIdentity, PreparedStorage};
+use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
     Completion, CpuBudget, InstanceOps, IsoplaneEngine, Template, TemplateStorageFailed, TrapKind,
 };
@@ -26,8 +26,7 @@ fn identity() -> PreparedIdentity {
 fn load(engine: &IsoplaneEngine, path: &Path) -> Template {
     // SAFETY: these tests change published files only to observe that the
     // resulting faults are contained.
-    unsafe { engine.load_prepared_mapped(path, identity(), &[]) }
-        .expect("map the published template")
+    unsafe { engine.load_prepared(path, identity(), &[]) }.expect("map the published template")
 }
 
 /// Publishes at `path` a layered template whose initializer wrote the page
@@ -62,7 +61,7 @@ fn publish_layer(engine: &IsoplaneEngine, path: &Path) {
             vec![],
         )
         .expect("capture the layer")
-        .publish(path, PreparedStorage::Mapped)
+        .publish(path)
         .expect("publish the layer");
 }
 

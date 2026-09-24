@@ -41,8 +41,6 @@ pub struct PreparationContext<'a> {
     pub max_passes: u32,
     /// Retained successful-pass guest log bytes.
     pub log_bytes: usize,
-    /// Required publication integrity mode; failures never weaken it.
-    pub storage: isoplane_engine::prepared::PreparedStorage,
     /// Cancellation of this owned preparation job.
     pub cancellation: &'a tokio_util::sync::CancellationToken,
 }
@@ -104,12 +102,14 @@ impl Deployer {
         let digest: [u8; 32] = hex::decode(&receipt.manifest_sha256)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("prepared manifest SHA256 must be 32 bytes"))?;
+        // SAFETY: this checked operator-owned root holds controlled local compiler output; publication
+        // creates new files and never modifies payloads. The engine contains a later storage fault.
         Ok(unsafe {
-            // SAFETY: this deployer publishes controlled compiler output under its checked private root; published payloads remain unchanged.
             engine.restore_prepared(
                 &self.root.join(&receipt.artifact_key.0).join("prepared"),
                 digest,
                 receipt.runtime_profile.digest()?,
+                &[],
             )
         }?)
     }
@@ -189,7 +189,7 @@ impl Deployer {
         std::fs::write(publication.path().join("version"), &opts.version.0)?;
         let directory = publication.path().join("prepared");
         let clock = std::time::Instant::now();
-        artifact.publish(&directory, context.storage)?;
+        artifact.publish(&directory)?;
         let receipt = PreparedReceipt {
             version: opts.version.0.clone(),
             artifact_key: publication

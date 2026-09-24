@@ -94,15 +94,10 @@ async fn preserves_application_state(provider: &dyn Preparation, portable: Porta
         .expect("trusted prepared output");
     let root = tempfile::tempdir().expect("publication");
     let path = root.path().join("prepared");
-    prepared
-        .publish(
-            &path,
-            isoplane_engine::prepared::PreparedStorage::VerifiedCopy,
-        )
-        .expect("publish");
-    let loaded = engine
-        .load_prepared(&path, identity)
-        .expect("load prepared output");
+    prepared.publish(&path).expect("publish");
+    // SAFETY: nothing changes the published files while the template maps them.
+    let loaded =
+        unsafe { engine.load_prepared(&path, identity, &[]) }.expect("load prepared output");
     let memory = loaded.memory_image_arc().to_dense();
     assert_eq!(
         memory[100], b'a',

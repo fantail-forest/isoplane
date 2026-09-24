@@ -3,7 +3,7 @@ use super::{common, filesystem};
 use common::{activate, small_engine_config};
 use filesystem::{call, dispatch, ROOT};
 use isoplane_abi::filesystem::Operation;
-use isoplane_engine::prepared::{PreparedIdentity, PreparedStorage};
+use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
     Completion, CpuBudget, EngineConfig, Instance, InstanceOps, IsoplaneEngine, PlatformFile,
     PlatformFiles, Template,
@@ -159,7 +159,7 @@ fn published_application_content_restores_with_the_current_host_trust_file() {
     engine
         .prepare_template_with_files(&wasm, identity, files(&[("/config.json", b"persisted")]))
         .expect("prepare with files")
-        .publish(&directory, PreparedStorage::VerifiedCopy)
+        .publish(&directory)
         .expect("local publication");
     drop(engine);
     let replacement = IsoplaneEngine::new(EngineConfig {
@@ -167,8 +167,8 @@ fn published_application_content_restores_with_the_current_host_trust_file() {
         ..small_engine_config()
     })
     .expect("replacement engine");
-    let template = replacement
-        .load_prepared(&directory, identity)
+    // SAFETY: the test unlinks the artifact only after mapping it, which leaves the mappings intact.
+    let template = unsafe { replacement.load_prepared(&directory, identity, &[]) }
         .expect("restore published artifact");
     std::fs::remove_dir_all(&directory).expect("remove backing artifact");
     let mut instance = activate(&replacement, &template);
@@ -223,7 +223,7 @@ fn changed_application_bytes_are_rejected_before_loading() {
     engine
         .prepare_template_with_files(&wasm, identity, files(&[("/config.json", content)]))
         .expect("prepare")
-        .publish(&path, PreparedStorage::VerifiedCopy)
+        .publish(&path)
         .expect("publish");
     let state_path = path.join("state.bin");
     let mut bytes = std::fs::read(&state_path).expect("state payload");
@@ -232,9 +232,11 @@ fn changed_application_bytes_are_rejected_before_loading() {
         .position(|window| window == content)
         .expect("asset bytes must be in retained state");
     bytes[position] ^= 1;
+    std::fs::remove_file(&state_path).expect("remove read-only published state");
     std::fs::write(state_path, bytes).expect("simulate modified backing content");
     assert!(
-        engine.load_prepared(&path, identity).is_err(),
+        // SAFETY: the file changed before loading, which must refuse it.
+        unsafe { engine.load_prepared(&path, identity, &[]) }.is_err(),
         "changed content must be refused before an application becomes executable"
     );
 }
@@ -281,16 +283,15 @@ fn restored_artifacts_cannot_claim_a_path_reserved_by_the_receiving_host() {
         .expect("producer with no reserved paths");
     let root = tempfile::tempdir().expect("registry");
     let path = root.path().join("version");
-    prepared
-        .publish(&path, PreparedStorage::VerifiedCopy)
-        .expect("published artifact");
+    prepared.publish(&path).expect("published artifact");
     let receiver = IsoplaneEngine::new(EngineConfig {
         platform_files: files(&[("/etc/ssl/certs/ca-certificates.crt", b"host roots")]),
         ..small_engine_config()
     })
     .expect("receiving host");
     assert!(
-        receiver.load_prepared(&path, identity).is_err(),
+        // SAFETY: nothing changes the published files.
+        unsafe { receiver.load_prepared(&path, identity, &[]) }.is_err(),
         "application files cannot replace paths reserved by the receiving host"
     );
 }
