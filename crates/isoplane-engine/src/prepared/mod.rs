@@ -17,7 +17,7 @@ use crate::{IsoplaneEngine, Template};
 
 pub use files::{PreparedPayload, ReadAhead};
 
-const FORMAT: u32 = 7;
+const FORMAT: u32 = 8;
 const MAGIC: [u8; 8] = *b"ISOPPREP";
 const NATIVE: &str = "template.cwasm";
 const BASELINE: &str = "baseline.bin";
@@ -72,6 +72,9 @@ struct Manifest {
     identity: PreparedIdentity,
     module_hash: [u8; 32],
     files: [files::FileRecord; 3],
+    /// The module hash of the template this one is a layer over; its native
+    /// code and unchanged memory come from that template.
+    base: Option<[u8; 32]>,
 }
 
 /// Fully prepared native code and explicit initial state, awaiting atomic publication.
@@ -138,6 +141,7 @@ impl IsoplaneEngine {
                 identity,
                 module_hash: template.hash.0,
                 files: std::array::from_fn(|index| files::FileRecord::new(&payloads[index])),
+                base: None,
             },
             payloads,
         })
@@ -153,8 +157,32 @@ impl IsoplaneEngine {
         bytes: &[u8],
         expected: PreparedIdentity,
     ) -> Result<PreparedTemplate> {
+        self.decode_prepared(bytes, expected, None)
+    }
+
+    /// As [`IsoplaneEngine::decode_builder_output`], for output captured as a
+    /// layer over `base`.
+    ///
+    /// # Safety
+    /// As for [`IsoplaneEngine::decode_builder_output`].
+    pub unsafe fn decode_builder_output_over(
+        &self,
+        base: &Template,
+        bytes: &[u8],
+        expected: PreparedIdentity,
+    ) -> Result<PreparedTemplate> {
+        self.decode_prepared(bytes, expected, Some(base))
+    }
+
+    fn decode_prepared(
+        &self,
+        bytes: &[u8],
+        expected: PreparedIdentity,
+        base: Option<&Template>,
+    ) -> Result<PreparedTemplate> {
         let prepared: PreparedTemplate = postcard::from_bytes(bytes)?;
         self.check_prepared(&prepared.manifest, expected)?;
+        let base = matching_base(&prepared.manifest, base)?;
         for (record, payload) in prepared.manifest.files.iter().zip(&prepared.payloads) {
             if record.bytes != payload.len() as u64
                 || &record.hash != blake3::hash(payload).as_bytes()
@@ -162,8 +190,9 @@ impl IsoplaneEngine {
                 return Err(PreparedError::Invalid("builder payload digest or length"));
             }
         }
-        let image = crate::MemoryImage::from_storage(
+        let image = crate::MemoryImage::from_storage_over(
             crate::image::ImageStorage::Owned(prepared.payloads[1].clone()),
+            base.map(|base| std::sync::Arc::clone(&base.inner.image)),
             self.inner.cfg.max_memory_bytes as usize,
         )
         .map_err(PreparedError::Invalid)?;
@@ -197,7 +226,28 @@ impl IsoplaneEngine {
     ) -> Result<Template> {
         let manifest = self.catalog_manifest(directory, manifest_sha256, runtime_profile)?;
         // SAFETY: the caller upholds this function's contract, which is the mapping's.
-        unsafe { self.map_prepared(directory, manifest, prefetch) }
+        unsafe { self.map_prepared(directory, manifest, prefetch, None) }
+    }
+
+    /// As [`IsoplaneEngine::restore_prepared`], for a template captured as a
+    /// layer over `base`.
+    ///
+    /// # Safety
+    /// As for [`IsoplaneEngine::load_prepared`].
+    #[tracing::instrument(name = "template_load", skip_all)]
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn restore_prepared_over(
+        &self,
+        base: &Template,
+        directory: &Path,
+        manifest_sha256: [u8; 32],
+        runtime_profile: [u8; 32],
+        prefetch: &[ReadAhead],
+    ) -> Result<Template> {
+        let manifest = self.catalog_manifest(directory, manifest_sha256, runtime_profile)?;
+        // SAFETY: the caller upholds this function's contract, which is the mapping's.
+        unsafe { self.map_prepared(directory, manifest, prefetch, Some(base)) }
     }
 
     /// Checks a selection receipt without reading native code or baseline payloads.
@@ -254,10 +304,32 @@ impl IsoplaneEngine {
         expected: PreparedIdentity,
         prefetch: &[ReadAhead],
     ) -> Result<Template> {
-        let manifest = files::read_manifest(directory)?;
+        let (manifest, _) = files::read_manifest_receipt(directory)?;
         self.check_prepared(&manifest, expected)?;
         // SAFETY: the caller upholds this function's contract, which is the mapping's.
-        unsafe { self.map_prepared(directory, manifest, prefetch) }
+        unsafe { self.map_prepared(directory, manifest, prefetch, None) }
+    }
+
+    /// As [`IsoplaneEngine::load_prepared`], for a template captured as a
+    /// layer over `base`: its native code is `base`'s, and memory it left
+    /// unchanged maps from `base`'s baseline file.
+    ///
+    /// # Safety
+    /// As for [`IsoplaneEngine::load_prepared`], for this template's files and `base`'s.
+    #[tracing::instrument(name = "template_load", skip_all)]
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn load_prepared_over(
+        &self,
+        base: &Template,
+        directory: &Path,
+        expected: PreparedIdentity,
+        prefetch: &[ReadAhead],
+    ) -> Result<Template> {
+        let (manifest, _) = files::read_manifest_receipt(directory)?;
+        self.check_prepared(&manifest, expected)?;
+        // SAFETY: the caller upholds this function's contract, which is the mapping's.
+        unsafe { self.map_prepared(directory, manifest, prefetch, Some(base)) }
     }
 
     /// # Safety
@@ -267,9 +339,15 @@ impl IsoplaneEngine {
         directory: &Path,
         manifest: Manifest,
         prefetch: &[ReadAhead],
+        base: Option<&Template>,
     ) -> Result<Template> {
+        let module_hash = manifest.module_hash;
+        let base = matching_base(&manifest, base)?;
         let native_hash = manifest.files[0].hash;
-        let held = self.inner.natives.get(&native_hash);
+        let held = match base {
+            Some(base) => Some(base.inner.native.clone()),
+            None => self.inner.natives.get(&native_hash),
+        };
         let files = files::open_verified(directory, &manifest, held.is_none())?;
         files::advise(&files, &manifest, prefetch)?;
         let activation_prefetch = prefetch::Payloads::new(files.each(), directory)?;
@@ -302,9 +380,12 @@ impl IsoplaneEngine {
                 path: directory.join(BASELINE),
                 source,
             })?;
-        let image =
-            crate::MemoryImage::from_storage(baseline, self.inner.cfg.max_memory_bytes as usize)
-                .map_err(PreparedError::Invalid)?;
+        let image = crate::MemoryImage::from_storage_over(
+            baseline,
+            base.map(|base| base.inner.image.clone()),
+            self.inner.cfg.max_memory_bytes as usize,
+        )
+        .map_err(PreparedError::Invalid)?;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
         let native = match (held, native) {
             (Some(held), _) => held,
@@ -321,7 +402,13 @@ impl IsoplaneEngine {
         };
         #[cfg(target_os = "linux")]
         let layer = if image.is_layer() {
-            Some(layer::from_file(layer_file, &image)?)
+            let base_source = match base {
+                Some(base) => Some(base.inner.layer_source.as_ref().ok_or(
+                    PreparedError::Invalid("a base template must map its baseline"),
+                )?),
+                None => None,
+            };
+            Some(layer::from_file(layer_file, &image, base_source)?)
         } else {
             None
         };
@@ -339,7 +426,8 @@ impl IsoplaneEngine {
             let mut template = template;
             let inner = std::sync::Arc::get_mut(&mut template.inner)
                 .ok_or(PreparedError::Invalid("new template is already shared"))?;
-            inner.activation_prefetch = Some(activation_prefetch);
+            inner.activation_prefetch = Some(std::sync::Arc::new(activation_prefetch));
+            inner.prepared_hash = Some(module_hash);
             template
         };
         Ok(template)
@@ -376,6 +464,32 @@ impl PreparedTemplate {
     /// Encodes complete preparation output for the host.
     pub fn encode_builder_output(&self) -> Result<Vec<u8>> {
         Ok(postcard::to_allocvec(self)?)
+    }
+}
+
+/// `base` when `manifest` names it as the template it was captured over;
+/// refuses a layer without its base and a base for anything but a layer.
+fn matching_base<'a>(
+    manifest: &Manifest,
+    base: Option<&'a Template>,
+) -> Result<Option<&'a Template>> {
+    match (manifest.base, base) {
+        (None, None) => Ok(None),
+        (Some(expected), Some(base)) if base.inner.prepared_hash == Some(expected) => {
+            if manifest.files[0].bytes != 0 {
+                return Err(PreparedError::Invalid(
+                    "a layer over a base carries no native code",
+                ));
+            }
+            Ok(Some(base))
+        }
+        (Some(_), Some(_)) => Err(PreparedError::Incompatible("base template")),
+        (Some(_), None) => Err(PreparedError::Incompatible(
+            "a layer needs the base template it was captured over",
+        )),
+        (None, Some(_)) => Err(PreparedError::Incompatible(
+            "only a layer is loaded over a base template",
+        )),
     }
 }
 

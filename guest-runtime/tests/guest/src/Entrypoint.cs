@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Acceptance.AcceptanceHandler>>;
 
 /// <summary>
-/// The module's five core exports in either profile. Under NativeAOT the
+/// The module's core exports in either profile. Under NativeAOT the
 /// methods carry <c>[UnmanagedCallersOnly]</c> and become the wasm exports;
 /// under Mono the SDK's C entry looks this class up by name from the global
 /// namespace and invokes the same methods through the runtime, with
@@ -36,6 +36,11 @@ internal static class IsoplaneGeneratedExports
     [UnmanagedCallersOnly(EntryPoint = "isoplane_initialize")]
 #endif
     public static long Initialize() => Guest.Initialize();
+
+#if !ISOPLANE_MONO
+    [UnmanagedCallersOnly(EntryPoint = "isoplane_initialize_runtime")]
+#endif
+    public static long InitializeRuntime() => Guest.InitializeRuntime();
 
 #if !ISOPLANE_MONO
     [UnmanagedCallersOnly(EntryPoint = "isoplane_gc_hint")]

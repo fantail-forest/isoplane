@@ -74,6 +74,30 @@ impl LocalPreparation {
             cache,
         })
     }
+
+    /// Run `job` on the preparation thread with this provider's cache,
+    /// observing `cancellation` before and after it.
+    pub(crate) async fn run<T: Send + 'static>(
+        &self,
+        cancellation: &CancellationToken,
+        job: impl FnOnce(Option<&isoplane_engine::CompilationCache>) -> Result<T, WorkerFailure>
+            + Send
+            + 'static,
+    ) -> Result<T, PrepareError> {
+        if cancellation.is_cancelled() {
+            return Err(PrepareError::Cancelled);
+        }
+        let pool = self.pool.clone();
+        let cache = self.cache.clone();
+        let result = tokio::task::spawn_blocking(move || pool.install(|| job(cache.as_deref())))
+            .await
+            .map_err(|error| PrepareError::State(error.into()))?
+            .map_err(PrepareError::Rejected)?;
+        if cancellation.is_cancelled() {
+            return Err(PrepareError::Cancelled);
+        }
+        Ok(result)
+    }
 }
 
 #[async_trait::async_trait]
@@ -84,23 +108,10 @@ impl Preparation for LocalPreparation {
         request: &BuildRequest,
         cancellation: &CancellationToken,
     ) -> Result<BuildProduct, PrepareError> {
-        if cancellation.is_cancelled() {
-            return Err(PrepareError::Cancelled);
-        }
         let wasm = wasm.to_vec();
         let request = request.clone();
-        let pool = self.pool.clone();
-        let cache = self.cache.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            pool.install(|| prepare(&wasm, &request, cache.as_deref()))
-        })
-        .await
-        .map_err(|error| PrepareError::State(error.into()))?
-        .map_err(PrepareError::Rejected)?;
-        if cancellation.is_cancelled() {
-            return Err(PrepareError::Cancelled);
-        }
-        Ok(result)
+        self.run(cancellation, move |cache| prepare(&wasm, &request, cache))
+            .await
     }
 }
 
@@ -121,17 +132,29 @@ fn prepare(
         validate(wasm, request).map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
     let engine = IsoplaneEngine::new(request.engine.clone())
         .map_err(|error| WorkerFailure::new(BuildStage::Engine, error))?;
-    let start = Instant::now();
     #[cfg(target_os = "linux")]
     let capture = crate::initialize::CaptureMode::Layered {
+        wasm,
         identity,
         portable: request.portable_template,
     };
     #[cfg(not(target_os = "linux"))]
-    let capture = crate::initialize::CaptureMode::Portable;
+    let capture = crate::initialize::CaptureMode::Portable { wasm };
+    Ok(produce(&engine, request, cache, identity, capture)?.0)
+}
+
+/// Initialize `request` under `engine` and encode the captured state,
+/// with the verified template it loads back to.
+pub(crate) fn produce(
+    engine: &IsoplaneEngine,
+    request: &BuildRequest,
+    cache: Option<&isoplane_engine::CompilationCache>,
+    identity: PreparedIdentity,
+    capture: crate::initialize::CaptureMode<'_>,
+) -> Result<(BuildProduct, Option<isoplane_engine::Template>), WorkerFailure> {
+    let start = Instant::now();
     let output = crate::initialize::initialize_with_cache(
-        &engine,
-        wasm,
+        engine,
         &request.initialization,
         cache,
         &request.application_files,
@@ -141,7 +164,14 @@ fn prepare(
         )),
         capture,
     )
-    .map_err(|error| WorkerFailure::new(BuildStage::Initialization, error.into()))?;
+    .map_err(|error| {
+        let stage = match error {
+            PrepareError::Baseline(_) => BuildStage::Baseline,
+            // Every other refusal happened while running or preserving initialization.
+            _ => BuildStage::Initialization,
+        };
+        WorkerFailure::new(stage, error.into())
+    })?;
     let preinit_ms = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
     let (prepared, portable) = match output.captured {
@@ -153,27 +183,25 @@ fn prepare(
             portable,
         ),
         crate::initialize::Captured::Portable(module) => (
-            encode(
-                &engine,
-                &module,
-                identity,
-                request.application_files.clone(),
-            )
-            .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?,
+            encode(engine, &module, identity, request.application_files.clone())
+                .map_err(|error| WorkerFailure::new(BuildStage::Artifact, error))?,
             (request.portable_template == crate::PortableTemplate::Returned).then_some(module),
         ),
     };
     let compile_ms = start.elapsed().as_secs_f64() * 1000.0;
-    Ok(BuildProduct {
-        initialized: output.initialized,
-        preinit_ms,
-        compile_ms,
-        prepared,
-        portable,
-    })
+    Ok((
+        BuildProduct {
+            initialized: output.initialized,
+            preinit_ms,
+            compile_ms,
+            prepared,
+            portable,
+        },
+        output.restored,
+    ))
 }
 
-fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdentity> {
+pub(crate) fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<PreparedIdentity> {
     anyhow::ensure!(
         *blake3::hash(wasm).as_bytes() == request.input_hash,
         "preparation input identity mismatch"

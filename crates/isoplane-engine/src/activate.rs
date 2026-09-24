@@ -149,6 +149,7 @@ pub(crate) fn instantiate(
     let mut f_wake = None;
     let mut f_gc_hint = None;
     let mut f_initialize = None;
+    let mut f_initialize_runtime = None;
     {
         let exports: Vec<(String, Extern)> = inst
             .exports(&mut store)
@@ -162,6 +163,9 @@ pub(crate) fn instantiate(
                 (guest_exports::WAKE, Extern::Func(f)) => f_wake = Some(f),
                 (guest_exports::GC_HINT, Extern::Func(f)) => f_gc_hint = Some(f),
                 (guest_exports::INITIALIZE, Extern::Func(f)) => f_initialize = Some(f),
+                (guest_exports::INITIALIZE_RUNTIME, Extern::Func(f)) => {
+                    f_initialize_runtime = Some(f)
+                }
                 _ => {}
             }
         }
@@ -193,6 +197,16 @@ pub(crate) fn instantiate(
             f.typed::<i32, ()>(&store)
                 .map_err(anyhow::Error::from)
                 .with_context(|| format!("`{}` must be (i32)->()", guest_exports::GC_HINT))?,
+        ),
+        None => None,
+    };
+    let f_initialize_runtime = match f_initialize_runtime {
+        Some(f) => Some(
+            f.typed::<(), i64>(&store)
+                .map_err(anyhow::Error::from)
+                .with_context(|| {
+                    format!("`{}` must be ()->i64", guest_exports::INITIALIZE_RUNTIME)
+                })?,
         ),
         None => None,
     };
@@ -258,6 +272,7 @@ pub(crate) fn instantiate(
         f_wake,
         f_gc_hint,
         f_initialize,
+        f_initialize_runtime,
         globals,
         tables,
         table_baseline,

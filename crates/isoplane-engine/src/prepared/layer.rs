@@ -49,6 +49,61 @@ impl IsoplaneEngine {
         resources: isoplane_abi::native_io::PreparedResources,
         deferred: Vec<u32>,
     ) -> Result<PreparedTemplate> {
+        self.capture_layer(
+            template,
+            instance,
+            identity,
+            resources,
+            deferred,
+            Capture::Application,
+        )
+    }
+
+    /// Capture a completed runtime-only initializer as a base: a template
+    /// that still runs the application's initializer, and that application
+    /// templates are captured as layers over.
+    pub fn prepare_runtime_baseline(
+        &self,
+        template: &Template,
+        instance: &mut Instance,
+        identity: PreparedIdentity,
+        resources: isoplane_abi::native_io::PreparedResources,
+        deferred: Vec<u32>,
+    ) -> Result<PreparedTemplate> {
+        self.capture_layer(
+            template,
+            instance,
+            identity,
+            resources,
+            deferred,
+            Capture::RuntimeBaseline,
+        )
+    }
+
+    /// Capture an application's completed initializer, run on an activation
+    /// of `base`, as a layer over it: only memory that differs from `base` is
+    /// stored, and the native code is `base`'s. `base` must be loaded from a
+    /// published runtime baseline.
+    pub fn prepare_initialized_template_over(
+        &self,
+        base: &Template,
+        instance: &mut Instance,
+        identity: PreparedIdentity,
+        resources: isoplane_abi::native_io::PreparedResources,
+        deferred: Vec<u32>,
+    ) -> Result<PreparedTemplate> {
+        self.capture_layer(base, instance, identity, resources, deferred, Capture::Over)
+    }
+
+    fn capture_layer(
+        &self,
+        template: &Template,
+        instance: &mut Instance,
+        identity: PreparedIdentity,
+        resources: isoplane_abi::native_io::PreparedResources,
+        deferred: Vec<u32>,
+        capture: Capture,
+    ) -> Result<PreparedTemplate> {
         if !Arc::ptr_eq(&template.inner, &instance.template)
             || !instance.is_capture_eligible()
             || instance.last != Some(crate::Completion::Done)
@@ -57,23 +112,29 @@ impl IsoplaneEngine {
                 "layer requires its own successfully completed initializer",
             ));
         }
-        let native_range = template.inner.module().image_range();
-        let native_address = native_range.start as usize;
-        let native_length = native_range.end as usize - native_address;
-        let native_ranges = super::residency::present_ranges(native_address, native_length)
-            .map_err(|error| PreparedError::Engine(error.into()))?;
+        let base = match capture {
+            Capture::Over => Some(template.inner.prepared_hash.ok_or(PreparedError::Invalid(
+                "a base template must be loaded from a published baseline",
+            ))?),
+            Capture::Application | Capture::RuntimeBaseline => None,
+        };
         let memory = instance.memory();
         let memory_ranges =
             super::residency::present_ranges(memory.as_ptr() as usize, memory.len())
                 .map_err(|error| PreparedError::Engine(error.into()))?;
-        let mut prefetch: Vec<_> = native_ranges
-            .into_iter()
-            .map(|range| ReadAhead {
+        let mut prefetch = Vec::new();
+        if base.is_none() {
+            let native_range = template.inner.module().image_range();
+            let native_address = native_range.start as usize;
+            let native_length = native_range.end as usize - native_address;
+            let native_ranges = super::residency::present_ranges(native_address, native_length)
+                .map_err(|error| PreparedError::Engine(error.into()))?;
+            prefetch.extend(native_ranges.into_iter().map(|range| ReadAhead {
                 payload: PreparedPayload::Native,
                 offset_bytes: range.start,
                 length_bytes: range.end - range.start,
-            })
-            .collect();
+            }));
+        }
         let captured = instance
             .capture_mutable_state()
             .map_err(PreparedError::Engine)?;
@@ -81,12 +142,22 @@ impl IsoplaneEngine {
         state.memory_pages = captured.memory_pages;
         state.deferred = deferred;
         state.prepared_resources = resources;
-        state.has_initialize = false;
+        state.has_initialize = capture == Capture::RuntimeBaseline;
         for ((_, value), captured_value) in state.mut_globals.iter_mut().zip(captured.globals) {
             *value = captured_value;
         }
-        let image = crate::MemoryImage::from_layer(instance.memory(), &memory_ranges)
-            .map_err(PreparedError::Invalid)?;
+        let image = match capture {
+            Capture::Over => crate::MemoryImage::from_overlay(
+                instance.memory(),
+                &template.inner.image,
+                &memory_ranges,
+                self.inner.cfg.max_memory_bytes as usize,
+            ),
+            Capture::Application | Capture::RuntimeBaseline => {
+                crate::MemoryImage::from_layer(instance.memory(), &memory_ranges)
+            }
+        }
+        .map_err(PreparedError::Invalid)?;
         let selected = image.layer_prefetch();
         if !selected.is_empty() {
             prefetch.push(ReadAhead {
@@ -97,12 +168,16 @@ impl IsoplaneEngine {
         }
         state.prefetch = prefetch;
         state.validate(&image, self.inner.cfg.max_memory_bytes)?;
-        let payloads = [
-            template
+        let native = match base {
+            Some(_) => Vec::new(),
+            None => template
                 .inner
                 .module()
                 .serialize()
                 .map_err(|error| PreparedError::Engine(error.into()))?,
+        };
+        let payloads = [
+            native,
             image.encoded().to_vec(),
             postcard::to_allocvec(&state)?,
         ];
@@ -110,6 +185,7 @@ impl IsoplaneEngine {
         hash.update(b"isoplane.initialization-layer.v1\0");
         hash.update(&template.hash.0);
         hash.update(&postcard::to_allocvec(&identity)?);
+        hash.update(&postcard::to_allocvec(&base)?);
         for bytes in &payloads {
             hash.update(blake3::hash(bytes).as_bytes());
         }
@@ -122,9 +198,26 @@ impl IsoplaneEngine {
                 identity,
                 module_hash: *hash.finalize().as_bytes(),
                 files: std::array::from_fn(|index| files::FileRecord::new(&payloads[index])),
+                base,
             },
             payloads,
         })
+    }
+
+    /// As [`IsoplaneEngine::load_prepared_product`], for a template captured as a layer over `base`.
+    /// # Safety
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn load_prepared_product_over(
+        &self,
+        base: &Template,
+        product: &PreparedTemplate,
+    ) -> Result<Template> {
+        let directory = tempfile::tempdir().map_err(|error| PreparedError::Engine(error.into()))?;
+        let path = directory.path().join("prepared");
+        product.publish(&path)?;
+        // SAFETY: as for `load_prepared_product`; `base` retains its own files.
+        unsafe { self.load_prepared_over(base, &path, product.manifest.identity, &[]) }
     }
 
     /// Loads captured preparation output without compilation.
@@ -141,21 +234,47 @@ impl IsoplaneEngine {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Capture {
+    /// The whole initialization, as a complete layer.
+    Application,
+    /// The runtime-only initialization, as a complete layer that still runs
+    /// the application's initializer.
+    RuntimeBaseline,
+    /// The application's initialization over a loaded runtime baseline, as
+    /// a layer over it.
+    Over,
+}
+
+/// Maps a layer's own baseline file and, for a layer over a base, the base's.
+/// Returns the layer's own source, for layers captured over this one.
 pub(super) fn from_file(
     file: File,
     image: &crate::MemoryImage,
-) -> Result<wasmtime::CowMemoryImage> {
+    base: Option<&wasmtime::CowMemorySource>,
+) -> Result<(wasmtime::CowMemorySource, wasmtime::CowMemoryImage)> {
     // SAFETY: callers provide the same verified immutable descriptor used for admission;
-    // the image retains it and its mapping through every allocator slot that references it.
-    unsafe { wasmtime::CowMemoryImage::from_file_extents(file, image.len(), image.layer_extents()) }
-        .map_err(|error| PreparedError::Engine(error.into()))
+    // the source retains it and its mapping through every image and allocator slot that
+    // references it.
+    let own = unsafe { wasmtime::CowMemorySource::from_file(file) }
+        .map_err(|error| PreparedError::Engine(error.into()))?;
+    let (sources, extents) = match base {
+        Some(base) => (vec![base.clone(), own.clone()], image.layer_extents(1)),
+        None => (vec![own.clone()], image.layer_extents(0)),
+    };
+    let mapped = wasmtime::CowMemoryImage::from_sources(&sources, image.len(), extents)
+        .map_err(|error| PreparedError::Engine(error.into()))?;
+    Ok((own, mapped))
 }
 
-pub(super) fn attach(template: &mut Template, image: wasmtime::CowMemoryImage) -> Result<()> {
-    Arc::get_mut(&mut template.inner)
-        .ok_or(PreparedError::Invalid(
-            "new layered template is already shared",
-        ))?
-        .initialization_layer = Some(image);
+pub(super) fn attach(
+    template: &mut Template,
+    (source, image): (wasmtime::CowMemorySource, wasmtime::CowMemoryImage),
+) -> Result<()> {
+    let inner = Arc::get_mut(&mut template.inner).ok_or(PreparedError::Invalid(
+        "new layered template is already shared",
+    ))?;
+    inner.initialization_layer = Some(image);
+    inner.layer_source = Some(source);
     Ok(())
 }

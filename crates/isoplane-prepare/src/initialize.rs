@@ -91,12 +91,11 @@ pub fn initialize(
 ) -> Result<InitializedModule, PrepareError> {
     let output = initialize_with_cache(
         engine,
-        wasm,
         request,
         None,
         &isoplane_engine::PlatformFiles::default(),
         None,
-        CaptureMode::Portable,
+        CaptureMode::Portable { wasm },
     )?;
     match output.captured {
         Captured::Portable(wasm) => Ok(InitializedModule {
@@ -110,14 +109,103 @@ pub fn initialize(
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum CaptureMode {
-    Portable,
+/// What initialization runs and how its result is captured. Every mode but
+/// [`CaptureMode::Over`] compiles `wasm`, or loads its compilation from a cache.
+pub(crate) enum CaptureMode<'a> {
+    /// The module's whole initialization, as a portable module.
+    Portable { wasm: &'a [u8] },
+    /// The module's whole initialization, as a layer.
     #[cfg(target_os = "linux")]
     Layered {
+        wasm: &'a [u8],
         identity: isoplane_engine::prepared::PreparedIdentity,
         portable: crate::PortableTemplate,
     },
+    /// Only the runtime's own initializer, as a baseline that applications
+    /// are prepared over.
+    #[cfg(target_os = "linux")]
+    RuntimeBaseline {
+        wasm: &'a [u8],
+        identity: isoplane_engine::prepared::PreparedIdentity,
+    },
+    /// The application's initializer, run on an activation of `base`, as a
+    /// layer over it.
+    #[cfg(target_os = "linux")]
+    Over {
+        base: isoplane_engine::Template,
+        identity: isoplane_engine::prepared::PreparedIdentity,
+    },
+}
+
+impl CaptureMode<'_> {
+    /// The initializer stages this capture runs, in order. Whole
+    /// initialization runs the runtime stage first, as a baseline does, so a
+    /// layer over a baseline ends in the state whole initialization leaves.
+    fn stages(&self) -> (Stage, Option<Stage>) {
+        match self {
+            CaptureMode::Portable { .. } => (Stage::Runtime, Some(Stage::Application)),
+            #[cfg(target_os = "linux")]
+            CaptureMode::Layered { .. } => (Stage::Runtime, Some(Stage::Application)),
+            #[cfg(target_os = "linux")]
+            CaptureMode::RuntimeBaseline { .. } => (Stage::Runtime, None),
+            #[cfg(target_os = "linux")]
+            CaptureMode::Over { .. } => (Stage::Application, None),
+        }
+    }
+}
+
+/// One of a guest's initializer exports.
+#[derive(Clone, Copy)]
+enum Stage {
+    /// `isoplane_initialize_runtime`, which completes at once in a guest
+    /// without it.
+    Runtime,
+    /// `isoplane_initialize`.
+    Application,
+}
+
+/// Runs `stage` on `instance` until it completes or fails, waking it from
+/// `host` while it is parked, and adds the CPU it used to `cpu_ns`.
+fn run_stage(
+    instance: &mut isoplane_engine::Instance,
+    stage: Stage,
+    request: &Initialization,
+    host: Option<(
+        &isoplane_host::bindings::PreparationIo,
+        &tokio::runtime::Runtime,
+    )>,
+    start: Instant,
+    cpu_ns: &mut u64,
+) -> Result<isoplane_engine::DispatchOutcome, PrepareError> {
+    let budget = initialization_budget(request, *cpu_ns, start.elapsed())?;
+    let mut outcome = match stage {
+        Stage::Runtime => instance.run_initialize_runtime(budget),
+        Stage::Application => instance.run_initialize(budget),
+    };
+    *cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+    while outcome.completion == Completion::Parked {
+        let Some((io, reactor)) = host else {
+            return Err(PrepareError::InvalidRequest(
+                "initializer is pending without an asynchronous host context",
+            ));
+        };
+        let remaining = Duration::from_millis(u64::from(request.wall_ms))
+            .checked_sub(start.elapsed())
+            .ok_or(PrepareError::Limit("initialization wall time"))?;
+        let completion = reactor
+            .block_on(async { tokio::time::timeout(remaining, io.next_completion()).await })
+            .map_err(|_| PrepareError::Limit("initialization wall time"))?
+            .ok_or(PrepareError::InvalidRequest(
+                "initializer is pending without a host wake source",
+            ))?;
+        outcome = instance.wake(
+            completion.0,
+            &completion.1,
+            initialization_budget(request, *cpu_ns, start.elapsed())?,
+        );
+        *cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+    }
+    Ok(outcome)
 }
 
 /// What a capture produced, in the representation its mode asked for.
@@ -135,17 +223,21 @@ pub(crate) enum Captured {
 pub(crate) struct InitializationOutput {
     pub initialized: Initialized,
     pub captured: Captured,
+    /// The captured state loaded back, as it was verified against the
+    /// initialized instance; absent for a module with no initializer.
+    pub restored: Option<isoplane_engine::Template>,
 }
 
 pub(crate) fn initialize_with_cache(
     engine: &IsoplaneEngine,
-    wasm: &[u8],
     request: &Initialization,
     cache: Option<&isoplane_engine::CompilationCache>,
     application_files: &isoplane_engine::PlatformFiles,
     memory_limit_bytes: Option<u64>,
-    capture: CaptureMode,
+    capture: CaptureMode<'_>,
 ) -> Result<InitializationOutput, PrepareError> {
+    let permits_entropy = !matches!(&capture, CaptureMode::RuntimeBaseline { .. });
+
     if request.runtime_config.len() > isoplane_abi::imports::MAX_RUNTIME_CONFIGURATION_BYTES
         || serde_json::from_slice::<BTreeMap<String, String>>(&request.runtime_config).is_err()
     {
@@ -161,23 +253,7 @@ pub(crate) fn initialize_with_cache(
     let cpu_start = preparation_cpu()?;
     let mut deferred_reasons = Vec::new();
     let mut capability_refusals = 0;
-    let instrumented = bake::instrument(wasm).map_err(PrepareError::State)?;
-    let (template, compiled) = match cache {
-        Some(cache) => cache.load(engine, &instrumented.wasm),
-        None => match capture {
-            CaptureMode::Portable => engine.load_template(&instrumented.wasm),
-            #[cfg(target_os = "linux")]
-            CaptureMode::Layered { .. } => engine.load_layer_source(&instrumented.wasm),
-        }
-        .map(|template| (template, true)),
-    }
-    .and_then(|(template, compiled)| {
-        Ok((
-            template.with_application_files(application_files.clone())?,
-            compiled,
-        ))
-    })
-    .map_err(PrepareError::State)?;
+    let (template, instrumented, compiled) = load(engine, cache, application_files, &capture)?;
     let reactor = request
         .network
         .as_ref()
@@ -207,40 +283,40 @@ pub(crate) fn initialize_with_cache(
                     state: state.clone(),
                     io: io.clone(),
                     memory_limit_bytes,
+                    permits_entropy,
                 }),
             )
             .map_err(PrepareError::State)?;
         if template.has_initialize() {
-            let mut outcome = instance.run_initialize(initialization_budget(
+            let host = io.as_deref().zip(reactor.as_ref());
+            let (first, then) = capture.stages();
+            let mut outcome = run_stage(
+                &mut instance,
+                first,
                 request,
-                cpu_ns,
-                initialization_start.elapsed(),
-            )?);
-            cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
-            while outcome.completion == Completion::Parked {
-                let (Some(io), Some(reactor)) = (&io, &reactor) else {
-                    return Err(PrepareError::InvalidRequest(
-                        "initializer is pending without an asynchronous host context",
-                    ));
-                };
-                let remaining = Duration::from_millis(u64::from(request.wall_ms))
-                    .checked_sub(initialization_start.elapsed())
-                    .ok_or(PrepareError::Limit("initialization wall time"))?;
-                let completion = reactor
-                    .block_on(async { tokio::time::timeout(remaining, io.next_completion()).await })
-                    .map_err(|_| PrepareError::Limit("initialization wall time"))?
-                    .ok_or(PrepareError::InvalidRequest(
-                        "initializer is pending without a host wake source",
-                    ))?;
-                outcome = instance.wake(
-                    completion.0,
-                    &completion.1,
-                    initialization_budget(request, cpu_ns, initialization_start.elapsed())?,
-                );
-                cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+                host,
+                initialization_start,
+                &mut cpu_ns,
+            )?;
+            if let Some(then) = then.filter(|_| outcome.completion == Completion::Done) {
+                outcome = run_stage(
+                    &mut instance,
+                    then,
+                    request,
+                    host,
+                    initialization_start,
+                    &mut cpu_ns,
+                )?;
             }
             initialization_budget(request, cpu_ns, initialization_start.elapsed())?;
             if outcome.completion != Completion::Done {
+                #[cfg(target_os = "linux")]
+                if matches!(capture, CaptureMode::RuntimeBaseline { .. })
+                    && (instance.last_capability_violation().is_some()
+                        || state.lock().seed_reads > 0)
+                {
+                    return Err(PrepareError::Baseline("reached a forbidden capability"));
+                }
                 if let Some(import) = instance.last_capability_violation() {
                     capability_refusals += 1;
                     let unit = {
@@ -282,9 +358,13 @@ pub(crate) fn initialize_with_cache(
             }
         } else {
             let captured = match capture {
-                CaptureMode::Portable => Captured::Portable(wasm.to_vec()),
+                CaptureMode::Portable { wasm } => Captured::Portable(wasm.to_vec()),
                 #[cfg(target_os = "linux")]
-                CaptureMode::Layered { identity, portable } => Captured::Layered {
+                CaptureMode::Layered {
+                    wasm,
+                    identity,
+                    portable,
+                } => Captured::Layered {
                     prepared: Box::new(
                         engine
                             .prepare_template_with_files(wasm, identity, application_files.clone())
@@ -293,9 +373,16 @@ pub(crate) fn initialize_with_cache(
                     portable: (portable == crate::PortableTemplate::Returned)
                         .then(|| wasm.to_vec()),
                 },
+                #[cfg(target_os = "linux")]
+                CaptureMode::RuntimeBaseline { .. } | CaptureMode::Over { .. } => {
+                    return Err(PrepareError::InvalidRequest(
+                        "a runtime baseline needs a module with an initializer",
+                    ))
+                }
             };
             return Ok(InitializationOutput {
                 captured,
+                restored: None,
                 initialized: Initialized {
                     deferred: Vec::new(),
                     cpu_ns,
@@ -324,14 +411,24 @@ pub(crate) fn initialize_with_cache(
             })?
             .unwrap_or_default();
         let deferred: Vec<_> = deferred.into_iter().collect();
+        #[cfg(target_os = "linux")]
+        if matches!(capture, CaptureMode::RuntimeBaseline { .. }) {
+            let state = state.lock();
+            if state.seed_reads > 0 || state.draws > 0 {
+                return Err(PrepareError::Baseline("read initialization entropy"));
+            }
+        }
         // Reinstantiation verifies captured state without invoking the initializer again.
         let (restored_template, captured, representation) = match capture {
-            CaptureMode::Portable => {
+            CaptureMode::Portable { .. } => {
+                let instrumented = instrumented.as_ref().ok_or(PrepareError::InvalidRequest(
+                    "a portable capture needs the instrumented module",
+                ))?;
                 let captured = instance
                     .capture_mutable_state()
                     .map_err(PrepareError::State)?;
                 let module = portable_module(
-                    &instrumented,
+                    instrumented,
                     instance.memory(),
                     &captured.globals,
                     &deferred,
@@ -344,7 +441,9 @@ pub(crate) fn initialize_with_cache(
                 (template, captured, Captured::Portable(module))
             }
             #[cfg(target_os = "linux")]
-            CaptureMode::Layered { identity, portable } => {
+            CaptureMode::Layered {
+                identity, portable, ..
+            } => {
                 let prepared = engine
                     .prepare_initialized_template(
                         &template,
@@ -357,15 +456,22 @@ pub(crate) fn initialize_with_cache(
                 let captured = instance
                     .capture_mutable_state()
                     .map_err(PrepareError::State)?;
-                let portable = match portable {
-                    crate::PortableTemplate::Returned => Some(portable_module(
-                        &instrumented,
-                        instance.memory(),
-                        &captured.globals,
-                        &deferred,
-                        &prepared_resources,
-                    )?),
-                    crate::PortableTemplate::Omitted => None,
+                let portable = match (portable, &instrumented) {
+                    (crate::PortableTemplate::Returned, Some(instrumented)) => {
+                        Some(portable_module(
+                            instrumented,
+                            instance.memory(),
+                            &captured.globals,
+                            &deferred,
+                            &prepared_resources,
+                        )?)
+                    }
+                    (crate::PortableTemplate::Returned, None) => {
+                        return Err(PrepareError::InvalidRequest(
+                            "a portable capture needs the instrumented module",
+                        ))
+                    }
+                    (crate::PortableTemplate::Omitted, _) => None,
                 };
                 let template = unsafe {
                     // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
@@ -381,6 +487,62 @@ pub(crate) fn initialize_with_cache(
                     },
                 )
             }
+            #[cfg(target_os = "linux")]
+            CaptureMode::RuntimeBaseline { identity, .. } => {
+                let prepared = engine
+                    .prepare_runtime_baseline(
+                        &template,
+                        &mut instance,
+                        identity,
+                        prepared_resources.clone(),
+                        deferred.clone(),
+                    )
+                    .map_err(|error| PrepareError::State(error.into()))?;
+                let captured = instance
+                    .capture_mutable_state()
+                    .map_err(PrepareError::State)?;
+                let template = unsafe {
+                    // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
+                    engine.load_prepared_product(&prepared)
+                }
+                .map_err(|error| PrepareError::State(error.into()))?;
+                (
+                    template,
+                    captured,
+                    Captured::Layered {
+                        prepared: Box::new(prepared),
+                        portable: None,
+                    },
+                )
+            }
+            #[cfg(target_os = "linux")]
+            CaptureMode::Over { ref base, identity } => {
+                let prepared = engine
+                    .prepare_initialized_template_over(
+                        &template,
+                        &mut instance,
+                        identity,
+                        prepared_resources.clone(),
+                        deferred.clone(),
+                    )
+                    .map_err(|error| PrepareError::State(error.into()))?;
+                let captured = instance
+                    .capture_mutable_state()
+                    .map_err(PrepareError::State)?;
+                let template = unsafe {
+                    // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
+                    engine.load_prepared_product_over(base, &prepared)
+                }
+                .map_err(|error| PrepareError::State(error.into()))?;
+                (
+                    template,
+                    captured,
+                    Captured::Layered {
+                        prepared: Box::new(prepared),
+                        portable: None,
+                    },
+                )
+            }
         };
         let mut restored = engine
             .activate_initialization(
@@ -389,6 +551,7 @@ pub(crate) fn initialize_with_cache(
                     state: state.clone(),
                     io: io.clone(),
                     memory_limit_bytes,
+                    permits_entropy,
                 }),
             )
             .map_err(PrepareError::State)?;
@@ -414,6 +577,7 @@ pub(crate) fn initialize_with_cache(
         let logs = state.logs.clone();
         return Ok(InitializationOutput {
             captured: representation,
+            restored: Some(restored_template),
             initialized: Initialized {
                 deferred,
                 cpu_ns,
@@ -429,6 +593,45 @@ pub(crate) fn initialize_with_cache(
         });
     }
     Err(PrepareError::NoConvergence(request.max_passes))
+}
+
+/// The template initialization runs on, with the application's files bound;
+/// the instrumented module when the template was compiled from it; and
+/// whether that compilation ran rather than reusing `cache`'s.
+fn load(
+    engine: &IsoplaneEngine,
+    cache: Option<&isoplane_engine::CompilationCache>,
+    application_files: &isoplane_engine::PlatformFiles,
+    capture: &CaptureMode<'_>,
+) -> Result<(isoplane_engine::Template, Option<bake::Instrumented>, bool), PrepareError> {
+    let (wasm, layered) = match capture {
+        CaptureMode::Portable { wasm } => (wasm, false),
+        #[cfg(target_os = "linux")]
+        CaptureMode::Layered { wasm, .. } | CaptureMode::RuntimeBaseline { wasm, .. } => {
+            (wasm, true)
+        }
+        #[cfg(target_os = "linux")]
+        CaptureMode::Over { base, .. } => {
+            let template = base
+                .clone()
+                .with_application_files(application_files.clone())
+                .map_err(PrepareError::State)?;
+            return Ok((template, None, false));
+        }
+    };
+    let instrumented = bake::instrument(wasm).map_err(PrepareError::State)?;
+    let (template, compiled) = match (cache, layered) {
+        (Some(cache), _) => cache.load(engine, &instrumented.wasm),
+        (None, false) => engine.load_template(&instrumented.wasm).map(|t| (t, true)),
+        (None, true) => engine
+            .load_layer_source(&instrumented.wasm)
+            .map(|t| (t, true)),
+    }
+    .map_err(PrepareError::State)?;
+    let template = template
+        .with_application_files(application_files.clone())
+        .map_err(PrepareError::State)?;
+    Ok((template, Some(instrumented), compiled))
 }
 
 /// The instrumented module with the initialized memory, globals and deferred
@@ -520,10 +723,11 @@ struct Bindings {
     io: Option<Arc<isoplane_host::bindings::PreparationIo>>,
     state: Arc<Mutex<Sandbox>>,
     memory_limit_bytes: Option<u64>,
+    permits_entropy: bool,
 }
 impl isoplane_engine::bindings::InitializationBindings for Bindings {
     fn permits_entropy(&self) -> bool {
-        true
+        self.permits_entropy
     }
 
     fn permits_io(&self) -> bool {

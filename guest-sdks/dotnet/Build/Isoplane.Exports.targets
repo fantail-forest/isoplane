@@ -30,6 +30,10 @@ internal static class IsoplaneGeneratedExports {
 #endif
   public static long Initialize() { $(_IsoplaneDebugScope) return Guest.Initialize(); }
 #if !ISOPLANE_MONO
+  [UnmanagedCallersOnly(EntryPoint="isoplane_initialize_runtime")]
+#endif
+  public static long InitializeRuntime() { $(_IsoplaneDebugScope) return Guest.InitializeRuntime(); }
+#if !ISOPLANE_MONO
   [UnmanagedCallersOnly(EntryPoint="isoplane_gc_hint")]
 #endif
   public static void GcHint(int pressure) { $(_IsoplaneDebugScope) Guest.GcHint(pressure); }

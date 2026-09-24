@@ -97,7 +97,7 @@ wasmparser  = "0.244"
 wasm-encoder = { version = "0.244", features = ["wasmparser"] }
 # Preparation and execution share this Wasmtime dependency configuration.
 # Engine construction and module validation apply guest capability restrictions.
-wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "df4406d5749704018c479119a91b039b93177493", default-features = false, features = [
+wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "98f133ea2460ea8840c7394d493bb0b1448469d9", default-features = false, features = [
     "anyhow", "runtime", "std", "cranelift", "winch", "pooling-allocator", "call-hook",
     "backtrace", "demangle", "addr2line", "parallel-compilation", "profiling", "gc", "gc-null",
 ] }

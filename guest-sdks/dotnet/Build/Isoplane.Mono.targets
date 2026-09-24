@@ -25,7 +25,7 @@
   <Import Project="Isoplane.Validation.targets" />
   <ItemGroup>
     <LinkerArg Include="-nostartfiles" />
-    <LinkerArg Include="-Wl,--skip-wit-component,--no-entry,--export=isoplane_alloc,--export=isoplane_handle,--export=isoplane_wake,--export=isoplane_initialize,--export=isoplane_gc_hint,--export=__stack_pointer,--max-memory=$(IsoplaneMemoryMaxBytes)" />
+    <LinkerArg Include="-Wl,--skip-wit-component,--no-entry,--export=isoplane_alloc,--export=isoplane_handle,--export=isoplane_wake,--export=isoplane_initialize,--export=isoplane_initialize_runtime,--export=isoplane_gc_hint,--export=__stack_pointer,--max-memory=$(IsoplaneMemoryMaxBytes)" />
     <LinkerArg Include="@(IsoplaneWrappedSymbol->'-Wl,--wrap=%(Identity)')" />
   </ItemGroup>
   <Target Name="IsoplaneMonoPaths">

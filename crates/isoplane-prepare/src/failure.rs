@@ -10,6 +10,9 @@ pub enum BuildStage {
     Engine,
     /// Running and preserving initialization.
     Initialization,
+    /// Checking that a runtime's own initialization left only state that
+    /// every application prepared over it can share.
+    Baseline,
     /// Encoding the complete prepared artifact.
     Artifact,
 }

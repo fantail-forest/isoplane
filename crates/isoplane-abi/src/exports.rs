@@ -5,6 +5,10 @@ pub const HANDLE: &str = "isoplane_handle";
 pub const WAKE: &str = "isoplane_wake";
 pub const GC_HINT: &str = "isoplane_gc_hint";
 pub const INITIALIZE: &str = "isoplane_initialize";
+/// Initialize only the guest's runtime, before any application code or data
+/// loads, so that state can be captured once as a baseline common to every
+/// application on the same runtime.
+pub const INITIALIZE_RUNTIME: &str = "isoplane_initialize_runtime";
 /// Allocate a guest-owned filesystem record through the guest allocator.
 pub const FS_ALLOC: &str = "isoplane_fs_alloc";
 /// Release a guest-owned filesystem record through the guest allocator.
@@ -12,7 +16,7 @@ pub const FS_FREE: &str = "isoplane_fs_free";
 pub const MEMORY: &str = "memory";
 
 pub const REQUIRED: &[&str] = &[ALLOC, HANDLE, WAKE, MEMORY];
-pub const OPTIONAL: &[&str] = &[GC_HINT, INITIALIZE, FS_ALLOC, FS_FREE];
+pub const OPTIONAL: &[&str] = &[GC_HINT, INITIALIZE, INITIALIZE_RUNTIME, FS_ALLOC, FS_FREE];
 
 use crate::imports::{Sig, Ty::I32, Ty::I64};
 
@@ -46,6 +50,7 @@ pub const SIGNATURES: &[(&str, Sig)] = &[
     (WAKE, SIG_WAKE),
     (GC_HINT, SIG_GC_HINT),
     (INITIALIZE, SIG_INITIALIZE),
+    (INITIALIZE_RUNTIME, SIG_INITIALIZE),
     (
         FS_ALLOC,
         Sig {

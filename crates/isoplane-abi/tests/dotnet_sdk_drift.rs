@@ -208,14 +208,9 @@ fn trap_code_in_poll_status_cs_mirrors_the_rust_enum() {
     );
 }
 
-#[test]
-fn generated_aspnet_entrypoints_match_the_host_export_contract() {
-    let adapter = sdk_file("../AspNetCore/buildTransitive/Isoplane.AspNetCore.targets");
-    assert!(
-        adapter.contains("Isoplane.Exports.targets"),
-        "the ASP.NET adapter must consume the shared export generator"
-    );
-    let source = sdk_file("../Build/Isoplane.Exports.targets");
+/// The exports a C# source declares, by the name each `[UnmanagedCallersOnly]`
+/// attribute gives the next static method, with that method's signature.
+fn managed_exports(source: &str) -> BTreeMap<String, (Vec<Ty>, Vec<Ty>)> {
     let mut found = BTreeMap::new();
     // The attribute is conditional on the runtime profile, so the export it
     // names is the next declaration after it, not on its own line.
@@ -225,9 +220,9 @@ fn generated_aspnet_entrypoints_match_the_host_export_contract() {
             continue;
         }
         let name = line
-            .split("EntryPoint=\"")
+            .split("EntryPoint")
             .nth(1)
-            .and_then(|rest| rest.split('"').next())
+            .and_then(|rest| rest.split('"').nth(1))
             .expect("an export name");
         let declaration = lines[index + 1..]
             .iter()
@@ -254,8 +249,39 @@ fn generated_aspnet_entrypoints_match_the_host_export_contract() {
         } else {
             vec![ty(result, name)]
         };
-        found.insert(name, (params, results));
+        found.insert(name.to_string(), (params, results));
     }
+    found
+}
+
+#[test]
+fn hand_written_fixture_entrypoints_declare_the_generated_exports() {
+    let generated = managed_exports(&sdk_file("../Build/Isoplane.Exports.targets"));
+    for fixture in [
+        "guests/dotnet/src/Entrypoint.cs",
+        "guest-runtime/tests/guest/src/Entrypoint.cs",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(fixture);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        assert_eq!(
+            managed_exports(&source),
+            generated,
+            "{fixture} must declare the exports the SDK generates; Mono's entry aborts on a missing one"
+        );
+    }
+}
+
+#[test]
+fn generated_aspnet_entrypoints_match_the_host_export_contract() {
+    let adapter = sdk_file("../AspNetCore/buildTransitive/Isoplane.AspNetCore.targets");
+    assert!(
+        adapter.contains("Isoplane.Exports.targets"),
+        "the ASP.NET adapter must consume the shared export generator"
+    );
+    let found = managed_exports(&sdk_file("../Build/Isoplane.Exports.targets"));
     // The native PAL supplies its allocator exports, independently of the managed router.
     let managed_signatures: Vec<_> = isoplane_abi::exports::SIGNATURES
         .iter()
@@ -273,7 +299,7 @@ fn generated_aspnet_entrypoints_match_the_host_export_contract() {
     );
     for (name, signature) in managed_signatures {
         let (params, results) = found
-            .get(name)
+            .get(*name)
             .unwrap_or_else(|| panic!("missing generated export {name}"));
         assert_eq!(
             (params.as_slice(), results.as_slice()),
