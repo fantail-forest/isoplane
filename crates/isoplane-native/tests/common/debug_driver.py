@@ -20,6 +20,7 @@ import debug_async_stack
 import debug_library
 import debug_features
 import debug_watchpoints
+from debug_sources import same_source
 
 launcher, endpoint, url, source, owner, mode, module = sys.argv[1:]
 owner = int(owner)
@@ -126,7 +127,7 @@ try:
             stopped = until(lambda item: item.get("event") == "stopped")
             thread = stopped["body"]["threadId"]
             frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
-            assert frame["line"] == expected and frame["source"]["path"] == source, "debugger must stop in the actual customer source"
+            assert frame["line"] == expected and same_source(frame["source"]["path"], source), "debugger must stop in the actual customer source"
             values = []
             for scope in response(send("scopes", {"frameId": frame["id"]}))["body"]["scopes"]:
                 values.extend(response(send("variables", {"variablesReference": scope["variablesReference"]}))["body"]["variables"])

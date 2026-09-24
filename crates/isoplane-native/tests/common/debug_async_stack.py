@@ -1,5 +1,6 @@
-"""Both debuggers preserve the logical callers and saved locals across host I/O."""
+"""Preserve logical callers and saved locals across host I/O."""
 from pathlib import Path
+from debug_sources import same_source
 
 EXPECTED_RESPONSE = b"63"
 
@@ -17,7 +18,7 @@ def inspect(source, send, response, thread, until):
     expected = [("Inner", "int total =", "answer", "22"),
                 ("Outer", "int result = await Inner", "outer", "22"),
                 ("Handle", "int result = await Outer", "seed", "21")]
-    application = [frame for frame in frames if frame.get("source", {}).get("path") == source]
+    application = [frame for frame in frames if same_source(frame.get("source", {}).get("path"), source)]
     assert len(application) == 3, "the resumed async stack must retain Inner, Outer and Handle across host parking"
     for frame, (method, line, local, value) in zip(application, expected):
         assert method in frame["name"], f"the async frame must name its original C# method {method}"
