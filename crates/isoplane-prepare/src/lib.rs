@@ -45,6 +45,10 @@ pub enum PrepareError {
     /// A guest reran a unit that the sandbox told it to defer.
     #[error("initialization unit {unit} ignored deferral and called {import}")]
     DeferralIgnored { unit: u32, import: String },
+    /// A runtime's own initialization did what a baseline shared by every
+    /// application on that runtime must not.
+    #[error("runtime baseline {0}")]
+    Baseline(&'static str),
     /// Replays exhausted their configured pass limit.
     #[error("initialization did not converge within {0} passes")]
     NoConvergence(u32),
@@ -62,6 +66,11 @@ pub use failure::{BuildStage, WorkerFailure};
 
 mod product;
 pub use product::{prepare_in_current_process, BuildProduct, LocalPreparation, Preparation};
+
+#[cfg(target_os = "linux")]
+mod baseline;
+#[cfg(target_os = "linux")]
+pub use baseline::{BaselineRequest, RuntimeBaseline};
 
 pub mod preinit;
 pub use preinit::{PreInitError, PreInitOutcome, PreInitRequest, PreInitializer};
