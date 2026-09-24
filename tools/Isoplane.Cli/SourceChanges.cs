@@ -8,9 +8,10 @@ internal sealed class SourceChanges : IDisposable
     private readonly FileSystemWatcher watcher;
     private Dictionary<string, string> snapshot;
     private string? output;
+    private int sourceChanged;
 
     internal void SetOutput(string module) => Volatile.Write(ref output, Path.GetFullPath(module));
-    private readonly Channel<bool> changes = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
+    private readonly Channel<bool> notifications = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
         SingleReader = true
@@ -29,9 +30,9 @@ internal sealed class SourceChanges : IDisposable
         watcher.Error += (_, e) =>
         {
             if (e.GetException() is InternalBufferOverflowException)
-                changes.Writer.TryWrite(false);
+                notifications.Writer.TryWrite(true);
             else
-                changes.Writer.TryComplete(e.GetException());
+                notifications.Writer.TryComplete(e.GetException());
         };
         watcher.EnableRaisingEvents = true;
         snapshot = Snapshot();
@@ -40,7 +41,10 @@ internal sealed class SourceChanges : IDisposable
     private void Observe(string path)
     {
         if (IsSourceFile(path))
-            changes.Writer.TryWrite(true);
+        {
+            Interlocked.Exchange(ref sourceChanged, 1);
+            notifications.Writer.TryWrite(true);
+        }
     }
 
     internal bool IsSourceFile(string path)
@@ -91,7 +95,8 @@ internal sealed class SourceChanges : IDisposable
         {
             while (true)
             {
-                var sourceEvent = await changes.Reader.ReadAsync(cancellation);
+                await notifications.Reader.ReadAsync(cancellation);
+                var sourceEvent = Interlocked.Exchange(ref sourceChanged, 0) != 0;
                 var current = Snapshot();
                 var changed = current.Count != snapshot.Count || current.Any(entry => !snapshot.TryGetValue(entry.Key, out var previous) || previous != entry.Value);
                 snapshot = current;

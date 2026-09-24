@@ -78,6 +78,27 @@ public sealed class SourceChangesTests
         finally { directory.Delete(recursive: true); }
     }
 
+    [Fact]
+    public async Task overflow_preserves_an_already_observed_edit_even_if_contents_return_to_the_baseline()
+    {
+        var directory = Directory.CreateTempSubdirectory("isoplane-source-changes-");
+        try
+        {
+            var source = Path.Combine(directory.FullName, "Application.cs");
+            File.WriteAllText(source, "initial");
+            using var watcher = new FailingWatcher(directory.FullName);
+            using var changes = new SourceChanges(watcher);
+            watcher.EnableRaisingEvents = false;
+            File.WriteAllText(source, "an edit the in-progress build could have read");
+            watcher.Change("Application.cs");
+            File.WriteAllText(source, "initial");
+            watcher.Fail(new InternalBufferOverflowException());
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await changes.WaitAsync(deadline.Token);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Theory]
     [InlineData("Application.cs", true)]
     [InlineData("dist/nested/Other.cs", true)]
