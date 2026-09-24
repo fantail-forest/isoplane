@@ -6,11 +6,11 @@ fn package_feed() -> &'static Path {
     static PACKAGES: OnceLock<PathBuf> = OnceLock::new();
     PACKAGES.get_or_init(|| {
         let root = super::repo_root();
-        let output = Command::new("python3")
+        let output = Command::new(super::python())
             .arg(root.join("scripts/fixture-packages.py"))
             .arg(&root)
             .output()
-            .expect("python3 is required to build the installed SDK and CLI packages");
+            .expect("Python is required to build the installed SDK and CLI packages");
         assert!(
             output.status.success(),
             "SDK and CLI packages must build: {}{}",
@@ -140,7 +140,7 @@ fn run(command: &mut Command) {
 /// Provisions the pinned DAP framing library in a locked, shared test environment.
 pub fn debugger_python() -> PathBuf {
     let root = super::repo_root();
-    let output = Command::new("python3")
+    let output = Command::new(super::python())
         .arg(root.join("scripts/fixture-tools.py"))
         .arg("dap-python")
         .arg(root)
@@ -181,5 +181,5 @@ pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
         .arg("--configfile")
         .arg(app.join("nuget.config"))
         .current_dir(destination));
-    tools.join("isoplane")
+    tools.join(format!("isoplane{}", std::env::consts::EXE_SUFFIX))
 }

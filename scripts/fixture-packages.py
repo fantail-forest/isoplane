@@ -3,17 +3,37 @@
 
 import hashlib
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
-SPEC = importlib.util.spec_from_file_location("fixture_tools", Path(__file__).with_name("fixture-tools.py"))
-tools = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(tools)
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+tools = load('fixture-tools')
+modules = load('shared-runtime-modules')
 
 def shared_runtime(root):
-    """The SDK's shared runtime, built under the C# fixture lock, which this
-    script never holds."""
+    """Build under the C# fixture lock, or verify explicitly selected portable artifacts."""
+    selected = os.environ.get('ISOPLANE_TEST_RUNTIME_MODULES')
+    if selected:
+        directory = Path(selected)
+        if not directory.is_absolute():
+            raise ValueError('ISOPLANE_TEST_RUNTIME_MODULES must name an absolute artifact directory')
+        feed = Path(os.environ.get('ISOPLANE_TEST_RUNTIME_FEED', root / 'guest-runtime/out/feed'))
+        version = ET.parse(root / 'Directory.Build.props').findtext('.//Version')
+        revision = json.loads((directory / 'runtime-build.json').read_text())['sourceRevision']
+        modules.verify(directory, version, revision, feed)
+        print(f'explicitly selected shared runtime artifacts: {directory} ({revision})', file=sys.stderr)
+        return directory
     subprocess.run(["bash", str(root / "guest-runtime/tests/packages/build.sh"), "--if-stale", "--fixture", "runtime"],
                    cwd=root, check=True, stdout=sys.stderr)
     return root / "guest-runtime/tests/packages/out/runtime"
@@ -26,7 +46,7 @@ def package_feed(root):
         "guest-sdks/dotnet", "tools", "crates", ".cargo", "Cargo.toml",
         "Cargo.lock", "Directory.Build.props", "global.json", "nuget.config",
         "scripts/fixture-tools.py", "scripts/fixture-packages.py",
-    )] + sorted(runtime.glob("Isoplane.MonoRuntime*.wasm*"))
+    )] + modules.files(runtime)
     toolchains = subprocess.check_output(["dotnet", "--version"], cwd=root)
     toolchains += subprocess.check_output(["rustc", "-vV"], cwd=root)
     identity = hashlib.sha256(tools.fingerprint(sources).encode() + toolchains).hexdigest()

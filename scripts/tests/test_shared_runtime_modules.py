@@ -2,13 +2,21 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('modules', Path(__file__).parents[1] / 'shared-runtime-modules.py')
-modules = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(modules)
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parents[1] / (name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+modules = load('shared-runtime-modules')
 
 
 class SharedModulesTests(unittest.TestCase):
@@ -33,6 +41,35 @@ class SharedModulesTests(unittest.TestCase):
 
     def verify(self):
         return modules.verify(self.directory, self.version, self.revision, self.feed)
+
+    def fixture_runtime(self, selection=None):
+        packages = load('fixture-packages')
+        source = self.directory / 'source'
+        source.mkdir(exist_ok=True)
+        (source / 'Directory.Build.props').write_text(f'<Project><PropertyGroup><Version>{self.version}</Version></PropertyGroup></Project>')
+        with patch.dict(os.environ, {'ISOPLANE_TEST_RUNTIME_MODULES': str(selection or self.directory),
+                                    'ISOPLANE_TEST_RUNTIME_FEED': str(self.feed)}), \
+                patch.object(packages.subprocess, 'run', side_effect=AssertionError('explicit runtime artifacts must not invoke a native build')):
+            return packages.shared_runtime(source)
+
+    def test_fixture_consumers_accept_verified_portable_runtime_artifacts(self):
+        self.assertEqual(self.fixture_runtime(), self.directory,
+                         'fixture packages must consume the selected verified runtime without rebuilding it')
+
+    def test_fixture_consumers_reject_changed_runtime_artifacts(self):
+        (self.directory / modules.module_names()[0]).write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'SHA256'):
+            self.fixture_runtime()
+
+    def test_fixture_consumers_reject_another_sdk_version(self):
+        self.receipt['sdkVersion'] = 'different'
+        self.write_receipt()
+        with self.assertRaisesRegex(ValueError, 'SDK version'):
+            self.fixture_runtime()
+
+    def test_fixture_consumers_require_an_absolute_artifact_selection(self):
+        with self.assertRaisesRegex(ValueError, 'absolute artifact directory'):
+            self.fixture_runtime(Path('relative'))
 
     def test_matching_inputs_are_portable_without_rebuilding(self):
         self.assertEqual(self.verify(), self.receipt, 'matching inputs must retain their recorded identity')

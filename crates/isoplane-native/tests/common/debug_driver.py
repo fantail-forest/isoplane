@@ -5,7 +5,6 @@ import http.client
 import os
 from pathlib import Path
 import queue
-import signal
 import socket
 import subprocess
 import sys
@@ -83,6 +82,11 @@ def request_http(result):
 
 
 def process_tree():
+    if os.name == 'nt':
+        listing = subprocess.check_output(['powershell', '-NoProfile', '-NonInteractive', '-Command',
+            'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress'],
+            text=True, timeout=30)
+        return {entry['ProcessId']: (entry['ParentProcessId'], 'running') for entry in json.loads(listing)}
     listing = subprocess.check_output(['ps', '-A', '-o', 'pid=,ppid=,stat='], text=True, timeout=30)
     return {int(pid): (int(parent), state) for pid, parent, state in (line.split() for line in listing.splitlines())}
 
@@ -134,7 +138,8 @@ try:
             assert any(value["name"] == "answer" and value["value"] == "42" for value in values), "customer local answer must remain inspectable"
             if mode == "stop":
                 owned = [owner] + children(owner, process_tree())
-                os.kill(owner, signal.SIGINT)
+                print('request-owner-stop', flush=True)
+                assert sys.stdin.readline() == 'owner-stopped\n', 'the development harness must complete the requested shutdown'
                 deadline = time.monotonic() + 120
                 while any_running(owned):
                     assert time.monotonic() < deadline, "CLI stop left an owned process running while paused"
@@ -160,10 +165,8 @@ try:
             response(send("next" if expected == before else "continue", {"threadId": thread}))
     if mode != "stop":
         assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"42"), "continued customer code must complete the actual HTTP response"
-        until(lambda item: item.get("event") == "terminated")
-        response(send("disconnect", {"terminateDebuggee": False}))
-    else:
-        adapter.terminate()
+    until(lambda item: item.get("event") == "terminated")
+    response(send("disconnect", {"terminateDebuggee": False}))
     assert adapter.wait(timeout=10) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
     print("debug acceptance passed: " + mode, flush=True)
 finally:

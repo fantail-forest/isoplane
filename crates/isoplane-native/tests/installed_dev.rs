@@ -2,6 +2,8 @@
 
 #[path = "common/dev.rs"]
 pub mod common;
+#[path = "common/debugger.rs"]
+mod debugger;
 use common::Dev;
 
 #[tokio::test]
@@ -252,7 +254,8 @@ fn installed_debug_acceptance(mode: &str) {
         .expect("debug CLI must report its exact relay and module/symbol pair");
     let driver =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
-    let result = std::process::Command::new(python)
+    let mut command = std::process::Command::new(python);
+    command
         .arg(driver)
         .arg(&cli)
         .arg(metadata["endpoint"].as_str().unwrap())
@@ -260,9 +263,8 @@ fn installed_debug_acceptance(mode: &str) {
         .arg(debug_source)
         .arg(dev.pid().to_string())
         .arg(mode)
-        .arg(metadata["package"].as_str().unwrap())
-        .output()
-        .expect("run the installed modern DAP adapter acceptance driver");
+        .arg(metadata["package"].as_str().unwrap());
+    let result = debugger::drive(&mut dev, &mut command);
     assert!(
         result.status.success(),
         "installed debug {mode} acceptance failed: {}{}\nRuntime output:\n{}",

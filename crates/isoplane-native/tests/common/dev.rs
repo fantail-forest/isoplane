@@ -3,13 +3,14 @@
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
 pub struct Dev {
     child: Box<dyn portable_pty::Child + Send>,
     terminal: Option<Terminal>,
+    input: Option<ChildStdin>,
     lines: Receiver<String>,
     pub url: String,
     pub debugger: Option<serde_json::Value>,
@@ -37,6 +38,11 @@ impl Dev {
             .args(["dev", "--json", "--port", "0", "--project"])
             .arg(project)
             .args(args);
+        if cfg!(windows) {
+            command
+                .arg("--shutdown-on-stdin-close")
+                .stdin(Stdio::piped());
+        }
         Self::spawn(&mut command, Duration::from_secs(600), true)
     }
 
@@ -57,7 +63,7 @@ impl Dev {
                 isoplane_fixtures::guest_runtime_feed(),
             );
         }
-        let (child, terminal, streams) = if structured_stdout {
+        let (child, terminal, streams, input) = if structured_stdout {
             #[cfg(unix)]
             command.process_group(0);
             let mut child = command
@@ -67,6 +73,7 @@ impl Dev {
                 .unwrap();
             let stdout = child.stdout.take().unwrap();
             let stderr = child.stderr.take().unwrap();
+            let input = child.stdin.take();
             (
                 Box::new(child) as Box<dyn portable_pty::Child + Send>,
                 None,
@@ -74,6 +81,7 @@ impl Dev {
                     (Box::new(stdout) as Box<dyn std::io::Read + Send>, true),
                     (Box::new(stderr) as Box<dyn std::io::Read + Send>, false),
                 ],
+                input,
             )
         } else {
             let pair = portable_pty::native_pty_system()
@@ -103,7 +111,12 @@ impl Dev {
                 .expect("start development tooling in its terminal");
             drop(pair.slave);
             let reader = pair.master.try_clone_reader().unwrap();
-            let input = pair.master.take_writer().unwrap();
+            let mut input = pair.master.take_writer().unwrap();
+            if cfg!(windows) {
+                // ConPTY inherits the cursor and waits for this terminal's initial position.
+                input.write_all(b"\x1b[1;1R").unwrap();
+                input.flush().unwrap();
+            }
             (
                 child as Box<dyn portable_pty::Child + Send>,
                 Some(Terminal {
@@ -111,6 +124,7 @@ impl Dev {
                     _master: pair.master,
                 }),
                 vec![(reader, false)],
+                None,
             )
         };
         let (tx, lines) = channel();
@@ -138,6 +152,7 @@ impl Dev {
         let mut dev = Self {
             child,
             terminal,
+            input,
             lines,
             url: String::new(),
             debugger: None,
@@ -213,6 +228,8 @@ impl Dev {
                 .write_all(b"\x03")
                 .expect("send Ctrl+C through the development terminal");
             terminal.input.flush().unwrap();
+        } else if let Some(input) = self.input.take() {
+            drop(input);
         } else {
             let status = Command::new("kill")
                 .args(["-INT", "--", &format!("-{}", self.pid())])

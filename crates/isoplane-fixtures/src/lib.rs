@@ -29,6 +29,14 @@ struct BuildSelection {
 
 static BUILT: Mutex<BTreeSet<BuildSelection>> = Mutex::new(BTreeSet::new());
 
+fn python() -> &'static str {
+    if cfg!(windows) {
+        "python"
+    } else {
+        "python3"
+    }
+}
+
 pub(crate) fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -292,7 +300,7 @@ pub fn guest_runtime_feed() -> PathBuf {
             feed.is_absolute(),
             "ISOPLANE_TEST_RUNTIME_FEED must name an absolute artifact-feed path"
         );
-        let mut command = Command::new("python3");
+        let mut command = Command::new(python());
         command.arg(root.join("feed-identity.py"));
         if explicit.is_some() {
             command.arg("verify-artifact");
@@ -348,7 +356,7 @@ pub fn guest_compiler_feed() -> PathBuf {
             } else {
                 "verify-current"
             };
-            let output = Command::new("python3")
+            let output = Command::new(python())
                 .arg(repo_root().join("guest-runtime/compiler/build.py"))
                 .arg(action)
                 .arg("--output")
