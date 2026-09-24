@@ -294,6 +294,7 @@ impl MemoryImage {
         self.storage.as_ref().as_ref()
     }
 
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn from_storage(
         storage: ImageStorage,
         max_memory_bytes: usize,
