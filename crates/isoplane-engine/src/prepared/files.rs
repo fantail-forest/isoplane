@@ -136,6 +136,29 @@ pub(super) fn read_manifest_receipt(
     directory: &Path,
 ) -> Result<(Manifest, [u8; 32])> {
     use sha2::Digest;
+    let bytes = read_manifest_bytes(directory)?;
+    Ok((
+        postcard::from_bytes(&bytes)?,
+        sha2::Sha256::digest(&bytes).into(),
+    ))
+}
+
+/// The published local manifest, matching the exact digest that selection
+/// recorded for the captured artifact.
+#[tracing::instrument(name = "template_manifest_verify", skip_all)]
+pub(super) fn read_manifest_by_digest(
+    directory: &Path,
+    manifest_sha256: [u8; 32],
+) -> Result<Manifest> {
+    use sha2::Digest;
+    let bytes = read_manifest_bytes(directory)?;
+    if <[u8; 32]>::from(sha2::Sha256::digest(&bytes)) != manifest_sha256 {
+        return Err(PreparedError::Incompatible("catalog manifest digest"));
+    }
+    Ok(postcard::from_bytes(&bytes)?)
+}
+
+fn read_manifest_bytes(directory: &Path) -> Result<Vec<u8>> {
     let path = directory.join(MANIFEST);
     let file = File::open(&path).map_err(|e| io("open manifest", &path, e))?;
     // The schema has three fixed records and one engine identity, never arbitrary payload bytes.
@@ -154,10 +177,7 @@ pub(super) fn read_manifest_receipt(
     if bytes.is_empty() || bytes.len() > 65536 {
         return Err(PreparedError::Invalid("manifest length"));
     }
-    Ok((
-        postcard::from_bytes(&bytes)?,
-        sha2::Sha256::digest(&bytes).into(),
-    ))
+    Ok(bytes)
 }
 
 /// A mapped template's payloads, verified against its manifest: the

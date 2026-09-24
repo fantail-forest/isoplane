@@ -250,6 +250,28 @@ impl IsoplaneEngine {
         unsafe { self.map_prepared(directory, manifest, prefetch, Some(base)) }
     }
 
+    /// Maps a local compiled artifact matching the exact manifest digest
+    /// recorded by local selection.
+    /// Refuses a manifest whose digest, identity or engine
+    /// compatibility differs from what is expected.
+    ///
+    /// # Safety
+    /// As for [`IsoplaneEngine::load_prepared`].
+    #[tracing::instrument(name = "template_load", skip_all)]
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn restore_prepared_by_digest(
+        &self,
+        directory: &Path,
+        manifest_sha256: [u8; 32],
+        expected: PreparedIdentity,
+    ) -> Result<Template> {
+        let manifest = files::read_manifest_by_digest(directory, manifest_sha256)?;
+        self.check_prepared(&manifest, expected)?;
+        // SAFETY: the caller upholds this function's contract, which is the mapping's.
+        unsafe { self.map_prepared(directory, manifest, &[], None) }
+    }
+
     /// Checks a selection receipt without reading native code or baseline payloads.
     pub fn check_prepared_receipt(
         &self,

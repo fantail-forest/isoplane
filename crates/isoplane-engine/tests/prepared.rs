@@ -226,6 +226,71 @@ fn receipt_restoration_rejects_a_different_runtime_profile() {
     );
 }
 
+/// Maps a locally compiled fixture selected by its manifest digest.
+fn restore_by_digest(
+    engine: &isoplane_engine::IsoplaneEngine,
+    path: &std::path::Path,
+    manifest_sha256: [u8; 32],
+    expected: PreparedIdentity,
+) -> Result<isoplane_engine::Template, PreparedError> {
+    // SAFETY: as for `load`.
+    unsafe { engine.restore_prepared_by_digest(path, manifest_sha256, expected) }
+}
+
+#[test]
+fn a_receipt_digest_selects_the_compiled_artifact() {
+    let (engine, directory, expected) = compiled_artifact();
+    let path = directory.path().join("version");
+    let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
+    let restored = restore_by_digest(&engine, &path, digest, expected)
+        .expect("the receipt digest must select the locally compiled artifact");
+    assert!(
+        activate(&engine, &restored).memory().len() >= 4 * 65536,
+        "restoration by digest must produce an activatable template"
+    );
+}
+
+#[test]
+fn a_receipt_digest_refuses_a_substituted_manifest() {
+    let (engine, directory, expected) = compiled_artifact();
+    let path = directory.path().join("version");
+    let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
+    let other = directory.path().join("other");
+    engine
+        .prepare_template(&guest(5, "", "", DONE, DONE), expected)
+        .expect("prepare")
+        .publish(&other)
+        .expect("publish");
+    let manifest = path.join("manifest.bin");
+    std::fs::remove_file(&manifest).expect("remove the read-only manifest");
+    std::fs::copy(other.join("manifest.bin"), &manifest).expect("substitute the manifest");
+    assert!(
+        matches!(
+            restore_by_digest(&engine, &path, digest, expected),
+            Err(PreparedError::Incompatible("catalog manifest digest"))
+        ),
+        "a manifest other than the selected receipt must not load"
+    );
+}
+
+#[test]
+fn a_receipt_digest_refuses_an_artifact_for_another_identity() {
+    let (engine, directory, expected) = compiled_artifact();
+    let path = directory.path().join("version");
+    let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
+    let other = PreparedIdentity {
+        initialization_hash: [4; 32],
+        ..expected
+    };
+    assert!(
+        matches!(
+            restore_by_digest(&engine, &path, digest, other),
+            Err(PreparedError::Incompatible(_))
+        ),
+        "a compiled artifact must not load for a different preparation identity"
+    );
+}
+
 #[test]
 fn builder_output_cannot_replace_host_platform_files() {
     let producer = test_engine();
