@@ -1,0 +1,15 @@
+[package]
+name = "isoplane-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+description = "Bounded local artifact storage with process-held reader leases and automatic eviction"
+
+[dependencies]
+fs4.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

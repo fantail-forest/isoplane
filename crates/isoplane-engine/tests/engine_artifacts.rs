@@ -10,6 +10,34 @@ fn echo_guest() -> Vec<u8> {
     guest(4, "", "", DONE, DONE)
 }
 
+#[test]
+fn active_instances_keep_their_compilation_storage_leased() {
+    use isoplane_cache::{Cache, CacheBytes, CacheKey};
+    let root = tempfile::tempdir().expect("isolated cache");
+    let cache = Cache::new(root.path().into(), CacheBytes(0)).expect("cache");
+    let lease = std::sync::Arc::new(cache.lease(CacheKey([1; 32])).expect("lease"));
+    let directory = lease.directory().to_path_buf();
+    let engine = test_engine();
+    // SAFETY: this test owns the directory and only the compiler populates it.
+    let compilation =
+        unsafe { isoplane_engine::CompilationCache::from_trusted_directory(directory.clone()) }
+            .expect("compilation cache");
+    let (mut template, _) = compilation.load(&engine, &echo_guest()).expect("compile");
+    template.retain_storage(lease);
+    let instance = activate(&engine, &template);
+    drop(template);
+    cache.prune().expect("prune active cache");
+    assert!(
+        directory.exists(),
+        "an instance must retain the backing files after its template owner exits"
+    );
+    drop(instance);
+    assert!(
+        !directory.exists(),
+        "the last instance must release storage and trigger over-budget eviction"
+    );
+}
+
 /// A `DispatchRecord` with nothing interesting in it.
 fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
     use isoplane_abi::dispatch::*;

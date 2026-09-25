@@ -10,7 +10,6 @@ mod no_dns;
 mod no_egress;
 
 use std::io::Read;
-use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use isoplane_abi::config::{InitSandbox, Limits};
@@ -92,8 +91,27 @@ fn shared_cache() -> Arc<CompilationCache> {
     static CACHE: OnceLock<Arc<CompilationCache>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-            let directory =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/compiled-test-packages");
+            let storage = isoplane_cache::Cache::new(
+                isoplane_fixtures::target_directory().join("compiled-tests"),
+                isoplane_cache::PROJECT_CACHE_BYTES,
+            )
+            .expect("open bounded runtime test cache");
+            let binary = std::fs::File::open(std::env::current_exe().expect("test binary path"))
+                .expect("open test binary identity");
+            let mut identity =
+                blake3::Hasher::new_derive_key("isoplane runtime acceptance compiled cache");
+            identity
+                .update_reader(binary)
+                .expect("hash test binary identity");
+            let lease = storage
+                .lease(isoplane_cache::CacheKey(*identity.finalize().as_bytes()))
+                .expect("lease runtime test cache");
+            let directory = lease.directory().to_path_buf();
+            static LEASE: OnceLock<isoplane_cache::Lease> = OnceLock::new();
+            assert!(
+                LEASE.set(lease).is_ok(),
+                "the shared test cache must acquire one process lifetime lease"
+            );
             // SAFETY: this private test-output directory is written only through
             // CompilationCache's atomic compiler path, keyed by the portable module
             // and engine compatibility; nothing outside this binary supplies it.

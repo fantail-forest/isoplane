@@ -2,21 +2,27 @@
 """Run a local development command: scripts/dev [--container] [command ...]"""
 
 import os
+import subprocess
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def development_environment(root, inherited):
+def development_environment(root, inherited, tools=None):
     environment = dict(inherited)
-    tools = root / ".isoplane-dev/tools"
-    paths = [str(tools / "bin")]
-    sdk = tools / "dotnet"
-    if (sdk / "dotnet").is_file():
+    paths = []
+    sdk = tools / "dotnet" if tools is not None else None
+    if tools is not None:
+        paths.append(str(tools / "bin"))
+    if sdk is not None and (sdk / "dotnet").is_file():
         paths.append(str(sdk))
         environment["DOTNET_ROOT"] = str(sdk)
-    wasi = root / "guest-runtime/work/wasi-sdk"
+    wasi = (Path(environment['ISOPLANE_RUNTIME_WORK']) / 'wasi-sdk'
+            if environment.get('ISOPLANE_RUNTIME_SOURCE') == str(root / 'guest-runtime')
+            else root / "guest-runtime/work/wasi-sdk")
+    if not (wasi / 'bin/clang').is_file():
+        wasi = root / 'guest-runtime/work/wasi-sdk'
     if (wasi / "bin/clang").is_file():
         environment.setdefault("WASI_SDK_PATH", str(wasi))
     environment["PATH"] = os.pathsep.join([*paths, environment.get("PATH", os.defpath)])
@@ -35,8 +41,18 @@ def main():
         args.pop(0)
     args = args or [os.environ.get("SHELL", "/bin/bash")]
     os.chdir(ROOT)
-    os.execvpe(args[0], args, development_environment(ROOT, os.environ))
+    import dev_tools
+    name, _, _ = dev_tools.identity(ROOT)
+    with dev_tools.storage.product(name, read_only=True) as tools:
+        if tools is not None and not (tools / "complete").is_file():
+            raise SystemExit("Development tool installation is incomplete; run scripts/setup.")
+        with dev_tools.storage.development(ROOT, os.environ) as environment:
+            if tools is not None:
+                held = environment.get('ISOPLANE_DEV_TOOL_LEASES', '').splitlines()
+                environment['ISOPLANE_DEV_TOOL_LEASES'] = '\n'.join([*held, name])
+            return subprocess.call(args, env=development_environment(ROOT, environment, tools),
+                                   **dev_tools.storage.subprocess_options())
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

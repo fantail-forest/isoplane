@@ -3,6 +3,7 @@
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -58,13 +59,18 @@ def identity():
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def build_storage():
+    if 'build_storage' in sys.modules:
+        return sys.modules['build_storage']
+    spec = importlib.util.spec_from_file_location('build_storage', HERE.parents[1] / 'scripts/build_storage.py')
+    storage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(storage)
+    sys.modules['build_storage'] = storage
+    return storage
+
+
 def fetch(url, path, expected):
-    if not path.exists() or digest(path) != expected:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url) as response, path.open('wb') as output:
-            shutil.copyfileobj(response, output)
-    if digest(path) != expected:
-        raise ValueError(f'input hash mismatch: {path}')
+    build_storage().download(url, path, expected)
 
 
 def props_bytes(version, sha512, source_identity, rid):
@@ -198,7 +204,8 @@ def build(args):
     archive = args.work / 'runtimelab.tar.gz'
     fetch(spec['RUNTIMELAB_TARBALL_URL'], archive, spec['RUNTIMELAB_TARBALL_SHA256'])
     tree = args.work / 'source'
-    subprocess.run([sys.executable, str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches')], check=True)
+    subprocess.run([sys.executable, str(HERE.parent / 'source-tree.py'), 'materialize', str(tree), str(archive), spec['RUNTIMELAB_TARBALL_SHA256'], str(HERE / 'patches'), '--build-layout', 'dotnet'], check=True,
+                   **build_storage().subprocess_options())
     prepare_native_cache(tree, target_os, architecture)
     environment = os.environ.copy()
     environment.update(LLVM_CMAKE_CONFIG=str(args.llvm / 'lib/cmake/llvm'),
@@ -209,14 +216,16 @@ def build(args):
         command = ['cmd', '/c', 'src\\coreclr\\build-runtime.cmd', '-x64', '-release', '-component', 'llvmjit']
         environment['NumberOfCores'] = str(args.jobs)
     with (args.work / 'build.log').open('w') as log:
-        subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True,
+                       **build_storage().subprocess_options())
     with tempfile.TemporaryDirectory(prefix='managed-publish-', dir=args.work) as published:
         command = ['./dotnet.sh', 'publish', 'src/coreclr/tools/aot/ILCompiler/ILCompiler_publish.csproj', '-c', 'Release',
                    f'-maxcpucount:{args.jobs}', f'-p:TargetArchitecture={architecture}', f'-p:TargetOS={target_os}', '-p:UseNativeAotForComponents=false', '-p:UseBootstrap=false', f'-p:PublishDir={Path(published).as_posix()}/']
         if windows:
             command = ['cmd', '/c', 'dotnet.cmd', *command[1:]]
         with (args.work / 'managed-build.log').open('w') as log:
-            subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
+            subprocess.run(command, cwd=tree, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True,
+                           **build_storage().subprocess_options())
         upstream = args.work / 'upstream.nupkg'
         with urllib.request.urlopen(spec['source']) as response:
             index = json.load(response)
@@ -236,14 +245,23 @@ def main():
         item.add_argument('--output', type=Path, required=True)
     item = sub.add_parser('build')
     item.add_argument('--output', type=Path, default=HERE.parent / 'out/compiler')
-    item.add_argument('--work', type=Path, default=HERE.parent / 'work/compiler')
+    item.add_argument('--work', type=Path, help='caller-managed compiler work directory; defaults to bounded shared storage')
     item.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8), help='maximum parallel compiler build workers')
     item.add_argument('--llvm', type=Path, default=Path('/usr/lib/llvm-18'))
     args = parser.parse_args()
     if args.action == 'build' and args.jobs < 1:
         parser.error('--jobs must be positive')
     try:
-        result = build(args) if args.action == 'build' else verify(args.output, args.action == 'verify-current')
+        if args.action == 'build':
+            if args.work is None and os.environ.get('ISOPLANE_RUNTIME_SOURCE') == str(HERE.parent):
+                args.work = Path(os.environ['ISOPLANE_RUNTIME_WORK']) / 'compiler'
+            with build_storage().workspace('compiler:' + str(HERE), args.work) as work:
+                args.work = work
+                with (work / '.build.lock').open('a+b') as handle:
+                    build_storage().lock(handle)
+                    result = build(args)
+        else:
+            result = verify(args.output, args.action == 'verify-current')
         print(result['version'])
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'compiler: {error}\n')

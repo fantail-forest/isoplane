@@ -45,6 +45,30 @@ pub(crate) fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// Resolve Cargo's configured output directory without acquiring its build lock.
+pub fn target_directory() -> &'static Path {
+    static TARGET: OnceLock<PathBuf> = OnceLock::new();
+    TARGET.get_or_init(|| {
+        let root = repo_root();
+        let output = Command::new(python())
+            .arg(root.join("scripts/fixture-tools.py"))
+            .arg("target-directory")
+            .arg(&root)
+            .output()
+            .expect("resolve the Cargo target directory");
+        assert!(
+            output.status.success(),
+            "Cargo output discovery failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        PathBuf::from(
+            String::from_utf8(output.stdout)
+                .expect("Cargo target path is UTF-8")
+                .trim(),
+        )
+    })
+}
+
 fn build(script: &str) -> PathBuf {
     build_selected(script, None, None)
 }

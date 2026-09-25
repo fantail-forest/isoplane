@@ -19,6 +19,13 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v cygpath >/dev/null 2>&1; then
+  HERE="$(cygpath -m "$HERE")"
+fi
+RUNTIME_SOURCE="${ISOPLANE_RUNTIME_SOURCE:-}"
+if [ "${RUNTIME_SOURCE//\\//}" != "$HERE" ]; then
+  exec python3 "$HERE/../scripts/build_storage.py" runtime "$HERE/.." bash "$HERE/build.sh" "$@"
+fi
 # shellcheck source=manifest.env
 source "$HERE/manifest.env"
 BUILD_HOST=linux
@@ -31,7 +38,8 @@ case "$(uname -s)" in
     WASI_SDK_SHA256="$WASI_SDK_WINDOWS_SHA256"
     ;;
 esac
-WORK="$HERE/work"
+WORK="${ISOPLANE_RUNTIME_WORK//\\//}"
+echo "Runtime build work: $WORK"
 OUT="$HERE/out"
 RUNTIME="$WORK/runtime"
 RUNTIMELAB="$WORK/runtimelab"
@@ -49,11 +57,7 @@ exec 9>"$WORK/.build.lock"
 flock 9
 
 fetch() {
-  local url="$1" sha="$2" file="$3"
-  if [ ! -f "$file" ] || [ "$(sha256sum "$file" | cut -d' ' -f1)" != "$sha" ]; then
-    curl --silent --show-error --fail --location --retry 3 -o "$file" "$url"
-  fi
-  echo "$sha  $file" | sha256sum --check --quiet
+  python3 "$HERE/../scripts/build_storage.py" "$1" "$3" "$2"
 }
 
 verify_archive() {
@@ -104,10 +108,10 @@ source_tree() {
 }
 
 runtime_source() {
-  source_tree "$1" "$RUNTIME" "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz" "$RUNTIME_TARBALL_SHA256" "$HERE/patches/runtime"
+  source_tree "$1" "$RUNTIME" "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz" "$RUNTIME_TARBALL_SHA256" "$HERE/patches/runtime" --build-layout dotnet
 }
 nativeaot_source() {
-  source_tree "$1" "$RUNTIMELAB" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz" "$RUNTIMELAB_TARBALL_SHA256" "$HERE/patches/runtimelab" --exclude='src/mono/*'
+  source_tree "$1" "$RUNTIMELAB" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz" "$RUNTIMELAB_TARBALL_SHA256" "$HERE/patches/runtimelab" --exclude='src/mono/*' --build-layout dotnet
 }
 openssl_source() {
   source_tree "$1" "$OPENSSL" "$DOWNLOADS/$OPENSSL_TAG.tar.gz" "$OPENSSL_TARBALL_SHA256" "$HERE/patches/openssl"
@@ -141,7 +145,7 @@ stage_openssl() {
   mkdir -p "$OPENSSL_BUILD"
   (
     cd "$OPENSSL_BUILD"
-    if [ ! -f "$OUT/openssl/.isoplane-build-identity" ] || [ "$(cat "$OUT/openssl/.isoplane-build-identity")" != "$(openssl_inputs_digest)" ]; then
+    if [ ! -f Makefile ] || [ ! -f "$OUT/openssl/.isoplane-build-identity" ] || [ "$(cat "$OUT/openssl/.isoplane-build-identity")" != "$(openssl_inputs_digest)" ]; then
       if [ -f Makefile ]; then make clean; fi
       CC="$WASI_SDK/bin/clang" AR="$WASI_SDK/bin/llvm-ar" RANLIB="$WASI_SDK/bin/llvm-ranlib" \
       perl "$OPENSSL/Configure" linux-generic32 no-shared no-threads no-asm no-dso no-module no-engine \

@@ -104,14 +104,19 @@ def preserve_untracked_inputs(tree, source, backup_id):
         print(f"    {tree.name}: preserved {len(saved)} untracked source files under .git/isoplane-source-backups/{backup_id}")
 
 
-def materialize(tree, archive, desired, directory, exclude):
+def materialize(tree, archive, desired, directory, exclude, build_layout=None):
     state_path = tree / ".git" / "isoplane-source.json"
+    generated_heads = set()
+    generated_directories = ['artifacts', '.dotnet', '.packages', '.tools'] if build_layout == 'dotnet' else []
     exists = (tree / ".git").is_dir()
     if exists:
         clean(tree)
         if state_path.exists():
             previous = json.loads(state_path.read_text())
+            generated_heads.update(previous.get('generated_heads', [previous['head']]))
             if previous["inputs"] == desired and previous["head"] == git(tree, "rev-parse", "HEAD"):
+                previous['generated_directories'] = generated_directories
+                state_path.write_text(json.dumps(previous, indent=2) + '\n')
                 print(f"    {tree.name}: source identity verified")
                 return
     elif tree.exists():
@@ -150,7 +155,11 @@ def materialize(tree, archive, desired, directory, exclude):
             print(f"    {tree.name}: reconciled pinned source; previous HEAD retained at {backup}")
         else:
             os.rename(source, tree)
-        state_path.write_text(json.dumps({"inputs": desired, "head": git(tree, "rev-parse", "HEAD")}, indent=2) + "\n")
+        head = git(tree, "rev-parse", "HEAD")
+        generated_heads.add(head)
+        state_path.write_text(json.dumps({"inputs": desired, "head": head,
+                                          "generated_heads": sorted(generated_heads),
+                                          "generated_directories": generated_directories}, indent=2) + "\n")
 
 
 def main():
@@ -161,11 +170,12 @@ def main():
     parser.add_argument("sha256")
     parser.add_argument("patches", type=Path)
     parser.add_argument("--exclude")
+    parser.add_argument("--build-layout", choices=['dotnet'], help='generated directory layout owned by the source build')
     args = parser.parse_args()
     try:
         desired = identity(args.archive, args.sha256, args.patches, args.exclude)
         if args.action == "materialize":
-            materialize(args.tree, args.archive, desired, args.patches, args.exclude)
+            materialize(args.tree, args.archive, desired, args.patches, args.exclude, args.build_layout)
         else:
             clean(args.tree)
             record = args.tree / ".git/isoplane-source.json"

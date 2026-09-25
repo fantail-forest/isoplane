@@ -323,6 +323,7 @@ impl IsoplaneEngine {
             hash,
             abi_rev: isoplane_abi::ABI_REV,
             inner: Arc::new(TemplateInner {
+                retained_storage: Vec::new(),
                 #[cfg(target_os = "linux")]
                 initialization_layer: None,
                 activation_prefetch: None,

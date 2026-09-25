@@ -5,8 +5,10 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 
@@ -20,6 +22,7 @@ def load(name):
 
 tools = load('fixture-tools')
 modules = load('shared-runtime-modules')
+storage = load('build_storage')
 
 def shared_runtime(root):
     """Build under the C# fixture lock, or verify explicitly selected portable artifacts."""
@@ -39,7 +42,7 @@ def shared_runtime(root):
     return root / "guest-runtime/tests/packages/out/runtime"
 
 
-def package_feed(root):
+def package_feed(root, destination):
     root = Path(root).resolve()
     runtime = shared_runtime(root)
     sources = [root / name for name in (
@@ -50,7 +53,11 @@ def package_feed(root):
     toolchains = subprocess.check_output(["dotnet", "--version"], cwd=root)
     toolchains += subprocess.check_output(["rustc", "-vV"], cwd=root)
     identity = hashlib.sha256(tools.fingerprint(sources).encode() + toolchains).hexdigest()
-    target = root / "target" / "fixture-packages" / identity
+    with storage.workspace(f"fixture-packages:{sys.platform}:{platform.machine()}") as target:
+        return build_feed(root, destination, runtime, identity, target)
+
+
+def build_feed(root, destination, runtime, identity, target):
     target.mkdir(parents=True, exist_ok=True)
     packages = target / "packages"
     receipt = target / "packages.json"
@@ -58,7 +65,13 @@ def package_feed(root):
         tools.lock_file(handle)
         outputs = sorted(packages.glob("*.nupkg"))
         if outputs and tools.is_fresh(receipt, identity, outputs):
-            return packages
+            return copy_feed(packages, destination)
+        if packages.exists():
+            shutil.rmtree(packages)
+        # A different checkout can have older timestamps but different source bytes.
+        intermediates = target / "artifacts/obj"
+        if intermediates.exists():
+            shutil.rmtree(intermediates)
         projects = (
             "guest-sdks/dotnet/Isoplane.Sdk.csproj",
             "guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj",
@@ -73,6 +86,7 @@ def package_feed(root):
                      str(target / "artifacts"), "-o", str(packages), "--disable-build-servers",
                      f"-p:IsoplaneRuntimeModuleDirectory={runtime}"],
                     cwd=root, stdout=output, stderr=subprocess.STDOUT,
+                    **storage.subprocess_options(),
                 )
                 if result.returncode != 0:
                     raise RuntimeError(f"packing {project} failed; see {log}")
@@ -80,8 +94,16 @@ def package_feed(root):
         if not outputs:
             raise RuntimeError(f"package build produced no packages; see {log}")
         tools.write_receipt(receipt, identity, outputs)
-    return packages
+        return copy_feed(packages, destination)
+
+
+def copy_feed(packages, destination):
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    for package in packages.glob("*.nupkg"):
+        shutil.copy2(package, destination / package.name)
+    return destination
 
 
 if __name__ == "__main__":
-    print(package_feed(sys.argv[1]))
+    print(package_feed(sys.argv[1], sys.argv[2]))

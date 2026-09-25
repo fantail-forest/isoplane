@@ -38,6 +38,34 @@ class CommandTests(unittest.TestCase):
 
 
 class SourceExportTests(unittest.TestCase):
+    def test_switching_to_an_older_revision_rebuilds_native_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root = directory / 'repository'
+            root.mkdir()
+            (root / 'src').mkdir()
+            (root / 'Cargo.toml').write_text('[package]\nname="revision_probe"\nversion="0.1.0"\nedition="2021"\n')
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            revisions = []
+            for value, date in [('older', '2001-01-01T00:00:00Z'), ('newer', '2002-01-01T00:00:00Z')]:
+                (root / 'src/main.rs').write_text('fn main() { println!("' + value + '"); }')
+                subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+                subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                                'commit', '-qm', value], cwd=root, check=True,
+                               env=dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date))
+                revisions.append(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip())
+            cache = directory / 'cache'
+            cache.mkdir()
+            source = cache / 'source'
+            environment = dict(os.environ, CARGO_TARGET_DIR=str(cache / 'target'),
+                               CARGO_BUILD_BUILD_DIR=str(cache / 'target'))
+            for revision, expected in [(revisions[1], 'newer'), (revisions[0], 'older')]:
+                preview.export_source(root, source, cache, revision, cache)
+                preview.run(['cargo', 'build', '--offline'], source, cache / 'cargo.log', environment)
+                executable = cache / 'target/debug' / ('revision_probe.exe' if os.name == 'nt' else 'revision_probe')
+                actual = subprocess.check_output([executable], text=True).strip()
+                self.assertEqual(actual, expected, 'the native binary must contain the source revision selected for release')
+
     def test_source_export_includes_the_pinned_dependency_not_its_working_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -202,6 +230,7 @@ class ReleaseTests(unittest.TestCase):
         subprocess.run(['git', '-C', repository, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                         'commit', '-qm', 'fixture'], check=True)
         source = self.root / 'source'
+        preview.export_source(repository, source, self.root, 'HEAD', self.root)
         runtime = source / 'guest-runtime/out/feed'
         runtime.mkdir(parents=True)
         (runtime / 'pack.nupkg').write_bytes(b'verified later by runtime build')

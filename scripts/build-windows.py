@@ -19,10 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load(name):
+    if name == "build_storage" and name in sys.modules:
+        return sys.modules[name]
     path = ROOT / 'scripts' / (name + '.py')
     spec = importlib.util.spec_from_file_location(name.replace('-', '_'), path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if name == "build_storage":
+        sys.modules[name] = module
     return module
 
 
@@ -135,8 +139,8 @@ def build(args):
     redist = redistributable(visual_studio, args.vc_redist)
     sdk, sdk_identity = preview.prepare_sdk(source, cache, logs, 'win-x64')
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
-        NUGET_PACKAGES=str(cache / 'nuget'), DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1',
-        CARGO_TARGET_DIR=str(cache / 'target'), CARGO_BUILD_BUILD_DIR=str(cache / 'target/build'))
+        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1',
+        CARGO_TARGET_DIR=str(cache / 'target'), CARGO_BUILD_BUILD_DIR=str(cache / 'target'))
     environment['PATH'] = str(sdk) + os.pathsep + environment['PATH']
 
     def run(command, name):
@@ -250,7 +254,7 @@ def build(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--cache', type=Path, default=ROOT / '.isoplane-dev/windows-build')
+    parser.add_argument('--cache', type=Path, default=None)
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases')
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
     parser.add_argument('--llvm', type=Path, help='reuse a matching LLVM development build; otherwise build the pinned LLVM sources')
@@ -293,10 +297,11 @@ def main():
     os.environ['RUSTUP_TOOLCHAIN'] = rust_version + '-x86_64-pc-windows-msvc'
     if args.check_prerequisites:
         return
-    args.cache.mkdir(parents=True, exist_ok=True)
-    with (args.cache / '.lock').open('a+b') as lock:
-        load('fixture-tools').lock_file(lock)
-        build(args)
+    with load('build_storage').workspace('release-win-x64', args.cache) as cache:
+        args.cache = cache
+        with (args.cache / '.lock').open('a+b') as lock:
+            load('fixture-tools').lock_file(lock)
+            build(args)
 
 
 if __name__ == '__main__':

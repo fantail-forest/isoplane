@@ -116,12 +116,10 @@ fn fail(mut command: impl BorrowMut<Command>, purpose: &str) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-fn build_release(worktree: &Path, root: &Path, output: &Path) -> Release {
+fn build_release(worktree: &Path, output: &Path) -> Release {
     succeed(
         Command::new("python3")
             .arg(worktree.join("scripts/build-preview.py"))
-            .arg("--cache")
-            .arg(root.join(".isoplane-dev/preview-build"))
             .arg("--output")
             .arg(output)
             .current_dir(worktree),
@@ -197,7 +195,7 @@ fn build_releases() -> Releases {
         "checking out the snapshot",
     );
     let output = scratch.join("releases");
-    let current = build_release(&worktree, &root, &output);
+    let current = build_release(&worktree, &output);
     let next_version = format!("{}.upgrade.1", current.version);
     succeed(
         Command::new("python3")
@@ -221,7 +219,7 @@ fn build_releases() -> Releases {
             .current_dir(&worktree),
         "committing the next preview version",
     );
-    let next = build_release(&worktree, &root, &output);
+    let next = build_release(&worktree, &output);
     assert_eq!(
         next.version, next_version,
         "the next release must carry the moved version"

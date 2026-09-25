@@ -4,6 +4,7 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import importlib.util
 import os
 from pathlib import Path
 import signal
@@ -12,6 +13,9 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
+SPEC = importlib.util.spec_from_file_location("build_storage", ROOT / "scripts/build_storage.py")
+storage = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(storage)
 
 # Docker startup contention can consume the process tests' deliberate kill deadlines.
 EXCLUSIVE_BINARIES = {"isoplane-prepare/process"}
@@ -45,11 +49,11 @@ def require_guest_tools(environment):
         raise RuntimeError("The test suite needs the WASI compiler. Build the guest-runtime toolchain, then run scripts/dev scripts/test.")
 
 
-def run(command, cwd, environment, log, timeout_seconds):
+def run(command, cwd, environment, log, timeout_seconds, lease_fds=()):
     started = time.monotonic()
     with log.open("w") as output:
         with subprocess.Popen(command, cwd=cwd, env=environment, stdout=output,
-                              stderr=subprocess.STDOUT, start_new_session=True) as process:
+                              stderr=subprocess.STDOUT, start_new_session=True, pass_fds=lease_fds) as process:
             try:
                 code = process.wait(timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
@@ -92,16 +96,21 @@ def main():
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=ROOT))
     packages = {package["id"]: package for package in metadata["packages"]}
-    runs = Path(metadata["target_directory"]) / "test-runs"
-    runs.mkdir(parents=True, exist_ok=True)
-    logs = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
+    runs = storage.diagnostics_root()
+    with storage.retained_run(runs) as (logs, _):
+        (logs / "owner.json").write_text(json.dumps({"workspace": str(ROOT), "pid": os.getpid(),
+                                                    "command": sys.argv}) + "\n")
+        return execute(args, parser, cpus, selection, packages, runs, logs)
+
+
+def execute(args, parser, cpus, selection, packages, runs, logs):
     environment = dict(os.environ)
     environment["RUST_TEST_THREADS"] = str(args.test_threads)
     environment.setdefault("RAYON_NUM_THREADS", str(max(1, min(16, cpus // args.jobs))))
     started = time.monotonic()
     print(f"Logs: {logs}", flush=True)
     build = run(["cargo", "test", *selection, "--no-run", "--message-format=json"],
-                ROOT, environment, logs / "build.log", args.timeout_seconds)
+                ROOT, environment, logs / "build.log", args.timeout_seconds, storage.subprocess_options().get('pass_fds', ()))
     if build["code"]:
         print(f"Build failed: {build['log']}", flush=True)
         return build["code"]
@@ -145,7 +154,7 @@ def main():
                 cwd = Path(package["manifest_path"]).parent
                 future = executor.submit(run, [binary["executable"]], cwd, binary_environment(name(binary), environment),
                                          logs / f"{index:03d}-{binary['target']['name']}.log",
-                                         args.timeout_seconds)
+                                         args.timeout_seconds, storage.subprocess_options().get('pass_fds', ()))
                 pending[future] = name(binary)
             for future in as_completed(pending):
                 result = {"name": pending[future], **future.result()}
@@ -156,7 +165,7 @@ def main():
                 if result["code"]:
                     print(f"  {result['log']}", flush=True)
     docs = run(["cargo", "test", *selection, "--doc"], ROOT, environment,
-               logs / "doctests.log", args.timeout_seconds)
+               logs / "doctests.log", args.timeout_seconds, storage.subprocess_options().get('pass_fds', ()))
     results.append({"name": "doctests", **docs})
     elapsed = time.monotonic() - started
     summary = {"seconds": elapsed, "build": build, "excluded": args.exclude_binary,
@@ -172,4 +181,6 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    with storage.development(ROOT, os.environ) as environment:
+        os.environ.update(environment)
+        raise SystemExit(main())

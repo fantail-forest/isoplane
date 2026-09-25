@@ -10,6 +10,7 @@ description = "Native platform support for managed Isoplane development tools"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+isoplane-cache.workspace = true
 isoplane-runtime = { workspace = true, features = ["local"] }
 isoplane-abi = { workspace = true, features = ["host"] }
 serde.workspace = true

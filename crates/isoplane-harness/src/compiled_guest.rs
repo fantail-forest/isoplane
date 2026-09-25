@@ -1,72 +1,46 @@
 //! Share disk-backed compilation while keeping engines and guest state isolated.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
+use isoplane_cache::{Cache, CacheKey, PROJECT_CACHE_BYTES};
 use isoplane_engine::{
     CompilationCache, EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles, Template,
 };
 
-struct CompiledGuests {
-    directory: PathBuf,
-    cache: CompilationCache,
-    initialized: Mutex<HashMap<FixtureKey, Arc<OnceLock<()>>>>,
-}
-
-#[derive(PartialEq, Eq, Hash)]
-struct FixtureKey {
-    module: ModuleHash,
-    configuration: Vec<u8>,
-}
+struct CompiledGuests(Cache);
 
 impl CompiledGuests {
     fn new(directory: PathBuf) -> Self {
-        // SAFETY: this private fixture-output directory is written only by this
-        // helper through CompilationCache's atomic compiler path. Native artifacts
-        // are keyed by portable content and engine compatibility, never supplied
-        // by a guest or copied from an external artifact source.
-        let cache = unsafe { CompilationCache::from_trusted_directory(directory.clone()) }
-            .expect("create the private compiled-fixture cache");
-        Self {
-            directory,
-            cache,
-            initialized: Mutex::default(),
-        }
+        Self(
+            Cache::new(directory, PROJECT_CACHE_BYTES)
+                .expect("open bounded compiled-fixture storage"),
+        )
     }
 
     fn load(&self, engine: &IsoplaneEngine, module: &[u8]) -> (Template, bool) {
-        let key = FixtureKey {
-            module: ModuleHash::of(module),
-            configuration: serde_json::to_vec(&engine.configuration())
-                .expect("serialize engine settings"),
-        };
-        let lock_path = self.directory.join(format!("{}.lock", key.module.hex()));
-        let ready = self
-            .initialized
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .entry(key)
-            .or_default()
-            .clone();
-        let load = || {
-            self.cache
-                .load(engine, module)
-                .unwrap_or_else(|error| panic!("the compiled guest must load: {error:#}"))
-        };
-        let mut initial = None;
-        ready.get_or_init(|| {
-            let lock = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(lock_path)
-                .expect("open the guest compilation lock");
-            fs4::FileExt::lock(&lock).expect("lock guest compilation across test processes");
-            initial = Some(load());
-        });
-        initial.unwrap_or_else(load)
+        let lease = Arc::new(
+            self.0
+                .lease(CacheKey(ModuleHash::of(module).0))
+                .expect("lease compiled guest storage"),
+        );
+        let path = lease.directory();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path.join("build.lock"))
+            .expect("open guest compilation lock");
+        fs4::FileExt::lock(&lock).expect("serialize guest compilation across binaries");
+        // SAFETY: only the compiler writes into this private, leased fixture directory.
+        let cache = unsafe { CompilationCache::from_trusted_directory(path.into()) }
+            .expect("open compiled guest cache");
+        let (mut template, compiled) = cache
+            .load(engine, module)
+            .expect("compile the guest fixture");
+        template.retain_storage(lease);
+        (template, compiled)
     }
 }
 
@@ -87,9 +61,7 @@ pub(super) fn engine_serving(module: &[u8], files: PlatformFiles) -> (IsoplaneEn
         .expect("the returned-guest engine must initialize");
     static COMPILED: OnceLock<CompiledGuests> = OnceLock::new();
     let cache = COMPILED.get_or_init(|| {
-        CompiledGuests::new(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/compiled-test-guests"),
-        )
+        CompiledGuests::new(isoplane_fixtures::target_directory().join("compiled-tests"))
     });
     let template = cache.load(&engine, module).0;
     (engine, template)

@@ -1,5 +1,6 @@
 """Exercise generated-output invalidation without building a runtime."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -22,7 +23,9 @@ class BuildInputsTests(unittest.TestCase):
             setup(root)
         script = (ROOT / 'build.sh').read_text().split('\nstages=("$@")')[0]
         (root / 'build.sh').write_text(script + '\n' + statements)
-        result = subprocess.run(['bash', str(root / 'build.sh')], capture_output=True, text=True)
+        environment = dict(os.environ, ISOPLANE_RUNTIME_SOURCE=str(root), ISOPLANE_RUNTIME_WORK=str(root / 'work'))
+        result = subprocess.run(['bash', str(root / 'build.sh')], env=environment,
+                                capture_output=True, text=True, timeout=30)
         return root, result
 
     def run_case(self, recorded):
@@ -39,7 +42,7 @@ if [ -e "$WORK/test/artifacts/object.o" ]; then echo retained; else echo invalid
 '''
         _, result = self.run_script(statements)
         self.assertEqual(result.returncode, 0, 'generated output qualification failed: ' + result.stderr)
-        return result.stdout.strip()
+        return result.stdout.strip().splitlines()[-1]
 
     def test_inputs_changed_during_compilation_do_not_receive_a_success_receipt(self):
         root, result = self.run_script('''
@@ -156,6 +159,8 @@ require_build_inputs
         root, result = self.run_script('''openssl_source() { return 0; }
 openssl_inputs_digest() { echo openssl; }
 mkdir -p "$OUT/openssl/include/openssl" "$OUT/openssl/lib" "$WASI_SDK/bin"
+mkdir -p "$OPENSSL_BUILD"
+touch "$OPENSSL_BUILD/Makefile"
 echo openssl > "$OUT/openssl/.isoplane-build-identity"
 echo "$WASI_SDK_SHA256" > "$WASI_SDK/.isoplane-archive-sha256"
 printf '#!/bin/sh\\nexit 0\\n' > "$WASI_SDK/bin/clang"
@@ -173,6 +178,31 @@ sha256sum --check --status "$WORK/openssl-build-artifacts"
         receipt = (root / 'work/openssl-build-artifacts').read_text()
         self.assertIn('libcrypto.a', receipt, 'the native archive must be bound to its build')
         self.assertIn('ssl.h', receipt, 'installed headers must be bound to their build')
+
+    def test_openssl_reconfigures_when_work_is_evicted_but_outputs_survive(self):
+        root, result = self.run_script(r'''openssl_source() { return 0; }
+openssl_inputs_digest() { echo openssl; }
+mkdir -p "$OUT/openssl/include/openssl" "$OUT/openssl/lib" "$WASI_SDK/bin" "$OPENSSL"
+echo openssl > "$OUT/openssl/.isoplane-build-identity"
+echo "$WASI_SDK_SHA256" > "$WASI_SDK/.isoplane-archive-sha256"
+printf '#!/bin/sh\nexit 0\n' > "$WASI_SDK/bin/clang"
+chmod +x "$WASI_SDK/bin/clang"
+cat > "$OPENSSL/Configure" <<'PERL'
+use strict;
+my ($prefix) = map { /^--prefix=(.*)$/ ? $1 : () } @ARGV;
+open(my $makefile, '>', 'Makefile') or die $!;
+print $makefile "build_libs:\n\tprintf rebuilt > libcrypto.a\ninstall_dev:\n\tcp libcrypto.a '$prefix/lib/libcrypto.a'\n\tprintf header > '$prefix/include/openssl/ssl.h'\n";
+close($makefile) or die $!;
+PERL
+mkdir -p "$OPENSSL_BUILD"
+echo stale > "$OPENSSL_BUILD/Makefile"
+rm -rf "$OPENSSL_BUILD"
+stage_openssl
+sha256sum --check --status "$WORK/openssl-build-artifacts"
+''')
+        self.assertEqual(result.returncode, 0, 'OpenSSL must rebuild after intermediate eviction: ' + result.stderr)
+        self.assertEqual((root / 'out/openssl/lib/libcrypto.a').read_text(), 'rebuilt',
+                         'a surviving receipt must not prevent regenerating the evicted build configuration')
 
     def test_modified_openssl_headers_and_archives_are_refused(self):
         for changed in ['lib/libcrypto.a', 'include/openssl/ssl.h']:

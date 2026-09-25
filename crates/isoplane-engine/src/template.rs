@@ -85,6 +85,8 @@ pub(crate) struct TemplateInner {
     /// unchanged pages from.
     #[cfg(target_os = "linux")]
     pub layer_source: Option<wasmtime::CowMemorySource>,
+    // Release storage leases after the mappings that depend on them.
+    pub retained_storage: Vec<Arc<dyn Send + Sync>>,
 }
 
 impl TemplateInner {
@@ -101,6 +103,7 @@ impl TemplateInner {
     /// A copy that shares this template's code, memory and mapped storage.
     fn share(&self) -> Self {
         Self {
+            retained_storage: self.retained_storage.clone(),
             #[cfg(target_os = "linux")]
             initialization_layer: self.initialization_layer.clone(),
             activation_prefetch: self.activation_prefetch.clone(),
@@ -138,6 +141,17 @@ impl TemplateInner {
 pub struct TemplateStorageFailed;
 
 impl Template {
+    /// Keep caller-owned backing storage alive until this template and its instances are released.
+    pub fn retain_storage(&mut self, owner: Arc<dyn Send + Sync>) {
+        if Arc::get_mut(&mut self.inner).is_none() {
+            self.inner = Arc::new(self.inner.share());
+        }
+        Arc::get_mut(&mut self.inner)
+            .expect("the inner template is uniquely owned after cloning it in this function")
+            .retained_storage
+            .push(owner);
+    }
+
     /// Bind immutable application files to a template and its snapshot identity.
     /// A template that is already shared, such as a runtime baseline, is left
     /// unchanged: the result is a new template sharing its code and memory.

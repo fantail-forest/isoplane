@@ -1,6 +1,7 @@
 # Run the SDK installation journey on a disposable Windows machine.
 param(
-    [Parameter(Mandatory)][string]$Release
+    [Parameter(Mandatory)][string]$Release,
+    [switch]$KeepArtifacts
 )
 $ErrorActionPreference = 'Stop'
 $Release = (Resolve-Path $Release).Path
@@ -88,5 +89,9 @@ finally {
     Set-Location $previousLocation
     $env:ISOPLANE_HOME = $previousHome
     $env:NUGET_PACKAGES = $previousPackages
-    Write-Output "Journey artifacts: $workspace"
+    if ($KeepArtifacts) {
+        Write-Output "Journey artifacts (caller-managed): $workspace"
+    } else {
+        Remove-Item -LiteralPath $workspace -Recurse -Force
+    }
 }

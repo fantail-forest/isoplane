@@ -96,6 +96,7 @@ impl IsoplaneEngine {
             hash: ModuleHash(manifest.module_hash),
             abi_rev: manifest.abi_rev,
             inner: Arc::new(TemplateInner {
+                retained_storage: Vec::new(),
                 #[cfg(target_os = "linux")]
                 initialization_layer: None,
                 activation_prefetch: None,

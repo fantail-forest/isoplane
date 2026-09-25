@@ -1,6 +1,7 @@
 """Exercise installed tools, User Secrets and verified-TLS PostgreSQL in both guest modes."""
 
 import argparse
+import importlib.util
 from contextlib import contextmanager
 import hashlib
 import json
@@ -16,6 +17,11 @@ import uuid
 import xml.etree.ElementTree as ET
 import os
 import sys
+
+
+STORAGE_SPEC = importlib.util.spec_from_file_location("build_storage", Path(__file__).resolve().parents[2] / "scripts/build_storage.py")
+storage = importlib.util.module_from_spec(STORAGE_SPEC)
+STORAGE_SPEC.loader.exec_module(storage)
 
 
 def command(arguments, *, env=None, cwd=None, data=None, timeout=120):
@@ -146,8 +152,11 @@ def main():
     parser.add_argument('--sample', type=Path, default=Path(__file__).resolve().parents[2] / 'samples/aspnet-todo')
     parser.add_argument('--configuration', action='append', choices=['IsoplaneInterpretedDebug', 'IsoplaneNativeAotRelease'])
     arguments = parser.parse_args()
-    records = arguments.records or Path(tempfile.mkdtemp(prefix='isoplane-dx-postgres-records-'))
-    records.mkdir(parents=True, exist_ok=True)
+    with storage.records(arguments.records) as records:
+        execute(arguments, records)
+
+
+def execute(arguments, records):
     print(f'Records: {records}', flush=True)
     with tempfile.TemporaryDirectory(prefix='isoplane-dx-postgres-') as work:
         directory = Path(work)

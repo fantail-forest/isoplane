@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
@@ -14,6 +16,28 @@ spec.loader.exec_module(compiler)
 
 
 class NativeCacheTests(unittest.TestCase):
+    def test_default_compiler_work_is_locked_and_reclaimed_automatically(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            storage = compiler.build_storage()
+            observed = []
+            def produce(args):
+                observed.append(args.work)
+                (args.work / 'intermediate').write_bytes(b'compiled')
+                with (args.work / '.build.lock').open('a+b') as competing:
+                    self.assertFalse(storage.lock(competing, blocking=False),
+                                     'concurrent compiler builds must not modify the same intermediates')
+                storage.prune(Path(temporary), 0)
+                self.assertTrue(args.work.exists(), 'active compiler intermediates must survive cleanup')
+                return {'version': 'test'}
+            with patch.object(storage, 'shared_root', return_value=Path(temporary)), \
+                    patch.object(storage, 'PRODUCT_BYTES', 0), \
+                    patch.object(compiler, 'build', side_effect=produce), \
+                    patch.object(sys, 'argv', ['compiler', 'build']), \
+                    patch.dict(os.environ, {'ISOPLANE_RUNTIME_SOURCE': ''}):
+                compiler.main()
+            self.assertEqual(len(observed), 1, 'the compiler command must execute inside its storage lease')
+            self.assertFalse(observed[0].exists(), 'finished compiler work must obey automatic retention')
+
     def test_macos_arm64_manifest_selects_source_built_host_tools(self):
         with patch.object(compiler.platform, 'system', return_value='Darwin'), \
                 patch.object(compiler.platform, 'machine', return_value='arm64'):

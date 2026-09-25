@@ -1,28 +1,3 @@
-# Keep the build churn somewhere it can be deleted without taking the compiled
-# output with it.
-#
-# Cargo names every artifact `<crate>-<metadata-hash>`, and that hash covers the
-# profile, the resolved feature set, the target kind and the whole dependency
-# graph below it. Change any one of those and the next build writes a *new*
-# file instead of replacing the old one, and cargo has no garbage collector for
-# a target directory on any channel -- `cargo clean gc` is nightly-only and
-# collects `$CARGO_HOME`, not this tree. A week of dependency edits left 254
-# test binaries in `target/debug/deps` averaging 200 MB each (wasmtime and
-# cranelift, statically linked and unoptimised, once per test target), of which
-# only the newest of each configuration was still reachable.
-#
-# `build-dir` splits the tree in two: `deps/`, `.fingerprint/`, `build/`,
-# `examples/` and `incremental/` land here, while `target/<profile>/` keeps only
-# the final named binaries. `scripts/clean --stale` can then reclaim the dead
-# copies without touching anything you actually run.
-#
-# `scripts/dev --container` overrides this with CARGO_BUILD_BUILD_DIR so that a container
-# build keeps its intermediates on the `isoplane-ctarget` volume rather than writing
-# them back through the bind mount, where they land as trees owned by a uid the
-# host user cannot unlink.
-[build]
-build-dir = "{workspace-root}/target/build"
-
 [net]
 # Use the developer's Git/SSH authentication for private source dependencies.
 git-fetch-with-cli = true

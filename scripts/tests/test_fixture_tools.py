@@ -28,6 +28,24 @@ class FixtureReceipts(unittest.TestCase):
         self.outputs = [self.output, self.sidecar]
         tools.write_receipt(self.receipt, self.inputs, self.outputs)
 
+    def test_output_discovery_honors_the_configured_cargo_target(self):
+        from unittest.mock import patch
+        crate = self.root / "crate"
+        (crate / "src").mkdir(parents=True)
+        (crate / "Cargo.toml").write_text('[package]\nname="fixture-output-test"\nversion="0.1.0"\nedition="2024"\n[workspace]\n')
+        (crate / "src/lib.rs").write_text("")
+        chosen = self.root / "chosen-target"
+        with patch.dict(os.environ, {"CARGO_TARGET_DIR": str(chosen)}):
+            self.assertEqual(tools.target_directory(crate), chosen,
+                             "nested fixture outputs must follow Cargo's configured target directory")
+
+    def test_identical_inputs_in_another_worktree_have_the_same_identity(self):
+        import shutil
+        copy = self.root / "another-worktree"
+        shutil.copytree(self.source, copy)
+        self.assertEqual(tools.fingerprint([copy]), self.inputs,
+                         "absolute worktree paths must not invalidate identical build inputs")
+
     def test_runtime_module_does_not_replace_the_sdk_guest_output(self):
         (self.root / "dotnet.wasm").write_bytes(b"runtime template")
         self.assertEqual(tools.published_guest(self.root), self.output,

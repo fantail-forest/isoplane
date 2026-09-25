@@ -32,6 +32,7 @@ libc = { workspace = true }
 windows-sys.workspace = true
 
 [dev-dependencies]
+isoplane-cache.workspace = true
 # Hand-written .wat fixtures, so a guest-SDK bug is never mistaken for an
 # engine bug.
 wat = { workspace = true }

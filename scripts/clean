@@ -1,34 +1,12 @@
 #!/usr/bin/env bash
-# Reclaim build intermediates.
-#
-#   scripts/clean            # caches and intermediates only, no rebuild
-#   scripts/clean --all      # everything, including compiled output
+# Reclaim inactive managed build storage; report other generated directories.
 set -euo pipefail
-usage() { printf 'Usage: scripts/clean [--all]\nReclaim build intermediates; --all also removes compiled output.\n'; }
-if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
-case "${1:-}" in
-  ""|--all) ;;
-  -h|--help) usage; exit 0 ;;
-  *) usage >&2; exit 2 ;;
-esac
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-before=$(du -sm . | cut -f1)
-
-JUNK=(target/debug/incremental target/release/incremental
-      guests/target guests/dotnet/src/obj guests/dotnet/src/bin
-      guests/dotnet/obj
-      guest-sdks/dotnet/obj guest-sdks/dotnet/bin
-      .isoplane-dev/release-journey)
-
-rm -rf "${JUNK[@]}"
-find . -name '*.rs.bk' -delete
-
-if [ "${1:-}" = "--all" ]; then
-  cargo clean
-fi
-
-after=$(du -sm . | cut -f1)
-echo "project: ${before} MB -> ${after} MB  (freed $((before - after)) MB)"
-df -h / | tail -1
+usage() { printf 'Usage: scripts/clean [--all] [--dry-run | --report]\nReclaim managed caches; --all clears inactive entries regardless of age or size.\nUnleased and legacy output is reported, never removed while its ownership is unknown.\n'; }
+for argument in "$@"; do
+  case "$argument" in
+    --all|--dry-run|--report) ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+exec python3 "$(dirname "${BASH_SOURCE[0]}")/clean.py" "$@"

@@ -61,9 +61,14 @@ impl Baselines {
             }
         };
         drop(current);
-        let application = baseline
-            .prepare_application_in(&request, &super::runtime_directory(project)?)
+        let cache = super::compilation_cache(project, version.as_bytes())?;
+        let mut application = baseline
+            .prepare_application_in(&request, cache.lease.directory())
             .map_err(isoplane_prepare::PrepareError::Rejected)?;
+        application.template.retain_storage(cache.lease);
+        application
+            .template
+            .retain_storage(std::sync::Arc::new(baseline.clone()));
         tracing::info!(
             compiled,
             "local preparation over the runtime baseline ready"
@@ -126,7 +131,6 @@ fn published(
 ) -> anyhow::Result<(isoplane_prepare::RuntimeBaseline, bool)> {
     use isoplane_prepare::{PrepareError, RuntimeBaseline};
     let identity = wanted.identity()?;
-    let cache = super::compilation_cache(project)?;
     let mut name = blake3::Hasher::new();
     for part in [
         &identity.input_hash,
@@ -135,14 +139,14 @@ fn published(
     ] {
         name.update(part);
     }
-    let directory = super::runtime_directory(project)?
-        .join("baselines")
-        .join(name.finalize().to_hex().as_str());
+    let cache = super::compilation_cache(project, name.finalize().as_bytes())?;
+    let directory = cache.lease.directory().join("baseline");
     let engine = std::sync::Arc::new(isoplane_engine::IsoplaneEngine::new(
         super::engine_configuration(project),
     )?);
     match load(&engine, &directory, identity) {
-        Ok(template) => {
+        Ok(mut template) => {
+            template.retain_storage(cache.lease.clone());
             tracing::info!(path = %directory.display(), "reusing the local runtime baseline");
             return Ok((RuntimeBaseline::loaded(engine, template, wanted)?, false));
         }
@@ -153,8 +157,8 @@ fn published(
         Err(_) => {}
     }
     admit()?;
-    let prepared =
-        RuntimeBaseline::prepare(wasm, wanted, Some(&cache)).map_err(PrepareError::Rejected)?;
+    let prepared = RuntimeBaseline::prepare(wasm, wanted, Some(&cache.cache))
+        .map_err(PrepareError::Rejected)?;
     let engine = std::sync::Arc::clone(prepared.baseline.engine());
     // SAFETY: RuntimeBaseline::prepare produced these bytes in this process.
     let product =
@@ -165,7 +169,8 @@ fn published(
             return Err(error.into());
         }
     }
-    let template = load(&engine, &directory, identity)?;
+    let mut template = load(&engine, &directory, identity)?;
+    template.retain_storage(cache.lease.clone());
     Ok((
         RuntimeBaseline::loaded(engine, template, wanted)?,
         prepared.product.initialized.compiled,

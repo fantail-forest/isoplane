@@ -43,9 +43,13 @@ PROJECTS = {
 
 
 def load(path):
+    if path.name == "build_storage.py" and "build_storage" in sys.modules:
+        return sys.modules["build_storage"]
     spec = importlib.util.spec_from_file_location(path.stem.replace('-', '_'), path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if path.name == "build_storage.py":
+        sys.modules["build_storage"] = module
     return module
 
 
@@ -61,11 +65,16 @@ def output(command, cwd=ROOT):
 def run(command, cwd, log, env=None):
     print(f'{log.stem}: {log}', flush=True)
     command = [str(arg) for arg in command]
+    env = dict(os.environ if env is None else env)
+    # Release source exports already live under the enclosing workspace lease.
+    env.update(ISOPLANE_RUNTIME_SOURCE=str(Path(cwd) / 'guest-runtime'),
+               ISOPLANE_RUNTIME_WORK=str(Path(cwd) / 'guest-runtime/work'))
     if env is not None:
         command[0] = shutil.which(command[0], path=env.get('PATH')) or command[0]
     with log.open('w') as stream:
         subprocess.run(command, cwd=cwd, env=env,
-                       stdout=stream, stderr=subprocess.STDOUT, check=True)
+                       stdout=stream, stderr=subprocess.STDOUT, check=True,
+                       **load(ROOT / "scripts/build_storage.py").subprocess_options())
 
 
 def source_revision(root):
@@ -95,12 +104,7 @@ def verify_inventory(directory, expected):
 
 
 def download(url, destination, expected, algorithm='sha256'):
-    if destination.exists() and sha(destination, algorithm) == expected:
-        return
-    with urllib.request.urlopen(url, timeout=60) as response, destination.open('wb') as stream:
-        shutil.copyfileobj(response, stream)
-    if sha(destination, algorithm) != expected:
-        raise ValueError(f'download hash differs: {destination}')
+    load(ROOT / 'scripts/build_storage.py').download(url, destination, expected, algorithm)
 
 
 def export_git_tree(root, revision, destination, archive, log):
@@ -126,6 +130,18 @@ def export_git_tree(root, revision, destination, archive, log):
 
 
 def export_source(root, source, cache, revision, logs):
+    identity = output(['git', 'rev-parse', revision], root)
+    receipt = cache / 'source-revision'
+    if not receipt.is_file() or receipt.read_text() != identity:
+        for directory in (cache / 'target', source, cache / 'runtime-build'):
+            reason = load(ROOT / 'scripts/build_storage.py').source_preservation_reason(directory)
+            if reason:
+                raise ValueError(f'cannot replace release workspace: {reason}')
+        # Cargo uses source timestamps; git archives can move those backwards.
+        receipt.unlink(missing_ok=True)
+        for directory in (cache / 'target', source, cache / 'runtime-build'):
+            if directory.exists():
+                shutil.rmtree(directory)
     preserved = cache / 'runtime-build'
     preserved.mkdir(exist_ok=True)
     for name in ('work', 'out'):
@@ -140,6 +156,7 @@ def export_source(root, source, cache, revision, logs):
     for path in preserved.iterdir():
         path.rename(source / 'guest-runtime' / path.name)
     preserved.rmdir()
+    receipt.write_text(identity)
 
 
 def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
@@ -352,8 +369,7 @@ def build(root, cache, releases, logs, args):
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1',
-                       NUGET_PACKAGES=str(cache / 'nuget'),
-                       CARGO_TARGET_DIR=str(cache / 'target'), CARGO_BUILD_BUILD_DIR=str(cache / 'target/build'),
+                       CARGO_TARGET_DIR=str(cache / 'target'), CARGO_BUILD_BUILD_DIR=str(cache / 'target'),
                        PATH=str(sdk) + os.pathsep + os.environ.get('PATH', os.defpath))
     run(['cargo', 'build', '--locked', '--release', '-p', 'isoplane-native'], source, logs / 'native.log', environment)
     native_library = cache / 'target/release' / NATIVE_LIBRARY
@@ -423,7 +439,7 @@ def build(root, cache, releases, logs, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--cache', type=Path, default=ROOT / '.isoplane-dev/preview-build',
+    parser.add_argument('--cache', type=Path, default=None,
                         help='build cache shared between releases: SDK download, cargo target, packages')
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases',
                         help='where the release directory, archive and checksum are written')
@@ -449,23 +465,18 @@ def main():
     if args.jobs < 1:
         parser.error('--jobs must be positive')
     os.environ['CARGO_BUILD_JOBS'] = str(args.jobs)
-    cache = args.cache.resolve()
-    if platform.system() == 'Darwin':
-        for variable, directory in [('CARGO_HOME', 'cargo'), ('NUGET_PACKAGES', 'nuget'),
-                                    ('TMPDIR', 'tmp'), ('DOTNET_CLI_HOME', 'dotnet-home')]:
-            path = cache / directory
-            path.mkdir(parents=True, exist_ok=True)
-            os.environ.setdefault(variable, str(path))
-    releases = args.output.resolve()
-    logs = cache / 'logs'
-    logs.mkdir(parents=True, exist_ok=True)
-    releases.mkdir(parents=True, exist_ok=True)
-    with (cache / '.lock').open('w') as lock:
-        load(ROOT / 'scripts/fixture-tools.py').lock_file(lock)
-        try:
-            build(ROOT, cache, releases, logs, args)
-        except (ValueError, OSError, subprocess.CalledProcessError) as error:
-            raise SystemExit(f'preview build failed: {error}; see {logs}') from error
+    storage = load(ROOT / 'scripts/build_storage.py')
+    with storage.workspace('release-' + RUNTIME_IDENTIFIER, args.cache) as cache:
+        releases = args.output.resolve()
+        logs = cache / 'logs'
+        logs.mkdir(parents=True, exist_ok=True)
+        releases.mkdir(parents=True, exist_ok=True)
+        with (cache / '.lock').open('w') as lock:
+            load(ROOT / 'scripts/fixture-tools.py').lock_file(lock)
+            try:
+                build(ROOT, cache, releases, logs, args)
+            except (ValueError, OSError, subprocess.CalledProcessError) as error:
+                raise SystemExit(f'preview build failed: {error}; see {logs}') from error
 
 
 if __name__ == '__main__':

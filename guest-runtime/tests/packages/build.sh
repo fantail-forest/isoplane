@@ -54,7 +54,11 @@ if [ "$FIXTURE" = runtime ]; then
   fi
   rm -f "$OUT" "$DEBUG"
   # This build already holds the lock the runtime's own script takes.
-  ISOPLANE_FIXTURE_LOCK="$SDK/MonoRuntime/build.sh" "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
+  SHARED_OUTPUTS=()
+  for output in "${OUTPUTS[@]}"; do SHARED_OUTPUTS+=(--output "$output"); done
+  ISOPLANE_FIXTURE_LOCK="$SDK/MonoRuntime/build.sh" python3 "$ROOT/scripts/build_storage.py" files \
+    "mono-runtime:$INPUTS:$(git -C "$ROOT" rev-parse HEAD):$(dotnet --version)" \
+    "${SHARED_OUTPUTS[@]}" -- "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
 else
   OUT="$HERE/out/$FIXTURE"
   OUTPUTS=("$OUT.tar")

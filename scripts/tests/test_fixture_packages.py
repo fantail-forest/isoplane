@@ -1,5 +1,6 @@
 """Package reuse requires unchanged inputs and intact output artifacts."""
 import importlib.util
+from contextlib import nullcontext
 from pathlib import Path
 import subprocess
 import tempfile
@@ -20,6 +21,11 @@ class PackageFeed(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        self.destination = self.root / "consumer/packages"
+        target = patch.object(packages.storage, "workspace",
+                              side_effect=lambda name: nullcontext(self.root / "target/fixture-packages"))
+        target.start()
+        self.addCleanup(target.stop)
         for name in ("guest-sdks/dotnet", "tools", "crates", ".cargo", "scripts"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
         for name in ("Cargo.toml", "Cargo.lock", "Directory.Build.props", "global.json",
@@ -48,35 +54,55 @@ class PackageFeed(unittest.TestCase):
     def test_unchanged_consumers_reuse_packages_and_corruption_rebuilds_them(self):
         def packs():
             return sum(1 for call in self.builder.call_args_list if "pack" in call.args[0])
-        feed = packages.package_feed(self.root)
+        feed = packages.package_feed(self.root, self.destination)
         initial_packs = packs()
         self.assertGreater(initial_packs, 0, "a new package feed must build its packages")
-        self.assertEqual(packages.package_feed(self.root), feed,
+        self.assertEqual(packages.package_feed(self.root, self.destination), feed,
                          "unchanged inputs must identify the same feed")
         self.assertEqual(packs(), initial_packs,
                          "a second consumer must not repack unchanged SDK and CLI artifacts")
-        next(feed.glob("*.nupkg")).write_bytes(b"corrupt")
-        packages.package_feed(self.root)
+        next((self.root / "target/fixture-packages/packages").glob("*.nupkg")).write_bytes(b"corrupt")
+        packages.package_feed(self.root, self.destination)
         self.assertGreater(packs(), initial_packs,
                            "a modified package must not be reused")
 
-    def test_a_source_change_selects_a_new_package_feed(self):
-        original = packages.package_feed(self.root)
-        (self.root / "tools" / "Changed.cs").write_text("updated CLI")
-        self.assertNotEqual(packages.package_feed(self.root), original,
-                            "changed source must not reuse packages with the same version")
+    def assert_rebuild_reuses_intermediates(self, change):
+        packages.package_feed(self.root, self.destination)
+        before = self.builder.call_count
+        change()
+        packages.package_feed(self.root, self.destination)
+        self.assertGreater(self.builder.call_count, before + 1,
+                           "changed package inputs must rebuild the feed")
+        artifacts = {call.args[0][call.args[0].index("--artifacts-path") + 1]
+                     for call in self.builder.call_args_list if "pack" in call.args[0]}
+        self.assertEqual(len(artifacts), 1,
+                         "new source generations must reuse one incremental build directory")
 
-    def test_a_rebuilt_shared_runtime_selects_a_new_package_feed(self):
-        original = packages.package_feed(self.root)
-        (self.root / "guest-runtime/tests/packages/out/runtime/Isoplane.MonoRuntime.wasm").write_bytes(b"rebuilt")
-        self.assertNotEqual(packages.package_feed(self.root), original,
-                            "an SDK package must not keep a runtime its source no longer builds")
+    def test_changed_source_rebuilds_without_multiplying_build_trees(self):
+        self.assert_rebuild_reuses_intermediates(lambda: (self.root / "tools/Changed.cs").write_text("updated"))
 
-    def test_changed_runtime_provenance_selects_a_new_package_feed(self):
-        original = packages.package_feed(self.root)
-        (self.root / "guest-runtime/tests/packages/out/runtime/runtime-build.json").write_text("new provenance")
-        self.assertNotEqual(packages.package_feed(self.root), original,
-                            "an SDK package must not keep superseded runtime provenance")
+    def test_changed_content_discards_timestamp_based_managed_intermediates(self):
+        packages.package_feed(self.root, self.destination)
+        old = self.root / "target/fixture-packages/artifacts/obj/stale"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"previous source generation")
+        (self.root / "tools/Changed.cs").write_text("changed source")
+        packages.package_feed(self.root, self.destination)
+        self.assertFalse(old.exists(), "MSBuild must not reuse another generation's timestamp-based intermediate state")
+
+    def test_a_rebuilt_runtime_rebuilds_the_packages(self):
+        self.assert_rebuild_reuses_intermediates(lambda: (self.root / "guest-runtime/tests/packages/out/runtime/Isoplane.MonoRuntime.wasm").write_bytes(b"rebuilt"))
+
+    def test_changed_runtime_provenance_rebuilds_the_packages(self):
+        self.assert_rebuild_reuses_intermediates(lambda: (self.root / "guest-runtime/tests/packages/out/runtime/runtime-build.json").write_text("new provenance"))
+
+    def test_the_consumer_receives_an_independent_copy(self):
+        feed = packages.package_feed(self.root, self.destination)
+        saved = {path.name: path.read_bytes() for path in feed.glob("*.nupkg")}
+        for path in (self.root / "target/fixture-packages/packages").glob("*.nupkg"):
+            path.unlink()
+        self.assertEqual({path.name: path.read_bytes() for path in feed.glob("*.nupkg")}, saved,
+                         "rebuilding the shared feed must not invalidate an active consumer")
 
 
 if __name__ == "__main__":

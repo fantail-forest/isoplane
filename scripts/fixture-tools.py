@@ -28,6 +28,12 @@ def lock_file(handle):
         fcntl.flock(handle, fcntl.LOCK_EX)
 
 
+def target_directory(root):
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=root)
+    return Path(json.loads(metadata)["target_directory"])
+
+
 def source_files(root):
     root = Path(root)
     if root.is_file():
@@ -59,7 +65,7 @@ def fingerprint(roots):
         root = Path(root)
         for path in source_files(root):
             name = path.name if root.is_file() else path.relative_to(root).as_posix()
-            record = json.dumps([index, str(root), name, file_digest(path)], separators=(",", ":"))
+            record = json.dumps([index, name, file_digest(path)], separators=(",", ":"))
             digest.update(record.encode())
             digest.update(b"\n")
     return digest.hexdigest()
@@ -103,11 +109,14 @@ def published_guest(directory):
 
 def main():
     action, *args = sys.argv[1:]
+    if action == "target-directory":
+        print(target_directory(Path(args[0]).resolve()))
+        return 0
     if action == "dap-python":
         root = Path(args[0]).resolve()
         version = "1.8.20"
         identity = hashlib.sha256((sys.version + version).encode()).hexdigest()
-        target = root / "target" / "dap-python" / identity
+        target = target_directory(root) / "dap-python" / identity
         target.mkdir(parents=True, exist_ok=True)
         executable = target / ("Scripts/python.exe" if os.name == 'nt' else "bin/python")
         with (target / "fixture.lock").open("a") as handle:
@@ -161,9 +170,9 @@ def main():
         profile = args[1]
         if profile not in ("debug", "release"):
             sys.exit("native fixture profile must be debug or release")
-        target = root / "target" / "native-support"
+        target = target_directory(root) / "native-support"
         target.mkdir(parents=True, exist_ok=True)
-        environment = dict(os.environ, CARGO_BUILD_BUILD_DIR=str(target / "build"))
+        environment = dict(os.environ, CARGO_BUILD_BUILD_DIR=str(target))
         with (target / "fixture.lock").open("a") as handle:
             lock_file(handle)
             log = target / "build.log"
@@ -175,10 +184,12 @@ def main():
                 )
             if result.returncode != 0:
                 sys.exit(f"building native Isoplane support failed; see {log}:\n{log.read_text()}")
+        library = {"win32": "isoplane_native.dll", "darwin": "libisoplane_native.dylib"}.get(sys.platform, "libisoplane_native.so")
+        print(target / profile / library)
         return 0
     if action == "debugger-protocol":
         root = Path(args[0]).resolve()
-        target = root / "target" / "debugger-protocol"
+        target = target_directory(root) / "managed-tools"
         target.mkdir(parents=True, exist_ok=True)
         assembly = target / "artifacts/bin/Isoplane.Debugging.Tests/debug/Isoplane.Debugging.Tests.dll"
         with (target / "fixture.lock").open("a") as handle:
@@ -196,7 +207,7 @@ def main():
         return 0
     if action == "isoplane-cli":
         root = Path(args[0]).resolve()
-        target = root / "target" / "managed-cli"
+        target = target_directory(root) / "managed-tools"
         target.mkdir(parents=True, exist_ok=True)
         with (target / "fixture.lock").open("a") as handle:
             lock_file(handle)

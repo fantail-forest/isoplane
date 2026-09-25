@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/isoplane-abi",
     "crates/isoplane-engine",
+    "crates/isoplane-cache",
     "crates/isoplane-hibernate",
     "crates/isoplane-host",
     "crates/isoplane-control",
@@ -31,6 +32,7 @@ libproc = "0.14.11"
 fs4 = "1.1.0"
 portable-pty = "0.9.0"
 isoplane-abi       = { path = "crates/isoplane-abi" }
+isoplane-cache     = { path = "crates/isoplane-cache" }
 isoplane-engine    = { path = "crates/isoplane-engine" }
 isoplane-hibernate = { path = "crates/isoplane-hibernate" }
 isoplane-host      = { path = "crates/isoplane-host" }

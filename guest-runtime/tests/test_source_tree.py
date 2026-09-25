@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -7,8 +8,12 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'source-tree.py'
+SPEC = importlib.util.spec_from_file_location('source_storage', SCRIPT.parent.parent / 'scripts/build_storage.py')
+storage = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(storage)
 
 
 class SourceTreeTests(unittest.TestCase):
@@ -41,13 +46,112 @@ class SourceTreeTests(unittest.TestCase):
             'diff --git a/value.txt b/value.txt\n--- a/value.txt\n+++ b/value.txt\n'
             f'@@ -1 +1 @@\n-old\n+{value}\n')
 
-    def run_source(self, action='materialize', env=None):
+    def run_source(self, action='materialize', env=None, extra=()):
         return subprocess.run(['python3', str(SCRIPT), action, str(self.tree), str(self.archive),
-                               self.sha, str(self.patches)], text=True, capture_output=True, env=env, timeout=20)
+                               self.sha, str(self.patches), *extra], text=True, capture_output=True, env=env, timeout=20)
 
     def materialize(self):
         result = self.run_source()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def retained_tree(self):
+        products = self.root / 'products'
+        with storage.product('runtime', root=products) as entry:
+            self.tree = entry / 'source'
+            self.materialize()
+        return products
+
+    def test_unmodified_generated_sources_are_reclaimed(self):
+        products = self.retained_tree()
+        storage.prune(products, 0)
+        self.assertFalse(self.tree.exists(), 'regenerable source must remain subject to the product budget')
+
+    def test_automatic_retention_preserves_local_source_edits(self):
+        with patch.object(storage, 'PRODUCT_BYTES', 0):
+            with storage.product('runtime', root=self.root / 'products') as entry:
+                self.tree = entry / 'source'
+                self.materialize()
+                (self.tree / 'value.txt').write_text('unfinished work')
+        self.assertEqual((self.tree / 'value.txt').read_text(), 'unfinished work',
+                         'automatic retention on command exit must protect unfinished source edits')
+
+    def test_cleanup_preserves_dirty_source_and_untracked_files(self):
+        products = self.retained_tree()
+        for name in ('value.txt', 'local.txt'):
+            with self.subTest(name=name):
+                original = (self.tree / name).read_bytes() if (self.tree / name).exists() else None
+                (self.tree / name).write_text('local edit')
+                storage.prune(products, 0)
+                self.assertEqual((self.tree / name).read_text(), 'local edit', 'cleanup must preserve local source edits')
+                if original is None:
+                    (self.tree / name).unlink()
+                else:
+                    (self.tree / name).write_bytes(original)
+
+    def test_cleanup_preserves_local_commits(self):
+        products = self.retained_tree()
+        (self.tree / 'value.txt').write_text('local commit')
+        subprocess.run(['git', '-C', str(self.tree), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-am', 'local change'], check=True, capture_output=True)
+        storage.prune(products, 0)
+        self.assertEqual((self.tree / 'value.txt').read_text(), 'local commit', 'cleanup must preserve committed local changes')
+
+    def test_cleanup_preserves_reconciled_backup_history(self):
+        products = self.retained_tree()
+        (self.tree / 'value.txt').write_text('local commit')
+        subprocess.run(['git', '-C', str(self.tree), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-am', 'local change'], check=True, capture_output=True)
+        previous = subprocess.check_output(['git', '-C', str(self.tree), 'rev-parse', 'HEAD'], text=True).strip()
+        self.write_patch('second')
+        self.materialize()
+        storage.prune(products, 0)
+        refs = subprocess.check_output(['git', '-C', str(self.tree), 'for-each-ref', '--format=%(objectname)',
+                                        'refs/isoplane/source-backups'], text=True)
+        self.assertIn(previous, refs, 'cleanup must preserve the history that source reconciliation saved')
+
+    def test_generated_source_updates_do_not_exempt_build_products_from_retention(self):
+        products = self.retained_tree()
+        self.write_patch('second')
+        self.materialize()
+        storage.prune(products, 0)
+        self.assertFalse(self.tree.exists(), 'ordinary generated source updates must remain reclaimable')
+
+    def test_cleanup_preserves_ignored_authored_source_inputs(self):
+        self.write_archive('old\n', {'.gitignore': '*.rsp\n'})
+        products = self.retained_tree()
+        result = self.run_source(extra=['--build-layout', 'dotnet'])
+        self.assertEqual(result.returncode, 0, 'the .NET source layout must be recorded: ' + result.stderr)
+        (self.tree / 'Directory.Build.rsp').write_text('local settings')
+        storage.prune(products, 0)
+        self.assertEqual((self.tree / 'Directory.Build.rsp').read_text(), 'local settings',
+                         'ignored authored inputs must not be mistaken for generated output')
+
+    def test_owned_ignored_build_outputs_do_not_prevent_eviction(self):
+        self.write_archive('old\n', {'.gitignore': 'artifacts/\n'})
+        products = self.retained_tree()
+        result = self.run_source(extra=['--build-layout', 'dotnet'])
+        self.assertEqual(result.returncode, 0, 'the .NET source layout must be recorded: ' + result.stderr)
+        (self.tree / 'artifacts').mkdir()
+        (self.tree / 'artifacts/object.o').write_bytes(b'compiled')
+        storage.prune(products, 0)
+        self.assertFalse(self.tree.exists(), 'owned ignored build artifacts must remain reclaimable')
+
+    def test_unattributed_source_repositories_are_retained(self):
+        products = self.retained_tree()
+        (self.tree / '.git/isoplane-source.json').unlink()
+        storage.prune(products, 0)
+        self.assertTrue((self.tree / 'value.txt').exists(), 'unknown source ownership must prevent deletion')
+
+    def test_cleanup_preserves_untracked_source_backups(self):
+        self.write_archive('old\n', {'.gitignore': '*.rsp\n'})
+        products = self.retained_tree()
+        (self.tree / 'Directory.Build.rsp').write_text('local input')
+        self.write_archive('old\n', {'.gitignore': '*.rsp\n', 'Directory.Build.rsp': 'upstream'})
+        self.materialize()
+        storage.prune(products, 0)
+        backups = list((self.tree / '.git/isoplane-source-backups').glob('*/Directory.Build.rsp'))
+        self.assertEqual(len(backups), 1, 'cleanup must preserve saved untracked input')
+        self.assertEqual(backups[0].read_text(), 'local input', 'saved local input must remain recoverable')
 
     def test_source_commands_do_not_launch_background_git_maintenance(self):
         trace = self.root / 'git-trace.json'

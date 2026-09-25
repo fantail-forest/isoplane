@@ -53,6 +53,8 @@ sys.exit(2 if os.environ.get('FAKE_MODE') == 'validator-rejection' else 0)
 """)
         validator.chmod(0o755)
         self.env["ISOPLANE_CLI"] = str(validator)
+        self.env["NUGET_PACKAGES"] = str(self.root / "shared-nuget")
+        self.env["NUGET_SCRATCH"] = str(self.root / "nuget-scratch")
         self.project = self.root / "Guest.csproj"
         self.project.write_text(f'''<Project Sdk="Microsoft.NET.Sdk">
 <Import Project="{ROOT}/guest-sdks/dotnet/Isoplane.Guest.props" />
@@ -114,9 +116,9 @@ else:
         self.assertTrue(scratch.is_relative_to(self.root / ".isoplane"),
                         "compiler intermediates must stay inside the project")
         self.assertFalse(scratch.exists(), "completed publication must remove its scratch directory")
-        cache = Path(next(a[:-7] for a in args if a.endswith(":/nuget")))
-        self.assertTrue(cache.is_relative_to(self.root / ".isoplane"),
-                        "the custom compiler cache must stay inside the project")
+        cache = Path(next(a.removeprefix("NUGET_PACKAGES=") for a in args if a.startswith("NUGET_PACKAGES=")))
+        self.assertEqual(cache, Path(self.env["NUGET_PACKAGES"]),
+                         "container publication must reuse the selected standard NuGet cache")
 
     def test_a_missing_docker_cli_names_the_prerequisite(self):
         (self.bin / "docker").unlink()
@@ -181,7 +183,11 @@ else:
         self.assertIn("-p:DefineConstants=FIRST%3BSECOND", args, "MSBuild property delimiters must survive forwarding")
         self.assertEqual(args[args.index("--network") + 1], "none", "offline compilation must have no network")
         self.assertIn("-p:ArtifactsPath=/build/artifacts", args, "Linux intermediates must be isolated from native build outputs")
-        self.assertIn("NUGET_SCRATCH=/nuget/.scratch", args, "compilers sharing packages must share NuGet's extraction locks")
+        scratch = self.env["NUGET_SCRATCH"]
+        self.assertIn("NUGET_SCRATCH=" + scratch, args, "host and container restores must use the same extraction locks")
+        self.assertIn(scratch + ":" + scratch, args, "the host lock directory must be mounted at the same path")
+        cache = str(self.root / "cache")
+        self.assertIn(cache + ":" + cache, args, "NuGet must hash the same absolute package path in both environments")
         self.assertEqual((self.root / "out/guest.wasm").read_bytes(), b"published module", "MSBuild must return the compiler output")
         self.assertTrue((self.root / "removed").exists(), "successful publication must remove its container")
 

@@ -1,44 +1,21 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
-
-fn package_feed() -> &'static Path {
-    static PACKAGES: OnceLock<PathBuf> = OnceLock::new();
-    PACKAGES.get_or_init(|| {
-        let root = super::repo_root();
-        let output = Command::new(super::python())
-            .arg(root.join("scripts/fixture-packages.py"))
-            .arg(&root)
-            .output()
-            .expect("Python is required to build the installed SDK and CLI packages");
-        assert!(
-            output.status.success(),
-            "SDK and CLI packages must build: {}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        PathBuf::from(
-            String::from_utf8(output.stdout)
-                .expect("package feed path is UTF-8")
-                .trim(),
-        )
-    })
-}
 
 fn stage_packages(destination: &Path) -> PathBuf {
+    let root = super::repo_root();
     let packages = destination.join("packages");
-    std::fs::create_dir_all(&packages).expect("create the isolated package feed");
-    for entry in std::fs::read_dir(package_feed()).expect("read the built package feed") {
-        let entry = entry.expect("read built package");
-        if entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == "nupkg")
-        {
-            std::fs::copy(entry.path(), packages.join(entry.file_name()))
-                .expect("copy the package into the isolated consumer feed");
-        }
-    }
+    let output = Command::new(super::python())
+        .arg(root.join("scripts/fixture-packages.py"))
+        .arg(&root)
+        .arg(&packages)
+        .output()
+        .expect("Python is required to stage the installed SDK and CLI packages");
+    assert!(
+        output.status.success(),
+        "SDK and CLI packages must build and stage under their build lock: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     packages
 }
 

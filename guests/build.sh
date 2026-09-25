@@ -37,7 +37,7 @@ PROFILE=release
 TDIR="${CARGO_TARGET_DIR:+${CARGO_TARGET_DIR%/}/guests}"
 TDIR="${TDIR:-$ROOT/target}"
 export CARGO_TARGET_DIR="$TDIR"
-export CARGO_BUILD_BUILD_DIR="$TDIR/build"
+export CARGO_BUILD_BUILD_DIR="$TDIR"
 
 # ISOPLANE_BUILD_QUIET drops the size and import/export reports, which a test
 # running this never reads, and keeps every check.

@@ -35,7 +35,7 @@ public sealed class IsoplaneContainerPublish : Task, ICancelableTask
     [Required] public string Configuration { get; set; }
     /// <summary>Disables network access and requires provisioned build inputs.</summary>
     public bool Offline { get; set; }
-    /// <summary>Optional root for the per-image compiler package cache.</summary>
+    /// <summary>Optional shared package directory; defaults to the user's NuGet packages.</summary>
     public string CacheDirectory { get; set; }
     /// <summary>Maximum wait for a container runtime control operation.</summary>
     [Required] public int CommandTimeoutSeconds { get; set; }
@@ -84,6 +84,17 @@ public sealed class IsoplaneContainerPublish : Task, ICancelableTask
         return success && !Log.HasLoggedErrors;
     }
 
+    private string NuGetDirectory(string name)
+    {
+        var result = Run("dotnet", new[] { "nuget", "locals", name, "--list", "--force-english-output" }, false);
+        Require(result, "resolving NuGet " + name + " directory");
+        string prefix = name + ": ";
+        foreach (string line in result.Output.Split('\n'))
+            if (line.StartsWith(prefix, StringComparison.Ordinal))
+                return Path.GetFullPath(line.Substring(prefix.Length).Trim());
+        throw new InvalidOperationException("NuGet did not report its " + name + " directory: " + result.Output);
+    }
+
     private void Publish(string scratch)
     {
         if (CommandTimeoutSeconds <= 0)
@@ -118,19 +129,23 @@ public sealed class IsoplaneContainerPublish : Task, ICancelableTask
         var group = Run("id", new[] { "-g" }, false, true);
         Require(user, "establishing the developer's user ID");
         Require(group, "establishing the developer's group ID");
-        string cacheRoot = string.IsNullOrEmpty(CacheDirectory)
-            ? Path.Combine(Path.GetDirectoryName(ProjectPath), ".isoplane", "compiler")
+        string cache = string.IsNullOrEmpty(CacheDirectory)
+            ? NuGetDirectory("global-packages")
             : Path.GetFullPath(CacheDirectory);
-        string cache = Path.Combine(cacheRoot, image.Replace(':', '-'), "nuget");
         Directory.CreateDirectory(cache);
+        cache = Path.GetFullPath(cache);
+        string nugetScratch = NuGetDirectory("temp");
+        Directory.CreateDirectory(nugetScratch);
         var args = new List<string> {
             "create", "--pull", "never", "--name", "isoplane-publish-" + owner, "--label", "isoplane.publish=" + owner,
             "--user", user.Output.Trim() + ":" + group.Output.Trim(), "--init", "--workdir", Path.GetDirectoryName(ProjectPath),
             "--volume", SourceRoot + ":" + SourceRoot + ":ro",
-            "--volume", scratch + ":/build", "--volume", cache + ":/nuget",
-            // NuGet coordinates concurrent package extraction through its scratch directory.
-            "--env", "NUGET_SCRATCH=/nuget/.scratch",
-            "--env", "NUGET_HTTP_CACHE_PATH=/nuget/.http-cache",
+            "--volume", scratch + ":/build", "--volume", cache + ":" + cache,
+            // NuGet hashes absolute package paths into locks in its scratch directory.
+            "--volume", nugetScratch + ":" + nugetScratch,
+            "--env", "NUGET_PACKAGES=" + cache,
+            "--env", "NUGET_SCRATCH=" + nugetScratch,
+            "--env", "NUGET_HTTP_CACHE_PATH=/build/http-cache",
         };
         if (!SdkDirectory.StartsWith(SourceRoot + "/", StringComparison.Ordinal) && SdkDirectory != SourceRoot)
             args.AddRange(new[] { "--volume", SdkDirectory + ":" + SdkDirectory + ":ro" });
@@ -148,6 +163,7 @@ public sealed class IsoplaneContainerPublish : Task, ICancelableTask
             "-p:IsoplaneGuestRuntimeFeed=" + GuestRuntimeFeed + "/",
             "-p:UseArtifactsOutput=true", "-p:ArtifactsPath=/build/artifacts",
             "-p:PublishDir=/build/publish/", "-p:NuGetAudit=false",
+            "-p:RestorePackagesPath=" + cache,
             "-p:UseSharedCompilation=false", "-nodeReuse:false",
         });
         if (!string.IsNullOrEmpty(MemoryMaxBytes)) args.Add("-p:IsoplaneMemoryMaxBytes=" + MemoryMaxBytes);

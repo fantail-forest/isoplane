@@ -77,7 +77,8 @@ impl Prepared {
         let engine = Arc::new(isoplane_engine::IsoplaneEngine::new(engine_configuration(
             project,
         ))?);
-        let (template, compiled) = compilation_cache(project)?.load(&engine, &template)?;
+        let (template, compiled) = compilation_cache(project, blake3::hash(&template).as_bytes())?
+            .load(&engine, &template)?;
         let template = template.with_application_files(project.application_files.clone())?;
         tracing::info!(compiled, "local native compilation ready");
         let module = ModuleId::new(&manifest.name, &version);
@@ -139,21 +140,40 @@ fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {
     }
 }
 
-/// The project's compiler-owned storage for its native runtime library.
-fn runtime_directory(project: &Project) -> anyhow::Result<std::path::PathBuf> {
-    let runtime_identity = blake3::hash(&std::fs::read(&project.runtime_library)?);
-    Ok(project
-        .compilation_directory
-        .join(runtime_identity.to_hex().as_str()))
+struct LocalCompilation {
+    cache: isoplane_engine::CompilationCache,
+    lease: Arc<isoplane_cache::Lease>,
 }
 
-/// The project's compiled modules, kept per native runtime library.
-fn compilation_cache(project: &Project) -> anyhow::Result<isoplane_engine::CompilationCache> {
-    let directory = runtime_directory(project)?;
-    // SAFETY: LocalProject selects compiler storage in the trusted local project.
-    // Only the engine's atomic compiler writes populate these entries;
-    // neither application manifests nor portable artifacts supply native code.
-    unsafe { isoplane_engine::CompilationCache::from_trusted_directory(directory) }
+impl LocalCompilation {
+    fn load(
+        &self,
+        engine: &isoplane_engine::IsoplaneEngine,
+        wasm: &[u8],
+    ) -> anyhow::Result<(isoplane_engine::Template, bool)> {
+        let (mut template, compiled) = self.cache.load(engine, wasm)?;
+        template.retain_storage(self.lease.clone());
+        Ok((template, compiled))
+    }
+}
+
+fn compilation_cache(
+    project: &Project,
+    artifact_identity: &[u8],
+) -> anyhow::Result<LocalCompilation> {
+    let mut identity = blake3::Hasher::new();
+    identity.update_reader(std::fs::File::open(&project.runtime_library)?)?;
+    identity.update(artifact_identity);
+    let storage = isoplane_cache::Cache::new(
+        project.compilation_directory.clone(),
+        isoplane_cache::PROJECT_CACHE_BYTES,
+    )?;
+    let lease = Arc::new(storage.lease(isoplane_cache::CacheKey(*identity.finalize().as_bytes()))?);
+    // SAFETY: only the compiler writes into this private, leased project directory.
+    let cache = unsafe {
+        isoplane_engine::CompilationCache::from_trusted_directory(lease.directory().into())
+    }?;
+    Ok(LocalCompilation { cache, lease })
 }
 
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -422,5 +442,45 @@ impl isoplane_proxy::RouteResolver for AppRoute {
     }
     fn generation(&self) -> u64 {
         1
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn an_active_rebuild_does_not_pin_previous_compilation_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = directory.path().join("runtime");
+        std::fs::write(&library, b"runtime").unwrap();
+        let project = Project {
+            manifest: serde_json::from_str(r#"{"name":"app"}"#).unwrap(),
+            state_directory: directory.path().join("state"),
+            runtime_library: library,
+            compilation_directory: directory.path().join("compiled"),
+            init_sandbox: isoplane_abi::config::InitSandbox::Sealed,
+            allow_endpoints: vec![],
+            platform_files: Default::default(),
+            application_files: Default::default(),
+        };
+        let previous = compilation_cache(&project, b"previous").unwrap();
+        let old = previous.lease.directory().to_path_buf();
+        std::fs::write(old.join("artifact"), b"compiled").unwrap();
+        let current = compilation_cache(&project, b"current").unwrap();
+        std::fs::write(current.lease.directory().join("artifact"), b"compiled").unwrap();
+        drop(previous);
+        isoplane_cache::Cache::new(project.compilation_directory, isoplane_cache::CacheBytes(0))
+            .unwrap()
+            .prune()
+            .unwrap();
+        assert!(
+            !old.exists(),
+            "the active rebuild must not pin an obsolete artifact from the same runtime"
+        );
+        assert!(
+            current.lease.directory().exists(),
+            "retention must preserve the current rebuild's storage"
+        );
     }
 }
