@@ -241,7 +241,8 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         project.Root!.Add(new System.Xml.Linq.XElement("PropertyGroup",
             new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
             new System.Xml.Linq.XElement("IsoplaneApplicationFactory", "Application.Create"),
-            new System.Xml.Linq.XElement("IsoplaneGuestRuntime", "Mono")));
+            new System.Xml.Linq.XElement("IsoplaneGuestRuntime", "Mono"),
+            new System.Xml.Linq.XElement("IsoplaneRuntimeDirectory", SharedRuntime)));
         project.Root.Add(new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("None",
             new System.Xml.Linq.XAttribute("Update", "data.txt"), new System.Xml.Linq.XElement("CopyToOutputDirectory", "PreserveNewest"),
             new System.Xml.Linq.XElement("TargetPath", "data/greeting.txt"))));
@@ -249,7 +250,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         project.Save(Path.Combine(application.FullName, "Application.csproj"));
         var resultPath = Path.Combine(directory.Path, "result.json");
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory.Path };
-        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-property:IsoplaneRuntimeDirectory=" + SharedRuntime, "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime,IsoplaneRuntimeDirectory", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime,IsoplaneRuntimeDirectory", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not build managed bundle fixture.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
