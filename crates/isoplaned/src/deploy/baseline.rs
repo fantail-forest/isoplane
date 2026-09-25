@@ -40,18 +40,17 @@ impl Deployer {
         let identity = wanted.identity()?;
         let name = name(&identity);
         let directory = self.root.join(&name);
-        std::fs::create_dir_all(&directory)?;
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(directory.join(LOCK))?;
-        let lock = acquire(lock, Hold::Shared).await?;
         let prepared = directory.join(PREPARED);
-        let lock = if prepared.exists() {
-            lock
-        } else {
-            let lock = acquire(lock, Hold::Exclusive).await?;
+        // Publishing takes the lock exclusively and then gives it up, rather than
+        // converting it: a conversion releases the lock first, so reclamation
+        // could remove the baseline between the two.
+        let lock = loop {
+            let lock = hold(&directory, Hold::Shared).await?;
+            if prepared.exists() {
+                break lock;
+            }
+            drop(lock);
+            let _publishing = hold(&directory, Hold::Exclusive).await?;
             if !prepared.exists() {
                 let product = context
                     .provider
@@ -67,7 +66,6 @@ impl Deployer {
                 readable_by_preparation(&directory)?;
                 readable_by_preparation(&prepared)?;
             }
-            acquire(lock, Hold::Shared).await?
         };
         let digest = context.engine.prepared_manifest_sha256(&prepared)?;
         let template = self.base(context.engine, &name, request.runtime.digest()?)?;
@@ -132,9 +130,44 @@ fn name(identity: &isoplane_engine::prepared::PreparedIdentity) -> String {
     format!("{PREFIX}{}", hash.finalize().to_hex())
 }
 
+#[derive(Clone, Copy)]
 enum Hold {
     Shared,
     Exclusive,
+}
+
+/// Takes the baseline in `directory` as `hold`, creating its directory and
+/// lock file when absent. A lock taken on a file that reclamation removed
+/// while this waited does not hold the baseline, so it retries.
+async fn hold(directory: &Path, hold: Hold) -> anyhow::Result<File> {
+    loop {
+        std::fs::create_dir_all(directory)?;
+        let lock = match std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(directory.join(LOCK))
+        {
+            Ok(lock) => lock,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let lock = acquire(lock, hold).await?;
+        if is_current(&lock, directory)? {
+            return Ok(lock);
+        }
+    }
+}
+
+/// Whether `lock` is still the lock file of the baseline in `directory`.
+fn is_current(lock: &File, directory: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let held = lock.metadata()?;
+    match std::fs::metadata(directory.join(LOCK)) {
+        Ok(current) => Ok(held.dev() == current.dev() && held.ino() == current.ino()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Takes `lock` as `hold`, waiting off the async runtime for its holders.
