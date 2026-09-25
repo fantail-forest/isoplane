@@ -3,6 +3,7 @@
 mod common;
 
 use common::run;
+use isoplane_abi::config::Limits;
 
 /// A core module with the given imports and exports, each carrying the
 /// signature the world declares for it; a name the world does not know gets
@@ -353,7 +354,7 @@ fn doctor_says_so_when_a_module_holds_no_io_capability_at_all() {
     );
 }
 
-/// A module the manifest passes and the validator refuses on a restricted memory budget.
+/// A module the manifest passes and the validator refuses on a smaller memory budget.
 #[test]
 fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     let m = module_with(
@@ -364,7 +365,14 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
             "isoplane_wake",
             "memory",
         ],
-        Some(2048),
+        Some(pages(Limits {
+            module_bytes_compressed: 52428800,
+            package_bytes: 52428800,
+            instance_memory_max: 536870912,
+            cpu_ms_per_http_dispatch: 300000,
+            subrequests_per_dispatch: 10000,
+            pending_futures_per_dispatch: 4096,
+        })),
     );
     let (_dir, p) = write_module("bigmem.wasm", &m);
 
@@ -373,12 +381,12 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
         "--no-color",
         p.to_str().unwrap(),
         "--guest-memory-bytes",
-        "134217728",
+        "536870912",
     ]);
     assert_eq!(
         ok.code,
         Some(0),
-        "128 MiB is the Standard ceiling: {}",
+        "the Enterprise ceiling admits its own maximum: {}",
         ok.stdout
     );
     assert!(ok.stdout.contains("numeric limits"), "{}", ok.stdout);
@@ -393,7 +401,7 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     assert_eq!(
         bad.code,
         Some(2),
-        "the same module is over the Free ceiling: {}",
+        "the same module is over the Standard ceiling: {}",
         bad.stdout
     );
     assert!(
@@ -409,6 +417,11 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
     assert!(bad.stdout.contains("numeric limits"), "{}", bad.stdout);
 }
 
+/// The wasm pages in a numeric budget's instance memory ceiling.
+fn pages(limits: Limits) -> u32 {
+    u32::try_from(limits.instance_memory_max / (64 << 10)).expect("a ceiling within wasm32")
+}
+
 #[test]
 fn doctor_takes_numeric_limits_from_the_app_manifest() {
     let tmp = tempfile::tempdir().expect("a temporary directory");
@@ -416,7 +429,7 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     std::fs::create_dir_all(dir.join("out")).unwrap();
     std::fs::write(
         dir.join("isoplane.toml"),
-        "name = \"pinched\"\nlimits = \"free\"\n",
+        "name = \"pinched\"\nlimits = \"enterprise\"\n",
     )
     .unwrap();
     let p = dir.join("out").join("bigmem.wasm");
@@ -430,7 +443,14 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
                 "isoplane_wake",
                 "memory",
             ],
-            Some(2048),
+            Some(pages(Limits {
+                module_bytes_compressed: 52428800,
+                package_bytes: 52428800,
+                instance_memory_max: 536870912,
+                cpu_ms_per_http_dispatch: 300000,
+                subrequests_per_dispatch: 10000,
+                pending_futures_per_dispatch: 4096,
+            })),
         ),
     )
     .unwrap();
@@ -438,18 +458,13 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
     let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
     assert_eq!(
         out.code,
-        Some(2),
-        "the app's numeric limits refuses the module: {}",
+        Some(0),
+        "the app's numeric limits admits memory the default limits would refuse: {}",
         out.stdout
     );
     assert!(
         out.stdout.contains("numeric limits") && out.stdout.contains("isoplane.toml"),
         "the limits and where it came from are stated: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("V3MemoryShape"),
-        "the validator names the rule: {}",
         out.stdout
     );
 }

@@ -261,18 +261,29 @@ fn structural_admission_policy_binds_preparation_identity_and_is_enforced() {
 
 #[test]
 fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
-    let wasm = wat::parse_str(
+    let budget_bytes = isoplane_abi::config::Limits {
+        module_bytes_compressed: 5242880,
+        package_bytes: 31457280,
+        instance_memory_max: 134217728,
+        cpu_ms_per_http_dispatch: 100,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .limits()
+    .instance_memory_max;
+    let budget_pages = budget_bytes / (64 << 10);
+    let wasm = wat::parse_str(format!(
         r#"(module
         (memory (export "memory") 1)
         (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 0)
         (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 0)
         (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0)
         (func (export "isoplane_initialize") (result i64)
-            (if (i32.ne (memory.grow (i32.const 1024)) (i32.const -1)) (then unreachable)) i64.const 0))"#,
-    )
+            (if (i32.ne (memory.grow (i32.const {budget_pages})) (i32.const -1)) (then unreachable)) i64.const 0))"#
+    ))
     .expect("bounded initialization fixture assembles");
     let mut input = request(&wasm);
-    input.engine.max_memory_bytes = 128 << 20;
+    input.engine.max_memory_bytes = 2 * budget_bytes;
     input.limits = isoplane_abi::config::Limits {
         module_bytes_compressed: 5242880,
         package_bytes: 31457280,
@@ -281,8 +292,10 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     };
-    assert!(isoplane_prepare::prepare_in_current_process(&wasm, &input).is_ok(),
-        "initialization must refuse growth above the 64MiB application budget even on a 128MiB engine");
+    assert!(
+        isoplane_prepare::prepare_in_current_process(&wasm, &input).is_ok(),
+        "initialization must refuse growth past the Free plan's {budget_bytes}-byte budget on an engine allowing twice that"
+    );
 }
 
 #[test]
