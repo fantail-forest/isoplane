@@ -520,19 +520,18 @@ mod tests {
     fn fixture_builds_receive_the_tools_installed_by_setup_on_path() {
         let directory = tempfile::tempdir().expect("isolated fixture environment directory");
         let script = directory.path().join("build.sh");
-        std::fs::write(&script, "printf '%s' \"$PATH\" > \"${0}.path\"\n")
+        std::fs::write(&script, "command -v wasm-tools > \"${0}.tool\" || true\n")
             .expect("write fixture environment probe");
         build_selected(
             script.to_str().expect("temporary script path is Unicode"),
             None,
             None,
         );
-        let path = std::fs::read_to_string(script.with_extension("sh.path"))
-            .expect("read the fixture build's PATH");
+        let tool = std::fs::read_to_string(script.with_extension("sh.tool"))
+            .expect("read where the fixture build found the tool");
         assert!(
-            std::env::split_paths(&path)
-                .any(|entry| entry == repo_root().join(".isoplane-dev/tools/bin")),
-            "fixture builds must find tools installed by scripts/setup without caller PATH changes"
+            Path::new(tool.trim()).is_file(),
+            "fixture builds must find tools installed by scripts/setup without caller PATH changes: {tool:?}"
         );
     }
 
