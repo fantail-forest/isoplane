@@ -12,7 +12,7 @@ isoplane-cache.workspace = true
 [dev-dependencies]
 brotli = { workspace = true }
 sha1 = { workspace = true }
-libc = { workspace = true }
+fs4 = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 flate2 = { workspace = true }

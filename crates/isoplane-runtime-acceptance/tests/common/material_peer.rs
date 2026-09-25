@@ -103,16 +103,9 @@ impl Turn {
 
 /// An exclusive advisory lock on `file`, released when the file closes.
 fn lock_exclusively(file: &std::fs::File) {
-    use std::os::fd::AsRawFd;
-    // SAFETY: flock takes a descriptor this process owns for as long as
-    // `file` lives; the lock is advisory and dies with the descriptor.
-    let status = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-    assert_eq!(
-        status,
-        0,
-        "the port's lock file is lockable: {}",
-        std::io::Error::last_os_error()
-    );
+    if let Err(error) = fs4::FileExt::lock(file) {
+        panic!("the port's lock file is lockable: {error}");
+    }
 }
 
 impl Drop for Turn {
