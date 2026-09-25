@@ -10,13 +10,21 @@ use isoplane_host::{CellConfig, EngineActivator, ModuleId};
 
 mod common;
 
-fn dispatch_growth(memory_override: Option<u64>, engine_bytes: u64, expected_growth: i32) {
+const PAGE: u64 = 65536;
+
+/// Grows a one-page guest by `grow_pages` and checks memory.grow's result.
+fn dispatch_growth(
+    memory_override: Option<u64>,
+    engine_bytes: u64,
+    grow_pages: u64,
+    expected_growth: i32,
+) {
     let wasm = wat::parse_str(format!(
         r#"(module
             (memory (export "memory") 1)
             (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
             (func (export "isoplane_handle") (param i32 i32) (result i64)
-                (if (i32.ne (memory.grow (i32.const 1024)) (i32.const {expected_growth}))
+                (if (i32.ne (memory.grow (i32.const {grow_pages})) (i32.const {expected_growth}))
                     (then unreachable))
                 i64.const 0)
             (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0))"#
@@ -49,9 +57,9 @@ fn dispatch_growth(memory_override: Option<u64>, engine_bytes: u64, expected_gro
             HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
-                package_bytes: 5242880,
-                instance_memory_max: 67108864,
-                cpu_ms_per_http_dispatch: 10,
+                package_bytes: 31457280,
+                instance_memory_max: 134217728,
+                cpu_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },
@@ -86,34 +94,73 @@ fn dispatch_growth(memory_override: Option<u64>, engine_bytes: u64, expected_gro
 
 #[test]
 fn a_guest_without_a_declared_maximum_cannot_grow_past_its_plan() {
-    dispatch_growth(None, 128 << 20, -1);
+    let ceiling = Limits {
+        module_bytes_compressed: 5242880,
+        package_bytes: 31457280,
+        instance_memory_max: 134217728,
+        cpu_ms_per_http_dispatch: 100,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .instance_memory_max;
+    // The engine could hold twice the plan's ceiling, so only the plan refuses.
+    dispatch_growth(None, 2 * ceiling, ceiling / PAGE, -1);
 }
 
 #[test]
 fn an_operator_memory_override_allows_growth_above_the_plan_default() {
-    dispatch_growth(Some(96 << 20), 128 << 20, 1);
+    let ceiling = Limits {
+        module_bytes_compressed: 5242880,
+        package_bytes: 31457280,
+        instance_memory_max: 134217728,
+        cpu_ms_per_http_dispatch: 100,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .instance_memory_max;
+    dispatch_growth(Some(2 * ceiling), 2 * ceiling, ceiling / PAGE, 1);
 }
 
 #[test]
 fn the_engine_capacity_still_bounds_a_larger_application_override() {
-    dispatch_growth(Some(96 << 20), 64 << 20, -1);
+    let ceiling = Limits {
+        module_bytes_compressed: 5242880,
+        package_bytes: 31457280,
+        instance_memory_max: 134217728,
+        cpu_ms_per_http_dispatch: 100,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .instance_memory_max;
+    dispatch_growth(Some(2 * ceiling), ceiling, ceiling / PAGE, -1);
 }
 
 #[test]
 fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
-    let wasm = wat::parse_str(
+    // One page more than the application's plan allows, within the engine.
+    let ceiling = Limits {
+        module_bytes_compressed: 5242880,
+        package_bytes: 31457280,
+        instance_memory_max: 134217728,
+        cpu_ms_per_http_dispatch: 100,
+        subrequests_per_dispatch: 20,
+        pending_futures_per_dispatch: 6,
+    }
+    .instance_memory_max;
+    let wasm = wat::parse_str(format!(
         r#"(module
-        (memory (export "memory") 1025)
+        (memory (export "memory") {})
         (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
         (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 0)
         (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0))"#,
-    )
+        ceiling / PAGE + 1
+    ))
     .expect("large template fixture assembles");
     for pooling in [false, true] {
         let engine = IsoplaneEngine::new(EngineConfig {
             pooling,
             max_instances: 2,
-            max_memory_bytes: 128 << 20,
+            max_memory_bytes: 2 * ceiling,
             guard_size_bytes: 65536,
             ..Default::default()
         })
@@ -126,9 +173,9 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
             HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
-                package_bytes: 5242880,
-                instance_memory_max: 67108864,
-                cpu_ms_per_http_dispatch: 10,
+                package_bytes: 31457280,
+                instance_memory_max: 134217728,
+                cpu_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },

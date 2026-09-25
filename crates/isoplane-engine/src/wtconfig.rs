@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn the_image_threshold_covers_the_configured_memory_ceiling() {
-        for ceiling in [67108864, 134217728, 536870912] {
+        for ceiling in [134217728, 134217728, 536870912] {
             let cfg = EngineConfig {
                 max_memory_bytes: ceiling,
                 ..EngineConfig::default()

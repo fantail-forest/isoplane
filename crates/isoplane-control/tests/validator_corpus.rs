@@ -319,19 +319,26 @@ fn v3_memory_shape() {
         V::V3MemoryShape,
     );
     // The same module is admitted only when its declared maximum fits the configured ceiling.
-    let at_standard_ceiling = clean_wat();
-    assert!(validator::validate(&parse(&at_standard_ceiling), Limits::default()).is_ok());
-    assert_violates(
-        "standard-sized module on the free plan",
-        &at_standard_ceiling,
+    let at_enterprise_ceiling = clean_wat().replace(
+        r#"(memory (export "memory") 17 2048)"#,
+        r#"(memory (export "memory") 17 8192)"#,
+    );
+    assert!(validator::validate(
+        &parse(&at_enterprise_ceiling),
         Limits {
-            module_bytes_compressed: 5242880,
-            package_bytes: 5242880,
-            instance_memory_max: 67108864,
-            cpu_ms_per_http_dispatch: 10,
-            subrequests_per_dispatch: 20,
-            pending_futures_per_dispatch: 6,
-        },
+            module_bytes_compressed: 52428800,
+            package_bytes: 52428800,
+            instance_memory_max: 536870912,
+            cpu_ms_per_http_dispatch: 300000,
+            subrequests_per_dispatch: 10000,
+            pending_futures_per_dispatch: 4096
+        }
+    )
+    .is_ok());
+    assert_violates(
+        "enterprise-sized module on the standard plan",
+        &at_enterprise_ceiling,
+        Limits::default(),
         V::V3MemoryShape,
     );
     // A minimum above the ceiling could never be instantiated at all.

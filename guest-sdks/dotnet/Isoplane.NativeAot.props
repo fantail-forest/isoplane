@@ -59,7 +59,7 @@
 
     <!-- The declared memory maximum, which the validator holds to the plan's
          ceiling; the toolchain's own link line declares 2 GiB. 134217728 is
-         the Standard plan; -p:IsoplaneMemoryMaxBytes=67108864 targets Free. -->
+         the Free and Standard plans' ceiling. -->
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PublishAot)' == 'true'">

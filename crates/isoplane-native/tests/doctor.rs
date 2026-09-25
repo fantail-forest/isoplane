@@ -388,7 +388,7 @@ fn doctor_fails_a_module_the_manifest_alone_would_pass() {
         "--no-color",
         p.to_str().unwrap(),
         "--guest-memory-bytes",
-        "67108864",
+        "134217728",
     ]);
     assert_eq!(
         bad.code,

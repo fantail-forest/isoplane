@@ -313,6 +313,47 @@ mod tests {
     }
 
     #[test]
+    fn an_application_package_is_held_to_its_configured_size() {
+        let root = installation(&["1.0.0"]);
+        let runtimes = Runtimes::load(root.path()).expect("loads");
+        let free: isoplane_abi::config::AppManifest =
+            toml::from_str("name = \"app\"\nlimits.module_bytes_compressed = 5242880\nlimits.package_bytes = 31457280\nlimits.instance_memory_max = 134217728\nlimits.cpu_ms_per_http_dispatch = 100\nlimits.subrequests_per_dispatch = 20\nlimits.pending_futures_per_dispatch = 6").expect("an explicit small-budget manifest");
+        let limits = isoplane_prepare::package::PackageLimits::of(&free);
+        let identity = identity_json("1.0.0", MODULE);
+        let package = |bytes: u64| {
+            let mut builder = tar::Builder::new(Vec::new());
+            let assembly = bytes - identity.len() as u64 - 2;
+            for (path, contents) in [
+                ("runtime.json", identity.as_bytes().to_vec()),
+                ("application.json", b"{}".to_vec()),
+                ("assemblies/App.dll", vec![0; assembly as usize]),
+            ] {
+                let mut header = tar::Header::new_ustar();
+                header.set_size(contents.len() as u64);
+                header.set_mode(0o644);
+                header.set_entry_type(tar::EntryType::Regular);
+                builder
+                    .append_data(&mut header, path, contents.as_slice())
+                    .expect("entry");
+            }
+            builder.into_inner().expect("archive")
+        };
+        assert!(
+            runtimes.resolve(&package(limits.bytes), limits).is_ok(),
+            "a package exactly at the configured package-size limit must be prepared"
+        );
+        assert!(
+            matches!(
+                runtimes.resolve(&package(limits.bytes + 1), limits),
+                Err(PackageRefusal::Package(
+                    isoplane_prepare::package::PackageError::TooLarge { .. }
+                ))
+            ),
+            "a package one byte over the configured package-size limit must be refused"
+        );
+    }
+
+    #[test]
     fn an_empty_inventory_does_not_load() {
         let root = installation(&[]);
         assert!(

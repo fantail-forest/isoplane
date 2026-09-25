@@ -379,9 +379,9 @@ mod tests {
         project = fixture.project.clone();
         project.manifest.limits = Limits {
             module_bytes_compressed: 5242880,
-            package_bytes: 5242880,
-            instance_memory_max: 67108864,
-            cpu_ms_per_http_dispatch: 10,
+            package_bytes: 31457280,
+            instance_memory_max: 134217728,
+            cpu_ms_per_http_dispatch: 100,
             subrequests_per_dispatch: 20,
             pending_futures_per_dispatch: 6,
         };
