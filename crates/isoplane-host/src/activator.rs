@@ -202,8 +202,10 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     struct Unused;
 
+    #[cfg(target_os = "linux")]
     impl HostBindings for Unused {
         fn call_future(&mut self, _: isoplane_engine::ImportCall<'_>) -> u64 {
             panic!("a refused activation must not run the guest")
@@ -218,6 +220,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn guest(marker: i32) -> Vec<u8> {
         wat::parse_str(format!(
             r#"(module
