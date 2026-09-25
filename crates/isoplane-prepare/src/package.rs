@@ -39,6 +39,11 @@ pub enum PackageError {
     /// The package names no runtime to run on.
     #[error("the package has no {RUNTIME}; build it with an SDK that carries its shared runtime")]
     NoRuntime,
+    /// The package's files add up to more than its size limit.
+    #[error(
+        "the package holds more than {limit_bytes} bytes uncompressed, its application size limit"
+    )]
+    TooLarge { limit_bytes: u64 },
     /// The package's runtime identity is unreadable or ambiguous.
     #[error("the package's {RUNTIME} is refused: {0}")]
     Runtime(#[from] RuntimeIdentityError),
@@ -56,10 +61,12 @@ pub struct Package {
     pub runtime: RuntimeIdentity,
 }
 
-/// Reads a package archive.
-pub fn read(archive: &[u8]) -> Result<Package, PackageError> {
+/// Reads a package archive, refusing it once its files add up to more than
+/// `limit_bytes`, before reading any of the excess.
+pub fn read(archive: &[u8], limit_bytes: u64) -> Result<Package, PackageError> {
     let mut files = Vec::new();
     let mut runtime = None;
+    let mut total_bytes = 0u64;
     let mut entries = tar::Archive::new(archive);
     for entry in entries.entries().map_err(PackageError::Archive)? {
         let mut entry = entry.map_err(PackageError::Archive)?;
@@ -70,6 +77,10 @@ pub fn read(archive: &[u8]) -> Result<Package, PackageError> {
         })?;
         if !entry.header().entry_type().is_file() {
             return Err(PackageError::NotAFile { path });
+        }
+        total_bytes = total_bytes.saturating_add(entry.size());
+        if total_bytes > limit_bytes {
+            return Err(PackageError::TooLarge { limit_bytes });
         }
         if path == RUNTIME {
             if runtime.is_some() || entry.size() > RUNTIME_IDENTITY_BYTES {
@@ -249,7 +260,24 @@ mod tests {
     }
 
     fn application_files(archive: &[u8]) -> Result<PlatformFiles, PackageError> {
-        read(archive).map(|package| package.files)
+        read(archive, u64::MAX).map(|package| package.files)
+    }
+
+    #[test]
+    fn a_package_is_measured_by_the_uncompressed_bytes_of_every_file_it_holds() {
+        let package = archive(&[
+            ("application.json", b"{}"),
+            ("assemblies/App.dll", &[0; 100]),
+        ]);
+        let size = (IDENTITY.len() + 2 + 100) as u64;
+        assert!(
+            read(&package, size).is_ok(),
+            "a package exactly at its limit must be admitted"
+        );
+        assert!(
+            matches!(read(&package, size - 1), Err(PackageError::TooLarge { limit_bytes }) if limit_bytes == size - 1),
+            "a package one byte over its limit must be refused"
+        );
     }
 
     fn paths(files: &PlatformFiles) -> Vec<&str> {
@@ -379,7 +407,8 @@ mod tests {
 
     #[test]
     fn a_package_names_the_runtime_it_was_built_against_and_does_not_serve_it() {
-        let package = read(&archive(&[("application.json", b"{}")])).expect("a package maps");
+        let package =
+            read(&archive(&[("application.json", b"{}")]), u64::MAX).expect("a package maps");
         assert_eq!(
             (
                 package.runtime.sdk_version.as_str(),
@@ -399,7 +428,7 @@ mod tests {
     fn a_package_without_a_runtime_identity_is_refused() {
         assert!(
             matches!(
-                read(&entries_only(&[("application.json", b"{}")])),
+                read(&entries_only(&[("application.json", b"{}")]), u64::MAX),
                 Err(PackageError::NoRuntime)
             ),
             "a package the host cannot match to a runtime must not be prepared"
@@ -421,10 +450,10 @@ mod tests {
             (other_module.as_bytes(), "Module"),
             (short_digest.as_bytes(), "Module"),
         ] {
-            let refused = read(&entries_only(&[
-                ("runtime.json", identity),
-                ("application.json", b"{}"),
-            ]));
+            let refused = read(
+                &entries_only(&[("runtime.json", identity), ("application.json", b"{}")]),
+                u64::MAX,
+            );
             let variant = match refused {
                 Err(PackageError::Runtime(RuntimeIdentityError::Json(_))) => "Json",
                 Err(PackageError::Runtime(RuntimeIdentityError::Version(_))) => "Version",
@@ -440,10 +469,10 @@ mod tests {
         }
         assert!(
             matches!(
-                read(&archive(&[
-                    ("runtime.json", IDENTITY),
-                    ("application.json", b"{}")
-                ])),
+                read(
+                    &archive(&[("runtime.json", IDENTITY), ("application.json", b"{}")]),
+                    u64::MAX
+                ),
                 Err(PackageError::Runtime(RuntimeIdentityError::Ambiguous))
             ),
             "a package must name exactly one runtime"

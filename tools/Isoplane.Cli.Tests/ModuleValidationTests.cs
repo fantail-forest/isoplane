@@ -54,7 +54,7 @@ public sealed class ModuleValidationTests
         var directory = Directory.CreateTempSubdirectory("isoplane-policy-");
         try
         {
-            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "limits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=262144\n");
+            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "limits = { module_bytes_compressed = 5242880, package_bytes = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=262144\n");
             var policy = ModuleDoctor.ResolvePolicy(Path.Combine(directory.FullName, "app.wasm"), memory);
             var report = ModuleValidator.Validate(Module, JsonSerializer.SerializeToUtf8Bytes(policy.Settings));
             Assert.True(report["limits"]!["instance_memory_max"]!.GetValue<ulong>() == 67108864UL
@@ -74,7 +74,7 @@ public sealed class ModuleValidationTests
             var module = Path.Combine(directory.FullName, "module.wasm");
             await File.WriteAllBytesAsync(module, Module, deadline.Token);
             await File.WriteAllTextAsync(Path.Combine(directory.FullName, "isoplane.toml"),
-                "limits = { module_bytes_compressed = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n[validation_limits]\nmax_functions=1\n", deadline.Token);
+                "limits = { module_bytes_compressed = 5242880, package_bytes = 5242880, instance_memory_max = 67108864, cpu_ms_per_http_dispatch = 10, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n[validation_limits]\nmax_functions=1\n", deadline.Token);
             var start = new ProcessStartInfo("dotnet")
             {
                 WorkingDirectory = directory.FullName,

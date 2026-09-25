@@ -239,9 +239,13 @@ fn validate(
                 .join("\n")
         )
     })?;
-    let compressed_bytes = compressed_module::size(&project.state_directory, wasm)?;
-    let limit = manifest.effective_limits().module_bytes_compressed;
-    anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
+    // A package is measured when it is read; the shared runtime it runs on is
+    // the platform's, not part of the application's size.
+    if project.application_files.files().is_empty() {
+        let compressed_bytes = compressed_module::size(&project.state_directory, wasm)?;
+        let limit = manifest.effective_limits().module_bytes_compressed;
+        anyhow::ensure!(compressed_bytes <= limit, "module is {compressed_bytes} compressed bytes, exceeding the configured {limit} byte limit");
+    }
     Ok(report)
 }
 

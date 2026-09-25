@@ -23,6 +23,8 @@ struct Installed {
 
 /// A package resolved to the installed runtime it was built against.
 pub struct PackageOnRuntime {
+    /// The SDK release the package was built with.
+    pub sdk_version: String,
     /// The runtime module, checked against its identity.
     pub runtime: Vec<u8>,
     /// The provenance a template prepared from it records.
@@ -117,14 +119,20 @@ impl Runtimes {
         self.installed.contains_key(sdk_version)
     }
 
-    /// Reads `package` and resolves the installed runtime it names.
-    pub fn resolve(&self, package: &[u8]) -> Result<PackageOnRuntime, PackageRefusal> {
-        let package = isoplane_prepare::package::read(package)?;
+    /// Reads `package`, refusing it over `limit_bytes`, and resolves the
+    /// installed runtime it names.
+    pub fn resolve(
+        &self,
+        package: &[u8],
+        limit_bytes: u64,
+    ) -> Result<PackageOnRuntime, PackageRefusal> {
+        let package = isoplane_prepare::package::read(package, limit_bytes)?;
         Ok(PackageOnRuntime {
             runtime: self.module(&package.runtime)?,
             profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
-                sdk_version: package.runtime.sdk_version,
+                sdk_version: package.runtime.sdk_version.clone(),
             },
+            sdk_version: package.runtime.sdk_version,
             files: package.files,
         })
     }

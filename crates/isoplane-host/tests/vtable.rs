@@ -185,6 +185,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
     let mut v = vtable(
         Limits {
             module_bytes_compressed: 5242880,
+            package_bytes: 5242880,
             instance_memory_max: 67108864,
             cpu_ms_per_http_dispatch: 10,
             subrequests_per_dispatch: 20,
@@ -195,6 +196,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
     );
     let cap = Limits {
         module_bytes_compressed: 5242880,
+        package_bytes: 5242880,
         instance_memory_max: 67108864,
         cpu_ms_per_http_dispatch: 10,
         subrequests_per_dispatch: 20,
@@ -206,6 +208,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
     assert_eq!(
         Limits {
             module_bytes_compressed: 5242880,
+            package_bytes: 5242880,
             instance_memory_max: 67108864,
             cpu_ms_per_http_dispatch: 10,
             subrequests_per_dispatch: 20,

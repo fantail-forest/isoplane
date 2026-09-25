@@ -20,6 +20,7 @@ name = "cell-1"
 name = "freebie"
 tenant = "student"
 limits.module_bytes_compressed = 5242880
+limits.package_bytes = 5242880
 limits.instance_memory_max = 67108864
 limits.cpu_ms_per_http_dispatch = 10
 limits.subrequests_per_dispatch = 20
@@ -31,6 +32,7 @@ versions = [{ id = "v1" }]
 name = "paying"
 tenant = "bigco"
 limits.module_bytes_compressed = 52428800
+limits.package_bytes = 52428800
 limits.instance_memory_max = 134217728
 limits.cpu_ms_per_http_dispatch = 30000
 limits.subrequests_per_dispatch = 200

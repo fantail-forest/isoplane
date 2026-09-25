@@ -63,6 +63,7 @@ fn the_pending_futures_cap_traps_the_guest() {
     let r = &free;
     let limit = Limits {
         module_bytes_compressed: 5242880,
+        package_bytes: 5242880,
         instance_memory_max: 67108864,
         cpu_ms_per_http_dispatch: 10,
         subrequests_per_dispatch: 20,
@@ -89,6 +90,7 @@ fn the_pending_futures_cap_traps_the_guest() {
                 HandlerLifecycle::Reuse,
                 Limits {
                     module_bytes_compressed: 5242880,
+                    package_bytes: 5242880,
                     instance_memory_max: 67108864,
                     cpu_ms_per_http_dispatch: 10,
                     subrequests_per_dispatch: 20,

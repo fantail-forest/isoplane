@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 pub struct Limits {
     /// Maximum zstd-compressed module bytes at admission.
     pub module_bytes_compressed: u64,
+    /// Maximum size of an application package: the uncompressed bytes of
+    /// every file it holds.
+    pub package_bytes: u64,
     /// Maximum guest linear-memory bytes.
     pub instance_memory_max: u64,
     /// CPU milliseconds across all slices of one dispatch.
@@ -23,6 +26,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             module_bytes_compressed: 52428800,
+            package_bytes: 52428800,
             instance_memory_max: 134217728,
             cpu_ms_per_http_dispatch: 30000,
             subrequests_per_dispatch: 200,
@@ -38,6 +42,8 @@ impl Default for Limits {
 pub struct ResourceLimitOverrides {
     /// Maximum compressed module size admitted for preparation.
     pub module_bytes_compressed: Option<u64>,
+    /// Maximum uncompressed application package size admitted for preparation.
+    pub package_bytes: Option<u64>,
     /// CPU budget across all invocation slices of one HTTP dispatch.
     pub cpu_ms_per_http_dispatch: Option<u32>,
     /// Maximum subrequests started by one dispatch.
@@ -53,6 +59,7 @@ impl ResourceLimitOverrides {
             module_bytes_compressed: self
                 .module_bytes_compressed
                 .unwrap_or(defaults.module_bytes_compressed),
+            package_bytes: self.package_bytes.unwrap_or(defaults.package_bytes),
             cpu_ms_per_http_dispatch: self
                 .cpu_ms_per_http_dispatch
                 .unwrap_or(defaults.cpu_ms_per_http_dispatch),

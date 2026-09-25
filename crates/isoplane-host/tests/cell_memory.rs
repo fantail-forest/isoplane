@@ -49,6 +49,7 @@ fn dispatch_growth(memory_override: Option<u64>, engine_bytes: u64, expected_gro
             HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
+                package_bytes: 5242880,
                 instance_memory_max: 67108864,
                 cpu_ms_per_http_dispatch: 10,
                 subrequests_per_dispatch: 20,
@@ -125,6 +126,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
             HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
+                package_bytes: 5242880,
                 instance_memory_max: 67108864,
                 cpu_ms_per_http_dispatch: 10,
                 subrequests_per_dispatch: 20,

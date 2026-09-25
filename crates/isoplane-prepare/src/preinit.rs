@@ -190,6 +190,7 @@ impl PreInitializer {
                 runtime: RuntimeProfile::RawWasm,
                 limits: Limits {
                     module_bytes_compressed: 52428800,
+                    package_bytes: 52428800,
                     instance_memory_max: 536870912,
                     cpu_ms_per_http_dispatch: 300000,
                     subrequests_per_dispatch: 10000,

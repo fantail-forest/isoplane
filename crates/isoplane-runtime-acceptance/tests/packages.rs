@@ -33,7 +33,7 @@ fn package(name: &str) -> Vec<PlatformFile> {
         use sha2::Digest;
         sha2::Sha256::digest(isoplane_fixtures::mono_runtime()).into()
     });
-    let package = isoplane_prepare::package::read(&archive)
+    let package = isoplane_prepare::package::read(&archive, Limits::default().package_bytes)
         .unwrap_or_else(|error| panic!("the {name} package must map to served files: {error}"));
     assert_eq!(
         package.runtime.module_sha256, *runtime_hash,

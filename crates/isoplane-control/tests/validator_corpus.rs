@@ -326,6 +326,7 @@ fn v3_memory_shape() {
         &at_standard_ceiling,
         Limits {
             module_bytes_compressed: 5242880,
+            package_bytes: 5242880,
             instance_memory_max: 67108864,
             cpu_ms_per_http_dispatch: 10,
             subrequests_per_dispatch: 20,

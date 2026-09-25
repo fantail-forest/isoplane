@@ -56,6 +56,21 @@ impl RuntimeProfile {
         Self::RawWasm
     }
 
+    /// The memory maximum a module of this profile may declare, given its
+    /// application's limit: that limit, except for a shared runtime, which
+    /// serves applications with different limits and is held only to its
+    /// plan's. Initialization and execution hold every instance to its
+    /// application's limit either way.
+    pub fn declared_memory_ceiling(
+        &self,
+        application: Option<isoplane_abi::config::GuestMemoryBytes>,
+    ) -> Option<isoplane_abi::config::GuestMemoryBytes> {
+        match self {
+            Self::SharedRuntime { .. } => None,
+            Self::RawWasm | Self::DotNet10 { .. } => application,
+        }
+    }
+
     /// Digest of the runtime profile recorded in prepared metadata.
     pub fn digest(&self) -> Result<[u8; 32], postcard::Error> {
         let mut hash = blake3::Hasher::new();

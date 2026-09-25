@@ -210,7 +210,13 @@ impl Deployer {
         isoplane_prepare::BuildRequest,
         isoplane_engine::prepared::PreparedIdentity,
     )> {
-        let admitted = admit_local(manifest, wasm)?;
+        let admitted = match context.runtime {
+            isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
+                admit_local_shared_runtime(manifest, wasm)?
+            }
+            isoplane_prepare::RuntimeProfile::RawWasm
+            | isoplane_prepare::RuntimeProfile::DotNet10 { .. } => admit_local(manifest, wasm)?,
+        };
         let mut runtime_config = Vec::new();
         context
             .runtime_configuration
@@ -355,6 +361,30 @@ fn admit_local(
     let limit_bytes = manifest.limits.module_bytes_compressed;
     anyhow::ensure!(compressed_bytes <= limit_bytes, "compressed module is {compressed_bytes} bytes, exceeding the configured {limit_bytes} byte limit");
     Ok(report)
+}
+
+fn admit_local_shared_runtime(
+    manifest: &AppManifest,
+    wasm: &[u8],
+) -> anyhow::Result<isoplane_control::validator::ValidationReport> {
+    isoplane_control::validator::validate_with_limits(
+        wasm,
+        manifest.limits,
+        Some(isoplane_abi::config::GuestMemoryBytes::new(
+            isoplane_abi::config::WASM32_MEMORY_MAX_BYTES,
+        )?),
+        &manifest.validation_limits,
+    )
+    .map_err(|violations| {
+        anyhow::anyhow!(
+            "shared runtime rejected:\n{}",
+            violations
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })
 }
 
 /// Creates or checks the operator-owned directory that holds local compiler output.

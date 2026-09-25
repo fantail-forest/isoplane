@@ -12,7 +12,7 @@ and query interceptors; it does not own another schema.
 
 Build with `dotnet build -c IsoplaneInterpretedDebug` or
 `dotnet build -c IsoplaneNativeAotRelease`. Run the shared verifier with
-`--name aspnet-gallery --limits-json '{"module_bytes_compressed":52428800,"instance_memory_max":536870912,"cpu_ms_per_http_dispatch":300000,"subrequests_per_dispatch":10000,"pending_futures_per_dispatch":4096}'` and the resulting module path. The
+`--name aspnet-gallery --limits-json '{"module_bytes_compressed":52428800,"package_bytes":52428800,"instance_memory_max":536870912,"cpu_ms_per_http_dispatch":300000,"subrequests_per_dispatch":10000,"pending_futures_per_dispatch":4096}'` and the resulting module path. The
 module declares the manifest's 512 MiB memory ceiling; interpreted EF execution
 requires more than the SDK's default 128 MiB ceiling for this workload. Each
 verification run provisions and removes its own PostgreSQL and S3 containers.

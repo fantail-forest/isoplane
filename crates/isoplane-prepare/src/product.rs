@@ -271,7 +271,9 @@ pub(crate) fn validate(wasm: &[u8], request: &BuildRequest) -> anyhow::Result<Pr
     isoplane_runtime::validate_with_limits(
         wasm,
         request.limits,
-        request.guest_memory_bytes,
+        request
+            .runtime
+            .declared_memory_ceiling(request.guest_memory_bytes),
         &request.validation_limits,
     )
     .map_err(|violations| anyhow::anyhow!("portable input rejected: {violations:?}"))?;

@@ -42,7 +42,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--module", type=Path, required=True)
 parser.add_argument("--name", default="minimal-gallery")
 parser.add_argument("--mode", required=True)
-parser.add_argument("--limits-json", type=parse_limits_json, default={'module_bytes_compressed': 52428800, 'instance_memory_max': 134217728, 'cpu_ms_per_http_dispatch': 30000, 'subrequests_per_dispatch': 200, 'pending_futures_per_dispatch': 64}, help="Application resource budgets as a numeric JSON object")
+parser.add_argument("--limits-json", type=parse_limits_json, default={'module_bytes_compressed': 52428800, 'package_bytes': 52428800, 'instance_memory_max': 134217728, 'cpu_ms_per_http_dispatch': 30000, 'subrequests_per_dispatch': 200, 'pending_futures_per_dispatch': 64}, help="Application resource budgets as a numeric JSON object")
 parser.add_argument("--isoplane", type=Path, required=True)
 parser.add_argument("--schema", type=Path, required=True)
 parser.add_argument("--records", type=Path, required=True)

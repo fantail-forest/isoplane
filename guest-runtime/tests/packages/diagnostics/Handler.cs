@@ -7,7 +7,10 @@ using Isoplane.Durable;
 
 namespace Diagnostics;
 
-/// <summary>Each path makes the Mono runtime report through its own logger.</summary>
+/// <summary>
+/// Each path makes the Mono runtime report through its own logger, or asks it
+/// for more memory than a limited instance may have.
+/// </summary>
 public sealed class Handler : IIsoplaneHandler
 {
     /// <summary>The package's declared factory.</summary>
@@ -24,8 +27,30 @@ public sealed class Handler : IIsoplaneHandler
             case "/invalid-il":
                 RunInvalidIl();
                 break;
+            case "/allocate":
+                return Task.FromResult(Response.Text(Allocate()));
         }
         return Task.FromResult(Response.Text("survived:" + req.Path));
+    }
+
+    /// <summary>
+    /// Allocates 40 MiB, which fits within the runtime's own memory maximum but
+    /// not within a limit a little above what the prepared application uses.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string Allocate()
+    {
+        try
+        {
+            var block = new byte[40 << 20];
+            block[^1] = 1;
+            GC.KeepAlive(block);
+            return "allocated";
+        }
+        catch (OutOfMemoryException)
+        {
+            return "refused:OutOfMemoryException";
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

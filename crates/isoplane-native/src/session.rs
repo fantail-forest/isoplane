@@ -80,11 +80,12 @@ impl Options {
                 let archive = std::fs::read(package).with_context(|| {
                     format!("reading the application package {}", package.display())
                 })?;
-                isoplane_prepare::package::read(&archive)
-                    .map(|package| package.files)
-                    .with_context(|| {
-                        format!("serving the application package {}", package.display())
-                    })?
+                isoplane_prepare::package::read(
+                    &archive,
+                    self.manifest.effective_limits().package_bytes,
+                )
+                .map(|package| package.files)
+                .with_context(|| format!("serving the application package {}", package.display()))?
             }
             None => isoplane_engine::PlatformFiles::default(),
         };
