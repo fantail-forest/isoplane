@@ -55,7 +55,7 @@ internal static class ManagedBundle
     {
         var projects = Directory.GetFiles(options.Directory, "*.csproj");
         if (projects.Length != 1) throw new ArgumentException("Select a directory containing exactly one application project with --project.");
-        var temporary = Directory.CreateTempSubdirectory("isoplane-bundle-");
+        var temporary = Directory.CreateDirectory(Path.Combine(options.Directory, ".isoplane", "bundle", Guid.NewGuid().ToString("N")));
         try
         {
             var metadata = Path.Combine(temporary.FullName, "inputs.json");

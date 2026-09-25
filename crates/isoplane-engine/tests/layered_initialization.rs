@@ -99,6 +99,35 @@ fn layer_publication_preserves_compiled_code_and_restores_globals_and_memory() {
 }
 
 #[test]
+fn prepared_product_uses_only_the_callers_storage_and_removes_its_scratch() {
+    let engine = IsoplaneEngine::new(small_engine_config()).expect("engine");
+    let (_, source) = source(&engine, "i32.const 100 i32.const 42 i32.store8 i64.const 0");
+    let mut instance = initialize(&engine, &source);
+    let product = capture(&engine, &source, &mut instance);
+    drop(instance);
+    let storage = tempfile::tempdir().expect("storage");
+    let missing = storage.path().join("missing");
+    assert!(engine.load_prepared_product_in(&product, &missing).is_err(),
+        "an unavailable caller directory must fail instead of falling back to system temporary storage");
+    let restored = engine
+        .load_prepared_product_in(&product, storage.path())
+        .expect("restore");
+    assert_eq!(
+        std::fs::read_dir(storage.path())
+            .expect("storage entries")
+            .count(),
+        0,
+        "mapped preparation files must be unlinked after restoration"
+    );
+    let mut fresh = activate(&engine, &restored);
+    assert_eq!(
+        fresh.memory()[100],
+        42,
+        "the restored mapping must survive scratch cleanup"
+    );
+}
+
+#[test]
 fn layer_private_writes_do_not_survive_pool_slot_reuse() {
     let engine = IsoplaneEngine::new(isoplane_engine::EngineConfig {
         max_instances: 1,

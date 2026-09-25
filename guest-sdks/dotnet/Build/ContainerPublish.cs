@@ -52,7 +52,7 @@ public sealed class IsoplaneContainerPublish : Task, ICancelableTask
     /// <summary>Builds and copies the module, failing on missing tools or compiler errors.</summary>
     public override bool Execute()
     {
-        string scratch = Path.Combine(Path.GetTempPath(), "isoplane-publish-" + owner);
+        string scratch = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(ProjectPath)), ".isoplane", "publish", owner);
         bool success = false;
         try
         {
@@ -119,7 +119,7 @@ public sealed class IsoplaneContainerPublish : Task, ICancelableTask
         Require(user, "establishing the developer's user ID");
         Require(group, "establishing the developer's group ID");
         string cacheRoot = string.IsNullOrEmpty(CacheDirectory)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Isoplane")
+            ? Path.Combine(Path.GetDirectoryName(ProjectPath), ".isoplane", "compiler")
             : Path.GetFullPath(CacheDirectory);
         string cache = Path.Combine(cacheRoot, image.Replace(':', '-'), "nuget");
         Directory.CreateDirectory(cache);

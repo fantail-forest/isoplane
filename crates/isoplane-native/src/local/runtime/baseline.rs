@@ -62,7 +62,7 @@ impl Baselines {
         };
         drop(current);
         let application = baseline
-            .prepare_application(&request)
+            .prepare_application_in(&request, &super::runtime_directory(project)?)
             .map_err(isoplane_prepare::PrepareError::Rejected)?;
         tracing::info!(
             compiled,

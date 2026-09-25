@@ -9,6 +9,15 @@ namespace Isoplane.Cli.Tests;
 public sealed class NativeSessionTests
 {
     [Fact]
+    public void preparation_keeps_compiled_artifacts_inside_the_project()
+    {
+        using var directory = new SessionDirectory();
+        LocalPreparation.Prepare(ModuleValidationTests.Module, directory.Options);
+        var artifacts = Directory.GetFiles(Path.Combine(directory.ProjectDirectory, ".isoplane"), "*.cwasm", SearchOption.AllDirectories);
+        Assert.True(artifacts.Length > 0, "Preparing a project must store its compiled artifacts under that project.");
+    }
+
+    [Fact]
     public async Task a_callback_failure_stops_the_host_and_returns_to_managed_code()
     {
         using var directory = new SessionDirectory();
@@ -159,13 +168,13 @@ public sealed class NativeSessionTests
     private sealed class SessionDirectory : IDisposable
     {
         private readonly DirectoryInfo directory = Directory.CreateTempSubdirectory("isoplane-native-session-");
+        internal string ProjectDirectory => directory.FullName;
         internal byte[] Options { get; }
 
         internal SessionDirectory()
         {
             File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "name='session'\nmodule='app.wasm'\n");
             var options = JsonNode.Parse(new LocalProject(directory.FullName).SessionOptions(0, []))!;
-            options["compilation_directory"] = Path.Combine(directory.FullName, "compiler");
             Options = JsonSerializer.SerializeToUtf8Bytes(options);
         }
 

@@ -213,7 +213,24 @@ impl IsoplaneEngine {
         base: &Template,
         product: &PreparedTemplate,
     ) -> Result<Template> {
-        let directory = tempfile::tempdir().map_err(|error| PreparedError::Engine(error.into()))?;
+        unsafe {
+            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
+            self.load_prepared_product_over_in(base, product, &std::env::temp_dir())
+        }
+    }
+
+    /// Restore a layer using temporary backing files within `storage`.
+    /// # Safety
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn load_prepared_product_over_in(
+        &self,
+        base: &Template,
+        product: &PreparedTemplate,
+        storage: &std::path::Path,
+    ) -> Result<Template> {
+        let directory =
+            tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
         product.publish(&path)?;
         // SAFETY: as for `load_prepared_product`; `base` retains its own files.
@@ -225,7 +242,23 @@ impl IsoplaneEngine {
     /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
     /// Checksums do not establish compiler origin.
     pub unsafe fn load_prepared_product(&self, product: &PreparedTemplate) -> Result<Template> {
-        let directory = tempfile::tempdir().map_err(|error| PreparedError::Engine(error.into()))?;
+        unsafe {
+            // SAFETY: the caller guarantees controlled local compiler origin for this product; its backing remains owned and unchanged.
+            self.load_prepared_product_in(product, &std::env::temp_dir())
+        }
+    }
+
+    /// Restore preparation output using temporary backing files within `storage`.
+    /// # Safety
+    /// Native bytes must originate from controlled local compilation and trusted operator-owned storage.
+    /// Checksums do not establish compiler origin.
+    pub unsafe fn load_prepared_product_in(
+        &self,
+        product: &PreparedTemplate,
+        storage: &std::path::Path,
+    ) -> Result<Template> {
+        let directory =
+            tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
         product.publish(&path)?;
         // SAFETY: the directory is private to this call and nothing writes its published files;

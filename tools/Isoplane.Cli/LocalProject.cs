@@ -40,7 +40,7 @@ internal sealed class LocalProject
             ["manifest"] = manifest,
             ["state_directory"] = debugDirectory ?? Path.Combine(directory, ".isoplane", "local", identity),
             ["runtime_library"] = NativeRuntime.LibraryPath,
-            ["compilation_directory"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Isoplane", "compiled"),
+            ["compilation_directory"] = Path.Combine(directory, ".isoplane", "compiled"),
             ["configuration"] = configuration,
             ["port"] = port,
             ["log_filter"] = Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",

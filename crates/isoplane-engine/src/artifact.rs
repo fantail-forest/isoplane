@@ -413,6 +413,11 @@ pub struct CompilationCache {
 }
 
 impl CompilationCache {
+    /// The private directory holding this cache's native artifacts.
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
+    }
+
     /// Create missing cache directories with private permissions on Unix.
     /// Existing directories are unchanged; this does not establish native-code provenance.
     pub fn create_directory(directory: &std::path::Path) -> Result<()> {

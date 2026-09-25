@@ -133,6 +133,7 @@ pub(crate) enum CaptureMode<'a> {
     #[cfg(target_os = "linux")]
     Over {
         base: isoplane_engine::Template,
+        storage: &'a std::path::Path,
         identity: isoplane_engine::prepared::PreparedIdentity,
     },
 }
@@ -475,7 +476,10 @@ pub(crate) fn initialize_with_cache(
                 };
                 let template = unsafe {
                     // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                    engine.load_prepared_product(&prepared)
+                    engine.load_prepared_product_in(
+                        &prepared,
+                        cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
+                    )
                 }
                 .map_err(|error| PrepareError::State(error.into()))?;
                 (
@@ -503,7 +507,10 @@ pub(crate) fn initialize_with_cache(
                     .map_err(PrepareError::State)?;
                 let template = unsafe {
                     // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                    engine.load_prepared_product(&prepared)
+                    engine.load_prepared_product_in(
+                        &prepared,
+                        cache.map_or(std::env::temp_dir().as_path(), |cache| cache.directory()),
+                    )
                 }
                 .map_err(|error| PrepareError::State(error.into()))?;
                 (
@@ -516,7 +523,11 @@ pub(crate) fn initialize_with_cache(
                 )
             }
             #[cfg(target_os = "linux")]
-            CaptureMode::Over { ref base, identity } => {
+            CaptureMode::Over {
+                ref base,
+                identity,
+                storage,
+            } => {
                 let prepared = engine
                     .prepare_initialized_template_over(
                         &template,
@@ -531,7 +542,7 @@ pub(crate) fn initialize_with_cache(
                     .map_err(PrepareError::State)?;
                 let template = unsafe {
                     // SAFETY: this engine captured `prepared` above; its native bytes came from that compiler.
-                    engine.load_prepared_product_over(base, &prepared)
+                    engine.load_prepared_product_over_in(base, &prepared, storage)
                 }
                 .map_err(|error| PrepareError::State(error.into()))?;
                 (

@@ -150,8 +150,8 @@ fn runtime_directory(project: &Project) -> anyhow::Result<std::path::PathBuf> {
 /// The project's compiled modules, kept per native runtime library.
 fn compilation_cache(project: &Project) -> anyhow::Result<isoplane_engine::CompilationCache> {
     let directory = runtime_directory(project)?;
-    // SAFETY: LocalProject selects private per-user compiler storage outside the
-    // checkout. Only the engine's atomic compiler writes populate these entries;
+    // SAFETY: LocalProject selects compiler storage in the trusted local project.
+    // Only the engine's atomic compiler writes populate these entries;
     // neither application manifests nor portable artifacts supply native code.
     unsafe { isoplane_engine::CompilationCache::from_trusted_directory(directory) }
 }

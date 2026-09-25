@@ -106,6 +106,18 @@ else:
             *properties,
         ], env=self.env, cwd=self.root, capture_output=True, text=True, timeout=90)
 
+    def test_build_intermediates_stay_inside_the_project(self):
+        result = self.publish("-p:IsoplaneCompilerCache=")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = json.loads((self.root / "created").read_text())
+        scratch = Path(next(a[:-7] for a in args if a.endswith(":/build")))
+        self.assertTrue(scratch.is_relative_to(self.root / ".isoplane"),
+                        "compiler intermediates must stay inside the project")
+        self.assertFalse(scratch.exists(), "completed publication must remove its scratch directory")
+        cache = Path(next(a[:-7] for a in args if a.endswith(":/nuget")))
+        self.assertTrue(cache.is_relative_to(self.root / ".isoplane"),
+                        "the custom compiler cache must stay inside the project")
+
     def test_a_missing_docker_cli_names_the_prerequisite(self):
         (self.bin / "docker").unlink()
         result = self.publish()

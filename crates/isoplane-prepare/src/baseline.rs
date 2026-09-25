@@ -147,10 +147,21 @@ impl RuntimeBaseline {
         &self,
         request: &BuildRequest,
     ) -> Result<PreparedApplication, WorkerFailure> {
+        self.prepare_application_in(request, &std::env::temp_dir())
+    }
+
+    /// Prepare an application with temporary captured state confined to `storage`.
+    /// The directory must already exist and be owned by the caller.
+    pub fn prepare_application_in(
+        &self,
+        request: &BuildRequest,
+        storage: &std::path::Path,
+    ) -> Result<PreparedApplication, WorkerFailure> {
         let identity = layer_identity(self, request)
             .map_err(|error| WorkerFailure::new(BuildStage::Input, error))?;
         let capture = crate::initialize::CaptureMode::Over {
             base: self.0.template.clone(),
+            storage,
             identity,
         };
         let (product, template) = produce(&self.0.engine, request, None, identity, capture)?;

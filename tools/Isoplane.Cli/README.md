@@ -46,6 +46,8 @@ installation uses the customer's existing .NET SDK and preserves shell SDK
 selection. No Rust compiler or host Mono is required.
 
 Run a generated app with `/tmp/isoplane-tools/isoplane dev --project /path/to/app`.
+Project-generated caches, preparation state, and staging files live under the
+project's `.isoplane/` directory. Standard NuGet and SourceLink caches remain shared.
 Publication follows the module path in `isoplane.toml`. Source edits rebuild into a
 staging directory and replace the module after successful publication; failed
 builds leave the last working app serving. Ctrl+C stops the session and its

@@ -11,6 +11,18 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     private readonly ManagedBundleFixture fixture;
     public ManagedBundleTests(ManagedBundleFixture fixture) => this.fixture = fixture;
 
+    [Fact]
+    public async Task building_a_bundle_uses_and_cleans_project_local_metadata()
+    {
+        var project = fixture.Project;
+        var output = Path.Combine(project, "application.tar");
+        await ManagedBundle.CreateAsync(new(project, "Debug", output), CancellationToken.None);
+        var scratch = Path.Combine(project, ".isoplane", "bundle");
+        Assert.True(File.Exists(output), "The project build must produce its application bundle.");
+        Assert.True(Directory.Exists(scratch) && !Directory.EnumerateFileSystemEntries(scratch).Any(),
+            "Bundle metadata must be staged under the project and removed after publication.");
+    }
+
     [Theory]
     [InlineData("Mono", "Interpreted")]
     [InlineData("NativeAOT", "NativeAot")]
@@ -171,6 +183,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
     private readonly BundleDirectory directory = new();
     private string[] platform = [];
     public JsonElement SdkMetadata { get; private set; }
+    public string Project => Path.Combine(directory.Path, "Application");
     public string Application => Path.Combine(directory.Path, "Application/bin/Debug/net10.0/Application.dll");
     public string Satellite(string culture) => Path.Combine(directory.Path, "Application/bin/Debug/net10.0", culture, "Application.resources.dll");
     public string Dependency => Path.Combine(directory.Path, "Dependency/bin/Debug/net10.0/Dependency.dll");
