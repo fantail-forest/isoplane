@@ -578,6 +578,27 @@ mod over_the_runtime_baseline {
     use super::*;
     use isoplane_prepare::{PreparedBaseline, RuntimeBaseline};
 
+    #[test]
+    fn a_runtime_that_runs_out_of_memory_in_start_up_reports_its_own_diagnosis() {
+        let runtime = isoplane_fixtures::mono_runtime();
+        let mut request = request(&runtime, Vec::new());
+        // The runtime's declared initial memory fits; its start-up does not.
+        request.runtime = RuntimeProfile::SharedRuntime {
+            sdk_version: "0.0.0-test".into(),
+        };
+        request.guest_memory_bytes =
+            Some(isoplane_abi::config::GuestMemoryBytes::new(64 << 20).expect("a page multiple"));
+        let failure =
+            RuntimeBaseline::prepare(&runtime, &request.baseline(), Some(&shared_cache()))
+                .err()
+                .expect("the runtime's start-up must not fit in 64 MiB");
+        let detail = format!("{failure:?}");
+        assert!(
+            detail.contains("guest aborted: Garbage collector could not allocate"),
+            "an operator must see the runtime's own diagnosis of a failed start-up: {detail}"
+        );
+    }
+
     /// The shared runtime prepared once to the end of its own initializer, for
     /// packages prepared with [`request`].
     fn runtime_baseline(runtime: &[u8]) -> PreparedBaseline {

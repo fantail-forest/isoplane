@@ -1,0 +1,23 @@
+diff --git a/src/mono/wasi/runtime/driver.c b/src/mono/wasi/runtime/driver.c
+index 6278f5bb8d2..a9daf766256 100644
+--- a/src/mono/wasi/runtime/driver.c
++++ b/src/mono/wasi/runtime/driver.c
+@@ -71,9 +71,18 @@ static MonoDomain *root_domain;
+ 
+ #define RUNTIMECONFIG_BIN_FILE "runtimeconfig.bin"
+ 
++/* An embedding without a console takes the runtime's log itself, including
++   what the runtime logs during start-up, before the embedding can install a
++   handler of its own. */
++void mono_wasi_embedding_log (const char *log_domain, const char *log_level, const char *message, mono_bool fatal) __attribute__((weak));
++
+ static void
+ wasi_trace_logger (const char *log_domain, const char *log_level, const char *message, mono_bool fatal, void *user_data)
+ {
++	if (mono_wasi_embedding_log) {
++		mono_wasi_embedding_log (log_domain, log_level, message, fatal);
++		return;
++	}
+ 	if (strcmp(log_level, "error") == 0)
+ 		fprintf(stderr, "[MONO] %s: %s\n", log_level, message);
+ 	else

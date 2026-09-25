@@ -17,9 +17,7 @@ extern const char *mono_class_get_name(void *);
 extern const char *mono_class_get_namespace(void *);
 __attribute__((import_module("isoplane"), import_name("abort"))) extern void host_abort(uint8_t *, int32_t);
 __attribute__((import_module("isoplane"), import_name("log_emit"))) extern void host_log(int32_t, const char *, int32_t);
-typedef void (*MonoLogCallback)(const char *, const char *, const char *, int32_t, void *);
 typedef void (*MonoPrintCallback)(const char *, int32_t);
-extern void mono_trace_set_log_handler(MonoLogCallback, void *);
 extern void mono_trace_set_print_handler(MonoPrintCallback);
 extern void mono_trace_set_printerr_handler(MonoPrintCallback);
 #ifdef ISOPLANE_LOCAL_DEBUG
@@ -59,6 +57,13 @@ static void on_log(const char *domain, const char *level, const char *message, i
     (void)user_data;
     if (fatal) fail(message);
     emit(log_level(level), message);
+}
+
+// The WASI driver passes the runtime's log here from the start of start-up; a
+// handler installed once start-up returns would miss a failure within it.
+void mono_wasi_embedding_log(const char *domain, const char *level, const char *message, int32_t fatal)
+{
+    on_log(domain, level, message, fatal, 0);
 }
 
 static void on_print(const char *text, int32_t is_stdout)
@@ -116,8 +121,6 @@ static void boot(void)
     mono_jit_parse_options(1, options);
 #endif
     if (initialize_runtime() != 0) fail("Mono initialization failed");
-    // Start-up installs the WASI driver's logger, which writes to the console.
-    mono_trace_set_log_handler(on_log, 0);
 #ifdef ISOPLANE_LOCAL_DEBUG
     // Bundle initialization must precede registering symbols for its assembly.
     isoplane_register_debug_symbols();

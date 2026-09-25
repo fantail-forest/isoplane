@@ -59,3 +59,5 @@
 
 ../runtime/039-wasi-logical-async-stacks.patch
 # omit ../runtime/040-wasi-native-dispatch-refusals.patch -- Mono interpreter and P/Invoke-table checks; NativeAOT binds P/Invokes at compile time.
+# omit ../runtime/041-wasi-embedding-log.patch -- The WASI driver's logger is Mono's; NativeAOT does not link the driver.
+# omit ../runtime/042-wasi-gc-allocation-log.patch -- sgen is Mono's collector; NativeAOT links its own.
