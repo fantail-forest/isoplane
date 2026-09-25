@@ -44,6 +44,12 @@ pub enum PackageError {
         "the package holds more than {limit_bytes} bytes uncompressed, its application size limit"
     )]
     TooLarge { limit_bytes: u64 },
+    /// The package holds more files than its limit.
+    #[error("the package holds more than {limit} files")]
+    TooManyFiles { limit: u32 },
+    /// The package's manifest is larger than its limit.
+    #[error("the package's {MANIFEST} is larger than {limit_bytes} bytes")]
+    ManifestTooLarge { limit_bytes: u64 },
     /// The package's runtime identity is unreadable or ambiguous.
     #[error("the package's {RUNTIME} is refused: {0}")]
     Runtime(#[from] RuntimeIdentityError),
@@ -61,12 +67,35 @@ pub struct Package {
     pub runtime: RuntimeIdentity,
 }
 
-/// Reads a package archive, refusing it once its files add up to more than
-/// `limit_bytes`, before reading any of the excess.
-pub fn read(archive: &[u8], limit_bytes: u64) -> Result<Package, PackageError> {
+/// What a package may hold.
+#[derive(Clone, Copy, Debug)]
+pub struct PackageLimits {
+    /// Uncompressed bytes of every file it holds.
+    pub bytes: u64,
+    /// Files it holds.
+    pub files: u32,
+    /// Bytes of its `application.json`.
+    pub manifest_bytes: u64,
+}
+
+impl PackageLimits {
+    /// The limits `manifest`'s application is held to.
+    pub fn of(manifest: &isoplane_abi::config::AppManifest) -> Self {
+        Self {
+            bytes: manifest.effective_limits().package_bytes,
+            files: manifest.validation_limits.max_package_files,
+            manifest_bytes: manifest.validation_limits.max_package_manifest_bytes,
+        }
+    }
+}
+
+/// Reads a package archive, refusing it as soon as it passes one of
+/// `limits`, before reading or recording the entry that passes it.
+pub fn read(archive: &[u8], limits: PackageLimits) -> Result<Package, PackageError> {
     let mut files = Vec::new();
     let mut runtime = None;
     let mut total_bytes = 0u64;
+    let mut count = 0u32;
     let mut entries = tar::Archive::new(archive);
     for entry in entries.entries().map_err(PackageError::Archive)? {
         let mut entry = entry.map_err(PackageError::Archive)?;
@@ -78,9 +107,22 @@ pub fn read(archive: &[u8], limit_bytes: u64) -> Result<Package, PackageError> {
         if !entry.header().entry_type().is_file() {
             return Err(PackageError::NotAFile { path });
         }
+        count = count.saturating_add(1);
+        if count > limits.files {
+            return Err(PackageError::TooManyFiles {
+                limit: limits.files,
+            });
+        }
         total_bytes = total_bytes.saturating_add(entry.size());
-        if total_bytes > limit_bytes {
-            return Err(PackageError::TooLarge { limit_bytes });
+        if total_bytes > limits.bytes {
+            return Err(PackageError::TooLarge {
+                limit_bytes: limits.bytes,
+            });
+        }
+        if path == MANIFEST && entry.size() > limits.manifest_bytes {
+            return Err(PackageError::ManifestTooLarge {
+                limit_bytes: limits.manifest_bytes,
+            });
         }
         if path == RUNTIME {
             if runtime.is_some() || entry.size() > RUNTIME_IDENTITY_BYTES {
@@ -260,24 +302,7 @@ mod tests {
     }
 
     fn application_files(archive: &[u8]) -> Result<PlatformFiles, PackageError> {
-        read(archive, u64::MAX).map(|package| package.files)
-    }
-
-    #[test]
-    fn a_package_is_measured_by_the_uncompressed_bytes_of_every_file_it_holds() {
-        let package = archive(&[
-            ("application.json", b"{}"),
-            ("assemblies/App.dll", &[0; 100]),
-        ]);
-        let size = (IDENTITY.len() + 2 + 100) as u64;
-        assert!(
-            read(&package, size).is_ok(),
-            "a package exactly at its limit must be admitted"
-        );
-        assert!(
-            matches!(read(&package, size - 1), Err(PackageError::TooLarge { limit_bytes }) if limit_bytes == size - 1),
-            "a package one byte over its limit must be refused"
-        );
+        read(archive, UNBOUNDED).map(|package| package.files)
     }
 
     fn paths(files: &PlatformFiles) -> Vec<&str> {
@@ -286,6 +311,71 @@ mod tests {
             .iter()
             .map(|file| file.path.as_str())
             .collect()
+    }
+
+    const UNBOUNDED: PackageLimits = PackageLimits {
+        bytes: u64::MAX,
+        files: u32::MAX,
+        manifest_bytes: u64::MAX,
+    };
+
+    #[test]
+    fn a_package_is_measured_by_the_uncompressed_bytes_of_every_file_it_holds() {
+        let package = archive(&[
+            ("application.json", b"{}"),
+            ("assemblies/App.dll", &[0; 100]),
+        ]);
+        let size = (IDENTITY.len() + 2 + 100) as u64;
+        let limited = |bytes| PackageLimits { bytes, ..UNBOUNDED };
+        assert!(
+            read(&package, limited(size)).is_ok(),
+            "a package exactly at its limit must be admitted"
+        );
+        assert!(
+            matches!(read(&package, limited(size - 1)), Err(PackageError::TooLarge { limit_bytes }) if limit_bytes == size - 1),
+            "a package one byte over its limit must be refused"
+        );
+    }
+
+    #[test]
+    fn a_package_of_many_empty_files_is_refused_at_its_file_limit() {
+        let names: Vec<String> = (0..64).map(|index| format!("assets/{index}")).collect();
+        let mut entries: Vec<(&str, &[u8])> = vec![("application.json", b"{}")];
+        entries.extend(names.iter().map(|name| (name.as_str(), b"".as_slice())));
+        let package = archive(&entries);
+        let limited = |files| PackageLimits { files, ..UNBOUNDED };
+        assert!(
+            read(&package, limited(66)).is_ok(),
+            "a package exactly at its file limit must be admitted"
+        );
+        assert!(
+            matches!(
+                read(&package, limited(65)),
+                Err(PackageError::TooManyFiles { limit: 65 })
+            ),
+            "files that cost no bytes must still count against the file limit"
+        );
+    }
+
+    #[test]
+    fn a_package_manifest_over_its_limit_is_refused() {
+        let manifest = [b' '; 100];
+        let package = archive(&[("application.json", &manifest)]);
+        let limited = |manifest_bytes| PackageLimits {
+            manifest_bytes,
+            ..UNBOUNDED
+        };
+        assert!(
+            read(&package, limited(100)).is_ok(),
+            "a manifest exactly at its limit must be admitted"
+        );
+        assert!(
+            matches!(
+                read(&package, limited(99)),
+                Err(PackageError::ManifestTooLarge { limit_bytes: 99 })
+            ),
+            "a manifest over its limit must be refused before it is read"
+        );
     }
 
     #[test]
@@ -408,7 +498,7 @@ mod tests {
     #[test]
     fn a_package_names_the_runtime_it_was_built_against_and_does_not_serve_it() {
         let package =
-            read(&archive(&[("application.json", b"{}")]), u64::MAX).expect("a package maps");
+            read(&archive(&[("application.json", b"{}")]), UNBOUNDED).expect("a package maps");
         assert_eq!(
             (
                 package.runtime.sdk_version.as_str(),
@@ -428,7 +518,7 @@ mod tests {
     fn a_package_without_a_runtime_identity_is_refused() {
         assert!(
             matches!(
-                read(&entries_only(&[("application.json", b"{}")]), u64::MAX),
+                read(&entries_only(&[("application.json", b"{}")]), UNBOUNDED),
                 Err(PackageError::NoRuntime)
             ),
             "a package the host cannot match to a runtime must not be prepared"
@@ -452,7 +542,7 @@ mod tests {
         ] {
             let refused = read(
                 &entries_only(&[("runtime.json", identity), ("application.json", b"{}")]),
-                u64::MAX,
+                UNBOUNDED,
             );
             let variant = match refused {
                 Err(PackageError::Runtime(RuntimeIdentityError::Json(_))) => "Json",
@@ -471,7 +561,7 @@ mod tests {
             matches!(
                 read(
                     &archive(&[("runtime.json", IDENTITY), ("application.json", b"{}")]),
-                    u64::MAX
+                    UNBOUNDED
                 ),
                 Err(PackageError::Runtime(RuntimeIdentityError::Ambiguous))
             ),

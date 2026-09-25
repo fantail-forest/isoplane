@@ -12,19 +12,28 @@ mod no_egress;
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
 
-use isoplane_abi::config::{InitSandbox, Limits};
+use isoplane_abi::config::{InitSandbox, Limits, ValidationLimits};
 use isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT;
 use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile, PlatformFiles};
 use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{engine_configuration, ReturnedGuest};
+use isoplane_prepare::package::PackageLimits;
 use isoplane_prepare::{
     BuildProduct, BuildRequest, BuildStage, Initialization, LocalPreparation, PortableTemplate,
     Preparation, PrepareError, RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
-/// The package fixture `name` as the host serves it.
+/// Limits used when reading package fixtures.
+fn limits() -> PackageLimits {
+    PackageLimits {
+        bytes: Limits::default().package_bytes,
+        files: ValidationLimits::DEFAULT.max_package_files,
+        manifest_bytes: ValidationLimits::DEFAULT.max_package_manifest_bytes,
+    }
+}
+
 fn package(name: &str) -> Vec<PlatformFile> {
     let archive = std::fs::read(isoplane_fixtures::mono_package(name))
         .expect("the package fixture is readable");
@@ -33,7 +42,7 @@ fn package(name: &str) -> Vec<PlatformFile> {
         use sha2::Digest;
         sha2::Sha256::digest(isoplane_fixtures::mono_runtime()).into()
     });
-    let package = isoplane_prepare::package::read(&archive, Limits::default().package_bytes)
+    let package = isoplane_prepare::package::read(&archive, limits())
         .unwrap_or_else(|error| panic!("the {name} package must map to served files: {error}"));
     assert_eq!(
         package.runtime.module_sha256, *runtime_hash,

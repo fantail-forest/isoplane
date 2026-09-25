@@ -82,7 +82,7 @@ impl Options {
                 })?;
                 isoplane_prepare::package::read(
                     &archive,
-                    self.manifest.effective_limits().package_bytes,
+                    isoplane_prepare::package::PackageLimits::of(&self.manifest),
                 )
                 .map(|package| package.files)
                 .with_context(|| format!("serving the application package {}", package.display()))?

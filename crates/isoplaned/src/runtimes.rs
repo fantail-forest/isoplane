@@ -119,14 +119,13 @@ impl Runtimes {
         self.installed.contains_key(sdk_version)
     }
 
-    /// Reads `package`, refusing it over `limit_bytes`, and resolves the
-    /// installed runtime it names.
+    /// Reads `package` within `limits` and resolves the installed runtime it names.
     pub fn resolve(
         &self,
         package: &[u8],
-        limit_bytes: u64,
+        limits: isoplane_prepare::package::PackageLimits,
     ) -> Result<PackageOnRuntime, PackageRefusal> {
-        let package = isoplane_prepare::package::read(package, limit_bytes)?;
+        let package = isoplane_prepare::package::read(package, limits)?;
         Ok(PackageOnRuntime {
             runtime: self.module(&package.runtime)?,
             profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
@@ -278,6 +277,38 @@ mod tests {
         assert!(
             Runtimes::load(root.path()).is_err(),
             "each listed release must hold the runtime released with it"
+        );
+    }
+
+    #[test]
+    fn a_package_of_many_empty_files_is_refused_before_its_runtime_is_resolved() {
+        let root = installation(&["1.0.0"]);
+        let runtimes = Runtimes::load(root.path()).expect("loads");
+        let mut builder = tar::Builder::new(Vec::new());
+        for index in 0..8 {
+            let mut header = tar::Header::new_ustar();
+            header.set_size(0);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            builder
+                .append_data(&mut header, format!("assets/{index}"), std::io::empty())
+                .expect("entry");
+        }
+        let archive = builder.into_inner().expect("archive");
+        let mut manifest: isoplane_abi::config::AppManifest =
+            toml::from_str("name = \"app\"").expect("a minimal manifest");
+        manifest.validation_limits.max_package_files = 4;
+        assert!(
+            matches!(
+                runtimes.resolve(
+                    &archive,
+                    isoplane_prepare::package::PackageLimits::of(&manifest)
+                ),
+                Err(PackageRefusal::Package(
+                    isoplane_prepare::package::PackageError::TooManyFiles { limit: 4 }
+                ))
+            ),
+            "a node must refuse a package of costless files at its file limit"
         );
     }
 

@@ -22,6 +22,10 @@ pub struct ValidationLimits {
     pub max_element_segments: u32,
     /// Data segments.
     pub max_data_segments: u32,
+    /// Files an application package holds.
+    pub max_package_files: u32,
+    /// Bytes of an application package's `application.json`.
+    pub max_package_manifest_bytes: u64,
 }
 
 impl ValidationLimits {
@@ -36,6 +40,8 @@ impl ValidationLimits {
         max_types: 100_000,
         max_element_segments: 100_000,
         max_data_segments: 100_000,
+        max_package_files: 4096,
+        max_package_manifest_bytes: 64 << 10,
     };
 }
 
