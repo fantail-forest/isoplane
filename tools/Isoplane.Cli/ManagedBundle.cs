@@ -134,7 +134,7 @@ internal static class ManagedBundle
                 var subdirectory = item.TryGetProperty("DestinationSubDirectory", out var sub) ? sub.GetString() : "";
                 target = subdirectory + Path.GetFileName(source);
             }
-            target = target.Replace(Path.DirectorySeparatorChar, '/');
+            target = target.Replace('\\', '/');
             if (!AssetPaths.TryAdd(names, target))
                 throw new InvalidOperationException($"Bundle asset '{target}' is not a unique relative file path.");
             result.Add((source, target));

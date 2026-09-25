@@ -94,14 +94,16 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         Assert.True(!File.Exists(output), "Invalid dependency closures must not produce an uploadable archive.");
     }
 
-    [Fact]
-    public async Task external_assets_preserve_their_output_paths_and_contents()
+    [Theory]
+    [InlineData("config/data.json")]
+    [InlineData("config\\data.json")]
+    public async Task external_assets_preserve_their_output_paths_and_contents(string target)
     {
         using var directory = new BundleDirectory();
         var asset = Path.Combine(directory.Path, "required-data.json");
         await File.WriteAllTextAsync(asset, "application data");
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: asset, assetTarget: "config/data.json"), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: asset, assetTarget: target), output, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         var found = false;
@@ -117,7 +119,9 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     [Theory]
     [InlineData("../escape")]
     [InlineData("/absolute")]
-    [InlineData("a\\b")]
+    [InlineData("a\\..\\escape")]
+    [InlineData("\\absolute")]
+    [InlineData("C:\\absolute")]
     public async Task asset_output_paths_cannot_escape_the_guest_root(string target)
     {
         using var directory = new BundleDirectory();
