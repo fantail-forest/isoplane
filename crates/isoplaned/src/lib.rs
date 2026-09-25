@@ -14,6 +14,8 @@ pub mod preparation;
 pub mod real;
 #[cfg(feature = "real-backends")]
 mod reclamation;
+#[cfg(feature = "real-backends")]
+pub mod runtimes;
 pub use isoplane_trust as trust;
 
 pub use config::{ConfigError, NodeConfig};

@@ -112,6 +112,17 @@ public sealed class PackageVersionTests : IDisposable
             "A module replaced after its build must not ship under that build's receipt: " + output);
     }
 
+    [Fact]
+    public async Task packing_the_sdk_with_a_runtime_identity_for_other_modules_fails()
+    {
+        const string version = "0.1.0-package-test.9";
+        var runtime = RuntimeDirectory(version);
+        File.WriteAllText(Path.Combine(runtime, "runtime.json"), File.ReadAllText(Path.Combine(RuntimeDirectory("0.1.0-package-test.10"), "runtime.json")));
+        var (exit, output) = await TryPack("Isoplane.Sdk.csproj", version, runtime);
+        Assert.True(exit != 0 && output.Contains("runtime.json does not identify this SDK version", StringComparison.Ordinal),
+            "Application packages carry the identity the SDK ships, so it must describe the runtimes the SDK carries: " + output);
+    }
+
     private static readonly (string Name, byte[] Bytes)[] RuntimeModules =
     [
         ("Isoplane.MonoRuntime.wasm", [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
@@ -119,27 +130,27 @@ public sealed class PackageVersionTests : IDisposable
     ];
 
     /// <summary>
-    /// A stand-in for the output of MonoRuntime/build.sh for SDK <paramref name="version"/>;
-    /// packing only checks, copies and records it.
+    /// A stand-in for the output of MonoRuntime/build.sh for SDK <paramref name="version"/>,
+    /// recorded by its real receipt producer; packing only checks and copies it.
     /// </summary>
     private string RuntimeDirectory(string version)
     {
         var runtime = Path.Combine(directory, "runtime-" + version);
         Directory.CreateDirectory(runtime);
-        var modules = new System.Text.Json.Nodes.JsonObject();
         foreach (var (name, bytes) in RuntimeModules)
         {
             File.WriteAllBytes(Path.Combine(runtime, name), bytes);
-            modules[name] = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+            File.WriteAllText(Path.Combine(runtime, name + ".runtime"), "10.0.11-package-test@sha512:cGFjaw==\n");
         }
-        var receipt = new System.Text.Json.Nodes.JsonObject
-        {
-            ["sdkVersion"] = version,
-            ["sourceRevision"] = "package-test-revision",
-            ["monoPack"] = "10.0.11-package-test@sha512:cGFjaw==",
-            ["modules"] = modules,
-        };
-        File.WriteAllText(Path.Combine(runtime, "runtime-build.json"), receipt.ToJsonString() + "\n");
+        var source = Directory.CreateDirectory(Path.Combine(directory, "source-" + version)).FullName;
+        File.WriteAllText(Path.Combine(source, "Directory.Build.props"), $"<Project><PropertyGroup><Version>{version}</Version></PropertyGroup></Project>");
+        var receipt = new ProcessStartInfo("python3") { UseShellExecute = false, RedirectStandardError = true };
+        foreach (var argument in new[] { Path.Combine(SdkDirectory(), "MonoRuntime", "receipt.py"), runtime, source, "package-test-revision" })
+            receipt.ArgumentList.Add(argument);
+        using var process = Process.Start(receipt) ?? throw new InvalidOperationException("Could not run the runtime receipt producer.");
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, "The runtime receipt producer must record the stand-in runtime: " + error);
         return runtime;
     }
 

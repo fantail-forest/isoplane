@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Record what the shared runtime modules in a directory were built from.
+"""Record what the shared runtime modules in a directory were built from:
+runtime-build.json for the build's own checks, and runtime.json, the identity
+the SDK package ships and every application package built against it carries.
 
 Usage: receipt.py DIRECTORY ROOT [SOURCE_REVISION]
 """
@@ -11,6 +13,7 @@ import sys
 from pathlib import Path
 
 MODULES = ("Isoplane.MonoRuntime.wasm", "Isoplane.MonoRuntime.Debug.wasm")
+PROVENANCE = "runtime.json"
 
 
 def source_revision(root):
@@ -20,6 +23,17 @@ def source_revision(root):
     except (OSError, subprocess.CalledProcessError):
         sys.exit("receipt: no source revision given and the source is not a git checkout")
     return revision + ("+dirty" if dirty else "")
+
+
+def provenance(receipt):
+    """The runtime's identity as the SDK package and the platform read it."""
+    version, sha512 = receipt["monoPack"].split("@sha512:", 1)
+    return {
+        "sdkVersion": receipt["sdkVersion"],
+        "sourceRevision": receipt["sourceRevision"],
+        "monoPack": {"version": version, "sha512": sha512},
+        "modules": {name: {"sha256": digest} for name, digest in receipt["modules"].items()},
+    }
 
 
 def main(directory, root, revision=None):
@@ -37,6 +51,7 @@ def main(directory, root, revision=None):
         "modules": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in MODULES},
     }
     (directory / "runtime-build.json").write_text(json.dumps(receipt, separators=(",", ":")) + "\n")
+    (directory / PROVENANCE).write_text(json.dumps(provenance(receipt), separators=(",", ":")) + "\n")
 
 
 if __name__ == "__main__":

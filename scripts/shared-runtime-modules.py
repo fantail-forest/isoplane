@@ -9,17 +9,22 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def module_names():
-    """Read the module inventory from its receipt producer."""
+def producer():
+    """The receipt producer, which owns the module inventory and identity format."""
     spec = importlib.util.spec_from_file_location('runtime_receipt', ROOT / 'guest-sdks/dotnet/MonoRuntime/receipt.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.MODULES
+    return module
+
+
+def module_names():
+    """Read the module inventory from its receipt producer."""
+    return producer().MODULES
 
 
 def files(directory):
     """Return the complete portable runtime input set."""
-    return [directory / name for name in ('runtime-build.json', *module_names(), *(name + '.runtime' for name in module_names()))]
+    return [directory / name for name in ('runtime-build.json', producer().PROVENANCE, *module_names(), *(name + '.runtime' for name in module_names()))]
 
 
 def verify(directory, version, revision, feed=None):
@@ -29,6 +34,8 @@ def verify(directory, version, revision, feed=None):
         raise ValueError('shared runtime SDK version or source revision mismatch')
     if set(receipt['modules']) != set(module_names()):
         raise ValueError('shared runtime module inventory mismatch')
+    if json.loads((directory / producer().PROVENANCE).read_text()) != producer().provenance(receipt):
+        raise ValueError('shared runtime identity differs from its receipt')
     if feed is not None:
         props = ET.parse(feed / 'Isoplane.GuestRuntime.props').getroot()
         expected = props.findtext('./PropertyGroup/IsoplaneGuestRuntimePackVersion') + '@sha512:' + props.findtext('./PropertyGroup/IsoplaneGuestRuntimePackSha512')

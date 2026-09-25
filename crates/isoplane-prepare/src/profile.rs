@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 pub enum RuntimeProfile {
     /// Raw WASM admission makes no managed-runtime or hosted IL claim.
     RawWasm,
+    /// The shared runtime a node installs for one SDK release, which
+    /// application packages built with that release run on.
+    SharedRuntime {
+        /// The SDK release that carries the runtime.
+        sdk_version: String,
+    },
     /// A .NET 10 toolchain with content identities supplied by its trusted publisher.
     DotNet10 {
         /// Selected managed execution mode.

@@ -38,6 +38,8 @@ class SharedModulesTests(unittest.TestCase):
 
     def write_receipt(self):
         (self.directory / 'runtime-build.json').write_text(json.dumps(self.receipt))
+        producer = modules.producer()
+        (self.directory / producer.PROVENANCE).write_text(json.dumps(producer.provenance(self.receipt)))
 
     def verify(self):
         return modules.verify(self.directory, self.version, self.revision, self.feed)
@@ -74,6 +76,11 @@ class SharedModulesTests(unittest.TestCase):
     def test_matching_inputs_are_portable_without_rebuilding(self):
         self.assertEqual(self.verify(), self.receipt, 'matching inputs must retain their recorded identity')
         self.assertTrue(all(path.is_file() for path in modules.files(self.directory)), 'handoff must include modules, sidecars and receipt')
+
+    def test_an_identity_that_differs_from_its_receipt_is_rejected(self):
+        (self.directory / modules.producer().PROVENANCE).write_text(json.dumps({'sdkVersion': 'stale'}))
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            self.verify()
 
     def test_another_sdk_version_is_rejected(self):
         self.receipt['sdkVersion'] = '0.1.0-preview.2'

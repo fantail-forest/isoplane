@@ -44,7 +44,7 @@ SDK="$ROOT/guest-sdks/dotnet"
 if [ "$FIXTURE" = runtime ]; then
   OUT="$HERE/out/runtime/Isoplane.MonoRuntime.wasm"
   DEBUG="$HERE/out/runtime/Isoplane.MonoRuntime.Debug.wasm"
-  OUTPUTS=("$OUT" "$OUT.runtime" "$DEBUG" "$DEBUG.runtime" "$HERE/out/runtime/runtime-build.json")
+  OUTPUTS=("$OUT" "$OUT.runtime" "$DEBUG" "$DEBUG.runtime" "$HERE/out/runtime/runtime-build.json" "$HERE/out/runtime/runtime.json")
   INPUTS=$(python3 "$TOOLS" fingerprint "$SDK" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
   if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
      && [ "$(cat "$OUT.runtime")" = "$(python3 "$TOOLS" runtime-identity "$FEED/Isoplane.GuestRuntime.props" mono)" ] \
@@ -60,9 +60,13 @@ if [ "$FIXTURE" = runtime ]; then
     "mono-runtime:$INPUTS:$(git -C "$ROOT" rev-parse HEAD):$(dotnet --version)" \
     "${SHARED_OUTPUTS[@]}" -- "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
 else
+  # A package carries the identity of the runtime it is built against, and
+  # these packages run on the fixture runtime. This build already holds the lock.
+  "$HERE/build.sh" --if-stale --fixture runtime
+  export ISOPLANE_RUNTIME_DIRECTORY="$HERE/out/runtime"
   OUT="$HERE/out/$FIXTURE"
   OUTPUTS=("$OUT.tar")
-  INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/$FIXTURE" "$HERE/Package.props" "$HERE/Package.targets" "$SDK" "$ROOT/tools/Isoplane.Cli" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
+  INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/$FIXTURE" "$HERE/Package.props" "$HERE/Package.targets" "$SDK" "$ROOT/tools/Isoplane.Cli" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED" "$HERE/out/runtime/runtime.json")
   if [ "$IF_STALE" = 1 ] && [ -f "$OUT.tar" ] \
      && python3 "$TOOLS" fresh "$OUT.fixture.json" "$INPUTS" "${OUTPUTS[@]}"; then
     echo "==> package $FIXTURE is up to date"

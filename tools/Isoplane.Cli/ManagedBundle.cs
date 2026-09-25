@@ -37,6 +37,9 @@ internal sealed record SharedRuntime(string Directory)
     /// <summary>The runtime that connects its debugger agent to a local debug session.</summary>
     internal string DebugModule => Require("Isoplane.MonoRuntime.Debug.wasm");
 
+    /// <summary>The runtimes' identity, which a package built against them carries so the platform runs it on the same runtime.</summary>
+    internal string Identity => Require("runtime.json");
+
     private string Require(string name)
     {
         var path = Path.Combine(Directory, name);
@@ -93,6 +96,9 @@ internal static class ManagedBundle
         var factory = properties.GetProperty("IsoplaneApplicationFactory").GetString();
         if (string.IsNullOrWhiteSpace(factory)) throw new InvalidOperationException("The project must name its application factory.");
         var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, factory, execution), BuildJson.Options);
+        var runtime = execution == GuestExecution.Interpreted
+            ? new SharedRuntime(properties.GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "").Identity
+            : null;
         var partial = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -101,6 +107,7 @@ internal static class ManagedBundle
             {
                 using var content = new MemoryStream(manifest, writable: false);
                 await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json") { DataStream = content }, cancellation);
+                if (runtime is not null) await tar.WriteEntryAsync(runtime, "runtime.json", cancellation);
                 foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Key, StringComparer.Ordinal))
                 {
                     await tar.WriteEntryAsync(assembly.Origin, "assemblies/" + assembly.Identity.RelativePath, cancellation);

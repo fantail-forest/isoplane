@@ -1,6 +1,7 @@
 //! Application packages as `isoplane bundle` writes them, mapped to the files
 //! the host serves the shared runtime: `application.json` and `assemblies/`
 //! beneath the package root, `assets/` at the application's content root.
+//! Its `runtime.json` names the runtime it was built against and is not served.
 
 use isoplane_abi::filesystem::{APPLICATION_PACKAGE_ROOT, HOST_ROOT};
 use isoplane_engine::{PlatformFile, PlatformFiles, PlatformFilesError};
@@ -8,6 +9,11 @@ use isoplane_engine::{PlatformFile, PlatformFiles, PlatformFilesError};
 const MANIFEST: &str = "application.json";
 const ASSEMBLIES: &str = "assemblies/";
 const ASSETS: &str = "assets/";
+const RUNTIME: &str = "runtime.json";
+/// The production runtime module the SDK carries, as its `runtime.json` names it.
+pub const RUNTIME_MODULE: &str = "Isoplane.MonoRuntime.wasm";
+/// A runtime identity is a few hundred bytes; this bounds reading a hostile one.
+const RUNTIME_IDENTITY_BYTES: u64 = 64 * 1024;
 
 /// Why a package archive is refused.
 #[derive(Debug, thiserror::Error)]
@@ -30,15 +36,30 @@ pub enum PackageError {
     /// The package names no entry assembly or factory.
     #[error("the package has no {MANIFEST}")]
     NoManifest,
+    /// The package names no runtime to run on.
+    #[error("the package has no {RUNTIME}; build it with an SDK that carries its shared runtime")]
+    NoRuntime,
+    /// The package's runtime identity is unreadable or ambiguous.
+    #[error("the package's {RUNTIME} is refused: {0}")]
+    Runtime(#[from] RuntimeIdentityError),
     /// Two entries serve the same path, or a file where another needs a directory.
     #[error(transparent)]
     Files(#[from] PlatformFilesError),
 }
 
-/// Maps a package archive to the application files the host serves while
-/// preparing and running it on the shared runtime.
-pub fn application_files(archive: &[u8]) -> Result<PlatformFiles, PackageError> {
+/// A package as the host prepares it.
+#[derive(Debug)]
+pub struct Package {
+    /// The files the host serves while preparing and running it.
+    pub files: PlatformFiles,
+    /// The runtime it was built against.
+    pub runtime: RuntimeIdentity,
+}
+
+/// Reads a package archive.
+pub fn read(archive: &[u8]) -> Result<Package, PackageError> {
     let mut files = Vec::new();
+    let mut runtime = None;
     let mut entries = tar::Archive::new(archive);
     for entry in entries.entries().map_err(PackageError::Archive)? {
         let mut entry = entry.map_err(PackageError::Archive)?;
@@ -49,6 +70,15 @@ pub fn application_files(archive: &[u8]) -> Result<PlatformFiles, PackageError> 
         })?;
         if !entry.header().entry_type().is_file() {
             return Err(PackageError::NotAFile { path });
+        }
+        if path == RUNTIME {
+            if runtime.is_some() || entry.size() > RUNTIME_IDENTITY_BYTES {
+                return Err(RuntimeIdentityError::Ambiguous.into());
+            }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(PackageError::Archive)?;
+            runtime = Some(RuntimeIdentity::from_json(&bytes)?);
+            continue;
         }
         let served = served_path(&path)?;
         let mut bytes = Vec::with_capacity(entry.size() as usize);
@@ -61,7 +91,84 @@ pub fn application_files(archive: &[u8]) -> Result<PlatformFiles, PackageError> 
     {
         return Err(PackageError::NoManifest);
     }
-    Ok(PlatformFiles::new(files)?)
+    Ok(Package {
+        files: PlatformFiles::new(files)?,
+        runtime: runtime.ok_or(PackageError::NoRuntime)?,
+    })
+}
+
+/// The shared runtime a package was built against, as the `runtime.json`
+/// its SDK carries names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeIdentity {
+    /// The SDK release that carries the runtime.
+    pub sdk_version: String,
+    /// SHA-256 of [`RUNTIME_MODULE`].
+    pub module_sha256: [u8; 32],
+}
+
+/// Why a runtime identity is refused.
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeIdentityError {
+    /// Not the SDK's `runtime.json` shape.
+    #[error("not the SDK's runtime.json shape: {0}")]
+    Json(#[source] serde_json::Error),
+    /// The version could not name a directory or a release unambiguously.
+    #[error("`{0}` is not an SDK release version")]
+    Version(String),
+    /// The production runtime module is missing or its digest malformed.
+    #[error("it records no SHA-256 of {RUNTIME_MODULE}")]
+    Module,
+    /// More than one identity, or one too large to be genuine.
+    #[error("a package carries exactly one small runtime identity")]
+    Ambiguous,
+}
+
+impl RuntimeIdentity {
+    /// Reads the identity a `runtime.json` records, ignoring the provenance
+    /// it also carries.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, RuntimeIdentityError> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Recorded {
+            sdk_version: String,
+            modules: std::collections::BTreeMap<String, Module>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Module {
+            sha256: String,
+        }
+        let recorded: Recorded =
+            serde_json::from_slice(bytes).map_err(RuntimeIdentityError::Json)?;
+        let release = !recorded.sdk_version.is_empty()
+            && recorded.sdk_version.len() <= 128
+            && recorded
+                .sdk_version
+                .starts_with(|c: char| c.is_ascii_digit())
+            && recorded
+                .sdk_version
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+        if !release {
+            return Err(RuntimeIdentityError::Version(recorded.sdk_version));
+        }
+        let digest = recorded
+            .modules
+            .get(RUNTIME_MODULE)
+            .filter(|module| {
+                module
+                    .sha256
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            })
+            .and_then(|module| hex::decode(&module.sha256).ok())
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or(RuntimeIdentityError::Module)?;
+        Ok(Self {
+            sdk_version: recorded.sdk_version,
+            module_sha256: digest,
+        })
+    }
 }
 
 fn served_path(path: &str) -> Result<String, PackageError> {
@@ -103,7 +210,16 @@ fn served_file(path: String, bytes: Vec<u8>) -> PlatformFile {
 mod tests {
     use super::*;
 
+    const IDENTITY: &[u8] = br#"{"sdkVersion":"1.2.3-test","sourceRevision":"abc","modules":{"Isoplane.MonoRuntime.wasm":{"sha256":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}}}"#;
+
+    /// A package with `entries` built against the runtime [`IDENTITY`] names.
     fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut all = vec![("runtime.json", IDENTITY)];
+        all.extend_from_slice(entries);
+        entries_only(&all)
+    }
+
+    fn entries_only(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
         for (path, bytes) in entries {
             let mut header = tar::Header::new_ustar();
@@ -130,6 +246,10 @@ mod tests {
         bytes.extend_from_slice(&[b'x'; 512]);
         bytes.extend_from_slice(&[0; 1024]);
         bytes
+    }
+
+    fn application_files(archive: &[u8]) -> Result<PlatformFiles, PackageError> {
+        read(archive).map(|package| package.files)
     }
 
     fn paths(files: &PlatformFiles) -> Vec<&str> {
@@ -254,6 +374,79 @@ mod tests {
                 ))
             ),
             "a later entry must not silently replace an earlier one"
+        );
+    }
+
+    #[test]
+    fn a_package_names_the_runtime_it_was_built_against_and_does_not_serve_it() {
+        let package = read(&archive(&[("application.json", b"{}")])).expect("a package maps");
+        assert_eq!(
+            (
+                package.runtime.sdk_version.as_str(),
+                package.runtime.module_sha256[..4].to_vec()
+            ),
+            ("1.2.3-test", vec![0x00, 0x11, 0x22, 0x33]),
+            "the host must run a package on the runtime its runtime.json names"
+        );
+        assert_eq!(
+            paths(&package.files),
+            ["/.isoplane/package/application.json"],
+            "the runtime identity is the platform's to read, not the guest's"
+        );
+    }
+
+    #[test]
+    fn a_package_without_a_runtime_identity_is_refused() {
+        assert!(
+            matches!(
+                read(&entries_only(&[("application.json", b"{}")])),
+                Err(PackageError::NoRuntime)
+            ),
+            "a package the host cannot match to a runtime must not be prepared"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_or_repeated_runtime_identity_is_refused() {
+        let digest =
+            "\"sha256\":\"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\"";
+        let path_version = format!("{{\"sdkVersion\":\"../1\",\"modules\":{{\"Isoplane.MonoRuntime.wasm\":{{{digest}}}}}}}");
+        let other_module =
+            format!("{{\"sdkVersion\":\"1.0\",\"modules\":{{\"Other.wasm\":{{{digest}}}}}}}");
+        let short_digest =
+            r#"{"sdkVersion":"1.0","modules":{"Isoplane.MonoRuntime.wasm":{"sha256":"0011"}}}"#;
+        for (identity, expected) in [
+            (b"not json".as_slice(), "Json"),
+            (path_version.as_bytes(), "Version"),
+            (other_module.as_bytes(), "Module"),
+            (short_digest.as_bytes(), "Module"),
+        ] {
+            let refused = read(&entries_only(&[
+                ("runtime.json", identity),
+                ("application.json", b"{}"),
+            ]));
+            let variant = match refused {
+                Err(PackageError::Runtime(RuntimeIdentityError::Json(_))) => "Json",
+                Err(PackageError::Runtime(RuntimeIdentityError::Version(_))) => "Version",
+                Err(PackageError::Runtime(RuntimeIdentityError::Module)) => "Module",
+                _ => "accepted or another refusal",
+            };
+            assert_eq!(
+                variant,
+                expected,
+                "a runtime identity that names no single runtime must be refused: {}",
+                String::from_utf8_lossy(identity)
+            );
+        }
+        assert!(
+            matches!(
+                read(&archive(&[
+                    ("runtime.json", IDENTITY),
+                    ("application.json", b"{}")
+                ])),
+                Err(PackageError::Runtime(RuntimeIdentityError::Ambiguous))
+            ),
+            "a package must name exactly one runtime"
         );
     }
 

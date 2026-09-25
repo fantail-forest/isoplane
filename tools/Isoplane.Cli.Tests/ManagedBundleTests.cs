@@ -40,8 +40,9 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
             entry.DataStream!.CopyTo(bytes);
             entries.Add(entry.Name, bytes.ToArray());
         }
-        Assert.True(entries.Keys.Order().SequenceEqual(new[] { "application.json", "assemblies/Application.dll", "assemblies/Application.pdb", "assemblies/Dependency.dll", "assemblies/Dependency.pdb" }.Order()),
-            "Only application IL and portable symbols should accompany the manifest; sources, scripts and framework implementations must stay out.");
+        var runtime = expected == "Interpreted" ? new[] { "runtime.json" } : [];
+        Assert.True(entries.Keys.Order().SequenceEqual(new[] { "application.json", "assemblies/Application.dll", "assemblies/Application.pdb", "assemblies/Dependency.dll", "assemblies/Dependency.pdb" }.Concat(runtime).Order()),
+            "Only application IL and portable symbols, and for interpreted execution the SDK runtime's identity, should accompany the manifest; sources, scripts and framework implementations must stay out.");
         Assert.True(entries["assemblies/Application.dll"].SequenceEqual(File.ReadAllBytes(fixture.Application)), "The compiled application and its embedded resources must remain unchanged.");
         Assert.True(entries["assemblies/Dependency.dll"].SequenceEqual(File.ReadAllBytes(fixture.Dependency)), "Transitive application dependencies must preserve their original identity and bytes.");
         using var manifest = JsonDocument.Parse(entries["application.json"]);
@@ -132,6 +133,35 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     }
 
     [Fact]
+    public async Task an_interpreted_bundle_carries_its_sdk_runtime_identity_unchanged()
+    {
+        using var directory = new BundleDirectory();
+        var output = Path.Combine(directory.Path, "application.tar");
+        await ManagedBundle.WriteAsync(fixture.Metadata("Mono"), output, default);
+        using var stream = File.OpenRead(output);
+        using var archive = new TarReader(stream);
+        string? identity = null;
+        while (archive.GetNextEntry() is { } entry)
+            if (entry.Name == "runtime.json")
+            {
+                using var reader = new StreamReader(entry.DataStream!);
+                identity = await reader.ReadToEndAsync();
+            }
+        Assert.True(identity == await File.ReadAllTextAsync(Path.Combine(fixture.SharedRuntime, "runtime.json")),
+            "The platform runs a package on the runtime its SDK carries, so the bundle must carry that runtime's identity byte for byte.");
+    }
+
+    [Fact]
+    public async Task an_interpreted_bundle_without_its_sdk_runtime_identity_is_refused()
+    {
+        using var directory = new BundleDirectory();
+        var output = Path.Combine(directory.Path, "application.tar");
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", runtimeDirectory: directory.Path), output, default));
+        Assert.True(error.Message.Contains("runtime.json", StringComparison.Ordinal) && !File.Exists(output),
+            "A package the platform cannot match to a runtime must be refused before anything is uploaded.");
+    }
+
+    [Fact]
     public async Task a_conflicting_application_identity_is_rejected()
     {
         using var directory = new BundleDirectory();
@@ -194,6 +224,8 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        Directory.CreateDirectory(SharedRuntime);
+        await File.WriteAllTextAsync(Path.Combine(SharedRuntime, "runtime.json"), "{\"sdkVersion\":\"0.0.0-test\"}\n");
         var dependency = Directory.CreateDirectory(Path.Combine(directory.Path, "Dependency"));
         var application = Directory.CreateDirectory(Path.Combine(directory.Path, "Application"));
         await File.WriteAllTextAsync(Path.Combine(directory.Path, "NuGet.Config"), "<configuration><packageSources><clear/></packageSources></configuration>");
@@ -217,7 +249,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         project.Save(Path.Combine(application.FullName, "Application.csproj"));
         var resultPath = Path.Combine(directory.Path, "result.json");
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory.Path };
-        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-property:IsoplaneRuntimeDirectory=" + SharedRuntime, "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime,IsoplaneRuntimeDirectory", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not build managed bundle fixture.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -237,7 +269,10 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
             .Select(item => item.GetProperty("FullPath").GetString()!).Where(path => Path.GetFileName(path) != "Dependency.dll").ToArray();
     }
 
-    public JsonElement Metadata(string runtime, bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false)
+    /// <summary>Stands in for the runtimes an SDK carries; a bundle only copies their identity.</summary>
+    public string SharedRuntime => Path.Combine(directory.Path, "runtime");
+
+    public JsonElement Metadata(string runtime, bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false, string? runtimeDirectory = null)
     {
         var assemblies = new List<string> { applicationPath ?? Application };
         if (includeDependency) assemblies.Add(Dependency);
@@ -245,7 +280,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         if (additionalAssembly is not null) assemblies.Add(additionalAssembly);
         return JsonSerializer.SerializeToElement(new
         {
-            Properties = new { AssemblyName = "Application", IsoplaneApplicationFactory = "Application.Create", IsoplaneGuestRuntime = runtime },
+            Properties = new { AssemblyName = "Application", IsoplaneApplicationFactory = "Application.Create", IsoplaneGuestRuntime = runtime, IsoplaneRuntimeDirectory = runtimeDirectory ?? SharedRuntime },
             Items = new
             {
                 IsoplaneBundleAssembly = assemblies.Select(path => new { FullPath = path }),

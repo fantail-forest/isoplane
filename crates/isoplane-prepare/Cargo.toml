@@ -28,6 +28,7 @@ tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tar.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 wasmtime.workspace = true

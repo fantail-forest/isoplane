@@ -14,6 +14,11 @@ pub struct PreparationConfig {
     pub initialization_passes: u32,
     /// Maximum retained successful initialization log bytes.
     pub initialization_log_bytes: usize,
+    /// The shared runtimes installed with this node, one directory per SDK
+    /// release beside the `inventory.json` listing them. Application packages
+    /// are prepared only on these; a node without it prepares no package.
+    #[serde(default)]
+    pub runtimes: Option<std::path::PathBuf>,
 }
 
 impl PreparationConfig {

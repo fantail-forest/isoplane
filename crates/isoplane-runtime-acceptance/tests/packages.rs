@@ -28,10 +28,18 @@ use tokio_util::sync::CancellationToken;
 fn package(name: &str) -> Vec<PlatformFile> {
     let archive = std::fs::read(isoplane_fixtures::mono_package(name))
         .expect("the package fixture is readable");
-    isoplane_prepare::package::application_files(&archive)
-        .unwrap_or_else(|error| panic!("the {name} package must map to served files: {error}"))
-        .files()
-        .to_vec()
+    static RUNTIME_HASH: OnceLock<[u8; 32]> = OnceLock::new();
+    let runtime_hash = RUNTIME_HASH.get_or_init(|| {
+        use sha2::Digest;
+        sha2::Sha256::digest(isoplane_fixtures::mono_runtime()).into()
+    });
+    let package = isoplane_prepare::package::read(&archive)
+        .unwrap_or_else(|error| panic!("the {name} package must map to served files: {error}"));
+    assert_eq!(
+        package.runtime.module_sha256, *runtime_hash,
+        "the {name} fixture must name the source-built runtime under test"
+    );
+    package.files.files().to_vec()
 }
 
 /// `files` with the package file at `relative` replaced or added.
