@@ -356,3 +356,117 @@ async fn an_application_is_refused_when_the_supplied_baseline_digest_differs() {
         Err(error) => panic!("the refusal must be the preparation's structured one: {error}"),
     }
 }
+
+/// A guest whose `isoplane_gc_hint` runs `hint`, and whose application
+/// initializer records at 308 how many collections, counted at 300, ran
+/// before it; with `runtime_stage`, it also has an empty runtime stage.
+fn collecting_guest(runtime_stage: bool, hint: &str) -> Vec<u8> {
+    let runtime = if runtime_stage {
+        r#"(func (export "isoplane_initialize_runtime") (result i64) i64.const 0)"#
+    } else {
+        ""
+    };
+    wat::parse_str(format!(
+        r#"(module
+      (memory (export "memory") 2 64)
+      (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 2048))
+      (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 0))
+      (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 0))
+      (func (export "isoplane_gc_hint") (param $pressure i32) {hint})
+      {runtime}
+      (func (export "isoplane_initialize") (result i64)
+        (i32.store (i32.const 308) (i32.load (i32.const 300)))
+        i64.const 0))"#
+    ))
+    .expect("the collecting test guest must assemble")
+}
+
+/// Counts a collection at 300 and records its pressure at 304.
+const COUNT_COLLECTION: &str =
+    "(i32.store (i32.const 300) (i32.add (i32.load (i32.const 300)) (i32.const 1)))
+    (i32.store (i32.const 304) (local.get $pressure))";
+
+/// The little-endian word at `offset` of `template`'s memory.
+fn word(template: &Template, offset: usize) -> u32 {
+    let memory = template.memory_image_arc().to_dense();
+    u32::from_le_bytes(memory[offset..offset + 4].try_into().expect("four bytes"))
+}
+
+/// Prepares `wasm`'s baseline and its application layer over it, loaded.
+async fn baseline_and_layer(wasm: &[u8], directory: &std::path::Path) -> (Template, Template) {
+    let request = request(wasm, InitSandbox::Sealed);
+    let runtime = baseline(wasm, &request)
+        .await
+        .expect("the runtime stage must prepare as a baseline");
+    let layer = runtime
+        .baseline
+        .prepare_application(&request)
+        .expect("the application must prepare over its baseline")
+        .product;
+    let engine = common::engine();
+    let base = load(
+        &engine,
+        &runtime.product,
+        request
+            .baseline()
+            .identity()
+            .expect("the baseline's identity"),
+        None,
+        &directory.join("base"),
+    );
+    let layer = load(
+        &engine,
+        &layer,
+        request.identity().expect("the application's identity"),
+        Some(&base),
+        &directory.join("layer"),
+    );
+    (base, layer)
+}
+
+#[tokio::test]
+async fn each_initializer_stage_collects_the_guests_garbage_before_its_capture() {
+    let wasm = collecting_guest(true, COUNT_COLLECTION);
+    let directory = tempfile::tempdir().expect("publication");
+    let (base, layer) = baseline_and_layer(&wasm, directory.path()).await;
+    assert_eq!(
+        (word(&base, 300), word(&layer, 308), word(&layer, 300)),
+        (1, 1, 2),
+        "the baseline must be captured after the runtime stage's collection, and the layer after the application's"
+    );
+    assert_eq!(
+        word(&layer, 304),
+        u32::from(isoplane_host::hibernate_capture::GC_HINT_SNAPSHOT),
+        "a template capture must ask for the collection a hibernation capture does"
+    );
+}
+
+#[tokio::test]
+async fn a_guest_without_a_runtime_stage_is_collected_only_after_its_initializer() {
+    let wasm = collecting_guest(false, COUNT_COLLECTION);
+    let directory = tempfile::tempdir().expect("publication");
+    let (base, layer) = baseline_and_layer(&wasm, directory.path()).await;
+    assert_eq!(
+        (word(&base, 300), word(&layer, 308), word(&layer, 300)),
+        (0, 0, 1),
+        "a guest with no runtime stage must not be entered before its initializer"
+    );
+}
+
+#[tokio::test]
+async fn a_guest_that_traps_while_collecting_fails_its_preparation() {
+    let wasm = collecting_guest(true, "unreachable");
+    let failure = match baseline(&wasm, &request(&wasm, InitSandbox::Sealed)).await {
+        Ok(_) => panic!("a guest that traps while collecting must not be captured"),
+        Err(failure) => failure,
+    };
+    assert_eq!(
+        (failure.stage, failure.completion),
+        (
+            BuildStage::Initialization,
+            Some(isoplane_engine::Completion::Trapped)
+        ),
+        "a trap in the collection before capture must fail initialization: {}",
+        failure.detail
+    );
+}

@@ -166,7 +166,8 @@ enum Stage {
 }
 
 /// Runs `stage` on `instance` until it completes or fails, waking it from
-/// `host` while it is parked, and adds the CPU it used to `cpu_ns`.
+/// `host` while it is parked, then has the guest collect its garbage, and
+/// adds the CPU both used to `cpu_ns`.
 fn run_stage(
     instance: &mut isoplane_engine::Instance,
     stage: Stage,
@@ -206,7 +207,22 @@ fn run_stage(
         );
         *cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
     }
-    Ok(outcome)
+    let ran_guest_code = match stage {
+        Stage::Runtime => instance.has_initialize_runtime(),
+        Stage::Application => true,
+    };
+    if outcome.completion != Completion::Done || !ran_guest_code {
+        return Ok(outcome);
+    }
+    // Garbage left in a template is left to every instance: its first
+    // collection, which a hibernation capture runs, rewrites template pages
+    // into that instance's delta.
+    let collected = instance.run_gc_hint(
+        isoplane_host::hibernate_capture::GC_HINT_SNAPSHOT,
+        initialization_budget(request, *cpu_ns, start.elapsed())?,
+    );
+    *cpu_ns = cpu_ns.saturating_add(collected.cpu_ns);
+    Ok(collected)
 }
 
 /// What a capture produced, in the representation its mode asked for.

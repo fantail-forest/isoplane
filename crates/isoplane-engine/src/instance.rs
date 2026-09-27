@@ -133,6 +133,20 @@ impl Instance {
         self.slice(budget, Entry::InitializeRuntime)
     }
 
+    /// Whether the guest exports `isoplane_initialize_runtime`, so that
+    /// [`Instance::run_initialize_runtime`] runs guest code.
+    pub fn has_initialize_runtime(&self) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|live| live.f_initialize_runtime.is_some())
+    }
+
+    /// Run `isoplane_gc_hint` under `budget`, which preparation charges to
+    /// initialization. A guest without the export completes at once.
+    pub fn run_gc_hint(&mut self, pressure: u8, budget: CpuBudget) -> DispatchOutcome {
+        self.slice(budget, Entry::GcHint(pressure))
+    }
+
     fn refuse(&self, kind: TrapKind, why: String) -> DispatchOutcome {
         DispatchOutcome {
             status: PollStatus::Trapped {
@@ -436,7 +450,7 @@ impl InstanceOps for Instance {
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome {
         // The hint runs on the hibernation path with no dispatch budget of its
         // own; the HTTP budget stops a guest turning it into free compute.
-        self.slice(CpuBudget::http(), Entry::GcHint(pressure))
+        self.run_gc_hint(pressure, CpuBudget::http())
     }
 
     fn reset(&mut self) -> Result<()> {
