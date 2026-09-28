@@ -170,10 +170,16 @@ impl StoreState {
                 .memory_limit_bytes()
                 .unwrap_or(cfg.max_memory_bytes),
         };
+        let mut state = Self::unbound(cfg, memory_limit);
+        state.bindings = Some(bindings);
+        state
+    }
+
+    pub(crate) fn unbound(cfg: &EngineConfig, memory_limit: u64) -> Self {
         let mut limits = Limits::new(cfg);
         limits.max_memory_bytes = memory_limit.min(cfg.max_memory_bytes) as usize;
         Self {
-            bindings: Some(bindings),
+            bindings: None,
             init_pal_calls: std::collections::BTreeMap::new(),
             memory: None,
             clock_ms: 0,
@@ -189,6 +195,19 @@ impl StoreState {
             scratch: Vec::new(),
             platform_files: cfg.platform_files.clone(),
         }
+    }
+
+    pub(crate) fn reset_execution(&mut self) {
+        self.memory = None;
+        self.wasm_depth = 0;
+        self.kill = None;
+        self.grace_at_ns = None;
+        self.unsafe_to_trap = false;
+        self.grace_deferrals = 0;
+        self.violation = None;
+        self.abort_msg = None;
+        self.limits.oom = false;
+        self.scratch.clear();
     }
 
     pub(crate) fn begin_slice(&mut self, clock_ms: u64, meter: Meter) {

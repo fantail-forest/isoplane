@@ -58,9 +58,9 @@ use wake::CellWake;
 pub struct CellConfig {
     #[serde(skip)]
     pub name: String,
-    /// The bound on concurrently Hot dispatches. Defaults to four times the
-    /// logical cpus.
+    /// The bound on concurrently Hot dispatches.
     pub exec_threads: usize,
+    /// Async workers serving guest I/O and wake sources.
     pub reactor_threads: usize,
     /// Dispatches one worker's lane holds before the cell sheds. Each
     /// execution thread has its own lane, so the cell as a whole holds
@@ -82,11 +82,10 @@ pub struct CellConfig {
 
 impl Default for CellConfig {
     fn default() -> Self {
-        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
         Self {
             name: "cell-0".into(),
-            exec_threads: cores * 4,
-            reactor_threads: cores.max(2),
+            exec_threads: 128,
+            reactor_threads: 128,
             queue_depth_per_worker: 64,
             max_idle_per_module: 64,
             response_queue_bytes: isoplane_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,

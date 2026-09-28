@@ -72,7 +72,7 @@ pub(crate) fn restore_mutable_state(inst: &mut Instance, img: &InstanceImage) ->
 // These identities are compared only inside the Live store that owns them; they are
 // never serialized, dereferenced, or reused by another activation.
 #[derive(PartialEq, Eq)]
-struct FunctionIdentity(usize);
+struct FunctionIdentity(std::num::NonZeroUsize);
 
 #[derive(PartialEq, Eq)]
 enum TableEntry {
@@ -98,7 +98,7 @@ impl TableBaseline {
         Ok(Self(baseline))
     }
 
-    fn verify(
+    pub(crate) fn verify(
         &self,
         store: &mut Store<crate::state::StoreState>,
         tables: &[Table],
@@ -143,7 +143,8 @@ fn table_entry(
     {
         Ref::Func(None) => Ok(TableEntry::Null),
         Ref::Func(Some(function)) => Ok(TableEntry::Function(FunctionIdentity(
-            function.to_raw(store) as usize,
+            std::num::NonZeroUsize::new(function.to_raw(store) as usize)
+                .context("a non-null function reference has no identity")?,
         ))),
         _ => bail!("table slot {index} is not a function reference and cannot be captured"),
     }

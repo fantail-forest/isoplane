@@ -125,13 +125,13 @@ fn default_tables_per_module() -> u32 {
     isoplane_abi::config::DEFAULT_TABLES_PER_MODULE
 }
 fn default_max_instances() -> u32 {
-    10_000
+    isoplane_abi::config::DEFAULT_MAX_INSTANCES
 }
 fn default_max_memory_mib() -> u64 {
-    128
+    isoplane_abi::config::DEFAULT_ENGINE_MEMORY_BYTES >> 20
 }
 fn default_guard_mib() -> u64 {
-    32
+    isoplane_abi::config::DEFAULT_MEMORY_GUARD_BYTES >> 20
 }
 
 impl EngineLimits {

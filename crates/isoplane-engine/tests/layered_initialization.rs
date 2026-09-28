@@ -1,6 +1,8 @@
 //! Captured initialization state restores over unchanged compiled code.
 #![cfg(target_os = "linux")]
 mod common;
+#[path = "common/dispatch.rs"]
+mod dispatch;
 
 use common::*;
 use isoplane_engine::prepared::{PreparedIdentity, PreparedTemplate};
@@ -124,6 +126,63 @@ fn prepared_product_uses_only_the_callers_storage_and_removes_its_scratch() {
         fresh.memory()[100],
         42,
         "the restored mapping must survive scratch cleanup"
+    );
+}
+
+#[test]
+fn a_pre_mapped_guest_still_enforces_its_activation_memory_limit() {
+    let engine = test_engine();
+    let (_, source) = source(&engine, "i64.const 0");
+    let mut instance = initialize(&engine, &source);
+    let product = capture(&engine, &source, &mut instance);
+    drop(instance);
+    let template = engine.load_prepared_product(&product).expect("load layer");
+    let mapped = engine
+        .map_activation(
+            &template,
+            isoplane_abi::config::GuestMemoryBytes::new(4 << 20).expect("valid ceiling"),
+        )
+        .expect("map")
+        .expect("mapped guest");
+    let mut bindings = TestBindings::new(Recorder::default());
+    bindings.memory_limit_bytes = Some(1);
+    assert!(
+        mapped.activate(Box::new(bindings)).is_err(),
+        "pre-mapping must not bypass the request's memory ceiling"
+    );
+}
+
+#[test]
+fn a_fresh_reset_restores_globals_without_replacing_the_layer_mapping() {
+    let engine = test_engine();
+    let (_, source) = source(&engine, "i64.const 73 global.set $calls i64.const 0");
+    let mut instance = initialize(&engine, &source);
+    let product = capture(&engine, &source, &mut instance);
+    drop(instance);
+    let template = engine.load_prepared_product(&product).expect("load layer");
+    let mut instance = activate(&engine, &template);
+    let address = instance.memory().as_ptr();
+    let original = instance.capture_mutable_state().expect("template globals");
+    let mut changed = original.clone();
+    for value in &mut changed.globals {
+        if let isoplane_engine::snapshot::GlobalValue::I64(value) = value {
+            *value = 99;
+        }
+    }
+    instance
+        .restore_mutable_state(&changed)
+        .expect("change globals");
+    instance.reset().expect("reset fresh instance");
+    assert_eq!(
+        instance.memory().as_ptr(),
+        address,
+        "fresh reset must retain the mapped address"
+    );
+    assert_eq!(
+        postcard::to_allocvec(&instance.capture_mutable_state().expect("reset globals"))
+            .expect("encode"),
+        postcard::to_allocvec(&original).expect("encode"),
+        "fresh reset must restore captured globals as well as linear memory"
     );
 }
 
@@ -289,4 +348,86 @@ fn simultaneous_layer_instances_keep_private_writes_isolated() {
         77,
         "private writes must remain isolated in both directions"
     );
+}
+
+#[test]
+fn preparing_growth_preserves_the_guest_heap_and_captured_state() {
+    use isoplane_abi::config::GuestMemoryBytes;
+    use std::os::unix::fs::FileExt;
+
+    let engine = IsoplaneEngine::new(isoplane_engine::EngineConfig {
+        max_memory_bytes: 512 << 20,
+        max_instances: 2,
+        ..small_engine_config()
+    })
+    .expect("engine with a large virtual reservation");
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1 8192)
+        (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
+        (func (export "isoplane_initialize") (result i64)
+            i32.const 100 i32.const 42 i32.store8 i64.const 0)
+        (func (export "isoplane_handle") (param i32 i32) (result i64)
+            (if (i32.ne (i32.load8_u (i32.const 100)) (i32.const 42)) (then unreachable))
+            (if (i32.ne (memory.grow (i32.const 1)) (i32.const 1)) (then unreachable))
+            (if (i32.ne (i32.load8_u (i32.const 65536)) (i32.const 0)) (then unreachable))
+            i32.const 65536 i32.const 73 i32.store8 i64.const 0)
+        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0))"#,
+    )
+    .expect("growth fixture");
+    let source = engine.load_layer_source(&wasm).expect("source");
+    let mut initialized = initialize(&engine, &source);
+    let product = capture(&engine, &source, &mut initialized);
+    drop(initialized);
+    let template = engine
+        .load_prepared_product(&product)
+        .expect("captured template");
+    for ceiling_bytes in [128 << 20, 512 << 20] {
+        let mapped = engine
+            .map_activation(
+                &template,
+                GuestMemoryBytes::new(ceiling_bytes).expect("ceiling"),
+            )
+            .expect("prepare growth")
+            .expect("Linux pooled mapping");
+        let mut bindings = TestBindings::new(Recorder::default());
+        bindings.memory_limit_bytes = Some(ceiling_bytes);
+        let mut instance = mapped.activate(Box::new(bindings)).expect("activate");
+        assert_eq!(
+            instance.memory_len(),
+            65536,
+            "preparing permissions must preserve the captured logical heap size"
+        );
+        let address = instance.memory().as_ptr() as u64;
+        let mut entries = vec![0; ((ceiling_bytes - 65536) / 4096 * 8) as usize];
+        std::fs::File::open("/proc/self/pagemap")
+            .expect("page table visibility")
+            .read_exact_at(&mut entries, ((address + 65536) / 4096) * 8)
+            .expect("suffix page entries");
+        assert!(
+            entries
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .all(|entry| u64::from_ne_bytes(*entry) & (1 << 63) == 0),
+            "preparing a 128 or 512 MiB ceiling must leave the unused suffix nonresident"
+        );
+        assert_eq!(
+            instance
+                .dispatch(&dispatch::http_dispatch(1), CpuBudget::http())
+                .completion,
+            Completion::Done,
+            "guest growth must see the captured size and preserve initialized bytes"
+        );
+        assert_eq!(
+            instance.memory_len(),
+            2 * 65536,
+            "guest growth must expose only its requested page"
+        );
+        assert_eq!(
+            instance.memory()[65536],
+            73,
+            "the newly grown page must be writable"
+        );
+    }
 }

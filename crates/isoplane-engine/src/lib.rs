@@ -1,7 +1,8 @@
 //! The sandbox boundary: everything that touches wasmtime. Templates are
 //! pre-initialised memory images mapped copy-on-write by wasmtime's pooling
 //! allocator; an activation is a `Store` plus `Linker::instantiate` into a
-//! pre-reserved slot, and a reset drops the store and instantiates again. A
+//! pre-reserved slot. Captured images can retain their mappings across reset
+//! and hibernation. A
 //! dispatch is a synchronous call on the caller's thread, metered by the
 //! thread CPU clock and killed through the epoch counter.
 
@@ -25,6 +26,7 @@ mod capture;
 mod compiler;
 mod layout;
 mod linker;
+mod mapped;
 mod meter;
 mod state;
 #[cfg(target_os = "linux")]
@@ -40,6 +42,7 @@ pub use budget::{
 pub use compiler::COMPILER_STACK_BYTES;
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
+pub use mapped::DormantInstance;
 pub use meter::clock_read_failures;
 pub use meter::try_thread_cpu_nanos;
 pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
@@ -58,7 +61,7 @@ pub struct EngineConfig {
     /// Disabled by default and excluded from serialized preparation settings.
     #[serde(skip)]
     pub perf_jitdump: bool,
-    /// Ceiling on concurrently resident instances in this cell.
+    /// Ceiling on allocated instances, including retained hibernation mappings.
     pub max_instances: u32,
     /// Aggregate pooled table slots; omission follows the instance count.
     pub total_tables: Option<u32>,
@@ -100,9 +103,9 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             perf_jitdump: false,
-            max_instances: 10_000,
+            max_instances: isoplane_abi::config::DEFAULT_MAX_INSTANCES,
             total_tables: None,
-            max_memory_bytes: 128 << 20,
+            max_memory_bytes: isoplane_abi::config::DEFAULT_ENGINE_MEMORY_BYTES,
             max_core_instance_size_bytes: isoplane_abi::config::DEFAULT_CORE_INSTANCE_SIZE_BYTES,
             table_elements: isoplane_abi::config::DEFAULT_TABLE_ELEMENTS,
             max_tables_per_module: isoplane_abi::config::DEFAULT_TABLES_PER_MODULE,
@@ -111,7 +114,7 @@ impl Default for EngineConfig {
             epoch_tick_us: 200,
             pooling: true,
             spectre_mitigations: true,
-            guard_size_bytes: 32 << 20,
+            guard_size_bytes: isoplane_abi::config::DEFAULT_MEMORY_GUARD_BYTES,
             platform_files: PlatformFiles::default(),
         }
     }

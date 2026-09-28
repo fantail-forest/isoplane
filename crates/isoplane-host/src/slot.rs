@@ -122,6 +122,7 @@ struct SlotInner {
     resume_state: LifecycleTier,
     /// The resident instance between calls; a call guard temporarily owns it.
     resident: Option<Box<dyn InstanceOps + Send>>,
+    dormant: Option<Box<dyn isoplane_engine::DormantInstance>>,
     in_call: bool,
     parked_since_ms: Option<u64>,
     /// Set on entry or rehydration and cleared by reset.
@@ -156,6 +157,7 @@ impl Slot {
                 state: LifecycleTier::Parked,
                 resume_state: LifecycleTier::Parked,
                 resident: Some(inst),
+                dormant: None,
                 in_call: false,
                 parked_since_ms: None,
                 dirty: false,
@@ -277,7 +279,7 @@ impl Slot {
         self.publish(&g);
     }
 
-    /// Releases resident pages after the context publishes its local checkpoint.
+    /// Releases guest pages after saving a local snapshot, retaining mappings when supported.
     pub fn hibernate(&self) -> Result<(), HibernateRefused> {
         let mut g = self.inner.lock();
         if g.tombstoned {
@@ -289,11 +291,20 @@ impl Slot {
         if g.state != LifecycleTier::Parked {
             return Err(HibernateRefused::NotParked(g.state));
         }
-        g.resident = None;
+        g.dormant = g.resident.take().and_then(|instance| instance.evict());
         g.state = LifecycleTier::Hibernated;
         g.parked_since_ms = None;
         self.publish(&g);
         Ok(())
+    }
+
+    pub(crate) fn take_dormant(&self) -> Option<Box<dyn isoplane_engine::DormantInstance>> {
+        let mut g = self.inner.lock();
+        if g.state == LifecycleTier::Hibernated {
+            g.dormant.take()
+        } else {
+            None
+        }
     }
 
     /// Install the caller's restored instance and return the slot to parked.
@@ -303,6 +314,7 @@ impl Slot {
         debug_assert_eq!(g.state, LifecycleTier::Hibernated);
         g.resident = Some(inst);
         g.state = LifecycleTier::Parked;
+        g.dormant = None;
         g.dirty = true;
         self.publish(&g);
     }
@@ -340,6 +352,7 @@ impl Slot {
     pub fn discard(&self) {
         let mut g = self.inner.lock();
         g.resident = None;
+        g.dormant = None;
         self.ctx.snapshot.lock().take();
         self.ctx.release_native_resources();
         g.state = LifecycleTier::Discarded;

@@ -56,3 +56,6 @@ pub enum Error {
     #[error("the debugger endpoint must be the session-owned 127.0.0.1 address with a bound port")]
     DebugEndpoint,
 }
+
+#[cfg(feature = "diagnostic-benchmark")]
+pub use runtime::run_concurrent_pairs;

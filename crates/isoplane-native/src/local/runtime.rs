@@ -20,12 +20,14 @@ use parking_lot::RwLock;
 
 use super::Inputs as Project;
 
+#[derive(Clone)]
 enum PreparedActivator {
     Ordinary(Arc<EngineActivator>),
     Debug(Arc<isoplane_host::debug::DebugActivator>),
 }
 
 /// Validated guest code ready to register with local services.
+#[derive(Clone)]
 pub struct Prepared {
     activator: PreparedActivator,
     manifest: AppManifest,
@@ -495,3 +497,8 @@ mod storage_tests {
         );
     }
 }
+
+#[cfg(feature = "diagnostic-benchmark")]
+mod concurrent_pairs;
+#[cfg(feature = "diagnostic-benchmark")]
+pub use concurrent_pairs::run_concurrent_pairs;

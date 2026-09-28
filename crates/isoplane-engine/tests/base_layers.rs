@@ -127,6 +127,148 @@ fn a_layer_over_a_baseline_activates_to_the_fully_initialized_memory() {
 }
 
 #[test]
+fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction() {
+    let engine = test_engine();
+    let directory = tempfile::tempdir().expect("directory");
+    let base = baseline(&engine, &guest_writing(1), &directory.path().join("base"));
+    let mut templates = Vec::new();
+    for marker in 1u8..=8 {
+        let mut instance = initialize_layer(&engine, &base, marker);
+        let product = engine
+            .prepare_initialized_template_over(
+                &base,
+                &mut instance,
+                identity(marker),
+                Default::default(),
+                vec![],
+            )
+            .expect("distinct layer capture");
+        let path = directory.path().join(marker.to_string());
+        product.publish(&path).expect("publish layer");
+        // SAFETY: the fixture owns and keeps every published backing file unchanged.
+        let template = unsafe { engine.load_prepared_over(&base, &path, identity(marker), &[]) }
+            .expect("load distinct layer");
+        let mapped = engine
+            .map_activation(
+                &template,
+                isoplane_abi::config::GuestMemoryBytes::new(4 << 20).expect("valid ceiling"),
+            )
+            .expect("pre-map")
+            .expect("layer supports retention");
+        templates.push((marker, template, mapped));
+    }
+    for (marker, _template, mapped) in templates {
+        let mut instance = mapped
+            .activate(Box::new(TestBindings::new(Recorder::default())))
+            .expect("activate mapped guest");
+        let address = instance.memory().as_ptr() as usize;
+        let mapping_lines = || {
+            std::fs::read_to_string("/proc/self/maps")
+                .expect("process mappings")
+                .lines()
+                .filter(|line| {
+                    let range = line.split_whitespace().next().expect("address range");
+                    let (start, end) = range.split_once('-').expect("range bounds");
+                    let start = usize::from_str_radix(start, 16).expect("start");
+                    let end = usize::from_str_radix(end, 16).expect("end");
+                    start < address + 2 * 65536 && end > address
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let mappings = mapping_lines();
+        for _ in 0..3 {
+            assert_eq!(
+                instance.memory()[70000],
+                marker,
+                "each guest must retain its own overlay"
+            );
+            assert_eq!(
+                &instance.memory()[100..107],
+                b"runtime",
+                "unchanged content must come from the shared baseline"
+            );
+            assert_eq!(
+                instance
+                    .dispatch(&dispatch::http_dispatch(1), CpuBudget::http())
+                    .completion,
+                Completion::Done,
+                "guest must reach a capture boundary"
+            );
+            instance
+                .capture_mutable_state()
+                .expect("capture before evicting");
+            let dormant = instance
+                .evict()
+                .expect("captured layered guest retains its mappings");
+            assert_eq!(
+                mapping_lines(),
+                mappings,
+                "eviction must preserve the actual VMAs, not only an address reservation"
+            );
+            use std::os::unix::fs::FileExt;
+            let mut entry = [0u8; 8];
+            std::fs::File::open("/proc/self/pagemap")
+                .expect("page table visibility")
+                .read_exact_at(&mut entry, (address as u64 / 4096) * 8)
+                .expect("mapped page entry");
+            assert_eq!(
+                u64::from_ne_bytes(entry) & (1 << 63),
+                0,
+                "eviction must release resident pages while retaining their mappings"
+            );
+            instance = dormant
+                .activate(Box::new(TestBindings::new(Recorder::default())))
+                .expect("reactivate without remapping");
+            assert_eq!(
+                instance.memory().as_ptr() as usize,
+                address,
+                "activation must reuse the original address space"
+            );
+            assert_eq!(
+                mapping_lines(),
+                mappings,
+                "activation must preserve template backing mappings"
+            );
+            instance.memory()[70000] = 255;
+            instance
+                .reset()
+                .expect("fresh reset in the existing mapping");
+            assert_eq!(
+                instance.memory()[70000],
+                marker,
+                "fresh reset must discard private writes"
+            );
+            assert_eq!(
+                instance.memory().as_ptr() as usize,
+                address,
+                "fresh reset must retain the address space"
+            );
+            assert_eq!(
+                mapping_lines(),
+                mappings,
+                "fresh reset must retain the template mappings"
+            );
+        }
+    }
+}
+
+fn initialize_layer(
+    engine: &IsoplaneEngine,
+    base: &Template,
+    marker: u8,
+) -> isoplane_engine::Instance {
+    let mut instance = activate(engine, base);
+    assert_eq!(
+        instance.run_initialize(CpuBudget::http()).completion,
+        Completion::Done,
+        "initializer must complete"
+    );
+    instance.memory()[70000] = marker;
+    instance
+}
+
+#[test]
 fn a_layer_stores_only_the_pages_its_application_changed_and_no_native_code() {
     let engine = test_engine();
     let directory = tempfile::tempdir().expect("directory");

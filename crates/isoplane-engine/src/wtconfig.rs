@@ -69,6 +69,7 @@ pub(crate) fn build_engine(cfg: &EngineConfig) -> Result<Engine> {
     c.memory_reservation(cfg.max_memory_bytes);
     c.memory_reservation_for_growth(0);
     c.memory_may_move(false);
+    c.memory_explicit_bounds_checks(cfg.pooling && cfg!(target_os = "linux"));
 
     c.memory_guard_size(cfg.guard_size_bytes);
     c.guard_before_linear_memory(false);

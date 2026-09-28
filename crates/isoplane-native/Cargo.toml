@@ -10,6 +10,7 @@ description = "Native platform support for managed Isoplane development tools"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+reqwest = { workspace = true, optional = true }
 isoplane-cache.workspace = true
 isoplane-runtime = { workspace = true, features = ["local"] }
 isoplane-abi = { workspace = true, features = ["host"] }
@@ -57,9 +58,17 @@ win32job.workspace = true
 csbindgen.workspace = true
 
 [dev-dependencies]
+nix.workspace = true
 http-body-util.workspace = true
 wat.workspace = true
 isoplane-fixtures.workspace = true
 reqwest.workspace = true
 portable-pty.workspace = true
 toml.workspace = true
+
+[features]
+diagnostic-benchmark = ["dep:reqwest"]
+
+[[example]]
+name = "concurrent_pairs"
+required-features = ["diagnostic-benchmark"]

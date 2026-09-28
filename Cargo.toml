@@ -100,7 +100,7 @@ wasmparser  = "0.244"
 wasm-encoder = { version = "0.244", features = ["wasmparser"] }
 # Preparation and execution share this Wasmtime dependency configuration.
 # Engine construction and module validation apply guest capability restrictions.
-wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "614b0b1c00237936db5721e6873bb24c41f5edd1", default-features = false, features = [
+wasmtime    = { git = "https://github.com/fantail-forest/isoplane-wasmtime", rev = "5edbc165170a2917bf8a9b91ddce43c16a6e99fd", default-features = false, features = [
     "anyhow", "runtime", "std", "cranelift", "winch", "pooling-allocator", "call-hook",
     "backtrace", "demangle", "addr2line", "parallel-compilation", "profiling", "gc", "gc-null",
 ] }
@@ -109,7 +109,7 @@ tempfile    = "3"
 memmap2 = "0.9"
 linux-raw-sys = { version = "0.12", features = ["ioctl"] }
 fd-lock     = "4"
-nix = { version = "0.30.1", default-features = false, features = ["fs"] }
+nix = { version = "0.30.1", default-features = false, features = ["fs", "process", "resource", "time"] }
 rustix = { version = "1.1.4", features = ["process", "event"] }
 rayon       = "1"
 base64      = "0.22"

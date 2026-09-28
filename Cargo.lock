@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
@@ -505,7 +505,7 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -513,7 +513,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-entity",
  "wasmtime-internal-core",
@@ -522,7 +522,7 @@ dependencies = [
 [[package]]
 name = "cranelift-bitset"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "serde",
  "serde_derive",
@@ -532,7 +532,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -562,7 +562,7 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -574,12 +574,12 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 
 [[package]]
 name = "cranelift-control"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "arbitrary",
 ]
@@ -587,7 +587,7 @@ dependencies = [
 [[package]]
 name = "cranelift-entity"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -598,7 +598,7 @@ dependencies = [
 [[package]]
 name = "cranelift-frontend"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-codegen",
  "hashbrown 0.17.1",
@@ -610,12 +610,12 @@ dependencies = [
 [[package]]
 name = "cranelift-isle"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 
 [[package]]
 name = "cranelift-native"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -625,7 +625,7 @@ dependencies = [
 [[package]]
 name = "cranelift-srcgen"
 version = "0.135.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 
 [[package]]
 name = "crc32fast"
@@ -1689,6 +1689,7 @@ dependencies = [
  "isoplane-trust",
  "libc",
  "libproc",
+ "nix 0.30.1",
  "parking_lot",
  "portable-pty",
  "procfs",
@@ -2543,7 +2544,7 @@ dependencies = [
 [[package]]
 name = "pulley-interpreter"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -2554,7 +2555,7 @@ dependencies = [
 [[package]]
 name = "pulley-macros"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3986,7 +3987,7 @@ dependencies = [
 [[package]]
 name = "wasmtime"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "addr2line",
  "async-trait",
@@ -4028,7 +4029,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-environ"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -4058,12 +4059,12 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-component-util"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 
 [[package]]
 name = "wasmtime-internal-core"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "anyhow",
  "hashbrown 0.17.1",
@@ -4074,7 +4075,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-cranelift"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-codegen",
  "cranelift-control",
@@ -4099,7 +4100,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-fiber"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cc",
  "libc",
@@ -4112,7 +4113,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-jit-debug"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cc",
  "object",
@@ -4123,7 +4124,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "libc",
  "wasmtime-internal-core",
@@ -4133,7 +4134,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-unwinder"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -4144,7 +4145,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4154,7 +4155,7 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-winch"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-codegen",
  "gimli",
@@ -4277,7 +4278,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "winch-codegen"
 version = "48.0.2"
-source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=614b0b1c00237936db5721e6873bb24c41f5edd1#614b0b1c00237936db5721e6873bb24c41f5edd1"
+source = "git+https://github.com/fantail-forest/isoplane-wasmtime?rev=5edbc165170a2917bf8a9b91ddce43c16a6e99fd#5edbc165170a2917bf8a9b91ddce43c16a6e99fd"
 dependencies = [
  "cranelift-assembler-x64",
  "cranelift-codegen",

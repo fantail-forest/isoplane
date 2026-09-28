@@ -16,6 +16,13 @@ use crate::{InstanceId, ModuleId};
 /// instance is `Send` because a parked instance is woken onto whichever pool
 /// thread takes the wake.
 pub trait Activator: Send + Sync + 'static {
+    /// Pre-map one captured instance at registration when supported.
+    fn map_activation(
+        &self,
+        _memory_limit_bytes: isoplane_abi::config::GuestMemoryBytes,
+    ) -> anyhow::Result<Option<Box<dyn isoplane_engine::DormantInstance>>> {
+        Ok(None)
+    }
     fn module(&self) -> &ModuleId;
     fn module_hash(&self) -> ModuleHash;
     fn abi_rev(&self) -> u32;
@@ -67,6 +74,7 @@ pub struct InstancePool {
     warm: Mutex<IdleList>,
     reset_candidates: Mutex<IdleList>,
     max_idle: usize,
+    mapped: Mutex<Option<Box<dyn isoplane_engine::DormantInstance>>>,
     live: AtomicU64,
     /// Set once the module is retired; instances released afterwards are
     /// discarded instead of pooled.
@@ -126,8 +134,28 @@ impl InstancePool {
             warm: Mutex::new(IdleList::default()),
             reset_candidates: Mutex::new(IdleList::default()),
             max_idle,
+            mapped: Mutex::new(None),
             live: AtomicU64::new(0),
             retired: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn map_activation(
+        &self,
+        memory_limit_bytes: isoplane_abi::config::GuestMemoryBytes,
+    ) -> anyhow::Result<()> {
+        *self.mapped.lock() = self.activator.map_activation(memory_limit_bytes)?;
+        Ok(())
+    }
+
+    pub(crate) fn activate(
+        &self,
+        bindings: Box<dyn isoplane_engine::HostBindings>,
+    ) -> anyhow::Result<Box<dyn InstanceOps + Send>> {
+        let mapped = self.mapped.lock().take();
+        match mapped {
+            Some(mapped) => mapped.activate(bindings),
+            None => self.activator.activate(bindings),
         }
     }
 
@@ -137,6 +165,7 @@ impl InstancePool {
         // Set before draining takes each list lock, and read under that lock by
         // `release`, so an instance released concurrently is drained or refused.
         self.retired.store(true, Ordering::Release);
+        self.mapped.lock().take();
         self.drain_idle()
     }
 
@@ -263,7 +292,7 @@ impl InstancePool {
         let id = InstanceId::alloc();
         let ctx = make_ctx(id)?;
         let bindings = crate::bindings::CellBindings::boxed(ctx.clone());
-        let inst = self.activator.activate(bindings)?;
+        let inst = self.activate(bindings)?;
         self.live.fetch_add(1, Ordering::Relaxed);
         Ok((Arc::new(Slot::new(id, ctx, inst)), AcquireSource::Activated))
     }

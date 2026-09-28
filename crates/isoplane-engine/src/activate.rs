@@ -251,9 +251,7 @@ pub(crate) fn instantiate(
             start..start + memory.data_size(&store),
             crate::storage_fault::Access::ReadWrite,
         )?);
-        for (global, (_, value)) in globals.iter().zip(&t.mut_globals) {
-            global.set(&mut store, wasmtime::Val::from(*value))?;
-        }
+        restore_globals(&mut store, &globals, t)?;
     }
     let f_initialize = if t.has_initialize { f_initialize } else { None };
     drop(exports_stage);
@@ -277,4 +275,15 @@ pub(crate) fn instantiate(
         tables,
         table_baseline,
     })
+}
+
+pub(crate) fn restore_globals(
+    store: &mut Store<StoreState>,
+    globals: &[wasmtime::Global],
+    template: &TemplateInner,
+) -> Result<()> {
+    for (global, (_, value)) in globals.iter().zip(&template.mut_globals) {
+        global.set(&mut *store, wasmtime::Val::from(*value))?;
+    }
+    Ok(())
 }

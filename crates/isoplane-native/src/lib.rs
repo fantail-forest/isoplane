@@ -335,6 +335,10 @@ pub unsafe extern "C" fn isoplane_process_free(handle: *mut std::ffi::c_void) {
     let _handle = handle;
 }
 
+/// Runs the isolated diagnostic response-pair experiment.
+#[cfg(feature = "diagnostic-benchmark")]
+pub use local::run_concurrent_pairs;
+
 #[cfg(test)]
 mod tests {
     use super::*;

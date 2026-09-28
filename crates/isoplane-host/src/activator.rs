@@ -119,6 +119,13 @@ impl EngineActivator {
 }
 
 impl Activator for EngineActivator {
+    fn map_activation(
+        &self,
+        memory_limit_bytes: isoplane_abi::config::GuestMemoryBytes,
+    ) -> crate::Result<Option<Box<dyn isoplane_engine::DormantInstance>>> {
+        self.engine
+            .map_activation(&*self.current()?, memory_limit_bytes)
+    }
     fn module(&self) -> &ModuleId {
         &self.module
     }

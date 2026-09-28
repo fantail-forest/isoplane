@@ -19,8 +19,8 @@ use crate::template::TemplateInner;
 use crate::{DispatchOutcome, EngineInner, InstanceImage, Result, TrapInfo};
 
 /// The wasmtime side of an activation. Separate from [`Instance`] so that
-/// `reset` can drop the whole thing, returning the slot to the pool, and build
-/// a fresh one while the caller's `Instance` stays valid.
+/// `reset` can rebuild a changed memory or table shape while the caller's
+/// `Instance` stays valid. Unchanged shapes retain their mappings.
 pub(crate) struct Live {
     /// Watches memory mapped from the template's storage; declared first so
     /// the range is released before the store frees it.
@@ -370,6 +370,11 @@ impl Instance {
 /// What the host does to a live instance. A trait so `isoplane-host` can be
 /// tested against a fake engine.
 pub trait InstanceOps {
+    /// Discard resident linear-memory pages after a checkpoint has been saved.
+    /// Returns retained mappings when supported, otherwise releases the instance.
+    fn evict(self: Box<Self>) -> Option<Box<dyn crate::DormantInstance>> {
+        None
+    }
     /// Run a dispatch to completion, park, or kill.
     fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome;
     /// Deliver a completed host future.
@@ -377,8 +382,7 @@ pub trait InstanceOps {
     /// Called before hibernation capture so the guest GC can compact and zero
     /// the freed tail; zeroed pages compress out of the delta.
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
-    /// Drop the store, which returns the slot to the pool, and instantiate
-    /// the template again.
+    /// Restore template state, retaining mappings when their shape is unchanged.
     fn reset(&mut self) -> Result<()>;
     /// True only when the last call returned `pending` and wasmtime reports
     /// no wasm frame on the native stack.
@@ -439,6 +443,9 @@ impl Completion {
 }
 
 impl InstanceOps for Instance {
+    fn evict(self: Box<Self>) -> Option<Box<dyn crate::DormantInstance>> {
+        crate::mapped::evict(*self)
+    }
     fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
         self.slice(budget, Entry::Handle(rec))
     }
@@ -459,21 +466,24 @@ impl InstanceOps for Instance {
                 "refusing to reset a tombstoned instance ({why}); drop it and activate a fresh one"
             );
         }
+        match crate::mapped::reset(self) {
+            Ok(true) => {
+                self.last = None;
+                self.last_violation = None;
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.tombstone = Some("the retained mapping could not be reset");
+                return Err(error);
+            }
+        }
         let live = anyhow::Context::context(self.live.take(), "instance has no live store")?;
         // Released before the store frees the memory the next instance may reuse.
         #[cfg(target_os = "linux")]
         drop(live.storage);
         let mut data = live.store.into_data();
-        data.memory = None;
-        data.wasm_depth = 0;
-        data.kill = None;
-        data.grace_at_ns = None;
-        data.unsafe_to_trap = false;
-        data.grace_deferrals = 0;
-        data.violation = None;
-        data.abort_msg = None;
-        data.limits.oom = false;
-        data.scratch.clear();
+        data.reset_execution();
 
         let reset = (|| {
             if let Some(bindings) = data.bindings.as_mut() {

@@ -148,6 +148,9 @@ impl Cell {
             meters: Arc::new(Meters::new()),
             endpoint_exceptions,
         };
+        entry
+            .pool
+            .map_activation(entry.manifest.memory_max_bytes().try_into()?)?;
         self.modules.write().insert(module, Arc::new(entry));
         Ok(())
     }
