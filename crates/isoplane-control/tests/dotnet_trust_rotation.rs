@@ -18,7 +18,7 @@ use isoplane_engine::{ModuleHash, PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
 use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{Reactor, ReturnedGuest};
-use isoplane_host::egress::{DnsError, HostEgressPolicy};
+use isoplane_host::egress::DnsError;
 use isoplane_host::{InstanceId, Resolver};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
@@ -127,7 +127,7 @@ impl Resolver for NoDns {
 fn node_serving(files: PlatformFiles, template: &[u8], clock_ms: u64) -> (Reactor, ReturnedGuest) {
     let reactor = Reactor::with_platform_files(
         InstanceId::alloc(),
-        HostEgressPolicy::new(Box::new(NoDns), 8, 1 << 20),
+        isoplane_harness::Network::with_resolver(Box::new(NoDns)),
         files,
     );
     reactor.context.begin_slice(clock_ms, 1);
@@ -191,31 +191,6 @@ async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interva
          still serve: the rotation is not seen yet ({runtime}); logs: {:?}",
         reactor.context.emitted_logs()
     );
-}
-
-mod native_aot {
-    use super::*;
-
-    #[tokio::test]
-    async fn the_template_carries_the_store_loaded_at_preparation() {
-        super::the_template_carries_the_store_loaded_at_preparation(GuestRuntime::NativeAot).await;
-    }
-
-    #[tokio::test]
-    async fn a_removed_root_is_gone_from_the_prepared_templates_store_after_the_recheck() {
-        super::a_removed_root_is_gone_from_the_prepared_templates_store_after_the_recheck(
-            GuestRuntime::NativeAot,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interval() {
-        super::the_prepared_templates_store_keeps_its_roots_within_the_recheck_interval(
-            GuestRuntime::NativeAot,
-        )
-        .await;
-    }
 }
 
 mod mono {

@@ -2,35 +2,21 @@
 title: Build and run
 ---
 
-Use the configuration selected in your project file. The examples below use the
-configurations supplied by the template. See [execution modes](execution-modes.md)
-for the differences between them.
-
-## Build and run a configuration
+Build managed application code with the ordinary .NET configurations:
 
 ```bash
-dotnet build -c IsoplaneInterpretedDebug
-dotnet run --no-build -c IsoplaneInterpretedDebug
+dotnet build
+dotnet run
 ```
 
-Stop the application with Ctrl+C before starting another session for that
-project. To check ahead-of-time compilation:
+`dotnet run` builds an application package, prepares it on the SDK's shared Mono
+runtime with local settings, and starts the local listener. Stop the application
+with Ctrl+C before starting another session for that project. Use `-c Release`
+when you want the Release configuration.
 
-```bash
-dotnet build -c IsoplaneNativeAotRelease
-dotnet run --no-build -c IsoplaneNativeAotRelease
-```
-
-A successful build publishes and validates WebAssembly, pre-initializes the
-application with its local settings, and compiles native code for local execution.
-Preparation failures are build failures. `--no-build` starts the prepared application;
-omit it when you want `dotnet run` to check for source changes and build first.
-Changed module bytes, settings, or runtime invalidate the corresponding cached
-preparation.
-
-Test the configuration you intend to use, even if you normally iterate with
-the interpreted configuration. See [execution modes](execution-modes.md) when a
-NativeAOT build exposes different compatibility requirements.
+The local host caches preparation and native runtime compilation. Changes to the
+application package, settings or runtime invalidate the corresponding cached
+state. See [application packages](execution-modes.md) for the execution model.
 
 ## Control compatibility warnings
 
@@ -59,7 +45,7 @@ assembly validation and sandbox restrictions still apply.
 ## Watch for source changes
 
 ```bash
-dotnet watch --no-hot-reload run -c IsoplaneInterpretedDebug
+dotnet watch --no-hot-reload run
 ```
 
 This uses the ordinary .NET watch workflow: on an edit it stops the application,
@@ -74,6 +60,13 @@ configuration you would pass to `dotnet run`.
 
 ## Debugging
 
-Breakpoint debugging is currently unavailable. Use ordinary .NET unit tests
-for isolated application logic and [sandbox integration tests](test-an-application.md)
-to exercise platform behavior in both modes.
+Start a local debug session with:
+
+```bash
+isoplane dev --debug --no-watch
+```
+
+Connect an editor through `isoplane debug-adapter`. The session uses the SDK's
+shared debug runtime and serves one request. Use ordinary .NET unit tests for
+isolated application logic and [sandbox integration tests](test-an-application.md)
+to exercise platform behavior.

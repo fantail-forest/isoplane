@@ -120,12 +120,12 @@ public sealed class SetupTests
         var asked = new List<string>();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
-            CanLoad = soname => soname != "libzstd.so.1" && soname != "libtinfo.so.6",
+            CanLoad = soname => soname != "libz.so.1" && soname != "libstdc++.so.6",
             Confirm = question => { asked.Add(question); return Task.FromResult(false); },
         };
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, machine));
         Assert.Contains("Setup is incomplete", error.Message);
-        Assert.Contains("sudo apt-get install -y libzstd1 libtinfo6", error.Message);
+        Assert.Contains("sudo apt-get install -y zlib1g libstdc++6", error.Message);
         Assert.Single(asked);
         Assert.False(Directory.Exists(fixture.Home), "nothing is downloaded while prerequisites are missing");
     }
@@ -180,11 +180,11 @@ public sealed class SetupTests
         using var fixture = new ToolchainBundle();
         var machine = Machines.Ready(fixture, new FakeRegistrations()) with
         {
-            CanLoad = soname => soname != "libtinfo.so.6",
+            CanLoad = soname => soname != "libstdc++.so.6",
             LinuxDistribution = new OperatingSystemRelease("fedora", "41"),
         };
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(fixture, machine));
-        Assert.Contains("libtinfo.so.6", error.Message);
+        Assert.Contains("libstdc++.so.6", error.Message);
         Assert.DoesNotContain("sudo apt-get", error.Message);
     }
 

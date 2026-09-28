@@ -1,40 +1,27 @@
 ---
-title: Interpreted and NativeAOT execution
+title: Application packages and the shared runtime
 ---
 
-Both execution modes run your application inside the WebAssembly sandbox.
-Interpreted execution runs the application's managed code through an interpreter
-in the guest. NativeAOT compiles the application and its reachable dependencies
-ahead of time into WebAssembly. It does not run the application as unrestricted
-native code on your development machine.
+An Isoplane application is a package of managed IL, dependencies, symbols and
+assets. The SDK records its runtime identity in that package. Local execution
+uses the shared Mono runtime included in the SDK; a hosted node uses its installed
+copy of the matching runtime. Both execute the application inside the WebAssembly
+sandbox.
 
-## Why the project selects the mode
+You select an SDK version in your project. You do not compile a runtime or supply
+a WebAssembly module, baseline or native compilation profile when deploying an
+application. A node refuses a package when its runtime identity does not match an
+installed runtime.
 
-The template gives each mode a named configuration: `IsoplaneInterpretedDebug` and
-`IsoplaneNativeAotRelease`. Its `PublishAot` setting selects the mode; the target is
-`wasi-wasm` in both cases. Ordinary MSBuild configuration therefore determines
-what `dotnet build`, `dotnet run` and the integration test fixture execute.
+On Linux, preparation initializes the runtime into a shared baseline, then
+initializes each application package into a distinct layer over that baseline.
+Compatible applications share the baseline while retaining their own application
+state. Wasmtime still compiles the platform runtime for execution on the host.
 
-## Compatibility differs
+Application packages retain managed metadata for reflection and runtime type
+loading. Sandbox capability and resource limits still apply to managed code and
+its dependencies.
 
-Interpreted builds retain application metadata by default so libraries can
-discover types and members at runtime. Retaining those assemblies uses more
-memory. You can opt into trimming with `PublishTrimmed=true` when your
-application and its dependencies support it; test reflection-dependent paths
-with that setting enabled.
-
-Ahead-of-time compilation needs to determine reachable code before the request
-runs. Reflection and dynamic-code assumptions in an application or its libraries
-can therefore expose trimming warnings or compilation failures that an
-interpreted build does not. Build and test your application in the mode you
-intend to deploy.
-
-The PostgreSQL sample generates its EF model and queries at build time so they
-can run under NativeAOT.
-
-## Debugging
-
-Breakpoint debugging is currently unavailable in both execution modes.
-
-For the commands, use [build and run](run-and-rebuild.md). For validation in each
-mode, use [sandbox integration tests](test-an-application.md).
+Use [build and run](run-and-rebuild.md) for local development and
+[sandbox integration tests](test-an-application.md) to exercise application
+behavior through the runtime.

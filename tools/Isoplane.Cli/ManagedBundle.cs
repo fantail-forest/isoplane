@@ -44,7 +44,7 @@ internal sealed record SharedRuntime(string Directory)
     {
         var path = Path.Combine(Directory, name);
         return File.Exists(path) ? path
-            : throw new InvalidOperationException($"The referenced Isoplane.Sdk has no shared runtime at '{path}'; restore an SDK that includes one, or set ISOPLANE_RUNTIME_DIRECTORY.");
+            : throw new InvalidOperationException($"The referenced Isoplane.Sdk has no shared runtime at '{path}'; restore an SDK release that includes its shared runtime.");
     }
 }
 
@@ -65,7 +65,7 @@ internal static class ManagedBundle
             var exit = await Processes.RunAsync("dotnet", ["msbuild", projects[0], "-restore", "-target:IsoplaneManagedBundle",
                 "-nodeReuse:false", "-property:UseSharedCompilation=false",
                 "-property:IsoplaneManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
-                "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime,IsoplaneRuntimeDirectory",
+                "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory",
                 "-getItem:IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference",
                 "-getResultOutputFile:" + metadata, "-nologo"], options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
@@ -87,18 +87,10 @@ internal static class ManagedBundle
         AssemblyClosure.Validate(assemblies, platform);
         var entry = properties.GetProperty("AssemblyName").GetString();
         if (!assemblies.ContainsKey(entry ?? "")) throw new InvalidOperationException("The bundle has no application entry assembly.");
-        var execution = properties.GetProperty("IsoplaneGuestRuntime").GetString() switch
-        {
-            "Mono" => GuestExecution.Interpreted,
-            "NativeAOT" => GuestExecution.NativeAot,
-            _ => throw new InvalidOperationException("The project must select an interpreted or NativeAOT configuration.")
-        };
         var factory = properties.GetProperty("IsoplaneApplicationFactory").GetString();
         if (string.IsNullOrWhiteSpace(factory)) throw new InvalidOperationException("The project must name its application factory.");
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, factory, execution), BuildJson.Options);
-        var runtime = execution == GuestExecution.Interpreted
-            ? new SharedRuntime(properties.GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "").Identity
-            : null;
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, factory, GuestExecution.Interpreted), BuildJson.Options);
+        var runtime = new SharedRuntime(properties.GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "").Identity;
         var partial = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -107,7 +99,7 @@ internal static class ManagedBundle
             {
                 using var content = new MemoryStream(manifest, writable: false);
                 await tar.WriteEntryAsync(new PaxTarEntry(TarEntryType.RegularFile, "application.json") { DataStream = content }, cancellation);
-                if (runtime is not null) await tar.WriteEntryAsync(runtime, "runtime.json", cancellation);
+                await tar.WriteEntryAsync(runtime, "runtime.json", cancellation);
                 foreach (var assembly in assemblies.Values.OrderBy(value => value.Identity.Key, StringComparer.Ordinal))
                 {
                     await tar.WriteEntryAsync(assembly.Origin, "assemblies/" + assembly.Identity.RelativePath, cancellation);

@@ -9,9 +9,15 @@ internal sealed class LifecycleHook
 
     internal bool IsCompleted => completion?.IsCompletedSuccessfully == true;
 
-    internal Task EnterAsync(Func<Task>? callbacks) => completion ??= InvokeAsync(callbacks);
+    internal Task EnterAsync(Func<Task>? callbacks, Func<Task>? completing = null) => completion ??= InvokeAsync(callbacks, completing);
 
-    private static async Task InvokeAsync(Func<Task>? callbacks)
+    private static async Task InvokeAsync(Func<Task>? callbacks, Func<Task>? completing)
+    {
+        await InvokeCallbacksAsync(callbacks);
+        await InvokeCallbacksAsync(completing);
+    }
+
+    private static async Task InvokeCallbacksAsync(Func<Task>? callbacks)
     {
         if (callbacks is null) return;
         foreach (Func<Task> callback in callbacks.GetInvocationList())

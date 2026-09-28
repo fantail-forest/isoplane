@@ -41,12 +41,7 @@ fn config(dir: &std::path::Path) -> NodeConfig {
         cell: "cell-1".into(),
         hosts: vec!["quotes.isoplane.dev".into()],
         path_prefix: "/".into(),
-        versions: vec![VersionConfig {
-            id: "v1".into(),
-            wasm: None,
-        }],
-        init_visible_vars: Default::default(),
-        init_sandbox: Default::default(),
+        versions: vec![VersionConfig { id: "v1".into() }],
     }];
     cfg
 }
@@ -113,19 +108,11 @@ async fn a_real_guests_init_visible_config_is_consumed_at_preinit_not_at_runtime
     let path = isoplane_fixtures::rust_path("quotes-api");
 
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let mut cfg = config(dir.path());
+    let cfg = config(dir.path());
     let wasm = std::fs::read(path).expect("the guest fixture is built");
-    cfg.apps[0].init_visible_vars = [("REGION".to_string(), "nz-akl".to_string())]
-        .into_iter()
-        .collect();
-
     let mut manifest: isoplane_abi::config::AppManifest =
         toml::from_str("name = 'quotes'").expect("valid manifest");
-    manifest.init_visible_vars = cfg.apps[0]
-        .init_visible_vars
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+    manifest.init_visible_vars = vec![("REGION".to_string(), "nz-akl".to_string())];
     let node = Node::build(cfg).expect("a real node must assemble");
     let rec = node
         .real

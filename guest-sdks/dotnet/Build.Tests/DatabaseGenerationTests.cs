@@ -8,8 +8,8 @@ public sealed class DatabaseGenerationTests : IDisposable
     private readonly string directory = Directory.CreateTempSubdirectory("isoplane-database-generation-test-").FullName;
 
     [Theory]
-    [InlineData("IsoplaneInterpretedDebug")]
-    [InlineData("IsoplaneNativeAotRelease")]
+    [InlineData("Debug")]
+    [InlineData("Release")]
     public async Task unchanged_database_builds_reuse_the_generated_model_and_queries(string configuration)
     {
         CopyDesignProject();
@@ -24,7 +24,7 @@ public sealed class DatabaseGenerationTests : IDisposable
     [Fact]
     public async Task a_deleted_generated_source_is_recreated_on_the_next_build()
     {
-        const string configuration = "IsoplaneInterpretedDebug";
+        const string configuration = "Debug";
         CopyDesignProject();
         await Build(configuration);
         var missing = GeneratedSources(configuration).First();
@@ -43,7 +43,7 @@ public sealed class DatabaseGenerationTests : IDisposable
     [InlineData("import")]
     public async Task changed_database_inputs_regenerate_the_model_and_queries(string change)
     {
-        const string configuration = "IsoplaneInterpretedDebug";
+        const string configuration = "Debug";
         CopyDesignProject();
         var properties = PrepareDependency(change);
         await Build(configuration, properties);

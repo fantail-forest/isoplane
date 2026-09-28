@@ -35,7 +35,6 @@ fn cleanup_cell(
         let egress = isoplane_host::egress::HostEgressPolicy::new(
             Box::new(PendingResolver(work.clone())),
             32,
-            1 << 20,
         )
         .with_connections(Arc::new(PendingConnection(work)));
         let services = Arc::new(isoplane_host::cell::Services {
@@ -236,28 +235,13 @@ async fn the_cell_cancels_an_abandoned_interpreted_timer_and_discards_only_the_a
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_cell_cancels_an_abandoned_native_aot_timer_and_discards_only_the_affected_guest() {
-    check_managed_cleanup(GuestRuntime::NativeAot, "/timer").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_cell_cancels_an_abandoned_interpreted_dns_and_discards_only_the_affected_guest() {
     check_managed_cleanup(GuestRuntime::Mono, "/dns").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_cell_cancels_an_abandoned_native_aot_dns_and_discards_only_the_affected_guest() {
-    check_managed_cleanup(GuestRuntime::NativeAot, "/dns").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_cell_cancels_an_abandoned_interpreted_socket_and_discards_only_the_affected_guest() {
     check_managed_cleanup(GuestRuntime::Mono, "/socket").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_cell_cancels_an_abandoned_native_aot_socket_and_discards_only_the_affected_guest() {
-    check_managed_cleanup(GuestRuntime::NativeAot, "/socket").await;
 }
 
 async fn check_expired_abandoned_timer(runtime: GuestRuntime, abandon_first: bool) {
@@ -334,18 +318,8 @@ async fn an_expired_abandoned_interpreted_timer_cannot_break_a_later_requests_ti
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_expired_abandoned_native_aot_timer_cannot_break_a_later_requests_timer() {
-    check_expired_abandoned_timer(GuestRuntime::NativeAot, true).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_clean_interpreted_guest_drives_its_timer_after_clock_advances() {
     check_expired_abandoned_timer(GuestRuntime::Mono, false).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_clean_native_aot_guest_drives_its_timer_after_clock_advances() {
-    check_expired_abandoned_timer(GuestRuntime::NativeAot, false).await;
 }
 
 async fn check_dormant_promise(runtime: GuestRuntime) {
@@ -414,18 +388,8 @@ async fn a_dormant_interpreted_promise_can_be_signalled_by_a_later_active_reques
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_dormant_native_aot_promise_can_be_signalled_by_a_later_active_request() {
-    check_dormant_promise(GuestRuntime::NativeAot).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_interpreted_promise_can_resume_work_within_its_own_request() {
     check_same_request_promise(GuestRuntime::Mono).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_native_aot_promise_can_resume_work_within_its_own_request() {
-    check_same_request_promise(GuestRuntime::NativeAot).await;
 }
 
 async fn check_idle_socket_reuse(runtime: GuestRuntime) {
@@ -455,9 +419,4 @@ async fn check_idle_socket_reuse(runtime: GuestRuntime) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_idle_interpreted_socket_does_not_prevent_clean_guest_reuse() {
     check_idle_socket_reuse(GuestRuntime::Mono).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_idle_native_aot_socket_does_not_prevent_clean_guest_reuse() {
-    check_idle_socket_reuse(GuestRuntime::NativeAot).await;
 }

@@ -1,6 +1,6 @@
 <Project>
   <!-- Compiles against the Linux ASP.NET implementation assemblies, which a
-       Mono package or a NativeAOT link carries, in place of the shared
+       application IL package carries, in place of the shared
        framework a wasm target cannot restore. -->
   <Target Name="IsoplaneSelectAspNetCore" BeforeTargets="ProcessFrameworkReferences;ResolveAssemblyReferences;IsoplaneResolveManagedPlatform"
           Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">

@@ -1,5 +1,5 @@
 /*
- * The Isoplane platform abstraction layer for a NativeAOT-LLVM guest.
+ * The Isoplane platform abstraction layer for the platform Mono runtime.
  *
  * These canonical-ABI symbols route the provided WASI operations through host
  * imports. Unsupported entries abort with their name; the compiled guest's

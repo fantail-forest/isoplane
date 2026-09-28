@@ -48,9 +48,9 @@ impl CompiledGuests {
 /// output a returned guest loads must come from an engine configured alike.
 pub fn engine_configuration(files: PlatformFiles) -> EngineConfig {
     EngineConfig {
+        // This harness holds at most two instances; node-sized pools only reserve unused slots.
         max_instances: 2,
-        max_memory_bytes: 256 << 20,
-        guard_size_bytes: 64 << 20,
+        max_memory_bytes: crate::GUEST_LIMITS.instance_memory_max,
         platform_files: files,
         ..EngineConfig::default()
     }

@@ -5,14 +5,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use isoplane_harness::Reactor;
-use isoplane_host::egress::{DnsError, HostEgressPolicy};
+use isoplane_host::egress::DnsError;
 use isoplane_host::{InstanceId, Resolver};
 
 /// A reactor whose name lookups go to `resolver`.
 pub fn reactor_for_dns(owner: u64, resolver: Box<dyn Resolver>) -> Reactor {
-    Reactor::new(
+    Reactor::with_network(
         InstanceId(owner),
-        HostEgressPolicy::new(resolver, 8, 1 << 20),
+        isoplane_harness::Network::with_resolver(resolver),
     )
 }
 

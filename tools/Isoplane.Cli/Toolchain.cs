@@ -161,22 +161,6 @@ internal static class Toolchain
             if (!OperatingSystem.IsWindows() && file.Executable && (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) == 0)
                 throw new InvalidOperationException($"Toolchain file {path} is not executable; rerun setup from a complete bundle.");
         }
-        if (manifest.Kind == "toolchain")
-            await VerifyCompilerPackageAsync(directory, manifest, cancellation);
-    }
-
-    private static async Task VerifyCompilerPackageAsync(string directory, ToolchainManifest manifest, CancellationToken cancellation)
-    {
-        using var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(directory, "compiler", "compiler.json"), cancellation));
-        var package = receipt.RootElement.GetProperty("package").GetString();
-        if (string.IsNullOrEmpty(package) || Path.GetFileName(package) != package || package.Contains('\\'))
-            throw new InvalidOperationException("The compiler receipt has an invalid package path; reinstall the supplied toolchain.");
-        var entry = manifest.Files.SingleOrDefault(file => file.Path == "compiler/" + package);
-        if (entry is null || entry.Sha256 != receipt.RootElement.GetProperty("package_sha256").GetString())
-            throw new InvalidOperationException("The compiler package is missing from the toolchain manifest or has the wrong identity; reinstall the complete bundle.");
-        var backend = manifest.Files.Single(file => file.Path == "compiler/" + CompilerProbeName);
-        if (backend.Sha256 != receipt.RootElement.GetProperty("backend_sha256").GetString())
-            throw new InvalidOperationException("The compiler dependency probe differs from the packaged backend; reinstall the complete bundle.");
     }
 
     private static async Task VerifyRuntimePairAsync(ToolchainManifest manifest, string bundledRuntime, CancellationToken cancellation)
@@ -218,25 +202,8 @@ internal static class Toolchain
     internal static string[] RequiredFiles() => [
         "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
         "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools" + ExecutableExtension, "wasi-sdk/bin/clang" + ExecutableExtension,
-        "feed/Isoplane.GuestRuntime.props",
-        "compiler/compiler.json", "compiler/Isoplane.GuestCompiler.props", "compiler/" + CompilerProbeName
+        "feed/Isoplane.GuestRuntime.props"
     ];
-
-    private static string CompilerProbeName => OperatingSystem.IsWindows() ? "backend.dll" : "backend";
-
-    internal static void ProbeCompiler(string directory)
-    {
-        var path = Path.Combine(directory, "compiler", CompilerProbeName);
-        try
-        {
-            var library = NativeLibrary.Load(path);
-            NativeLibrary.Free(library);
-        }
-        catch (Exception error) when (error is DllNotFoundException or BadImageFormatException)
-        {
-            throw new InvalidOperationException($"The NativeAOT compiler backend cannot load. Install the native dependencies listed in the toolchain README. {error.Message}", error);
-        }
-    }
 
     internal static string PlatformIdentifier()
     {

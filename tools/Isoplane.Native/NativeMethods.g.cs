@@ -17,7 +17,7 @@ namespace Isoplane.Native.Interop
         /// <summary>
         ///  Version of the native entry points and their report schema.
         /// </summary>
-        internal const uint ABI_VERSION = 1;
+        internal const uint ABI_VERSION = 2;
 
 
 
@@ -39,16 +39,6 @@ namespace Isoplane.Native.Interop
         /// </summary>
         [DllImport(__DllName, EntryPoint = "isoplane_validate", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern NativeResult isoplane_validate(byte* wasm, nuint wasm_length, byte* policy, nuint policy_length);
-
-        /// <summary>
-        ///  Prepares and compiles a local application without starting its listener.
-        ///  The supplied options identify the same configuration and compiler-owned storage as execution.
-        ///
-        ///  # Safety
-        ///  Both buffers remain readable and pinned for this call, as in `isoplane_validate`.
-        /// </summary>
-        [DllImport(__DllName, EntryPoint = "isoplane_prepare_local", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern NativeResult isoplane_prepare_local(byte* wasm, nuint wasm_length, byte* options, nuint options_length);
 
         /// <summary>
         ///  Releases the payload of a result returned by this library.

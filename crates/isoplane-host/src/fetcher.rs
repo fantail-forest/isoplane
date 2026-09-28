@@ -219,8 +219,8 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_https_fetch_is_refused_before_any_host_tls_or_connection() {
-        let egress = HostEgressPolicy::new(Box::new(NoNetwork), 8, 1 << 20)
-            .with_connections(Arc::new(NoNetwork));
+        let egress =
+            HostEgressPolicy::new(Box::new(NoNetwork), 8).with_connections(Arc::new(NoNetwork));
         let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
         let url = "https://public.example/".to_string();
         let result = fetcher
@@ -295,7 +295,7 @@ mod tests {
                 .await
                 .expect("the peer HTTP exchange");
         });
-        let egress = HostEgressPolicy::new(Box::new(NoNetwork), 8, 1 << 20)
+        let egress = HostEgressPolicy::new(Box::new(NoNetwork), 8)
             .with_destinations(Arc::new(OnlyPeer(address)));
         let fetcher = PinnedHttpFetcher::new(Arc::new(egress), INLINE_BODY_LIMIT);
         let url = format!("http://pinned.example:{}/echo?x=1", address.port());

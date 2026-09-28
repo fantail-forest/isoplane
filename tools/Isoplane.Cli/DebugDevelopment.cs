@@ -7,8 +7,6 @@ internal static class DebugDevelopment
 {
     internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
-        if (await Development.RuntimeProfileAsync(options, cancellation) != GuestRuntimeProfile.Mono)
-            throw new ArgumentException("Debugging currently requires an explicitly selected interpreted project configuration; NativeAOT debugging is not supported.");
         var session = Path.Combine(options.Directory, ".isoplane", "debug", Guid.NewGuid().ToString("N"));
         try
         {

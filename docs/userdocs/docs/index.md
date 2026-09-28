@@ -30,6 +30,6 @@ Look up public types, methods and properties in the [SDK API reference](referenc
 
 ## Explanation
 
-Understand [interpreted and NativeAOT execution](execution-modes.md) and
+Understand [application packages and the shared runtime](execution-modes.md) and
 [the application lifecycle](application-lifecycle.md) before choosing where to
 keep state or when to perform work.

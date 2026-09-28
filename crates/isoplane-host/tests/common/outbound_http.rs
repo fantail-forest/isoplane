@@ -105,12 +105,8 @@ impl Server {
 }
 
 pub fn services(address: SocketAddr) -> Arc<Services> {
-    services_with_budget(address, 1 << 20)
-}
-
-pub fn services_with_budget(address: SocketAddr, max_bytes: u64) -> Arc<Services> {
     let policy = Arc::new(
-        HostEgressPolicy::new(Box::new(Endpoint(address)), 1, max_bytes)
+        HostEgressPolicy::new(Box::new(Endpoint(address)), 1)
             .with_destinations(Arc::new(Endpoint(address))),
     );
     Arc::new(Services {

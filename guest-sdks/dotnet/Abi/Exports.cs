@@ -9,13 +9,9 @@ using Isoplane.Runtime;
 namespace Isoplane.Abi;
 
 /// <summary>
-/// The bodies of the guest's exports (<c>isoplane_alloc</c>, <c>isoplane_handle</c>,
-/// <c>isoplane_wake</c>, <c>isoplane_initialize</c>, <c>isoplane_gc_hint</c>), generic
-/// over what routes a dispatch. A guest's own <c>[UnmanagedCallersOnly]</c>
-/// methods delegate here, since that attribute cannot sit on a generic class.
-/// Nothing here throws across the boundary: an escaping exception in an
-/// <c>UnmanagedCallersOnly</c> frame is a runtime abort with no trap code, so
-/// every entrypoint converts to <see cref="PollStatus.Trapped"/>.
+/// Managed bodies behind the native Mono entrypoints, parameterized by the
+/// application's router. Dispatch and initialization failures are logged and
+/// converted to <see cref="PollStatus.Trapped"/> before returning to the host.
 /// </summary>
 public static unsafe class Exports<TRouter>
     where TRouter : IIsoplaneRouter, new()

@@ -23,14 +23,12 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
             "Bundle metadata must be staged under the project and removed after publication.");
     }
 
-    [Theory]
-    [InlineData("Mono", "Interpreted")]
-    [InlineData("NativeAOT", "NativeAot")]
-    public async Task a_bundle_preserves_application_dependencies_symbols_and_execution_selection(string profile, string expected)
+    [Fact]
+    public async Task a_bundle_preserves_application_dependencies_symbols_and_runtime_identity()
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata(profile), output, CancellationToken.None);
+        await ManagedBundle.WriteAsync(fixture.Metadata(), output, CancellationToken.None);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         var entries = new Dictionary<string, byte[]>();
@@ -40,13 +38,12 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
             entry.DataStream!.CopyTo(bytes);
             entries.Add(entry.Name, bytes.ToArray());
         }
-        var runtime = expected == "Interpreted" ? new[] { "runtime.json" } : [];
-        Assert.True(entries.Keys.Order().SequenceEqual(new[] { "application.json", "assemblies/Application.dll", "assemblies/Application.pdb", "assemblies/Dependency.dll", "assemblies/Dependency.pdb" }.Concat(runtime).Order()),
+        Assert.True(entries.Keys.Order().SequenceEqual(new[] { "application.json", "runtime.json", "assemblies/Application.dll", "assemblies/Application.pdb", "assemblies/Dependency.dll", "assemblies/Dependency.pdb" }.Order()),
             "Only application IL and portable symbols, and for interpreted execution the SDK runtime's identity, should accompany the manifest; sources, scripts and framework implementations must stay out.");
         Assert.True(entries["assemblies/Application.dll"].SequenceEqual(File.ReadAllBytes(fixture.Application)), "The compiled application and its embedded resources must remain unchanged.");
         Assert.True(entries["assemblies/Dependency.dll"].SequenceEqual(File.ReadAllBytes(fixture.Dependency)), "Transitive application dependencies must preserve their original identity and bytes.");
         using var manifest = JsonDocument.Parse(entries["application.json"]);
-        Assert.True(manifest.RootElement.GetProperty("Execution").GetString() == expected, "The submitted execution selection must match the chosen project configuration.");
+        Assert.True(manifest.RootElement.GetProperty("Execution").GetString() == "Interpreted", "An application package must run on the shared interpreter.");
     }
 
     [Fact]
@@ -54,7 +51,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata("Mono", includeSatellites: true), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(includeSatellites: true), output, default);
         using var input = File.OpenRead(output);
         using var reader = new TarReader(input);
         var satellites = new Dictionary<string, byte[]>();
@@ -90,7 +87,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", includeDependency: false), output, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata(includeDependency: false), output, CancellationToken.None));
         Assert.True(error.Message.Contains("missing dependency 'Dependency'", StringComparison.Ordinal), "The error must identify the missing transitive dependency.");
         Assert.True(!File.Exists(output), "Invalid dependency closures must not produce an uploadable archive.");
     }
@@ -104,7 +101,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         var asset = Path.Combine(directory.Path, "required-data.json");
         await File.WriteAllTextAsync(asset, "application data");
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: asset, assetTarget: target), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(asset: asset, assetTarget: target), output, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         var found = false;
@@ -128,7 +125,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var directory = new BundleDirectory();
         var asset = Path.Combine(directory.Path, "data.txt");
         await File.WriteAllTextAsync(asset, "data");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", asset: asset, assetTarget: target),
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(asset: asset, assetTarget: target),
             Path.Combine(directory.Path, "application.tar"), default));
     }
 
@@ -137,7 +134,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        await ManagedBundle.WriteAsync(fixture.Metadata("Mono"), output, default);
+        await ManagedBundle.WriteAsync(fixture.Metadata(), output, default);
         using var stream = File.OpenRead(output);
         using var archive = new TarReader(stream);
         string? identity = null;
@@ -156,7 +153,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     {
         using var directory = new BundleDirectory();
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", runtimeDirectory: directory.Path), output, default));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(runtimeDirectory: directory.Path), output, default));
         Assert.True(error.Message.Contains("runtime.json", StringComparison.Ordinal) && !File.Exists(output),
             "A package the platform cannot match to a runtime must be refused before anything is uploaded.");
     }
@@ -167,7 +164,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var directory = new BundleDirectory();
         var duplicate = Path.Combine(directory.Path, "duplicate.dll");
         File.Copy(fixture.Dependency, duplicate);
-        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", additionalAssembly: duplicate), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<AssemblyInputException>(() => ManagedBundle.WriteAsync(fixture.Metadata(additionalAssembly: duplicate), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
         Assert.True(error.Message.Contains("Conflicting inputs define assembly 'Dependency'", StringComparison.Ordinal), "Two files claiming the same dependency identity must not be arbitrarily selected.");
     }
 
@@ -179,7 +176,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         await File.WriteAllTextAsync(output, "previous bundle");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono"), output, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ManagedBundle.WriteAsync(fixture.Metadata(), output, cancellation.Token));
         Assert.True(await File.ReadAllTextAsync(output) == "previous bundle" && Directory.GetFiles(directory.Path).Length == 1,
             "A cancelled build must preserve the previous bundle and leave no partial upload files.");
     }
@@ -195,7 +192,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         var invalid = input == "assembly" ? application : Path.ChangeExtension(application, ".pdb");
         await File.WriteAllTextAsync(invalid, "not managed metadata");
         var output = Path.Combine(directory.Path, "application.tar");
-        var error = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", applicationPath: application), output, CancellationToken.None));
+        var error = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), output, CancellationToken.None));
         Assert.True(error.Message.Contains(input == "assembly" ? "not a valid managed assembly" : "portable PDB", StringComparison.Ordinal),
             "Malformed managed inputs must name the unsupported input format.");
         Assert.True(!File.Exists(output) && Directory.GetFiles(directory.Path, "*.tmp").Length == 0, "Malformed inputs must leave no complete or partial upload archive.");
@@ -207,7 +204,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
         using var directory = new BundleDirectory();
         var application = Path.Combine(directory.Path, "Application.dll");
         File.CreateSymbolicLink(application, fixture.Application);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata("Mono", applicationPath: application), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
         Assert.True(error.Message.Contains("regular file", StringComparison.Ordinal), "A link must not be uploaded as a tar link or followed outside the declared assembly input.");
     }
 }
@@ -241,7 +238,6 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         project.Root!.Add(new System.Xml.Linq.XElement("PropertyGroup",
             new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
             new System.Xml.Linq.XElement("IsoplaneApplicationFactory", "Application.Create"),
-            new System.Xml.Linq.XElement("IsoplaneGuestRuntime", "Mono"),
             new System.Xml.Linq.XElement("IsoplaneRuntimeDirectory", SharedRuntime)));
         project.Root.Add(new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("None",
             new System.Xml.Linq.XAttribute("Update", "data.txt"), new System.Xml.Linq.XElement("CopyToOutputDirectory", "PreserveNewest"),
@@ -250,7 +246,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         project.Save(Path.Combine(application.FullName, "Application.csproj"));
         var resultPath = Path.Combine(directory.Path, "result.json");
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory.Path };
-        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneGuestRuntime,IsoplaneRuntimeDirectory", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not build managed bundle fixture.");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -273,7 +269,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
     /// <summary>Stands in for the runtimes an SDK carries; a bundle only copies their identity.</summary>
     public string SharedRuntime => Path.Combine(directory.Path, "runtime");
 
-    public JsonElement Metadata(string runtime, bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false, string? runtimeDirectory = null)
+    public JsonElement Metadata(bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false, string? runtimeDirectory = null)
     {
         var assemblies = new List<string> { applicationPath ?? Application };
         if (includeDependency) assemblies.Add(Dependency);
@@ -281,7 +277,7 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
         if (additionalAssembly is not null) assemblies.Add(additionalAssembly);
         return JsonSerializer.SerializeToElement(new
         {
-            Properties = new { AssemblyName = "Application", IsoplaneApplicationFactory = "Application.Create", IsoplaneGuestRuntime = runtime, IsoplaneRuntimeDirectory = runtimeDirectory ?? SharedRuntime },
+            Properties = new { AssemblyName = "Application", IsoplaneApplicationFactory = "Application.Create", IsoplaneRuntimeDirectory = runtimeDirectory ?? SharedRuntime },
             Items = new
             {
                 IsoplaneBundleAssembly = assemblies.Select(path => new { FullPath = path }),

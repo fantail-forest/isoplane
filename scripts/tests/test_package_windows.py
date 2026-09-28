@@ -16,7 +16,7 @@ class WindowsPackageTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='isoplane-msi-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.files = ['Sdk/Sdk.props', 'feed/Isoplane.GuestRuntime.props', 'compiler/Isoplane.GuestCompiler.props',
+        self.files = ['Sdk/Sdk.props', 'feed/Isoplane.GuestRuntime.props',
                       'cli/Isoplane.Cli.dll', 'cli/runtime/isoplane_native.dll', 'bin/wasm-tools.exe',
                       'wasi-sdk/bin/clang.exe', 'mono-targets/Sdk/Sdk.props', 'wasi-cross/Sdk/Sdk.props',
                       'templates/Isoplane.Templates.1.2.3-preview.1.nupkg']

@@ -1,152 +1,62 @@
-//! The real .NET modules through the validator, the init sandbox and the
-//! data plane. The `_stock` fixtures are built without the guest-side PAL
-//! object, so they carry the `wasi:*` surface NativeAOT-LLVM emits and the
-//! adapter has to compose; the shipped module resolves wasi-libc's surface
-//! in-module and keeps only the readiness imports the runtime's event loop
-//! and timer queue make from managed code, which the adapter delegates. Each
-//! acceptance has a rejection beside it.
+//! The retained Mono runtime through both capability admission boundaries.
 
-use isoplane_abi::config::{InitSandbox, Limits};
-use isoplane_control::validator::{self, ViolationCode as V};
-use isoplane_engine::pal::{self, PalSource};
-use wasmtime::{Engine, Linker, Module};
+use isoplane_abi::config::Limits;
+use isoplane_control::validator::{self, ViolationCode};
+use isoplane_engine::{EngineConfig, IsoplaneEngine};
 
-fn artifact(name: &str) -> Vec<u8> {
-    isoplane_fixtures::dotnet(name)
-}
-
-/// The adapter is composed over these modules, never run.
-struct Host;
-impl PalSource for Host {
-    fn record_initialization_call(&mut self, _module: &'static str) {}
-
-    fn slice_clock_ms(&mut self) -> u64 {
-        0
-    }
-    fn entropy_fill(&mut self, _out: &mut [u8]) -> wasmtime::Result<()> {
-        Ok(())
-    }
-}
-
-fn report(name: &str, wasm: &[u8]) -> validator::ValidationReport {
-    match validator::validate(wasm, Limits::default()) {
-        Ok(r) => r,
-        Err(vs) => {
-            let vs: Vec<String> = vs.iter().map(|v| format!("  - {v}")).collect();
-            panic!("{name} was rejected:\n{}", vs.join("\n"));
-        }
-    }
+fn engine() -> IsoplaneEngine {
+    IsoplaneEngine::new(EngineConfig {
+        max_instances: 2,
+        max_memory_bytes: 256 << 20,
+        ..EngineConfig::default()
+    })
+    .expect("the test engine must start")
 }
 
 #[test]
-fn the_stock_dotnet_module_now_passes_v1_through_the_pal_adapter() {
-    let wasm = artifact("isoplane_guest_dotnet_stock");
-    let r = report("isoplane_guest_dotnet_stock", &wasm);
-
-    assert_eq!(r.pal.len(), 33, "a stock module declares 33 wasi imports");
-    let delegated: Vec<String> = r
-        .pal
+fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator() {
+    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet");
+    let report = validator::validate(&wasm, Limits::default())
+        .expect("the Mono fixture must satisfy admission");
+    let template = engine()
+        .load_template(&wasm)
+        .expect("the admitted Mono fixture must load into the engine");
+    let mut admitted: Vec<_> = report.pal.iter().map(|import| import.full_name()).collect();
+    let mut linked: Vec<_> = template
+        .pal_composed()
         .iter()
-        .filter(|p| p.disposition.is_delegated())
-        .map(|p| p.full_name())
+        .map(|import| import.full_name())
         .collect();
-    for expected in ["clock_now_coarse", "entropy_fill", "filesystem_call"] {
-        assert!(
-            r.capabilities.contains(&expected),
-            "stock runtime must report its {expected} adapter"
-        );
-    }
+    admitted.sort();
+    linked.sort();
     assert!(
-        delegated
-            .iter()
-            .any(|name| name.starts_with("wasi:filesystem/")),
-        "filesystem declarations must use the read-only adapter"
-    );
-
-    // Reached through WASI, so held as capabilities and named with the door.
-    assert!(r.capabilities.contains(&"clock_now_coarse"));
-    assert!(r.capabilities.contains(&"entropy_fill"));
-    let m = r.manifest();
-    assert!(m.contains("wasi:clocks/monotonic-clock@0.2.0::now -> delegates to `clock_now_coarse`"));
-    assert!(m.contains("wasi:random/random@0.2.0::get-random-bytes -> delegates to `entropy_fill`"));
-    assert!(m.contains("trap-on-call"));
-
-    assert!(r.has_initialize(), "the pre-init entry point");
-
-    // What the validator admitted, the linker composes.
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm).expect("real module must compile");
-    let mut linker: Linker<Host> = Linker::new(&engine);
-    let composed = pal::link(&mut linker, &module).expect("the adapter must compose all 33");
-    assert_eq!(composed.len(), 33);
-}
-
-/// The module that drags LINQ, `Regex` and `System.Text.Json` out of the
-/// BCL, which is what sizes the whitelist.
-#[test]
-fn the_compat_stock_dotnet_module_passes_v1_too() {
-    let wasm = artifact("isoplane_guest_dotnet_compat_stock");
-    let r = report("isoplane_guest_dotnet_compat_stock", &wasm);
-    assert_eq!(
-        r.pal.len(),
-        45,
-        "the compatibility runtime must retain its declared platform imports"
+        !admitted.is_empty(),
+        "Mono must exercise the platform adapter"
     );
     assert_eq!(
-        r.pal
-            .iter()
-            .filter(|p| p.disposition.is_delegated() && !p.module.starts_with("wasi:filesystem/") && !matches!(p.disposition.capability(), Some(isoplane_abi::native_io::canonical::POLL_IMPORT | isoplane_abi::native_io::canonical::SOCKET_IMPORT)))
-            .count(),
-        3,
-        "filesystem, readiness and socket adapters must preserve the existing clock, entropy and environment delegates"
-    );
-    assert!(
-        r.capabilities.contains(&"entropy_fill"),
-        "the compatibility runtime must retain its entropy capability"
-    );
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm).expect("the compatibility module must compile");
-    let mut linker: Linker<Host> = Linker::new(&engine);
-    assert_eq!(
-        pal::link(&mut linker, &module)
-            .expect("the compatibility imports must link")
-            .len(),
-        45,
-        "every admitted compatibility import must compose into the linker"
+        linked, admitted,
+        "execution must compose every admitted platform import"
     );
 }
 
 #[test]
-fn the_shipped_dotnet_module_keeps_only_the_managed_readiness_imports() {
-    let wasm = artifact("isoplane_guest_dotnet");
-    let r = report("isoplane_guest_dotnet", &wasm);
-    let mut delegated: Vec<String> = r.pal.iter().map(|p| p.full_name()).collect();
-    delegated.sort_unstable();
-    assert_eq!(
-        delegated,
-        vec![
-            "wasi:clocks/monotonic-clock@0.2.0::subscribe-duration",
-            "wasi:io/poll@0.2.0::[resource-drop]pollable",
-            "wasi:io/poll@0.2.0::poll",
-        ],
-        "the shipped build resolves wasi-libc's imports in-module; what remains is the timer queue's and event loop's own readiness calls"
+fn an_undeclared_mono_platform_interface_is_refused_by_admission_and_execution() {
+    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet");
+    let mutated = rename_import(&wasm, "wasi:io/poll@0.2.0", "wasi:io/poll@0.9.0");
+    let violations = validator::validate(&mutated, Limits::default())
+        .expect_err("an unknown platform interface must fail admission");
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.code == ViolationCode::V1UndeclaredImport),
+        "the changed platform interface must be rejected as undeclared: {violations:?}"
     );
     assert!(
-        r.pal
-            .iter()
-            .all(|p| p.disposition.capability()
-                == Some(isoplane_abi::native_io::canonical::POLL_IMPORT)),
-        "the readiness imports must delegate to the poll adapter"
+        engine().load_template(&mutated).is_err(),
+        "execution must also refuse the undeclared platform interface"
     );
-    for c in &r.capabilities {
-        assert!(isoplane_abi::imports::lookup(c).is_some());
-    }
 }
 
-/// Rename one import in place, preserving every length so the binary stays
-/// well-formed. The name also appears in a custom section, which the
-/// validator ignores.
 fn rename_import(wasm: &[u8], from: &str, to: &str) -> Vec<u8> {
     assert_eq!(
         from.len(),
@@ -172,229 +82,4 @@ fn rename_import(wasm: &[u8], from: &str, to: &str) -> Vec<u8> {
         String::from_utf8_lossy(from)
     );
     out
-}
-
-#[test]
-fn a_real_module_with_one_off_whitelist_wasi_import_still_fails_v1() {
-    let wasm = artifact("isoplane_guest_dotnet_stock");
-
-    // A trap-on-call entry, renamed.
-    let mutated = rename_import(&wasm, "get-directories", "get-directoryZZ");
-    let vs = validator::validate(&mutated, Limits::default())
-        .expect_err("an off-whitelist wasi import must be rejected");
-    assert!(
-        vs.iter().any(|v| v.code == V::V1UndeclaredImport),
-        "a renamed import is undeclared: {vs:?}"
-    );
-    let subject = vs
-        .iter()
-        .find(|v| v.code == V::V1UndeclaredImport)
-        .and_then(|v| v.subject.clone())
-        .unwrap_or_default();
-    assert_eq!(subject, "wasi:filesystem/preopens@0.2.0.get-directoryZZ");
-    assert!(
-        vs.iter().any(|v| v.detail.contains("PAL whitelist")),
-        "a wasi: rejection names the whitelist, not the isoplane table"
-    );
-
-    // A delegated entry, renamed.
-    let mutated = rename_import(&wasm, "get-random-bytes", "get-random-byteZ");
-    let vs = validator::validate(&mutated, Limits::default()).expect_err("must be rejected");
-    assert!(vs.iter().any(|v| v.code == V::V1UndeclaredImport));
-
-    // The interface renamed: a WASI generation the adapter does not implement.
-    let mutated = rename_import(
-        &wasm,
-        "wasi:random/random@0.2.0",
-        "wasi:random/random@0.9.0",
-    );
-    let vs = validator::validate(&mutated, Limits::default()).expect_err("must be rejected");
-    assert!(vs.iter().any(|v| v.code == V::V1UndeclaredImport));
-}
-
-/// The same rewrite pointed at a whitelisted name stays deployable, so a
-/// rejection above is not the rewrite breaking the binary.
-#[test]
-fn negative_control_renaming_to_another_whitelisted_import_still_passes() {
-    let wasm = artifact("isoplane_guest_dotnet_stock");
-
-    // The two metadata calls have the same canonical signature.
-    let swapped = rename_import(&wasm, "[method]descriptor.stat", "[method]descriptor.sync");
-    let vs = validator::validate(&swapped, Limits::default())
-        .expect("same-signature filesystem imports remain admitted");
-    assert!(
-        vs.pal.iter().any(|p| p.func == "[method]descriptor.sync"),
-        "the replacement import must be observed"
-    );
-
-    let broken = rename_import(&wasm, "[method]descriptor.stat", "[method]descriptor.staZ");
-    let vs = validator::validate(&broken, Limits::default()).expect_err("must be rejected");
-    assert!(vs.iter().any(|v| v.code == V::V1UndeclaredImport));
-
-    let untouched = rename_import(&wasm, "get-directories", "get-directories");
-    assert_eq!(
-        validator::validate(&untouched, Limits::default())
-            .expect("identity rewrite")
-            .pal
-            .len(),
-        33
-    );
-}
-
-/// Deployment always prepares under the application's egress policy; the
-/// runtime polls while coming up, which the sealed sandbox only serves through
-/// that policy. A closed allowlist admits the polls and no destination.
-fn initialization_network() -> isoplane_prepare::InitializationNetwork {
-    isoplane_prepare::InitializationNetwork {
-        tenant: "pal-dotnet-test".into(),
-        allowlist: Some(Vec::new()),
-        allowed_destinations: Vec::new(),
-        limits: Default::default(),
-        native_handles: 16,
-        pending_futures: 4,
-    }
-}
-
-/// The runtime reaches `wasi:cli/environment::get-environment` inside
-/// `_initialize`, before any tenant code, so the init sandbox has to compose
-/// the adapter too.
-#[test]
-fn the_stock_dotnet_module_pre_initializes_through_the_adapter() {
-    let wasm = artifact("isoplane_guest_dotnet_stock");
-    validator::validate(&wasm, Limits::default()).expect("must validate first");
-
-    let out = isoplane_control::PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
-        .with_network(initialization_network())
-        .run(
-            &wasm,
-            &isoplane_control::PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(&wasm),
-                init_blob: Vec::new(),
-            },
-        )
-        .expect("a stock .NET module must pre-initialize through the PAL adapter");
-    assert!(
-        !out.pal_calls.is_empty(),
-        "the runtime reaches the PAL through the WASI door while coming up"
-    );
-
-    let again = isoplane_control::PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
-        .with_network(initialization_network())
-        .run(
-            &wasm,
-            &isoplane_control::PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(&wasm),
-                init_blob: Vec::new(),
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        out.reproducible_digest, again.reproducible_digest,
-        "the WASI entropy delegation must draw from the escrowed seed, not host entropy"
-    );
-    // The runtime reads the clock and polls while coming up, and under the
-    // egress policy that clock is real time, so the captured bytes carry
-    // timestamps and the poll count varies; sealed pre-initialization keeps
-    // byte identity (see preinit.rs). What must agree is what the deployment
-    // decides from the run: the doors reached and the units deferred.
-    let doors = |calls: &[(String, u32)]| -> std::collections::BTreeSet<String> {
-        calls.iter().map(|(door, _)| door.clone()).collect()
-    };
-    assert_eq!(
-        doors(&out.pal_calls),
-        doors(&again.pal_calls),
-        "two runs must reach the PAL through the same doors"
-    );
-    assert_eq!(
-        out.deferred_units, again.deferred_units,
-        "two runs must defer the same units"
-    );
-}
-
-/// The template, which is what a cell loads, through the engine's own V1
-/// check: a capability decision must not pass deploy and fail at activation.
-#[test]
-fn the_stock_dotnet_template_loads_into_the_data_plane() {
-    let wasm = artifact("isoplane_guest_dotnet_stock");
-    validator::validate(&wasm, Limits::default()).expect("must validate");
-
-    let out = isoplane_control::PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
-        .with_network(initialization_network())
-        .run(
-            &wasm,
-            &isoplane_control::PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(&wasm),
-                init_blob: Vec::new(),
-            },
-        )
-        .expect("must pre-initialize");
-
-    let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-        max_instances: 8,
-        // The .NET module declares up to 2048 pages.
-        max_memory_bytes: 128 << 20,
-        epoch_tick_us: 200,
-        pooling: true,
-        spectre_mitigations: true,
-        guard_size_bytes: 2 << 20,
-        ..isoplane_engine::EngineConfig::default()
-    })
-    .expect("engine");
-
-    let t = engine
-        .load_template(&out.template_wasm)
-        .expect("the data plane must load a template carrying a whitelisted wasi: surface");
-
-    assert!(
-        t.uses_pal(),
-        "the runtime linker should have composed the adapter"
-    );
-    assert_eq!(
-        t.pal_composed().len(),
-        33,
-        "all 33, the whole way through to the cell"
-    );
-
-    // The same capabilities the validator reported.
-    let mut caps: Vec<&str> = t
-        .pal_composed()
-        .iter()
-        .filter_map(|d| d.disposition.capability())
-        .collect();
-    caps.sort_unstable();
-    caps.dedup();
-    assert_eq!(
-        caps,
-        vec!["clock_now_coarse", "entropy_fill", "filesystem_call", "poll_call", "socket_call"],
-        "the template may draw only on the declared clock, entropy, filesystem, readiness and socket adapters"
-    );
-}
-
-#[test]
-fn negative_control_the_data_plane_refuses_an_off_whitelist_wasi_import() {
-    let wasm = artifact("isoplane_guest_dotnet_stock");
-    let mutated = rename_import(&wasm, "get-directories", "get-directoryZZ");
-
-    let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-        max_instances: 8,
-        max_memory_bytes: 128 << 20,
-        epoch_tick_us: 200,
-        pooling: true,
-        spectre_mitigations: true,
-        guard_size_bytes: 2 << 20,
-        ..isoplane_engine::EngineConfig::default()
-    })
-    .expect("engine");
-
-    let err = engine
-        .load_template(&mutated)
-        .expect_err("an import outside the whitelist must never reach a slot");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("V1") && msg.contains("get-directoryZZ"),
-        "the refusal names the rule and the import: {msg}"
-    );
 }

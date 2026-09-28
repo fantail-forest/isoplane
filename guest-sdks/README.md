@@ -5,7 +5,7 @@ rather than copied into them.
 
 | | |
 |---|---|
-| [`dotnet`](dotnet) | **The target.** What a tenant writes: ordinary C# compiled by NativeAOT-LLVM to a core wasm module. |
+| [`dotnet`](dotnet) | **The target.** What a tenant writes: ordinary C# compiled to IL packages for the shared Mono WASM runtime. |
 | [`rust`](rust) | The reference implementation of the guest contract — a few thousand lines with no bundled runtime, used to prove the ABI is implementable and to give the harness and benchmark suite a floor to measure against. |
 
 Read the asymmetry as the documentation does: .NET is the ecosystem Isoplane exists

@@ -7,7 +7,7 @@ use isoplane_control::validator::{self, ViolationCode as V};
 mod validate;
 use validate::{assert_violates, codes, parse, REQUIRED_EXPORTS};
 
-/// A module shaped like what NativeAOT-LLVM emits: a handful of `isoplane`
+/// A module with canonical WASI imports: a handful of `isoplane`
 /// imports plus the `wasi:*` residue the toolchain leaves behind. The four
 /// `wasi` entries here are the ones the adapter delegates; `output-stream.blocking-flush`
 /// stands in for the trap-on-call remainder.

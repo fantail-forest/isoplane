@@ -32,7 +32,6 @@ pub struct Prepared {
     tenant: String,
     version: String,
     allow_endpoints: Vec<std::net::SocketAddr>,
-    compiled: bool,
 }
 
 impl Prepared {
@@ -62,11 +61,11 @@ impl Prepared {
         identity.update(&settings);
         preparation_cache::hash_files(&mut identity, &project.application_files);
         let version = identity.finalize().to_hex().to_string();
-        let admit = || validate(project, wasm, false).map(drop);
+        let admit = || validate_runtime(project, wasm).map(drop);
         if let Some(prepared) = baselines.prepare(project, wasm, &settings, &version, admit) {
             return prepared;
         }
-        let report = validate(project, wasm, false)?;
+        let report = validate_runtime(project, wasm)?;
         let template = if report.has_initialize() {
             preparation_cache::template(project, wasm, &settings, || {
                 preinitialize(project, wasm, &settings)
@@ -89,12 +88,7 @@ impl Prepared {
             tenant: project.tenant(),
             version,
             allow_endpoints: project.allow_endpoints.clone(),
-            compiled,
         })
-    }
-    /// Whether preparing this application required native compilation.
-    pub fn compiled(&self) -> bool {
-        self.compiled
     }
     /// Validates and compiles a marked debug module without pre-initialization.
     pub fn build_debug(project: &Project, wasm: &[u8]) -> Result<Self, super::Error> {
@@ -126,15 +120,12 @@ impl Prepared {
             tenant: project.tenant(),
             version,
             allow_endpoints: project.allow_endpoints.clone(),
-            compiled: true,
         })
     }
 }
 
 fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {
     isoplane_engine::EngineConfig {
-        pooling: false,
-        max_memory_bytes: project.manifest.memory_max_bytes(),
         platform_files: project.platform_files.clone(),
         ..Default::default()
     }
@@ -180,7 +171,7 @@ fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow
     let files = project.served_files()?;
     Ok(isoplane_prepare::PreInitializer::new()
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
-        .with_engine_config(isoplane_engine::EngineConfig { pooling: false, max_memory_bytes: project.manifest.memory_max_bytes(), platform_files: files.clone(), ..Default::default() })
+        .with_engine_config(isoplane_engine::EngineConfig { platform_files: files.clone(), ..engine_configuration(project) })
         .with_network(initialization_network(project))
         .with_pal(project.init_sandbox)
         .with_runtime_configuration(configuration.to_vec())
@@ -206,6 +197,23 @@ fn initialization_network(project: &Project) -> isoplane_prepare::Initialization
             .effective_limits()
             .pending_futures_per_dispatch,
     }
+}
+
+fn validate_runtime(
+    project: &Project,
+    wasm: &[u8],
+) -> anyhow::Result<isoplane_runtime::ValidationReport> {
+    let report = validate(project, wasm, false)?;
+    if !project.application_files.files().is_empty() {
+        anyhow::ensure!(
+            report.has_initialize()
+                && report
+                    .optional_exports
+                    .contains(&isoplane_abi::imports::exports::INITIALIZE_RUNTIME),
+            "the installed runtime requires both runtime and application initialization exports"
+        );
+    }
+    Ok(report)
 }
 
 fn validate(
@@ -304,8 +312,7 @@ impl LocalApp {
         configuration: isoplane_host::bindings::RuntimeConfiguration,
     ) -> anyhow::Result<Arc<Self>> {
         let network = isoplane_runtime::network::NetworkLimits::default();
-        let egress =
-            isoplane_host::HostEgressPolicy::system(network.connections, network.egress_bytes)?;
+        let egress = isoplane_host::HostEgressPolicy::system(network.connections)?;
         let egress =
             egress.with_destinations(Arc::new(super::destinations::DevelopmentDestinations::new(
                 prepared.allow_endpoints.clone(),

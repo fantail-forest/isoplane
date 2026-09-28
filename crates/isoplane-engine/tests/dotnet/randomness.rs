@@ -50,7 +50,7 @@ fn dispatch(instance: &mut Instance, path: &str) -> DispatchOutcome {
     probe(path).dispatch(instance)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn ordinary_rng_draws_fresh_host_bytes_for_each_call_request_and_template_activation(runtime: GuestRuntime) {
         for path in ["/draw", "/instance"] {
             let mut bodies = Vec::new();

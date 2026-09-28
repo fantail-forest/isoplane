@@ -184,7 +184,6 @@ pub(super) mod cell_tests {
             egress: Arc::new(crate::egress::HostEgressPolicy::new(
                 Box::new(NoResolver),
                 64,
-                1 << 20,
             )),
             fetcher: Arc::new(FakeFetcher::default()),
         })

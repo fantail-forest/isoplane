@@ -87,6 +87,7 @@ impl Activator for DebugActivator {
         Ok(Box::new(DebugInstance {
             instance,
             initialized: false,
+            pending_request: None,
         }))
     }
 }
@@ -154,19 +155,16 @@ impl HostBindings for DebugBindings {
 struct DebugInstance {
     instance: Instance,
     initialized: bool,
+    pending_request: Option<DispatchRecord>,
 }
 
-impl InstanceOps for DebugInstance {
-    fn dispatch(&mut self, record: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
-        if self.initialized {
-            return unsupported("a local debugger instance accepts one dispatch");
-        }
-        self.initialized = true;
-        let initialize =
-            tracing::info_span!("initialize").in_scope(|| self.instance.run_initialize(budget));
-        if initialize.completion != Completion::Done {
-            return initialize;
-        }
+impl DebugInstance {
+    fn dispatch_initialized(
+        &mut self,
+        record: &DispatchRecord,
+        budget: CpuBudget,
+        initialize: DispatchOutcome,
+    ) -> DispatchOutcome {
         let mut result = self.instance.dispatch(
             record,
             budget.after(budget.spent_ns.saturating_add(initialize.cpu_ns)),
@@ -187,8 +185,35 @@ impl InstanceOps for DebugInstance {
         };
         result
     }
+}
+
+impl InstanceOps for DebugInstance {
+    fn dispatch(&mut self, record: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
+        if self.initialized {
+            return unsupported("a local debugger instance accepts one dispatch");
+        }
+        self.initialized = true;
+        let initialize =
+            tracing::info_span!("initialize").in_scope(|| self.instance.run_initialize(budget));
+        if initialize.completion == Completion::Parked {
+            self.pending_request = Some(record.clone());
+        }
+        if initialize.completion != Completion::Done {
+            return initialize;
+        }
+        self.dispatch_initialized(record, budget, initialize)
+    }
     fn wake(&mut self, future: u64, result: &ResultRecord, budget: CpuBudget) -> DispatchOutcome {
-        self.instance.wake(future, result, budget)
+        let outcome = self.instance.wake(future, result, budget);
+        if outcome.completion == Completion::Parked {
+            return outcome;
+        }
+        match self.pending_request.take() {
+            Some(record) if outcome.completion == Completion::Done => {
+                self.dispatch_initialized(&record, budget, outcome)
+            }
+            _ => outcome,
+        }
     }
     fn gc_hint(&mut self, _: u8) -> DispatchOutcome {
         unsupported("local debugger maintenance execution is unsupported")
@@ -247,6 +272,13 @@ mod tests {
     use isoplane_abi::dispatch::{DispatchKind, HttpRequest, TraceContext};
 
     fn activator(initialize: Option<&str>) -> Result<DebugActivator, DebugError> {
+        activator_with_wake(initialize, "")
+    }
+
+    fn activator_with_wake(
+        initialize: Option<&str>,
+        wake: &str,
+    ) -> Result<DebugActivator, DebugError> {
         let initialize = initialize.map_or(String::new(), |body| {
             format!("(func (export \"isoplane_initialize\") (result i64) {body} i64.const 0)")
         });
@@ -258,7 +290,7 @@ mod tests {
             (func (export "isoplane_handle") (param i32 i32) (result i64)
                 global.get $initialized i32.const 42 i32.ne if unreachable end
                 i32.const 8 i32.const 7 i32.store i64.const 0)
-            (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0)
+            (func (export "isoplane_wake") (param i64 i32 i32) (result i64) {wake} i64.const 0)
             {initialize})"#
         ))
         .expect("the debug fixture must assemble");
@@ -276,6 +308,10 @@ mod tests {
 
     fn instance(initialize: &str) -> Box<dyn InstanceOps + Send> {
         let activator = activator(Some(initialize)).expect("the raw fixture must load");
+        activate(activator)
+    }
+
+    fn activate(activator: DebugActivator) -> Box<dyn InstanceOps + Send> {
         let ctx = Arc::new(InstanceCtx::for_test(
             InstanceId(1),
             HandlerLifecycle::Fresh,
@@ -333,6 +369,73 @@ mod tests {
         assert!(
             result.trap.is_some(),
             "initialization failure must remain observable"
+        );
+    }
+
+    #[test]
+    fn asynchronous_initialization_dispatches_the_saved_request_after_its_final_wake() {
+        let mut instance = activate(
+            activator_with_wake(
+                Some("i64.const 1 return"),
+                "global.get $initialized i32.const 1 i32.add global.set $initialized
+                 global.get $initialized i32.const 2 i32.lt_u if i64.const 1 return end
+                 i32.const 42 global.set $initialized",
+            )
+            .expect("the asynchronous initialization fixture must load"),
+        );
+        assert_eq!(
+            instance.dispatch(&record(), CpuBudget::http()).completion,
+            Completion::Parked,
+            "asynchronous initialization must park the original request"
+        );
+        assert_eq!(
+            instance
+                .wake(1, &ResultRecord::Ok(Vec::new()), CpuBudget::http())
+                .completion,
+            Completion::Parked,
+            "an intermediate initialization wake must keep the request pending"
+        );
+        assert_eq!(
+            &instance.memory()[8..12],
+            &0i32.to_le_bytes(),
+            "the request cannot run before initialization finishes"
+        );
+        assert_eq!(
+            instance
+                .wake(2, &ResultRecord::Ok(Vec::new()), CpuBudget::http())
+                .completion,
+            Completion::Done,
+            "the final initialization wake must run the original request"
+        );
+        assert_eq!(
+            &instance.memory()[8..12],
+            &7i32.to_le_bytes(),
+            "completion must include the queued handler, not just initialization"
+        );
+    }
+
+    #[test]
+    fn a_failed_initialization_wake_never_dispatches_the_saved_request() {
+        let mut instance = activate(
+            activator_with_wake(Some("i64.const 1 return"), "unreachable")
+                .expect("the failing asynchronous initialization fixture must load"),
+        );
+        assert_eq!(
+            instance.dispatch(&record(), CpuBudget::http()).completion,
+            Completion::Parked,
+            "the fixture must reach its asynchronous initialization boundary"
+        );
+        assert_eq!(
+            instance
+                .wake(1, &ResultRecord::Ok(Vec::new()), CpuBudget::http())
+                .completion,
+            Completion::Trapped,
+            "a failed initialization wake must end the request"
+        );
+        assert_eq!(
+            &instance.memory()[8..12],
+            &0i32.to_le_bytes(),
+            "failed initialization must not invoke the queued handler"
         );
     }
 
@@ -395,7 +498,7 @@ mod tests {
             isoplane_abi::config::HandlerLifecycle::Reuse,
             isoplane_abi::config::Limits {
                 module_bytes_compressed: 5242880,
-                package_bytes: 31457280,
+                package_bytes: 52428800,
                 instance_memory_max: 134217728,
                 cpu_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,

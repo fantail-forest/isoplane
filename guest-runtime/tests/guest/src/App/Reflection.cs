@@ -9,13 +9,7 @@ using System.Threading.Tasks;
 
 namespace Acceptance;
 
-/// <summary>
-/// Reflection, generics and serialization where the interpreter and the
-/// ahead-of-time compiler can differ: both profiles are trimmed, so what
-/// the trimmer cannot see is gone in both, while an instantiation the
-/// compiler never generated exists only where code can be created at run
-/// time. Every route reports what the runtime under test did.
-/// </summary>
+/// <summary>Reflection, runtime-created generics and serialization probes.</summary>
 internal sealed partial class Reflection
 {
     public Task<string> RunAsync(string[] path) => path[0] switch

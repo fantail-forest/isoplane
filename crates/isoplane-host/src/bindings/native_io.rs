@@ -127,7 +127,7 @@ mod tests {
         let stream = TcpStream::connect(remote).await.unwrap();
         let (_accepted, local) = listener.accept().await.unwrap();
         let policy = Arc::new(
-            crate::egress::HostEgressPolicy::system(1, 1024)
+            crate::egress::HostEgressPolicy::system(1)
                 .unwrap()
                 .with_destinations(Arc::new(EndpointPeer(remote))),
         );
@@ -142,7 +142,7 @@ mod tests {
                 streams_taken: false,
                 state: Arc::new(Mutex::new(SocketState::Connected(Arc::new(Connection {
                     stream: Arc::new(stream),
-                    permit,
+                    _permit: permit,
                 })))),
                 task: None,
             }))
@@ -353,7 +353,7 @@ impl Default for ResourceLimits {
 
 struct Connection {
     stream: Arc<TcpStream>,
-    permit: ConnectionPermit,
+    _permit: ConnectionPermit,
 }
 
 enum SocketState {
@@ -1032,7 +1032,7 @@ impl Resources {
                 let stream = policy.connect(&owner, destination).await.map_err(Error::from)?;
                 Ok(Connection {
                     stream: Arc::new(stream),
-                    permit,
+                    _permit: permit,
                 })
             }
             .await;

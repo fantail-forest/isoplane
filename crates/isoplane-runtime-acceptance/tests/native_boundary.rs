@@ -1,15 +1,11 @@
 #[macro_use]
 mod common;
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 
 use common::GuestRuntime;
 use isoplane_engine::Completion;
 
 async fn after_restore(runtime: GuestRuntime, path: &str) -> String {
-    let reactor = no_egress::reactor_without_egress(5600);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(5600));
     reactor.context.begin_slice(1, 1);
     let mut guest = common::guest(&reactor, runtime);
     let first = guest.start(path);
@@ -31,7 +27,7 @@ async fn after_restore(runtime: GuestRuntime, path: &str) -> String {
     reactor.response_text(1)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_missing_native_library_is_refused_before_and_after_store_restoration(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-library-after-park/missing").await;
@@ -78,7 +74,7 @@ async fn a_loaded_assembly_can_call_a_prelinked_guest_function_without_host_nati
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_host_native_library_is_not_available_to_the_guest(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-library-after-park/host").await;
@@ -125,7 +121,7 @@ async fn byte_loading_an_impostor_cannot_replace_the_sdk_default_binding() {
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn invoking_an_unknown_native_declaration_is_refused_before_and_after_store_restoration(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-declaration-after-park").await;
@@ -133,7 +129,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_static_declaration_for_an_absent_prelinked_symbol_is_refused_when_called(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-symbol-after-park/symbol").await;
@@ -141,7 +137,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn an_absent_internal_symbol_is_refused_when_called(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-symbol-after-park/internal").await;
@@ -149,7 +145,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_supported_static_native_export_remains_callable_across_store_restoration(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-symbol-after-park/timestamp").await;
@@ -157,7 +153,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn an_absent_star_module_symbol_is_a_managed_refusal(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-symbol-after-park/star").await;
@@ -165,7 +161,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_supported_star_module_export_remains_callable(runtime: GuestRuntime) {
         let result = after_restore(runtime, "/reflection/native-symbol-after-park/star-timestamp").await;

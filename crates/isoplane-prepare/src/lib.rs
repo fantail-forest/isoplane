@@ -57,7 +57,7 @@ pub enum PrepareError {
     Encoding(#[source] postcard::Error),
 }
 mod profile;
-pub use profile::{ManagedComponents, ManagedMode, RuntimeProfile};
+pub use profile::RuntimeProfile;
 mod process;
 pub use process::{BuildRequest, PortableTemplate};
 

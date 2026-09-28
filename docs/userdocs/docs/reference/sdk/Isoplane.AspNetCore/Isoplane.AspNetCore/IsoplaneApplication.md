@@ -5,7 +5,7 @@ mdx:
 
 # IsoplaneApplication class
 
-Runs a built application, starting hosted services on its first warmup or host request.
+Runs a built application with one host startup shared by preparation, warmup, and requests.
 
 ```csharp
 public sealed class IsoplaneApplication

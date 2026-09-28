@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Package explicitly selected Linux node binaries, their runtime profiles and
-the shared runtimes of the SDK releases the node supports."""
+"""Package Linux node binaries and the shared runtimes of supported SDK releases."""
 
 import argparse
 import hashlib
@@ -41,7 +40,6 @@ def install_runtimes(sources, runtimes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binaries", type=Path, required=True)
-    parser.add_argument("--profiles", type=Path, required=True)
     parser.add_argument("--runtimes", type=Path, nargs="+", required=True,
                         help="runtime directories, each holding runtime.json and the module it names")
     parser.add_argument("--output", type=Path, required=True)
@@ -54,7 +52,6 @@ def main():
         shutil.copy2(args.binaries / "isoplaned", stage / "isoplaned")
         for name in ("isoplaned.service", "install-node.sh"):
             shutil.copy2(Path(__file__).with_name(name), stage / name)
-        shutil.copy2(args.profiles, stage / "profiles.json")
         install_runtimes(args.runtimes, stage / "runtimes")
         files = sorted(path for path in stage.rglob("*") if path.is_file())
         (stage / "SHA256SUMS").write_text(

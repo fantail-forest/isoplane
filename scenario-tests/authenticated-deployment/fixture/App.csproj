@@ -1,7 +1,5 @@
 <Project Sdk="Isoplane.AspNetCore/0.1.0-preview.3">
   <PropertyGroup>
-    <PublishAot>false</PublishAot>
-    <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>
     <IsoplaneApplicationFactory>Example.App.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>

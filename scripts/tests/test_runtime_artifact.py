@@ -30,8 +30,6 @@ class RuntimeArtifactTests(unittest.TestCase):
         for name, prefix, directory in [
             ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack', 'runtime'),
             ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'IsoplaneGuestWasiSdkPack', 'wasi-sdk'),
-            ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotPack', 'nativeaot'),
-            ('Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotSdkPack', 'nativeaot-sdk'),
         ]:
             path = feed / f'{name}.1.nupkg'
             with zipfile.ZipFile(path, 'w') as package:

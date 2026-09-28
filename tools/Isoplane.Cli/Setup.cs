@@ -268,7 +268,6 @@ internal static class Readiness
 
     internal static async Task ProveToolsAsync(string toolchain, CancellationToken cancellation)
     {
-        Toolchain.ProbeCompiler(toolchain);
         NativeRuntime.EnsureLoaded();
         foreach (var (name, path) in Probes)
         {

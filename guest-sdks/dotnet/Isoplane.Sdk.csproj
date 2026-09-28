@@ -39,7 +39,7 @@
                       OutputItemType="None" Pack="true" PackagePath="tools/Conformance/" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
-    <None Include="Isoplane.Guest.props;Isoplane.Guest.targets;Isoplane.NativeAot.props" Pack="true" PackagePath="tools/" />
+    <None Include="Isoplane.Guest.props;Isoplane.Guest.targets" Pack="true" PackagePath="tools/" />
     <None Include="Build/**" Exclude="Build/**/obj/**;Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
     <None Include="native/**" Pack="true" PackagePath="tools/native/" />
   </ItemGroup>

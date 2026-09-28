@@ -18,7 +18,7 @@ use crate::no_dns::NoDns;
 /// A reactor whose outbound connections may only reach `peers`, resolving
 /// nothing: the guest connects by address.
 pub fn reactor_for_peers(owner: u64, peers: Vec<SocketAddr>) -> Reactor {
-    Reactor::new(InstanceId(owner), admitting(peers, Box::new(NoDns)))
+    Reactor::with_network(InstanceId(owner), admitting(peers, Box::new(NoDns)))
 }
 
 /// As [`reactor_for_peers`], with every outbound connection's kernel send
@@ -29,7 +29,7 @@ pub fn reactor_for_peers_with_send_buffer(
     peers: Vec<SocketAddr>,
     send_buffer_bytes: u32,
 ) -> Reactor {
-    Reactor::new(
+    Reactor::with_network(
         InstanceId(owner),
         admitting(peers, Box::new(NoDns))
             .with_connections(Arc::new(SmallSendBuffer(send_buffer_bytes))),

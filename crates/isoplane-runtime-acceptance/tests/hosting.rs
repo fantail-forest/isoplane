@@ -7,41 +7,29 @@
 
 #[macro_use]
 mod common;
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 
 use common::{guest, GuestRuntime};
-use no_egress::reactor_without_egress;
 
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
-    let reactor = reactor_without_egress(owner);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(owner));
     reactor.context.begin_slice(1, 1);
     let mut guest = guest(&reactor, runtime);
     guest.answer(&reactor, path, 1).await
 }
 
-in_both_runtimes! {
-    /// An open-generic registration closed over a reference type resolves in
-    /// both runtimes (shared code). Closed over a value type it is an
-    /// instantiation the ahead-of-time compiler never generated: the
-    /// interpreter creates it, NativeAOT refuses it.
+in_mono_runtime! {
     #[tokio::test]
     async fn services_resolve_with_singleton_scoped_transient_and_open_generic_lifetimes(runtime: GuestRuntime) {
-        let ints = match runtime {
-            GuestRuntime::Mono => "Int32",
-            GuestRuntime::NativeAot => "InvalidOperationException",
-        };
+        let ints = "Int32";
         assert_eq!(
             answer(runtime, 340, "/hosting/di").await,
             format!("tick 1 String clocks=1 same-greeter=True | tick 2 String clocks=1 new-greeter=True | ints={ints}"),
-            "one singleton clock must count across two scopes, each scope its own greeter, the open generic must close over a reference type, and over a value type {runtime} must answer {ints} (NativeAOT cannot create a generic instantiation it never compiled)"
+            "one singleton clock must count across two scopes, each scope its own greeter, the open generic must close over a reference type, and over a value type {runtime} must answer {ints}"
         );
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn the_container_refuses_a_scoped_service_from_the_root_and_an_unregistered_one(runtime: GuestRuntime) {
         assert_eq!(
@@ -52,22 +40,19 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn in_memory_configuration_layers_sections_and_binds_to_options(runtime: GuestRuntime) {
-        let hidden = match runtime {
-            GuestRuntime::Mono => "True/3",
-            GuestRuntime::NativeAot => "False/0",
-        };
+        let hidden = "True/3";
         assert_eq!(
             answer(runtime, 342, "/hosting/config-memory").await,
             format!("on|9443|7|true/True|edge:9443:True:a.example,b.example|Hosts,Name,Port,Tls|False|hidden={hidden}"),
-            "configuration must layer and bind generated options; reflection-only private setters must bind in the untrimmed interpreted guest and remain unset when trimmed from NativeAOT"
+            "configuration must layer and bind generated options; reflection-only private setters must bind in the untrimmed interpreted guest"
         );
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn json_configuration_from_a_stream_binds_nested_sections_and_arrays(runtime: GuestRuntime) {
         assert_eq!(
@@ -78,7 +63,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// File providers meet the empty read-only disk: a required file fails
     /// as `FileNotFoundException`, an optional one is skipped, and the
     /// environment provider sees nothing.
@@ -92,7 +77,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn options_bind_post_configure_name_and_snapshot_per_scope(runtime: GuestRuntime) {
         assert_eq!(
@@ -103,7 +88,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn logging_reaches_a_provider_with_structure_scopes_and_filters(runtime: GuestRuntime) {
         assert_eq!(
@@ -119,7 +104,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn activities_start_under_a_listener_with_w3c_ids_and_parenting(runtime: GuestRuntime) {
         assert_eq!(
@@ -130,7 +115,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_diagnostic_listener_delivers_only_subscribed_events_while_subscribed(runtime: GuestRuntime) {
         assert_eq!(
@@ -141,7 +126,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// The generic host built without defaults starts and stops its hosted
     /// service on the one thread, with no console lifetime, file provider
     /// or signal handler.
@@ -155,7 +140,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// The default application builder wires the console lifetime, the
     /// physical file provider over the content root, environment variables
     /// and the console logger: what of that the empty disk and the single
@@ -170,7 +155,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn the_stopwatch_is_high_resolution_in_nanoseconds_over_the_hosts_clock(runtime: GuestRuntime) {
         assert_eq!(
@@ -181,16 +166,13 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// One thread, a 32-bit wasm process, an empty environment, no
     /// arguments, and the runtime identifies itself.
     #[tokio::test]
     async fn the_process_facts_describe_a_single_threaded_wasm_guest(runtime: GuestRuntime) {
         let answer = answer(runtime, 352, "/hosting/environment").await;
-        let expected_dynamic_code = match runtime {
-            GuestRuntime::Mono => "True",
-            GuestRuntime::NativeAot => "False",
-        };
+        let expected_dynamic_code = "True";
         let mut facts = answer.split('|');
         for expected in [
             "cpus=1".to_string(),
@@ -208,7 +190,7 @@ in_both_runtimes! {
         );
         assert!(
             answer.contains(&format!("|dynamic-code={expected_dynamic_code}|")),
-            "the interpreter supports dynamic code and the ahead-of-time compiler does not, so {runtime} must report {expected_dynamic_code}: {answer}"
+            "the interpreter must report dynamic code support: {answer}"
         );
         assert!(
             answer.contains("|variables=0|args=0|"),

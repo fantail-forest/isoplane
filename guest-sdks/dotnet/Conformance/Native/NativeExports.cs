@@ -11,16 +11,13 @@ public sealed class NativeExports : Microsoft.Build.Utilities.Task
     [Required]
     public string Tool { get; set; } = "";
 
-    /// <summary>Selected archives or objects; Library metadata names an optional direct P/Invoke module.</summary>
+    /// <summary>Selected archives or objects.</summary>
     [Required]
     public ITaskItem[] Inputs { get; set; } = [];
 
     /// <summary>Destination for the sorted native symbol inventory.</summary>
     [Required]
     public string SymbolsFile { get; set; } = "";
-
-    /// <summary>Optional destination for export-specific NativeAOT direct P/Invoke entries.</summary>
-    public string DirectPInvokeFile { get; set; } = "";
 
     /// <summary>The selected WASI clang used to resolve its implicit runtime archives.</summary>
     public string Compiler { get; set; } = "";
@@ -49,7 +46,6 @@ public sealed class NativeExports : Microsoft.Build.Utilities.Task
             if (Inputs.Length == 0)
                 throw new InvalidDataException("No native link inputs were supplied for the export inventory.");
             var symbols = new SortedSet<string>(StringComparer.Ordinal);
-            var libraries = new SortedSet<string>(StringComparer.Ordinal) { "*" };
             var resolved = SystemLibraries.Select(name => ResolveLibrary("--print-file-name=" + name)).ToList();
             if (IncludeCompilerBuiltins) resolved.Add(ResolveLibrary("--print-libgcc-file-name"));
             ResolvedLibraries = resolved.Select(path => (ITaskItem)new Microsoft.Build.Utilities.TaskItem(path)).ToArray();
@@ -60,22 +56,11 @@ public sealed class NativeExports : Microsoft.Build.Utilities.Task
                     throw new FileNotFoundException("A selected native link input is missing.", path);
                 var exports = ReadExports(path);
                 symbols.UnionWith(exports);
-                var library = input.GetMetadata("Library");
-                if (library.Length != 0)
-                {
-                    if (library.Contains('!') || library.Any(char.IsWhiteSpace))
-                        throw new InvalidDataException($"Invalid direct P/Invoke module name: {library}");
-                    libraries.Add(library);
-                }
+
             }
             if (symbols.Count == 0)
                 throw new InvalidDataException("The selected native link inputs export no symbols.");
             WriteIfChanged(SymbolsFile, symbols);
-            if (DirectPInvokeFile.Length != 0)
-            {
-                var direct = libraries.SelectMany(library => symbols.Select(symbol => library + "!" + symbol));
-                WriteIfChanged(DirectPInvokeFile, direct);
-            }
             return true;
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)

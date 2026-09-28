@@ -61,7 +61,7 @@ diagnostics go to stderr. `RUST_LOG=debug` increases their detail. `--port 0`
 requests an available port. Opt-in `--shutdown-on-stdin-close` ends the session
 when its caller closes stdin; interactive sessions retain normal Ctrl+C behavior.
 
-`isoplane bundle --project /path/to/app --configuration IsoplaneNativeAotRelease
+`isoplane bundle --project /path/to/app --configuration Release
 --output application.tar` compiles managed deployment input through the installed
 SDK. The project configuration selects execution mode. The archive contains
 application assemblies, their managed dependencies and available portable symbols;

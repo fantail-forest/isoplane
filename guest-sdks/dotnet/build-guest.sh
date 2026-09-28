@@ -2,6 +2,7 @@
 # Build a C# Isoplane guest to a core wasm module.
 #
 #   build-guest.sh <guest-dir> [dotnet publish args...]
+#   guests/dotnet/build.sh     # a guest's build.sh wraps this
 set -euo pipefail
 
 if [ $# -lt 1 ]; then

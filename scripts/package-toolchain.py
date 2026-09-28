@@ -50,7 +50,7 @@ def extract_cli(package_path, destination):
 
 def make_world_readable(directory):
     """A release is installed by users other than the builder; private modes from build staging
-    (the compiler output keeps its temporary directory's 0700) must not ship."""
+    (build output can retain a temporary directory's 0700) must not ship."""
     for path in [directory, *directory.rglob('*')]:
         if path.is_symlink():
             continue
@@ -115,7 +115,6 @@ def main():
     if not (args.dotnet_root / 'sdk' / sdk).is_dir():
         parser.error(f'dotnet root does not contain pinned SDK {sdk}')
     subprocess.run([sys.executable, str(root / 'guest-runtime/feed-identity.py'), 'verify-current', str(root / 'guest-runtime'), str(args.runtime_output / 'feed')], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run([sys.executable, str(root / 'guest-runtime/compiler/build.py'), 'verify-current', '--output', str(args.runtime_output / 'compiler')], check=True, stdout=subprocess.DEVNULL)
     if subprocess.check_output([str(args.dotnet_root / ('dotnet' + executable)), '--list-sdks'], text=True).splitlines() == []:
         parser.error('dotnet root is not runnable')
     if not (args.notices / 'rust-dependencies.json').is_file():
@@ -128,7 +127,7 @@ def main():
         stage = release / 'toolchain' if args.packages else release
         stage.mkdir(parents=True)
         copy_licenses(args.notices, stage)
-        for source, name in [(args.runtime_output / 'feed', 'feed'), (args.runtime_output / 'packs', 'packs'), (args.runtime_output / 'compiler', 'compiler'),
+        for source, name in [(args.runtime_output / 'feed', 'feed'), (args.runtime_output / 'packs', 'packs'),
                              (args.wasi_sdk, 'wasi-sdk')]:
             shutil.copytree(source, stage / name, symlinks=False)
         if windows:

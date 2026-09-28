@@ -11,8 +11,7 @@ try
     }
     if (args.Length == 0 || args is ["--help"] or ["-h"] or [_, "--help" or "-h"])
     {
-        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--guest-runtime mono|nativeaot] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request for debugging.\nisoplane debug-adapter\nServe the Debug Adapter Protocol on standard input/output.\nisoplane setup [--source RELEASE_DIRECTORY|URL] [--yes]\nInstall the SDK matching this CLI; --yes installs missing native prerequisites without prompting.\nisoplane uninstall-sdk\nRemove everything setup installed, keeping the CLI.\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
-        Console.WriteLine("isoplane prepare --project DIRECTORY --configuration CONFIGURATION --module FILE [--json]\nPrepare a built application for local execution without starting it.");
+        Console.WriteLine("isoplane dev [--project DIRECTORY] [--port PORT] [--no-watch] [--debug] [--json] [--shutdown-on-stdin-close]\n--debug requires --no-watch and serves one request for debugging.\nisoplane debug-adapter\nServe the Debug Adapter Protocol on standard input/output.\nisoplane setup [--source RELEASE_DIRECTORY|URL] [--yes]\nInstall the SDK matching this CLI; --yes installs missing native prerequisites without prompting.\nisoplane uninstall-sdk\nRemove everything setup installed, keeping the CLI.\nisoplane doctor\nisoplane doctor MODULE [OPTIONS]\nisoplane --version");
         Console.WriteLine("isoplane bundle --output FILE [--project DIRECTORY] [--configuration CONFIGURATION]\nCompile managed deployment input as a managed application archive.");
         return 0;
     }
@@ -37,7 +36,6 @@ try
     }
     return args[0] switch
     {
-        "prepare" => await Development.PrepareAsync(args[1..], cancellation.Token),
         "dev" => await Development.RunAsync(DevelopmentOptions.Parse(args[1..]), cancellation.Token),
         _ => throw new ArgumentException($"Unknown command '{args[0]}'. Run isoplane --help.")
     };

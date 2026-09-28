@@ -54,7 +54,7 @@ fn vtable_with_resolver(
     allowlist: Option<Vec<String>>,
 ) -> Vt {
     let fetcher = Arc::new(FakeFetcher::default());
-    let egress = Arc::new(HostEgressPolicy::new(resolver, 1024, 1 << 30));
+    let egress = Arc::new(HostEgressPolicy::new(resolver, 1024));
     let services = Arc::new(Services {
         egress,
         fetcher: fetcher.clone(),
@@ -185,7 +185,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
     let mut v = vtable(
         Limits {
             module_bytes_compressed: 5242880,
-            package_bytes: 31457280,
+            package_bytes: 52428800,
             instance_memory_max: 134217728,
             cpu_ms_per_http_dispatch: 100,
             subrequests_per_dispatch: 20,
@@ -196,7 +196,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
     );
     let cap = Limits {
         module_bytes_compressed: 5242880,
-        package_bytes: 31457280,
+        package_bytes: 52428800,
         instance_memory_max: 134217728,
         cpu_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
@@ -208,7 +208,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
     assert_eq!(
         Limits {
             module_bytes_compressed: 5242880,
-            package_bytes: 31457280,
+            package_bytes: 52428800,
             instance_memory_max: 134217728,
             cpu_ms_per_http_dispatch: 100,
             subrequests_per_dispatch: 20,

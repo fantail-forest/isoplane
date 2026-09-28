@@ -51,7 +51,7 @@ fn cloned_instances(runtime: GuestRuntime) -> Vec<(Instance, Recorder)> {
         .collect()
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn initialization_can_capture_settings_before_activation(runtime: GuestRuntime) {
         for (mut instance, recorder) in cloned_instances(runtime) {
             assert_eq!(request(&mut instance, &recorder, "/prepared-setting"), b"captured",

@@ -141,40 +141,32 @@ async fn an_application_layer_preserves_initialized_state_outside_its_fresh_seed
 }
 
 #[tokio::test]
-async fn a_module_without_a_runtime_stage_is_prepared_over_its_uninitialized_baseline() {
-    let wasm = common::guest(SEED, "(i64.store (i32.const 200) (i64.const 0x6170706c))");
-    let request = request(&wasm, InitSandbox::Sealed);
-    let runtime = baseline(&wasm, &request)
-        .await
-        .expect("a module without a runtime stage must still prepare a baseline");
-    let layer = runtime
-        .baseline
-        .prepare_application(&request)
-        .expect("the application must prepare over its baseline")
-        .product;
-    let engine = common::engine();
-    let directory = tempfile::tempdir().expect("publication");
-    let base = load(
-        &engine,
-        &runtime.product,
-        request
-            .baseline()
-            .identity()
-            .expect("the baseline's identity"),
-        None,
-        &directory.path().join("base"),
+async fn a_module_without_a_runtime_stage_cannot_produce_a_baseline() {
+    let wasm = common::guest(SEED, "");
+    assert!(
+        baseline(&wasm, &request(&wasm, InitSandbox::Sealed))
+            .await
+            .is_err(),
+        "an absent runtime stage must not produce an uninitialized baseline"
     );
-    let layer = load(
-        &engine,
-        &layer,
-        request.identity().expect("the application's identity"),
-        Some(&base),
-        &directory.path().join("layer"),
-    );
-    assert_eq!(
-        layer.memory_image_arc().to_dense()[200..204],
-        *b"lppa",
-        "the whole initialization must run over a baseline with no runtime stage"
+}
+
+#[tokio::test]
+async fn a_module_without_an_application_initializer_cannot_produce_a_baseline() {
+    let wasm = wat::parse_str(
+        r#"(module
+        (memory (export "memory") 1 1)
+        (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 0)
+        (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 0)
+        (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 0)
+        (func (export "isoplane_initialize_runtime") (result i64) i64.const 0))"#,
+    )
+    .expect("runtime-only fixture");
+    assert!(
+        baseline(&wasm, &request(&wasm, InitSandbox::Sealed))
+            .await
+            .is_err(),
+        "a runtime without an application initializer must not produce a deployable baseline"
     );
 }
 
@@ -438,18 +430,6 @@ async fn each_initializer_stage_collects_the_guests_garbage_before_its_capture()
         word(&layer, 304),
         u32::from(isoplane_host::hibernate_capture::GC_HINT_SNAPSHOT),
         "a template capture must ask for the collection a hibernation capture does"
-    );
-}
-
-#[tokio::test]
-async fn a_guest_without_a_runtime_stage_is_collected_only_after_its_initializer() {
-    let wasm = collecting_guest(false, COUNT_COLLECTION);
-    let directory = tempfile::tempdir().expect("publication");
-    let (base, layer) = baseline_and_layer(&wasm, directory.path()).await;
-    assert_eq!(
-        (word(&base, 300), word(&layer, 308), word(&layer, 300)),
-        (0, 0, 1),
-        "a guest with no runtime stage must not be entered before its initializer"
     );
 }
 

@@ -60,14 +60,11 @@ complete_pack_build "$expected" "$WORK/receipt" fake_source_check
             with self.subTest(changed=changed):
                 root, result = self.run_script('''
 runtime_source() { return 0; }
-nativeaot_source() { return 0; }
 require_build_inputs() { return 0; }
 inputs_digest > "$WORK/runtime-build-inputs"
-inputs_digest > "$WORK/nativeaot-build-inputs"
 echo version > "$WORK/pack-version"
 echo package > "$WORK/package.nupkg"
 sha256sum "$WORK/pack-version" "$WORK/package.nupkg" > "$WORK/runtime-pack-artifacts"
-cp "$WORK/runtime-pack-artifacts" "$WORK/nativeaot-pack-artifacts"
 ''' + f'echo changed >> "$WORK/{changed}"\nstage_feed\n')
                 self.assertNotEqual(result.returncode, 0, 'changed package identity must prevent publication')
                 self.assertIn('package bytes or version identity changed', result.stderr, 'publication must diagnose modified pack artifacts')
@@ -104,7 +101,7 @@ require_ninja
         def setup(root):
             downloads = root / 'work/downloads'
             downloads.mkdir(parents=True)
-            for mode in ['mono', 'nativeaot']:
+            for mode in ['mono']:
                 with zipfile.ZipFile(downloads / f'icu-{mode}-fixture.nupkg', 'w') as archive:
                     archive.writestr('runtimes/wasi-wasm/native/lib/icudt.dat', 'filtered')
                     archive.writestr('runtimes/wasi-wasm/native/lib/libicuuc.a', mode + '-native-library')
@@ -113,9 +110,7 @@ require_ninja
         statements = '''
 icu_source() { return 0; }
 ICU_MONO_TRANSPORT_VERSION=fixture
-ICU_NATIVEAOT_TRANSPORT_VERSION=fixture
 ICU_MONO_TRANSPORT_SHA256="$(sha256sum "$DOWNLOADS/icu-mono-fixture.nupkg" | cut -d' ' -f1)"
-ICU_NATIVEAOT_TRANSPORT_SHA256="$(sha256sum "$DOWNLOADS/icu-nativeaot-fixture.nupkg" | cut -d' ' -f1)"
 mkdir -p "$ICU/icu/icu4c/source"
 printf '#!/bin/sh\\ntouch Makefile\\n' > "$ICU/icu/icu4c/source/runConfigureICU"
 chmod +x "$ICU/icu/icu4c/source/runConfigureICU"
@@ -133,7 +128,7 @@ make() {
     def test_full_icu_data_preserves_each_runtime_native_transport(self):
         root, result = self.icu_case()
         self.assertEqual(result.returncode, 0, 'staging complete ICU data must succeed: ' + result.stderr)
-        for mode in ['mono', 'nativeaot']:
+        for mode in ['mono']:
             native = root / f'out/icu/{mode}/runtimes/wasi-wasm/native'
             self.assertEqual((native / 'lib/icudt.dat').read_text(), 'complete-data\n', 'each runtime must receive the complete data archive')
             self.assertEqual((native / 'lib/libicuuc.a').read_text(), mode + '-native-library', 'ICU data updates must preserve that runtime transport native implementation')

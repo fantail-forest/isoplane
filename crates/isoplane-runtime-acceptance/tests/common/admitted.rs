@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use isoplane_harness::Reactor;
-use isoplane_host::egress::{DenyReason, DestinationPolicy, HostEgressPolicy};
+use isoplane_host::egress::{DenyReason, DestinationPolicy};
 use isoplane_host::Resolver;
 
 /// A destination policy admitting exactly the test's own peers.
@@ -32,7 +32,10 @@ impl DestinationPolicy for OnlyPeers {
 
 /// An egress policy whose outbound connections may only reach `peers`,
 /// resolving names through `resolver`.
-pub fn admitting(mut peers: Vec<SocketAddr>, resolver: Box<dyn Resolver>) -> HostEgressPolicy {
+pub fn admitting(
+    mut peers: Vec<SocketAddr>,
+    resolver: Box<dyn Resolver>,
+) -> isoplane_harness::Network {
     let aliases: Vec<_> = peers
         .iter()
         .filter_map(|peer| match peer {
@@ -50,7 +53,7 @@ pub fn admitting(mut peers: Vec<SocketAddr>, resolver: Box<dyn Resolver>) -> Hos
         })
         .collect();
     peers.extend(aliases);
-    HostEgressPolicy::new(resolver, 8, 1 << 20).with_destinations(Arc::new(OnlyPeers(peers)))
+    isoplane_harness::Network::with_resolver(resolver).with_destinations(Arc::new(OnlyPeers(peers)))
 }
 
 /// Waits for the reactor to release every connection permit: a cancelled

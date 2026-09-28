@@ -1,4 +1,3 @@
 <Project>
-  <Import Project="../../../guest-sdks/dotnet/Isoplane.Guest.targets" />
   <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
 </Project>

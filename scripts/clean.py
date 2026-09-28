@@ -17,7 +17,6 @@ def inventory(root, target):
         root / 'guests/out': 'guest fixtures',
         root / 'guest-runtime/out': 'runtime products',
         root / 'guest-runtime/work': 'runtime intermediates',
-        root / 'guest-runtime/compiler/work': 'compiler intermediates',
         root / '.isoplane-dev': 'local tools and legacy release builds',
     }
     development = root / '.isoplane-dev'

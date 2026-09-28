@@ -7,10 +7,8 @@ internal sealed class SourceChanges : IDisposable
 {
     private readonly FileSystemWatcher watcher;
     private Dictionary<string, string> snapshot;
-    private string? output;
     private int sourceChanged;
 
-    internal void SetOutput(string module) => Volatile.Write(ref output, Path.GetFullPath(module));
     private readonly Channel<bool> notifications = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
@@ -49,9 +47,7 @@ internal sealed class SourceChanges : IDisposable
 
     internal bool IsSourceFile(string path)
     {
-        var module = Volatile.Read(ref output);
-        var fullPath = Path.GetFullPath(path);
-        if (fullPath == module || fullPath == module + ".runtime" || Directory.Exists(path))
+        if (Directory.Exists(path))
             return false;
         var relative = Path.GetRelativePath(watcher.Path, path);
         return !relative.Split(Path.DirectorySeparatorChar).Any(Excluded);

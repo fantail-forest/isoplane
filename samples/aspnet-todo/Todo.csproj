@@ -1,20 +1,14 @@
 <Project Sdk="Isoplane.AspNetCore/0.1.0-preview.3">
   <PropertyGroup>
-    <Configurations>Debug;Release;IsoplaneInterpretedDebug;IsoplaneNativeAotRelease</Configurations>
-    <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
-    <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>
-    <Optimize Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</Optimize>
     <IsoplaneApplicationFactory>TodoApp.Application.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>
-    <IsoplaneMemoryMaxBytes>536870912</IsoplaneMemoryMaxBytes>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Design/**/*.cs" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <ProjectReference Include="Design/Design.csproj" ReferenceOutputAssembly="false" ExcludeAssets="all" Private="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;PublishAot;IsoplaneGuestRuntime" />
-    <RuntimeHostConfigurationOption Include="Microsoft.EntityFrameworkCore.Issue31751" Value="true" />
+                      GlobalPropertiesToRemove="RuntimeIdentifier" />
   </ItemGroup>
   <Target Name="IncludeCompiledDatabaseModel" BeforeTargets="CoreCompile" DependsOnTargets="ResolveProjectReferences">
     <ItemGroup>

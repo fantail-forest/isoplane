@@ -1,5 +1,4 @@
 using Isoplane.Native;
-using Isoplane.Cli.Tests;
 using System.Net.Sockets;
 using Xunit;
 
@@ -37,13 +36,12 @@ public sealed class DebugRelayTests
         internal LocalSession Host { get; }
         internal CancellationToken Cancellation => lifetime.Token;
         private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly DirectoryInfo directory = Directory.CreateTempSubdirectory("isoplane-relay-");
+        private readonly SessionFixture fixture = new();
 
         private RelaySession()
         {
-            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "name='relay-test'\nmodule='app.wasm'\n");
             Relay = new DebugRelay(Cancellation);
-            Host = new LocalSession(ModuleValidationTests.Module, new LocalProject(directory.FullName).SessionOptions(0, []), message =>
+            Host = new LocalSession(SessionFixture.Module, fixture.Options, message =>
             {
                 if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult();
             });
@@ -82,7 +80,7 @@ public sealed class DebugRelayTests
             First.Dispose();
             Second.Dispose();
             await Host.DisposeAsync();
-            directory.Delete(recursive: true);
+            fixture.Dispose();
             lifetime.Dispose();
         }
 

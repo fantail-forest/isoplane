@@ -4,11 +4,10 @@
     as the Isoplane SDK builds one, stopping at the managed bundle.
   -->
   <PropertyGroup>
-    <IsoplaneGuestRuntime>Mono</IsoplaneGuestRuntime>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-  <Import Project="../../../guest-sdks/dotnet/Isoplane.Guest.props" />
   <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
   <ItemGroup>
     <ProjectReference Include="$(MSBuildThisFileDirectory)../../../guest-sdks/dotnet/Isoplane.Sdk.csproj" />

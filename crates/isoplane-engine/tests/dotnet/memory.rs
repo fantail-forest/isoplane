@@ -29,7 +29,7 @@ fn initialized_limit_survives_restore(wasm: &[u8], limit_bytes: u64) {
         "the collector must observe the effective limit at initialization and retain it after capture and restoration");
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn the_gc_observes_its_limit_during_initialization_and_after_restore(runtime: GuestRuntime) {
         let wasm = isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_memory", runtime);
         for limit_bytes in [96 << 20, isoplane_abi::config::WASM32_MEMORY_MAX_BYTES] {

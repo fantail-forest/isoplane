@@ -201,7 +201,6 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
 def prepare_runtime(source, candidates, logs):
     runtime = source / 'guest-runtime'
     feed = load(runtime / 'feed-identity.py')
-    compiler = load(runtime / 'compiler/build.py')
     destination = runtime / 'out'
     destination.mkdir(exist_ok=True)
     for candidate in [source, *candidates]:
@@ -221,23 +220,6 @@ def prepare_runtime(source, candidates, logs):
     else:
         run(['bash', runtime / 'build.sh'], source, logs / 'guest-runtime.log')
     feed.verify_feed(destination / 'feed', runtime)
-    for candidate in [source, *candidates]:
-        try:
-            compiler.verify(candidate / 'guest-runtime/out/compiler', True)
-        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
-            print(f'Compiler cache unavailable at {candidate}: {error}', flush=True)
-            continue
-        if candidate != source:
-            if (destination / 'compiler').exists():
-                shutil.rmtree(destination / 'compiler')
-            shutil.copytree(candidate / 'guest-runtime/out/compiler', destination / 'compiler', dirs_exist_ok=True)
-        print(f'Reusing verified compiler from {candidate}', flush=True)
-        break
-    else:
-        if (destination / 'compiler').exists():
-            shutil.rmtree(destination / 'compiler')
-        run(['python3', runtime / 'compiler/build.py', 'build'], source, logs / 'compiler.log')
-    compiler.verify(destination / 'compiler', True)
     # Acquisition verifies pinned archives even when a sibling worktree supplies them.
     downloads = runtime / 'work/downloads'
     downloads.mkdir(parents=True, exist_ok=True)
@@ -416,7 +398,6 @@ def build(root, cache, releases, logs, args):
          '--output', release], source, logs / 'assemble.log', environment)
     verify_packages(release / 'packages', version, revision, native_library)
     runtime_inputs = load(source / 'guest-runtime/feed-identity.py').verify_feed(runtime_output / 'feed', source / 'guest-runtime')
-    compiler_identity = load(source / 'guest-runtime/compiler/build.py').verify(runtime_output / 'compiler', True)
     wasi_sdk_version = (source / 'guest-runtime/work/wasi-sdk/VERSION').read_text()
     manifest = {'sourceRevision': revision, 'packageVersion': version, 'runtimeIdentifier': RUNTIME_IDENTIFIER,
                 'toolchain': archive_toolchain(release, epoch),
@@ -425,7 +406,6 @@ def build(root, cache, releases, logs, args):
                 'dotnetSdk': {key: value for key, value in sdk_identity.items() if key != 'files'},
                 'wasmToolsVersion': wasm_version,
                 'runtimeInputsSha256': runtime_inputs,
-                'compiler': compiler_identity,
                 'wasiSdk': wasi_sdk_version,
                 'builder': {'rustc': output(['rustc', '-vV']), 'cargo': output(['cargo', '--version']),
                             'cargoLockSha256': sha(source / 'Cargo.lock')}}
@@ -446,22 +426,20 @@ def main():
     parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
     parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
     parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
-    parser.add_argument('--llvm', type=Path, help='LLVM development build matching the compiler pin (macOS)')
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()
     if platform.system() == 'Darwin':
         if RUNTIME_IDENTIFIER not in ('osx-arm64', 'osx-x64'):
             parser.error('macOS builds require an ARM64 or x64 host')
-        if not args.runtime_artifact or not args.runtime_sha256 or not args.llvm:
-            parser.error('macOS builds require --runtime-artifact, --runtime-sha256 and --llvm')
+        if not args.runtime_artifact or not args.runtime_sha256:
+            parser.error('macOS builds require --runtime-artifact, --runtime-sha256')
         if not re.fullmatch('[a-fA-F0-9]{64}', args.runtime_sha256):
             parser.error('--runtime-sha256 must contain 64 hexadecimal digits')
         args.runtime_sha256 = args.runtime_sha256.lower()
-        args.llvm = args.llvm.resolve()
     elif platform.system() != 'Linux' or platform.machine() != 'x86_64':
         parser.error('build-preview requires Linux x64 or macOS')
-    elif args.runtime_artifact or args.runtime_sha256 or args.llvm:
-        parser.error('runtime artifact and LLVM options currently apply to macOS builds')
+    elif args.runtime_artifact or args.runtime_sha256:
+        parser.error('runtime artifact options currently apply to macOS builds')
     if args.jobs < 1:
         parser.error('--jobs must be positive')
     os.environ['CARGO_BUILD_JOBS'] = str(args.jobs)

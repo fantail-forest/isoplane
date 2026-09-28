@@ -16,28 +16,6 @@ public sealed class ToolchainTests
             "setup must reject a bundle layout it cannot interpret");
     }
 
-    [Fact]
-    public async Task SetupRefusesAnUntrackedCompilerPackage()
-    {
-        using var fixture = new ToolchainBundle();
-        var path = Path.Combine(fixture.Source, "toolchain.json");
-        var manifest = JsonSerializer.Deserialize<ToolchainManifest>(await File.ReadAllTextAsync(path))!;
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(manifest with
-        {
-            Files = manifest.Files.Where(file => file.Path != "compiler/fixture.nupkg").ToArray()
-        }));
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.InstallAsync());
-        Assert.True(error.Message.Contains("compiler package", StringComparison.Ordinal), "setup must diagnose an incomplete compiler payload");
-    }
-
-    [Fact]
-    public void DoctorExplainsAnUnloadableCompilerBackend()
-    {
-        using var fixture = new ToolchainBundle();
-        var failure = Assert.Throws<InvalidOperationException>(() => Toolchain.ProbeCompiler(fixture.Source));
-        Assert.True(failure.Message.Contains("native dependencies", StringComparison.Ordinal), "doctor must explain missing native compiler dependencies");
-    }
-
     private static void AssertNothingInstalled(ToolchainBundle fixture, string because)
     {
         Assert.True(!Directory.Exists(Toolchain.Installations(fixture.Home)) || Directory.GetDirectories(Toolchain.Installations(fixture.Home)).Length == 0, because);

@@ -81,7 +81,7 @@ structured runtime record for a bug report, run:
 
 ```bash
 RUST_LOG=debug isoplane dev --project . \
-  --configuration IsoplaneInterpretedDebug --json \
+  --configuration Debug --json \
   >isoplane-session.jsonl 2>isoplane-debug.jsonl
 ```
 

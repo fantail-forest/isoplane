@@ -21,7 +21,7 @@ fn hash(
         .answer(instance, recorder)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn ordinary_sha256_array_and_span_calls_match_known_digests_across_requests(runtime: GuestRuntime) {
         let (mut instance, recorder) = hashing(runtime).activate();
         let cases: &[(&[u8], &str)] = &[

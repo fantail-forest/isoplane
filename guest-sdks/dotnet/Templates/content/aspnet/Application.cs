@@ -12,6 +12,7 @@ public static class Application
         var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         var app = builder.Build();
         app.MapGet("/", () => "Hello from Isoplane!");
+        Isoplane.Initialization.Initializing += () => new IsoplaneApplication(app).WarmupAsync("/");
         return app;
     }
 }

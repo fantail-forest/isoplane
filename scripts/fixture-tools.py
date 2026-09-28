@@ -222,11 +222,10 @@ def main():
                 sys.exit(f"building Isoplane CLI failed; see {log}:\n{log.read_text()}")
         print(target / "artifacts/bin/Isoplane.Cli/debug/Isoplane.Cli.dll")
     elif action == "runtime-identity":
-        # The identity of the pack a feed offers a runtime (mono or
-        # nativeaot): its version and the digest NuGet records for the
-        # package, from the props the feed stage writes.
         props = Path(args[0]).read_text()
-        prefix = {"mono": "IsoplaneGuestRuntimePack", "nativeaot": "IsoplaneGuestNativeAotPack"}[args[1]]
+        if args[1] != "mono":
+            sys.exit("runtime-identity supports only the platform Mono runtime")
+        prefix = "IsoplaneGuestRuntimePack"
         def field(name):
             start = props.find(f"<{name}>")
             end = props.find(f"</{name}>")

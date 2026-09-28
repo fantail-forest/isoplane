@@ -28,7 +28,7 @@ async fn exchange(runtime: GuestRuntime, mode: &str) -> (String, ProtocolPeer) {
     } else {
         Box::new(no_dns::NoDns)
     };
-    let reactor = Reactor::new(
+    let reactor = Reactor::with_network(
         InstanceId::alloc(),
         admitted::admitting(vec![peer.address], resolver),
     );
@@ -63,7 +63,7 @@ async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String
 async fn tunnel_exchange(runtime: GuestRuntime, authenticate: bool) {
     let origin = protocol_peer(true).await;
     let proxy = connect_proxy(origin.address, authenticate).await;
-    let reactor = Reactor::new(
+    let reactor = Reactor::with_network(
         InstanceId::alloc(),
         admitted::admitting(vec![proxy.address], Box::new(no_dns::NoDns)),
     );
@@ -122,7 +122,7 @@ async fn tunnel_exchange(runtime: GuestRuntime, authenticate: bool) {
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_explicit_proxy_receives_the_absolute_uri_without_origin_dns(runtime: GuestRuntime) {
         let (answer, peer) = exchange(runtime, "proxy").await;
@@ -193,7 +193,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_https_connect_proxy_tunnels_tls_without_origin_dns(runtime: GuestRuntime) {
         tunnel_exchange(runtime, false).await;

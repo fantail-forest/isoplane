@@ -137,11 +137,8 @@ impl Deployer {
     }
 
     /// Prepare and publish a local immutable artifact.
-    /// On Linux, every module with an initializer is prepared as a layer over
-    /// the runtime baseline this node publishes once for it: the state its
-    /// `isoplane_initialize_runtime` export leaves, or its uninitialized state
-    /// when it has none. A module without an initializer has no state to
-    /// capture and is prepared whole.
+    /// Initializes the installed platform runtime as a shared baseline and
+    /// the application as a layer over it on Linux.
     pub async fn prepare_local(
         &self,
         manifest: &AppManifest,
@@ -158,8 +155,15 @@ impl Deployer {
                 isoplane_prepare::PortableTemplate::Omitted,
             )
             .await?;
+        anyhow::ensure!(
+            admitted.has_initialize()
+                && admitted
+                    .optional_exports
+                    .contains(&isoplane_abi::imports::exports::INITIALIZE_RUNTIME),
+            "the installed runtime requires both runtime and application initialization exports"
+        );
         #[cfg(target_os = "linux")]
-        if admitted.has_initialize() {
+        {
             let held = self.baseline(wasm, &request, context).await?;
             let product = context
                 .provider
@@ -176,25 +180,27 @@ impl Deployer {
             let published =
                 self.publish(&artifact, manifest, options, context, Some(&held.name))?;
             let _directory = published.publication.keep();
-            return Ok(published.receipt);
+            Ok(published.receipt)
         }
         // Only Linux maps a layer over a baseline, so elsewhere every module prepares whole.
         #[cfg(not(target_os = "linux"))]
-        drop(admitted);
-        let product = context
-            .provider
-            .prepare(wasm, &request, context.cancellation)
-            .await?;
-        // SAFETY: only the host-selected trusted Preparation provider supplies these bytes;
-        // source uploads never reach this decoder as native artifacts.
-        let artifact = unsafe {
-            context
-                .engine
-                .decode_builder_output(product.prepared_bytes(), identity)
-        }?;
-        let published = self.publish(&artifact, manifest, options, context, None)?;
-        let _directory = published.publication.keep();
-        Ok(published.receipt)
+        {
+            drop(admitted);
+            let product = context
+                .provider
+                .prepare(wasm, &request, context.cancellation)
+                .await?;
+            // SAFETY: only the host-selected trusted Preparation provider supplies these bytes;
+            // source uploads never reach this decoder as native artifacts.
+            let artifact = unsafe {
+                context
+                    .engine
+                    .decode_builder_output(product.prepared_bytes(), identity)
+            }?;
+            let published = self.publish(&artifact, manifest, options, context, None)?;
+            let _directory = published.publication.keep();
+            Ok(published.receipt)
+        }
     }
 
     /// Admits `wasm` and builds the request that prepares it.
@@ -214,8 +220,7 @@ impl Deployer {
             isoplane_prepare::RuntimeProfile::SharedRuntime { .. } => {
                 admit_local_shared_runtime(manifest, wasm)?
             }
-            isoplane_prepare::RuntimeProfile::RawWasm
-            | isoplane_prepare::RuntimeProfile::DotNet10 { .. } => admit_local(manifest, wasm)?,
+            isoplane_prepare::RuntimeProfile::RawWasm => admit_local(manifest, wasm)?,
         };
         let mut runtime_config = Vec::new();
         context

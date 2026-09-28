@@ -42,8 +42,10 @@ can register the transport with `builder.WebHost.UseIsoplane()`.
 
 The factory builds the service provider and route conventions during pre-init.
 Keep request-specific state out of that factory. Use an initialization hook for
-asynchronous warmup. The .NET host and its hosted services start on the first
-request, or during an explicit initialization warmup. Request scopes are created and disposed by ASP.NET's normal
+asynchronous warmup. After those hooks complete, the adapter starts the .NET host
+and awaits its hosted services before template capture. A hook that warms an
+endpoint starts the same host earlier; automatic startup and real requests reuse
+that completed startup. Request scopes are created and disposed by ASP.NET's normal
 request lifecycle. Ongoing `BackgroundService` work is rejected before startup:
 its lifetime cannot extend beyond a completed dispatch. Asynchronous bounded
 `IHostedService.StartAsync` work is supported.
@@ -78,22 +80,21 @@ dispatch settles. An early response releases unread content without background
 draining. Streaming also does not yet impose a byte
 cap on pending write payloads; that resource limit remains unresolved.
 
-On Linux, use the repository's pinned .NET SDK, wasi-sdk and wasm-tools, then
-run `dotnet publish -c Release`. The build restores the selected managed ASP.NET
-runtime and request-delegate generator from NuGet; it does not borrow assemblies from the installed
-shared framework. Unresolvable methods fail compilation. The PAL/import gate
-and `isoplane doctor` then check the produced module.
+Build the application with the pinned .NET SDK. `isoplane dev` and `isoplane bundle`
+restore the selected managed ASP.NET runtime and request-delegate generator from
+NuGet and package application IL. They do not require a native guest compiler.
 
 Set `RuntimeFrameworkVersion` in the application project to select the ASP.NET
 patch version (for example, `10.0.12`). Without an explicit selection, it uses the latest
 patch listed by the .NET SDK. Ordinary `PackageReference` versions remain owned by
 the application. Deployment bundles carry those resolved implementations;
-the platform supplies its own WASM runtime and compiler.
+the platform supplies the shared WASM runtime.
 
 To build local packages, pack `Isoplane.Sdk.csproj` and `Isoplane.AspNetCore.csproj` into
-the same directory and configure that directory as a NuGet source. The fixture
-builder at `guests/aspnet/build.sh` exercises this installation path with an
-isolated consumer and package cache. Managed adapter tests run with
+the same directory and configure that directory as a NuGet source. The installed
+SDK tests exercise this path with an isolated consumer and package cache.
+`guests/aspnet` is an engine fixture for scope capture and streaming, not a customer
+project. Managed adapter tests run with
 `dotnet test guest-sdks/dotnet/AspNetCore.Tests`.
 
 ## Start from a template
@@ -111,7 +112,6 @@ isoplane dev
 
 The generated project includes an ASP.NET route and the local build/run
 configuration. Install the [.NET CLI](../../../tools/Isoplane.Cli/README.md)
-and put its tool directory on your PATH. `isoplane dev` publishes and validates
-the module, then serves it on localhost; source edits trigger a rebuild. This
-path currently uses the NativeAOT compiler and a bundled Rust runtime, with
-the Linux toolchain prerequisites above. Local state is private to the project directory.
+and put its tool directory on your PATH. `isoplane dev` builds an application
+package and serves it on the SDK's shared Mono runtime; source edits trigger a
+rebuild. Local state is private to the project directory.

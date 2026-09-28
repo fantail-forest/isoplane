@@ -208,26 +208,36 @@ fn trap_code_in_poll_status_cs_mirrors_the_rust_enum() {
     );
 }
 
-/// The exports a C# source declares, by the name each `[UnmanagedCallersOnly]`
-/// attribute gives the next static method, with that method's signature.
+/// The managed signatures reached by the native Mono entrypoints.
 fn managed_exports(source: &str) -> BTreeMap<String, (Vec<Ty>, Vec<Ty>)> {
+    let native = sdk_file("../native/mono_entry.c");
     let mut found = BTreeMap::new();
-    // The attribute is conditional on the runtime profile, so the export it
-    // names is the next declaration after it, not on its own line.
-    let lines: Vec<&str> = source.lines().collect();
-    for (index, line) in lines.iter().enumerate() {
-        if !line.contains("[UnmanagedCallersOnly(") {
+    for function in native.split("\n}\n") {
+        let Some(declaration) = function.lines().find_map(|line| {
+            ["int32_t isoplane_", "int64_t isoplane_", "void isoplane_"]
+                .iter()
+                .find_map(|prefix| line.strip_prefix(prefix))
+        }) else {
             continue;
-        }
-        let name = line
-            .split("EntryPoint")
+        };
+        let export = declaration
+            .split_once('(')
+            .expect("a native entrypoint name")
+            .0;
+        let name = format!("isoplane_{export}");
+        let method_name = function
+            .split("invoke(\"")
             .nth(1)
-            .and_then(|rest| rest.split('"').nth(1))
-            .expect("an export name");
-        let declaration = lines[index + 1..]
-            .iter()
-            .find_map(|candidate| candidate.split("public static ").nth(1))
-            .expect("a static export after its attribute");
+            .and_then(|rest| rest.split('"').next())
+            .expect("a native entrypoint invokes its managed method");
+        let declaration = source
+            .lines()
+            .filter_map(|line| line.split("public static ").nth(1))
+            .find(|line| {
+                line.split_once(' ')
+                    .is_some_and(|(_, signature)| signature.starts_with(&format!("{method_name}(")))
+            })
+            .unwrap_or_else(|| panic!("{name} requires managed method {method_name}"));
         let (result, method) = declaration.split_once(' ').expect("an export return type");
         let parameters = method
             .split_once('(')
@@ -240,17 +250,21 @@ fn managed_exports(source: &str) -> BTreeMap<String, (Vec<Ty>, Vec<Ty>)> {
             .map(|value| {
                 ty(
                     value.split_whitespace().next().expect("a parameter type"),
-                    name,
+                    &name,
                 )
             })
             .collect();
         let results = if result == "void" {
             vec![]
         } else {
-            vec![ty(result, name)]
+            vec![ty(result, &name)]
         };
         found.insert(name.to_string(), (params, results));
     }
+    assert!(
+        !found.is_empty(),
+        "the Mono adapter must invoke managed entrypoints"
+    );
     found
 }
 
@@ -401,19 +415,10 @@ fn native_memory_queries_match_the_host_import_signature() {
         imports::HOST_MODULE,
         definition.name
     );
-    for (patch, declaration) in [
-        (
-            include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch"),
-            "extern guint64 isoplane_memory_limit_bytes (void);",
-        ),
-        (
-            include_str!("../../../guest-runtime/patches/runtimelab/008-wasi-memory-limit.patch"),
-            "uint64_t isoplane_memory_limit_bytes();",
-        ),
-    ] {
-        assert!(
-            patch.contains(&attribute) && patch.contains(declaration),
-            "each native collector must bind the canonical import as an unsigned 64-bit byte count"
-        );
-    }
+    let patch = include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch");
+    assert!(
+        patch.contains(&attribute)
+            && patch.contains("extern guint64 isoplane_memory_limit_bytes (void);"),
+        "Mono's collector must bind the canonical import as an unsigned 64-bit byte count"
+    );
 }

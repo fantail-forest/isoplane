@@ -271,7 +271,7 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
     let rig = Rig::new(
         &wasm,
         2 * isoplane_abi::WASM_PAGE_SIZE as u64,
-        Arc::new(HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20)),
+        Arc::new(HostEgressPolicy::new(Box::new(NoDns), 1)),
     );
     let first = rig
         .submit("/")
@@ -339,7 +339,7 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         release: tokio::sync::Notify::new(),
     });
     let policy = Arc::new(
-        HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20)
+        HostEgressPolicy::new(Box::new(NoDns), 1)
             .with_connections(connections.clone())
             .with_destinations(Arc::new(ExactPeer(peer))),
     );
@@ -447,11 +447,6 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
         0,
         "terminal discard must release reserved disk blocks"
     );
-}
-
-#[test]
-fn native_aot_tcp_read_survives_local_snapshot_reclamation() {
-    managed_stream_snapshot(GuestRuntime::NativeAot);
 }
 
 #[test]

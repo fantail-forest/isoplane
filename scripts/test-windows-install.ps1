@@ -68,8 +68,8 @@ throw new Exception("Disposal left the application listener running.");
     Set-Location (Join-Path $workspace 'Sample')
     Invoke-Dotnet build
     Test-HttpGuest Mono Debug
-    Invoke-Dotnet build -c IsoplaneNativeAotRelease
-    Test-HttpGuest NativeAOT IsoplaneNativeAotRelease
+    Invoke-Dotnet build -c Release
+    Test-HttpGuest Release Release
     Remove-Item "$sdk\bin\wasm-tools.exe"
     Invoke-Cli setup --source $Release --yes
     if (!(Test-Path "$sdk\bin\wasm-tools.exe")) { throw 'Repair did not restore the missing tool.' }

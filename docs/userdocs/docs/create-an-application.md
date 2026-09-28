@@ -28,7 +28,7 @@ Local state is private to the project directory.
 Run the application:
 
 ```bash
-dotnet run -c IsoplaneInterpretedDebug
+dotnet run
 ```
 
 Wait for the command to print a local address. The first build can take a while.
@@ -48,7 +48,7 @@ replace `Hello from Isoplane!` with `Hello from my API!` and save the file.
 Run the same command again:
 
 ```bash
-dotnet run -c IsoplaneInterpretedDebug
+dotnet run
 ```
 
 Open the address printed for this run. You should now see:
@@ -64,5 +64,5 @@ Press Ctrl+C to finish the session.
 
 Use [run and watch](run-and-rebuild.md) to restart automatically after edits, or
 [add an integration test](test-an-application.md) for the response you just
-created. [Execution modes](execution-modes.md) explains how this configuration
-relates to NativeAOT.
+created. [Application packages](execution-modes.md) explains how the SDK selects the
+shared runtime.

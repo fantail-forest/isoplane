@@ -1,6 +1,6 @@
 //! Egress policy for `http_fetch`, enforced host-side: private and link-local
-//! ranges denied, optional per-app allowlists, per-tenant connection and
-//! bandwidth quotas, and resolve-then-pin. The check resolves once, validates
+//! ranges denied, optional per-app allowlists, connection quotas,
+//! and resolve-then-pin. The check resolves once, validates
 //! every address it got back, and returns a [`PinnedTarget`] carrying the
 //! `SocketAddr` the connection uses, so DNS cannot move the target between
 //! the check and the connect.
@@ -75,10 +75,6 @@ pub enum DenyReason {
     ConnectionQuota {
         limit: u64,
     },
-    /// Per-tenant bandwidth quota.
-    BandwidthQuota {
-        limit_bytes: u64,
-    },
 }
 
 impl std::error::Error for DenyReason {}
@@ -96,12 +92,6 @@ impl std::fmt::Display for DenyReason {
             }
             DenyReason::ConnectionQuota { limit } => {
                 write!(f, "per-tenant connection quota of {limit} exhausted")
-            }
-            DenyReason::BandwidthQuota { limit_bytes } => {
-                write!(
-                    f,
-                    "per-tenant bandwidth quota of {limit_bytes} bytes exhausted"
-                )
             }
         }
     }
@@ -226,60 +216,12 @@ pub struct HostEgressPolicy {
     resolver: Box<dyn Resolver>,
     destinations: Arc<dyn DestinationPolicy>,
     max_connections: u64,
-    /// Egress fair-use cap.
-    max_bytes: u64,
     connections: AtomicU64,
-    bytes: AtomicU64,
     resolutions: AtomicU64,
 }
 
 /// Holds connection quota until the corresponding host socket is released.
 pub(crate) struct ConnectionPermit(Arc<HostEgressPolicy>);
-
-pub(crate) struct ByteReservation {
-    policy: Arc<HostEgressPolicy>,
-    available: u64,
-}
-
-impl ConnectionPermit {
-    pub(crate) fn reserve_bytes(
-        &self,
-        requested: isoplane_abi::native_io::ByteCount,
-    ) -> Result<ByteReservation, DenyReason> {
-        let mut available = 0;
-        self.0
-            .bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-                available = requested.0.min(self.0.max_bytes.saturating_sub(used));
-                (available != 0 || requested.0 == 0).then_some(used.saturating_add(available))
-            })
-            .map_err(|_| DenyReason::BandwidthQuota {
-                limit_bytes: self.0.max_bytes,
-            })?;
-        Ok(ByteReservation {
-            policy: self.0.clone(),
-            available,
-        })
-    }
-}
-
-impl ByteReservation {
-    pub(crate) fn available(&self) -> isoplane_abi::native_io::ByteCount {
-        isoplane_abi::native_io::ByteCount(self.available)
-    }
-
-    pub(crate) fn commit(mut self, transferred: isoplane_abi::native_io::ByteCount) {
-        self.available = self.available.saturating_sub(transferred.0);
-    }
-}
-
-impl Drop for ByteReservation {
-    fn drop(&mut self) {
-        self.policy
-            .bytes
-            .fetch_sub(self.available, Ordering::Relaxed);
-    }
-}
 
 impl Drop for ConnectionPermit {
     fn drop(&mut self) {
@@ -384,11 +326,6 @@ impl HostEgressPolicy {
         if !Self::allowlisted(&host, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(host));
         }
-        if self.bytes.load(Ordering::Relaxed) >= self.max_bytes {
-            return Err(DenyReason::BandwidthQuota {
-                limit_bytes: self.max_bytes,
-            });
-        }
         self.connections
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 (value < self.max_connections).then_some(value + 1)
@@ -413,25 +350,21 @@ impl HostEgressPolicy {
             })
     }
 
-    pub fn new(resolver: Box<dyn Resolver>, max_connections: u64, max_bytes: u64) -> Self {
+    /// Creates an egress policy with a concurrent connection limit.
+    pub fn new(resolver: Box<dyn Resolver>, max_connections: u64) -> Self {
         Self {
             connections_factory: Arc::new(LocalConnections),
             resolver,
             destinations: Arc::new(PublicDestinations),
             max_connections,
-            max_bytes,
             connections: AtomicU64::new(0),
-            bytes: AtomicU64::new(0),
             resolutions: AtomicU64::new(0),
         }
     }
 
-    pub fn system(max_connections: u64, max_bytes: u64) -> Result<Self, DnsError> {
-        Ok(Self::new(
-            Box::new(SystemResolver::new()?),
-            max_connections,
-            max_bytes,
-        ))
+    /// Creates an egress policy using the system DNS resolver.
+    pub fn system(max_connections: u64) -> Result<Self, DnsError> {
+        Ok(Self::new(Box::new(SystemResolver::new()?), max_connections))
     }
 
     pub fn resolutions(&self) -> u64 {
@@ -439,9 +372,6 @@ impl HostEgressPolicy {
     }
     pub fn connections(&self) -> u64 {
         self.connections.load(Ordering::Relaxed)
-    }
-    pub fn record_bytes(&self, n: u64) {
-        self.bytes.fetch_add(n, Ordering::Relaxed);
     }
     pub fn release_connection(&self) {
         self.connections
@@ -473,12 +403,6 @@ impl HostEgressPolicy {
         let parsed = parse_url(url)?;
         if !Self::allowlisted(&parsed.host, reach.allowlist) {
             return Err(DenyReason::NotAllowlisted(parsed.host).into());
-        }
-        if self.bytes.load(Ordering::Relaxed) >= self.max_bytes {
-            return Err(DenyReason::BandwidthQuota {
-                limit_bytes: self.max_bytes,
-            }
-            .into());
         }
         self.resolutions.fetch_add(1, Ordering::Relaxed);
         let addrs = self.resolver.resolve(&parsed.host, parsed.port).await?;
@@ -566,7 +490,7 @@ mod tests {
     }
 
     fn policy(r: impl Resolver) -> HostEgressPolicy {
-        HostEgressPolicy::new(Box::new(r), 100, 1 << 30)
+        HostEgressPolicy::new(Box::new(r), 100)
     }
 
     struct CountingFailure(Arc<AtomicU64>);
@@ -829,11 +753,7 @@ mod tests {
 
     #[tokio::test]
     async fn connection_quota_is_per_tenant_and_released() {
-        let p = HostEgressPolicy::new(
-            Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])),
-            2,
-            1 << 30,
-        );
+        let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])), 2);
         assert!(
             p.check_typed("http://a.example/", Reach::default())
                 .await
@@ -866,7 +786,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_target_does_not_burn_quota() {
-        let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([10, 0, 0, 1], 80)])), 1, 1 << 30);
+        let p = HostEgressPolicy::new(Box::new(Fixed(vec![sa([10, 0, 0, 1], 80)])), 1);
         assert!(
             p.check_typed("http://internal/", Reach::default())
                 .await
@@ -881,7 +801,6 @@ mod tests {
         let policy = Arc::new(HostEgressPolicy::new(
             Box::new(Fixed(vec![sa([93, 184, 216, 34], 80)])),
             1,
-            1 << 30,
         ));
         let connection = policy
             .check_owned("http://example.test/", Reach::default())

@@ -6,7 +6,6 @@
     is built lives in the SDK's Isoplane.Guest.props.
   -->
   <Import Project="../../../guest-sdks/dotnet/Isoplane.Guest.props" />
-  <Import Project="Stock.targets" Condition="'$(IsoplaneStock)' == 'true'" />
 
   <PropertyGroup>
     <AssemblyName>isoplane_guest_dotnet</AssemblyName>

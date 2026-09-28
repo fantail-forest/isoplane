@@ -3,48 +3,57 @@
 #[path = "common/dev.rs"]
 pub mod common;
 
-use common::{guest, manifest, Dev};
+use common::Dev;
 use std::path::{Path, PathBuf};
 
 fn project(destination: &Path) -> (PathBuf, PathBuf) {
-    let app = destination.join("app");
-    std::fs::create_dir(&app).unwrap();
-    std::fs::create_dir(destination.join("packages")).unwrap();
-    manifest(&app, "");
-    std::fs::write(app.join("fixture.wasm"), guest("working publication")).unwrap();
+    let app = isoplane_fixtures::aspnet_project(destination);
+    source(&app, "working publication", "");
+    let project = app.join("Template-App.csproj");
+    let text = std::fs::read_to_string(&project).expect("generated project");
     std::fs::write(
-        app.join("Lifecycle.csproj"),
-        r#"<Project>
-  <PropertyGroup><IsoplaneGuestRuntime>NativeAOT</IsoplaneGuestRuntime></PropertyGroup>
-  <Target Name="Restore" />
-  <Target Name="Publish">
+        &project,
+        text.replace(
+            "</Project>",
+            r#"
+  <Target Name="FixtureBuildGate" BeforeTargets="CoreCompile">
+    <Error Condition="Exists('omit-publication')" Text="fixture package build refused" />
     <Exec Condition="Exists('hold-publication')" Command="sh wait-build.sh" />
-    <MakeDir Directories="$(PublishDir)" />
-    <Copy Condition="!Exists('omit-publication')" SourceFiles="fixture.wasm" DestinationFolder="$(PublishDir)" />
   </Target>
 </Project>"#,
-    )
-    .unwrap();
-    std::fs::write(
-        app.join("wait-build.sh"),
-        "set -eu\nmkfifo .isoplane/publication-gate\nprintf 'publication-is-held\\n'\nexec cat .isoplane/publication-gate\n",
-    )
-    .unwrap();
-    let packages = destination
-        .join("packages")
-        .to_string_lossy()
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('"', "&quot;");
-    std::fs::write(
-        app.join("nuget.config"),
-        format!(
-            "<configuration><packageSources><clear/><add key=\"local\" value=\"{packages}\"/></packageSources></configuration>"
         ),
     )
-    .unwrap();
+    .expect("fixture build gate");
+    std::fs::write(app.join("wait-build.sh"),
+        "set -eu\nmkfifo .isoplane/publication-gate\nprintf 'publication-is-held\\n'\nexec cat .isoplane/publication-gate\n")
+        .expect("fixture external build gate");
     let cli = isoplane_fixtures::managed_cli(destination, &app);
     (app, cli)
+}
+
+fn source(app: &Path, response: &str, log: &str) {
+    let existing =
+        std::fs::read_to_string(app.join("Application.cs")).expect("generated application");
+    let namespace = existing
+        .lines()
+        .find_map(|line| line.strip_prefix("namespace "))
+        .and_then(|line| line.strip_suffix(';'))
+        .expect("generated application namespace");
+    let source = format!(
+        r#"
+using Microsoft.AspNetCore.Builder;
+using Isoplane.AspNetCore;
+namespace {namespace};
+public static class Application {{
+    public static WebApplication Create() {{
+        var app = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!).Build();
+        app.MapGet("/", () => {{ System.Console.WriteLine("{log}"); return "{response}"; }});
+        return app;
+    }}
+}}
+"#
+    );
+    std::fs::write(app.join("Application.cs"), source).expect("customer application source");
 }
 
 async fn body(dev: &Dev) -> String {
@@ -62,11 +71,7 @@ async fn body(dev: &Dev) -> String {
 async fn guest_logs_reach_the_installed_cli_from_execution_threads() {
     let directory = tempfile::tempdir().expect("isolate the installed logging workflow");
     let (app, cli) = project(directory.path());
-    std::fs::write(
-        app.join("fixture.wasm"),
-        common::guest_with_log("logged response", "managed-session-guest-log"),
-    )
-    .expect("publish a guest that logs during dispatch");
+    source(&app, "logged response", "managed-session-guest-log");
     let mut dev = Dev::start_managed(&app, &cli);
     assert_eq!(
         body(&dev).await,
@@ -78,7 +83,7 @@ async fn guest_logs_reach_the_installed_cli_from_execution_threads() {
 }
 
 #[tokio::test]
-async fn a_missing_publication_preserves_the_running_app_and_allows_repair() {
+async fn a_failed_package_build_preserves_the_running_app_and_allows_repair() {
     let directory = tempfile::tempdir().unwrap();
     let (app, cli) = project(directory.path());
     let mut dev = Dev::start_managed(&app, &cli);
@@ -93,12 +98,10 @@ async fn a_missing_publication_preserves_the_running_app_and_allows_repair() {
     assert_eq!(
         body(&dev).await,
         "working publication",
-        "a successful compiler exit without a module must not stop the working app"
+        "a failed package build must not stop the working app"
     );
 
-    let replacement = app.join(".isoplane/repaired.wasm");
-    std::fs::write(&replacement, guest("repaired publication")).unwrap();
-    std::fs::rename(replacement, app.join("fixture.wasm")).unwrap();
+    source(&app, "repaired publication", "");
     std::fs::remove_file(app.join("omit-publication")).unwrap();
     dev.wait_event("reloaded");
     assert_eq!(
@@ -122,13 +125,6 @@ async fn shutdown_cancels_a_publication_waiting_on_external_work() {
     assert!(
         app.join(".isoplane/publication-gate").exists(),
         "shutdown must cancel publication without requiring its external work to finish"
-    );
-    assert!(
-        std::fs::read_dir(app.join(".isoplane/publish"))
-            .unwrap()
-            .next()
-            .is_none(),
-        "cancelled publication must remove its staging directory before reporting completion"
     );
 }
 
@@ -170,9 +166,7 @@ async fn a_keep_alive_connection_serves_the_new_publication_after_reload() {
             "working publication",
             "the initial connection must serve the original publication"
         );
-        let pending = app.join(".isoplane/replacement.wasm");
-        std::fs::write(&pending, guest("replacement publication")).unwrap();
-        std::fs::rename(pending, app.join("fixture.wasm")).unwrap();
+        source(&app, "replacement publication", "");
         running.wait_event("reloaded");
         assert_eq!(
             request(&mut sender).await,
@@ -192,7 +186,7 @@ fn a_second_managed_process_cannot_share_the_projects_state() {
     let (app, cli) = project(directory.path());
     let mut running = Dev::start_managed(&app, &cli);
     let output = std::process::Command::new(&cli)
-        .args(["dev", "--no-build", "--no-watch", "--project"])
+        .args(["dev", "--no-watch", "--project"])
         .arg(&app)
         .output()
         .unwrap();
@@ -212,7 +206,7 @@ fn a_second_managed_process_cannot_share_the_projects_state() {
 fn the_cutover_supervisor_starts_an_installed_managed_worker() {
     let directory = tempfile::tempdir().unwrap();
     let (app, cli) = project(directory.path());
-    std::fs::write(app.join("app.wasm"), guest("cutover worker")).unwrap();
+    source(&app, "cutover worker", "");
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local/cutover.py");
     let output = std::process::Command::new("python3")
@@ -223,7 +217,7 @@ spec = importlib.util.spec_from_file_location("cutover", sys.argv[1])
 cutover = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cutover)
 async def run():
-    supervisor = cutover.Cutover(SimpleNamespace(cli=sys.argv[2], output=sys.argv[4], startup_timeout=30))
+    supervisor = cutover.Cutover(SimpleNamespace(cli=sys.argv[2], output=sys.argv[4], startup_timeout=600))
     owner, url = await supervisor.worker("managed", sys.argv[3])
     try:
         with urllib.request.urlopen(url, timeout=30) as response:

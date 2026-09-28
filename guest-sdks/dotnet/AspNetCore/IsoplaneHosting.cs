@@ -51,7 +51,7 @@ public static class IsoplaneHosting
         });
 }
 
-/// <summary>Runs a built application, starting hosted services on its first warmup or host request.</summary>
+/// <summary>Runs a built application with one host startup shared by preparation, warmup, and requests.</summary>
 public sealed class IsoplaneApplication
 {
     private readonly WebApplication application;
@@ -66,6 +66,8 @@ public sealed class IsoplaneApplication
         foreach (var source in ((IEndpointRouteBuilder)application).DataSources)
             _ = source.Endpoints;
     }
+
+    internal Task StartAsync() => server.StartApplicationAsync(application);
 
     /// <summary>Starts the .NET host once, then processes a buffered host request.</summary>
     public async Task<Response> HandleAsync(Request request)

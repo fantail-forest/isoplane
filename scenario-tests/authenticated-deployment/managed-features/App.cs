@@ -9,8 +9,10 @@ using Isoplane.AspNetCore;
 
 namespace ManagedFeatures;
 
+/// <summary>Exercises interpreted managed code and EF query translation after deployment.</summary>
 public static class App
 {
+    /// <summary>Builds the application and warms its managed-feature read route before template capture.</summary>
     public static WebApplication Create()
     {
         var builder = IsoplaneHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
@@ -37,6 +39,7 @@ public static class App
             Console.WriteLine("source-free-console");
             return "source free";
         });
+        Isoplane.Initialization.Initializing += () => new IsoplaneApplication(app).WarmupAsync("/");
         return app;
     }
 

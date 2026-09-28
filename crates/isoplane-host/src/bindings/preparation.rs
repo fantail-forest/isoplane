@@ -181,7 +181,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn preparation_timers_wake_on_the_host_clock_and_must_be_disposed_before_capture() {
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         let timer = handle(&io, Request::Timer(DurationNanos(1_000_000_000)));
         assert_eq!(
             io.pending_count(),
@@ -217,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn immediately_ready_pollables_survive_capture_without_creating_host_work() {
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         let sentinel = handle(&io, Request::Timer(DurationNanos(0)));
         let prepared = io
             .finish()
@@ -227,7 +227,7 @@ mod tests {
             vec![sentinel],
             "capture must record every guest-cached ready pollable identity"
         );
-        let restored = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let restored = preparation(HostEgressPolicy::system(4).unwrap());
         restored.restore_resources(&prepared).unwrap();
         assert!(
             matches!(
@@ -261,7 +261,7 @@ mod tests {
             vec![ResourceHandle(1)],
             vec![ResourceHandle(2), ResourceHandle(2)],
         ] {
-            let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+            let io = preparation(HostEgressPolicy::system(4).unwrap());
             let prepared = PreparedResources {
                 next_handle: 3,
                 network: Some(ResourceHandle(1)),
@@ -273,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn captured_ready_pollables_consume_the_activation_handle_budget() {
-        let mut io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let mut io = preparation(HostEgressPolicy::system(4).unwrap());
         io.resources = Mutex::new(Resources::new(ResourceLimits {
             handles: ResourceCount(1),
         }));
@@ -294,12 +294,12 @@ mod tests {
 
     #[tokio::test]
     async fn prepared_network_identity_and_retired_handles_survive_restoration() {
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         let retired = handle(&io, Request::Timer(DurationNanos(0)));
         dispose(&io, retired, ResourceKind::Pollable);
         let network = handle(&io, Request::Network);
         let prepared = io.finish().unwrap();
-        let restored = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let restored = preparation(HostEgressPolicy::system(4).unwrap());
         restored.restore_resources(&prepared).unwrap();
         assert_eq!(
             handle(&restored, Request::Network),
@@ -322,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn preparation_refuses_capture_with_an_undelivered_completion() {
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         let future = io
             .alloc(
                 isoplane_abi::native_io::canonical::POLL_IMPORT,
@@ -346,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn preparation_enforces_the_supplied_pending_future_budget() {
-        let mut io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let mut io = preparation(HostEgressPolicy::system(4).unwrap());
         io.config.pending_futures = 0;
         assert!(
             matches!(
@@ -376,13 +376,13 @@ mod tests {
                 network: Some(ResourceHandle(2)),
             },
         ] {
-            let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+            let io = preparation(HostEgressPolicy::system(4).unwrap());
             assert!(
                 io.restore_resources(&prepared).is_err(),
                 "invalid prepared handles must not gain authority"
             );
         }
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         let retired = handle(&io, Request::Timer(DurationNanos(0)));
         dispose(&io, retired, ResourceKind::Pollable);
         assert!(
@@ -393,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn retained_native_resources_refuse_a_different_template_baseline() {
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         io.restore_resources(&PreparedResources {
             ready_pollables: Vec::new(),
             next_handle: 2,
@@ -408,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn restored_network_handles_consume_the_native_handle_budget() {
-        let mut io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let mut io = preparation(HostEgressPolicy::system(4).unwrap());
         io.resources = Mutex::new(Resources::new(ResourceLimits {
             handles: ResourceCount(0),
         }));
@@ -448,7 +448,7 @@ mod tests {
             .unwrap();
         let destination = listener.local_addr().unwrap();
         let io = preparation(
-            HostEgressPolicy::system(4, 1024)
+            HostEgressPolicy::system(4)
                 .unwrap()
                 .with_destinations(Arc::new(Endpoint(destination))),
         );
@@ -494,7 +494,7 @@ mod tests {
     async fn preparation_obeys_application_allowlists_even_for_host_admitted_endpoints() {
         let destination = "127.0.0.1:4321".parse().unwrap();
         let mut io = preparation(
-            HostEgressPolicy::system(4, 1024)
+            HostEgressPolicy::system(4)
                 .unwrap()
                 .with_destinations(Arc::new(Endpoint(destination))),
         );
@@ -521,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_preparation_cancels_its_pending_reactor_work() {
-        let io = preparation(HostEgressPolicy::system(4, 1024).unwrap());
+        let io = preparation(HostEgressPolicy::system(4).unwrap());
         handle(&io, Request::Timer(DurationNanos(u64::MAX)));
         let futures = io.runtime.futures.clone();
         drop(io);

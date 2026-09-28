@@ -6,7 +6,7 @@
 **/*.rs.bk
 .isoplane-data/
 
-# .NET build intermediates (the ILCompiler packages restore large)
+# .NET build intermediates
 guests/dotnet/src/obj/
 guests/dotnet/src/bin/
 guests/dotnet/hostcheck/target/

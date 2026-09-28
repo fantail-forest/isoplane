@@ -85,15 +85,10 @@ impl Input {
             return Ok(Response::Bytes(Vec::new()));
         }
         let stream = connection(&self.state)?;
-        let reservation = stream
-            .permit
-            .reserve_bytes(ByteCount(length as u64))
-            .map_err(|error| Error::Denied(error.to_string()))?;
-        let mut bytes = vec![0; reservation.available().0 as usize];
+        let mut bytes = vec![0; length];
         match stream.stream.try_read(&mut bytes) {
             Ok(0) => Ok(Response::Closed),
             Ok(count) => {
-                reservation.commit(ByteCount(count as u64));
                 bytes.truncate(count);
                 Ok(Response::Bytes(bytes))
             }
@@ -139,18 +134,8 @@ impl Output {
 
     pub(super) fn send(&mut self, bytes: &[u8], bindings: &dyn Context) -> Result<Response, Error> {
         let stream = connection(&self.state)?;
-        let reservation = stream
-            .permit
-            .reserve_bytes(ByteCount(bytes.len() as u64))
-            .map_err(|error| Error::Denied(error.to_string()))?;
-        match stream
-            .stream
-            .try_write(&bytes[..reservation.available().0 as usize])
-        {
-            Ok(count) => {
-                reservation.commit(ByteCount(count as u64));
-                Ok(Response::Capacity(ByteCount(count as u64)))
-            }
+        match stream.stream.try_write(bytes) {
+            Ok(count) => Ok(Response::Capacity(ByteCount(count as u64))),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 self.arm(bindings)?;
                 Err(Error::WouldBlock)
@@ -218,9 +203,7 @@ mod tests {
         }
     }
 
-    async fn connected(
-        max_bytes: ByteCount,
-    ) -> (Arc<Mutex<SocketState>>, TcpStream, CellBindings, Arc<Wake>) {
+    async fn connected() -> (Arc<Mutex<SocketState>>, TcpStream, CellBindings, Arc<Wake>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("the owned stream peer must bind");
@@ -233,7 +216,7 @@ mod tests {
             .expect("the test must control its socket's send capacity");
         let (client, peer) = tokio::join!(socket.connect(address), listener.accept());
         let policy = Arc::new(
-            HostEgressPolicy::new(Box::new(NoDns), 1, max_bytes.0)
+            HostEgressPolicy::new(Box::new(NoDns), 1)
                 .with_destinations(Arc::new(OwnedPeer(address))),
         );
         let permit = policy
@@ -256,7 +239,7 @@ mod tests {
         context.begin_slice(1, 1);
         let state = Arc::new(Mutex::new(SocketState::Connected(Arc::new(Connection {
             stream: Arc::new(client.expect("the controlled socket must connect")),
-            permit,
+            _permit: permit,
         }))));
         (
             state,
@@ -269,7 +252,7 @@ mod tests {
     #[tokio::test]
     async fn polling_an_unreadable_input_arms_the_wake_a_blocked_read_would() {
         use super::super::{Request, ResourceCount, ResourceLimits, Resources};
-        let (state, mut peer, bindings, wake) = connected(ByteCount(1 << 20)).await;
+        let (state, mut peer, bindings, wake) = connected().await;
         let mut resources = Resources::new(ResourceLimits {
             handles: ResourceCount(4),
         });
@@ -322,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_full_socket_parks_one_output_wake_and_preserves_partial_send_counts() {
-        let (state, mut peer, bindings, wake) = connected(ByteCount(1 << 30)).await;
+        let (state, mut peer, bindings, wake) = connected().await;
         let mut output = Output::new(state);
         let sent = fill_output(&mut output, &bindings);
         let runtime = bindings.rt().expect("the stream test must have a reactor");
@@ -397,7 +380,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_delivered_readiness_wake_can_rearm_before_its_old_task_returns() {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            let (state, mut peer, mut bindings, _) = connected(ByteCount(1024)).await;
+            let (state, mut peer, mut bindings, _) = connected().await;
             let (wake, release) = hold_first_wake(&mut bindings);
             let mut input = Input::new(state);
             assert!(matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes.is_empty()), "the first read must wait for the real peer");
@@ -441,7 +424,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_delivered_output_wake_can_rearm_before_its_old_task_returns() {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            let (state, mut peer, mut bindings, _) = connected(ByteCount(1 << 30)).await;
+            let (state, mut peer, mut bindings, _) = connected().await;
             let (wake, release) = hold_first_wake(&mut bindings);
             let mut output = Output::new(state);
             let first_bytes = fill_output(&mut output, &bindings);
@@ -466,7 +449,7 @@ mod tests {
     async fn resetting_a_slot_closes_its_real_socket_and_cancels_pending_input() {
         use crate::Activator;
         use isoplane_engine::HostBindings;
-        let (state, mut peer, mut bindings, _) = connected(ByteCount(1024)).await;
+        let (state, mut peer, mut bindings, _) = connected().await;
         let input = bindings
             .ctx
             .native_io
@@ -521,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_a_pending_input_removes_its_wake_before_late_peer_data() {
         use tokio::io::AsyncWriteExt;
-        let (state, mut peer, bindings, _) = connected(ByteCount(1024)).await;
+        let (state, mut peer, bindings, _) = connected().await;
         let mut input = Input::new(state.clone());
         assert!(
             matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes.is_empty()),
@@ -569,7 +552,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_peer_reset_completes_a_pending_read_with_an_error() {
-        let (state, peer, bindings, wake) = connected(ByteCount(1024)).await;
+        let (state, peer, bindings, wake) = connected().await;
         let mut input = Input::new(state);
         assert!(
             matches!(input.read(ByteCount(1), &bindings), Ok(Response::Bytes(bytes)) if bytes.is_empty()),
@@ -602,31 +585,6 @@ mod tests {
             runtime.services.egress.connections(),
             0,
             "the reset connection must release quota when its last owner drops"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_send_cannot_exceed_its_remaining_byte_quota() {
-        let (state, mut peer, bindings, _) = connected(ByteCount(3)).await;
-        let mut output = Output::new(state);
-        assert!(
-            matches!(
-                output.send(b"four", &bindings),
-                Ok(Response::Capacity(ByteCount(3)))
-            ),
-            "a send must stop at its remaining byte quota"
-        );
-        assert!(
-            matches!(output.send(b"r", &bindings), Err(Error::Denied(_))),
-            "an exhausted byte quota must refuse another send"
-        );
-        let mut received = [0; 3];
-        peer.read_exact(&mut received)
-            .await
-            .expect("the peer must receive the admitted bytes");
-        assert_eq!(
-            &received, b"fou",
-            "a denied suffix must never reach the real peer"
         );
     }
 }

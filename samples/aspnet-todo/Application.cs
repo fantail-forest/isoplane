@@ -13,6 +13,8 @@ public static class Application
     /// <summary>Configures the application and registers read-only database warmup before template capture.</summary>
     public static WebApplication Create()
     {
+        // EF compiled models initialize synchronously because guests cannot start OS threads.
+        AppContext.SetSwitch("Microsoft.EntityFrameworkCore.Issue31751", true);
         var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, TodoJson.Default));

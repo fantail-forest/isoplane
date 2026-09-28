@@ -1,4 +1,4 @@
-"""Exercise installed tools, User Secrets and verified-TLS PostgreSQL in both guest modes."""
+"""Exercise installed tools, User Secrets and verified-TLS PostgreSQL."""
 
 import argparse
 import importlib.util
@@ -110,6 +110,10 @@ def verify_crud(address, container):
     assert rows(container) == [], 'the independent SQL client must observe the deletion'
 
 
+class StartupRejected(RuntimeError):
+    """The CLI refused preparation and exited before reporting readiness."""
+
+
 @contextmanager
 def application(dotnet, project, configuration, env, records, suffix=""):
     records = records.resolve()
@@ -124,7 +128,9 @@ def application(dotnet, project, configuration, env, records, suffix=""):
                     raise RuntimeError('Application startup exceeded its deadline; inspect the runtime log')
                 line = process.stdout.readline()
             if not line:
-                raise RuntimeError('The installed CLI exited before readiness; inspect the runtime log')
+                status = process.wait(timeout=30)
+                assert status != 0, 'the CLI must not exit successfully without reporting readiness'
+                raise StartupRejected(f'The installed CLI rejected startup with status {status}; inspect the runtime log')
             ready = json.loads(line)
             assert ready['event'] == 'ready', 'the CLI must report readiness before requests'
             yield ready['url']
@@ -150,7 +156,7 @@ def main():
     parser.add_argument('--package-feed', type=Path, required=True)
     parser.add_argument('--records', type=Path, default=None)
     parser.add_argument('--sample', type=Path, default=Path(__file__).resolve().parents[2] / 'samples/aspnet-todo')
-    parser.add_argument('--configuration', action='append', choices=['IsoplaneInterpretedDebug', 'IsoplaneNativeAotRelease'])
+    parser.add_argument('--configuration', action='append', choices=['Debug', 'Release'])
     arguments = parser.parse_args()
     with storage.records(arguments.records) as records:
         execute(arguments, records)
@@ -184,30 +190,28 @@ def execute(arguments, records):
             manifest = project / 'isoplane.toml'
             base = manifest.read_text().replace('127.0.0.1:5432', f'127.0.0.1:{port}')
             trust = f'\n[dev.trust]\nbundle = {json.dumps(str(directory / "ca.crt"))}\nsha256 = "{hashlib.sha256((directory / "ca.crt").read_bytes()).hexdigest()}"\n'
-            for configuration in arguments.configuration or ['IsoplaneInterpretedDebug', 'IsoplaneNativeAotRelease']:
+            for configuration in arguments.configuration or ['Debug', 'Release']:
                 manifest.write_text(base + trust)
                 with (records / f'{configuration}-build.log').open('w') as log:
                     subprocess.run([dotnet, 'build', '-c', configuration, '--disable-build-servers'],
                                    cwd=project, env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
                 with application(arguments.dotnet.resolve(), project, configuration, env, records) as address:
-                    shutil.copy2(project / 'out/Todo.wasm', records / f'{configuration}.wasm')
+                    shutil.copy2(project / '.isoplane/package/application.tar', records / f'{configuration}.tar')
                     verify_crud(address, container)
                 manifest.write_text(base)
-                with application(arguments.dotnet.resolve(), project, configuration, env, records, "-untrusted") as address:
-                    try:
-                        request(address, 'GET', '/todos')
-                    except urllib.error.HTTPError as error:
-                        assert error.code == 500, 'an untrusted database certificate must fail the request'
-                    else:
-                        raise AssertionError('the guest accepted a database certificate without its trusted root')
+                try:
+                    with application(arguments.dotnet.resolve(), project, configuration, env, records, "-untrusted"):
+                        raise AssertionError('database warmup must refuse startup without the trusted root')
+                except StartupRejected:
+                    pass
                 rejected = (records / f'{configuration}-untrusted.log').read_text()
                 assert 'System.Security.Authentication.AuthenticationException' in rejected, 'removing trust must fail TLS authentication, not merely return an unrelated server error'
                 assert 'outbound operation denied' not in rejected, 'the untrusted-root test must reach the database'
                 print(f'{configuration}: verified-TLS CRUD and untrusted-root rejection passed', flush=True)
             for record in records.glob('*.log'):
                 assert password not in record.read_text(), 'development credentials must not appear in build or runtime logs'
-            for module in records.glob('*.wasm'):
-                assert password.encode() not in module.read_bytes(), 'runtime secrets must not be embedded in the published guest'
+            for package in records.glob('*.tar'):
+                assert password.encode() not in package.read_bytes(), 'runtime secrets must not be embedded in the application package'
 
 
 if __name__ == '__main__':

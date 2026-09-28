@@ -34,8 +34,8 @@ using Xunit;
 public class ApplicationTests
 {
     [Theory]
-    [InlineData("IsoplaneInterpretedDebug")]
-    [InlineData("IsoplaneNativeAotRelease")]
+    [InlineData("Debug")]
+    [InlineData("Release")]
     public async Task The_home_page_answers(string configuration)
     {
         using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(10));

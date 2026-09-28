@@ -37,14 +37,10 @@ internal sealed class ToolchainBundle : IDisposable
         {
             var target = Path.Combine(Source, required);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            var content = required == "compiler/compiler.json"
-                ? JsonSerializer.Serialize(new { package = "fixture.nupkg", package_sha256 = digest, backend_sha256 = digest })
-                : "payload";
+            var content = "payload";
             File.WriteAllText(target, content);
             entries.Add(new(required, Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))), false));
         }
-        File.WriteAllText(Path.Combine(Source, "compiler", "fixture.nupkg"), "payload");
-        entries.Add(new("compiler/fixture.nupkg", digest, false));
         var manifest = new ToolchainManifest(platform ?? Toolchain.PlatformIdentifier(), "10.0.400", "10.0.11", entries.ToArray());
         File.WriteAllText(Path.Combine(Source, "toolchain.json"), JsonSerializer.Serialize(manifest));
         foreach (var id in PackageIds)

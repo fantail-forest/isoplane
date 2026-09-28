@@ -55,7 +55,7 @@ fn reactor(owner: u64, peers: Vec<std::net::SocketAddr>) -> Reactor {
     reactor
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_get_parks_on_the_socket_and_resumes_with_the_response(runtime: GuestRuntime) {
         let peer = http_peer().await;
@@ -590,7 +590,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_ipv6_only_dns_destination_is_reachable_by_the_default_http_client(runtime: GuestRuntime) {
         let ipv6 = std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);

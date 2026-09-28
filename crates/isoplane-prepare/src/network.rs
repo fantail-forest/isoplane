@@ -32,7 +32,7 @@ impl InitializationNetwork {
     ) -> Result<PreparationIo, crate::PrepareError> {
         let owner = ConnectionOwner::new(self.tenant.clone(), isoplane_host::InstanceId(1))
             .map_err(|error| crate::PrepareError::State(error.into()))?;
-        let egress = HostEgressPolicy::system(self.limits.connections, self.limits.egress_bytes)
+        let egress = HostEgressPolicy::system(self.limits.connections)
             .map_err(|error| crate::PrepareError::State(error.into()))?
             .with_destinations(Arc::new(AdditionalDestinations {
                 endpoints: self.allowed_destinations.clone(),

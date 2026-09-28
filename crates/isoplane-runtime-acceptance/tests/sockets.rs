@@ -12,8 +12,6 @@ mod admitted;
 mod fixed_dns;
 #[path = "common/no_dns.rs"]
 mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 #[path = "common/peers.rs"]
 mod peers;
 #[path = "common/refusing.rs"]
@@ -23,14 +21,13 @@ use admitted::released;
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
 use isoplane_harness::EmittedGuestLogs as _;
-use no_egress::reactor_without_egress;
 use peers::{
     fnv1a, gated_peer, pattern, peer, peer_with_receive_buffer, reactor_for_peers,
     reactor_for_peers_with_send_buffer, slow_drain_peer, Peer,
 };
 use refusing::refusing_endpoint;
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_connection_parks_while_connecting_and_resumes_connected(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -69,7 +66,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_stream_echoes_bytes_through_input_and_output_readiness(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -95,7 +92,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// A parked read survives Store restoration: the guest's captured memory is
     /// restored between the park and the wake that delivers the bytes.
     #[tokio::test]
@@ -132,7 +129,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn two_sockets_in_flight_observe_their_own_pollables(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -153,7 +150,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_refused_connection_is_reported_inline_as_connection_refused(runtime: GuestRuntime) {
         let (_reservation, refused) = refusing_endpoint();
@@ -184,7 +181,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_read_receives_clean_eof_when_the_peer_closes(runtime: GuestRuntime) {
         let eof = peer(Peer::Eof).await;
@@ -205,7 +202,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_read_receives_a_reset_as_a_socket_error(runtime: GuestRuntime) {
         let reset = peer(Peer::Reset).await;
@@ -226,7 +223,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_half_closed_socket_keeps_its_receive_direction(runtime: GuestRuntime) {
         let half = peer(Peer::HalfClose).await;
@@ -247,7 +244,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn cancelling_a_read_releases_the_connection(runtime: GuestRuntime) {
         let silent = peer(Peer::Silent).await;
@@ -297,7 +294,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_disposed_socket_drops_its_registration_before_the_next_poll(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -327,7 +324,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn no_delay_is_real_host_state_before_and_after_connecting(runtime: GuestRuntime) {
         let echo = peer(Peer::Echo).await;
@@ -348,7 +345,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Timeouts govern blocking calls, which an Isoplane socket never makes; they are
     /// stored like any other option rather than refused, as they are for
     /// asynchronous use on every other platform.
@@ -372,7 +369,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_send_into_a_reset_connection_is_a_socket_error_naming_the_reset(runtime: GuestRuntime) {
         let reset = peer(Peer::Reset).await;
@@ -409,7 +406,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// An Isoplane socket never blocks; the synchronous socket calls either refuse
     /// explicitly (Connect) or report the ordinary would-block error, never a
     /// trap or a hang.
@@ -454,7 +451,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Socket.Poll waits inside the call; it is refused explicitly rather than
     /// trapped by the host's refusal to block.
     #[tokio::test]
@@ -477,10 +474,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn listening_and_datagram_sockets_are_refused_with_socket_errors(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(20);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         assert_eq!(
@@ -497,7 +494,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_zero_byte_receive_parks_until_data_arrives_and_leaves_it_for_the_read(runtime: GuestRuntime) {
         let (peer, gate) = gated_peer().await;
@@ -528,7 +525,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Enabled linger asks for a close-with-reset the host never performs;
     /// the runtime refuses it before any host call, as upstream .NET does on
     /// WASI, and the socket keeps working.
@@ -552,7 +549,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Disabled linger is the platform's only state: the SDK shim accepts
     /// setting it as the no-op it is (libc itself has no SO_LINGER), and the
     /// socket keeps working and reads back as not lingering.
@@ -576,7 +573,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// A negative timeout and a negative linger time are refused by managed
     /// argument checks; a NoDelay value too short for the option reaches the
     /// host shim and is refused as an invalid argument. Each leaves the value
@@ -604,7 +601,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Buffer sizes and keep-alive reach the host and are refused: they
     /// neither round-trip in the guest nor change the host socket. The
     /// refusal leaves NoDelay, real host state, in place and the socket usable.
@@ -740,14 +737,14 @@ async fn a_large_send_under_backpressure(runtime: GuestRuntime, owner: u64, wake
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_large_send_to_a_slow_reader_parks_on_writability_and_delivers_every_byte_in_order(runtime: GuestRuntime) {
         a_large_send_under_backpressure(runtime, 34, WakePath::Direct).await;
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// The partially sent buffer and send-loop position survive store restoration.
     #[tokio::test]
     async fn a_large_send_under_backpressure_survives_store_restoration_at_every_park(runtime: GuestRuntime) {
@@ -755,7 +752,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_large_stream_is_received_intact_through_small_guest_buffers(runtime: GuestRuntime) {
         const STREAM_BYTES: usize = 300 * 1024;
@@ -833,7 +830,7 @@ async fn a_synchronous_call_fails_fast(
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// The buffers on both ends are far smaller than the payload, so a
     /// blocking send would have to wait for the silent peer.
     #[tokio::test]
@@ -849,7 +846,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// ReceiveTimeout round-trips as a property; it never times a receive
     /// out, because a synchronous receive is refused before it could wait.
     /// The reactor's clock is not advanced: nothing here may depend on time.
@@ -904,7 +901,7 @@ async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
         );
     }
     let mut reactor = if mode == "dns" {
-        isoplane_harness::Reactor::new(
+        isoplane_harness::Reactor::with_network(
             isoplane_host::InstanceId::alloc(),
             admitted::admitting(
                 admitted,
@@ -954,7 +951,7 @@ async fn configured_tcp_client(runtime: GuestRuntime, mode: &str, ipv6: bool) {
     released(&reactor).await;
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_default_tcp_client_connects_to_ipv4_with_its_configuration(runtime: GuestRuntime) {
         configured_tcp_client(runtime, "address", false).await;
@@ -985,7 +982,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_ipv6_only_tcp_client_refuses_an_ipv4_mapped_destination(runtime: GuestRuntime) {
         configured_tcp_client(runtime, "only-v6", false).await;
@@ -1000,14 +997,14 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_default_tcp_client_retains_an_approved_ipv4_dns_answers_authority(runtime: GuestRuntime) {
         configured_tcp_client(runtime, "dns", false).await;
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_explicit_ipv4_tcp_client_refuses_an_ipv6_destination(runtime: GuestRuntime) {
         configured_tcp_client(runtime, "only-v4", true).await;
@@ -1019,7 +1016,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_default_tcp_client_retains_an_allowlisted_ipv4_literals_authority(runtime: GuestRuntime) {
         configured_tcp_client(runtime, "literal", false).await;
@@ -1045,7 +1042,7 @@ async fn socket_apm(runtime: GuestRuntime, mode: &str) {
     assert_eq!(answer, "APM callbacks restored; unfinished End refused", "task-backed APM callbacks, state, completed End calls and unfinished-wait refusal must survive Store restoration");
     released(&reactor).await;
 }
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn network_stream_apm_callbacks_survive_store_restoration(runtime: GuestRuntime) { socket_apm(runtime, "stream").await; }
     #[tokio::test]

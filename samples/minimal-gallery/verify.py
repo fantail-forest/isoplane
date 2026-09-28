@@ -5,9 +5,11 @@ import hashlib
 import subprocess
 import tempfile
 import time
-import re
 import urllib.request
-import signal
+import os
+import shutil
+import selectors
+import xml.etree.ElementTree as ET
 import uuid
 import io
 from pathlib import Path
@@ -37,12 +39,14 @@ def limits_toml(limits):
 
 
 parser = argparse.ArgumentParser(
-    description="Verify a published gallery against disposable PostgreSQL and S3 storage."
+    description="Build and verify a gallery against disposable PostgreSQL and S3 storage."
 )
-parser.add_argument("--module", type=Path, required=True)
+parser.add_argument("--sample", choices=["minimal-gallery", "aspnet-gallery"], default="minimal-gallery")
+parser.add_argument("--package-feed", type=Path, required=True)
+parser.add_argument("--dotnet", type=Path, required=True)
 parser.add_argument("--name", default="minimal-gallery")
-parser.add_argument("--mode", required=True)
-parser.add_argument("--limits-json", type=parse_limits_json, default={'module_bytes_compressed': 52428800, 'package_bytes': 52428800, 'instance_memory_max': 134217728, 'cpu_ms_per_http_dispatch': 30000, 'subrequests_per_dispatch': 200, 'pending_futures_per_dispatch': 64}, help="Application resource budgets as a numeric JSON object")
+parser.add_argument("--configuration", choices=["Debug", "Release"], default="Release")
+parser.add_argument("--limits-json", type=parse_limits_json, default={'module_bytes_compressed': 52428800, 'package_bytes': 52428800, 'instance_memory_max': 536870912, 'cpu_ms_per_http_dispatch': 300000, 'subrequests_per_dispatch': 10000, 'pending_futures_per_dispatch': 4096}, help="Application resource budgets as a numeric JSON object")
 parser.add_argument("--isoplane", type=Path, required=True)
 parser.add_argument("--schema", type=Path, required=True)
 parser.add_argument("--records", type=Path, required=True)
@@ -256,9 +260,21 @@ with tempfile.TemporaryDirectory(prefix="run-", dir=root) as tmp:
             ],
             data=args.schema.read_text(),
         )
-        mode = args.mode
-        project = d / mode
-        project.mkdir()
+        mode = args.configuration
+        for sample in ("minimal-gallery", "aspnet-gallery"):
+            shutil.copytree(repo / "samples" / sample, d / sample,
+                            ignore=shutil.ignore_patterns("bin", "obj", "out", ".isoplane"))
+        project = d / args.sample
+        nuget = ET.parse(project / "nuget.config")
+        ET.SubElement(nuget.getroot().find("packageSources"), "add",
+                      {"key": "local-preview", "value": str(args.package_feed.resolve())})
+        nuget.write(project / "nuget.config")
+        env = os.environ.copy()
+        env["APPDATA"] = str(d / "user-secrets")
+        dotnet = str(args.dotnet.resolve())
+        env["DOTNET_ROOT"] = str(args.dotnet.resolve().parent)
+        env["PATH"] = str(isoplane.parent) + os.pathsep + str(args.dotnet.resolve().parent) + os.pathsep + env["PATH"]
+        pg.command([dotnet, "user-secrets", "init", "--project", str(project)], env=env)
         config_values = {
             "ConnectionStrings:Gallery": f"Host=127.0.0.1;Port={port};Database=todo;Username=postgres;Password={password}",
             "Gallery:S3:Endpoint": endpoint,
@@ -267,9 +283,10 @@ with tempfile.TemporaryDirectory(prefix="run-", dir=root) as tmp:
             "Gallery:S3:AccessKey": key,
             "Gallery:S3:SecretKey": secret,
         }
-        module = args.module.resolve()
+        pg.command([dotnet, "user-secrets", "set", "--project", str(project)],
+                   env=env, data=json.dumps(config_values))
         (project / "isoplane.toml").write_text(
-            f'name="{args.name}"\nmodule="{module}"\nlimits={limits_toml(args.limits_json)}\n[dev]\ninit_sandbox="runtime-bringup"\nallow_endpoints=["127.0.0.1:{port}","127.0.0.1:{s3port}","[::ffff:127.0.0.1]:{s3port}"]\n[dev.trust]\nbundle="{d}/ca.crt"\nsha256="{hashlib.sha256((d/'ca.crt').read_bytes()).hexdigest()}"\n'
+            f'name="{args.name}"\nlimits={limits_toml(args.limits_json)}\n[dev]\ninit_sandbox="runtime-bringup"\nallow_endpoints=["127.0.0.1:{port}","127.0.0.1:{s3port}","[::ffff:127.0.0.1]:{s3port}"]\n[dev.trust]\nbundle="{d}/ca.crt"\nsha256="{hashlib.sha256((d/'ca.crt').read_bytes()).hexdigest()}"\n'
         )
         logpath = root / f"{mode}-ingest.log"
         with logpath.open("w") as log:
@@ -277,34 +294,33 @@ with tempfile.TemporaryDirectory(prefix="run-", dir=root) as tmp:
                 [
                     str(isoplane),
                     "dev",
-                    "--watch",
+                    "--project",
                     str(project),
-                    "--no-build",
+                    "--configuration",
+                    args.configuration,
                     "--no-watch",
                     "--port",
                     "0",
-                    "--runtime-config-stdin",
+                    "--json",
+                    "--shutdown-on-stdin-close",
                 ],
                 stdin=subprocess.PIPE,
-                stdout=log,
-                stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=log,
+                env=env,
                 text=True,
             )
             try:
-                process.stdin.write(json.dumps(config_values) + "\n")
-                process.stdin.flush()
-                deadline = time.monotonic() + 300
-                while True:
-                    match = re.search(
-                        rf"ready {re.escape(args.name)} at (http://127.0.0.1:\d+)",
-                        logpath.read_text(),
-                    )
-                    if match:
-                        break
-                    if process.poll() is not None or time.monotonic() > deadline:
-                        raise RuntimeError("Guest readiness failed: " + mode)
-                    time.sleep(0.25)
-                url = match.group(1)
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    if not selector.select(900):
+                        raise RuntimeError("Guest readiness exceeded its deadline; inspect " + str(logpath))
+                    line = process.stdout.readline()
+                if not line:
+                    raise RuntimeError("Guest exited before readiness; inspect " + str(logpath))
+                ready = json.loads(line)
+                assert ready["event"] == "ready", "The CLI must report readiness before requests"
+                url = ready["url"]
                 verify_image(url, container, s3, (root / "original.jpg").read_bytes())
                 print(
                     mode
@@ -312,14 +328,31 @@ with tempfile.TemporaryDirectory(prefix="run-", dir=root) as tmp:
                     flush=True,
                 )
             finally:
-                process.send_signal(signal.SIGINT)
+                process.stdin.close()
                 try:
                     process.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
                     raise
+        pg.command(["docker", "exec", container, "psql", "-U", "postgres", "-d", "todo", "-v", "ON_ERROR_STOP=1",
+                    "-c", 'ALTER TABLE "GalleryImages" RENAME TO "UnavailableGalleryImages"'])
+        config_values["Gallery:ThumbnailEdge"] = "128"
+        pg.command([dotnet, "user-secrets", "set", "--project", str(project)],
+                   env=env, data=json.dumps(config_values))
+        try:
+            with pg.application(dotnet, project, mode, env, root, "-missing-table"):
+                raise AssertionError("Gallery preparation must run its read query before reporting readiness")
+        except pg.StartupRejected:
+            diagnostic = (root / f"{mode}-missing-table.log").read_text()
+            assert "Initialization" in diagnostic and "Npgsql.PostgresException" in diagnostic, \
+                "Preparation must report the database failure from its read warmup"
+            database_log = subprocess.run(["docker", "logs", container], capture_output=True, text=True,
+                                          check=True, timeout=30)
+            assert 'relation "GalleryImages" does not exist' in database_log.stdout + database_log.stderr, \
+                "PostgreSQL must observe the initialization query against the missing gallery table"
+        print(mode + ": gallery read warmup rejects a missing database table before readiness", flush=True)
         for value in [password, key, secret]:
             assert (
-                value not in logpath.read_text()
+                all(value not in path.read_text() for path in root.glob("*.log"))
             ), "Credentials must not appear in guest logs"

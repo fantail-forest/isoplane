@@ -321,7 +321,7 @@ impl Drop for Dev {
 pub fn manifest(dir: &std::path::Path, extra: &str) {
     std::fs::write(
         dir.join("isoplane.toml"),
-        format!("name='local-app'\nmodule='app.wasm'\n{extra}"),
+        format!("name='local-app'\n{extra}"),
     )
     .unwrap();
 }

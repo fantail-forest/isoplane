@@ -18,12 +18,12 @@ internal sealed class LocalProject
         var path = Path.Combine(this.directory, "isoplane.toml");
         try { manifest = TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path)) ?? throw new ArgumentException($"Empty project manifest: {path}"); }
         catch (TomlException error) { throw new ArgumentException($"Cannot read {path}: {error.Message}", error); }
+        if (manifest.ContainsKey("module") ||
+            (manifest.TryGetValue("dev", out var development) && development is TomlTable settings && settings.ContainsKey("build")))
+            throw new ArgumentException($"{path}: remove module and dev.build; the SDK builds an application package for its shared runtime.");
         if (!manifest.TryGetValue("name", out var name) || name is not string text || string.IsNullOrWhiteSpace(text))
             throw new ArgumentException($"{path} must establish a nonempty app name.");
     }
-
-    internal string Module => manifest.TryGetValue("module", out var module) && module is string path && !string.IsNullOrWhiteSpace(path)
-        ? Path.GetFullPath(path, directory) : throw new ArgumentException("isoplane.toml must name the module to execute.");
 
     /// <summary>Where <c>isoplane dev</c> builds an interpreted project's package.</summary>
     internal string Package => Path.Combine(directory, ".isoplane", "package", "application.tar");
@@ -46,7 +46,7 @@ internal sealed class LocalProject
             ["log_filter"] = Environment.GetEnvironmentVariable("RUST_LOG") ?? "info",
             ["debug_endpoint"] = debugEndpoint,
             ["trust"] = trust,
-            ["package"] = package,
+            ["package"] = package ?? Package,
         };
         if (development.TryGetValue("init_sandbox", out var sandbox)) settings["init_sandbox"] = sandbox;
         if (development.TryGetValue("allow_endpoints", out var endpoints)) settings["allow_endpoints"] = endpoints;

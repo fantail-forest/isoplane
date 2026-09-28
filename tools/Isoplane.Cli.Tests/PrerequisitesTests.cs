@@ -27,8 +27,8 @@ public sealed class PrerequisitesTests
     [Fact]
     public void The_install_command_names_the_ubuntu_packages_only_on_ubuntu_24_04()
     {
-        var missing = Prerequisites.Missing(soname => soname is not ("libzstd.so.1" or "libssl.so.3"), _ => true);
-        Assert.Equal("sudo apt-get install -y libssl3t64 libzstd1", Prerequisites.InstallCommand(new OperatingSystemRelease("ubuntu", "24.04"), missing));
+        var missing = Prerequisites.Missing(soname => soname is not ("libz.so.1" or "libssl.so.3"), _ => true);
+        Assert.Equal("sudo apt-get install -y libssl3t64 zlib1g", Prerequisites.InstallCommand(new OperatingSystemRelease("ubuntu", "24.04"), missing));
         Assert.Null(Prerequisites.InstallCommand(new OperatingSystemRelease("ubuntu", "22.04"), missing));
         Assert.Null(Prerequisites.InstallCommand(new OperatingSystemRelease("debian", "12"), missing));
     }

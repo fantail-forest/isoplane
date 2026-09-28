@@ -1,9 +1,5 @@
 <Project Sdk="Isoplane.AspNetCore/0.1.0-preview.3">
   <PropertyGroup>
-    <Configurations>Debug;Release;IsoplaneInterpretedDebug;IsoplaneNativeAotRelease</Configurations>
-    <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
-    <PublishAot Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</PublishAot>
-    <Optimize Condition="'$(Configuration)' == 'IsoplaneNativeAotRelease'">true</Optimize>
     <AssemblyName>SampleApp</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsoplaneApplicationFactory>SampleApp.Application.Create</IsoplaneApplicationFactory>

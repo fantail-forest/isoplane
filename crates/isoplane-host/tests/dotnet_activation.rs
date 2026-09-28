@@ -101,11 +101,6 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_aot_activation_awaits_its_timer_before_dispatch_and_does_not_repeat() {
-    activation_finishes_before_dispatch(GuestRuntime::NativeAot).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interpreted_activation_awaits_its_timer_before_dispatch_and_does_not_repeat() {
     activation_finishes_before_dispatch(GuestRuntime::Mono).await;
 }

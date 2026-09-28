@@ -65,11 +65,11 @@ async fn an_installed_dotnet_tool_runs_and_reloads_the_aspnet_template() {
 }
 
 #[tokio::test]
-async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_timers() {
+async fn an_installed_application_resumes_ordinary_timers() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut dev = Dev::start_managed_with_args(&app, &cli, &["--guest-runtime", "mono"]);
+    let mut dev = Dev::start_managed(&app, &cli);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -78,7 +78,7 @@ async fn an_installed_mono_profile_serves_the_template_and_resumes_ordinary_time
     assert_eq!(
         response.status(),
         200,
-        "the explicit Mono profile must serve the unchanged installed template"
+        "the shared runtime must serve the unchanged installed template"
     );
     assert_eq!(
         response.text().await.unwrap(),
@@ -113,7 +113,7 @@ async fn a_package_reload_prepares_only_its_layer_over_the_held_runtime_baseline
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut dev = Dev::start_managed_with_args(&app, &cli, &["--guest-runtime", "mono"]);
+    let mut dev = Dev::start_managed(&app, &cli);
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).unwrap();
     std::fs::write(
@@ -186,8 +186,8 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     let original = std::fs::read_to_string(&source).unwrap();
     let modified = original.replace(
         "app.MapGet(\"/\", () => \"Hello from Isoplane!\");",
-        "app.MapGet(\"/\", Handle);",
-    );
+        "app.MapGet(\"/\", Handle);\n        app.MapGet(\"/warmup\", async () => { await Task.Delay(1); return \"warm\"; });",
+    ).replace("WarmupAsync(\"/\")", "WarmupAsync(\"/warmup\")");
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
@@ -258,7 +258,7 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
                 "run",
                 "--no-launch-profile",
                 "-c",
-                "IsoplaneInterpretedDebug",
+                "Debug",
                 "-p:IsoplaneDebug=true",
                 "--",
                 "--json",
@@ -340,37 +340,29 @@ fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
 }
 
 #[test]
-fn installed_debug_options_reject_watch_and_unbuilt_modules_before_publication() {
+fn debug_mode_requires_nonwatching_execution() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    for (arguments, diagnostic) in [
-        (vec!["--debug"], "--debug requires --no-watch"),
-        (
-            vec!["--debug", "--no-watch", "--no-build"],
-            "--debug cannot be combined with --no-build.",
-        ),
-    ] {
-        let result = std::process::Command::new(&cli)
-            .args(["dev", "--project"])
-            .arg(&app)
-            .args(arguments)
-            .output()
-            .unwrap();
-        assert!(
-            !result.status.success(),
-            "unsupported debug modes must fail before publication"
-        );
-        assert!(
-            String::from_utf8_lossy(&result.stderr).contains(diagnostic),
-            "debug mode rejection must explain the supported workflow: {}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert!(
-            !app.join(".isoplane/debug").exists(),
-            "invalid debug options must not create a session"
-        );
-    }
+    let result = std::process::Command::new(&cli)
+        .args(["dev", "--project"])
+        .arg(&app)
+        .arg("--debug")
+        .output()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "unsupported debug modes must fail before publication"
+    );
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("--debug requires --no-watch"),
+        "debug mode rejection must explain the supported workflow: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        !app.join(".isoplane/debug").exists(),
+        "invalid debug options must not create a session"
+    );
 }
 
 #[test]

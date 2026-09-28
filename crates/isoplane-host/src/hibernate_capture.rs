@@ -392,7 +392,7 @@ mod tests {
             runtime_configuration: Default::default(),
             services: Arc::new(crate::bindings::Services {
                 egress: Arc::new(
-                    crate::egress::HostEgressPolicy::system(0, 0).expect("fixture resolver"),
+                    crate::egress::HostEgressPolicy::system(0).expect("fixture resolver"),
                 ),
                 fetcher: Arc::new(crate::fakes::FakeFetcher::default()),
             }),

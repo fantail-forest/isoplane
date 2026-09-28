@@ -317,8 +317,9 @@ mod tests {
         let root = installation(&["1.0.0"]);
         let runtimes = Runtimes::load(root.path()).expect("loads");
         let free: isoplane_abi::config::AppManifest =
-            toml::from_str("name = \"app\"\nlimits.module_bytes_compressed = 5242880\nlimits.package_bytes = 31457280\nlimits.instance_memory_max = 134217728\nlimits.cpu_ms_per_http_dispatch = 100\nlimits.subrequests_per_dispatch = 20\nlimits.pending_futures_per_dispatch = 6").expect("an explicit small-budget manifest");
+            toml::from_str("name = \"app\"\nlimits.module_bytes_compressed = 5242880\nlimits.package_bytes = 52428800\nlimits.instance_memory_max = 134217728\nlimits.cpu_ms_per_http_dispatch = 100\nlimits.subrequests_per_dispatch = 20\nlimits.pending_futures_per_dispatch = 6").expect("an explicit small-budget manifest");
         let limits = isoplane_prepare::package::PackageLimits::of(&free);
+        let maximum_package_bytes = 50 << 20;
         let identity = identity_json("1.0.0", MODULE);
         let package = |bytes: u64| {
             let mut builder = tar::Builder::new(Vec::new());
@@ -339,17 +340,19 @@ mod tests {
             builder.into_inner().expect("archive")
         };
         assert!(
-            runtimes.resolve(&package(limits.bytes), limits).is_ok(),
-            "a package exactly at the configured package-size limit must be prepared"
+            runtimes
+                .resolve(&package(maximum_package_bytes), limits)
+                .is_ok(),
+            "a 50 MiB package must be admitted on the configured application budget"
         );
         assert!(
             matches!(
-                runtimes.resolve(&package(limits.bytes + 1), limits),
+                runtimes.resolve(&package(maximum_package_bytes + 1), limits),
                 Err(PackageRefusal::Package(
                     isoplane_prepare::package::PackageError::TooLarge { .. }
                 ))
             ),
-            "a package one byte over the configured package-size limit must be refused"
+            "a package one byte over 50 MiB must be refused on the configured application budget"
         );
     }
 

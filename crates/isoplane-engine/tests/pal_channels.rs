@@ -71,7 +71,7 @@ impl PalSource for Host {
 // the guest: a module that imports the delegated set and calls it
 // ---------------------------------------------------------------------------
 
-/// Shaped like what NativeAOT-LLVM emits for these functions: the canonical
+/// Shaped like the WASI canonical ABI for these functions: the canonical
 /// ABI's callee-allocates convention (`cabi_realloc`) and caller-supplied
 /// return areas, so the adapter under test is the same code path a real .NET
 /// module drives.

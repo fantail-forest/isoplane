@@ -4,7 +4,7 @@ use crate::dotnet::{budget, fixture, GuestRuntime, Request};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{Completion, InstanceOps};
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn an_uncaptured_managed_continuation_resumes_on_another_worker_after_store_destruction(runtime: GuestRuntime) {
         let fixture = fixture("isoplane_guest_dotnet_async", runtime);
         let (mut instance, _) = fixture.activate();

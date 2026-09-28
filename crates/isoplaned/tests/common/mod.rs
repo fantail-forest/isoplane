@@ -45,12 +45,7 @@ pub fn config(dir: &std::path::Path) -> NodeConfig {
         cell: "cell-1".into(),
         hosts: vec!["quotes.isoplane.dev".into()],
         path_prefix: "/".into(),
-        versions: vec![VersionConfig {
-            id: "v1".into(),
-            wasm: None,
-        }],
-        init_visible_vars: Default::default(),
-        init_sandbox: Default::default(),
+        versions: vec![VersionConfig { id: "v1".into() }],
     }];
     cfg
 }

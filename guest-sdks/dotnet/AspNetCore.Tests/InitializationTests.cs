@@ -42,6 +42,18 @@ public sealed class InitializationTests
     }
 
     [Fact]
+    public async Task Failed_user_initialization_prevents_framework_completion()
+    {
+        var hook = new LifecycleHook();
+        bool completed = false;
+        var failure = await Record.ExceptionAsync(() => hook.EnterAsync(
+            () => throw new InvalidOperationException("user initialization failed"),
+            () => { completed = true; return Task.CompletedTask; }));
+        Assert.True(failure is InvalidOperationException && !completed && !hook.IsCompleted,
+            "framework startup must not proceed when user initialization fails");
+    }
+
+    [Fact]
     public async Task A_completed_hook_does_not_run_callbacks_again()
     {
         var hook = new LifecycleHook();

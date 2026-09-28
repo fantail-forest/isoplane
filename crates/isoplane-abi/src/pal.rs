@@ -1,4 +1,4 @@
-//! The WASI adapter table. NativeAOT-LLVM output declares `wasi:*` imports
+//! The WASI adapter table. WASI runtime output declares `wasi:*` imports
 //! the capability table would reject, and reaches only a handful of them. At
 //! deploy the platform composes an adapter: each whitelisted import is either
 //! delegated to a `isoplane:platform` import at the same fidelity, or satisfied

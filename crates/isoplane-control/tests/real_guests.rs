@@ -67,7 +67,7 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
             &wasm,
             Limits {
                 module_bytes_compressed: 5242880,
-                package_bytes: 31457280,
+                package_bytes: 52428800,
                 instance_memory_max: 134217728,
                 cpu_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,

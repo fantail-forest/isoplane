@@ -7,8 +7,12 @@ using Microsoft.Extensions.Logging;
 
 namespace AdapterFixture;
 
+internal sealed class Router() : WebApplicationRouter(Application.Create);
+
+/// <summary>Exercises the ASP.NET transport, request scopes, and hosted startup.</summary>
 public static class Application
 {
+    /// <summary>Builds the transport fixture and warms its ordinary and scoped read routes.</summary>
     public static WebApplication Create()
     {
         var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
@@ -70,6 +74,12 @@ public static class Application
             if (release[0] == 0) throw new InvalidOperationException("The streaming fixture failed after publishing its first chunk.");
             await context.Response.Body.WriteAsync("B"u8.ToArray());
         });
+        Isoplane.Initialization.Initializing += async () =>
+        {
+            var application = new IsoplaneApplication(app);
+            await application.WarmupAsync("/");
+            await application.WarmupAsync("/scope");
+        };
         return app;
     }
 }

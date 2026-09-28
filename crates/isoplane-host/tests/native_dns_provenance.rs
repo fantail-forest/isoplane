@@ -4,7 +4,7 @@ use isoplane_abi::native_io::{AddressFamily, Error, Request, ResourceHandle, Res
 use isoplane_engine::HostBindings;
 use isoplane_harness::Reactor;
 use isoplane_host::bindings::CellBindings;
-use isoplane_host::egress::{ConnectionFactory, ConnectionOwner, DnsError, HostEgressPolicy};
+use isoplane_host::egress::{ConnectionFactory, ConnectionOwner, DnsError};
 use isoplane_host::{InstanceId, Resolver};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -54,9 +54,9 @@ fn handle(response: Response) -> ResourceHandle {
 impl Probe {
     fn new(answer: IpAddr, allowlist: &str) -> Self {
         let (tx, connections) = mpsc::unbounded_channel();
-        let mut reactor = Reactor::new(
+        let mut reactor = Reactor::with_network(
             InstanceId::alloc(),
-            HostEgressPolicy::new(Box::new(Dns(answer)), 8, 1024)
+            isoplane_harness::Network::with_resolver(Box::new(Dns(answer)))
                 .with_connections(Arc::new(Connector(tx))),
         );
         Arc::get_mut(&mut reactor.context)

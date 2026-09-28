@@ -40,11 +40,14 @@ Supply these values through Isoplane runtime configuration:
 | `Gallery:ThumbnailEdge` | Optional positive maximum thumbnail edge |
 
 PostgreSQL uses verified TLS and disables connection pooling. Configure trusted
-roots and allowed endpoints through the local development manifest. Credentials
-are read when a request runs and are not part of the prepared application.
+roots and allowed endpoints through the local development manifest. Both gallery
+apps run a read-only `GET /images` during initialization, warming database access
+and serialization before template capture. Configuration, credentials, trust roots,
+and database availability are therefore required during preparation. The request
+disposes its database connection; it does not upload images or write metadata.
 The S3 SDK uses path-style requests and retains its signing and checksum defaults.
 
-Build configurations are `IsoplaneInterpretedDebug` and `IsoplaneNativeAotRelease`.
+Build configurations are `Debug` and `Release`.
 Apply the schema from the separate design project with `dotnet ef database update
 --project Design --connection "<your PostgreSQL connection string>"` after
 installing the matching `dotnet-ef` 10.0 tool. The guest does not apply migrations.
@@ -58,14 +61,17 @@ The Stb ports use permissive/public-domain licensing and MetadataExtractor uses
 Apache 2.0. The small Stb resize port has a lower maintenance cadence than the
 larger image frameworks; this sample keeps processing behind one shared module.
 
-`verify.py` checks a published guest against disposable PostgreSQL 16 and Garage
+`verify.py` builds and checks an application package against disposable PostgreSQL 16 and Garage
 2.3.0 containers. Install `verification-requirements.txt` in a virtual environment,
-then pass `--module`, `--mode`, `--isoplane`, `--schema`, and `--records`. Generate the
+then pass `--package-feed`, `--dotnet`, `--isoplane`, `--schema`, and `--records`.
+Use `--sample minimal-gallery` or `--sample aspnet-gallery`, and
+`--configuration Debug` or `--configuration Release`. Generate the
 SQL supplied to `--schema` with `dotnet ef migrations script --project Design
 --output <path>`. The verifier creates a deterministic JPEG with actual EXIF,
 checks the response and independent PostgreSQL/S3 reads, decodes the thumbnail
 with Pillow, and removes its containers on exit. Its startup/request deadlines
 only detect hangs. It requires Docker and OpenSSL on the machine running it.
 
-The sample declares a 512 MiB maximum guest memory. This ceiling keeps the
-workload comparison consistent; it is not a claim about memory actually used.
+Execution must fit both the shared runtime module's memory maximum and the
+host-enforced memory allowance. The configured
+allowance is not a claim about memory actually used.

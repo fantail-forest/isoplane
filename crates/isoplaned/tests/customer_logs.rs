@@ -20,7 +20,8 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
     .await
     .expect("logging setup task")
     .expect("one test subscriber");
-    for runtime in [GuestRuntime::Mono, GuestRuntime::NativeAot] {
+    {
+        let runtime = GuestRuntime::Mono;
         let before = otlp::output::guest_logs(&output).len();
         let wasm = tokio::task::spawn_blocking(move || {
             isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_logs", runtime)

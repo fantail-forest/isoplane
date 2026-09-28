@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Isoplane.Build;
 using Xunit;
 
-namespace Isoplane.Build.Tests;
+namespace Isoplane.Cli.Tests;
 
 public sealed class AssemblyClosureTests : IDisposable
 {

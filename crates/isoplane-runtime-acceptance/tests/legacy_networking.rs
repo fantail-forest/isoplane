@@ -49,7 +49,7 @@ async fn request(runtime: GuestRuntime, reactor: &Reactor, path: &str) -> String
 
 async fn http_exchange(runtime: GuestRuntime, mode: &str) -> String {
     let peer = http_peers::http_peer().await;
-    let reactor = Reactor::new(
+    let reactor = Reactor::with_network(
         InstanceId::alloc(),
         admitted::admitting(
             vec![peer.address],
@@ -157,7 +157,7 @@ async fn mail_exchange(runtime: GuestRuntime, tls: bool, cancel: bool) {
     assert_eq!(reactor.futures.pending_total(reactor.context.instance), 0, "settled SMTP send must dispose its timeout and network futures without request-boundary cleanup");
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn legacy_http_request_upload_and_response_survive_store_restoration(runtime: GuestRuntime) {
         assert_eq!(http_exchange(runtime, "request").await, "legacy async body", "HttpWebRequest must upload and consume a response using asynchronous socket I/O across Store restorations");

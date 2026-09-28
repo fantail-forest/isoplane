@@ -35,6 +35,60 @@ use isoplane_host::{InstanceId, ModuleId};
 /// How long a test waits on the reactor, a peer or a resolver before it is a hung test.
 pub const WAKE_DEADLINE: Duration = Duration::from_secs(60);
 
+/// The production plan used for preparation and execution of returned guests.
+pub const GUEST_LIMITS: Limits = Limits {
+    module_bytes_compressed: 52428800,
+    package_bytes: 52428800,
+    instance_memory_max: 134217728,
+    cpu_ms_per_http_dispatch: 30000,
+    subrequests_per_dispatch: 200,
+    pending_futures_per_dispatch: 64,
+};
+
+/// Controlled network dependencies with production budgets, which tests cannot override.
+///
+/// ```compile_fail
+/// let policy = isoplane_host::egress::HostEgressPolicy::system(1).unwrap();
+/// let network = isoplane_harness::Network(policy);
+/// ```
+pub struct Network(HostEgressPolicy);
+
+impl Default for Network {
+    fn default() -> Self {
+        let limits = isoplane_runtime::network::NetworkLimits::default();
+        Self(
+            HostEgressPolicy::system(limits.connections)
+                .expect("the production egress policy must initialize"),
+        )
+    }
+}
+
+impl Network {
+    /// Uses a controlled resolver while retaining the production network budgets.
+    pub fn with_resolver(resolver: Box<dyn isoplane_host::Resolver>) -> Self {
+        let limits = isoplane_runtime::network::NetworkLimits::default();
+        Self(HostEgressPolicy::new(resolver, limits.connections))
+    }
+
+    /// Restricts destinations to test peers or exercises a destination-policy refusal.
+    pub fn with_destinations(
+        mut self,
+        destinations: Arc<dyn isoplane_host::egress::DestinationPolicy>,
+    ) -> Self {
+        self.0 = self.0.with_destinations(destinations);
+        self
+    }
+
+    /// Controls connection completion or transport buffering for networking tests.
+    pub fn with_connections(
+        mut self,
+        connections: Arc<dyn isoplane_host::egress::ConnectionFactory>,
+    ) -> Self {
+        self.0 = self.0.with_connections(connections);
+        self
+    }
+}
+
 struct Wake(tokio::sync::Notify);
 
 impl WakeSink for Wake {
@@ -43,8 +97,7 @@ impl WakeSink for Wake {
     }
 }
 
-/// One instance's host resources on a real reactor, with the outbound policy
-/// the test supplies.
+/// One instance's host resources with production limits and a real reactor.
 pub struct Reactor {
     /// The instance's host context: resources and responses.
     pub context: Arc<InstanceCtx>,
@@ -55,24 +108,28 @@ pub struct Reactor {
 }
 
 impl Reactor {
-    /// A reactor on the current tokio runtime for `owner`, whose outbound
-    /// connections, lookups and fetches go through `policy` and the real
-    /// transport. The guest's PAL filesystem holds no files, including no
-    /// default trust bundle; TLS tests supply their trust explicitly.
-    pub fn new(owner: InstanceId, policy: HostEgressPolicy) -> Self {
-        Self::with_platform_files(owner, policy, PlatformFiles::default())
+    /// A reactor using the production host's default outbound policy and limits.
+    pub fn new(owner: InstanceId) -> Self {
+        Self::with_network(owner, Network::default())
     }
 
-    /// As [`Self::new`], with `files` served read-only through the guest's
+    /// A reactor on the current tokio runtime for `owner`, whose outbound
+    /// connections, lookups and fetches go through `network` and the real
+    /// transport. The guest's PAL filesystem holds no files, including no
+    /// default trust bundle; TLS tests supply their trust explicitly.
+    pub fn with_network(owner: InstanceId, network: Network) -> Self {
+        Self::with_platform_files(owner, network, PlatformFiles::default())
+    }
+
+    /// As [`Self::with_network`], with `files` served read-only through the guest's
     /// PAL filesystem.
-    pub fn with_platform_files(
-        owner: InstanceId,
-        policy: HostEgressPolicy,
-        files: PlatformFiles,
-    ) -> Self {
+    pub fn with_platform_files(owner: InstanceId, network: Network, files: PlatformFiles) -> Self {
         LogCapture::global();
-        let egress = Arc::new(policy);
-        let fetcher = PinnedHttpFetcher::new(egress.clone(), 256 * 1024);
+        let egress = Arc::new(network.0);
+        let fetcher = PinnedHttpFetcher::new(
+            egress.clone(),
+            isoplane_runtime::network::NetworkLimits::default().inline_response_bytes,
+        );
         let futures = Arc::new(FutureTable::new());
         let wake = Arc::new(Wake(tokio::sync::Notify::new()));
         let runtime = Arc::new(CellRuntime {
@@ -91,7 +148,7 @@ impl Reactor {
             Tenancy {
                 module: ModuleId::new("returned-guest", "v1"),
                 tenant: "returned-guest-test".into(),
-                limits: Limits::default(),
+                limits: GUEST_LIMITS,
 
                 lifecycle: HandlerLifecycle::Reuse,
                 allowlist: None,
@@ -287,10 +344,10 @@ impl ReturnedGuest {
                 }),
                 trace: TraceContext::default(),
                 cancel_future: 0,
-                cpu_budget_ms: 30_000,
+                cpu_budget_ms: self.context.limits.cpu_ms_per_http_dispatch,
                 now_ms: self.context.slice_clock_ms(),
             },
-            budget(),
+            budget(&self.context),
         );
         self.snapshot = capture(&mut instance, &outcome);
         outcome
@@ -429,7 +486,7 @@ impl ReturnedGuest {
                         .restore_mutable_state(&image)
                         .expect("the guest globals must restore");
                     instance.memory().copy_from_slice(&memory);
-                    let outcome = instance.wake(future, result, budget());
+                    let outcome = instance.wake(future, result, budget(&self.context));
                     let snapshot = capture(&mut instance, &outcome);
                     (outcome, snapshot)
                 })
@@ -452,10 +509,10 @@ fn capture(instance: &mut Instance, outcome: &DispatchOutcome) -> Option<(Instan
     })
 }
 
-fn budget() -> CpuBudget {
+fn budget(context: &InstanceCtx) -> CpuBudget {
     CpuBudget {
-        cpu_ms: 30_000,
-        wall_ms_cap: 60_000,
+        cpu_ms: context.limits.cpu_ms_per_http_dispatch,
+        wall_ms_cap: isoplane_host::CellConfig::default().wall_ms_cap,
         spent_ns: 0,
     }
 }
@@ -492,7 +549,7 @@ mod completion_tests {
 
     fn alloc(table: &FutureTable, owner: InstanceId) -> u64 {
         table
-            .alloc(owner, 1, "sleep", 4)
+            .alloc(owner, 1, "sleep", GUEST_LIMITS.pending_futures_per_dispatch)
             .expect("the test dispatch must have a free future slot")
     }
 

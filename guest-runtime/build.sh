@@ -1,20 +1,7 @@
 #!/usr/bin/env bash
 # Build the Isoplane guest runtime from pinned sources: guest-runtime/build.sh [stage...]
 #
-# Stages, in order (default: all): acquire toolchain patch openssl icu packs feed
-#   acquire    download and verify the archives in manifest.env
-#   toolchain  unpack the pinned wasi-sdk under work/wasi-sdk
-#   patch      reconcile pinned source trees and patches, preserving local commits:
-#              patches/runtime and patches/openssl are directories applied in
-#              order; patches/runtimelab/series names the fork's own patches and
-#              the runtime patches that apply to it, Mono files excluded
-#   openssl    build OpenSSL to wasm32-wasip2 archives, installed under out/openssl
-#   icu        build complete ICU data and stage each pinned WASI native transport
-#   packs      the runtime and nativeaot stages concurrently (separate trees)
-#   runtime    build the Mono WASI runtime pack (mono+libs+packs) for wasi-wasm
-#   nativeaot  build the NativeAOT-LLVM framework pack (clr.aot+libs) for wasi-wasm
-#   feed       write the packs into out/feed as a local NuGet source, unpacked under out/packs
-#
+# Stages, in order (default: all): acquire toolchain patch openssl icu runtime feed
 # Everything under work/ and out/ is regenerable and git-ignored.
 set -euo pipefail
 
@@ -42,14 +29,12 @@ WORK="${ISOPLANE_RUNTIME_WORK//\\//}"
 echo "Runtime build work: $WORK"
 OUT="$HERE/out"
 RUNTIME="$WORK/runtime"
-RUNTIMELAB="$WORK/runtimelab"
 OPENSSL="$WORK/openssl"
 OPENSSL_BUILD="$WORK/openssl-build"
 WASI_SDK="$WORK/wasi-sdk"
 ICU="$WORK/icu"
 ICU_BUILD="$WORK/icu-build"
 ICU_MONO_NATIVE="$OUT/icu/mono/runtimes/wasi-wasm/native"
-ICU_NATIVEAOT_NATIVE="$OUT/icu/nativeaot/runtimes/wasi-wasm/native"
 DOWNLOADS="$WORK/downloads"
 LOGS="$WORK/logs"
 mkdir -p "$DOWNLOADS" "$LOGS" "$OUT"
@@ -77,12 +62,10 @@ require_ninja() {
 stage_acquire() {
   echo "==> acquire"
   fetch "$RUNTIME_TARBALL_URL" "$RUNTIME_TARBALL_SHA256" "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz"
-  fetch "$RUNTIMELAB_TARBALL_URL" "$RUNTIMELAB_TARBALL_SHA256" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz"
   fetch "$OPENSSL_TARBALL_URL" "$OPENSSL_TARBALL_SHA256" "$DOWNLOADS/$OPENSSL_TAG.tar.gz"
   fetch "$WASI_SDK_URL" "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
   fetch "$ICU_SOURCE_URL" "$ICU_SOURCE_SHA256" "$DOWNLOADS/icu-$ICU_SOURCE_COMMIT.tar.gz"
   fetch "$ICU_MONO_TRANSPORT_URL" "$ICU_MONO_TRANSPORT_SHA256" "$DOWNLOADS/icu-mono-$ICU_MONO_TRANSPORT_VERSION.nupkg"
-  fetch "$ICU_NATIVEAOT_TRANSPORT_URL" "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$DOWNLOADS/icu-nativeaot-$ICU_NATIVEAOT_TRANSPORT_VERSION.nupkg"
 }
 
 stage_toolchain() {
@@ -110,9 +93,6 @@ source_tree() {
 runtime_source() {
   source_tree "$1" "$RUNTIME" "$DOWNLOADS/runtime-$RUNTIME_TAG.tar.gz" "$RUNTIME_TARBALL_SHA256" "$HERE/patches/runtime" --build-layout dotnet
 }
-nativeaot_source() {
-  source_tree "$1" "$RUNTIMELAB" "$DOWNLOADS/runtimelab-$RUNTIMELAB_COMMIT.tar.gz" "$RUNTIMELAB_TARBALL_SHA256" "$HERE/patches/runtimelab" --exclude='src/mono/*' --build-layout dotnet
-}
 openssl_source() {
   source_tree "$1" "$OPENSSL" "$DOWNLOADS/$OPENSSL_TAG.tar.gz" "$OPENSSL_TARBALL_SHA256" "$HERE/patches/openssl"
 }
@@ -124,7 +104,6 @@ icu_source() {
 stage_patch() {
   echo "==> patch"
   runtime_source materialize
-  nativeaot_source materialize
   openssl_source materialize
   icu_source materialize
 }
@@ -171,9 +150,7 @@ stage_icu() {
   icu_source verify
   local build_inputs="$(icu_inputs_digest)"
   local mono_archive="$DOWNLOADS/icu-mono-$ICU_MONO_TRANSPORT_VERSION.nupkg"
-  local nativeaot_archive="$DOWNLOADS/icu-nativeaot-$ICU_NATIVEAOT_TRANSPORT_VERSION.nupkg"
   verify_archive "$ICU_MONO_TRANSPORT_SHA256" "$mono_archive"
-  verify_archive "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$nativeaot_archive"
   (
     if [ ! -f "$WORK/icu-build-inputs" ] || [ "$(cat "$WORK/icu-build-inputs")" != "$build_inputs" ]; then
       rm -rf "$ICU_BUILD"
@@ -196,13 +173,10 @@ stage_icu() {
     make -j"$(nproc)" "${make_arguments[@]}"
     [ -f "data/out/$ICU_DATA_FILE" ] || { echo "the ICU build produced no data/out/$ICU_DATA_FILE" >&2; exit 1; }
     verify_archive "$ICU_MONO_TRANSPORT_SHA256" "$mono_archive"
-    verify_archive "$ICU_NATIVEAOT_TRANSPORT_SHA256" "$nativeaot_archive"
     rm -rf "$OUT/icu"
-    mkdir -p "$OUT/icu/mono" "$OUT/icu/nativeaot"
+    mkdir -p "$OUT/icu/mono"
     unzip -q "$mono_archive" 'runtimes/wasi-wasm/native/**' -d "$OUT/icu/mono"
-    unzip -q "$nativeaot_archive" 'runtimes/wasi-wasm/native/**' -d "$OUT/icu/nativeaot"
     cp "data/out/$ICU_DATA_FILE" "$ICU_MONO_NATIVE/lib/icudt.dat"
-    cp "data/out/$ICU_DATA_FILE" "$ICU_NATIVEAOT_NATIVE/lib/icudt.dat"
     icu_source verify
     [ "$build_inputs" = "$(icu_inputs_digest)" ] || { echo "ICU inputs changed during compilation; rerun the build" >&2; exit 1; }
     find "$OUT/icu" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$WORK/icu-build-artifacts"
@@ -220,7 +194,6 @@ inputs_digest() {
   python3 "$HERE/feed-identity.py" digest "$HERE"
 }
 runtime_version_file="$WORK/pack-version"
-nativeaot_version_file="$WORK/nativeaot-pack-version"
 # stamp_pack_version <version file>
 stamp_pack_version() {
   local build_id label stamp
@@ -328,51 +301,6 @@ stage_runtime() {
   sha256sum "$runtime_version_file" "$shipping/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.$version.nupkg" "$shipping/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.$version.nupkg" > "$WORK/runtime-pack-artifacts"
 }
 
-# The NativeAOT framework: the fork's CoreLib and libraries under the same
-# patch series, the native shims, the OpenSSL backend and the AOT runtime
-# archives, packaged as the target pack the pinned ILCompiler.LLVM compiles
-# against.
-stage_nativeaot() {
-  echo "==> nativeaot (log: $LOGS/nativeaot-build.log)"
-  require_build_inputs
-  nativeaot_source verify
-  local build_inputs="$(inputs_digest)"
-  audit_pinvokes "$RUNTIMELAB"
-  prepare_pack_outputs "$RUNTIMELAB" "$WORK/nativeaot-build-inputs"
-  stamp_pack_version "$nativeaot_version_file"
-  (
-    cd "$RUNTIMELAB"
-    DOTNET_CLI_USE_MSBUILD_SERVER=0 \
-    build_runtime -os wasi -arch wasm -subset clr.aot+libs+nativeaot.packages -c Release -bl \
-      "/p:_IcuDir=$ICU_NATIVEAOT_NATIVE" \
-      /nodeReuse:false /p:UseSharedCompilation=false \
-      /p:OfficialBuild=true "/p:OfficialBuildId=$PACK_BUILD_ID" \
-      "/p:PatchVersion=$PACK_PATCH" "/p:PreReleaseVersionLabel=$PACK_VERSION_LABEL" \
-      "/p:PreReleaseVersionIteration=$PACK_ITERATION" \
-      /p:EnableSourceLink=false \
-      "/p:WasiOpenSslLibDir=$OUT/openssl/lib" \
-      -cmakeargs "$(openssl_cmake_args)"
-  ) > "$LOGS/nativeaot-build.log" 2>&1
-  complete_pack_build "$build_inputs" "$WORK/nativeaot-build-inputs" nativeaot_source
-  local version
-  version="$(cat "$nativeaot_version_file")"
-  sha256sum "$nativeaot_version_file" "$RUNTIMELAB/artifacts/packages/Release/Shipping/runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM.$version.nupkg" "$RUNTIMELAB/artifacts/packages/Release/Shipping/Microsoft.DotNet.ILCompiler.LLVM.$version.nupkg" > "$WORK/nativeaot-pack-artifacts"
-}
-
-# Both packs at once: the two trees, logs and version files are disjoint, and
-# the builds share only read-only inputs (OpenSSL, the wasi-sdk, the NuGet
-# cache). A failure in either fails the stage after both have stopped.
-stage_packs() {
-  local runtime_status=0 nativeaot_status=0
-  stage_runtime & local runtime_job=$!
-  stage_nativeaot & local nativeaot_job=$!
-  wait "$runtime_job" || runtime_status=$?
-  wait "$nativeaot_job" || nativeaot_status=$?
-  [ "$runtime_status" -eq 0 ] || { echo "the runtime stage failed ($runtime_status); see $LOGS/runtime-build.log" >&2; }
-  [ "$nativeaot_status" -eq 0 ] || { echo "the nativeaot stage failed ($nativeaot_status); see $LOGS/nativeaot-build.log" >&2; }
-  [ "$runtime_status" -eq 0 ] && [ "$nativeaot_status" -eq 0 ]
-}
-
 # The version a build stage recorded, or the message naming that stage.
 recorded_version() {
   local file="$1" stage="$2"
@@ -393,38 +321,26 @@ unpack() {
 stage_feed() {
   echo "==> feed"
   runtime_source verify
-  nativeaot_source verify
   require_build_inputs
-  for receipt in "$WORK/runtime-build-inputs" "$WORK/nativeaot-build-inputs"; do
-    [ -f "$receipt" ] && [ "$(cat "$receipt")" = "$(inputs_digest)" ] || { echo "the runtime packs do not match current build inputs; run guest-runtime/build.sh packs" >&2; exit 1; }
-  done
-  for receipt in "$WORK/runtime-pack-artifacts" "$WORK/nativeaot-pack-artifacts"; do
-    [ -f "$receipt" ] && sha256sum --check --status "$receipt" || { echo "runtime package bytes or version identity changed after compilation; rebuild packs" >&2; exit 1; }
-  done
+  local inputs="$WORK/runtime-build-inputs" artifacts="$WORK/runtime-pack-artifacts"
+  [ -f "$inputs" ] && [ "$(cat "$inputs")" = "$(inputs_digest)" ] || { echo "the runtime packs do not match current build inputs; run guest-runtime/build.sh runtime" >&2; exit 1; }
+  [ -f "$artifacts" ] && sha256sum --check --status "$artifacts" || { echo "runtime package bytes or version identity changed after compilation; rebuild runtime" >&2; exit 1; }
   local feed="$OUT/feed"
   mkdir -p "$feed"
-  local version nativeaot_version
+  local version
   version="$(recorded_version "$runtime_version_file" runtime)"
-  nativeaot_version="$(recorded_version "$nativeaot_version_file" nativeaot)"
   local shipping="$RUNTIME/artifacts/packages/Release/Shipping"
   local pack="$shipping/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.$version.nupkg"
   [ -f "$pack" ] || { echo "the runtime stage produced no $pack:" >&2; ls "$shipping" >&2; exit 1; }
   local sdkpack="$shipping/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.$version.nupkg"
   [ -f "$sdkpack" ] || { echo "the runtime stage produced no Wasi.Sdk pack at $sdkpack" >&2; exit 1; }
-  local nativeaot_shipping="$RUNTIMELAB/artifacts/packages/Release/Shipping"
-  local nativeaot_pack="$nativeaot_shipping/runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM.$nativeaot_version.nupkg"
-  [ -f "$nativeaot_pack" ] || { echo "the nativeaot stage produced no $nativeaot_pack:" >&2; ls "$nativeaot_shipping" >&2; exit 1; }
-  local nativeaot_sdk="$nativeaot_shipping/Microsoft.DotNet.ILCompiler.LLVM.$nativeaot_version.nupkg"
-  [ -f "$nativeaot_sdk" ] || { echo "the nativeaot stage produced no common targets pack at $nativeaot_sdk" >&2; exit 1; }
   rm -f "$feed"/*.nupkg
-  cp "$pack" "$sdkpack" "$nativeaot_pack" "$nativeaot_sdk" "$feed/"
+  cp "$pack" "$sdkpack" "$feed/"
   rm -rf "$OUT/packs"
   unpack "$pack" "$OUT/packs/runtime"
   unpack "$sdkpack" "$OUT/packs/wasi-sdk"
-  unpack "$nativeaot_pack" "$OUT/packs/nativeaot"
-  unpack "$nativeaot_sdk" "$OUT/packs/nativeaot-sdk"
-  # The SDK's profiles import this to select their packs by version and to
-  # check the pack a build resolves against the feed's digest.
+  # The platform runtime build selects its packs by version and checks
+  # each resolved pack against the feed's digest.
   cat > "$feed/Isoplane.GuestRuntime.props" <<EOF
 <Project>
   <PropertyGroup>
@@ -435,22 +351,15 @@ stage_feed() {
     <IsoplaneGuestRuntimePackSha512>$(pack_digest "$pack")</IsoplaneGuestRuntimePackSha512>
     <IsoplaneGuestRuntimePackDirectory>\$(MSBuildThisFileDirectory)../packs/runtime/</IsoplaneGuestRuntimePackDirectory>
     <IsoplaneGuestWasiSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/wasi-sdk/</IsoplaneGuestWasiSdkPackDirectory>
-    <IsoplaneGuestNativeAotSdkPackVersion>$nativeaot_version</IsoplaneGuestNativeAotSdkPackVersion>
-    <IsoplaneGuestNativeAotSdkPackSha512>$(pack_digest "$nativeaot_sdk")</IsoplaneGuestNativeAotSdkPackSha512>
-    <IsoplaneGuestNativeAotSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot-sdk/</IsoplaneGuestNativeAotSdkPackDirectory>
-    <IsoplaneGuestNativeAotPackVersion>$nativeaot_version</IsoplaneGuestNativeAotPackVersion>
-    <IsoplaneGuestNativeAotPackSha512>$(pack_digest "$nativeaot_pack")</IsoplaneGuestNativeAotPackSha512>
-    <IsoplaneGuestNativeAotPackDirectory>\$(MSBuildThisFileDirectory)../packs/nativeaot/</IsoplaneGuestNativeAotPackDirectory>
   </PropertyGroup>
 </Project>
 EOF
   echo "    $(basename "$pack")"
   echo "    $(basename "$sdkpack")"
-  echo "    $(basename "$nativeaot_pack")"
 }
 
 stages=("$@")
-[ ${#stages[@]} -gt 0 ] || stages=(acquire toolchain patch openssl icu packs feed)
+[ ${#stages[@]} -gt 0 ] || stages=(acquire toolchain patch openssl icu runtime feed)
 for stage in "${stages[@]}"; do
   "stage_$stage"
 done

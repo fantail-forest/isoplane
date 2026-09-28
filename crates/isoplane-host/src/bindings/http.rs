@@ -130,10 +130,6 @@ impl CellBindings {
                             .and_then(|response| operation.response(response)),
                         Err(error) => Err(error),
                     };
-                    if let Ok(r) = &out {
-                        svc.egress
-                            .record_bytes(r.body_inline.as_ref().map_or(0, |b| b.len()) as u64);
-                    }
                     from_typed(out)
                 }
                 Err(crate::egress::EgressError::Denied(deny)) => {
@@ -165,9 +161,6 @@ impl CellBindings {
         let rt2 = rt.clone();
         let task = rt.reactor.spawn(async move {
             let result = operation.read(body, max).await;
-            if let Ok(chunk) = &result {
-                rt2.services.egress.record_bytes(chunk.data.len() as u64);
-            }
             CellBindings::settle(&rt2, id, from_typed(result));
         });
         scope.attach_task(resource, task.abort_handle());

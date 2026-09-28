@@ -5,20 +5,15 @@
 
 #[macro_use]
 mod common;
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
 use isoplane_harness::EmittedGuestLogs as _;
-use no_egress::reactor_without_egress;
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_delay_parks_the_guest_on_one_host_timer_and_resumes_on_its_wake(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(1);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/delay/50");
@@ -55,12 +50,12 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// The timer queue arms one host timer for its earliest deadline and re-arms
     /// it as timers fire, so concurrent delays share a park and a registration.
     #[tokio::test]
     async fn concurrent_delays_share_one_park_and_the_queues_one_host_timer(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(2);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/delays/3");
@@ -99,12 +94,12 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// A parked timer survives Store restoration: its continuation runs after the
     /// guest's captured memory was restored into a new Store.
     #[tokio::test(start_paused = true)]
     async fn a_parked_delay_survives_a_store_restoration_delta_round_trip(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(10);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/delay/50");
@@ -127,10 +122,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn sequential_awaits_each_take_their_own_wake(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(3);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let mut outcome = guest.start("/loop/sequence/5");
@@ -155,10 +150,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn cancelling_a_delay_releases_its_registration_and_resumes_with_cancellation(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(4);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/cancel/50");
@@ -194,10 +189,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn queued_thread_pool_work_runs_before_the_guest_parks(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(5);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/ready-work");
@@ -217,10 +212,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_yield_is_ready_work_and_never_parks(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(6);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/yield");
@@ -238,10 +233,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn an_abandoned_timer_ends_with_its_dispatch_and_never_fires_later(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(7);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_dispatch(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/abandon");
@@ -276,13 +271,13 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Every synchronous wait the BCL offers on work that needs a host wake
     /// refuses explicitly: the guest has no thread to block and no way to park
     /// inside a call, so the alternative to an exception is a trap or a hang.
     #[tokio::test]
     async fn every_synchronous_wait_on_host_backed_work_fails_explicitly(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(8);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         let mut guest = guest(&reactor, runtime);
         for (index, (path, what)) in [
             ("/loop/sync-wait", "Task.Wait"),
@@ -318,12 +313,12 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Waiting on work that is already complete needs no wake and is not
     /// blocking; refusing it would break ordinary code.
     #[tokio::test]
     async fn waiting_on_completed_work_is_not_blocking(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(9);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let answer = guest.answer(&reactor, "/loop/completed-wait", 1).await;
@@ -332,7 +327,7 @@ in_both_runtimes! {
 }
 
 async fn replacement_timer_resumes(runtime: GuestRuntime, path: &str) {
-    let reactor = reactor_without_egress(51);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let mut guest = guest(&reactor, runtime);
     let outcome = guest.start(path);
@@ -367,7 +362,7 @@ async fn replacement_timer_resumes(runtime: GuestRuntime, path: &str) {
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn cancelling_the_last_delay_allows_a_later_replacement_to_fire(runtime: GuestRuntime) {
         replacement_timer_resumes(runtime, "/loop/cancel-then-delay/200").await;
@@ -385,7 +380,7 @@ in_both_runtimes! {
 
     #[tokio::test(start_paused = true)]
     async fn a_delay_can_be_armed_after_the_cancelled_deadline_has_passed(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(52);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/loop/cancel-only");
@@ -406,7 +401,7 @@ in_both_runtimes! {
 
 async fn scheduling_survives_store_restoration(runtime: GuestRuntime, scenario: &str) {
     isoplane_harness::LogCapture::global();
-    let reactor = reactor_without_egress(70);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let mut guest = guest(&reactor, runtime);
     let outcome = guest.start(&format!("/loop/{scenario}"));
@@ -438,7 +433,7 @@ async fn scheduling_survives_store_restoration(runtime: GuestRuntime, scenario: 
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_customer_synchronization_context_resumes_after_a_delta(runtime: GuestRuntime) {
         scheduling_survives_store_restoration(runtime, "custom-context").await;

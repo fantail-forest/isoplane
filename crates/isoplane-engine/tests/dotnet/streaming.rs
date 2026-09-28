@@ -11,7 +11,7 @@ fn streaming(runtime: GuestRuntime) -> &'static Fixture {
     fixture("isoplane_guest_dotnet_streaming", runtime)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn the_managed_sdk_rejects_a_refused_response_handle_before_exposing_a_writer(runtime: GuestRuntime) {
         let (mut instance, recorder) = streaming(runtime).activate();
         recorder.reject_next_response.store(true, Ordering::Relaxed);

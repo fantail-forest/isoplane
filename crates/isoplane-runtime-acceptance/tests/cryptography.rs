@@ -9,10 +9,6 @@
 mod common;
 #[path = "common/crypto_vectors.rs"]
 mod crypto_vectors;
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 
 use common::{guest, GuestRuntime};
 use crypto_vectors::{
@@ -20,9 +16,8 @@ use crypto_vectors::{
     CHACHA20_POLY1305_RFC8439_CIPHERTEXT, CHACHA20_POLY1305_RFC8439_TAG, HKDF_RFC5869_1, HMAC_JEFE,
     LEAF_SERIAL, LEAF_SIGNATURE_OF_ISOPLANE, LEAF_THUMBPRINT, PBKDF2_ONE, SHA256_ABC,
 };
-use no_egress::reactor_without_egress;
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn encrypted_pkcs8_round_trips_and_refuses_the_wrong_password(runtime: GuestRuntime) {
         let text = answer(runtime, 60, "/crypto/encrypted-pkcs8").await;
@@ -48,7 +43,7 @@ async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
 
 /// The guest's wall clock is the dispatch's; a chain is verified at it.
 async fn answer_at(runtime: GuestRuntime, owner: u64, path: &str, now_ms: u64) -> String {
-    let reactor = reactor_without_egress(owner);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(owner));
     reactor.context.begin_slice(now_ms, 1);
     let mut guest = guest(&reactor, runtime);
     guest.answer(&reactor, path, 1).await
@@ -57,7 +52,7 @@ async fn answer_at(runtime: GuestRuntime, owner: u64, path: &str, now_ms: u64) -
 /// A wall-clock instant inside the fixed certificates' validity.
 const WITHIN_VALIDITY_MS: u64 = 1_789_100_000_000;
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// The AEAD ciphers exist only with a native backend, so this tells a
     /// build without one apart explicitly.
     #[tokio::test]
@@ -70,7 +65,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn digests_macs_and_key_derivation_match_their_standard_vectors(runtime: GuestRuntime) {
         for (index, (path, expected, what)) in [
@@ -95,7 +90,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_gcm_matches_the_nist_vector_and_round_trips(runtime: GuestRuntime) {
         let answer = answer(runtime, 55, "/crypto/aes-gcm").await;
@@ -107,7 +102,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_cbc_round_trips_a_generated_key(runtime: GuestRuntime) {
         assert_eq!(
@@ -118,7 +113,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn rsa_signs_and_verifies_with_pkcs1_and_pss(runtime: GuestRuntime) {
         let answer = answer(runtime, 57, "/crypto/rsa-verify").await;
@@ -130,7 +125,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn rsa_oaep_wraps_and_unwraps_a_secret(runtime: GuestRuntime) {
         assert_eq!(
@@ -141,7 +136,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn rsa_generates_a_key_pair_that_signs(runtime: GuestRuntime) {
         assert_eq!(
@@ -152,7 +147,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn ecdsa_signs_and_verifies_on_p256(runtime: GuestRuntime) {
         assert_eq!(
@@ -163,7 +158,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn ecdh_derives_the_same_secret_on_both_sides(runtime: GuestRuntime) {
         assert_eq!(
@@ -174,7 +169,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_certificate_parses_and_its_key_verifies_a_signature(runtime: GuestRuntime) {
         let answer = answer(runtime, 62, &format!("/crypto/x509-parse/{LEAF_SIGNATURE_OF_ISOPLANE}")).await;
@@ -186,7 +181,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_certificate_chains_to_its_custom_root_and_not_to_a_stranger(runtime: GuestRuntime) {
         let answer = answer_at(runtime, 63, "/crypto/x509-chain", WITHIN_VALIDITY_MS).await;
@@ -203,7 +198,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_certificate_signature_verifies_against_its_issuer(runtime: GuestRuntime) {
         assert_eq!(
@@ -214,7 +209,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// Two activations of one template draw different random bytes: the
     /// generator draws from the host, never from a warm heap the clone copied.
     #[tokio::test]
@@ -275,14 +270,14 @@ async fn assert_rejects_every_tampered_input(runtime: GuestRuntime, owner: u64, 
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_gcm_rejects_every_tampered_input_and_clears_the_plaintext(runtime: GuestRuntime) {
         assert_rejects_every_tampered_input(runtime, 67, "aes-gcm").await;
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_gcm_refuses_invalid_key_nonce_tag_and_buffer_lengths(runtime: GuestRuntime) {
         assert_eq!(
@@ -293,7 +288,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_ccm_matches_the_rfc_3610_vector_and_round_trips(runtime: GuestRuntime) {
         assert_eq!(
@@ -304,14 +299,14 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_ccm_rejects_every_tampered_input_and_clears_the_plaintext(runtime: GuestRuntime) {
         assert_rejects_every_tampered_input(runtime, 72, "aes-ccm").await;
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_ccm_refuses_invalid_key_nonce_tag_and_buffer_lengths(runtime: GuestRuntime) {
         assert_eq!(
@@ -322,7 +317,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn chacha20_poly1305_matches_the_rfc_8439_vector_and_round_trips(runtime: GuestRuntime) {
         assert_eq!(
@@ -333,14 +328,14 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn chacha20_poly1305_rejects_every_tampered_input_and_clears_the_plaintext(runtime: GuestRuntime) {
         assert_rejects_every_tampered_input(runtime, 77, "chacha20-poly1305").await;
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn chacha20_poly1305_refuses_invalid_key_nonce_tag_and_buffer_lengths(runtime: GuestRuntime) {
         assert_eq!(
@@ -351,7 +346,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_cbc_rejects_invalid_padding_and_a_partial_block(runtime: GuestRuntime) {
         assert_eq!(
@@ -362,7 +357,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn aes_cbc_refuses_invalid_key_and_iv_lengths(runtime: GuestRuntime) {
         assert_eq!(
@@ -373,7 +368,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn rsa_oaep_rejects_a_tampered_ciphertext_and_an_oversized_plaintext(runtime: GuestRuntime) {
         assert_eq!(
@@ -384,7 +379,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn ecdsa_verifies_false_on_a_malformed_signature(runtime: GuestRuntime) {
         assert_eq!(
@@ -395,7 +390,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn rsa_keys_round_trip_through_every_import_and_export_format(runtime: GuestRuntime) {
         assert_eq!(
@@ -406,7 +401,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn ecdsa_keys_round_trip_through_every_import_and_export_format(runtime: GuestRuntime) {
         assert_eq!(
@@ -417,7 +412,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn ecdh_keys_round_trip_through_every_import_and_export_format(runtime: GuestRuntime) {
         assert_eq!(
@@ -428,7 +423,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn malformed_key_material_is_refused_on_import(runtime: GuestRuntime) {
         assert_eq!(
@@ -439,7 +434,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_disposed_key_refuses_every_operation(runtime: GuestRuntime) {
         assert_eq!(
@@ -450,7 +445,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn disposing_a_key_leaves_its_copies_usable(runtime: GuestRuntime) {
         assert_eq!(

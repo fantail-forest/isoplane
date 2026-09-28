@@ -170,7 +170,7 @@ mod tests {
         } else {
             resolved
         };
-        let policy = HostEgressPolicy::system(1, 1024)
+        let policy = HostEgressPolicy::system(1)
             .unwrap()
             .with_destinations(std::sync::Arc::new(OwnedPeer(address)));
         let owner =
@@ -211,7 +211,7 @@ mod tests {
             .await
             .unwrap();
         let peer = listener.local_addr().unwrap();
-        let policy = crate::egress::HostEgressPolicy::system(2, 1024).unwrap();
+        let policy = crate::egress::HostEgressPolicy::system(2).unwrap();
         let stranger = ConnectionOwner::new("stranger".into(), crate::InstanceId(1)).unwrap();
         assert!(
             matches!(

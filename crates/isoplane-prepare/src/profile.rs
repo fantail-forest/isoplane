@@ -13,41 +13,6 @@ pub enum RuntimeProfile {
         /// The SDK release that carries the runtime.
         sdk_version: String,
     },
-    /// A .NET 10 toolchain with content identities supplied by its trusted publisher.
-    DotNet10 {
-        /// Selected managed execution mode.
-        mode: ManagedMode,
-        /// Content identities for the complete installed runtime and build closure.
-        components: Box<ManagedComponents>,
-    },
-}
-
-/// Managed execution modes retain distinct build provenance.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ManagedMode {
-    /// Ahead-of-time compilation of customer IL to portable WASM.
-    NativeAot,
-    /// Mono interpretation of customer IL inside the WASM sandbox.
-    Mono,
-}
-
-/// Digests of trusted release artifacts; version strings alone do not establish identity.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ManagedComponents {
-    /// Exact .NET SDK content used by the producer.
-    pub sdk: [u8; 32],
-    /// Exact guest CLR runtime and its patches.
-    pub runtime: [u8; 32],
-    /// Base-class and framework assembly closure.
-    pub libraries: [u8; 32],
-    /// The selected IL compiler or interpreter build tool.
-    pub compiler: [u8; 32],
-    /// Platform adapter and export/scheduler transformations.
-    pub platform: [u8; 32],
-    /// WASI SDK and libc artifact closure.
-    pub wasi: [u8; 32],
-    /// Managed/native layout contract and applied adaptation.
-    pub native_layout: [u8; 32],
 }
 
 impl RuntimeProfile {
@@ -67,7 +32,7 @@ impl RuntimeProfile {
     ) -> Option<isoplane_abi::config::GuestMemoryBytes> {
         match self {
             Self::SharedRuntime { .. } => None,
-            Self::RawWasm | Self::DotNet10 { .. } => application,
+            Self::RawWasm => application,
         }
     }
 

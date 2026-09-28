@@ -149,31 +149,25 @@ pub fn rust_manifest() -> Vec<String> {
         .collect()
 }
 
-/// The execution runtime a C# fixture is published for. Every behaviour a
-/// customer sees is expected in both; a test that drives one fixture through
-/// the engine names the runtime so its failures do too.
+/// The runtime used by C# sandbox fixtures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GuestRuntime {
-    /// NativeAOT-LLVM: the guest and the reachable BCL compiled to one module.
-    NativeAot,
     /// The Mono interpreter with the guest's IL bundled into the module.
     Mono,
 }
 
 impl GuestRuntime {
-    /// Both runtimes, for tests that prove one behaviour in each.
-    pub const ALL: [GuestRuntime; 2] = [GuestRuntime::NativeAot, GuestRuntime::Mono];
+    /// The retained runtime exercised by the fixture harness.
+    pub const ALL: [GuestRuntime; 1] = [GuestRuntime::Mono];
 
     fn script_name(self) -> &'static str {
         match self {
-            GuestRuntime::NativeAot => "nativeaot",
             GuestRuntime::Mono => "mono",
         }
     }
 
     fn output_directory(self) -> &'static str {
         match self {
-            GuestRuntime::NativeAot => "guests/dotnet/out",
             GuestRuntime::Mono => "guests/dotnet/out/mono",
         }
     }
@@ -185,10 +179,10 @@ impl std::fmt::Display for GuestRuntime {
     }
 }
 
-/// The bytes of a NativeAOT C# guest `guests/build-dotnet.sh` writes under
+/// The bytes of a Mono C# guest `guests/build-dotnet.sh` writes under
 /// `guests/dotnet/out`, built if missing or stale.
 pub fn dotnet(name: &str) -> Vec<u8> {
-    dotnet_for(name, GuestRuntime::NativeAot)
+    dotnet_for(name, GuestRuntime::Mono)
 }
 
 /// The bytes of a C# guest published for `runtime`, built if missing or
@@ -201,7 +195,6 @@ pub fn dotnet_for(name: &str, runtime: GuestRuntime) -> Vec<u8> {
 }
 
 fn dotnet_path(name: &str, runtime: GuestRuntime) -> PathBuf {
-    verify_compiler_for(runtime);
     build_selected(
         "guests/build-dotnet.sh",
         Some(name),
@@ -274,22 +267,7 @@ pub fn mono_package(name: &str) -> PathBuf {
         .join(format!("{name}.tar"))
 }
 
-/// The unoptimised NativeAOT compiler regression guest, rebuilt when its
-/// source or verified compiler changes.
-pub fn compiler_acceptance() -> Vec<u8> {
-    guest_compiler_feed();
-    let path = build_selected(
-        "guest-runtime/tests/guest/build.sh",
-        Some("compiler"),
-        Some("nativeaot"),
-    )
-    .join("guest-runtime/tests/guest/out/nativeaot/guest_compiler_acceptance.wasm");
-    assert_attributed_to_feed(&path, GuestRuntime::NativeAot);
-    read(&path)
-}
-
 fn runtime_acceptance_path(runtime: GuestRuntime) -> PathBuf {
-    verify_compiler_for(runtime);
     build_selected(
         "guest-runtime/tests/guest/build.sh",
         None,
@@ -305,7 +283,7 @@ pub fn dotnet_runtime_identity(name: &str, runtime: GuestRuntime) -> String {
     identity_beside(&dotnet_path(name, runtime))
 }
 
-/// The local feed `guest-runtime/build.sh feed` publishes both packs to. An
+/// The local feed `guest-runtime/build.sh feed` publishes the runtime packs to. An
 /// installed package has no checkout to find it in, so a test points one at
 /// this path through `ISOPLANE_GUEST_RUNTIME_FEED`, as a customer names theirs.
 /// The feed is verified once per test process against current build inputs.
@@ -354,51 +332,6 @@ pub fn guest_runtime_feed() -> PathBuf {
     .clone()
 }
 
-fn verify_compiler_for(runtime: GuestRuntime) {
-    match runtime {
-        GuestRuntime::NativeAot => {
-            guest_compiler_feed();
-        }
-        GuestRuntime::Mono => {}
-    }
-}
-
-/// The verified NativeAOT compiler beside the selected runtime feed.
-/// Default fixtures require current sources; `ISOPLANE_TEST_RUNTIME_FEED` permits
-/// explicitly selected historical artifacts after checking their integrity.
-pub fn guest_compiler_feed() -> PathBuf {
-    static COMPILER: OnceLock<PathBuf> = OnceLock::new();
-    COMPILER
-        .get_or_init(|| {
-            let feed = guest_runtime_feed();
-            let compiler = feed
-                .parent()
-                .expect("an absolute runtime feed has a parent")
-                .join("compiler");
-            let action = if std::env::var_os("ISOPLANE_TEST_RUNTIME_FEED").is_some() {
-                "verify-artifact"
-            } else {
-                "verify-current"
-            };
-            let output = Command::new(python())
-                .arg(repo_root().join("guest-runtime/compiler/build.py"))
-                .arg(action)
-                .arg("--output")
-                .arg(&compiler)
-                .output()
-                .expect("python3 is required to verify NativeAOT compiler artifacts");
-            assert!(
-                output.status.success(),
-                "NativeAOT compiler artifacts at {} are not valid for this test run:\n{}{}",
-                compiler.display(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            compiler
-        })
-        .clone()
-}
-
 /// The identity of the pack the local feed currently offers `runtime`, from
 /// the props file `guest-runtime/build.sh feed` writes: the pack version and
 /// the digest NuGet records for the package, `version@sha512:digest`, the
@@ -421,7 +354,6 @@ pub fn feed_runtime_identity(runtime: GuestRuntime) -> String {
             .to_string()
     };
     let prefix = match runtime {
-        GuestRuntime::NativeAot => "IsoplaneGuestNativeAotPack",
         GuestRuntime::Mono => "IsoplaneGuestRuntimePack",
     };
     format!(

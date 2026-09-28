@@ -57,7 +57,7 @@ fn dispatch_growth(
             HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
-                package_bytes: 31457280,
+                package_bytes: 52428800,
                 instance_memory_max: 134217728,
                 cpu_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,
@@ -96,7 +96,7 @@ fn dispatch_growth(
 fn a_guest_without_a_declared_maximum_cannot_grow_past_its_plan() {
     let ceiling = Limits {
         module_bytes_compressed: 5242880,
-        package_bytes: 31457280,
+        package_bytes: 52428800,
         instance_memory_max: 134217728,
         cpu_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
@@ -111,7 +111,7 @@ fn a_guest_without_a_declared_maximum_cannot_grow_past_its_plan() {
 fn an_operator_memory_override_allows_growth_above_the_plan_default() {
     let ceiling = Limits {
         module_bytes_compressed: 5242880,
-        package_bytes: 31457280,
+        package_bytes: 52428800,
         instance_memory_max: 134217728,
         cpu_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
@@ -125,7 +125,7 @@ fn an_operator_memory_override_allows_growth_above_the_plan_default() {
 fn the_engine_capacity_still_bounds_a_larger_application_override() {
     let ceiling = Limits {
         module_bytes_compressed: 5242880,
-        package_bytes: 31457280,
+        package_bytes: 52428800,
         instance_memory_max: 134217728,
         cpu_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
@@ -140,7 +140,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
     // One page more than the application's plan allows, within the engine.
     let ceiling = Limits {
         module_bytes_compressed: 5242880,
-        package_bytes: 31457280,
+        package_bytes: 52428800,
         instance_memory_max: 134217728,
         cpu_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
@@ -173,7 +173,7 @@ fn a_template_larger_than_the_application_budget_is_refused_at_activation() {
             HandlerLifecycle::Reuse,
             Limits {
                 module_bytes_compressed: 5242880,
-                package_bytes: 31457280,
+                package_bytes: 52428800,
                 instance_memory_max: 134217728,
                 cpu_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,

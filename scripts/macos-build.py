@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 import shutil
-import sys
 import tarfile
 import tempfile
 
@@ -23,15 +22,6 @@ def prepare(preview, source, cache, logs, args):
     work = runtime / 'work'
     work.mkdir(exist_ok=True)
     prepare_wasi(preview, source, cache, work)
-    compiler = preview.load(runtime / 'compiler/build.py')
-    try:
-        compiler.verify(output / 'compiler', True)
-    except (OSError, ValueError, KeyError):
-        if (output / 'compiler').exists():
-            shutil.rmtree(output / 'compiler')
-        preview.run([sys.executable, runtime / 'compiler/build.py', 'build', '--llvm', args.llvm,
-                     '--jobs', args.jobs], source, logs / 'compiler.log')
-    compiler.verify(output / 'compiler', True)
     prepare_notices(preview, runtime, cache, work)
     return output
 

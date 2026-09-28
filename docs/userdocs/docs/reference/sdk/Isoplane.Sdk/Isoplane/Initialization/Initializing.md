@@ -13,7 +13,7 @@ public static event Func<Task>? Initializing;
 
 ## Remarks
 
-Subscribe during application construction. Callbacks are awaited in registration order before template capture. Asynchronous network I/O uses the application's normal outbound policy. Await all I/O and dispose its connections, streams, and timers before the callback finishes; live host resources cannot be captured. Do not create request-scoped state or start background work. State retained here is copied into each instance; use [`Activated`](../Activation/Activated.md) for per-instance initialization such as reseeding a random generator. Exceptions fail preparation.
+Subscribe during application construction. Callbacks are awaited in registration order before template capture. The ASP.NET adapter then ensures the application host has started. Asynchronous network I/O uses the application's normal outbound policy. Await all I/O and dispose its connections, streams, and timers before the callback finishes; live host resources cannot be captured. Do not create request-scoped state or start background work. State retained here is copied into each instance; use [`Activated`](../Activation/Activated.md) for per-instance initialization such as reseeding a random generator. Exceptions fail preparation.
 
 ## See Also
 

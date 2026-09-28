@@ -53,7 +53,7 @@ const CLOCK_2200_MS: u64 = 7_258_118_400_000;
 /// TLS. The clock never runs backwards, so a test needing another one
 /// chooses it here.
 fn reactor_at(peers: Vec<std::net::SocketAddr>, clock_ms: u64) -> Reactor {
-    let reactor = Reactor::new(InstanceId::alloc(), admitting(peers, Box::new(NoDns)));
+    let reactor = Reactor::with_network(InstanceId::alloc(), admitting(peers, Box::new(NoDns)));
     reactor.context.begin_slice(clock_ms, 1);
     reactor
 }
@@ -69,7 +69,7 @@ fn reactor_for_named_peers(peers: Vec<std::net::SocketAddr>) -> Reactor {
     let resolver = Box::new(FixedDns(vec![std::net::IpAddr::V4(
         std::net::Ipv4Addr::LOCALHOST,
     )]));
-    let reactor = Reactor::new(InstanceId::alloc(), admitting(peers, resolver));
+    let reactor = Reactor::with_network(InstanceId::alloc(), admitting(peers, resolver));
     reactor.context.begin_slice(CLOCK_2030_MS, 1);
     reactor
 }
@@ -99,7 +99,7 @@ async fn observed(events: &mut UnboundedReceiver<PeerEvent>) -> PeerEvent {
         .expect("the peer outlives the test")
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_handshake_parks_on_socket_readiness_and_authenticates_the_peer(runtime: GuestRuntime) {
         let peer = tls_peer(Certificate::Leaf, Behaviour::Echo).await;
@@ -1368,7 +1368,7 @@ async fn validated_then_rotated(
     (reactor, guest)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn default_trust_validates_a_complete_chain_from_the_platform_bundle(runtime: GuestRuntime) {
         let peer = tls_peer(Certificate::Chained, Behaviour::Echo).await;

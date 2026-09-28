@@ -40,7 +40,6 @@ fn rig(cfg: CellConfig) -> Rig {
         egress: Arc::new(HostEgressPolicy::new(
             Box::new(Fixed(vec!["93.184.216.34:80".parse().unwrap()])),
             1024,
-            1 << 30,
         )),
         fetcher: fetcher.clone(),
     });

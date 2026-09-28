@@ -1594,6 +1594,7 @@ dependencies = [
  "isoplane-engine",
  "isoplane-fixtures",
  "isoplane-host",
+ "isoplane-runtime",
  "serde",
  "serde_json",
  "tempfile",

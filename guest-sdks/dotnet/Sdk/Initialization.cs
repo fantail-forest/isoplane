@@ -11,7 +11,8 @@ public static class Initialization
     /// <summary>Raised after application construction, before template capture.</summary>
     /// <remarks>
     /// Subscribe during application construction. Callbacks are awaited in registration order before
-    /// template capture. Asynchronous network I/O uses the application's normal outbound policy.
+    /// template capture. The ASP.NET adapter then ensures the application host has started.
+    /// Asynchronous network I/O uses the application's normal outbound policy.
     /// Await all I/O and dispose its connections, streams, and timers before the callback finishes;
     /// live host resources cannot be captured. Do not create request-scoped state or start
     /// background work. State retained here
@@ -20,5 +21,7 @@ public static class Initialization
     /// </remarks>
     public static event Func<Task>? Initializing;
 
-    internal static Task EnterAsync() => Hook.EnterAsync(Initializing);
+    internal static event Func<Task>? Completing;
+
+    internal static Task EnterAsync() => Hook.EnterAsync(Initializing, Completing);
 }

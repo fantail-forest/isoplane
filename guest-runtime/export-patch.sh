@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Turn the uncommitted changes in a work tree into the next numbered patch:
-#   guest-runtime/export-patch.sh runtime|runtimelab|openssl <name>
+#   guest-runtime/export-patch.sh runtime|openssl <name>
 # Writes patches/<tree>/NNN-<name>.patch (and names it in the tree's series
 # file, where one exists) and commits the change in the work tree; build.sh
 # patch then re-materializes the tree from the declared series.

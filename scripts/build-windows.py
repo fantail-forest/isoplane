@@ -83,35 +83,6 @@ def stock_pack(name, version, cache):
 
 
 
-def prepare_llvm(cache, source, run):
-    preview = load('build-preview')
-    manifest = json.loads((source / 'guest-runtime/compiler/manifest.json').read_text())
-    version = manifest['llvm_version']
-    directory = cache / ('llvm-' + version)
-    receipt = directory / 'isoplane-build.json'
-    configuration = ['-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl',
-        '-DCMAKE_BUILD_TYPE=Release', '-DLLVM_INCLUDE_BENCHMARKS=OFF', '-DLLVM_ENABLE_TERMINFO=OFF',
-        '-DLLVM_ENABLE_ZSTD=OFF', '-DLLVM_ENABLE_ZLIB=OFF', '-DLLVM_ENABLE_LIBXML2=OFF',
-        '-DLLVM_TARGETS_TO_BUILD=WebAssembly', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded']
-    expected = {'sourceSha256': manifest['llvm_source_sha256'], 'configuration': configuration}
-    if receipt.exists() and json.loads(receipt.read_text()) == expected:
-        return directory
-    archive = cache / f'llvm-project-{version}.src.tar.xz'
-    preview.download(f'https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/{archive.name}', archive,
-                     expected['sourceSha256'])
-    sources = cache / f'llvm-project-{version}.src'
-    if sources.exists():
-        shutil.rmtree(sources)
-    with tarfile.open(archive) as bundle:
-        bundle.extractall(cache, filter='data')
-    run(['cmake', '--fresh', '-G', 'Ninja', '-S', sources / 'llvm', '-B', directory,
-         *configuration], 'llvm-configure')
-    run(['cmake', '--build', directory, '--parallel', str(min(os.cpu_count() or 1, 8)),
-         '--target', 'LLVMCore', 'LLVMBitWriter', 'llvm-config'], 'llvm-build')
-    receipt.write_text(json.dumps(expected, indent=2) + '\n')
-    return directory
-
-
 def build(args):
     preview = load('build-preview')
     revision = preview.source_revision(ROOT)
@@ -172,21 +143,6 @@ def build(args):
         runtime_logs = runtime / 'work/logs'
         if runtime_logs.is_dir():
             shutil.copytree(runtime_logs, logs / 'runtime-stages', dirs_exist_ok=True)
-    compiler = runtime_output / 'compiler'
-    try:
-        preview.load(runtime / 'compiler/build.py').verify(compiler, True)
-        print(f'Reusing verified compiler: {compiler}', flush=True)
-    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
-        print(f'Compiler build required: {error}', flush=True)
-        llvm = args.llvm.resolve() if args.llvm else prepare_llvm(cache, source, run)
-        if compiler.exists():
-            shutil.rmtree(compiler)
-        try:
-            run([sys.executable, runtime / 'compiler/build.py', 'build', '--llvm', llvm,
-                 '--output', compiler], 'compiler')
-        finally:
-            for compiler_log in (runtime / 'work/compiler').glob('*.log'):
-                shutil.copyfile(compiler_log, logs / ('compiler-' + compiler_log.name))
     run(['cargo', 'build', '--locked', '--release', '-p', 'isoplane-native'], 'native')
     native = cache / 'target/release/isoplane_native.dll'
     wasm_version = re.search(r'cargo install --locked wasm-tools@([^\s]+)', (source / 'Dockerfile').read_text()).group(1)
@@ -257,7 +213,6 @@ def main():
     parser.add_argument('--cache', type=Path, default=None)
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases')
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
-    parser.add_argument('--llvm', type=Path, help='reuse a matching LLVM development build; otherwise build the pinned LLVM sources')
     parser.add_argument('--vc-redist', type=Path)
     parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--runtime-artifact', help='shared runtime archive file or HTTPS URL; omitted to build from source')
@@ -272,8 +227,7 @@ def main():
         args.runtime_sha256 = args.runtime_sha256.lower()
     if platform.system() != 'Windows' or platform.machine().lower() not in ('amd64', 'x86_64'):
         parser.error('run this builder on Windows x64')
-    if args.llvm and not (args.llvm / 'bin/llvm-config.exe').is_file():
-        parser.error(f'LLVM development build not found: {args.llvm}')
+
     if args.vc_redist and not args.vc_redist.is_file():
         parser.error(f'Visual C++ redistributable not found: {args.vc_redist}')
     command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',

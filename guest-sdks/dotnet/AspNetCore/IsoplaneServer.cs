@@ -14,11 +14,11 @@ internal sealed class IsoplaneServer(Func<ResponseTransport> createTransport) : 
 
     internal Task StartApplicationAsync(WebApplication application) => started ??= StartApplicationCoreAsync(application);
 
-    private static Task StartApplicationCoreAsync(WebApplication application)
+    private static async Task StartApplicationCoreAsync(WebApplication application)
     {
         if (application.Services.GetServices<IHostedService>().Any(service => service is BackgroundService))
             throw new NotSupportedException("Isoplane ASP.NET does not support BackgroundService work between completed dispatches. Use hosted services for bounded startup work.");
-        return application.StartAsync();
+        await application.StartAsync();
     }
     public IFeatureCollection Features { get; } = new FeatureCollection();
 

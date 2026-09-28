@@ -41,16 +41,16 @@ pub(crate) struct Options {
     #[serde(default)]
     trust: isoplane_trust::TrustConfig,
     #[serde(default)]
-    configuration: std::collections::BTreeMap<String, String>,
+    pub(crate) configuration: std::collections::BTreeMap<String, String>,
     log_filter: Option<String>,
     port: Option<u16>,
     debug_endpoint: Option<SocketAddr>,
     /// The application package loaded by the shared runtime.
-    package: Option<PathBuf>,
+    package: PathBuf,
 }
 
 impl Options {
-    fn inputs(&self) -> anyhow::Result<Inputs> {
+    pub(crate) fn inputs(&self) -> anyhow::Result<Inputs> {
         anyhow::ensure!(
             !self.manifest.name.trim().is_empty(),
             "local application name is empty"
@@ -71,24 +71,19 @@ impl Options {
                     && !address.ip().is_multicast()),
             "development services must name individual IP addresses and nonzero ports"
         );
-        let application_files = match &self.package {
-            Some(package) => {
-                anyhow::ensure!(
-                    package.is_absolute(),
-                    "the application package path must be absolute"
-                );
-                let archive = std::fs::read(package).with_context(|| {
-                    format!("reading the application package {}", package.display())
-                })?;
-                isoplane_prepare::package::read(
-                    &archive,
-                    isoplane_prepare::package::PackageLimits::of(&self.manifest),
-                )
-                .map(|package| package.files)
-                .with_context(|| format!("serving the application package {}", package.display()))?
-            }
-            None => isoplane_engine::PlatformFiles::default(),
-        };
+        anyhow::ensure!(
+            self.package.is_absolute(),
+            "the application package path must be absolute"
+        );
+        let archive = std::fs::read(&self.package).with_context(|| {
+            format!("reading the application package {}", self.package.display())
+        })?;
+        let application_files = isoplane_prepare::package::read(
+            &archive,
+            isoplane_prepare::package::PackageLimits::of(&self.manifest),
+        )
+        .map(|package| package.files)
+        .with_context(|| format!("serving the application package {}", self.package.display()))?;
         let trust = isoplane_trust::TrustBundle::load(&self.trust)?;
         let mut files = vec![isoplane_engine::PlatformFile {
             path: isoplane_trust::GUEST_PATH.into(),
@@ -114,18 +109,6 @@ impl Options {
             application_files,
         })
     }
-}
-
-pub(crate) fn prepare_local(wasm: &[u8], options: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let options: Options = serde_json::from_slice(options)?;
-    let inputs = options.inputs()?;
-    let configuration = isoplane_host::bindings::RuntimeConfiguration::from_json(
-        &serde_json::to_vec(&options.configuration)?,
-    )?;
-    let prepared = Prepared::build(&inputs, wasm, &configuration, &Baselines::default())?;
-    Ok(serde_json::to_vec(
-        &serde_json::json!({"compiled": prepared.compiled()}),
-    )?)
 }
 
 impl Session {

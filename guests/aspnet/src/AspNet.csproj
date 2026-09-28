@@ -1,8 +1,17 @@
-<Project Sdk="Isoplane.AspNetCore/0.1.0-preview.3">
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../../guest-sdks/dotnet/Isoplane.Guest.props" />
   <PropertyGroup>
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AssemblyName>isoplane_guest_aspnet</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
-    <IsoplaneApplicationFactory>AdapterFixture.Application.Create</IsoplaneApplicationFactory>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+    <IsoplaneRouter>AdapterFixture.Router</IsoplaneRouter>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="../../../guest-sdks/dotnet/Isoplane.Guest.targets" />
+  <Import Project="../../../guest-sdks/dotnet/AspNetCore/buildTransitive/Isoplane.AspNetCore.Framework.targets" />
+  <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.Exports.targets" />
 </Project>

@@ -2,25 +2,20 @@
 
 #[macro_use]
 mod common;
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
-use no_egress::reactor_without_egress;
 
 const ON_THE_ELEVENTH_MS: u64 = 1_789_100_000_000;
 
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
-    let reactor = reactor_without_egress(owner);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(owner));
     reactor.context.begin_slice(ON_THE_ELEVENTH_MS, 1);
     let mut guest = guest(&reactor, runtime);
     guest.answer(&reactor, path, 1).await
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn named_cultures_are_available_while_the_default_culture_is_invariant(runtime: GuestRuntime) {
         assert_eq!(
@@ -31,7 +26,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn numbers_dates_and_spans_format_with_the_invariant_patterns(runtime: GuestRuntime) {
         assert_eq!(
@@ -42,7 +37,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn numbers_and_dates_parse_with_the_invariant_patterns(runtime: GuestRuntime) {
         assert_eq!(
@@ -53,7 +48,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn culture_comparison_uses_unicode_collation_data(runtime: GuestRuntime) {
         assert_eq!(
@@ -64,7 +59,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn casing_honors_turkish_and_greek_cultures(runtime: GuestRuntime) {
         assert_eq!(
@@ -75,7 +70,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn unicode_normalization_and_idn_use_standard_data(runtime: GuestRuntime) {
         assert_eq!(
@@ -86,7 +81,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn built_in_encodings_are_present_and_code_pages_need_a_provider(runtime: GuestRuntime) {
         assert_eq!(
@@ -97,7 +92,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn named_time_zones_come_from_the_packs_embedded_data(runtime: GuestRuntime) {
         assert_eq!(
@@ -108,7 +103,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_custom_time_zone_with_a_daylight_rule_converts_both_ways(runtime: GuestRuntime) {
         assert_eq!(
@@ -119,7 +114,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn the_wall_clock_is_the_hosts_and_local_time_is_utc(runtime: GuestRuntime) {
         assert_eq!(
@@ -130,7 +125,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn named_cultures_format_and_parse_their_decimal_and_group_separators(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 330, "/globalization/named-format").await, "1.234,5/1234.5",
@@ -138,7 +133,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn non_gregorian_calendars_are_available(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 331, "/globalization/calendars").await, "hebrew=5784 japanese=1",
@@ -146,7 +141,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn non_latin_and_compatibility_normalization_use_unicode_data(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 332, "/globalization/unicode-forms").await,
@@ -155,10 +150,10 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_named_culture_remains_usable_after_a_store_restoration_delta(runtime: GuestRuntime) {
-        let reactor = reactor_without_egress(333);
+        let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(333));
         reactor.context.begin_slice(1, 1);
         let mut guest = guest(&reactor, runtime);
         let outcome = guest.start("/globalization/culture-after-park");
@@ -172,7 +167,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_locale_outside_the_browser_subset_has_its_own_day_names(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 334, "/globalization/welsh-day").await,
@@ -180,7 +175,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn non_gregorian_calendar_month_names_use_their_cultures_data(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 335, "/globalization/hebrew-month").await,
@@ -188,7 +183,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn windows_time_zone_ids_resolve_and_observe_daylight_rules(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 336, "/globalization/windows-zone").await,
@@ -196,7 +191,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_unknown_normalization_form_is_rejected(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 337, "/globalization/invalid-normalization-form").await,
@@ -204,7 +199,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn normalization_rejects_an_unpaired_surrogate(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 338, "/globalization/invalid-normalization-input").await,
@@ -212,7 +207,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn system_timezones_have_localized_standard_and_daylight_names(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 339, "/globalization/timezone-names").await,

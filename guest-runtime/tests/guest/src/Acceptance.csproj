@@ -4,8 +4,7 @@
   <!--
     The acceptance guest for the source-built runtime: one handler per family
     of runtime modification, each request path one behaviour. Built by
-    ../build.sh in either SDK profile, each of which compiles against the
-    pack guest-runtime/build.sh publishes for it.
+    ../build.sh against the Mono pack guest-runtime/build.sh publishes.
   -->
   <Import Project="../../../../guest-sdks/dotnet/Isoplane.Guest.props" />
 
@@ -17,18 +16,6 @@
     <!-- The multi-family fixture exceeds WASI's 50 MiB static-image default. -->
     <WasmInitialHeapSize>67108864</WasmInitialHeapSize>
   </PropertyGroup>
-
-  <PropertyGroup Condition="'$(IsoplaneCompilerProbe)' == 'true'">
-    <Optimize>false</Optimize>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);ISOPLANE_COMPILER_PROBE</DefineConstants>
-  </PropertyGroup>
-  <ItemGroup Condition="'$(IsoplaneCompilerProbe)' == 'true'">
-    <Compile Remove="App/**/*.cs" />
-    <Compile Include="../compiler/Handler.cs" />
-    <Compile Include="../../../../guest-sdks/dotnet/Abi/Tests/NativeCompilerProbe.cs" />
-    <NativeLibrary Include="$(IsoplaneCompilerProbeObject)" Library="isoplane_compiler_probe" />
-  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="Payload/**/*.cs" />
@@ -48,13 +35,12 @@
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(IsoplaneGuestRuntime)' == 'Mono'">
+  <ItemGroup>
     <TrimmerRootAssembly Include="System.Runtime" />
     <EmbeddedResource Include="$(IsoplaneAcceptancePayload)" LogicalName="dynamic-payload" />
   </ItemGroup>
 
-  <Target Name="RequireAcceptancePayload" BeforeTargets="PrepareForBuild"
-          Condition="'$(IsoplaneGuestRuntime)' == 'Mono'">
+  <Target Name="RequireAcceptancePayload" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(IsoplaneAcceptancePayload)')"
            Text="Build the acceptance payload through guest-runtime/tests/guest/build.sh." />
   </Target>

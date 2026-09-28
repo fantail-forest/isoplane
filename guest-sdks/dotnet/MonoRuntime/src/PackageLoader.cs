@@ -30,7 +30,7 @@ public static class PackageLoader
     public const string Root = "/.isoplane/package";
 
     /// <summary>
-    /// Loads every package assembly into the default context and returns the
+    /// Resolves package assemblies on demand in the default context and returns the
     /// router the SDK generates for the declared factory, not yet booted.
     /// Throws when the manifest selects another execution mode, when the
     /// runtime already supplies a package assembly's name, or when the factory
@@ -40,35 +40,38 @@ public static class PackageLoader
     public static IIsoplaneRouter Load()
     {
         ManagedApplication application = ReadManifest();
-        Dictionary<string, string> assemblies = Index(Path.Combine(Root, "assemblies"));
         AssemblyLoadContext context = AssemblyLoadContext.Default;
+        Dictionary<string, string> assemblies = Index(context, Path.Combine(Root, "assemblies"));
         context.Resolving += (loading, name) =>
             assemblies.TryGetValue(Key(name), out string? path) ? loading.LoadFromAssemblyPath(path) : null;
-        foreach (KeyValuePair<string, string> assembly in assemblies.OrderBy(entry => entry.Key, StringComparer.Ordinal))
-            RequireFromPackage(context, assembly.Key, assembly.Value);
         return CreateRouter(context.LoadFromAssemblyName(new AssemblyName(application.Assembly)), application.Factory);
     }
 
     private static ManagedApplication ReadManifest()
     {
         using FileStream manifest = File.OpenRead(Path.Combine(Root, "application.json"));
-        ManagedApplication application = JsonSerializer.Deserialize(manifest, new ManifestJson(new JsonSerializerOptions(BuildJson.Options)).ManagedApplication)
-            ?? throw Refuse(new PackageManifestException("the application manifest is empty"));
-        if (application.Execution != GuestExecution.Interpreted)
-            throw Refuse(new PackageExecutionException($"the package targets {application.Execution} execution, not this interpreter"));
-        return application;
+        try
+        {
+            return JsonSerializer.Deserialize(manifest, new ManifestJson(new JsonSerializerOptions(BuildJson.Options)).ManagedApplication)
+                ?? throw Refuse(new PackageManifestException("the application manifest is empty"));
+        }
+        catch (JsonException error)
+        {
+            throw Refuse(new PackageManifestException("the application manifest is invalid: " + error.Message));
+        }
     }
 
     /// <summary>
     /// Package assemblies by the key the managed bundle files them under,
     /// <c>[culture/]Name</c>, each checked to define the assembly its key names.
     /// </summary>
-    private static Dictionary<string, string> Index(string directory)
+    private static Dictionary<string, string> Index(AssemblyLoadContext context, string directory)
     {
         var assemblies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (string path in Directory.EnumerateFiles(directory, "*.dll", SearchOption.AllDirectories))
         {
             string key = Path.ChangeExtension(Path.GetRelativePath(directory, path), null).Replace(Path.DirectorySeparatorChar, '/');
+            RefuseRuntimeAssembly(context, key);
             AssemblyName defined = AssemblyName.GetAssemblyName(path);
             if (!string.Equals(Key(defined), key, StringComparison.OrdinalIgnoreCase))
                 throw Refuse(new PackageAssemblyConflictException($"package file '{key}.dll' defines assembly '{Key(defined)}'"));
@@ -80,17 +83,20 @@ public static class PackageLoader
     private static string Key(AssemblyName name) =>
         string.IsNullOrEmpty(name.CultureName) ? name.Name ?? "" : name.CultureName + "/" + name.Name;
 
-    /// <summary>
-    /// Loads a package assembly by name, as its dependents will, and refuses
-    /// the package when that name binds to the runtime's assembly instead.
-    /// </summary>
-    private static void RequireFromPackage(AssemblyLoadContext context, string key, string path)
+    private static void RefuseRuntimeAssembly(AssemblyLoadContext context, string key)
     {
         int separator = key.LastIndexOf('/');
         var name = new AssemblyName(key[(separator + 1)..]) { CultureName = separator < 0 ? "" : key[..separator] };
-        Assembly loaded = context.LoadFromAssemblyName(name);
-        if (!string.Equals(loaded.Location, path, StringComparison.Ordinal))
-            throw Refuse(new PackageAssemblyConflictException($"package assembly '{key}' is supplied by the runtime"));
+        try
+        {
+            context.LoadFromAssemblyName(name);
+        }
+        catch (FileNotFoundException)
+        {
+            // Package resolution is not installed yet, so only runtime assemblies can bind.
+            return;
+        }
+        throw Refuse(new PackageAssemblyConflictException($"package assembly '{key}' is supplied by the runtime"));
     }
 
     private static IIsoplaneRouter CreateRouter(Assembly entry, string factory)
@@ -147,8 +153,6 @@ internal static class WebApplications
 }
 
 internal sealed class PackageManifestException(string message) : Exception(message);
-
-internal sealed class PackageExecutionException(string message) : Exception(message);
 
 internal sealed class PackageAssemblyConflictException(string message) : Exception(message);
 

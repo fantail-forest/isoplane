@@ -34,7 +34,7 @@ fn dual_stack() -> Box<FixedDns> {
     Box::new(FixedDns(vec![PUBLIC_V4, PUBLIC_V6]))
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_forward_lookup_parks_on_the_host_resolver_and_returns_its_answer(runtime: GuestRuntime) {
         let reactor = reactor_for_dns(30, dual_stack());
@@ -72,7 +72,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// A parked lookup survives Store restoration: the answer reaches the continuation
     /// after the guest's captured memory was restored into a new Store.
     #[tokio::test]
@@ -97,7 +97,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn address_family_filters_apply_to_the_host_answer(runtime: GuestRuntime) {
         let reactor = reactor_for_dns(31, dual_stack());
@@ -117,7 +117,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_host_entry_carries_the_name_and_addresses(runtime: GuestRuntime) {
         let reactor = reactor_for_dns(32, dual_stack());
@@ -131,7 +131,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_ip_literal_resolves_without_a_host_lookup_or_a_park(runtime: GuestRuntime) {
         let reactor = reactor_without_egress(33);
@@ -147,7 +147,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn resolver_failures_map_to_the_matching_socket_errors(runtime: GuestRuntime) {
         for (kind, expected) in [
@@ -182,7 +182,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_policy_refusal_is_access_denied_and_counted_once(runtime: GuestRuntime) {
         let mixed = Box::new(FixedDns(vec![
@@ -209,7 +209,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn cancelling_a_lookup_drops_the_host_lookup_and_its_wake(runtime: GuestRuntime) {
         let entered = Arc::new(tokio::sync::Notify::new());
@@ -254,7 +254,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn the_legacy_begin_end_pair_completes_through_its_callback(runtime: GuestRuntime) {
         let reactor = reactor_for_dns(37, dual_stack());
@@ -268,7 +268,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn the_host_name_is_answered_in_the_guest_without_a_lookup(runtime: GuestRuntime) {
         let reactor = reactor_without_egress(39);
@@ -288,7 +288,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn lookups_that_would_have_to_block_fail_explicitly(runtime: GuestRuntime) {
         let reactor = reactor_without_egress(38);

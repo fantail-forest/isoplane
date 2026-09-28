@@ -8,7 +8,6 @@
     linked and compiled module serves every interpreted application.
   -->
   <PropertyGroup>
-    <IsoplaneGuestRuntime>Mono</IsoplaneGuestRuntime>
   </PropertyGroup>
   <Import Project="../../Isoplane.Guest.props" />
 

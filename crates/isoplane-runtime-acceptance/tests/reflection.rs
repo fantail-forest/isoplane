@@ -1,30 +1,20 @@
-//! Reflection, generics and serialization where the interpreter and the
-//! ahead-of-time compiler can differ. Both profiles are trimmed, so what
-//! the trimmer cannot see is gone in both; an instantiation the compiler
-//! never generated exists only where code can be created at run time, and
-//! that is the one behaviour whose expected outcome is a function of the
-//! runtime under test, stated in its assertion.
+//! Reflection, runtime-created generics, serialization and Store restoration on Mono.
 
 #[macro_use]
 mod common;
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
 
 use common::{guest, GuestRuntime};
 use isoplane_engine::Completion;
 use isoplane_host::InstanceId;
-use no_egress::reactor_without_egress;
 
 async fn answer(runtime: GuestRuntime, owner: u64, path: &str) -> String {
-    let reactor = reactor_without_egress(owner);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(owner));
     reactor.context.begin_slice(1, 1);
     let mut guest = guest(&reactor, runtime);
     guest.answer(&reactor, path, 1).await
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     /// A type named by a literal is kept by the trimmer and found; a
     /// framework instantiation is found by its qualified name.
     #[tokio::test]
@@ -42,26 +32,21 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
-    async fn a_runtime_named_type_obeys_the_profiles_trimming_policy(runtime: GuestRuntime) {
-        let expected = match runtime {
-            GuestRuntime::Mono => "Acceptance.Orphan instance=created",
-            GuestRuntime::NativeAot => "null",
-        };
+    async fn a_runtime_named_type_remains_constructible(runtime: GuestRuntime) {
+        let expected = "Acceptance.Orphan instance=created";
         assert_eq!(
             answer(runtime, 362, "/reflection/type-by-name/assembled").await,
             expected,
-            "a runtime-named type must remain constructible in untrimmed Mono and be removed from trimmed NativeAOT"
+            "a runtime-named type must remain constructible in untrimmed Mono"
         );
     }
 }
 
-in_both_runtimes! {
-    /// A closed generic over a reference type shares the canonical code
-    /// both compilers already have.
+in_mono_runtime! {
     #[tokio::test]
-    async fn make_generic_type_over_a_reference_type_instantiates_in_both_profiles(runtime: GuestRuntime) {
+    async fn make_generic_type_over_a_reference_type_instantiates_in_mono(runtime: GuestRuntime) {
         assert_eq!(
             answer(runtime, 363, "/reflection/make-generic/reference").await,
             "Holder<Sample> method=Sample",
@@ -70,28 +55,18 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
-    /// A closed generic over a value type the program never instantiates
-    /// needs code the ahead-of-time compiler did not generate: the
-    /// interpreter builds it at run time, NativeAOT refuses it.
+in_mono_runtime! {
     #[tokio::test]
-    async fn make_generic_type_over_an_unseen_value_type_depends_on_the_runtime(runtime: GuestRuntime) {
+    async fn make_generic_type_over_an_unseen_value_type_instantiates(runtime: GuestRuntime) {
         let answer = answer(runtime, 364, "/reflection/make-generic/value").await;
-        match runtime {
-            GuestRuntime::Mono => assert!(
-                answer == "Holder<UnseenPoint> method=UnseenPoint" || answer == "Holder<UnseenSize> method=UnseenSize",
-                "the interpreter must instantiate a generic over a value type it has never seen: {answer}"
-            ),
-            GuestRuntime::NativeAot => assert_eq!(
-                answer,
-                "NotSupportedException",
-                "NativeAOT has no code for a value-type instantiation it never generated and must refuse it, never answer wrongly"
-            ),
-        }
+        assert!(
+            answer == "Holder<UnseenPoint> method=UnseenPoint" || answer == "Holder<UnseenSize> method=UnseenSize",
+            "the interpreter must instantiate a generic over a value type it has never seen: {answer}"
+        );
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn activator_constructs_with_and_without_arguments_and_refuses_a_missing_constructor(runtime: GuestRuntime) {
         assert_eq!(
@@ -102,7 +77,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn attributes_properties_and_methods_are_enumerable_over_a_kept_type(runtime: GuestRuntime) {
         assert_eq!(
@@ -113,7 +88,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn method_info_invokes_binds_delegates_and_wraps_a_wrong_argument(runtime: GuestRuntime) {
         assert_eq!(
@@ -124,7 +99,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn generic_virtual_methods_dispatch_over_reference_and_value_arguments(runtime: GuestRuntime) {
         assert_eq!(
@@ -135,7 +110,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn interface_and_delegate_dispatch_including_dynamic_invoke(runtime: GuestRuntime) {
         assert_eq!(
@@ -146,7 +121,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn enums_parse_format_flags_and_refuse_an_unknown_name(runtime: GuestRuntime) {
         assert_eq!(
@@ -157,17 +132,14 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
-    async fn json_reflection_obeys_the_profile_and_generated_json_works(runtime: GuestRuntime) {
-        let expected = match runtime {
-            GuestRuntime::Mono => r#"{"Name":"json","Count":4,"Tags":["a","b"]} json:4:a+b"#,
-            GuestRuntime::NativeAot => "InvalidOperationException",
-        };
+    async fn reflection_and_generated_json_both_round_trip(runtime: GuestRuntime) {
+        let expected = r#"{"Name":"json","Count":4,"Tags":["a","b"]} json:4:a+b"#;
         assert_eq!(
             answer(runtime, 371, "/reflection/json/reflection").await,
             expected,
-            "default JSON reflection must round-trip in untrimmed Mono and be refused under NativeAOT trimming"
+            "default JSON reflection must round-trip in untrimmed Mono"
         );
         assert_eq!(
             answer(runtime, 372, "/reflection/json/source-generated").await,
@@ -188,7 +160,7 @@ in_both_runtimes! {
 }
 
 async fn answer_after_restore(runtime: GuestRuntime, owner: InstanceId, path: &str) -> String {
-    let reactor = reactor_without_egress(owner.0);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId(owner.0));
     reactor.context.begin_slice(1, 1);
     let mut guest = guest(&reactor, runtime);
     let outcome = guest.start(path);
@@ -209,7 +181,7 @@ async fn answer_after_restore(runtime: GuestRuntime, owner: InstanceId, path: &s
     reactor.response_text(1)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn interpreted_expression_closures_remain_callable_after_store_restoration(runtime: GuestRuntime) {
         assert_eq!(answer_after_restore(runtime, InstanceId(380), "/reflection/expression-after-park").await,
@@ -217,7 +189,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn disposing_a_safe_handle_twice_releases_it_once(runtime: GuestRuntime) {
         assert_eq!(answer(runtime, 381, "/reflection/safe-handle-dispose").await,
@@ -225,7 +197,7 @@ in_both_runtimes! {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_finalized_safe_handle_is_not_released_again_after_store_restoration(runtime: GuestRuntime) {
         assert_eq!(answer_after_restore(runtime, InstanceId(382), "/reflection/safe-handle-finalizer-after-park").await,
@@ -247,7 +219,7 @@ async fn an_interpreted_emitted_delegate_remains_callable_after_store_restoratio
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn default_expression_compilation_remains_callable_after_store_restoration(runtime: GuestRuntime) {
         assert_eq!(answer_after_restore(runtime, InstanceId(384), "/reflection/expression-default-after-park").await,
@@ -297,7 +269,7 @@ async fn interpreted_dynamic_expando_bindings_survive_store_restoration() {
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn enabled_event_listeners_survive_store_restoration_and_stop_at_disposal(runtime: GuestRuntime) {
         assert_eq!(answer_after_restore(runtime, InstanceId(396), "/reflection/events-after-park").await,

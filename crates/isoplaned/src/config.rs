@@ -3,9 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
-use isoplane_abi::config::{
-    HandlerLifecycle, InitSandbox, Limits, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT,
-};
+use isoplane_abi::config::{HandlerLifecycle, Limits, DEFAULT_ADMIN_PORT, DEFAULT_PROXY_PORT};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,13 +251,6 @@ pub struct AppConfig {
     pub path_prefix: String,
     #[serde(default)]
     pub versions: Vec<VersionConfig>,
-    /// Non-secret vars handed to the init sandbox as a data blob.
-    #[serde(default)]
-    pub init_visible_vars: BTreeMap<String, String>,
-    /// Additional runtime initialization capability policy.
-    /// Application entropy is governed separately by the preparation context.
-    #[serde(default)]
-    pub init_sandbox: InitSandbox,
 }
 
 fn default_path_prefix() -> String {
@@ -270,11 +261,6 @@ fn default_path_prefix() -> String {
 #[serde(deny_unknown_fields)]
 pub struct VersionConfig {
     pub id: String,
-    /// The module to deploy for this version at startup. `None` is routable
-    /// with nothing to run: a request for it fails naming the missing
-    /// template.
-    #[serde(default)]
-    pub wasm: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -346,12 +332,7 @@ impl NodeConfig {
                     "127.0.0.1".into(),
                 ],
                 path_prefix: "/".into(),
-                versions: vec![VersionConfig {
-                    id: "v1".into(),
-                    wasm: None,
-                }],
-                init_visible_vars: BTreeMap::new(),
-                init_sandbox: InitSandbox::Sealed,
+                versions: vec![VersionConfig { id: "v1".into() }],
             }],
             data_dir: default_data_dir(),
             engine: EngineLimits::default(),
@@ -381,7 +362,6 @@ impl NodeConfig {
                 .validate()
                 .map_err(|error| ConfigError::Preparation(error.to_string()))?;
         }
-        #[cfg(feature = "real-backends")]
         self.validate_placement()?;
         self.trust_bundle().map(drop)
     }
@@ -467,7 +447,6 @@ name = "cell-1"
         config.host.guest_resources.log_bytes_per_dispatch = 7;
         config.host.queue_depth_per_worker = 3;
         config.network.connections = 2;
-        config.network.egress_bytes = 19;
         config.host.wall_ms_cap = 60_000;
         let encoded = toml::to_string(&config).expect("the node prints its merged configuration");
         let restored = NodeConfig::from_toml(&encoded).expect("the printed configuration loads");
@@ -486,10 +465,6 @@ name = "cell-1"
         assert_eq!(
             restored.network.connections, 2,
             "the printed configuration must preserve connection budget"
-        );
-        assert_eq!(
-            restored.network.egress_bytes, 19,
-            "the printed configuration must preserve egress budget"
         );
         assert_eq!(
             restored.host.wall_ms_cap, 60_000,
@@ -529,6 +504,15 @@ name = "cell-1"
                 Err(ConfigError::ZeroResponseQueue)
             ),
             "a zero response queue must fail before any writer can wait forever"
+        );
+    }
+
+    #[test]
+    fn configured_standalone_modules_are_rejected() {
+        let result = toml::from_str::<VersionConfig>("id = 'v1'\nwasm = 'application.wasm'");
+        assert!(
+            result.is_err(),
+            "version configuration must not accept standalone application modules"
         );
     }
 

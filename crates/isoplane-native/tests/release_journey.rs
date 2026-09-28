@@ -1,7 +1,7 @@
 //! The canonical release build, consumed the way a customer does: the bootstrap
 //! .NET SDK from Ubuntu's packages, a global tool install, `isoplane setup`
-//! downloading the release from an origin, the registered template, both
-//! execution modes, the upgrade to the next preview, and `isoplane uninstall-sdk`.
+//! downloading the release from an origin, the registered template in Debug
+//! and Release configurations, the upgrade to the next preview, and `isoplane uninstall-sdk`.
 //! Two releases are built from a snapshot of the working tree, so the journey
 //! validates the sources as they are, not the last commit. Every install runs
 //! inside a fresh Ubuntu 24.04 container carrying only the bootstrap SDK the
@@ -193,6 +193,12 @@ fn build_releases() -> Releases {
             .arg(&commit)
             .current_dir(&root),
         "checking out the snapshot",
+    );
+    succeed(
+        Command::new("git")
+            .args(["submodule", "update", "--init", "--recursive"])
+            .current_dir(&worktree),
+        "initializing the snapshot's pinned source dependencies",
     );
     let output = scratch.join("releases");
     let current = build_release(&worktree, &output);
@@ -550,15 +556,17 @@ impl Machine {
     }
 
     fn build(&self, app: &str, configuration: &str) {
-        let modules = succeed(
+        let entries = succeed(
             self.new_shell(&format!(
-                "cd {app}\ndotnet build -c {configuration} >build-{configuration}.log 2>&1 || {{ cat build-{configuration}.log; exit 1; }}\nls bin/{configuration}/net10.0/wasi-wasm/publish/*.wasm"
+                "cd {app}\ndotnet build -c {configuration} >build-{configuration}.log 2>&1 || {{ cat build-{configuration}.log; exit 1; }}\nisoplane bundle --configuration {configuration} --output application.tar >bundle-{configuration}.log 2>&1 || {{ cat bundle-{configuration}.log; exit 1; }}\ntar -tf application.tar"
             )),
             &format!("building the {configuration} configuration with installed assets"),
         );
         assert!(
-            modules.trim().ends_with(".wasm"),
-            "the {configuration} build must publish a WebAssembly module from installed assets"
+            entries.lines().any(|entry| entry == "application.json")
+                && entries.lines().any(|entry| entry == "runtime.json")
+                && entries.lines().any(|entry| entry == format!("assemblies/{app}.dll")),
+            "the {configuration} package must contain application IL and the installed SDK's runtime identity: {entries}"
         );
     }
 
@@ -611,7 +619,8 @@ fn uuid_like() -> String {
 }
 
 #[test]
-fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_in_both_modes() {
+fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_in_debug_and_release(
+) {
     let releases = releases();
     let machine = Machine::new(releases);
     let sdk_before = succeed(
@@ -654,7 +663,7 @@ fn a_global_tool_install_and_setup_from_the_origin_create_a_project_that_builds_
         "dotnet new list must discover the registered template after setup"
     );
     let app = machine.create_project(&releases.current, "JourneyApp");
-    for configuration in ["IsoplaneInterpretedDebug", "IsoplaneNativeAotRelease"] {
+    for configuration in ["Debug", "Release"] {
         machine.build(&app, configuration);
     }
     machine.uninstall_sdk();
@@ -709,7 +718,7 @@ fn repeated_setup_changes_nothing_and_uninstall_sdk_removes_exactly_what_setup_r
         "setup must not alter the user's shell configuration"
     );
     let app = machine.create_project(&releases.current, "RemovalApp");
-    machine.build(&app, "IsoplaneInterpretedDebug");
+    machine.build(&app, "Debug");
 
     let selected = succeed(
         machine.shell("cat \"$HOME/.isoplane/current.json\""),
@@ -808,7 +817,7 @@ fn updating_the_global_tool_and_rerunning_setup_moves_to_the_next_preview_as_one
         "the upgrade must replace the toolchain rather than accumulate them:\n{toolchains}"
     );
     let app = machine.create_project(&releases.next, "UpgradedApp");
-    machine.build(&app, "IsoplaneInterpretedDebug");
+    machine.build(&app, "Debug");
     machine.uninstall_sdk();
     assert!(
         !machine.templates().contains("isoplane-web"),

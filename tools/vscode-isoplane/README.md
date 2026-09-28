@@ -4,7 +4,7 @@ Install the Isoplane CLI and SDK, then start an interpreted debug session from
 the application directory:
 
 ```sh
-dotnet run -c IsoplaneInterpretedDebug -p:IsoplaneDebug=true
+dotnet run -c Debug -p:IsoplaneDebug=true
 ```
 
 In VS Code, choose **Run and Debug → Isoplane** and enter the printed debugger port. Set a

@@ -1,8 +1,6 @@
 //! The harness for the C# behaviour fixtures: one engine and template per
-//! fixture and runtime, activation with recording bindings, and the HTTP
-//! dispatch the probes answer. A behaviour a customer sees is proven in both
-//! runtimes, so `in_both_runtimes!` writes one test per runtime from one body
-//! and a failure names the runtime it happened in.
+//! fixture, activation with recording bindings, and the HTTP dispatch the probes
+//! answer. `in_mono_runtime!` names the shared Mono runtime in test results.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -15,20 +13,14 @@ use isoplane_engine::{
 };
 pub use isoplane_fixtures::GuestRuntime;
 
-/// Writes `mod $name { fn native_aot() {..} fn mono() {..} }` from one body,
+/// Writes `mod $name { fn mono() {..} }` from one body,
 /// so `cargo test mono` or `cargo test hashing::` select what to run.
 #[macro_export]
-macro_rules! in_both_runtimes {
+macro_rules! in_mono_runtime {
     ($(fn $name:ident($runtime:ident: GuestRuntime) $body:block)*) => {
         $(
             mod $name {
                 use super::*;
-
-                #[test]
-                fn native_aot() {
-                    let $runtime = GuestRuntime::NativeAot;
-                    $body
-                }
 
                 #[test]
                 fn mono() {

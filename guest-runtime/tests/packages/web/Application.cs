@@ -34,7 +34,12 @@ public static class Application
                 total += read;
             return "received:" + total.ToString(CultureInfo.InvariantCulture);
         });
-        Initialization.Initializing += () => new IsoplaneApplication(app).WarmupAsync("/warm");
+        Initialization.Initializing += async () =>
+        {
+            var application = new IsoplaneApplication(app);
+            await application.WarmupAsync("/warm");
+            await application.WarmupAsync("/hello/warmup");
+        };
         return app;
     }
 }
@@ -47,7 +52,13 @@ public sealed class Greeter
     /// <summary>Warm-up requests served, all during initialization.</summary>
     public int Warmups { get; set; }
 
-    /// <summary>The content file's greeting for <paramref name="name"/>, and the warm-up count.</summary>
-    public string Greet(string name) =>
-        greeting + ", " + name + "; warmups=" + Warmups.ToString(CultureInfo.InvariantCulture);
+    private int greetings;
+
+    /// <summary>The content file's greeting and counts including initialization requests.</summary>
+    public string Greet(string name)
+    {
+        greetings++;
+        return greeting + ", " + name + "; greetings=" + greetings.ToString(CultureInfo.InvariantCulture)
+            + "; warmups=" + Warmups.ToString(CultureInfo.InvariantCulture);
+    }
 }

@@ -9,33 +9,13 @@
 using System.Runtime.InteropServices;
 using Guest = Isoplane.Abi.Exports<global::$(IsoplaneRouter)>;
 internal static class IsoplaneGeneratedExports {
-#if ISOPLANE_MONO
   [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods, typeof(IsoplaneGeneratedExports))]
   public static void Main() { }
-#endif
-#if !ISOPLANE_MONO
-  [UnmanagedCallersOnly(EntryPoint="isoplane_alloc")]
-#endif
   public static int Alloc(int size, int align) { $(_IsoplaneDebugScope) return Guest.Alloc(size, align); }
-#if !ISOPLANE_MONO
-  [UnmanagedCallersOnly(EntryPoint="isoplane_handle")]
-#endif
   public static long Handle(int ptr, int len) { $(_IsoplaneDebugScope) return Guest.Handle(ptr, len); }
-#if !ISOPLANE_MONO
-  [UnmanagedCallersOnly(EntryPoint="isoplane_wake")]
-#endif
   public static long Wake(long future, int ptr, int len) { $(_IsoplaneDebugScope) return Guest.Wake(future, ptr, len); }
-#if !ISOPLANE_MONO
-  [UnmanagedCallersOnly(EntryPoint="isoplane_initialize")]
-#endif
   public static long Initialize() { $(_IsoplaneDebugScope) return Guest.Initialize(); }
-#if !ISOPLANE_MONO
-  [UnmanagedCallersOnly(EntryPoint="isoplane_initialize_runtime")]
-#endif
   public static long InitializeRuntime() { $(_IsoplaneDebugScope) return Guest.InitializeRuntime(); }
-#if !ISOPLANE_MONO
-  [UnmanagedCallersOnly(EntryPoint="isoplane_gc_hint")]
-#endif
   public static void GcHint(int pressure) { $(_IsoplaneDebugScope) Guest.GcHint(pressure); }
 }
 ]]></_IsoplaneExportsSource>

@@ -20,8 +20,8 @@
   </PropertyGroup>
 
   <Target Name="IsoplaneValidateModule"
-          AfterTargets="LinkNative;IsoplanePublishInContainer;IsoplaneMonoPublishCore"
-          Condition="'$(IsoplaneLocalDebug)' != 'true' AND '$(_IsoplaneContainerIntermediate)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
+          AfterTargets="IsoplaneMonoPublishCore"
+          Condition="'$(IsoplaneLocalDebug)' != 'true' AND '$(NativeBinary)' != '' AND Exists('$(NativeBinary)')">
 
     <PropertyGroup>
       <!-- Absolute, so the paths in the messages can be pasted back. -->

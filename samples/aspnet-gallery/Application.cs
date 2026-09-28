@@ -12,9 +12,11 @@ namespace AspNetGallery;
 /// <summary>A PostgreSQL and S3 gallery with request-scoped EF persistence.</summary>
 public static class Application
 {
-    /// <summary>Builds routes without reading credentials or contacting services during preparation.</summary>
+    /// <summary>Builds routes and warms the read-only database endpoint before template capture.</summary>
     public static WebApplication Create()
     {
+        // EF compiled models initialize synchronously because guests cannot start OS threads.
+        AppContext.SetSwitch("Microsoft.EntityFrameworkCore.Issue31751", true);
         var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         builder.Services.ConfigureHttpJsonOptions(options =>
             options.SerializerOptions.TypeInfoResolverChain.Insert(0, GalleryJson.Default));
@@ -38,14 +40,14 @@ public static class Application
         application.MapGet("/images", ListAsync);
         application.MapGet("/images/{id:guid}/original", OriginalAsync);
         application.MapGet("/images/{id:guid}/thumbnail", ThumbnailAsync);
-        Isoplane.Initialization.Initializing += () =>
+        Isoplane.Initialization.Initializing += async () =>
         {
             _ = GallerySchema.Generated.GalleryDbModel.Instance.GetEntityTypes().ToArray();
             _ = application.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value;
             _ = GalleryJson.Default.GalleryImage;
             _ = GalleryJson.Default.GalleryImageArray;
             _ = GalleryJson.Default.ExifInfo;
-            return Task.CompletedTask;
+            await new IsoplaneApplication(application).WarmupAsync("/images");
         };
         return application;
     }

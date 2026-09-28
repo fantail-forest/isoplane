@@ -293,7 +293,7 @@ mod tests {
     #[tokio::test]
     async fn closing_a_scope_keeps_an_inflight_fetch_charged_until_it_is_dropped() {
         let scope = HttpScope::new();
-        let policy = Arc::new(HostEgressPolicy::new(Box::new(PublicEndpoint), 1, 1024));
+        let policy = Arc::new(HostEgressPolicy::new(Box::new(PublicEndpoint), 1));
         let mut operation = scope
             .begin_fetch()
             .expect("the dispatch must register its fetch");
@@ -342,7 +342,7 @@ mod tests {
     #[tokio::test]
     async fn a_read_completing_after_scope_closure_cannot_restore_its_body() {
         let scope = HttpScope::new();
-        let policy = Arc::new(HostEgressPolicy::new(Box::new(PublicEndpoint), 1, 1024));
+        let policy = Arc::new(HostEgressPolicy::new(Box::new(PublicEndpoint), 1));
         let mut fetch = scope
             .begin_fetch()
             .expect("the dispatch must register a fetch");

@@ -60,7 +60,7 @@ def author(toolchain, version, output):
             if hashlib.file_digest(source, 'sha256').hexdigest() != entry['sha256']:
                 raise ValueError(f'toolchain integrity check failed: {relative}')
         paths.append(relative)
-    required = {'Sdk/Sdk.props', 'feed/Isoplane.GuestRuntime.props', 'compiler/Isoplane.GuestCompiler.props',
+    required = {'Sdk/Sdk.props', 'feed/Isoplane.GuestRuntime.props',
                 'cli/Isoplane.Cli.dll', 'cli/runtime/isoplane_native.dll', 'bin/wasm-tools.exe',
                 'wasi-sdk/bin/clang.exe', 'mono-targets/Sdk/Sdk.props', 'wasi-cross/Sdk/Sdk.props',
                 f'templates/Isoplane.Templates.{version}.nupkg'}

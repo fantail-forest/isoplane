@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Isoplane.Build;
 
-internal enum GuestExecution { Interpreted, NativeAot }
+internal enum GuestExecution { Interpreted }
 internal sealed record ManagedApplication(string Assembly, string Factory, GuestExecution Execution);
 
 internal static class BuildJson

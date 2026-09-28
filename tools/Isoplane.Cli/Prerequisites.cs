@@ -19,10 +19,8 @@ internal static class Prerequisites
     [
         new("ICU", Enumerable.Range(60, 41).Reverse().Select(version => $"libicuuc.so.{version}").ToArray(), "globalization in the .NET SDK", "libicu74"),
         new("OpenSSL", ["libssl.so.3"], "TLS in the .NET SDK", "libssl3t64"),
-        new("zlib", ["libz.so.1"], "the NativeAOT compiler backend", "zlib1g"),
+        new("zlib", ["libz.so.1"], "compression in the .NET SDK", "zlib1g"),
         new("libstdc++", ["libstdc++.so.6"], "the .NET SDK and the WebAssembly compiler", "libstdc++6"),
-        new("zstd", ["libzstd.so.1"], "the NativeAOT compiler backend", "libzstd1"),
-        new("terminfo", ["libtinfo.so.6"], "the NativeAOT compiler backend", "libtinfo6"),
         new("CA certificates", [], "downloads and TLS connections", "ca-certificates"),
     ];
 

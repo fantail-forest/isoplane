@@ -52,7 +52,6 @@ if [ "$FIXTURE" = runtime ]; then
     echo "==> shared Mono runtime is up to date"
     exit 0
   fi
-  rm -f "$OUT" "$DEBUG"
   # This build already holds the lock the runtime's own script takes.
   SHARED_OUTPUTS=()
   for output in "${OUTPUTS[@]}"; do SHARED_OUTPUTS+=(--output "$output"); done
@@ -73,7 +72,6 @@ else
     exit 0
   fi
   CLI="$(python3 "$TOOLS" isoplane-cli "$ROOT")"
-  rm -f "$OUT.tar"
   dotnet "$CLI" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
 fi
 

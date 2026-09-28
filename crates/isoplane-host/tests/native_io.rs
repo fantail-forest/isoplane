@@ -11,7 +11,6 @@ mod connection_factory;
 mod harness;
 use harness::{GuestRuntime, Reactor, ReturnedGuest, WAKE_DEADLINE};
 use isoplane_host::bindings::CellBindings;
-use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::{InstanceId, Resolver};
 use isoplane_harness::EmittedGuestLogs as _;
 
@@ -27,11 +26,11 @@ impl Resolver for NoDns {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn a_managed_timer_wakes_on_another_worker_after_its_store_is_destroyed(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
-        let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+        let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
@@ -66,7 +65,7 @@ in_both_runtimes! {
     #[tokio::test(start_paused = true)]
     async fn an_abandoned_managed_timer_cannot_run_during_a_later_request(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
-        let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+        let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(Box::new(NoDns)));
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_dispatch(1, 1);
@@ -137,7 +136,7 @@ impl isoplane_host::egress::DestinationPolicy for ExactPeer {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_managed_connection_survives_store_destruction_and_disposal_closes_its_real_peer(runtime: GuestRuntime) {
         socket_round_trip("isoplane_guest_dotnet_connect", runtime, None).await;
@@ -200,11 +199,11 @@ async fn socket_transfer(
         .local_addr()
         .expect("the test listener must have an endpoint");
     let connections = Arc::new(connection_factory::RecordingConnections::default());
-    let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20)
+    let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns))
         .with_connections(connections.clone())
         .with_destinations(Arc::new(ExactPeer(peer)));
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, policy);
+    let reactor = Reactor::with_network(owner, policy);
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
@@ -301,7 +300,10 @@ async fn dropping_a_native_timer_removes_its_host_work_without_entering_managed_
     use isoplane_abi::native_io::{DurationNanos, Request, Response};
     use isoplane_engine::HostBindings;
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1 << 20));
+    let reactor = Reactor::with_network(
+        owner,
+        isoplane_harness::Network::with_resolver(Box::new(NoDns)),
+    );
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
@@ -351,13 +353,13 @@ impl Resolver for PublicDns {
         Ok(vec![std::net::SocketAddr::from(([93, 184, 216, 34], port))])
     }
 }
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn managed_dns_finishes_after_its_store_is_destroyed(runtime: GuestRuntime) {
         let owner = InstanceId::alloc();
-        let reactor = Reactor::new(
+        let reactor = Reactor::with_network(
             owner,
-            HostEgressPolicy::new(Box::new(PublicDns), 1, 1 << 20),
+            isoplane_harness::Network::with_resolver(Box::new(PublicDns)),
         );
         let context = &reactor.context;
         let futures = &reactor.futures;
@@ -423,22 +425,18 @@ impl Resolver for PendingDns {
     }
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test(start_paused = true)]
     async fn managed_dns_cancellation_after_store_destruction_releases_host_work(runtime: GuestRuntime) {
         let entered = Arc::new(tokio::sync::Notify::new());
         let stopped = Arc::new(tokio::sync::Notify::new());
         let owner = InstanceId::alloc();
-        let reactor = Reactor::new(
+        let reactor = Reactor::with_network(
             owner,
-            HostEgressPolicy::new(
-                Box::new(PendingDns {
+            isoplane_harness::Network::with_resolver(Box::new(PendingDns {
                     entered: entered.clone(),
                     stopped: stopped.clone(),
-                }),
-                1,
-                1 << 20,
-            ),
+                })),
         );
         let context = &reactor.context;
         let futures = &reactor.futures;
@@ -504,7 +502,10 @@ in_both_runtimes! {
 fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
     isoplane_harness::LogCapture::global();
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1024));
+    let reactor = Reactor::with_network(
+        owner,
+        isoplane_harness::Network::with_resolver(Box::new(NoDns)),
+    );
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
@@ -537,7 +538,7 @@ fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn a_managed_tcp_listener_receives_access_denied(runtime: GuestRuntime) {
         managed_network_refusal(runtime, "/tcp-listener", b"AccessDenied");
@@ -575,10 +576,10 @@ in_both_runtimes! {
             .expect("the reservation must have an endpoint")
             .as_socket()
             .expect("the reservation must be an IP endpoint");
-        let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
+        let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns))
             .with_destinations(Arc::new(ExactPeer(peer)));
         let owner = InstanceId::alloc();
-        let reactor = Reactor::new(owner, policy);
+        let reactor = Reactor::with_network(owner, policy);
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
@@ -641,10 +642,10 @@ async fn stream_failure(runtime: GuestRuntime, mode: &str, expected: &[u8]) {
     let peer = listener
         .local_addr()
         .expect("the peer must have an endpoint");
-    let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
+    let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns))
         .with_destinations(Arc::new(ExactPeer(peer)));
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, policy);
+    let reactor = Reactor::with_network(owner, policy);
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
@@ -755,7 +756,7 @@ async fn assert_stream_failure(
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn an_unsupported_managed_keepalive_option_receives_operation_not_supported(runtime: GuestRuntime) {
         managed_network_refusal(runtime, "/keepalive", b"OperationNotSupported");
@@ -794,7 +795,7 @@ async fn managed_dns_error(
 ) {
     isoplane_harness::LogCapture::global();
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, HostEgressPolicy::new(resolver, 1, 1024));
+    let reactor = Reactor::with_network(owner, isoplane_harness::Network::with_resolver(resolver));
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
@@ -846,7 +847,7 @@ async fn managed_dns_error(
     );
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     #[tokio::test]
     async fn managed_dns_reports_a_missing_name_without_counting_a_denial(runtime: GuestRuntime) {
         managed_dns_error(
@@ -917,7 +918,10 @@ async fn a_native_tcp_policy_refusal_counts_once_without_starting_owned_work() {
     use isoplane_abi::native_io::{AddressFamily, Error, Request, Response};
     use isoplane_engine::HostBindings;
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, HostEgressPolicy::new(Box::new(NoDns), 1, 1024));
+    let reactor = Reactor::with_network(
+        owner,
+        isoplane_harness::Network::with_resolver(Box::new(NoDns)),
+    );
     let mut bindings = CellBindings::new(reactor.context.clone());
     let Response::Handle(network) = bindings
         .native_io(Request::Network)
@@ -992,14 +996,14 @@ async fn dropping_a_socket_cancels_its_pending_connection_provider_and_releases_
     use isoplane_engine::HostBindings;
     let started = Arc::new(tokio::sync::Notify::new());
     let cancelled = Arc::new(tokio::sync::Notify::new());
-    let policy = HostEgressPolicy::new(Box::new(NoDns), 1, 1024).with_connections(Arc::new(
-        PendingConnections {
+    let policy = isoplane_harness::Network::with_resolver(Box::new(NoDns)).with_connections(
+        Arc::new(PendingConnections {
             started: started.clone(),
             cancelled: cancelled.clone(),
-        },
-    ));
+        }),
+    );
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(owner, policy);
+    let reactor = Reactor::with_network(owner, policy);
     reactor.context.begin_slice(1, 1);
     let mut bindings = CellBindings::new(reactor.context.clone());
     let (network, socket) = {
@@ -1069,9 +1073,9 @@ async fn a_failed_connection_retains_readable_and_configurable_socket_options() 
     use isoplane_abi::native_io::{AddressFamily, Error, Request, ResourceKind, Response};
     use isoplane_engine::HostBindings;
     let owner = InstanceId::alloc();
-    let reactor = Reactor::new(
+    let reactor = Reactor::with_network(
         owner,
-        HostEgressPolicy::new(Box::new(NoDns), 1, 1024)
+        isoplane_harness::Network::with_resolver(Box::new(NoDns))
             .with_connections(Arc::new(RefusedConnections)),
     );
     reactor.context.begin_dispatch(1, 1);

@@ -12,7 +12,7 @@ fn request(instance: &mut Instance, recorder: &Recorder, path: &str) -> Vec<u8> 
     Request::post(path).answer(instance, recorder)
 }
 
-in_both_runtimes! {
+in_mono_runtime! {
     fn ordinary_certificate_clones_preserve_owned_der_and_signature_hash_values(runtime: GuestRuntime) {
         let (mut instance, recorder) = certificates(runtime).activate();
         for path in ["/values", "/legacy-values"] {

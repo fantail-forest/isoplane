@@ -124,8 +124,6 @@ internal sealed partial class Hosting
             second = scope.ServiceProvider.GetRequiredService<Needy>().Describe()
                 + " new-greeter=" + !ReferenceEquals(greeterOfFirstScope, scope.ServiceProvider.GetRequiredService<IGreeter>());
         }
-        // The open generic closed over a value type is an instantiation the
-        // ahead-of-time compiler never saw.
         return first + " | " + second + " | ints=" + Attempt(() => provider.GetRequiredService<IRepository<int>>().Describe());
     }
 

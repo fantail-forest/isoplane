@@ -42,6 +42,91 @@ public sealed class HostingTests
     }
 
     [Fact]
+    public async Task preparation_starts_hosts_after_user_hooks_and_reuses_existing_warmup()
+    {
+        var hookRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startupRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new List<string>();
+        var coldBuilder = Builder();
+        coldBuilder.Services.AddSingleton<IHostedService>(new StartupService(async () =>
+        {
+            events.Add("cold.start");
+            startupEntered.SetResult();
+            await startupRelease.Task;
+        }));
+        var warmBuilder = Builder();
+        warmBuilder.Services.AddSingleton<IHostedService>(new StartupService(() =>
+        {
+            events.Add("warm.start");
+            return Task.CompletedTask;
+        }));
+        await using var cold = coldBuilder.Build();
+        await using var warm = warmBuilder.Build();
+        cold.MapGet("/", () => "ready");
+        warm.MapGet("/", () => "ready");
+        int factories = 0;
+        new WebApplicationRouter(() => { factories++; return cold; }).Boot();
+        new WebApplicationRouter(() => { factories++; return warm; }).Boot();
+        Func<Task> callback = async () =>
+        {
+            await hookRelease.Task;
+            await new IsoplaneApplication(warm).WarmupAsync("/");
+            events.Add("hook.completed");
+        };
+        Initialization.Initializing += callback;
+        try
+        {
+            Task initialization = Initialization.EnterAsync();
+            Assert.True(events.Count == 0 && !initialization.IsCompleted,
+                "automatic startup must wait for the application's initialization hook");
+            hookRelease.SetResult();
+            await startupEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(events.SequenceEqual(["warm.start", "hook.completed", "cold.start"]),
+                "automatic startup must follow user warmup and must not repeat its host startup");
+            Assert.False(initialization.IsCompleted, "template initialization must await hosted-service startup");
+            startupRelease.SetResult();
+            await initialization;
+            await Initialization.EnterAsync();
+            await new IsoplaneApplication(cold).HandleAsync(Request());
+            await new IsoplaneApplication(warm).HandleAsync(Request());
+            Assert.True(factories == 2 && events.SequenceEqual(["warm.start", "hook.completed", "cold.start"]),
+                "preparation and real requests must reuse each factory's application and completed startup");
+        }
+        finally
+        {
+            Initialization.Initializing -= callback;
+            hookRelease.TrySetResult();
+            startupRelease.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task failed_host_startup_is_retained_without_retrying_services()
+    {
+        int starts = 0;
+        var builder = Builder();
+        builder.Services.AddSingleton<IHostedService>(new StartupService(() =>
+        {
+            starts++;
+            throw new InvalidOperationException("startup failed");
+        }));
+        await using var app = builder.Build();
+        var first = new IsoplaneApplication(app);
+        var second = new IsoplaneApplication(app);
+        var failure = await Record.ExceptionAsync(first.StartAsync);
+        var repeated = await Record.ExceptionAsync(second.StartAsync);
+        Assert.True(failure is InvalidOperationException && ReferenceEquals(failure, repeated) && starts == 1,
+            "a startup failure must remain failed across adapters without rerunning hosted services");
+    }
+
+    private sealed class StartupService(Func<Task> start) : IHostedService
+    {
+        public Task StartAsync(CancellationToken cancellationToken) => start();
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    [Fact]
     public async Task middleware_and_callbacks_observe_the_framework_order()
     {
         var events = new List<string>();

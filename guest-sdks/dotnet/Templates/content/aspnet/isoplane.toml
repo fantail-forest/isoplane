@@ -1,6 +1,4 @@
 name = "SampleApp"
-module = "out/SampleApp.wasm"
 
 [dev]
 init_sandbox = "runtime-bringup"
-build = "dotnet publish -c Release -o out --disable-build-servers"

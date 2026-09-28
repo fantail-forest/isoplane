@@ -35,16 +35,9 @@ pub fn release_version() -> String {
 }
 
 /// Installs the packaged ASP.NET template into an isolated hive and creates a
-/// consumer for its interpreted configurations. The returned project resolves
+/// consumer for its managed application configurations. The returned project resolves
 /// Isoplane packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
-    template_project(
-        destination,
-        &[("isoplane-guest-runtime", crate::guest_runtime_feed())],
-    )
-}
-
-fn template_project(destination: &Path, feeds: &[(&str, PathBuf)]) -> PathBuf {
     let root = super::repo_root();
     let packages = stage_packages(destination);
     std::fs::copy(root.join("global.json"), destination.join("global.json"))
@@ -69,31 +62,14 @@ fn template_project(destination: &Path, feeds: &[(&str, PathBuf)]) -> PathBuf {
         .arg(&packages)
         .args(["--name", "template-packages", "--configfile"])
         .arg(&config));
-    let mut runtime_mapping = String::new();
-    for (name, feed) in feeds {
-        run(Command::new("dotnet")
-            .args(["nuget", "add", "source"])
-            .arg(feed)
-            .args(["--name", name, "--configfile"])
-            .arg(&config));
-        let patterns: String = super::package_ids(feed)
-            .iter()
-            .map(|id| format!("<package pattern=\"{id}\" />"))
-            .collect();
-        runtime_mapping.push_str(&format!(
-            "<packageSource key=\"{name}\">{patterns}</packageSource>\n"
-        ));
-    }
     let xml = std::fs::read_to_string(&config).expect("read generated package sources");
     let xml = xml.replace(
         "</configuration>",
         &format!(
             "<config><add key=\"globalPackagesFolder\" value=\"{}\" /></config>\n\
              <packageSourceMapping>\n\
-             <packageSource key=\"template-packages\"><package pattern=\"Isoplane.*\" /><package pattern=\"Isoplane.*\" /></packageSource>\n\
-             {runtime_mapping}\
+             <packageSource key=\"template-packages\"><package pattern=\"Isoplane.*\" /></packageSource>\n\
              <packageSource key=\"nuget\"><package pattern=\"*\" /></packageSource>\n\
-             <packageSource key=\"dotnet-experimental\"><package pattern=\"*\" /></packageSource>\n\
              </packageSourceMapping></configuration>",
             destination.join("nuget").to_string_lossy().replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;")
         ),

@@ -4,8 +4,7 @@ title: Connect to PostgreSQL
 
 The release's `samples/aspnet-todo` application uses ASP.NET, Entity Framework
 Core, and Npgsql against a real PostgreSQL database. It requires verified TLS and
-turns connection pooling off. The same project supports interpreted and NativeAOT
-configurations.
+turns connection pooling off. Debug and Release builds use the shared Mono runtime.
 
 ## Use an existing development database
 
@@ -33,7 +32,10 @@ Host=YOUR_TLS_HOSTNAME;Port=5432;Database=todo;Username=YOUR_USER;Password=YOUR_
 
 The sample enforces `SslMode=VerifyFull` and `Pooling=false` when constructing
 its connection string. It reads configuration when creating each request's
-DbContext, without connecting to the database during application preparation.
+DbContext. Its initialization hook warms the read-only `/todos` endpoint, so the
+database must be reachable during application preparation. The factory also sets
+EF's `Microsoft.EntityFrameworkCore.Issue31751` switch through `AppContext` so the
+compiled model initializes without starting an operating-system thread.
 
 For a normal public database endpoint, remove the sample's
 `allow_endpoints = ["127.0.0.1:5432"]` line from `[dev]` in `isoplane.toml`.
@@ -83,7 +85,7 @@ ownership; keep it until cleanup. Other User Secrets are left untouched.
 ## Run and exercise the API
 
 ```bash
-dotnet run -c IsoplaneInterpretedDebug
+dotnet run -c Debug
 ```
 
 Use the URL printed by the command. The following examples use `curl`; another
@@ -109,9 +111,8 @@ curl "$app_url/todos"
 Check the table independently in your database's SQL console. Restart the app
 after creating a row to confirm persistence comes from the database.
 
-Stop the application, run `dotnet run -c IsoplaneNativeAotRelease`, and repeat the
-same operations. The sample generates its EF model and queries at build time
-for NativeAOT.
+Stop the application, run `dotnet run -c Release`, and repeat the
+same operations. The sample generates its EF model and queries at build time in both configurations.
 
 ## Local private trust
 

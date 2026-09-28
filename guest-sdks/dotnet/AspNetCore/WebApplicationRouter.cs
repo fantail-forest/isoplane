@@ -18,12 +18,16 @@ public class WebApplicationRouter : IStreamingHttpRouter
     public WebApplicationRouter(Func<WebApplication> factory) => this.factory = factory;
 
     /// <summary>
-    /// Builds the application without starting it. Throws
+    /// Builds the application and schedules host startup after user initialization hooks. Throws
     /// <see cref="InvalidOperationException"/> when the factory returns none or
     /// the application does not use the Isoplane server.
     /// </summary>
-    public void Boot() => application = new(factory()
-        ?? throw new InvalidOperationException("the application factory returned no WebApplication"));
+    public void Boot()
+    {
+        application = new(factory()
+            ?? throw new InvalidOperationException("the application factory returned no WebApplication"));
+        Initialization.Completing += application.StartAsync;
+    }
 
     /// <summary>Streams every request body to the application.</summary>
     public bool StreamsRequest(RequestHead request) => true;

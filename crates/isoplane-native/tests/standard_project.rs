@@ -1,4 +1,4 @@
-//! Installed projects select their sandbox profile through ordinary MSBuild configuration.
+//! Installed projects build packages and run them on their SDK's shared runtime.
 
 #[path = "common/dev.rs"]
 pub mod common;
@@ -9,7 +9,7 @@ use std::process::Command;
 fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
     let directory = tempfile::tempdir().expect("isolate installed SDK capability evaluation");
     let app = isoplane_fixtures::aspnet_project(directory.path());
-    for configuration in ["IsoplaneInterpretedDebug", "IsoplaneNativeAotRelease"] {
+    for configuration in ["Debug", "Release"] {
         let output = Command::new("dotnet")
             .args(["msbuild", "-getItem:ProjectCapability"])
             .arg(format!("-p:Configuration={configuration}"))
@@ -40,7 +40,7 @@ fn installed_sandbox_projects_do_not_advertise_clr_hot_reload() {
 }
 
 #[tokio::test]
-async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
+async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
     let directory = tempfile::tempdir().expect("isolate the installed project workflow");
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let library = directory.path().join("CustomerLibrary");
@@ -75,13 +75,14 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
         &source,
         format!("using Microsoft.Extensions.Logging;\n{route}"),
     )
-    .expect("exercise ordinary application logging inside both guests");
+    .expect("exercise ordinary application logging inside the package");
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    for (configuration, runtime, aot) in [("IsoplaneInterpretedDebug", "Mono", "false")] {
+    {
+        let configuration = "Debug";
         let evaluated = Command::new("dotnet")
             .args([
                 "msbuild",
-                "-getProperty:IsoplaneGuestRuntime,PublishAot,RuntimeIdentifier",
+                "-getProperty:IsoplaneManagedBundleBuild,RuntimeIdentifier",
             ])
             .arg(format!("-p:Configuration={configuration}"))
             .env(
@@ -99,16 +100,12 @@ async fn dotnet_run_uses_the_profile_declared_in_the_project_body() {
         let properties: serde_json::Value = serde_json::from_slice(&evaluated.stdout)
             .expect("MSBuild property queries produce JSON");
         assert_eq!(
-            properties["Properties"]["IsoplaneGuestRuntime"], runtime,
-            "project-body configuration must select the actual sandbox runtime"
+            properties["Properties"]["IsoplaneManagedBundleBuild"], "true",
+            "an ordinary SDK application must build a package"
         );
         assert_eq!(
-            properties["Properties"]["PublishAot"], aot,
-            "the ordinary PublishAot property must remain visible to tooling"
-        );
-        assert_eq!(
-            properties["Properties"]["RuntimeIdentifier"], "wasi-wasm",
-            "both execution modes target WebAssembly"
+            properties["Properties"]["RuntimeIdentifier"], "",
+            "an application package must not require a native runtime toolchain"
         );
         let mut running = start_dotnet(&app, &cli, configuration, false);
         let response = reqwest::get(&running.url)
@@ -133,9 +130,9 @@ async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     let directory = tempfile::tempdir().expect("isolate the incremental installed project journey");
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut first = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
+    let mut first = start_dotnet(&app, &cli, "Debug", false);
     first.stop();
-    let mut second = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", false);
+    let mut second = start_dotnet(&app, &cli, "Debug", false);
     let diagnostics = second.diagnostics();
     // Linux prepares a package over a published runtime baseline; other
     // platforms reuse the whole initialized module.
@@ -216,7 +213,7 @@ async fn dotnet_watch_rebuilds_the_guest_after_a_compilation_error_is_repaired()
     let directory = tempfile::tempdir().expect("isolate the installed watch workflow");
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut running = start_dotnet(&app, &cli, "IsoplaneInterpretedDebug", true);
+    let mut running = start_dotnet(&app, &cli, "Debug", true);
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).expect("read the generated application");
     std::fs::write(&source, "this is not valid C#").expect("introduce a compile failure");

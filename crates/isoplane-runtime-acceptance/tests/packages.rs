@@ -4,15 +4,10 @@
 //! preparation, and executed through the reactor across a park and a
 //! Store restoration.
 
-#[path = "common/no_dns.rs"]
-mod no_dns;
-#[path = "common/no_egress.rs"]
-mod no_egress;
-
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
 
-use isoplane_abi::config::{InitSandbox, Limits, ValidationLimits};
+use isoplane_abi::config::{InitSandbox, ValidationLimits};
 use isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT;
 use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{CompilationCache, Completion, IsoplaneEngine, PlatformFile, PlatformFiles};
@@ -20,20 +15,21 @@ use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{engine_configuration, ReturnedGuest};
 use isoplane_prepare::package::PackageLimits;
 use isoplane_prepare::{
-    BuildProduct, BuildRequest, BuildStage, Initialization, LocalPreparation, PortableTemplate,
-    Preparation, PrepareError, RuntimeProfile,
+    BuildProduct, BuildRequest, BuildStage, Initialization, InitializationNetwork,
+    LocalPreparation, PortableTemplate, Preparation, PrepareError, RuntimeProfile,
 };
 use tokio_util::sync::CancellationToken;
 
 /// Limits used when reading package fixtures.
 fn limits() -> PackageLimits {
     PackageLimits {
-        bytes: Limits::default().package_bytes,
+        bytes: isoplane_harness::GUEST_LIMITS.package_bytes,
         files: ValidationLimits::DEFAULT.max_package_files,
         manifest_bytes: ValidationLimits::DEFAULT.max_package_manifest_bytes,
     }
 }
 
+/// The package fixture `name` as the host serves it.
 fn package(name: &str) -> Vec<PlatformFile> {
     let archive = std::fs::read(isoplane_fixtures::mono_package(name))
         .expect("the package fixture is readable");
@@ -77,25 +73,39 @@ fn package_file(files: &[PlatformFile], relative: &str) -> Vec<u8> {
         .to_vec()
 }
 
+fn network() -> InitializationNetwork {
+    let host = isoplane_host::CellConfig::default();
+    InitializationNetwork {
+        tenant: "returned-guest-test".into(),
+        allowlist: None,
+        allowed_destinations: Vec::new(),
+        limits: Default::default(),
+        native_handles: host.guest_resources.native_handles,
+        pending_futures: isoplane_harness::GUEST_LIMITS
+            .limits()
+            .pending_futures_per_dispatch,
+    }
+}
+
 fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
     BuildRequest {
         engine: engine_configuration(PlatformFiles::default()),
         application_files: PlatformFiles::new(files)
             .expect("package paths are valid application files"),
         runtime: RuntimeProfile::raw_wasm(),
-        limits: Limits::default(),
+        limits: isoplane_harness::GUEST_LIMITS,
         guest_memory_bytes: None,
         validation_limits: Default::default(),
         initialization: Initialization {
-            network: None,
+            network: Some(network()),
             runtime_config: b"{}".to_vec(),
             hash_seed: [7; 16],
             config: b"{}".to_vec(),
             sandbox: InitSandbox::RuntimeBringUp,
-            cpu_ms: 120_000,
-            wall_ms: 300_000,
-            max_passes: 4,
-            log_bytes: 16 * 1024,
+            cpu_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_CPU_MS,
+            wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
+            max_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
+            log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,
         },
         input_hash: *blake3::hash(runtime).as_bytes(),
         portable_template: PortableTemplate::Omitted,
@@ -169,7 +179,7 @@ async fn answer_across_restored_stores(files: Vec<PlatformFile>, path: &str) -> 
     let (product, request) = prepare(&preparation, &runtime, files)
         .await
         .unwrap_or_else(|error| panic!("the package must prepare on the shared runtime: {error}"));
-    let reactor = no_egress::reactor_without_egress(7300);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let guest = {
         // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
@@ -293,6 +303,15 @@ async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn an_aspnet_package_warms_its_read_route_before_template_capture() {
+    let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
+    assert!(
+        body.contains("; greetings=2;"),
+        "the first real greeting must follow one completed initialization greeting: {body}"
+    );
+}
+
 #[tokio::test]
 async fn a_second_package_reuses_the_runtimes_native_compilation() {
     let runtime = isoplane_fixtures::mono_runtime();
@@ -313,6 +332,18 @@ async fn a_second_package_reuses_the_runtimes_native_compilation() {
         "the first package compiles the runtime and the second must reuse it (first compiled: {}, second compiled: {})",
         alpha.initialized.compiled,
         beta.initialized.compiled
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unused_package_assembly_loads_on_demand_and_survives_store_restoration() {
+    let library = package_file(&package("beta"), "assemblies/Beta.Library.dll");
+    let files = with_package_file(package("alpha"), "assemblies/Beta.Library.dll", &library);
+    let body = answer_across_restored_stores(files, "/load-library").await;
+    assert_eq!(
+        body,
+        "initialized=False;loaded=Beta.Library",
+        "an unused dependency must remain unloaded during preparation and load successfully before a parked request resumes"
     );
 }
 
@@ -341,7 +372,8 @@ async fn a_package_assembly_the_runtime_supplies_is_refused() {
     ))
     .await;
     assert!(
-        detail.contains("PackageAssemblyConflictException"),
+        detail.contains("PackageAssemblyConflictException")
+            && detail.contains("supplied by the runtime"),
         "a package must not bring an assembly the runtime binds instead: {detail}"
     );
 }
@@ -462,7 +494,7 @@ async fn diagnose(path: &str) -> (isoplane_engine::DispatchOutcome, Vec<String>)
     let (product, request) = prepare(&preparation, &runtime, package("diagnostics"))
         .await
         .unwrap_or_else(|error| panic!("the diagnostics package must prepare: {error}"));
-    let reactor = no_egress::reactor_without_egress(7300);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let mut guest = {
         // SAFETY: The private decode helper receives only products from this test module's local preparation paths.
@@ -525,7 +557,7 @@ fn debug_boot(agent: Option<&str>) -> isoplane_engine::DispatchOutcome {
             modified_ns: 0,
         });
     }
-    let reactor = no_egress::reactor_without_egress(7300);
+    let reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
     reactor.context.begin_slice(1, 1);
     let mut guest = ReturnedGuest::new(&isoplane_fixtures::mono_debug_runtime(), &reactor);
     guest.serve_platform_files(PlatformFiles::new(files).expect("valid debug session files"));
@@ -614,19 +646,24 @@ mod over_the_runtime_baseline {
 
     /// `files` prepared as a layer over `baseline`, with the baseline, both as a
     /// cell receives them.
-    fn layer_over(
+    async fn layer_over(
         baseline: &PreparedBaseline,
         runtime: &[u8],
         files: Vec<PlatformFile>,
     ) -> (PreparedTemplate, PreparedTemplate) {
         let request = request(runtime, files);
-        let layer = baseline
-            .baseline
-            .prepare_application(&request)
-            .unwrap_or_else(|failure| {
-                panic!("the package must prepare over the baseline: {failure:?}")
-            })
-            .product;
+        let source = baseline.baseline.clone();
+        let (layer, request) = tokio::task::spawn_blocking(move || {
+            let layer = source
+                .prepare_application(&request)
+                .unwrap_or_else(|failure| {
+                    panic!("the package must prepare over the baseline: {failure:?}")
+                })
+                .product;
+            (layer, request)
+        })
+        .await
+        .expect("the preparation worker must finish");
         let engine = IsoplaneEngine::new(request.engine.clone()).expect("the preparation engine");
         let base_identity = request
             .baseline()
@@ -650,16 +687,16 @@ mod over_the_runtime_baseline {
         (base, layer)
     }
 
-    #[tokio::test]
-    async fn a_layered_package_preserves_its_initialized_handler_response() {
+    #[tokio::test(start_paused = true)]
+    async fn whole_and_layered_preparation_preserve_the_same_initialized_application_state() {
         let runtime = isoplane_fixtures::mono_runtime();
         let preparation = LocalPreparation::with_cache(shared_cache()).expect("local preparation");
-        let (whole, request) = prepare(&preparation, &runtime, package("alpha"))
+        let (whole, request) = prepare(&preparation, &runtime, package("beta"))
             .await
-            .expect("alpha must prepare whole");
+            .expect("beta must prepare whole");
         let baseline = runtime_baseline(&runtime);
-        let (base, layer) = layer_over(&baseline, &runtime, package("alpha"));
-        let whole_reactor = no_egress::reactor_without_egress(7300);
+        let (base, layer) = layer_over(&baseline, &runtime, package("beta")).await;
+        let whole_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         whole_reactor.context.begin_slice(1, 1);
         let whole = finish_across_restored_stores(
             {
@@ -667,10 +704,10 @@ mod over_the_runtime_baseline {
                 unsafe { ReturnedGuest::prepared(decode(&whole, &request), &whole_reactor) }
             },
             &whole_reactor,
-            "/greeting",
+            "/beta",
         )
         .await;
-        let layered_reactor = no_egress::reactor_without_egress(7301);
+        let layered_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         layered_reactor.context.begin_slice(1, 1);
         let layered = finish_across_restored_stores(
             {
@@ -678,16 +715,18 @@ mod over_the_runtime_baseline {
                 unsafe { ReturnedGuest::layered(base, layer, &layered_reactor) }
             },
             &layered_reactor,
-            "/greeting",
+            "/beta",
         )
         .await;
         assert_eq!(
-            whole, "alpha:/greeting",
-            "the whole preparation must retain alpha's initialized handler"
-        );
-        assert_eq!(
             layered, whole,
-            "layered and whole preparation must retain the same initialized handler response"
+            "layered and whole preparation must preserve the same application response across Store restoration"
+        );
+        let report: serde_json::Value = serde_json::from_str(&layered)
+            .expect("the captured application must return its JSON report");
+        assert_eq!(
+            report["Warmups"], 1,
+            "both preparation paths must retain exactly one completed initialization warmup"
         );
     }
 
@@ -695,9 +734,9 @@ mod over_the_runtime_baseline {
     async fn packages_over_one_runtime_baseline_each_answer_across_restored_stores() {
         let runtime = isoplane_fixtures::mono_runtime();
         let baseline = runtime_baseline(&runtime);
-        let (alpha_base, alpha) = layer_over(&baseline, &runtime, package("alpha"));
-        let (beta_base, beta) = layer_over(&baseline, &runtime, package("beta"));
-        let alpha_reactor = no_egress::reactor_without_egress(7300);
+        let (alpha_base, alpha) = layer_over(&baseline, &runtime, package("alpha")).await;
+        let (beta_base, beta) = layer_over(&baseline, &runtime, package("beta")).await;
+        let alpha_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         alpha_reactor.context.begin_slice(1, 1);
         let alpha = finish_across_restored_stores(
             {
@@ -708,7 +747,7 @@ mod over_the_runtime_baseline {
             "/greeting",
         )
         .await;
-        let beta_reactor = no_egress::reactor_without_egress(7301);
+        let beta_reactor = isoplane_harness::Reactor::new(isoplane_host::InstanceId::alloc());
         beta_reactor.context.begin_slice(1, 1);
         let beta = finish_across_restored_stores(
             {

@@ -52,7 +52,7 @@ using Xunit;
 public sealed class ApplicationTests
 {
     [Theory]
-    [InlineData("IsoplaneInterpretedDebug")]
+    [InlineData("Debug")]
     public async Task the_application_runs_inside_the_installed_sandbox_and_releases_its_listener(string configuration)
     {
         using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(20));

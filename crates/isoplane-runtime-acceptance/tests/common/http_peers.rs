@@ -36,7 +36,7 @@ pub fn reactor_for_http(
     peers: Vec<SocketAddr>,
     resolver: Box<dyn Resolver>,
 ) -> Reactor {
-    Reactor::new(InstanceId(owner), admitting(peers, resolver))
+    Reactor::with_network(InstanceId(owner), admitting(peers, resolver))
 }
 
 /// A running peer: its address, how many connections it accepted, and the

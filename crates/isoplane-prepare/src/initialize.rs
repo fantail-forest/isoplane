@@ -304,6 +304,14 @@ pub(crate) fn initialize_with_cache(
                 }),
             )
             .map_err(PrepareError::State)?;
+        #[cfg(target_os = "linux")]
+        if matches!(capture, CaptureMode::RuntimeBaseline { .. })
+            && (!template.has_initialize() || !instance.has_initialize_runtime())
+        {
+            return Err(PrepareError::InvalidRequest(
+                "a runtime baseline requires both initialization exports",
+            ));
+        }
         if template.has_initialize() {
             let host = io.as_deref().zip(reactor.as_ref());
             let (first, then) = capture.stages();
@@ -363,10 +371,10 @@ pub(crate) fn initialize_with_cache(
                     .trap
                     .map(|trap| trap.message)
                     .unwrap_or_else(|| "initializer did not return successfully".into());
-                // The guest's own diagnosis of a trap is its last log line.
-                if let Some(last) = state.lock().logs.last() {
+                // Worker reports are bounded, so keep the latest diagnosis before older context.
+                for line in state.lock().logs.iter().rev() {
                     detail.push_str("; guest log: ");
-                    detail.push_str(last.trim_end());
+                    detail.push_str(line.trim_end());
                 }
                 return Err(PrepareError::Initialization {
                     completion: outcome.completion,

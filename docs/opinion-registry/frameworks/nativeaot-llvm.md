@@ -1,41 +1,43 @@
-# NativeAOT-LLVM
+# Shared Mono runtime
 
-## Pin the compiler package in one file; upgrade in its own commit
+## Customers select an SDK release
 
-The ILCompiler package comes from an experimental feed that ships new builds often and promises nothing. Keep its version in one props file, and pin the .NET SDK to a version, not a channel. Make an upgrade a commit that changes only those lines, with the guest fixtures rebuilt and the acceptance suite green before and after.
+Build customer applications as managed IL packages. Record the SDK's runtime
+identity in each package, and admit it only against the platform's installed
+runtime for that release. Platform builds compile Mono and its PAL to WASM;
+customer projects supply no runtime module or native compilation profile.
 
-**Not this:** Installing whatever the feed or the channel serves today and discovering the PAL no longer links.
+**Not this:** Per-application native compilation or selectable execution modes.
 
-**Exception:** None.
+**Exception:** Minimal sandbox and engine fixtures can supply WASM directly to
+the integration under test.
 
-## Make the PAL a closure over the BCL's WASI imports, and fail the build on any survivor
+## Prepare the runtime before the application
 
-The runtime declares `wasi:*` imports the sandbox does not provide. Have the platform abstraction layer satisfy an enumerated whitelist by delegation to platform imports and trap on the rest. Fail the guest build if any `wasi:*` import survives linking, so a new BCL dependency that reaches for the filesystem is a build error, not a deploy-time rejection.
+Initialize the platform runtime into a shared baseline, then initialize each
+application package into its own layer. Require both initialization exports.
+Keep runtime identity and memory-limit checks at admission and restoration.
 
-**Not this:** Letting the validator reject the module after the developer has finished writing the app.
+**Not this:** Treating a missing initialization stage as successful preparation.
 
-**Exception:** None.
+**Exception:** Portable local preparation on platforms without mapped layers
+runs both stages and captures the resulting template.
 
 ## Bind an import only with a wrapper and a test
 
-Declare an extern in `Isoplane.Abi` only when a `Isoplane.Sdk` type calls it and a test exercises the call through a guest. A bound import with no wrapper is a capability the SDK claims and does not deliver, and a doc comment describing a method that does not exist is worse.
+Add an ABI import together with its SDK consumer and a real guest test. Generate
+representations from the host contract, or drift-test them against it.
 
-**Not this:** Externs for put, fetch, and wait-until declared and never wrapped, with SDK docs describing them as available.
+**Not this:** Unused capability declarations or hand-maintained copies.
 
 **Exception:** None.
 
-## Generate the entrypoint
+## Serialize shared fixture builds
 
-Emit the exports every guest must provide from a source generator or a build step, driven by the handler type the developer names. A customer writes a handler, not a set of `UnmanagedCallersOnly` one-liners copied from a README.
+Use the shared fixture helper, per-build intermediates and its cross-process
+lock. A nested build must not acquire its parent's lock. Missing toolchains fail
+tests with an actionable diagnostic.
 
-**Not this:** An entrypoint file pasted into every guest.
-
-**Exception:** Hostile fixtures that deliberately break the export contract write theirs by hand.
-
-## Build guests serially with isolated intermediates
-
-Guests that share the SDK project race on MSBuild intermediates when built concurrently. Have the guest build script build one at a time with per-guest intermediate directories, and let nothing else invoke MSBuild on those projects.
-
-**Not this:** Parallel guest builds that pass on a quiet machine and fail intermittently under load.
+**Not this:** Parallel MSBuild writers sharing intermediates or silently skipped fixtures.
 
 **Exception:** None.

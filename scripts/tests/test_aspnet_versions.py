@@ -1,5 +1,4 @@
 """Exercise application framework selection through restore, compilation and bundling."""
-import itertools
 import json
 import os
 from pathlib import Path
@@ -13,8 +12,8 @@ ASPNET = ROOT / "guest-sdks/dotnet/AspNetCore/buildTransitive"
 
 class AspNetVersionTests(unittest.TestCase):
     def test_application_patch_selection_survives_restore_compile_and_bundle(self):
-        for version, profile in itertools.product(("10.0.11", "10.0.12"), ("Mono", "NativeAOT")):
-            with self.subTest(version=version, profile=profile), tempfile.TemporaryDirectory(prefix="isoplane-aspnet-version-") as directory:
+        for version in ("10.0.11", "10.0.12"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory(prefix="isoplane-aspnet-version-") as directory:
                 root = Path(directory)
                 project = root / "Application.csproj"
                 project.write_text(f'''<Project Sdk="Microsoft.NET.Sdk.Web">
@@ -22,7 +21,6 @@ class AspNetVersionTests(unittest.TestCase):
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeFrameworkVersion>{version}</RuntimeFrameworkVersion>
-    <IsoplaneGuestRuntime>{profile}</IsoplaneGuestRuntime>
     <IsoplaneManagedBundleBuild>true</IsoplaneManagedBundleBuild>
     <IsoplaneApplicationFactory>Application.Create</IsoplaneApplicationFactory>
     <OutputType>Library</OutputType>

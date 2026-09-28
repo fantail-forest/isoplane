@@ -18,8 +18,8 @@ and reads credentials only when a request runs. Configure the database endpoint
 and trusted CA in `isoplane.toml` for local development. Do not put credentials in
 that manifest or the source.
 
-Use `dotnet build -c IsoplaneInterpretedDebug` or
-`dotnet build -c IsoplaneNativeAotRelease`, followed by `dotnet run` with the same
+Use `dotnet build -c Debug` or
+`dotnet build -c Release`, followed by `dotnet run` with the same
 configuration. The Isoplane SDK publishes `out/Todo.wasm`. The sample's default
 local endpoint is `127.0.0.1:5432`; replace it with the actual database endpoint.
 Both TODO implementations use the same sample resource limits for comparisons.

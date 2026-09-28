@@ -4,6 +4,27 @@ use isoplane_abi::config::InitSandbox;
 use isoplane_prepare::{initialize, PrepareError};
 
 #[test]
+fn initialization_failure_preserves_the_diagnosis_before_a_generic_final_log() {
+    let wasm = guest(
+        r#"(import "isoplane" "log_emit" (func $log (param i32 i32 i32)))
+        (data (i32.const 64) "missing application setting")
+        (data (i32.const 128) "initialization failed")"#,
+        r#"(call $log (i32.const 3) (i32.const 64) (i32.const 27))
+        (call $log (i32.const 3) (i32.const 128) (i32.const 21)) unreachable"#,
+    );
+    let error = initialize(&engine(), &wasm, &request())
+        .err()
+        .expect("the initializer traps");
+    let PrepareError::Initialization { detail, .. } = error else {
+        panic!("a logged guest trap must remain an initialization failure: {error}");
+    };
+    assert!(
+        detail.contains("missing application setting") && detail.contains("initialization failed"),
+        "the generic final log must not erase the guest's earlier diagnosis: {detail}"
+    );
+}
+
+#[test]
 fn baking_preserves_grown_memory_hidden_globals_and_static_tables() {
     let wasm = guest("", "(drop (memory.grow (i32.const 1))) (i32.store (i32.const 70000) (i32.const 123)) (global.set $state (i32.const 42))");
     let prepared = initialize(&engine(), &wasm, &request())

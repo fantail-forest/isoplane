@@ -1,4 +1,4 @@
-# Optional Linux toolchain for NativeAOT-LLVM guest builds.
+# Optional Linux toolchain for the shared Mono runtime and host.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config libssl-dev ca-certificates curl git \
       cmake ninja-build python3 clang lld llvm \
-      libzstd-dev libsqlite3-dev \
+      libsqlite3-dev \
       procps iproute2 net-tools iputils-ping less jq time strace \
       util-linux zstd unzip xz-utils \
     && rm -rf /var/lib/apt/lists/*
@@ -39,17 +39,8 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
 RUN cargo install --locked wasm-tools@1.244.0
 
 # --- wasi-sdk (the C# guest's linker and PAL compiler) ----------------------
-# NativeAOT-LLVM shells out to the WASI SDK's clang for the final link, and
+# The platform runtime build uses the WASI SDK's clang for the final link, and
 # `guests/dotnet/build.sh` compiles `native/isoplane_pal.c` with the same clang.
-# The ILCompiler package pins an expected version and warns on anything else,
-# so this is the version that package wants -- see guests/dotnet/README.md.
-#
-# It lives in the IMAGE rather than being fetched on first use, for the same
-# reason .NET and wasm-tools do. `build.sh` used to install it itself into
-# /opt, which cannot work: the container runs as the invoking uid (rule 1) and
-# /opt is root-owned, so the untar failed with two hundred lines of
-# "Cannot mkdir: Permission denied" and the build carried on to a confusing
-# failure further down.
 ARG WASI_SDK_VERSION=29.0
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \

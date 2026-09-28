@@ -30,8 +30,6 @@ class FeedTests(unittest.TestCase):
         for package, prefix in [
             ('Microsoft.NETCore.App.Runtime.Mono.wasi-wasm', 'IsoplaneGuestRuntimePack'),
             ('Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk', 'IsoplaneGuestWasiSdkPack'),
-            ('runtime.wasi-wasm.Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotPack'),
-            ('Microsoft.DotNet.ILCompiler.LLVM', 'IsoplaneGuestNativeAotSdkPack'),
         ]:
             content = package.encode()
             path = self.feed / f'{package}.1.nupkg'

@@ -12,13 +12,13 @@ using Isoplane.Testing;
 using var startup = new CancellationTokenSource(TimeSpan.FromMinutes(10));
 await using var app = await IsoplaneApplication.StartAsync(
     "/path/to/app",
-    new ApplicationOptions { Configuration = "IsoplaneInterpretedDebug" },
+    new ApplicationOptions { Configuration = "Debug" },
     startup.Token);
 var response = await app.Client.GetAsync("/health");
 response.EnsureSuccessStatusCode();
 ```
 
-Select `IsoplaneNativeAotRelease` to exercise the NativeAOT configuration of a generated project; tests do not substitute execution modes. `CliPath` defaults to `isoplane` on PATH and can name an explicit installed executable.
+Select `Release` to exercise optimized application IL from a generated project. `CliPath` defaults to `isoplane` on PATH and can name an explicit installed executable.
 
 The application directory must contain its `.csproj` and `isoplane.toml`. Port zero selects an available loopback port. Use a separate project directory for each concurrently running session; the CLI owns its existing project lock and local state. Startup cancellation, startup failure, and async disposal release owned child processes. Disposal first requests normal CLI cleanup, then terminates remaining descendants if `ShutdownTimeout` expires. Nonzero CLI exit and forced cleanup are reported as failures rather than successful disposal. `DiagnosticOutput` retains the last `DiagnosticLimitCharacters` of process output.
 
