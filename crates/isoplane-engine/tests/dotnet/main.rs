@@ -1,6 +1,6 @@
-//! Managed behaviour through real C# guests, in both execution runtimes.
-//! One binary so the fixtures share one harness and one loaded template per
-//! runtime; each module proves one family of behaviour.
+//! Managed behaviour through real C# guests on Mono.
+//! One binary so the fixtures share one harness and one loaded template;
+//! each module proves one family of behaviour.
 
 #[path = "../common/bindings.rs"]
 mod bindings;
@@ -16,8 +16,8 @@ mod memory;
 mod randomness;
 mod streaming;
 
-/// The fixtures of both runtimes link the source-built packs the feed offers
-/// now; the identities a result is attributable to are in the test output.
+/// The fixtures link the source-built Mono pack the feed offers;
+/// the identity a result is attributable to is in the test output.
 #[test]
 fn the_fixtures_are_attributed_to_the_feeds_packs() {
     for runtime in isoplane_fixtures::GuestRuntime::ALL {

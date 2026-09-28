@@ -1,5 +1,4 @@
-//! Managed native I/O across destroyed Stores using the real host reactor, in
-//! both guest runtimes.
+//! Managed native I/O across destroyed Stores using Mono and the real host reactor.
 
 use isoplane_engine::Completion;
 use std::sync::Arc;
