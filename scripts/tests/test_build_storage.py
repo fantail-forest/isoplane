@@ -32,6 +32,13 @@ class Retention(unittest.TestCase):
         with storage.retained_run(self.root, max_age_seconds=10, now=12):
             self.assertFalse(old.exists(), "starting a run must reclaim expired diagnostics")
 
+    def test_a_disabled_cache_preserves_reclaimable_output(self):
+        old = self.run_output(1)
+        (self.root / '.pruning-disabled').touch()
+        self.assertEqual(storage.prune(self.root, 0, 0, now=100), [],
+                         "disabled pruning must not select owned output for deletion")
+        self.assertTrue(old.exists(), "disabled pruning must preserve expired output")
+
     def test_finishing_a_run_evicts_the_oldest_logs_to_meet_the_budget(self):
         old = self.run_output(1)
         with storage.retained_run(self.root, max_bytes=5, now=2) as (current, _):

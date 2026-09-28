@@ -158,9 +158,11 @@ def source_preservation_reason(directory):
 
 
 def prune(root, max_bytes, max_age_seconds=None, now=None, protected=(), dry_run=False):
-    """Remove oldest inactive owned entries; unknown directories are never adopted."""
+    """Remove inactive owned entries unless the root contains .pruning-disabled."""
     now = time.time() if now is None else now
     root = Path(root)
+    if (root / ".pruning-disabled").is_file():
+        return []
     removed = []
     with catalog(root):
         entries = []
