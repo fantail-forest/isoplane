@@ -47,6 +47,7 @@ pub mod response;
 mod response_transport;
 mod sharded_map;
 pub mod slot;
+pub mod threads;
 pub use activator::{EngineActivator, ReloadedTemplateDiffers, TemplateReload};
 pub use bindings::{CellBindings, InstanceCtx};
 pub use breaker::{BreakerState, HangBreaker};

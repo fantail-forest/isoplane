@@ -370,7 +370,7 @@ impl LocalApp {
         });
         let mut config = CellConfig {
             name: prepared.manifest.name.clone(),
-            ..Default::default()
+            ..CellConfig::local()
         };
         if matches!(prepared.activator, PreparedActivator::Debug(_)) {
             config.wall_ms_cap = isoplane_host::debug::DEBUG_BUDGET_MS;

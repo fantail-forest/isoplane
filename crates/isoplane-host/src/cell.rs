@@ -82,10 +82,11 @@ pub struct CellConfig {
 
 impl Default for CellConfig {
     fn default() -> Self {
+        let threads = crate::threads::ThreadAllocation::production();
         Self {
             name: "cell-0".into(),
-            exec_threads: 128,
-            reactor_threads: 128,
+            exec_threads: threads.execution,
+            reactor_threads: threads.reactor,
             queue_depth_per_worker: 64,
             max_idle_per_module: 64,
             response_queue_bytes: isoplane_abi::host::DEFAULT_RESPONSE_QUEUE_BYTES,
@@ -99,6 +100,16 @@ impl Default for CellConfig {
 }
 
 impl CellConfig {
+    /// Local development and full-host tests use the local CPU allocation.
+    pub fn local() -> Self {
+        let threads = crate::threads::ThreadAllocation::local();
+        Self {
+            exec_threads: threads.execution,
+            reactor_threads: threads.reactor,
+            ..Self::default()
+        }
+    }
+
     /// Validates settings for a cell driven by its own execution workers.
     pub fn validate(&self) -> crate::Result<()> {
         self.hibernate.validate()?;

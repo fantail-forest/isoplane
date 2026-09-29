@@ -14,6 +14,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::local::{debug::DebugPeer, Baselines, Inputs, LocalApp, Prepared};
 
+thread_local! {
+    static SESSION_SUBSCRIBER: std::cell::RefCell<Option<tracing::dispatcher::DefaultGuard>> = const { std::cell::RefCell::new(None) };
+}
+
 pub(crate) struct Session {
     pub cancellation: CancellationToken,
     baselines: Baselines,
@@ -148,10 +152,20 @@ impl Session {
             !self.started.swap(true, Ordering::AcqRel),
             "local session was already started"
         );
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let subscriber = events.subscriber(options.log_filter.as_deref().unwrap_or("info"))?;
+        let worker_subscriber = subscriber.clone();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(isoplane_host::threads::ThreadAllocation::local().outer)
+            .on_thread_start(move || {
+                SESSION_SUBSCRIBER.with_borrow_mut(|guard| {
+                    *guard = Some(tracing::dispatcher::set_default(&worker_subscriber));
+                });
+            })
+            .on_thread_stop(|| {
+                SESSION_SUBSCRIBER.with_borrow_mut(|guard| drop(guard.take()));
+            })
             .enable_all()
             .build()?;
-        let subscriber = events.subscriber(options.log_filter.as_deref().unwrap_or("info"))?;
         tracing::dispatcher::with_default(&subscriber, || {
             runtime.block_on(self.serve(wasm, options, &events))
         })

@@ -139,6 +139,7 @@ pub fn run_concurrent_pairs(path: &Path) -> anyhow::Result<()> {
         });
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(isoplane_host::threads::ThreadAllocation::local().outer)
         .enable_all()
         .build()?;
     runtime.block_on(execute(
