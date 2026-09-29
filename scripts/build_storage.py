@@ -112,7 +112,10 @@ def product(identity, root=None, read_only=False, name=None):
 @contextmanager
 def development(root, inherited):
     """Keep a host's mutable build and temporary files inside its worktree."""
-    root = Path(root).resolve()
+    root = Path(root).absolute()
+    inherited_root = inherited.get('ISOPLANE_BUILD_ROOT')
+    if inherited_root and Path(inherited_root).samefile(root):
+        root = Path(inherited_root)
     with (product('development', root=build_root(root), name='development') as directory,
           product('managed', root=root / '.build/clr-anycpu', name='managed')):
         environment = dict(inherited)

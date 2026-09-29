@@ -26,12 +26,7 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/*.py'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
       - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
-      - exclude: '**/.git/**/*'
-      - exclude: '**/artifacts/**/*'
-      - exclude: '**/.dotnet/**/*'
-      - exclude: '**/.packages/**/*'
-      - exclude: '**/.tools/**/*'
-      - exclude: '**/__pycache__/**/*'
+      - exclude: 'vendor/dotnet-runtime/**/__pycache__/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Isoplane.GuestRuntime.props'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.*.nupkg'
@@ -76,7 +71,6 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
       - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
-      - exclude: '**/.git/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libcrypto.a'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libssl.a'
@@ -90,7 +84,6 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
       - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
-      - exclude: '**/.git/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/icu/mono/runtimes/wasi-wasm/native/lib/icudt.dat'
     cmds:

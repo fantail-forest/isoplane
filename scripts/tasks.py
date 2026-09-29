@@ -8,7 +8,12 @@ import sys
 
 
 def run(root, *tasks):
-    root = Path(root).resolve()
+    root = Path(root).absolute()
+    development_root = os.environ.get("ISOPLANE_BUILD_ROOT")
+    if development_root and Path(development_root).samefile(root):
+        root = Path(development_root)
+    if os.name == "nt" and root.drive.startswith("\\\\"):
+        raise RuntimeError("Run from a mapped drive; Task cannot expand source patterns on UNC paths.")
     executable = shutil.which("task")
     if executable is None:
         installed = Path.home() / ".local/bin" / ("task.exe" if os.name == "nt" else "task")
@@ -22,4 +27,4 @@ def run(root, *tasks):
 
 
 if __name__ == "__main__":
-    run(Path(__file__).resolve().parents[1], *sys.argv[1:])
+    run(Path(__file__).absolute().parents[1], *sys.argv[1:])

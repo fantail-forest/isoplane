@@ -103,10 +103,8 @@ tasks:
       - Taskfile.yml
       - scripts/fixture-packages.py
       - '{{.MODULES}}/runtime.json'
-      - exclude: '**/obj/**/*'
-      - exclude: '**/bin/**/*'
-      - exclude: '**/out/**/*'
-      - exclude: '**/__pycache__/**/*'
+      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__}/**/*'
+      - exclude: 'tools/**/{obj,bin,out,__pycache__}/**/*'
     generates:
       - .build/clr-anycpu/fixture-packages/packages/Isoplane.Sdk.*.nupkg
       - .build/clr-anycpu/fixture-packages/packages/Isoplane.AspNetCore.*.nupkg
