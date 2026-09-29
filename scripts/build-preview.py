@@ -73,7 +73,8 @@ def run(command, cwd, log, env=None):
 
 
 def source_revision(root):
-    if output(['git', 'status', '--porcelain', '--untracked-files=normal'], root):
+    # The Linux producer checks sources; SMB changes Git's view of modes and symlinks.
+    if platform.system() == 'Linux' and output(['git', 'status', '--porcelain', '--untracked-files=normal'], root):
         raise ValueError('commit or remove pending source changes before building a release')
     return output(['git', 'rev-parse', 'HEAD'], root)
 
