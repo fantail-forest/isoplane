@@ -102,9 +102,10 @@ def build(args):
     environment, visual_studio = developer_environment(args.msys_root.resolve())
     redist = redistributable(visual_studio, args.vc_redist)
     sdk, _ = preview.prepare_sdk(source, cache, logs, 'win-x64')
+    native_target = load('build_storage').build_root(source) / 'native'
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
         DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1',
-        CARGO_TARGET_DIR=str(cache / 'target'), CARGO_BUILD_BUILD_DIR=str(cache / 'target'))
+        CARGO_TARGET_DIR=str(native_target), CARGO_BUILD_BUILD_DIR=str(native_target))
     environment['PATH'] = str(sdk) + os.pathsep + environment['PATH']
 
     def run(command, name):
@@ -114,7 +115,7 @@ def build(args):
     runtime_work = load('build_storage').build_root(ROOT) / 'development/runtime-work'
     run(runtime_command(args.msys_root.resolve(), runtime, ['toolchain']), 'runtime-tools')
     run(['cargo', 'build', '--locked', '--release', '-p', 'isoplane-native'], 'native')
-    native = cache / 'target/release/isoplane_native.dll'
+    native = native_target / 'release/isoplane_native.dll'
     wasm_version = re.search(r'cargo install --locked wasm-tools@([^\s]+)', (source / 'Dockerfile').read_text()).group(1)
     run(['cargo', 'install', '--locked', f'wasm-tools@{wasm_version}', '--root', cache / 'tools'], 'wasm-tools')
     runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else ROOT / '.build/wasm32/release-runtime'

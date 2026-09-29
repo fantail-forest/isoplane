@@ -118,6 +118,7 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
     else:
         with tarfile.open(path) as bundle:
             bundle.extractall(directory, filter='data')
+    native_target = storage.build_root(source) / 'native'
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(directory), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')
@@ -233,13 +234,14 @@ def build(root, cache, releases, logs, args):
         load(source / 'scripts/macos-build.py').prepare_wasi(
             load(source / 'scripts/build-preview.py'), source, cache, runtime_work)
     sdk, sdk_identity = prepare_sdk(source, cache, logs, RUNTIME_IDENTIFIER)
+    native_target = storage.build_root(source) / 'native'
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1',
-                       CARGO_TARGET_DIR=str(cache / 'target'), CARGO_BUILD_BUILD_DIR=str(cache / 'target'),
+                       CARGO_TARGET_DIR=str(native_target), CARGO_BUILD_BUILD_DIR=str(native_target),
                        PATH=str(sdk) + os.pathsep + os.environ.get('PATH', os.defpath))
     run(['cargo', 'build', '--locked', '--release', '-p', 'isoplane-native'], source, logs / 'native.log', environment)
-    native_library = cache / 'target/release' / NATIVE_LIBRARY
+    native_library = native_target / 'release' / NATIVE_LIBRARY
     wasm_version = re.search(r'cargo install --locked wasm-tools@([^\s]+)', (source / 'Dockerfile').read_text()).group(1)
     run(['cargo', 'install', '--locked', f'wasm-tools@{wasm_version}', '--root', cache / 'tools'], source,
         logs / 'wasm-tools.log', environment)
