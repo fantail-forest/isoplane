@@ -5,7 +5,7 @@
   <PropertyGroup>
     <_IsoplaneBuildRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$([MSBuild]::NormalizeDirectory('$(ISOPLANE_BUILD_ROOT)'))</_IsoplaneBuildRoot>
     <UseArtifactsOutput Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">true</UseArtifactsOutput>
-    <ArtifactsPath Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">$(ISOPLANE_BUILD_DIRECTORY)/managed/$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ArtifactsPath>
+    <ArtifactsPath Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">$(_IsoplaneBuildRoot).build/clr-anycpu/managed/$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ArtifactsPath>
     <Version>0.1.0-preview.3</Version>
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

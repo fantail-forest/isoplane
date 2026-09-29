@@ -42,23 +42,13 @@ PROJECTS = {
 }
 
 
-PORTABLE_PACKAGES = {'Isoplane.Sdk', 'Isoplane.AspNetCore', 'Isoplane.Templates'}
-
-
-def pack_project(name, version, revision, packages, produce, portable=None):
-    """Reuse Linux-built portable packages; build platform packages on their host."""
-    if name in PORTABLE_PACKAGES and portable is not None:
-        receipt = json.loads((portable / 'packages.json').read_text())
-        source = portable / f'{name}.{version}.nupkg'
-        if receipt['sourceRevision'] != revision or sha(source) != receipt['files'][source.name]:
-            raise ValueError(f'portable package identity or content differs: {source}')
-        shutil.copy2(source, packages / source.name)
-    elif name in PORTABLE_PACKAGES:
-        storage = load(ROOT / 'scripts/build_storage.py')
-        storage.cached_files(f'release-package:{revision}:{version}:{name}',
-                             [packages / f'{name}.{version}.nupkg'], produce, linux_only=True)
-    else:
-        produce()
+def pack_project(name, version, revision, packages, produce, native_library, runtime_identifier):
+    """Reuse shared managed packages, then attach this platform's native support."""
+    storage = load(ROOT / 'scripts/build_storage.py')
+    package = packages / f'{name}.{version}.nupkg'
+    storage.cached_files(f'release-managed-package:{revision}:{version}:{name}',
+                         [package], produce, linux_only=True, target="clr-anycpu")
+    load(ROOT / 'scripts/managed_packages.py').attach_native(package, name, native_library, runtime_identifier)
 
 
 def shared_runtime_archive(source, cache, revision, runtime_output=None):
@@ -412,13 +402,17 @@ def build(root, cache, releases, logs, args):
     if packages.exists():
         shutil.rmtree(packages)
     packages.mkdir()
+    storage = load(ROOT / 'scripts/build_storage.py')
+    with storage.product('release-managed:' + revision, root=ROOT / '.build/clr-anycpu',
+                         name='release-' + revision) as managed:
+        managed_artifacts = managed / 'artifacts'
     for name, project in PROJECTS.items():
         # The version comes from Directory.Build.props alone; only the revision is supplied here.
         pack_project(name, version, revision, packages, lambda: run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native_library}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
-            source, logs / f'pack-{name}.log', environment), args.managed_packages)
+             '-p:IsoplaneManagedOnly=true', '-p:UseAppHost=false', '--artifacts-path', managed_artifacts, f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
+            source, logs / f'pack-{name}.log', environment), native_library, RUNTIME_IDENTIFIER)
     verify_packages(packages, version, revision, native_library)
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     wasm_sources = list((cargo_home / 'registry/src').glob(f'*/wasm-tools-{wasm_version}/Cargo.toml'))
@@ -464,7 +458,6 @@ def main():
                         help='where the release directory, archive and checksum are written')
     parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
     parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
-    parser.add_argument('--managed-packages', type=Path, help='verified portable packages exported by the Linux builder')
     parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()

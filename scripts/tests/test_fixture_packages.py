@@ -29,7 +29,7 @@ class PackageFeed(unittest.TestCase):
         for name in ("guest-sdks/dotnet", "tools", "crates", ".cargo", "scripts"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
         for name in ("Cargo.toml", "Cargo.lock", "Directory.Build.props", "global.json",
-                     "nuget.config", "scripts/fixture-tools.py", "scripts/fixture-packages.py"):
+                     "nuget.config", "scripts/fixture-tools.py", "scripts/fixture-packages.py", "scripts/managed_packages.py"):
             (self.root / name).write_text("input")
         (self.root / 'Directory.Build.props').write_text(
             '<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>')
@@ -39,7 +39,11 @@ class PackageFeed(unittest.TestCase):
         producer = patch.object(packages.storage.platform, 'system', return_value='Linux')
         producer.start()
         self.addCleanup(producer.stop)
-        toolchain = patch.object(packages.subprocess, "check_output", return_value=b"toolchain")
+        toolchain = patch.object(packages.subprocess, "check_output",
+                                 side_effect=lambda command, **kwargs: "native" if kwargs.get("text") else b"toolchain")
+        attachment = patch.object(packages.managed, "attach_native")
+        attachment.start()
+        self.addCleanup(attachment.stop)
         toolchain.start()
         self.addCleanup(toolchain.stop)
         builder = patch.object(packages.subprocess, "run", side_effect=self.build)
@@ -48,7 +52,7 @@ class PackageFeed(unittest.TestCase):
 
     def build(self, command, **kwargs):
         if "--fixture" in command:
-            runtime = self.root / "guest-runtime/tests/packages/out/runtime"
+            runtime = self.root / ".build/wasm32/runtime-modules"
             runtime.mkdir(parents=True, exist_ok=True)
             for path in packages.modules.files(runtime):
                 if not path.exists():
@@ -71,8 +75,10 @@ class PackageFeed(unittest.TestCase):
                          "a second consumer must not repack unchanged SDK and CLI artifacts")
         next((self.root / "target/fixture-packages/packages").glob("*.nupkg")).write_bytes(b"corrupt")
         packages.package_feed(self.root, self.destination)
-        self.assertGreater(packs(), initial_packs,
-                           "a modified package must not be reused")
+        self.assertEqual(packs(), initial_packs,
+                         "a damaged staging copy must be restored without recompiling shared assemblies")
+        self.assertTrue(all(path.read_bytes() == b"package" for path in feed.glob("*.nupkg")),
+                        "the repaired feed must contain the verified published packages")
 
     def assert_rebuild_reuses_intermediates(self, change):
         packages.package_feed(self.root, self.destination)
@@ -91,7 +97,7 @@ class PackageFeed(unittest.TestCase):
 
     def test_changed_content_discards_timestamp_based_managed_intermediates(self):
         packages.package_feed(self.root, self.destination)
-        old = self.root / "target/fixture-packages/artifacts/obj/stale"
+        old = self.root / ".build/clr-anycpu/fixture-packages/artifacts/obj/stale"
         old.parent.mkdir(parents=True)
         old.write_bytes(b"previous source generation")
         (self.root / "tools/Changed.cs").write_text("changed source")
@@ -99,10 +105,10 @@ class PackageFeed(unittest.TestCase):
         self.assertFalse(old.exists(), "MSBuild must not reuse another generation's timestamp-based intermediate state")
 
     def test_a_rebuilt_runtime_rebuilds_the_packages(self):
-        self.assert_rebuild_reuses_intermediates(lambda: (self.root / "guest-runtime/tests/packages/out/runtime/Isoplane.MonoRuntime.wasm").write_bytes(b"rebuilt"))
+        self.assert_rebuild_reuses_intermediates(lambda: (self.root / ".build/wasm32/runtime-modules/Isoplane.MonoRuntime.wasm").write_bytes(b"rebuilt"))
 
     def test_changed_runtime_provenance_rebuilds_the_packages(self):
-        self.assert_rebuild_reuses_intermediates(lambda: (self.root / "guest-runtime/tests/packages/out/runtime/runtime-build.json").write_text("new provenance"))
+        self.assert_rebuild_reuses_intermediates(lambda: (self.root / ".build/wasm32/runtime-modules/runtime-build.json").write_text("new provenance"))
 
     def test_the_consumer_receives_an_independent_copy(self):
         feed = packages.package_feed(self.root, self.destination)

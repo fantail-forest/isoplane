@@ -56,7 +56,7 @@ FIXTURES=(
 mono=()
 for spec in "${FIXTURES[@]}"; do
   IFS='|' read -r name out dir extra <<<"$spec"
-  mono+=("$name|$ROOT/dotnet/out/mono/$name.wasm|$dir|$extra")
+  mono+=("$name|$ROOT/../.build/wasm32/dotnet/mono/$name.wasm|$dir|$extra")
 done
 FIXTURES=("${mono[@]}")
 
@@ -110,6 +110,8 @@ if ! command -v dotnet >/dev/null 2>&1; then
   exit 1
 fi
 
+python3 "$TOOLS" output-directory "$ROOT/.." wasm32 dotnet >/dev/null
+INTERMEDIATES=$(python3 "$TOOLS" output-directory "$ROOT/.." wasm32 dotnet-intermediates)
 rc=0
 built=0 skipped=0
 for spec in "${FIXTURES[@]}"; do
@@ -122,8 +124,7 @@ for spec in "${FIXTURES[@]}"; do
   log=$(mktemp "$(dirname "$out")/.build-log-XXXXXXXX")
   ok=0
   # shellcheck disable=SC2086
-  build_directory=$(python3 "$TOOLS" build-directory "$ROOT/.." "$name")
-  if ISOPLANE_BUILD_DIRECTORY="$build_directory" ISOPLANE_BUILD_ROOT="$(cd "$ROOT/.." && pwd)" ISOPLANE_OUT_DIR="$(dirname "$out")" ISOPLANE_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
+  if ISOPLANE_OUT_DIR="$(dirname "$out")" ISOPLANE_OUT="$name" "$dir/build.sh" --artifacts-path "$INTERMEDIATES/$name" $extra >"$log" 2>&1; then ok=1; fi
   built=$((built + 1))
 
   if [ "$ok" = 1 ]; then

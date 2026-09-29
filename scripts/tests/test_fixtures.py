@@ -73,7 +73,7 @@ class FixtureTests(unittest.TestCase):
             stage_dotnet_fixture(root, '#!/bin/sh\nmkdir -p "$ISOPLANE_OUT_DIR"\nprintf fixture > "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm"\nprintf test@sha512:digest > "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm.runtime"\n')
             result = build_dotnet_fixture(root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(sorted(path.name for path in (root / "guests/dotnet/out/mono").iterdir()),
+            self.assertEqual(sorted(path.name for path in (root / ".build/wasm32/dotnet/mono").iterdir()),
                              sorted(["isoplane_guest_dotnet_connect" + suffix for suffix in (".wasm", ".wasm.runtime", ".wasm.fixture.json")]),
                              "fixture selection must not build or reuse another variant")
             runtime = root / "guest-runtime"
@@ -84,9 +84,10 @@ class FixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             stage_dotnet_fixture(root, '#!/bin/sh\nset -eu\ntest "$(cat "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm")" = published\nprintf replacement > "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm"\nprintf test@sha512:digest > "$ISOPLANE_OUT_DIR/$ISOPLANE_OUT.wasm.runtime"\n')
-            output = root / "guests/dotnet/out/mono/isoplane_guest_dotnet_connect.wasm"
+            output = root / ".build/wasm32/dotnet/mono/isoplane_guest_dotnet_connect.wasm"
             output.parent.mkdir(parents=True)
             output.write_text("published")
+            (output.parents[1] / "owner.json").write_text('{"identity": "fixture:dotnet"}')
             result = build_dotnet_fixture(root)
             self.assertEqual(result.returncode, 0,
                              "a concurrent reader must retain the old publication until the builder replaces it: " + result.stdout + result.stderr)
@@ -98,11 +99,11 @@ class FixtureTests(unittest.TestCase):
             packages = root / "guest-runtime/tests/packages"
             packages.mkdir(parents=True)
             shutil.copy2(ROOT / "guest-runtime/tests/packages/build.sh", packages / "build.sh")
-            output = packages / "out/alpha.tar"
-            output.parent.mkdir()
+            output = root / ".build/clr-anycpu/package-fixtures/alpha.tar"
+            output.parent.mkdir(parents=True)
             output.write_text("published")
-            runtime = output.parent / "runtime"
-            runtime.mkdir()
+            runtime = root / ".build/wasm32/runtime-modules"
+            runtime.mkdir(parents=True)
             (runtime / "Isoplane.MonoRuntime.wasm.runtime").write_text("identity")
             (root / "guest-runtime/feed-identity.py").write_text("")
             scripts = root / "scripts"

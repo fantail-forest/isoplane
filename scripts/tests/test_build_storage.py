@@ -173,7 +173,7 @@ class Retention(unittest.TestCase):
                                  'explicit Cargo paths must remain caller-managed')
             self.assertTrue((target / 'keep').exists(), 'automatic retention must not adopt explicit output paths')
 
-    def test_managed_builds_put_outputs_and_intermediates_under_the_command_lease(self):
+    def test_managed_builds_put_outputs_and_intermediates_under_shared_clr_storage(self):
         project = self.root / 'source'
         project.mkdir()
         shutil.copyfile(Path(__file__).parents[2] / 'Directory.Build.props', project / 'Directory.Build.props')
@@ -184,9 +184,9 @@ class Retention(unittest.TestCase):
                 result = subprocess.run(['dotnet', 'build', '--disable-build-servers', '-p:NuGetAudit=false'],
                                         cwd=project, env=environment, capture_output=True, text=True, timeout=90)
                 self.assertEqual(result.returncode, 0, 'the managed build must succeed: ' + result.stdout + result.stderr)
-                directory = Path(environment['ISOPLANE_BUILD_DIRECTORY'])
-                self.assertTrue(list((directory / 'managed/bin').rglob('Probe.dll')), 'the managed assembly must be inside retained storage')
-                self.assertTrue(list((directory / 'managed/obj').rglob('project.assets.json')), 'restore intermediates must be inside retained storage')
+                directory = project / '.build/clr-anycpu/managed'
+                self.assertTrue(list((directory / 'bin').rglob('Probe.dll')), 'the managed assembly must be inside retained storage')
+                self.assertTrue(list((directory / 'obj').rglob('project.assets.json')), 'restore intermediates must be inside retained storage')
                 self.assertFalse((project / 'obj').exists(), 'repository builds must not leave unbounded per-project intermediates')
             self.assertTrue(directory.exists(), 'completed managed builds must remain reusable')
 
@@ -232,7 +232,7 @@ class Retention(unittest.TestCase):
                     result = subprocess.run(['dotnet', 'build', '--disable-build-servers', '-p:NuGetAudit=false'],
                                             cwd=directory, env=environment, capture_output=True, text=True, timeout=90)
                     self.assertEqual(result.returncode, 0, 'both managed projects must build: ' + result.stdout + result.stderr)
-                managed = Path(environment['ISOPLANE_BUILD_DIRECTORY']) / 'managed'
+                managed = project / '.build/clr-anycpu/managed'
                 assemblies = list(managed.glob('*/bin/Probe/debug/Probe.dll'))
                 self.assertEqual(len(assemblies), 2, 'same-named projects must not overwrite one another in managed storage')
                 self.assertNotEqual(assemblies[0].read_bytes(), assemblies[1].read_bytes(),

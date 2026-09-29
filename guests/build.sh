@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build every Rust guest to guests/out/*.wasm and list them in guests/out/manifest.
+# Build every Rust guest to .build/wasm32/rust-guests/*.wasm and list them in .build/wasm32/rust-guests/manifest.
 #
 #   scripts/dev guests/build.sh            # build all
 #   scripts/dev guests/build.sh --if-stale # only when inputs or outputs differ from the build receipt
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="$ROOT/out"
+OUT="$ROOT/../.build/wasm32/rust-guests"
 MANIFEST="$OUT/manifest"
 IF_STALE=0
 [ "${1:-}" = "--if-stale" ] && IF_STALE=1
@@ -40,7 +40,7 @@ export CARGO_BUILD_BUILD_DIR="$TDIR"
 # ISOPLANE_BUILD_QUIET drops the size and import/export reports, which a test
 # running this never reads, and keeps every check.
 QUIET="${ISOPLANE_BUILD_QUIET:-}"
-mkdir -p "$OUT"
+python3 "$TOOLS" output-directory "$ROOT/.." wasm32 rust-guests >/dev/null
 cd "$ROOT"
 
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")

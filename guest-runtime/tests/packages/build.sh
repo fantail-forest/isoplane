@@ -40,13 +40,14 @@ else
 fi
 export ISOPLANE_GUEST_RUNTIME_FEED="$FEED"
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the package fixtures cannot be built." >&2; exit 1; }
-mkdir -p "$HERE/out"
+RUNTIME_OUTPUT="$ROOT/.build/wasm32/runtime-modules"
+PACKAGE_OUTPUT="$ROOT/.build/clr-anycpu/package-fixtures"
 
 SDK="$ROOT/guest-sdks/dotnet"
 if [ "$FIXTURE" = runtime ]; then
-  OUT="$HERE/out/runtime/Isoplane.MonoRuntime.wasm"
-  DEBUG="$HERE/out/runtime/Isoplane.MonoRuntime.Debug.wasm"
-  OUTPUTS=("$OUT" "$OUT.runtime" "$DEBUG" "$DEBUG.runtime" "$HERE/out/runtime/runtime-build.json" "$HERE/out/runtime/runtime.json")
+  OUT="$RUNTIME_OUTPUT/Isoplane.MonoRuntime.wasm"
+  DEBUG="$RUNTIME_OUTPUT/Isoplane.MonoRuntime.Debug.wasm"
+  OUTPUTS=("$OUT" "$OUT.runtime" "$DEBUG" "$DEBUG.runtime" "$RUNTIME_OUTPUT/runtime-build.json" "$RUNTIME_OUTPUT/runtime.json")
   INPUTS=$(python3 "$TOOLS" fingerprint "$SDK" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
   if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
      && [ "$(cat "$OUT.runtime")" = "$(python3 "$TOOLS" runtime-identity "$FEED/Isoplane.GuestRuntime.props" mono)" ] \
@@ -54,25 +55,27 @@ if [ "$FIXTURE" = runtime ]; then
     echo "==> shared Mono runtime is up to date"
     exit 0
   fi
+  python3 "$TOOLS" output-directory "$ROOT" wasm32 runtime-modules >/dev/null
   SHARED_OUTPUTS=()
   for output in "${OUTPUTS[@]}"; do SHARED_OUTPUTS+=(--output "$output"); done
   python3 "$ROOT/scripts/build_storage.py" files \
     "mono-runtime:$INPUTS:$(git -C "$ROOT" rev-parse HEAD):$(dotnet --version)" \
-    --linux-only "${SHARED_OUTPUTS[@]}" -- "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
+    --linux-only "${SHARED_OUTPUTS[@]}" -- "$SDK/MonoRuntime/build.sh" --output "$RUNTIME_OUTPUT"
 else
   # A package carries the identity of the runtime it is built against, and
   # these packages run on the fixture runtime.
   "$HERE/build.sh" --if-stale --fixture runtime
-  export ISOPLANE_RUNTIME_DIRECTORY="$HERE/out/runtime"
-  OUT="$HERE/out/$FIXTURE"
+  export ISOPLANE_RUNTIME_DIRECTORY="$RUNTIME_OUTPUT"
+  OUT="$PACKAGE_OUTPUT/$FIXTURE"
   OUTPUTS=("$OUT.tar")
-  INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/$FIXTURE" "$HERE/Package.props" "$HERE/Package.targets" "$SDK" "$ROOT/tools/Isoplane.Cli" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED" "$HERE/out/runtime/runtime.json")
+  INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/$FIXTURE" "$HERE/Package.props" "$HERE/Package.targets" "$SDK" "$ROOT/tools/Isoplane.Cli" "$ROOT/tools/BuildProtocol" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED" "$RUNTIME_OUTPUT/runtime.json")
   if [ "$IF_STALE" = 1 ] && [ -f "$OUT.tar" ] \
      && python3 "$TOOLS" fresh "$OUT.fixture.json" "$INPUTS" "${OUTPUTS[@]}"; then
     echo "==> package $FIXTURE is up to date"
     exit 0
   fi
   python3 "$TOOLS" require-linux
+  python3 "$TOOLS" output-directory "$ROOT" clr-anycpu package-fixtures >/dev/null
   CLI="$(python3 "$TOOLS" isoplane-cli "$ROOT")"
   dotnet "$CLI" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
 fi

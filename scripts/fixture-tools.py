@@ -4,6 +4,7 @@
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -91,37 +92,67 @@ def published_guest(directory):
 
 
 def build_managed_tool(root, action, project, assembly_name):
-    target = target_directory(root) / "managed-tools" / action
-    artifacts = target / "artifacts"
-    assembly = artifacts / f"bin/{assembly_name}/debug/{assembly_name}.dll"
-    inputs = fingerprint([root / name for name in (
-        "tools", "guest-sdks/dotnet", "Directory.Build.props", "global.json",
-        "nuget.config", "scripts/fixture-tools.py", "crates", "Cargo.toml", "Cargo.lock", ".cargo")])
-    inputs += subprocess.check_output(["dotnet", "--version"], cwd=root, text=True).strip()
-    inputs += subprocess.check_output(["rustc", "-vV"], cwd=root, text=True)
-    receipt = target / "complete.json"
-    outputs = sorted(path for path in (artifacts / "bin").rglob("*") if path.is_file())
-    if assembly.is_file() and is_fresh(receipt, inputs, outputs):
+    import build_storage
+    with build_storage.product(action, root=root / ".build/clr-anycpu", name=action) as target:
+        artifacts = target / "artifacts"
+        assembly = artifacts / f"bin/{assembly_name}/debug/{assembly_name}.dll"
+        inputs = fingerprint([root / name for name in (
+            "tools", "guest-sdks/dotnet", "Directory.Build.props", "global.json",
+            "nuget.config", "scripts/fixture-tools.py")])
+        inputs += subprocess.check_output(["dotnet", "--version"], cwd=root, text=True).strip()
+        receipt = target / "complete.json"
+        outputs = sorted(path for path in (artifacts / "bin").rglob("*") if path.is_file())
+        if not assembly.is_file() or not is_fresh(receipt, inputs, outputs):
+            if sys.platform != "linux":
+                raise RuntimeError(f"Build {action}'s shared managed assemblies on Linux first.")
+            log = target / "build.log"
+            with log.open("w") as output:
+                result = subprocess.run(
+                    ["dotnet", "build", str(root / project), "--artifacts-path", str(artifacts),
+                     "--disable-build-servers", "-p:IsoplaneManagedOnly=true", "-p:UseAppHost=false"],
+                    cwd=root, stdout=output, stderr=subprocess.STDOUT, timeout=600)
+            if result.returncode:
+                raise RuntimeError(f"Building {action} failed; see {log}")
+            outputs = sorted(path for path in (artifacts / "bin").rglob("*") if path.is_file())
+            write_receipt(receipt, inputs, outputs)
+        if action == "isoplane-cli":
+            return stage_native_cli(root, assembly, inputs)
         return assembly
-    target.mkdir(parents=True, exist_ok=True)
-    log = target / "build.log"
-    with log.open("w") as output:
-        subprocess.run(
-            ["dotnet", "build", str(root / project), "--artifacts-path", str(artifacts),
-             "--disable-build-servers"], cwd=root, stdout=output,
-            stderr=subprocess.STDOUT, timeout=600, check=True)
-    outputs = sorted(path for path in (artifacts / "bin").rglob("*") if path.is_file())
-    write_receipt(receipt, inputs, outputs)
-    return assembly
+
+
+def stage_native_cli(root, assembly, managed_inputs):
+    import build_storage
+    inputs = managed_inputs + fingerprint([root / name for name in ("crates", "Cargo.toml", "Cargo.lock", ".cargo")])
+    inputs += subprocess.check_output(["rustc", "-vV"], cwd=root, text=True)
+    with build_storage.product("cli", root=build_storage.build_root(root), name="cli") as target:
+        binary = target / "bin" / assembly.name
+        receipt = target / "complete.json"
+        outputs = sorted(path for path in (target / "bin").rglob("*") if path.is_file())
+        if binary.is_file() and is_fresh(receipt, inputs, outputs):
+            return binary
+        native = Path(subprocess.check_output(
+            [sys.executable, str(root / "scripts/fixture-tools.py"), "isoplane-native", str(root), "debug"],
+            cwd=root, text=True).strip())
+        if (target / "bin").exists():
+            shutil.rmtree(target / "bin")
+        shutil.copytree(assembly.parent, target / "bin")
+        runtime = target / "bin/runtime"
+        runtime.mkdir(exist_ok=True)
+        shutil.copy2(native, runtime / native.name)
+        outputs = sorted(path for path in (target / "bin").rglob("*") if path.is_file())
+        write_receipt(receipt, inputs, outputs)
+        return binary
 
 
 def main():
     action, *args = sys.argv[1:]
-    if action == "build-directory":
+    if action == "output-directory":
         import build_storage
-        root, name = Path(args[0]).resolve(), args[1]
-        with build_storage.product('fixture:' + name, root=build_storage.build_root(root) / 'fixtures', name=name) as directory:
-            print(directory)
+        root, target, name = Path(args[0]).resolve(), args[1], args[2]
+        if target not in ("wasm32", "clr-anycpu"):
+            sys.exit(f"unsupported portable fixture target: {target}")
+        with build_storage.product('fixture:' + name, root=root / '.build' / target, name=name) as directory:
+            print(directory.as_posix())
         return 0
     if action == "require-linux":
         if sys.platform != "linux":

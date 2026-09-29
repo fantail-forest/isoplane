@@ -152,11 +152,8 @@ def build(args):
     if packages.exists():
         shutil.rmtree(packages)
     packages.mkdir()
-    for name, project in preview.PROJECTS.items():
-        preview.pack_project(name, version, revision, packages, lambda: run([sdk / 'dotnet.exe', 'pack', source / project, '-c', 'Release', '-o', packages,
-             f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
-             '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'], 'pack-' + name), args.managed_packages)
+    for name in preview.PROJECTS:
+        preview.pack_project(name, version, revision, packages, None, native, 'win-x64')
     preview.verify_packages(packages, version, revision, native, 'win-x64')
     runtime_version = re.search(r'^RUNTIME_TAG=v(.+)$', (runtime / 'manifest.env').read_text(), re.MULTILINE).group(1)
     mono = stock_pack('Microsoft.NET.Runtime.MonoTargets.Sdk', runtime_version, cache)
@@ -206,7 +203,6 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases')
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
     parser.add_argument('--vc-redist', type=Path)
-    parser.add_argument('--managed-packages', type=Path, help='verified portable packages exported by the Linux builder')
     parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--runtime-artifact', help='shared runtime archive file or HTTPS URL; omitted to reuse the Linux publication in this worktree')
     parser.add_argument('--runtime-sha256', help='required checksum for --runtime-artifact')

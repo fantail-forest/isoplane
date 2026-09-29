@@ -23,6 +23,7 @@ def load(name):
 tools = load('fixture-tools')
 modules = load('shared-runtime-modules')
 storage = load('build_storage')
+managed = load('managed_packages')
 
 def shared_runtime(root):
     """Obtain the Linux-built runtime, or verify explicitly selected portable artifacts."""
@@ -39,21 +40,21 @@ def shared_runtime(root):
         return directory
     subprocess.run([sys.executable, str(root / "scripts/dev"), "bash", str(root / "guest-runtime/tests/packages/build.sh"), "--if-stale", "--fixture", "runtime"],
                    cwd=root, check=True, stdout=sys.stderr)
-    return root / "guest-runtime/tests/packages/out/runtime"
+    return root / ".build/wasm32/runtime-modules"
 
 
 def package_feed(root, destination):
     root = Path(root).resolve()
     runtime = shared_runtime(root)
     sources = [root / name for name in (
-        "guest-sdks/dotnet", "tools", "crates", ".cargo", "Cargo.toml",
-        "Cargo.lock", "Directory.Build.props", "global.json", "nuget.config",
-        "scripts/fixture-tools.py", "scripts/fixture-packages.py",
+        "guest-sdks/dotnet", "tools", "Directory.Build.props", "global.json", "nuget.config",
+        "scripts/fixture-tools.py", "scripts/fixture-packages.py", "scripts/managed_packages.py",
     )] + modules.files(runtime)
     toolchains = subprocess.check_output(["dotnet", "--version"], cwd=root)
     portable_identity = hashlib.sha256(tools.fingerprint(sources).encode() + toolchains).hexdigest()
     toolchains += subprocess.check_output(["rustc", "-vV"], cwd=root)
-    identity = hashlib.sha256(tools.fingerprint(sources).encode() + toolchains).hexdigest()
+    native_sources = [root / name for name in ("crates", ".cargo", "Cargo.toml", "Cargo.lock")]
+    identity = hashlib.sha256(portable_identity.encode() + tools.fingerprint(native_sources).encode() + toolchains).hexdigest()
     with storage.workspace(f"fixture-packages:{sys.platform}:{platform.machine()}") as target:
         return build_feed(root, destination, runtime, identity, target, portable_identity)
 
@@ -68,9 +69,16 @@ def build_feed(root, destination, runtime, identity, target, portable_identity):
     if packages.exists():
         shutil.rmtree(packages)
     # A different checkout can have older timestamps but different source bytes.
-    intermediates = target / "artifacts/obj"
-    if intermediates.exists():
-        shutil.rmtree(intermediates)
+    with storage.product("fixture-packages", root=root / ".build/clr-anycpu", name="fixture-packages") as compiled:
+        intermediates = compiled / "artifacts/obj"
+        receipt_identity = compiled / "inputs"
+        if sys.platform == "linux" and (not receipt_identity.exists() or receipt_identity.read_text() != portable_identity):
+            if intermediates.exists():
+                shutil.rmtree(intermediates)
+            receipt_identity.write_text(portable_identity)
+    native = Path(subprocess.check_output(
+        [sys.executable, str(root / "scripts/fixture-tools.py"), "isoplane-native", str(root), "release"],
+        cwd=root, text=True).strip())
     projects = (
         "guest-sdks/dotnet/Isoplane.Sdk.csproj",
         "guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj",
@@ -85,17 +93,16 @@ def build_feed(root, destination, runtime, identity, target, portable_identity):
             def pack():
                 result = subprocess.run(
                     ['dotnet', 'pack', str(root / project), '--artifacts-path',
-                     str(target / 'artifacts'), '-o', str(packages), '--disable-build-servers',
+                     str(compiled / 'artifacts'), '-o', str(packages), '--disable-build-servers', '-p:IsoplaneManagedOnly=true', '-p:UseAppHost=false',
                      f'-p:IsoplaneRuntimeModuleDirectory={runtime}'],
                     cwd=root, env=environment, stdout=output, stderr=subprocess.STDOUT)
                 if result.returncode != 0:
                     raise RuntimeError(f'packing {project} failed; see {log}')
-            if project.startswith('guest-sdks/'):
-                name = Path(project).stem
-                storage.cached_files(f'fixture-package:{portable_identity}:{name}',
-                                     [packages / f'{name}.{version}.nupkg'], pack, linux_only=True)
-            else:
-                pack()
+            name = Path(project).stem
+            package = packages / f'{name}.{version}.nupkg'
+            storage.cached_files(f'fixture-managed-package:{portable_identity}:{name}',
+                                 [package], pack, linux_only=True, target="clr-anycpu")
+            managed.attach_native(package, name, native, storage.platform_name())
     outputs = sorted(packages.glob("*.nupkg"))
     if not outputs:
         raise RuntimeError(f"package build produced no packages; see {log}")

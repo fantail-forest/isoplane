@@ -126,7 +126,7 @@ fn read(path: &Path) -> Vec<u8> {
 
 /// The path of a module `guests/build.sh` writes, built if missing or stale.
 /// A name the script's manifest does not list fails here, naming the script,
-/// rather than as a missing file or a stale module left in `guests/out`.
+/// rather than as a missing file or a stale module left in `.build/wasm32/rust-guests`.
 pub fn rust_path(name: &str) -> PathBuf {
     let root = build("guests/build.sh");
     let manifest = rust_manifest();
@@ -135,7 +135,8 @@ pub fn rust_path(name: &str) -> PathBuf {
         "guests/build.sh does not build {name}.wasm; its GUESTS list names {}",
         manifest.join(", ")
     );
-    root.join("guests/out").join(format!("{name}.wasm"))
+    root.join(".build/wasm32/rust-guests")
+        .join(format!("{name}.wasm"))
 }
 
 /// The bytes of a module `guests/build.sh` writes, built if missing or stale.
@@ -146,7 +147,7 @@ pub fn rust(name: &str) -> Vec<u8> {
 /// The names of every module `guests/build.sh` writes, from the manifest the
 /// script leaves beside them.
 pub fn rust_manifest() -> Vec<String> {
-    let manifest = build("guests/build.sh").join("guests/out/manifest");
+    let manifest = build("guests/build.sh").join(".build/wasm32/rust-guests/manifest");
     String::from_utf8_lossy(&read(&manifest))
         .lines()
         .map(str::to_string)
@@ -172,7 +173,7 @@ impl GuestRuntime {
 
     fn output_directory(self) -> &'static str {
         match self {
-            GuestRuntime::Mono => "guests/dotnet/out/mono",
+            GuestRuntime::Mono => ".build/wasm32/dotnet/mono",
         }
     }
 }
@@ -184,7 +185,7 @@ impl std::fmt::Display for GuestRuntime {
 }
 
 /// The bytes of a Mono C# guest `guests/build-dotnet.sh` writes under
-/// `guests/dotnet/out`, built if missing or stale.
+/// `.build/wasm32/dotnet`, built if missing or stale.
 pub fn dotnet(name: &str) -> Vec<u8> {
     dotnet_for(name, GuestRuntime::Mono)
 }
@@ -255,8 +256,7 @@ pub fn mono_debug_runtime() -> Vec<u8> {
 
 fn shared_runtime(name: &str) -> PathBuf {
     let path = build_selected(&format!("{PACKAGES}/build.sh"), Some("runtime"), None)
-        .join(PACKAGES)
-        .join("out/runtime")
+        .join(".build/wasm32/runtime-modules")
         .join(name);
     assert_attributed_to_feed(&path, GuestRuntime::Mono);
     path
@@ -266,8 +266,7 @@ fn shared_runtime(name: &str) -> PathBuf {
 /// the archive `isoplane bundle` writes, built if missing or stale.
 pub fn mono_package(name: &str) -> PathBuf {
     build_selected(&format!("{PACKAGES}/build.sh"), Some(name), None)
-        .join(PACKAGES)
-        .join("out")
+        .join(".build/clr-anycpu/package-fixtures")
         .join(format!("{name}.tar"))
 }
 
@@ -277,7 +276,7 @@ fn runtime_acceptance_path(runtime: GuestRuntime) -> PathBuf {
         None,
         Some(runtime.script_name()),
     )
-    .join("guest-runtime/tests/guest/out")
+    .join(".build/wasm32/acceptance")
     .join(runtime.script_name())
     .join("guest_runtime_acceptance.wasm")
 }

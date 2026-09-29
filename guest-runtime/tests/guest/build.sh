@@ -34,7 +34,8 @@ fi
 export ISOPLANE_GUEST_RUNTIME_FEED="$FEED"
 PROPS="$FEED/Isoplane.GuestRuntime.props"
 NAME="guest_${FIXTURE}_acceptance"
-OUT="$HERE/out/$RUNTIME/$NAME.wasm"
+OUTPUT="$ROOT/.build/wasm32/acceptance"
+OUT="$OUTPUT/$RUNTIME/$NAME.wasm"
 INPUTS=$(python3 "$TOOLS" fingerprint "$HERE/src" "$ROOT/guest-sdks/dotnet" "$HERE/build.sh" "$TOOLS" "$ROOT/global.json" "$ROOT/nuget.config" "$FEED")
 if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
    && [ "$(cat "$OUT.runtime")" = "$(python3 "$TOOLS" runtime-identity "$PROPS" "$RUNTIME")" ] \
@@ -43,6 +44,7 @@ if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
   exit 0
 fi
 python3 "$TOOLS" require-linux
+python3 "$TOOLS" output-directory "$ROOT" wasm32 acceptance >/dev/null
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the acceptance guest cannot be built." >&2; exit 1; }
 
 # Symbols stay in the interpreter's module so a trap names its frames.
@@ -53,7 +55,7 @@ if [ "$RUNTIME" = mono ]; then
     --artifacts-path "$HERE/obj/$RUNTIME/payload-artifacts" --output "$payload"
   profile+=("-p:IsoplaneAcceptancePayload=$payload/Isoplane.Acceptance.DynamicPayload.dll")
 fi
-ISOPLANE_OUT_DIR="$HERE/out/$RUNTIME" ISOPLANE_OUT="$NAME" "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
+ISOPLANE_OUT_DIR="$OUTPUT/$RUNTIME" ISOPLANE_OUT="$NAME" "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
   "${profile[@]}" --artifacts-path "$HERE/obj/$RUNTIME-$FIXTURE"
 
 python3 "$TOOLS" record "$OUT.fixture.json" "$INPUTS" "$OUT" "$OUT.runtime"

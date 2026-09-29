@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn stage_packages(destination: &Path) -> PathBuf {
+    let _build = super::BUILT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = super::repo_root();
     let packages = destination.join("packages");
     let output = Command::new(super::python())
@@ -92,6 +95,9 @@ fn run(command: &mut Command) {
 
 /// Provisions the pinned DAP framing library in a shared test environment.
 pub fn debugger_python() -> PathBuf {
+    let _build = super::BUILT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = super::repo_root();
     let output = Command::new(super::python())
         .arg(root.join("scripts/fixture-tools.py"))

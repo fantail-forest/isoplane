@@ -61,14 +61,14 @@ def main():
                     if path.name == storage.platform_name() or args.all:
                         roots.append(path)
                         if name == ".build":
-                            for group in ("products", "fixtures"):
+                            for group in ("products", "fixtures", "published"):
                                 products = path / group
                                 if products.is_dir() and not products.is_symlink():
                                     roots.append(products)
                     else:
                         print(f'retained {path}: use --all to discard other platforms' output')
     if args.all and not args.report:
-        for path, size in storage.clean_shared(dry_run=args.dry_run):
+        for path, size in storage.clean(ROOT / ".artifacts/shared", dry_run=args.dry_run):
             print(f'{size:>14,} bytes  {"would remove" if args.dry_run else "removed"}  {path}')
     for root in roots:
         if not root.exists():

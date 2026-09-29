@@ -76,8 +76,8 @@ cargo test --workspace                             # Everything, including relea
 cargo test -p isoplane-host                            # One crate
 cargo test -p isoplane-host --test cell                # One integration test binary
 
-scripts/dev guests/build.sh                        # Rust guests -> guests/out/*.wasm
-scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> guests/*/out/*.wasm
+scripts/dev guests/build.sh                        # Rust guests -> .build/wasm32/rust-guests/*.wasm
+scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> .build/wasm32/dotnet/mono/*.wasm
 
 cargo run -p isoplaned -- --config isoplaned.toml          # Run a node
 cargo run -p isoplaned -- --config isoplaned.toml --check  # Validate a config without running
@@ -234,7 +234,7 @@ Behavior changes need coverage that detects their absence or regression. Extend 
 
 - **`type`**: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`, `build`.
 - **`scope`**: the crate or area touched, by its short name (`engine`, `sdk`), comma-separated for several.
-- Keep commits atomic. Never commit generated artifacts (`target/`, `guests/out/`, `*.wasm`, `obj/`, `bin/`, `docs/userdocs/build/`).
+- Keep commits atomic. Never commit generated artifacts (`target/`, `.build/wasm32/rust-guests/`, `*.wasm`, `obj/`, `bin/`, `docs/userdocs/build/`).
 
 ## Workflow: develop, validate, replan
 

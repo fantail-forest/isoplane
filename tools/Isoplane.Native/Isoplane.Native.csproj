@@ -23,7 +23,7 @@
     <InternalsVisibleTo Include="Isoplane.Testing" />
     <InternalsVisibleTo Include="Isoplane.Testing.Tests" />
   </ItemGroup>
-  <Target Name="RequireNativeLibrary" BeforeTargets="PrepareForBuild;_GetPackageFiles">
+  <Target Name="RequireNativeLibrary" BeforeTargets="PrepareForBuild;_GetPackageFiles" Condition="'$(IsoplaneManagedOnly)' != 'true'">
     <Exec Condition="'$(BuildNativeSupport)' == 'true'" Command="$(NativeBuildPython) &quot;$(MSBuildThisFileDirectory)../../scripts/fixture-tools.py&quot; isoplane-native &quot;$(MSBuildThisFileDirectory)../..&quot; $(NativeProfile)" ConsoleToMSBuild="true" StandardOutputImportance="Low">
       <Output TaskParameter="ConsoleOutput" PropertyName="IsoplaneNativePath" />
     </Exec>

@@ -177,9 +177,9 @@ def build_root(root=None):
     return (repository_root() if root is None else Path(root)) / '.build' / platform_name()
 
 
-def shared_root():
-    """Immutable artifacts shared by consumers of this worktree."""
-    return repository_root() / '.artifacts' / 'shared'
+def shared_root(target="wasm32"):
+    """Published artifacts grouped by their target, independent of the builder."""
+    return repository_root() / ".build" / target / "published"
 
 
 def diagnostics_root():
@@ -224,7 +224,8 @@ def product(identity, root=None, read_only=False, name=None):
 def development(root, inherited):
     """Keep a host's mutable build and temporary files inside its worktree."""
     root = Path(root).resolve()
-    with product('development', root=build_root(root), name='development') as directory:
+    with (product('development', root=build_root(root), name='development') as directory,
+          product('managed', root=root / '.build/clr-anycpu', name='managed')):
         environment = dict(inherited)
         previous = inherited.get('ISOPLANE_BUILD_DIRECTORY')
         if previous and inherited.get('ISOPLANE_BUILD_ROOT') != str(root):
@@ -296,13 +297,13 @@ def restore_files(entry, outputs):
     return True
 
 
-def artifact_directory(identity):
-    return shared_root() / hashlib.sha256(identity.encode()).hexdigest()
+def artifact_directory(identity, target="wasm32"):
+    return shared_root(target) / hashlib.sha256(identity.encode()).hexdigest()
 
 
-def publish_files(identity, outputs):
+def publish_files(identity, outputs, target="wasm32"):
     """Publish a complete artifact directory; consumers only read completed files."""
-    entry = artifact_directory(identity)
+    entry = artifact_directory(identity, target)
     entry.parent.mkdir(parents=True, exist_ok=True)
     if entry.is_symlink():
         raise ValueError(f'shared artifact directory must not be a symlink: {entry}')
@@ -324,11 +325,11 @@ def publish_files(identity, outputs):
                 raise ValueError(f'Shared artifacts differ at {entry}; clean them before rebuilding') from error
 
 
-def cached_files(identity, outputs, produce, linux_only=False):
+def cached_files(identity, outputs, produce, linux_only=False, target="wasm32"):
     """Consume published files, or publish a completed build from its owning host."""
     outputs = [Path(path) for path in outputs]
     identity = 'files:' + identity
-    entry = artifact_directory(identity)
+    entry = artifact_directory(identity, target)
     if restore_files(entry, outputs):
         return
     if produce is None or (linux_only and platform.system() != 'Linux'):
@@ -336,12 +337,7 @@ def cached_files(identity, outputs, produce, linux_only=False):
     if entry.exists():
         raise ValueError(f'Shared artifacts are invalid at {entry}; clean them before rebuilding')
     produce()
-    publish_files(identity, outputs)
-
-
-def clean_shared(dry_run=False):
-    """Explicitly remove published artifacts after their consumers have stopped."""
-    return clean(shared_root(), dry_run=dry_run)
+    publish_files(identity, outputs, target)
 
 
 def download(url, destination, expected, algorithm="sha256"):
@@ -358,7 +354,7 @@ def download(url, destination, expected, algorithm="sha256"):
             if digest(pending, algorithm) != expected:
                 raise ValueError(f'download hash mismatch: {url}')
             pending.replace(destination)
-    cached_files(f'download:{algorithm}:{expected}', [destination], fetch)
+    cached_files(f'download:{algorithm}:{expected}', [destination], fetch, target="downloads")
 
 
 if __name__ == "__main__":

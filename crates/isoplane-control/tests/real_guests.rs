@@ -94,7 +94,7 @@ fn every_module_build_sh_writes_draws_the_verdict_recorded_for_it() {
 
     assert!(
         problems.is_empty(),
-        "{} module(s) in guests/out do not match the verdict recorded for them:\n  - {}",
+        "{} module(s) in .build/wasm32/rust-guests do not match the verdict recorded for them:\n  - {}",
         problems.len(),
         problems.join("\n  - ")
     );
