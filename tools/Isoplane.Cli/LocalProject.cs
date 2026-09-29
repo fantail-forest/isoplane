@@ -37,7 +37,8 @@ internal sealed class LocalProject
         var identity = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes((string)manifest["name"]!)));
         Dictionary<string, object?> settings = new()
         {
-            ["manifest"] = manifest,
+            ["manifest"] = manifest.Where(entry => entry.Key != "dev")
+                .ToDictionary(entry => entry.Key, entry => entry.Value),
             ["state_directory"] = debugDirectory ?? Path.Combine(directory, ".isoplane", "local", identity),
             ["runtime_library"] = NativeRuntime.LibraryPath,
             ["compilation_directory"] = Path.Combine(directory, ".isoplane", "compiled"),
