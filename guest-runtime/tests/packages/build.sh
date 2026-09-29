@@ -49,6 +49,5 @@ else
   OUT="$PACKAGE_OUTPUT/$FIXTURE"
   python3 "$TOOLS" require-linux
   python3 "$TOOLS" output-directory "$ROOT" clr-anycpu package-fixtures >/dev/null
-  CLI="$ROOT/.build/clr-anycpu/isoplane-cli/artifacts/bin/Isoplane.Cli/debug/Isoplane.Cli.dll"
-  dotnet "$CLI" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
+  dotnet "${ISOPLANE_CLI:?Task must supply the staged CLI}" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
 fi

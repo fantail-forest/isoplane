@@ -294,9 +294,11 @@ tasks:
       - '"{{.PYTHON}}" scripts/dev bash guest-runtime/tests/packages/build.sh --compile --fixture runtime'
 
   package:build:
-    deps: [":managed:cli"]
+    deps: [":cli"]
     internal: true
     label: 'package:{{.NAME}}'
+    env:
+      ISOPLANE_CLI: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/cli/bin/Isoplane.Cli.dll'
     sources:
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.props'

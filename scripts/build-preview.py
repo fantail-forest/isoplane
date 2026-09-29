@@ -118,7 +118,6 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
     else:
         with tarfile.open(path) as bundle:
             bundle.extractall(directory, filter='data')
-    native_target = storage.build_root(source) / 'native'
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(directory), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')

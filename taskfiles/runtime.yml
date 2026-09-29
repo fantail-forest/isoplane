@@ -3,7 +3,7 @@ version: '3'
 tasks:
   selected:
     cmds:
-      - task: '{{if .ISOPLANE_TEST_RUNTIME_FEED}}verify-selected{{else}}build{{end}}'
+      - task: '{{if or .ISOPLANE_TEST_RUNTIME_FEED (ne OS "linux")}}verify-selected{{else}}build{{end}}'
 
   verify-selected:
     internal: true
