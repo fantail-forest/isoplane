@@ -128,16 +128,11 @@ stage_icu() {
 }
 
 runtime_version_file="$WORK/pack-version"
-# stamp_pack_version <version file>
 stamp_pack_version() {
-  local build_id label stamp
-  build_id="$(date -u +%Y%m%d).1"
-  label="$PACK_LABEL-$(date -u +%Y%m%d%H%M%S)"
-  # Arcade's date stamp: yy * 1000 + mm * 50 + dd.
-  stamp=$((10#$(date -u +%y) * 1000 + 10#$(date -u +%m) * 50 + 10#$(date -u +%d)))
-  echo "10.0.$PACK_PATCH-$label.$PACK_ITERATION.$stamp.1" > "$1"
-  PACK_BUILD_ID="$build_id"
-  PACK_VERSION_LABEL="$label"
+  PACK_VERSION_SUFFIX="$PACK_LABEL-${ISOPLANE_RUNTIME_INPUTS:?Task must supply the runtime source checksum}.$PACK_ITERATION"
+  # Arcade needs a calendar build number for assembly/file versions.
+  PACK_BUILD_ID="$(git -C "$RUNTIME" log -1 --format=%cs | tr -d '-').1"
+  printf '%s\n' "10.0.$PACK_PATCH-$PACK_VERSION_SUFFIX" > "$1"
   echo "    pack version $(cat "$1")"
 }
 require_build_inputs() {
@@ -188,8 +183,7 @@ stage_runtime() {
   require_build_inputs
   audit_pinvokes "$RUNTIME"
   stamp_pack_version "$runtime_version_file"
-  # An official build is the one Arcade versions from the label and build id
-  # rather than stamping "dev" or "ci"; nothing else about it applies here.
+  # Official versioning keeps the upstream assembly versions instead of dev versions.
   (
     mkdir -p "$WORK/runtime-artifacts"
     if [ ! -e "$RUNTIME/artifacts" ]; then
@@ -200,8 +194,8 @@ stage_runtime() {
     build_runtime -os wasi -subset mono+libs+packs -c Release -bl \
       /nodeReuse:false /p:UseSharedCompilation=false \
       /p:OfficialBuild=true "/p:OfficialBuildId=$PACK_BUILD_ID" \
-      "/p:PatchVersion=$PACK_PATCH" "/p:PreReleaseVersionLabel=$PACK_VERSION_LABEL" \
-      "/p:PreReleaseVersionIteration=$PACK_ITERATION" /p:WasmNativeStrip=false \
+      "/p:PatchVersion=$PACK_PATCH" "/p:VersionSuffix=$PACK_VERSION_SUFFIX" \
+      /p:WasmNativeStrip=false \
       /p:EnableSourceLink=false \
       "/p:WasiOpenSslLibDir=$OUT/openssl/lib" \
       "/p:_IcuDir=$ICU_MONO_NATIVE" "/p:ICULibDir=$ICU_MONO_NATIVE/lib" \

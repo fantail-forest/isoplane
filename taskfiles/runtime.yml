@@ -2,15 +2,18 @@ version: '3'
 
 tasks:
   selected:
+    run: once
     cmds:
       - task: '{{if or .ISOPLANE_TEST_RUNTIME_FEED (ne OS "linux")}}verify-selected{{else}}build{{end}}'
 
   verify-selected:
+    run: once
     internal: true
     cmds:
       - '"{{.PYTHON}}" guest-runtime/feed-identity.py verify-artifact "{{.FEED}}"'
 
   build:
+    run: once
     sources:
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/src/**/*'
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/eng/**/*'
@@ -25,7 +28,7 @@ tasks:
       - '{{.ROOT_DIR}}/guest-runtime/*.sh'
       - '{{.ROOT_DIR}}/guest-runtime/*.py'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
-      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
+      - '{{.ROOT_DIR}}/global.json'
       - exclude: 'vendor/dotnet-runtime/**/__pycache__/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Isoplane.GuestRuntime.props'
@@ -35,7 +38,7 @@ tasks:
       - '"{{.PYTHON}}" scripts/fixture-tools.py require-linux'
       - task: toolchain
       - task: dependencies
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile runtime feed'
+      - 'ISOPLANE_RUNTIME_INPUTS="{{.CHECKSUM}}" "{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile runtime feed'
 
   runtime:
     cmds:
@@ -54,6 +57,7 @@ tasks:
       - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile acquire'
 
   toolchain:
+    run: once
     label: 'runtime:toolchain:{{.PLATFORM}}'
     sources:
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
@@ -65,12 +69,12 @@ tasks:
       - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile toolchain'
 
   openssl:
+    run: once
     deps: [toolchain]
     sources:
       - '{{.ROOT_DIR}}/vendor/openssl/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
-      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libcrypto.a'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libssl.a'
@@ -78,12 +82,12 @@ tasks:
       - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile openssl'
 
   icu:
+    run: once
     deps: [toolchain]
     sources:
       - '{{.ROOT_DIR}}/vendor/icu/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/build.sh'
       - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
-      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/icu/mono/runtimes/wasi-wasm/native/lib/icudt.dat'
     cmds:
