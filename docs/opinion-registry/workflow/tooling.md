@@ -1,12 +1,14 @@
-# Tools and Custom Automation
+# Libraries, Tools and Custom Automation
 
-## Prefer maintained tools and libraries for established responsibilities
+## Use the standard runtime and maintained libraries for solved problems
 
-Apply the [dependency guidance](../../../AGENTS.md#dependency-management) across product code, tests, builds, releases and repository automation. Evaluate the tools already adopted and their supported features before writing a substitute for an established responsibility, including dependency resolution, scheduling, caching, parsing, migrations, authentication and test execution. Count the custom implementation, tests, state formats and recovery procedures in the maintenance cost; avoiding a declared dependency does not make those costs disappear.
+Apply the [dependency guidance](../../../AGENTS.md#dependency-management) across product code, tests, builds, releases and repository automation. Use the language's standard library and runtime where they cover the operation well; use maintained libraries for established functionality they do not adequately cover. Date and time parsing, URLs, serialization, archive handling and command-line parsing are established problems, even when a first implementation looks short.
 
-**Not this:** Writing a general-purpose subsystem in a script because the first version looks quick, or treating development tooling as exempt from the library choices we apply to production code.
+Use the library's supported features together: define commands and options through the argument parser and derive help from those definitions. Evaluate already-adopted libraries and tools before adding alternatives. Count edge cases, tests, state formats and recovery procedures in the maintenance cost; avoiding a declared dependency does not make those costs disappear.
 
-**Exception:** A small product-specific operation or a concrete requirement that suitable maintained tools cannot meet can justify custom code. State the gap briefly and keep the implementation scoped to it; choosing a tool still requires weighing its integration and operational costs.
+**Not this:** Handwritten calendar arithmetic to parse a timestamp, separate argument-parsing switches and help strings, or a homegrown dependency resolver or scheduler because it lives in a development script.
+
+**Exception:** Small, obvious glue or product-specific logic can be simpler than adding a dependency. A concrete requirement that suitable runtime APIs, libraries or tools cannot meet can also justify custom code; keep it scoped to that gap and weigh integration costs.
 
 ## Let each tool own its state and workflow
 

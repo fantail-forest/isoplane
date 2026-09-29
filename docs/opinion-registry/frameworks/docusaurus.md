@@ -20,11 +20,11 @@ their content. Add documentation when it serves a real need, not to fill a categ
 
 ## Generate reference docs from doc comments in code
 
-Generate API references, config references, and capability tables from the doc comments and definitions in code, so that updating them never needs a manual edit to a docs file, and keep a test on the stable toolchain that fails when a generated page drifts from the code. Write guides and tutorials by hand; expect them to need manual edits to stay in sync, and treat that as part of the change that made them stale.
+Follow the [reference-documentation guidance](../../../AGENTS.md#comments--documentation): generate API references, config references and capability tables from code as a prerequisite of the documentation build, or drift-check deliberately retained generated copies on the stable toolchain. Generation at build time removes the need to synchronize a stored copy; generator behavior can still need tests. Write guides and tutorials by hand and update them when the behavior they explain changes.
 
-**Not this:** A drift test that needs nightly rustc and the .NET SDK to run, so that it runs nowhere.
+**Not this:** Keeping a generated copy solely to give a drift test something to compare, or making a test runner build the documentation prerequisites.
 
-**Exception:** None.
+**Exception:** Repository readers or consumers that cannot run the generator may benefit from retained generated pages. Check those copies for drift rather than requiring every consumer to generate them.
 
 ## Describe supported behavior and its limits
 

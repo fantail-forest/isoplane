@@ -12,6 +12,8 @@ Follow the two startup phases in [Error Handling](../../../AGENTS.md#error-handl
 
 The [error-handling rules](../../../AGENTS.md#error-handling) place responsibility at the boundary that decides the outcome. A wide completion event can carry the failure context without duplicate error records at every propagating layer; startup failures need their own terminal event. The [observability guarantee](../../../AGENTS.md#observability) covers handled failures, not abrupt process loss.
 
-**Not this:** A panic in host bookkeeping taking the cell down; an error swallowed into a `let _ =` so the request simply never answers.
+Recovery also needs the error's meaning: a missing file may be recreated, while a failed read of an existing file does not establish that replacing it is safe. A fallback that erases this distinction can turn a temporary failure into permanent loss even when it logs the error.
+
+**Not this:** A panic in host bookkeeping taking the cell down; an error swallowed into a `let _ =` so the request simply never answers; or a cleanup job deleting snapshots because it could not read their headers.
 
 **Exception:** None.
