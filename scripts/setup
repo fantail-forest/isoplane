@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# Install the pinned development SDK and native helpers in shared leased storage.
+# Install the pinned development SDK and native helpers for this host.
 set -euo pipefail
 exec python3 "$(dirname "${BASH_SOURCE[0]}")/dev_tools.py"

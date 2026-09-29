@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the shared Mono runtime modules the Isoplane.Sdk package carries, the
-# production runtime and the local-debug one, and runtime-build.json recording
+# production runtime and the local-debug one, and runtime.json recording
 # the SDK version, source revision and Mono pack they were built from.
 # Usage: guest-sdks/dotnet/MonoRuntime/build.sh --output DIRECTORY [--source-revision REVISION]
 # The revision defaults to the checkout's HEAD, marked +dirty when it has changes.
@@ -26,11 +26,11 @@ mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 # Symbols stay in the interpreter's module so a trap names its frames.
 ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
-  -p:WasmNativeStrip=false --artifacts-path "$HERE/obj/production"
+  -p:WasmNativeStrip=false --artifacts-path "$OUTPUT/intermediates/production"
 ISOPLANE_OUT_DIR="$OUTPUT" ISOPLANE_OUT=Isoplane.MonoRuntime.Debug "$ROOT/guest-sdks/dotnet/build-guest.sh" "$HERE" \
-  -p:WasmNativeStrip=false -p:IsoplaneLocalDebug=true --artifacts-path "$HERE/obj/debug"
+  -p:WasmNativeStrip=false -p:IsoplaneLocalDebug=true --artifacts-path "$OUTPUT/intermediates/debug"
 for module in Isoplane.MonoRuntime Isoplane.MonoRuntime.Debug; do
   [ -f "$OUTPUT/$module.wasm.runtime" ] \
     || { echo "FATAL: the $module publish recorded no Mono pack identity" >&2; exit 1; }
 done
-python3 "$HERE/receipt.py" "$OUTPUT" "$ROOT" ${REVISION:+"$REVISION"}
+python3 "$HERE/manifest.py" "$OUTPUT" "$ROOT" ${REVISION:+"$REVISION"}

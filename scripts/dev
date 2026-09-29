@@ -19,11 +19,7 @@ def development_environment(root, inherited, tools=None):
     if sdk is not None and (sdk / ("dotnet.exe" if os.name == "nt" else "dotnet")).is_file():
         paths.append(str(sdk))
         environment["DOTNET_ROOT"] = str(sdk)
-    wasi = (Path(environment['ISOPLANE_RUNTIME_WORK']) / 'wasi-sdk'
-            if environment.get('ISOPLANE_RUNTIME_SOURCE') == str(root / 'guest-runtime')
-            else root / "guest-runtime/work/wasi-sdk")
-    if not (wasi / 'bin/clang').is_file():
-        wasi = root / 'guest-runtime/work/wasi-sdk'
+    wasi = Path(environment['ISOPLANE_RUNTIME_WORK']) / 'wasi-sdk'
     if (wasi / "bin/clang").is_file():
         environment.setdefault("WASI_SDK_PATH", str(wasi))
     environment["PATH"] = os.pathsep.join([*paths, environment.get("PATH", os.defpath)])
@@ -45,8 +41,6 @@ def main():
     import dev_tools
     name, _, _ = dev_tools.identity(ROOT)
     with dev_tools.storage.product(name, root=dev_tools.storage.tools_root(), read_only=True) as tools:
-        if tools is not None and not (tools / "complete").is_file():
-            raise SystemExit("Development tool installation is incomplete; run scripts/setup.")
         with dev_tools.storage.development(ROOT, os.environ) as environment:
             if tools is not None:
                 environment['ISOPLANE_DEV_TOOLS'] = str(tools)

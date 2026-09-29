@@ -2,30 +2,17 @@
 # Build every Rust guest to .build/wasm32/rust-guests/*.wasm and list them in .build/wasm32/rust-guests/manifest.
 #
 #   scripts/dev guests/build.sh            # build all
-#   scripts/dev guests/build.sh --if-stale # only when inputs or outputs differ from the build receipt
+#   scripts/dev guests/build.sh --if-stale # reuse outputs when inputs have not changed
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$ROOT/../.build/wasm32/rust-guests"
 MANIFEST="$OUT/manifest"
-IF_STALE=0
-[ "${1:-}" = "--if-stale" ] && IF_STALE=1
-
 TOOLS="$ROOT/../scripts/fixture-tools.py"
-
-INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/isoplane-abi" "$TOOLS" "$ROOT/build.sh")
-
-is_fresh() {
-  [ -f "$MANIFEST" ] || return 1
-  local outputs=("$MANIFEST") g
-  while read -r g; do outputs+=("$OUT/$g.wasm"); done < "$MANIFEST"
-  python3 "$TOOLS" fresh "$OUT/.fixture-receipt.json" "$INPUTS" "${outputs[@]}"
-}
-
-if [ "$IF_STALE" = 1 ] && is_fresh; then
-  echo "==> $OUT is up to date"
-  exit 0
+if [ "${1:-}" != --compile ]; then
+  exec python3 "$ROOT/../scripts/tasks.py" fixtures:rust
 fi
+
 TARGET=wasm32-unknown-unknown
 PROFILE=release
 # A target directory of the guests' own: a host `cargo test` that runs this
@@ -147,7 +134,3 @@ fi
 printf '%s\n' "${GUESTS[@]}" foreign-module > "$MANIFEST"
 echo
 echo "==> wrote $(wc -l < "$MANIFEST") modules to $OUT"
-
-outputs=("$MANIFEST")
-while read -r g; do outputs+=("$OUT/$g.wasm"); done < "$MANIFEST"
-python3 "$TOOLS" record "$OUT/.fixture-receipt.json" "$INPUTS" "${outputs[@]}"

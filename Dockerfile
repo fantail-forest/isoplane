@@ -15,6 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       util-linux zstd unzip xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
+COPY scripts/dev_tools.py scripts/build_storage.py /opt/isoplane-tool-setup/
+RUN PYTHONPATH=/opt/isoplane-tool-setup python3 -c 'from pathlib import Path; import dev_tools; dev_tools.install_task(Path("/opt/isoplane-tool-setup"))' \
+    && mv /root/.local/bin/task /usr/local/bin/task \
+    && rm -rf /opt/isoplane-tool-setup
+
 # --- Rust (host runtime + Rust guests) -------------------------------------
 ARG RUST_VERSION=1.98.0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \

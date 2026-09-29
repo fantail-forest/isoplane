@@ -1,9 +1,7 @@
 """Worktree-owned build output and explicit cleanup."""
 
 from contextlib import contextmanager
-import errno
 import hashlib
-import json
 import os
 from pathlib import Path
 import platform
@@ -29,112 +27,14 @@ def size_bytes(path):
         return 0
 
 
-def source_preservation_reason(directory):
-    """Refuse eviction of unknown repositories or generated trees with local state."""
-    directory = Path(directory)
-    if not directory.exists():
-        return None
-    def git(tree, *arguments):
-        return subprocess.check_output(['git', '--no-optional-locks', '-C', str(tree), *arguments],
-                                       stderr=subprocess.PIPE, text=True).strip()
-
-    def scan_error(error):
-        raise error
-
-    for current, directories, files in os.walk(directory, followlinks=False, onerror=scan_error):
-        if '.git' not in directories + files:
-            continue
-        tree = Path(current)
-        directories[:] = []
-        metadata = tree / '.git'
-        record = metadata / 'isoplane-source.json'
-        if not metadata.is_dir() or metadata.is_symlink() or not record.is_file():
-            return f'unrecognized source repository: {tree}'
-        try:
-            state = json.loads(record.read_text())
-            head = state['head']
-            if not isinstance(head, str) or git(tree, 'rev-parse', 'HEAD') != head:
-                return f'local source commits: {tree}'
-            if git(tree, 'status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'):
-                return f'local source edits: {tree}'
-            outputs = state.get('generated_directories', [])
-            if not isinstance(outputs, list) or not all(isinstance(name, str) and name not in ('', '.', '..')
-                                                       and '/' not in name and '\\' not in name for name in outputs):
-                return f'unverified source build directories: {tree}'
-            ignored = git(tree, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z')
-            for name in ignored.split('\0'):
-                if name and name.split('/', 1)[0] not in outputs:
-                    return f'ignored local source input: {tree / name}'
-            if (metadata / 'isoplane-source-backups').exists():
-                return f'preserved source files: {tree}'
-            branch = git(tree, 'symbolic-ref', 'HEAD')
-            refs = git(tree, 'for-each-ref', '--format=%(refname)').splitlines()
-            generated = state.get('generated_heads', [head])
-            if not isinstance(generated, list) or head not in generated or not all(
-                    isinstance(commit, str) and len(commit) in (40, 64)
-                    and all(character in '0123456789abcdef' for character in commit) for commit in generated):
-                return f'unverified generated source history: {tree}'
-            if any(ref != branch and not ref.startswith('refs/isoplane/source-backups/') for ref in refs):
-                return f'local source references: {tree}'
-            if git(tree, 'rev-list', '--all', '--reflog', '--not', *generated):
-                return f'preserved source history: {tree}'
-        except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
-            return f'cannot verify disposable source at {tree}: {error}'
-    return None
-
-
 def clean(root, dry_run=False):
-    """Explicitly remove owned output; callers must stop its producers first."""
+    """Explicitly remove a disposable output directory."""
     root = Path(root)
-    if not root.exists():
+    if not root.is_dir() or root.is_symlink():
         return []
-    removed = []
-    for directory in sorted(root.iterdir()):
-        owner = directory / 'owner.json'
-        if directory.is_symlink() or not directory.is_dir() or not owner.is_file() or owner.is_symlink():
-            continue
-        reason = source_preservation_reason(directory)
-        if reason:
-            print(f'Retained {directory}: {reason}', file=sys.stderr)
-            removed.extend(clean_source_siblings(directory, dry_run))
-            continue
-        removed.append((directory, size_bytes(directory)))
-        if not dry_run:
-            remove_owned_directory(directory)
-    return removed
-
-
-def remove_owned_directory(directory):
-    """Keep the ownership record if deleting build contents fails."""
-    for path in directory.iterdir():
-        if path.name == 'owner.json':
-            continue
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-        else:
-            path.unlink(missing_ok=True)
-    shutil.rmtree(directory)
-
-
-def clean_source_siblings(directory, dry_run):
-    """Keep edited repositories without retaining unrelated compiler output."""
-    if (directory / '.git').exists():
-        return []
-    removed = []
-    for path in sorted(directory.iterdir()):
-        if path.name == 'owner.json':
-            continue
-        if path.is_symlink():
-            continue
-        if path.is_dir() and source_preservation_reason(path):
-            removed.extend(clean_source_siblings(path, dry_run))
-            continue
-        removed.append((path, size_bytes(path)))
-        if not dry_run:
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink(missing_ok=True)
+    removed = [(root, size_bytes(root))]
+    if not dry_run:
+        shutil.rmtree(root)
     return removed
 
 
@@ -144,10 +44,9 @@ def retained_run(root, remove_on_success=False):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="run-", dir=root))
-    (directory / 'owner.json').write_text(json.dumps({'pid': os.getpid(), 'platform': platform_name()}))
     yield directory
     if remove_on_success:
-        remove_owned_directory(directory)
+        shutil.rmtree(directory)
 
 
 def tools_root():
@@ -177,11 +76,6 @@ def build_root(root=None):
     return (repository_root() if root is None else Path(root)) / '.build' / platform_name()
 
 
-def shared_root(target="wasm32"):
-    """Published artifacts grouped by their target, independent of the builder."""
-    return repository_root() / ".build" / target / "published"
-
-
 def diagnostics_root():
     return repository_root() / '.test-runs' / platform_name()
 
@@ -206,17 +100,12 @@ def product(identity, root=None, read_only=False, name=None):
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", name):
         raise ValueError(f"invalid build directory name: {name}")
     directory = root / name
-    owner = directory / 'owner.json'
-    if directory.is_symlink() or owner.is_symlink():
+    if directory.is_symlink():
         raise ValueError(f"product storage must not be a symlink: {directory}")
     if read_only:
-        yield directory if owner.is_file() else None
+        yield directory if directory.is_dir() else None
         return
-    if directory.exists() and not owner.is_file():
-        raise ValueError(f"product storage is not owned: {directory}")
     directory.mkdir(parents=True, exist_ok=True)
-    if not owner.exists():
-        owner.write_text(json.dumps({'identity': identity}))
     yield directory
 
 
@@ -277,71 +166,8 @@ def digest(path, algorithm="sha256"):
         return hashlib.file_digest(source, algorithm).hexdigest()
 
 
-def restore_files(entry, outputs):
-    receipt = entry / 'files.json'
-    files = [entry / str(index) for index in range(len(outputs))]
-    try:
-        hashes = json.loads(receipt.read_text())
-        valid = isinstance(hashes, list) and len(hashes) == len(files) and all(
-            digest(path) == expected for path, expected in zip(files, hashes))
-    except (FileNotFoundError, json.JSONDecodeError):
-        valid = False
-    if not valid:
-        return False
-    for source, destination in zip(files, outputs):
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='.product-', dir=destination.parent) as temporary:
-            staged = Path(temporary) / 'file'
-            shutil.copy2(source, staged)
-            staged.replace(destination)
-    return True
-
-
-def artifact_directory(identity, target="wasm32"):
-    return shared_root(target) / hashlib.sha256(identity.encode()).hexdigest()
-
-
-def publish_files(identity, outputs, target="wasm32"):
-    """Publish a complete artifact directory; consumers only read completed files."""
-    entry = artifact_directory(identity, target)
-    entry.parent.mkdir(parents=True, exist_ok=True)
-    if entry.is_symlink():
-        raise ValueError(f'shared artifact directory must not be a symlink: {entry}')
-    hashes = [digest(path) for path in outputs]
-    with tempfile.TemporaryDirectory(prefix='.publish-', dir=entry.parent) as temporary:
-        staged = Path(temporary) / 'artifact'
-        staged.mkdir()
-        for index, source in enumerate(outputs):
-            shutil.copy2(source, staged / str(index))
-        (staged / 'files.json').write_text(json.dumps(hashes))
-        (staged / 'owner.json').write_text(json.dumps({'identity': identity}))
-        try:
-            staged.rename(entry)
-        except OSError as error:
-            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) or not entry.is_dir():
-                raise
-            if json.loads((entry / 'files.json').read_text()) != hashes or any(
-                    digest(entry / str(index)) != expected for index, expected in enumerate(hashes)):
-                raise ValueError(f'Shared artifacts differ at {entry}; clean them before rebuilding') from error
-
-
-def cached_files(identity, outputs, produce, linux_only=False, target="wasm32"):
-    """Consume published files, or publish a completed build from its owning host."""
-    outputs = [Path(path) for path in outputs]
-    identity = 'files:' + identity
-    entry = artifact_directory(identity, target)
-    if restore_files(entry, outputs):
-        return
-    if produce is None or (linux_only and platform.system() != 'Linux'):
-        raise RuntimeError('Shared build outputs are missing or stale. Build them on Linux in this worktree first.')
-    if entry.exists():
-        raise ValueError(f'Shared artifacts are invalid at {entry}; clean them before rebuilding')
-    produce()
-    publish_files(identity, outputs, target)
-
-
 def download(url, destination, expected, algorithm="sha256"):
-    """Verify and publish downloads, with each consumer staging its own copy."""
+    """Download an archive into its build directory and verify its checksum."""
     destination = Path(destination)
     if destination.is_file() and digest(destination, algorithm) == expected:
         return
@@ -354,7 +180,7 @@ def download(url, destination, expected, algorithm="sha256"):
             if digest(pending, algorithm) != expected:
                 raise ValueError(f'download hash mismatch: {url}')
             pending.replace(destination)
-    cached_files(f'download:{algorithm}:{expected}', [destination], fetch, target="downloads")
+    fetch()
 
 
 if __name__ == "__main__":
@@ -366,20 +192,7 @@ if __name__ == "__main__":
         root = Path(sys.argv[2]).resolve()
         with development(root, os.environ) as environment:
             raise SystemExit(subprocess.call(sys.argv[3:], env=environment))
-    elif sys.argv[1:2] == ["files"]:
-        parser.add_argument("identity")
-        parser.add_argument("--linux-only", action="store_true")
-        parser.add_argument("--output", type=Path, action="append", required=True)
-        if "--" not in sys.argv:
-            parser.error("files requires -- followed by the build command")
-        separator = sys.argv.index("--")
-        arguments = parser.parse_args(sys.argv[2:separator])
-        command = sys.argv[separator + 1:]
-        if not command:
-            parser.error("files requires a build command")
-        cached_files(arguments.identity, arguments.output,
-                     lambda: subprocess.run(command, check=True),
-                     linux_only=arguments.linux_only)
+
     else:
         parser.add_argument("url")
         parser.add_argument("destination", type=Path)

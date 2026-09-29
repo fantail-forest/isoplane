@@ -2,7 +2,7 @@
   <!-- The one declaration of the release version. Every first-party package,
        the CLI tool and the generated template carry it; scripts/release-version.py
        moves it together with the in-repo SDK pins that must match. -->
-  <PropertyGroup>
+  <PropertyGroup Condition="!$(MSBuildProjectDirectory.StartsWith('$(MSBuildThisFileDirectory).build')) AND !$(MSBuildProjectDirectory.StartsWith('$(MSBuildThisFileDirectory).test-runs'))">
     <_IsoplaneBuildRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$([MSBuild]::NormalizeDirectory('$(ISOPLANE_BUILD_ROOT)'))</_IsoplaneBuildRoot>
     <UseArtifactsOutput Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">true</UseArtifactsOutput>
     <ArtifactsPath Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">$(_IsoplaneBuildRoot).build/clr-anycpu/managed/$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ArtifactsPath>

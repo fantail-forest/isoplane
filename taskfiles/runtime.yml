@@ -1,0 +1,97 @@
+version: '3'
+
+tasks:
+  selected:
+    cmds:
+      - task: '{{if .ISOPLANE_TEST_RUNTIME_FEED}}verify-selected{{else}}build{{end}}'
+
+  verify-selected:
+    internal: true
+    cmds:
+      - '"{{.PYTHON}}" guest-runtime/feed-identity.py verify-artifact "{{.FEED}}"'
+
+  build:
+    sources:
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/src/**/*'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/eng/**/*'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/*.props'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/*.targets'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/*.proj'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/*.json'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/*.config'
+      - '{{.ROOT_DIR}}/vendor/dotnet-runtime/*.sh'
+      - '{{.ROOT_DIR}}/vendor/openssl/**/*'
+      - '{{.ROOT_DIR}}/vendor/icu/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/*.sh'
+      - '{{.ROOT_DIR}}/guest-runtime/*.py'
+      - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
+      - exclude: '**/.git/**/*'
+      - exclude: '**/artifacts/**/*'
+      - exclude: '**/.dotnet/**/*'
+      - exclude: '**/.packages/**/*'
+      - exclude: '**/.tools/**/*'
+      - exclude: '**/__pycache__/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Isoplane.GuestRuntime.props'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.*.nupkg'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.*.nupkg'
+    cmds:
+      - '"{{.PYTHON}}" scripts/fixture-tools.py require-linux'
+      - task: toolchain
+      - task: dependencies
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile runtime feed'
+
+  runtime:
+    cmds:
+      - task: build
+
+  feed:
+    cmds:
+      - task: build
+
+  dependencies:
+    internal: true
+    deps: [openssl, icu]
+
+  acquire:
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile acquire'
+
+  toolchain:
+    label: 'runtime:toolchain:{{.PLATFORM}}'
+    sources:
+      - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/guest-runtime/build.sh'
+    generates:
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/wasi-sdk/VERSION'
+    cmds:
+      - task: acquire
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile toolchain'
+
+  openssl:
+    deps: [toolchain]
+    sources:
+      - '{{.ROOT_DIR}}/vendor/openssl/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/build.sh'
+      - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
+      - exclude: '**/.git/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libcrypto.a'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libssl.a'
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile openssl'
+
+  icu:
+    deps: [toolchain]
+    sources:
+      - '{{.ROOT_DIR}}/vendor/icu/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/build.sh'
+      - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/taskfiles/runtime.yml'
+      - exclude: '**/.git/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime/icu/mono/runtimes/wasi-wasm/native/lib/icudt.dat'
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile icu'

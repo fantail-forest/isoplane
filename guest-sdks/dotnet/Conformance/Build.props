@@ -2,6 +2,7 @@
   <PropertyGroup>
     <_IsoplaneConformanceRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$(ISOPLANE_BUILD_ROOT)</_IsoplaneConformanceRoot>
     <_IsoplaneConformanceRoot Condition="'$(_IsoplaneConformanceRoot)' == ''">$(MSBuildThisFileDirectory)../../..</_IsoplaneConformanceRoot>
-    <_IsoplaneConformanceArtifacts>$([MSBuild]::NormalizeDirectory('$(_IsoplaneConformanceRoot)', '.build', 'clr-anycpu', 'conformance'))</_IsoplaneConformanceArtifacts>
+    <_IsoplaneConformanceArtifacts Condition="'$(ISOPLANE_MANAGED_ARTIFACTS)' != ''">$([MSBuild]::NormalizeDirectory('$(ISOPLANE_MANAGED_ARTIFACTS)', 'conformance'))</_IsoplaneConformanceArtifacts>
+    <_IsoplaneConformanceArtifacts Condition="'$(_IsoplaneConformanceArtifacts)' == ''">$([MSBuild]::NormalizeDirectory('$(_IsoplaneConformanceRoot)', '.build', 'clr-anycpu', 'conformance'))</_IsoplaneConformanceArtifacts>
   </PropertyGroup>
 </Project>

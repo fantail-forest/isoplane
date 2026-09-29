@@ -61,7 +61,8 @@ cargo metadata --no-deps --format-version 1 \
 ## Common Operations
 
 ```sh
-scripts/setup                                     # Install native guest tools
+scripts/setup                                     # Initialize submodules and install Task/native tools
+python3 scripts/tasks.py --list                    # List build and release tasks
 scripts/dev <command>                              # Run a native development command
 scripts/dev                                       # A development shell
 scripts/dev --container --build                    # Optional Linux toolchain image
@@ -200,6 +201,8 @@ Use the type system so that misuse is a compile error.
 ## Testing Standards
 
 Behavior changes need coverage that detects their absence or regression. Extend or reuse existing tests when they cover the contract; add a separate test when it contributes distinct failure detection. Judge that contribution against build, execution, and maintenance cost.
+
+Validate repository build, setup, cleanup and release scripts by running the real commands; do not maintain tests of build-script machinery.
 
 ### Principles
 

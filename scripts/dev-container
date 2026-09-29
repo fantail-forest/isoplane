@@ -160,13 +160,19 @@ fi
 PORTS=()
 for p in ${ISOPLANE_PORTS:-}; do PORTS+=(-p "$p"); done
 create_container() {
+  local common_git
+  common_git="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
+  local git_mount=()
+  if [[ "$common_git" != "$ROOT/"* ]]; then
+    git_mount=(-v "$common_git:$common_git")
+  fi
   d run -d --name "$NAME" --hostname "$NAME" \
     --label "$LABEL" --label "isoplane.created=$(date -u +%FT%TZ)" \
     --user "$(id -u):$(id -g)" \
-    -v "$ROOT:/isoplane" \
+    -v "$ROOT:$ROOT" "${git_mount[@]}" \
     -v isoplane-cargo-registry:/opt/cargo/registry \
     -v isoplane-nuget:/nuget \
-    -w /isoplane \
+    -w "$ROOT" \
     -e CARGO_HOME=/opt/cargo \
     -e NUGET_PACKAGES=/nuget \
     -e HOME=/tmp/home \
@@ -273,4 +279,4 @@ done
 [ -t 0 ] && EXEC+=(-it)
 EXEC+=("$NAME")
 [ $# -eq 0 ] && set -- bash
-exec "${EXEC[@]}" python3 /isoplane/scripts/build_storage.py runtime /isoplane "$@"
+exec "${EXEC[@]}" python3 "$ROOT/scripts/build_storage.py" runtime "$ROOT" "$@"

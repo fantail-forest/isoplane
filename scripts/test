@@ -103,8 +103,6 @@ def main():
     packages = {package["id"]: package for package in metadata["packages"]}
     runs = storage.diagnostics_root()
     with storage.retained_run(runs) as logs:
-        (logs / "owner.json").write_text(json.dumps({"workspace": str(ROOT), "pid": os.getpid(),
-                                                    "command": sys.argv}) + "\n")
         return execute(args, parser, cpus, selection, packages, runs, logs)
 
 

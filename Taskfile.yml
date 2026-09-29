@@ -1,0 +1,147 @@
+version: '3'
+
+vars:
+  PYTHON: '{{.ISOPLANE_PYTHON | default (ternary "python" "python3" (eq OS "windows"))}}'
+  PLATFORM: '{{if eq OS "darwin"}}osx{{else if eq OS "windows"}}win{{else}}{{OS}}{{end}}-{{if eq ARCH "amd64"}}x64{{else}}{{ARCH}}{{end}}'
+
+  MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
+  FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
+
+includes:
+  fixtures: taskfiles/fixtures.yml
+  runtime: taskfiles/runtime.yml
+
+tasks:
+  fixtures:
+    desc: Prepare shared fixtures before running parallel tests
+    cmds:
+      - task: fixtures:rust
+      - task: fixtures:dotnet
+      - task: fixtures:acceptance
+      - task: fixtures:package
+      - task: cli
+      - task: managed:debugger
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py dap-python .'
+      - task: fixtures:feed
+
+  runtime:
+    desc: Build the shared Mono runtime on Linux
+    cmds:
+      - task: runtime:build
+
+  managed:cli:
+    desc: Build the portable managed CLI on Linux
+    sources: &managed_sources
+      - tools/**/*.cs
+      - tools/**/*.csproj
+      - tools/**/*.props
+      - tools/**/*.targets
+      - Directory.Build.props
+      - global.json
+      - nuget.config
+      - licenses/SdkPackage.props
+      - Taskfile.yml
+      - scripts/fixture-tools.py
+      - exclude: tools/**/obj/**/*
+      - exclude: tools/**/bin/**/*
+    generates:
+      - .build/clr-anycpu/isoplane-cli/artifacts/bin/Isoplane.Cli/debug/Isoplane.Cli.dll
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py compile-managed cli'
+
+  managed:debugger:
+    sources: *managed_sources
+    generates:
+      - .build/clr-anycpu/debugger-protocol/artifacts/bin/Isoplane.Debugging.Tests/debug/Isoplane.Debugging.Tests.dll
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py compile-managed debugger'
+
+  native:
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py isoplane-native . debug'
+
+  cli:
+    desc: Stage the managed CLI with native support for this platform
+    deps: [managed:cli, native]
+    cmds:
+      - '"{{.PYTHON}}" scripts/fixture-tools.py stage-cli'
+
+  fixtures:rust:
+    desc: Build portable Rust WASM fixtures
+    sources:
+      - guests/**/*.rs
+      - guests/**/Cargo.toml
+      - guests/Cargo.lock
+      - guests/.cargo/**/*
+      - guest-sdks/rust/**/*.rs
+      - guest-sdks/rust/**/Cargo.toml
+      - crates/isoplane-abi/**/*
+      - guests/build.sh
+      - Taskfile.yml
+    generates:
+      - .build/wasm32/rust-guests/manifest
+      - .build/wasm32/rust-guests/hello.wasm
+      - .build/wasm32/rust-guests/quotes-api.wasm
+      - .build/wasm32/rust-guests/misbehaver.wasm
+      - .build/wasm32/rust-guests/bigheap.wasm
+      - .build/wasm32/rust-guests/impure-cctor.wasm
+      - .build/wasm32/rust-guests/undeclared-import.wasm
+      - .build/wasm32/rust-guests/foreign-module.wasm
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guests/build.sh --compile'
+
+  managed:packages:
+    sources:
+      - guest-sdks/dotnet/**/*
+      - tools/**/*.cs
+      - tools/**/*.csproj
+      - tools/**/*.props
+      - tools/**/*.targets
+      - Directory.Build.props
+      - global.json
+      - nuget.config
+      - Taskfile.yml
+      - scripts/fixture-packages.py
+      - '{{.MODULES}}/runtime.json'
+      - exclude: '**/obj/**/*'
+      - exclude: '**/bin/**/*'
+      - exclude: '**/out/**/*'
+      - exclude: '**/__pycache__/**/*'
+    generates:
+      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Sdk.*.nupkg
+      - .build/clr-anycpu/fixture-packages/packages/Isoplane.AspNetCore.*.nupkg
+      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Templates.*.nupkg
+      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Cli.*.nupkg
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-packages.py pack-managed'
+
+  native:release:
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py isoplane-native . release'
+
+  fixtures:feed:
+    deps: [managed:packages, native:release]
+    cmds:
+      - '"{{.PYTHON}}" scripts/fixture-packages.py attach-native'
+
+  release:shared:
+    cmds:
+      - task: runtime
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/release-managed.py'
+
+  release:linux:
+    desc: Build shared outputs and the Linux release
+    deps: [release:shared]
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-preview.py --assemble {{.CLI_ARGS}}'
+
+  release:macos:
+    desc: Assemble the macOS release from shared Linux outputs
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-preview.py --assemble {{.CLI_ARGS}}'
+
+  release:windows:
+    desc: Assemble the Windows release from shared Linux outputs
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-windows.py {{.CLI_ARGS}}'
+

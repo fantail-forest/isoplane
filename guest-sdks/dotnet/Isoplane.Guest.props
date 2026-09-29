@@ -5,7 +5,7 @@
     <IsoplaneCli Condition="'$(IsoplaneCli)' == '' AND '$(ISOPLANE_CLI)' != ''">$(ISOPLANE_CLI)</IsoplaneCli>
     <_IsoplaneToolExtension Condition="$([MSBuild]::IsOSPlatform('Windows'))">.exe</_IsoplaneToolExtension>
     <_IsoplaneSdkDirectory>$(MSBuildThisFileDirectory)</_IsoplaneSdkDirectory>
-    <_IsoplaneCheckoutFeed>$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', 'guest-runtime', 'out', 'feed'))</_IsoplaneCheckoutFeed>
+    <_IsoplaneCheckoutFeed>$([MSBuild]::NormalizeDirectory('$(_IsoplaneSdkDirectory)', '..', '..', '.build', 'wasm32', 'runtime', 'feed'))</_IsoplaneCheckoutFeed>
     <IsoplaneGuestRuntimeFeed Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND Exists('$(_IsoplaneCheckoutFeed)Isoplane.GuestRuntime.props')">$(_IsoplaneCheckoutFeed)</IsoplaneGuestRuntimeFeed>
   </PropertyGroup>
   <PropertyGroup Condition="'$(IsoplaneGuestRuntimeFeed)' == '' AND $([MSBuild]::IsOSPlatform('Windows'))">

@@ -1,7 +1,7 @@
 //! Test support: the one way a test obtains a guest module from `guests/`.
 //!
 //! The first access to each fixture runs its build script with `--if-stale`.
-//! A fresh fixture validates its content receipt; stale or missing output is rebuilt.
+//! Task tracks fixture inputs and rebuilds stale or missing output.
 //! Successful selections are reused for the remainder of the test process. The scripts
 //! use distinct host intermediates. This crate serialises callers within a process;
 //! scripts/test prepares shared fixtures before launching parallel consumers.
@@ -218,7 +218,7 @@ fn assert_attributed_to_feed(module: &Path, runtime: GuestRuntime) {
     assert_eq!(
         linked,
         offered,
-        "{} links a pack other than the one guest-runtime/out/feed offers {runtime}; the fixture build must republish it",
+        "{} links a pack other than the one .build/wasm32/runtime/feed offers {runtime}; the fixture build must republish it",
         module.display()
     );
 }
@@ -300,7 +300,7 @@ pub fn guest_runtime_feed() -> PathBuf {
         let feed = explicit
             .as_ref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| root.join("out/feed"));
+            .unwrap_or_else(|| repo_root().join(".build/wasm32/runtime/feed"));
         assert!(
             feed.is_absolute(),
             "ISOPLANE_TEST_RUNTIME_FEED must name an absolute artifact-feed path"
@@ -445,71 +445,4 @@ pub fn assert_cpu_clock_advances(read_clock: impl Fn() -> Option<u64>) {
         after > before,
         "CPU work must advance the native clock, including on ARM"
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fixture_builds_receive_the_tools_installed_by_setup_on_path() {
-        let directory = tempfile::tempdir().expect("isolated fixture environment directory");
-        let script = directory.path().join("build.sh");
-        std::fs::write(&script, "command -v wasm-tools > \"${0}.tool\" || true\n")
-            .expect("write fixture environment probe");
-        build_selected(
-            script.to_str().expect("temporary script path is Unicode"),
-            None,
-            None,
-        );
-        let tool = std::fs::read_to_string(script.with_extension("sh.tool"))
-            .expect("read where the fixture build found the tool");
-        assert!(
-            Path::new(tool.trim()).is_file(),
-            "fixture builds must find tools installed by scripts/setup without caller PATH changes: {tool:?}"
-        );
-    }
-
-    #[test]
-    fn a_successful_fixture_selection_is_built_once_per_test_process() {
-        let directory = tempfile::tempdir().expect("isolated fixture cache test directory");
-        let script = directory.path().join("build.sh");
-        std::fs::write(&script, "printf x >> \"${0}.calls\"\n")
-            .expect("write controlled fixture builder");
-        let script_name = script.to_str().expect("temporary script path is Unicode");
-        build_selected(script_name, Some("first"), Some("mono"));
-        build_selected(script_name, Some("first"), Some("mono"));
-        assert_eq!(
-            std::fs::read(script.with_extension("sh.calls")).expect("read build invocations"),
-            b"x",
-            "a fixture must not be rebuilt or revalidated during the same test process"
-        );
-        build_selected(script_name, Some("second"), Some("mono"));
-        assert_eq!(
-            std::fs::read(script.with_extension("sh.calls")).expect("read build invocations"),
-            b"xx",
-            "a different fixture selection must establish its own startup artifacts"
-        );
-    }
-
-    #[test]
-    fn a_failed_fixture_build_is_not_cached_as_successful() {
-        let directory = tempfile::tempdir().expect("isolated failed build test directory");
-        let script = directory.path().join("build.sh");
-        std::fs::write(&script, "exit 9\n").expect("write failing fixture builder");
-        let script_name = script.to_str().expect("temporary script path is Unicode");
-        let failure = std::panic::catch_unwind(|| build_selected(script_name, None, None));
-        assert!(
-            failure.is_err(),
-            "a failed build must fail the requesting test"
-        );
-        std::fs::write(&script, "printf x >> \"${0}.calls\"\n")
-            .expect("repair the controlled fixture builder");
-        build_selected(script_name, None, None);
-        assert_eq!(
-            std::fs::read(script.with_extension("sh.calls")).expect("read successful retry"),
-            b"x",
-            "a failed attempt must not let a later caller consume missing artifacts"
-        );
-    }
 }

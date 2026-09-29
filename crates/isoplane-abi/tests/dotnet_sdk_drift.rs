@@ -390,13 +390,13 @@ fn the_mono_debug_runtime_reads_its_debugger_where_the_host_serves_it() {
 
 #[test]
 fn mono_memory_accounting_uses_the_contracts_wasm_page_size() {
-    let patch = include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch");
+    let source = sdk_file("../../../vendor/dotnet-runtime/src/mono/mono/utils/memfuncs.c");
     let expression = format!(
         "(guint64)__builtin_wasm_memory_size (0) * {};",
         isoplane_abi::WASM_PAGE_SIZE
     );
     assert!(
-        patch.contains(&expression),
+        source.contains(&expression),
         "the Mono memory query must convert wasm pages using the host contract's page size"
     );
 }
@@ -415,10 +415,10 @@ fn native_memory_queries_match_the_host_import_signature() {
         imports::HOST_MODULE,
         definition.name
     );
-    let patch = include_str!("../../../guest-runtime/patches/runtime/035-wasi-memory-limit.patch");
+    let source = sdk_file("../../../vendor/dotnet-runtime/src/mono/mono/utils/memfuncs.c");
     assert!(
-        patch.contains(&attribute)
-            && patch.contains("extern guint64 isoplane_memory_limit_bytes (void);"),
+        source.contains(&attribute)
+            && source.contains("extern guint64 isoplane_memory_limit_bytes (void);"),
         "Mono's collector must bind the canonical import as an unsigned 64-bit byte count"
     );
 }

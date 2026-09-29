@@ -1580,9 +1580,6 @@ dependencies = [
 [[package]]
 name = "isoplane-fixtures"
 version = "0.1.0"
-dependencies = [
- "tempfile",
-]
 
 [[package]]
 name = "isoplane-harness"

@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Build the complete Linux or macOS developer preview from committed HEAD at the declared release version.
-
-    python3 scripts/build-preview.py [--cache DIR] [--output DIR]
-
-The result is one release directory (release.json, the package feed, the
-toolchain archive, samples and README), plus its archive, checksum and build
-receipt under --output (default .isoplane-dev/releases). Publishing the release
-directory under a release origin is what isoplane setup downloads from.
-Rebuilding the same version from the same revision verifies the existing
-release; from another revision it is refused until the version is moved with
-scripts/release-version.py.
-"""
+"""Assemble a Linux or macOS release; Task prepares shared Linux outputs first."""
 import argparse
 import gzip
 import hashlib
@@ -21,6 +10,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -42,26 +32,12 @@ PROJECTS = {
 }
 
 
-def pack_project(name, version, revision, packages, produce, native_library, runtime_identifier):
-    """Reuse shared managed packages, then attach this platform's native support."""
-    storage = load(ROOT / 'scripts/build_storage.py')
+def pack_project(name, version, packages, native_library, runtime_identifier):
+    """Attach native support to a Linux-built managed package."""
     package = packages / f'{name}.{version}.nupkg'
-    storage.cached_files(f'release-managed-package:{revision}:{version}:{name}',
-                         [package], produce, linux_only=True, target="clr-anycpu")
+    shared = ROOT / '.build/clr-anycpu/release/packages' / package.name
+    shutil.copy2(shared, package)
     load(ROOT / 'scripts/managed_packages.py').attach_native(package, name, native_library, runtime_identifier)
-
-
-def shared_runtime_archive(source, cache, revision, runtime_output=None):
-    """Publish on Linux or copy a verified runtime archive into a consumer workspace."""
-    storage = load(ROOT / 'scripts/build_storage.py')
-    archive = cache / 'shared-runtime.tgz'
-    def produce():
-        if runtime_output is None:
-            raise RuntimeError('Build the shared runtime on Linux in this worktree first.')
-        archive.unlink(missing_ok=True)
-        load(source / 'scripts/runtime-artifact.py').export_artifact(runtime_output, archive)
-    storage.cached_files(f'release-runtime-feed:{revision}', [archive], produce, linux_only=True)
-    return str(archive), sha(archive)
 
 
 def load(path):
@@ -89,8 +65,6 @@ def run(command, cwd, log, env=None):
     command = [str(arg) for arg in command]
     env = load(ROOT / "scripts/build_storage.py").temporary_environment(
         log.parent / "tmp", os.environ if env is None else env)
-    env.update(ISOPLANE_RUNTIME_SOURCE=str(Path(cwd) / 'guest-runtime'),
-               ISOPLANE_RUNTIME_WORK=str(Path(cwd) / 'guest-runtime/work'))
     if env is not None:
         command[0] = shutil.which(command[0], path=env.get('PATH')) or command[0]
     with log.open('w') as stream:
@@ -113,82 +87,19 @@ def release_version(source):
     return versions.declared(source)
 
 
-def inventory(directory):
-    return [{'path': p.relative_to(directory).as_posix(), 'sha256': sha(p),
-             'executable': bool(p.stat().st_mode & 0o111)}
-            for p in sorted(directory.rglob('*')) if p.is_file()]
-
-
-def verify_inventory(directory, expected):
-    if inventory(directory) != expected:
-        raise ValueError(f'cached artifact inventory or content differs: {directory}')
-
-
 def download(url, destination, expected, algorithm='sha256'):
     load(ROOT / 'scripts/build_storage.py').download(url, destination, expected, algorithm)
-
-
-def export_git_tree(root, revision, destination, archive, log):
-    run(['git', 'archive', '--format=tar', '-o', archive, revision], root, log)
-    with tarfile.open(archive) as tree:
-        tree.extractall(destination, filter='data')
-        # Git commit timestamps can go backwards when selecting an older revision.
-        for member in tree.getmembers():
-            if member.isfile():
-                os.utime(destination / member.name, None)
-    archive.unlink()
-    entries = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=root)
-    for entry in entries.split(b'\0'):
-        if not entry:
-            continue
-        metadata, name = entry.split(b'\t', 1)
-        mode, _, commit = metadata.decode().split()
-        if mode != '160000':
-            continue
-        path = Path(os.fsdecode(name))
-        repository = root / path
-        if not (repository / '.git').exists():
-            raise ValueError(f'initialize source dependencies with git submodule update --init --recursive: {path}')
-        target = destination / path
-        target.mkdir(parents=True, exist_ok=True)
-        export_git_tree(repository, commit, target, archive, log)
-
-
-def export_source(root, source, cache, revision, logs):
-    identity = output(['git', 'rev-parse', revision], root)
-    receipt = cache / 'source-revision'
-    if not receipt.is_file() or receipt.read_text() != identity:
-        for directory in (source, cache / 'runtime-build'):
-            reason = load(ROOT / 'scripts/build_storage.py').source_preservation_reason(directory)
-            if reason:
-                raise ValueError(f'cannot replace release workspace: {reason}')
-        receipt.unlink(missing_ok=True)
-    preserved = cache / 'runtime-build'
-    preserved.mkdir(exist_ok=True)
-    for name in ('work', 'out'):
-        path = source / 'guest-runtime' / name
-        if path.exists():
-            path.rename(preserved / name)
-    if source.exists():
-        shutil.rmtree(source)
-    source.mkdir()
-    source_tar = cache / 'source.tar'
-    export_git_tree(root, revision, source, source_tar, logs / 'source.log')
-    for path in preserved.iterdir():
-        path.rename(source / 'guest-runtime' / path.name)
-    preserved.rmdir()
-    receipt.write_text(identity)
 
 
 def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
     version = json.loads((source / 'global.json').read_text())['sdk']['version']
     directory = cache / 'dotnet'
-    receipt = cache / 'dotnet.json'
-    if receipt.exists():
-        identity = json.loads(receipt.read_text())
-        if identity['version'] == version and identity.get('runtimeIdentifier', RUNTIME_IDENTIFIER) == runtime_identifier:
-            verify_inventory(directory, identity['files'])
-            return directory, identity
+    executable = directory / ('dotnet.exe' if runtime_identifier.startswith('win-') else 'dotnet')
+    if executable.is_file():
+        installed = subprocess.run([str(executable), '--version'], cwd=source, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if installed.returncode == 0 and installed.stdout.strip() == version:
+            return directory, {'version': version, 'runtimeIdentifier': runtime_identifier}
     metadata_url = f'https://builds.dotnet.microsoft.com/dotnet/release-metadata/{version.rsplit(".", 1)[0]}/releases.json'
     with urllib.request.urlopen(metadata_url, timeout=60) as response:
         releases = json.load(response)
@@ -214,42 +125,8 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
         run([directory / 'dotnet', 'workload', 'install', 'wasi-experimental', '--skip-manifest-update',
              '--source', 'https://api.nuget.org/v3/index.json'], source, logs / 'sdk-workload.log', environment)
     identity = {'version': version, 'runtimeIdentifier': runtime_identifier, 'url': archive['url'], 'sha512': archive['hash'].lower(),
-                'files': inventory(directory)}
-    receipt.write_text(json.dumps(identity, indent=2) + '\n')
+                }
     return directory, identity
-
-
-def prepare_runtime(source, candidates, logs):
-    runtime = source / 'guest-runtime'
-    feed = load(runtime / 'feed-identity.py')
-    destination = runtime / 'out'
-    destination.mkdir(exist_ok=True)
-    for candidate in [source, *candidates]:
-        candidate_runtime = candidate / 'guest-runtime'
-        try:
-            feed.verify_feed(candidate_runtime / 'out/feed', runtime)
-        except (OSError, ValueError, ET.ParseError, zipfile.BadZipFile) as error:
-            print(f'Runtime cache unavailable at {candidate}: {error}', flush=True)
-            continue
-        if candidate != source:
-            for name in ('feed', 'packs'):
-                if (destination / name).exists():
-                    shutil.rmtree(destination / name)
-                shutil.copytree(candidate_runtime / 'out' / name, destination / name, dirs_exist_ok=True)
-        print(f'Reusing verified runtime feed from {candidate}', flush=True)
-        break
-    else:
-        run(['bash', runtime / 'build.sh'], source, logs / 'guest-runtime.log')
-    feed.verify_feed(destination / 'feed', runtime)
-    # Acquisition verifies pinned archives even when a sibling worktree supplies them.
-    downloads = runtime / 'work/downloads'
-    downloads.mkdir(parents=True, exist_ok=True)
-    for candidate in candidates:
-        for path in (candidate / 'guest-runtime/work/downloads').glob('*'):
-            if path.is_file() and not (downloads / path.name).exists():
-                shutil.copyfile(path, downloads / path.name)
-    run(['bash', runtime / 'build.sh', 'acquire', 'toolchain', 'patch'], source, logs / 'runtime-sources.log')
-    return destination
 
 
 def package_metadata(package):
@@ -325,53 +202,36 @@ def release_name(version):
     return f'isoplane-{RUNTIME_IDENTIFIER}-{version}'
 
 
-def existing_release(release, archive, receipt_path, revision):
-    """Verify a release already assembled at this version, or refuse to overwrite one from another revision."""
-    manifest_path = release / 'release.json'
-    if manifest_path.exists():
-        recorded = json.loads(manifest_path.read_text())['sourceRevision']
-        if recorded != revision:
-            raise ValueError(f'{release.name} was already assembled from revision {recorded[:12]}; '
-                             f'declare a new version with scripts/release-version.py set before building revision {revision[:12]}')
-    if receipt_path.exists():
-        receipt = json.loads(receipt_path.read_text())
-        if receipt['sourceRevision'] != revision:
-            raise ValueError(f'{release.name} was already assembled from revision {receipt["sourceRevision"][:12]}; '
-                             f'declare a new version with scripts/release-version.py set before building revision {revision[:12]}')
-        verify_inventory(release, receipt['files'])
-        if sha(archive) != receipt['archiveSha256']:
-            raise ValueError('release archive differs from its build receipt')
-        if archive.with_name(archive.name + '.sha256').read_text() != f"{receipt['archiveSha256']}  {archive.name}\n":
-            raise ValueError('release archive checksum file differs')
-        return True
+def existing_release(release, archive, revision):
+    manifest = release / 'release.json'
+    if manifest.is_file():
+        if json.loads(manifest.read_text())['sourceRevision'] != revision:
+            raise ValueError(f'{release.name} belongs to another source revision; select a new version or explicitly remove it')
+        if archive.is_file():
+            return True
     if release.exists() or archive.exists():
-        raise ValueError(f'unreceipted release exists; remove it before retrying: {release}')
+        raise ValueError(f'incomplete release exists; explicitly remove it before retrying: {release}')
     return False
 
 
 def build(root, cache, releases, logs, args):
     revision = source_revision(root)
     epoch = int(output(['git', 'show', '-s', '--format=%ct', revision], root))
-    source = cache / 'source'
-    export_source(root, source, cache, revision, logs)
+    source = root
     version = release_version(source)
     if args.runtime_modules:
         load(root / 'scripts/shared-runtime-modules.py').verify(args.runtime_modules.resolve(), version, revision)
     release = releases / release_name(version)
     archive = release.with_name(release.name + '.tgz')
-    receipt_path = release.with_name(release.name + '.receipt.json')
-    if existing_release(release, archive, receipt_path, revision):
+    if existing_release(release, archive, revision):
         print(f'Verified existing release: {archive}', flush=True)
         return
-    candidates = [Path(line[9:]) for line in output(['git', 'worktree', 'list', '--porcelain'], root).splitlines()
-                  if line.startswith('worktree ')]
-    if platform.system() == 'Darwin' and not args.runtime_artifact:
-        args.runtime_artifact, args.runtime_sha256 = shared_runtime_archive(source, cache, revision)
-    runtime_output = (load(source / 'scripts/macos-build.py').prepare(
-        load(source / 'scripts/build-preview.py'), source, cache, logs, args) if platform.system() == 'Darwin'
-        else prepare_runtime(source, candidates, logs))
-    if platform.system() == 'Linux':
-        shared_runtime_archive(source, cache, revision, runtime_output)
+    runtime_output = source / '.build/wasm32/runtime'
+    storage = load(ROOT / 'scripts/build_storage.py')
+    runtime_work = storage.build_root(source) / 'development/runtime-work'
+    if platform.system() == 'Darwin':
+        load(source / 'scripts/macos-build.py').prepare_wasi(
+            load(source / 'scripts/build-preview.py'), source, cache, runtime_work)
     sdk, sdk_identity = prepare_sdk(source, cache, logs, RUNTIME_IDENTIFIER)
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
@@ -386,33 +246,14 @@ def build(root, cache, releases, logs, args):
     wasm_tools = cache / 'tools/bin/wasm-tools'
     if output([wasm_tools, '--version']) != f'wasm-tools {wasm_version}':
         raise ValueError('installed wasm-tools version differs from the pin')
-    runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else cache / 'runtime-modules'
-    if not args.runtime_modules:
-        def produce_modules():
-            if runtime_modules.exists():
-                shutil.rmtree(runtime_modules)
-            run(['bash', source / 'guest-sdks/dotnet/MonoRuntime/build.sh', '--output', runtime_modules,
-                 '--source-revision', revision], source, logs / 'shared-runtime.log',
-                dict(environment, PATH=str(wasm_tools.parent) + os.pathsep + environment['PATH']))
-        load(ROOT / 'scripts/build_storage.py').cached_files(
-            f'release-runtime-modules:{revision}:{version}',
-            load(ROOT / 'scripts/shared-runtime-modules.py').files(runtime_modules), produce_modules, linux_only=True)
+    runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else source / '.build/wasm32/release-runtime'
     load(source / 'scripts/shared-runtime-modules.py').verify(runtime_modules, version, revision, runtime_output / 'feed')
     packages = cache / 'packages'
     if packages.exists():
         shutil.rmtree(packages)
     packages.mkdir()
-    storage = load(ROOT / 'scripts/build_storage.py')
-    with storage.product('release-managed:' + revision, root=ROOT / '.build/clr-anycpu',
-                         name='release-' + revision) as managed:
-        managed_artifacts = managed / 'artifacts'
-    for name, project in PROJECTS.items():
-        # The version comes from Directory.Build.props alone; only the revision is supplied here.
-        pack_project(name, version, revision, packages, lambda: run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
-             f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
-             '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             '-p:IsoplaneManagedOnly=true', '-p:UseAppHost=false', '--artifacts-path', managed_artifacts, f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
-            source, logs / f'pack-{name}.log', environment), native_library, RUNTIME_IDENTIFIER)
+    for name in PROJECTS:
+        pack_project(name, version, packages, native_library, RUNTIME_IDENTIFIER)
     verify_packages(packages, version, revision, native_library)
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     wasm_sources = list((cargo_home / 'registry/src').glob(f'*/wasm-tools-{wasm_version}/Cargo.toml'))
@@ -422,23 +263,21 @@ def build(root, cache, releases, logs, args):
     if notices.exists():
         shutil.rmtree(notices)
     run([sys.executable, source / 'scripts/toolchain-notices.py', '--wasm-tools-source', wasm_sources[0].parent,
-         '--runtime-work', source / 'guest-runtime/work', '--wasi-sdk', source / 'guest-runtime/work/wasi-sdk',
-         '--managed-source', source, '--output', notices], source, logs / 'notices.log', environment)
+         '--runtime-work', source / 'vendor', '--wasi-sdk', runtime_work / 'wasi-sdk',
+         '--managed-notices', ROOT / '.build/clr-anycpu/release/notices', '--output', notices], source, logs / 'notices.log', environment)
     run([sys.executable, source / 'scripts/package-toolchain.py', '--runtime-output', runtime_output,
-         '--wasi-sdk', source / 'guest-runtime/work/wasi-sdk', '--wasm-tools', wasm_tools,
+         '--wasi-sdk', runtime_work / 'wasi-sdk', '--wasm-tools', wasm_tools,
          '--native-library', native_library, '--dotnet-root', sdk,
          '--notices', notices, '--packages', packages, '--package-version', version,
          '--output', release], source, logs / 'assemble.log', environment)
     verify_packages(release / 'packages', version, revision, native_library)
-    runtime_inputs = load(source / 'guest-runtime/feed-identity.py').verify_feed(runtime_output / 'feed', source / 'guest-runtime')
-    wasi_sdk_version = (source / 'guest-runtime/work/wasi-sdk/VERSION').read_text()
+    wasi_sdk_version = (runtime_work / 'wasi-sdk/VERSION').read_text()
     manifest = {'sourceRevision': revision, 'packageVersion': version, 'runtimeIdentifier': RUNTIME_IDENTIFIER,
                 'toolchain': archive_toolchain(release, epoch),
                 'packages': [{'id': name, 'version': version, 'file': f'packages/{name}.{version}.nupkg',
                               'sha256': sha(release / 'packages' / f'{name}.{version}.nupkg')} for name in PROJECTS],
                 'dotnetSdk': {key: value for key, value in sdk_identity.items() if key != 'files'},
                 'wasmToolsVersion': wasm_version,
-                'runtimeInputsSha256': runtime_inputs,
                 'wasiSdk': wasi_sdk_version,
                 'builder': {'rustc': output(['rustc', '-vV']), 'cargo': output(['cargo', '--version']),
                             'cargoLockSha256': sha(source / 'Cargo.lock')}}
@@ -446,34 +285,32 @@ def build(root, cache, releases, logs, args):
     archive_release(release, archive, epoch)
     checksum = sha(archive)
     archive.with_name(archive.name + '.sha256').write_text(f'{checksum}  {archive.name}\n')
-    receipt_path.write_text(json.dumps({'sourceRevision': revision, 'files': inventory(release), 'archiveSha256': checksum}, indent=2) + '\n')
     print(f'Built {archive}\nSHA256 {checksum}', flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--assemble', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--cache', type=Path, default=None,
                         help='build cache shared between releases: SDK download, cargo target, packages')
-    parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases',
+    parser.add_argument('--output', type=Path, default=ROOT / '.build/releases',
                         help='where the release directory, archive and checksum are written')
-    parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
-    parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
-    parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
+    parser.add_argument('--runtime-modules', type=Path, help='use shared WASM modules from this SDK revision')
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()
+    for path in (args.cache, args.output):
+        if path is not None and not path.resolve().is_relative_to(ROOT):
+            parser.error('build and release directories must be inside this worktree')
+    if not args.assemble:
+        import tasks
+        target = 'release:macos' if platform.system() == 'Darwin' else 'release:linux'
+        tasks.run(ROOT, target, 'CLI_ARGS=' + shlex.join(sys.argv[1:]))
+        return
     if platform.system() == 'Darwin':
         if RUNTIME_IDENTIFIER not in ('osx-arm64', 'osx-x64'):
             parser.error('macOS builds require an ARM64 or x64 host')
-        if bool(args.runtime_artifact) != bool(args.runtime_sha256):
-            parser.error('--runtime-artifact and --runtime-sha256 must be supplied together')
-        if args.runtime_sha256 and not re.fullmatch('[a-fA-F0-9]{64}', args.runtime_sha256):
-            parser.error('--runtime-sha256 must contain 64 hexadecimal digits')
-        if args.runtime_sha256:
-            args.runtime_sha256 = args.runtime_sha256.lower()
     elif platform.system() != 'Linux' or platform.machine() != 'x86_64':
         parser.error('build-preview requires Linux x64 or macOS')
-    elif args.runtime_artifact or args.runtime_sha256:
-        parser.error('runtime artifact options currently apply to macOS builds')
     if args.jobs < 1:
         parser.error('--jobs must be positive')
     os.environ['CARGO_BUILD_JOBS'] = str(args.jobs)

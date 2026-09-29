@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 DECLARATION = 'Directory.Build.props'
 SCANNED_SUFFIXES = ('.csproj', '.props', '.targets')
-EXCLUDED_PATHS = frozenset({'guest-runtime/work', 'handoffs', 'target'})
+EXCLUDED_PATHS = frozenset({'vendor', 'tools/debugger-libs', 'guest-runtime/work', 'handoffs', 'target'})
 EXCLUDED_DIRECTORIES = frozenset({'bin', 'obj', 'node_modules'})
 SEMVER = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$')
 PIN = re.compile(r'(?P<prefix>\bSdk="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)/|<PackageReference Include="(?:Isoplane\.Sdk|Isoplane\.AspNetCore)" Version=")(?P<version>[^"]+)"')

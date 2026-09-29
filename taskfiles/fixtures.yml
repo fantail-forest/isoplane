@@ -1,0 +1,355 @@
+version: '3'
+
+tasks:
+  dotnet:
+    cmds:
+      - task: dotnet:isoplane_guest_dotnet_activation
+      - task: dotnet:isoplane_guest_dotnet_certificates
+      - task: dotnet:isoplane_guest_dotnet_streaming
+      - task: dotnet:isoplane_guest_dotnet_hashing
+      - task: dotnet:isoplane_guest_dotnet_trust
+      - task: dotnet:isoplane_guest_dotnet_randomness
+      - task: dotnet:isoplane_guest_dotnet_memory
+      - task: dotnet:isoplane_guest_dotnet_config
+      - task: dotnet:isoplane_guest_dotnet_failing_boot
+      - task: dotnet:isoplane_guest_dotnet_network_refusal
+      - task: dotnet:isoplane_guest_dotnet_dns
+      - task: dotnet:isoplane_guest_dotnet_stream
+      - task: dotnet:isoplane_guest_dotnet_connect
+      - task: dotnet:isoplane_guest_dotnet_cleanup
+      - task: dotnet:isoplane_guest_dotnet_timer
+      - task: dotnet:isoplane_guest_dotnet_logs
+      - task: dotnet:isoplane_guest_dotnet_async
+      - task: dotnet:isoplane_guest_dotnet_filesystem
+      - task: dotnet:isoplane_guest_aspnet
+      - task: dotnet:isoplane_guest_dotnet_request
+      - task: dotnet:isoplane_guest_dotnet
+      - task: dotnet:isoplane_guest_dotnet_compat
+      - task: dotnet:isoplane_guest_dotnet_entropy
+
+  dotnet:build:
+    deps: [":runtime:selected"]
+    internal: true
+    label: 'dotnet:{{.NAME}}'
+    sources:
+      - '{{.ROOT_DIR}}/guests/dotnet/**/*'
+      - '{{.ROOT_DIR}}/guests/aspnet/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
+      - '{{.FEED}}/Isoplane.GuestRuntime.props'
+      - exclude: '**/obj/**/*'
+      - exclude: '**/bin/**/*'
+      - exclude: '**/out/**/*'
+      - exclude: '**/__pycache__/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/dotnet/mono/{{.NAME}}.wasm'
+      - '{{.ROOT_DIR}}/.build/wasm32/dotnet/mono/{{.NAME}}.wasm.runtime'
+    env:
+      ISOPLANE_OUT_DIR: '{{.ROOT_DIR}}/.build/wasm32/dotnet/mono'
+      ISOPLANE_OUT: '{{.NAME}}'
+      ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
+    cmds:
+      - '"{{.PYTHON}}" scripts/fixture-tools.py require-linux'
+      - '"{{.PYTHON}}" scripts/dev bash guests/{{.PROJECT}}/build.sh --artifacts-path "{{.ROOT_DIR}}/.build/wasm32/dotnet-intermediates/{{.NAME}}" {{.OPTIONS}}'
+
+  dotnet:isoplane_guest_dotnet_activation:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_activation
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneActivationProbe=true"
+
+  dotnet:isoplane_guest_dotnet_certificates:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_certificates
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneCertificateProbe=true"
+
+  dotnet:isoplane_guest_dotnet_streaming:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_streaming
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneStreamingProbe=true"
+
+  dotnet:isoplane_guest_dotnet_hashing:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_hashing
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneHashingProbe=true"
+
+  dotnet:isoplane_guest_dotnet_trust:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_trust
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneTrustProbe=true"
+
+  dotnet:isoplane_guest_dotnet_randomness:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_randomness
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneRandomnessProbe=true"
+
+  dotnet:isoplane_guest_dotnet_memory:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_memory
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneMemoryProbe=true -p:IsoplaneMemoryMaxBytes=4294967296 -p:IsoplaneGuestMemoryBytes=4294967296"
+
+  dotnet:isoplane_guest_dotnet_config:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_config
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneConfigProbe=true"
+
+  dotnet:isoplane_guest_dotnet_failing_boot:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_failing_boot
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneFailingBoot=true"
+
+  dotnet:isoplane_guest_dotnet_network_refusal:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_network_refusal
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneNetworkRefusalProbe=true"
+
+  dotnet:isoplane_guest_dotnet_dns:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_dns
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneDnsProbe=true"
+
+  dotnet:isoplane_guest_dotnet_stream:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_stream
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneStreamProbe=true"
+
+  dotnet:isoplane_guest_dotnet_connect:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_connect
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneConnectProbe=true"
+
+  dotnet:isoplane_guest_dotnet_cleanup:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_cleanup
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneCleanupProbe=true"
+
+  dotnet:isoplane_guest_dotnet_timer:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_timer
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneTimerProbe=true"
+
+  dotnet:isoplane_guest_dotnet_logs:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_logs
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneLogProbe=true"
+
+  dotnet:isoplane_guest_dotnet_async:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_async
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneAsyncProbe=true"
+
+  dotnet:isoplane_guest_dotnet_filesystem:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_filesystem
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneFilesystemProbe=true"
+
+  dotnet:isoplane_guest_aspnet:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_aspnet
+          PROJECT: aspnet
+          OPTIONS: ""
+
+  dotnet:isoplane_guest_dotnet_request:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_request
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneRequestProbe=true"
+
+  dotnet:isoplane_guest_dotnet:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet
+          PROJECT: dotnet
+          OPTIONS: ""
+
+  dotnet:isoplane_guest_dotnet_compat:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_compat
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneCompatProbe=true"
+
+  dotnet:isoplane_guest_dotnet_entropy:
+    cmds:
+      - task: dotnet:build
+        vars:
+          NAME: isoplane_guest_dotnet_entropy
+          PROJECT: dotnet
+          OPTIONS: "-p:IsoplaneEntropyProbe=true"
+
+  acceptance:
+    deps: [":runtime:selected"]
+    env:
+      ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
+    sources:
+      - '{{.ROOT_DIR}}/guest-runtime/tests/guest/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
+      - '{{.FEED}}/Isoplane.GuestRuntime.props'
+      - exclude: '**/obj/**/*'
+      - exclude: '**/bin/**/*'
+      - exclude: '**/out/**/*'
+      - exclude: '**/__pycache__/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/acceptance/mono/guest_runtime_acceptance.wasm'
+      - '{{.ROOT_DIR}}/.build/wasm32/acceptance/mono/guest_runtime_acceptance.wasm.runtime'
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/tests/guest/build.sh --compile'
+
+  package:
+    cmds:
+      - task: package:runtime
+      - task: package:alpha
+      - task: package:beta
+      - task: package:native
+      - task: package:web
+      - task: package:diagnostics
+
+  package:runtime:
+    deps: [":runtime:selected"]
+    env:
+      ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
+    sources:
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/build.sh'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
+      - '{{.FEED}}/Isoplane.GuestRuntime.props'
+      - exclude: '**/obj/**/*'
+      - exclude: '**/bin/**/*'
+      - exclude: '**/out/**/*'
+      - exclude: '**/__pycache__/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.wasm'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.Debug.wasm'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/runtime.json'
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/tests/packages/build.sh --compile --fixture runtime'
+
+  package:build:
+    deps: [":managed:cli"]
+    internal: true
+    label: 'package:{{.NAME}}'
+    sources:
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.props'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.targets'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/build.sh'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/tools/**/*.cs'
+      - '{{.ROOT_DIR}}/tools/**/*.csproj'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/runtime.json'
+      - exclude: '**/obj/**/*'
+      - exclude: '**/bin/**/*'
+      - exclude: '**/out/**/*'
+      - exclude: '**/__pycache__/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/{{.NAME}}.tar'
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
+
+  package:alpha:
+    deps: [package:runtime]
+    cmds:
+      - task: package:build
+        vars:
+          NAME: alpha
+
+  package:beta:
+    deps: [package:runtime]
+    cmds:
+      - task: package:build
+        vars:
+          NAME: beta
+
+  package:native:
+    deps: [package:runtime]
+    cmds:
+      - task: package:build
+        vars:
+          NAME: native
+
+  package:web:
+    deps: [package:runtime]
+    cmds:
+      - task: package:build
+        vars:
+          NAME: web
+
+  package:diagnostics:
+    deps: [package:runtime]
+    cmds:
+      - task: package:build
+        vars:
+          NAME: diagnostics

@@ -6,9 +6,40 @@ import os
 import platform
 import re
 import subprocess
+import tarfile
+import urllib.request
+import zipfile
 from pathlib import Path
 
 import build_storage as storage
+
+TASK_VERSION = '3.53.1'
+
+
+def install_task(root):
+    """Install the pinned Task executable in the user's tool directory."""
+    executable = Path.home() / '.local/bin' / ('task.exe' if os.name == 'nt' else 'task')
+    if executable.is_file():
+        result = subprocess.run([str(executable), '--version'], text=True, capture_output=True)
+        if result.returncode == 0 and result.stdout.strip() == TASK_VERSION:
+            return
+    system = {'Linux': 'linux', 'Darwin': 'darwin', 'Windows': 'windows'}[platform.system()]
+    arch = {'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}[platform.machine().lower()]
+    suffix = 'zip' if os.name == 'nt' else 'tar.gz'
+    name = f'task_{system}_{arch}.{suffix}'
+    url = f'https://github.com/go-task/task/releases/download/v{TASK_VERSION}'
+    with urllib.request.urlopen(url + '/task_checksums.txt', timeout=60) as response:
+        checksums = dict((line.split()[1], line.split()[0]) for line in response.read().decode().splitlines())
+    archive = storage.build_root(root) / 'tool-setup' / name
+    storage.download(url + '/' + name, archive, checksums[name])
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == 'nt':
+        with zipfile.ZipFile(archive) as bundle:
+            executable.write_bytes(bundle.read('task.exe'))
+    else:
+        with tarfile.open(archive) as bundle:
+            executable.write_bytes(bundle.extractfile('task').read())
+        executable.chmod(0o755)
 
 
 def identity(root):
@@ -20,7 +51,7 @@ def identity(root):
 
 
 def preview_builder(root):
-    """Load the shared SDK installation and inventory implementation."""
+    """Load the SDK installer."""
     spec = importlib.util.spec_from_file_location('preview', root / 'scripts/build-preview.py')
     preview = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(preview)
@@ -28,17 +59,11 @@ def preview_builder(root):
 
 
 def installation_ready(directory, name, wasm, sdk, root):
-    """Check the completion identity and the installed tools before sharing them."""
+    """Ask installed tools for their versions."""
     if directory is None:
         return False
     extension = '.exe' if os.name == 'nt' else ''
     try:
-        if (directory / 'complete').read_text() != name:
-            return False
-        receipt = json.loads((directory / 'dotnet.json').read_text())
-        if receipt['version'] != sdk or receipt['runtimeIdentifier'] != identity(root)[2]:
-            return False
-        preview_builder(root).verify_inventory(directory / 'dotnet', receipt['files'])
         for executable, expected in ((directory / 'bin' / ('wasm-tools' + extension), 'wasm-tools ' + wasm),
                                      (directory / 'dotnet' / ('dotnet' + extension), sdk)):
             actual = subprocess.check_output([str(executable), '--version'], cwd=root, text=True,
@@ -51,6 +76,8 @@ def installation_ready(directory, name, wasm, sdk, root):
 
 
 def setup(root):
+    subprocess.run(['git', 'submodule', 'update', '--init', '--recursive'], cwd=root, check=True)
+    install_task(root)
     name, wasm, rid = identity(root)
     sdk = json.loads((root / 'global.json').read_text())['sdk']['version']
     with storage.product(name, root=storage.tools_root(), read_only=True) as directory:
@@ -67,8 +94,6 @@ def setup(root):
         if installation_ready(directory, name, wasm, sdk, root):
             print('Development tools are already installed and verified.')
             return
-        (directory / 'complete').unlink(missing_ok=True)
-        (directory / 'dotnet.json').unlink(missing_ok=True)
         with storage.workspace('tool-setup') as work:
             logs = work / 'logs'
             logs.mkdir(exist_ok=True)
@@ -78,7 +103,6 @@ def setup(root):
             preview.run(['cargo', 'install', '--locked', '--force', f'wasm-tools@{wasm}', '--root', directory],
                         root, logs / 'wasm-tools.log', environment)
             preview.prepare_sdk(root, directory, logs, rid)
-        (directory / 'complete').write_text(name)
     print('Development tools installed in the shared user cache.')
 
 

@@ -7,19 +7,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ManagedDebuggerProtocolTests(unittest.TestCase):
-    def test_managed_watchpoint_commands_match_the_runtime_patch_series(self):
-        runtime = {}
-        declaration = re.compile(r"\b(MDBGPROT_\w+)\s*=\s*(\d+)")
-        for patch in sorted((ROOT / "guest-runtime/patches/runtime").glob("*.patch")):
-            for line in patch.read_text().splitlines():
-                match = declaration.search(line)
-                if not match:
-                    continue
-                name, value = match.groups()
-                if line.startswith("-"):
-                    runtime.pop(name, None)
-                elif line.startswith("+"):
-                    runtime[name] = int(value)
+    def test_managed_watchpoint_commands_match_the_runtime(self):
+        header = ROOT / "vendor/dotnet-runtime/src/mono/mono/component/debugger-protocol.h"
+        runtime = {name: int(value) for name, value in
+                   re.findall(r"\b(MDBGPROT_\w+)\s*=\s*(\d+)", header.read_text())}
         backend = (ROOT / "tools/Isoplane.Debugging/Backend/ManagedDataBreakpoint.cs").read_text()
         adapter = {name: int(value) for name, value in re.findall(r"const (?:int|byte) (\w+) = (\d+);", backend)}
         counterparts = {

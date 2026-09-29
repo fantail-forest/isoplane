@@ -15,7 +15,7 @@ def inventory(root, target):
         target: 'Cargo and fixture outputs',
         root / 'guests/target': 'guest Cargo outputs',
         root / 'guests/out': 'guest fixtures',
-        root / 'guest-runtime/out': 'runtime products',
+        root / 'guest-runtime/out': 'legacy runtime products',
         root / 'guest-runtime/work': 'runtime intermediates',
         root / '.isoplane-dev': 'local tools and legacy release builds',
     }
@@ -24,7 +24,7 @@ def inventory(root, target):
         for child in development.iterdir():
             if child.is_dir() and not child.is_symlink():
                 candidates[child] = 'unmanaged development output; inspect before removing'
-    excluded = {'.git', 'node_modules', 'target', 'work', 'out', '__pycache__'}
+    excluded = {'vendor', '.git', 'node_modules', 'target', 'work', 'out', '__pycache__'}
     import os
     for current, directories, _ in os.walk(root, followlinks=False):
         current = Path(current)
@@ -43,16 +43,7 @@ def inventory(root, target):
 
 
 def clean_output(path, dry_run):
-    reason = storage.source_preservation_reason(path)
-    if reason:
-        print(f'retained {path}: {reason}')
-        removed = storage.clean_source_siblings(path, dry_run)
-    else:
-        removed = [(path, storage.size_bytes(path))]
-        if not dry_run:
-            import shutil
-            shutil.rmtree(path)
-    for child, size in removed:
+    for child, size in storage.clean(path, dry_run):
         print(f'{size:>14,} bytes  {"would remove" if dry_run else "removed"}  {child}')
 
 
@@ -72,7 +63,9 @@ def main():
         if parent.is_dir() and not parent.is_symlink():
             for path in sorted(parent.iterdir()):
                 if path.is_dir() and not path.is_symlink():
-                    if path.name == storage.platform_name() or args.all:
+                    if name == '.build' and path.name == 'releases':
+                        print(f'retained {path}: release archives')
+                    elif path.name == storage.platform_name() or args.all:
                         roots.append(path)
                     else:
                         print(f"retained {path}: use --all to discard output for other platforms or portable targets")

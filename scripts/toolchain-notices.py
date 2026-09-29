@@ -85,8 +85,7 @@ def source_licenses(package, cache, repositories):
 
 def managed_notices(source, output):
     packages = {}
-    for assets in sorted(path for area in ('tools', 'guest-sdks')
-                         for path in (source / area).rglob('project.assets.json')):
+    for assets in sorted(source.rglob('project.assets.json')):
         document = json.loads(assets.read_text())
         for identity, library in document['libraries'].items():
             if library['type'] != 'package':
@@ -131,7 +130,7 @@ def main():
     parser.add_argument('--wasi-sdk', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--target', help='Rust target whose native dependencies are shipped (defaults to the build host)')
-    parser.add_argument('--managed-source', type=Path, help='collect restored managed package attribution')
+    parser.add_argument('--managed-notices', type=Path, required=True, help='Linux-built managed package attribution')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     target = args.target or next(line.removeprefix('host: ') for line in subprocess.check_output(['rustc', '-vV'], text=True).splitlines() if line.startswith('host: '))
@@ -159,7 +158,7 @@ def main():
         attribution.append({key: package[key] for key in ('name', 'version', 'license', 'authors', 'repository')})
     (args.output / 'rust-dependencies.json').write_text(json.dumps(attribution, indent=2) + '\n')
     for component in ('openssl', 'icu', 'runtime'):
-        for source in (args.runtime_work / component).iterdir():
+        for source in (args.runtime_work / ('dotnet-runtime' if component == 'runtime' else component)).iterdir():
             if source.is_file() and source.name.lower().startswith(PREFIXES):
                 destination = args.output / component / source.name
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -179,8 +178,7 @@ def main():
     trust.mkdir(exist_ok=True)
     for name in ('NOTICE', 'ca-bundle.pem', 'ca-bundle.manifest.json'):
         shutil.copyfile(root / 'trust' / name, trust / name)
-    if args.managed_source:
-        managed_notices(args.managed_source, args.output)
+    shutil.copytree(args.managed_notices, args.output, dirs_exist_ok=True)
     print(args.output)
 
 

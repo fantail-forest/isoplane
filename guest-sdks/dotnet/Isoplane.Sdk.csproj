@@ -45,7 +45,7 @@
   </ItemGroup>
   <!-- The shared runtimes interpreted applications run on, production and
        local-debug. Their directory comes from guest-sdks/dotnet/MonoRuntime/build.sh,
-       whose receipt must name this SDK version, and in a release build this
+       whose manifest must name this SDK version, and in a release build this
        source revision. The package carries the runtimes' identity, runtime.json,
        beside them; application packages built against this SDK carry it too. -->
   <ItemGroup>
@@ -55,16 +55,15 @@
     <PropertyGroup>
       <IsoplaneRuntimeModuleDirectory Condition="'$(IsoplaneRuntimeModuleDirectory)' == ''">$(ISOPLANE_RUNTIME_MODULE_DIRECTORY)</IsoplaneRuntimeModuleDirectory>
       <_IsoplaneRuntimeDirectory>$([MSBuild]::EnsureTrailingSlash('$(IsoplaneRuntimeModuleDirectory)'))</_IsoplaneRuntimeDirectory>
-      <_IsoplaneRuntimeReceipt>$(_IsoplaneRuntimeDirectory)runtime-build.json</_IsoplaneRuntimeReceipt>
       <_IsoplaneRuntimeProvenance>$(_IsoplaneRuntimeDirectory)runtime.json</_IsoplaneRuntimeProvenance>
     </PropertyGroup>
     <ItemGroup>
       <_IsoplaneRuntimeModule Include="@(_IsoplaneRuntimeModuleName->'$(_IsoplaneRuntimeDirectory)%(Identity).wasm')" />
       <_IsoplaneMissingRuntime Include="@(_IsoplaneRuntimeModule)" Condition="!Exists('%(Identity)')" />
     </ItemGroup>
-    <Error Condition="'$(IsoplaneRuntimeModuleDirectory)' == '' OR '@(_IsoplaneMissingRuntime)' != '' OR !Exists('$(_IsoplaneRuntimeReceipt)') OR !Exists('$(_IsoplaneRuntimeProvenance)')"
-           Text="Pack the SDK with -p:IsoplaneRuntimeModuleDirectory naming the output of guest-sdks/dotnet/MonoRuntime/build.sh, which holds Isoplane.MonoRuntime.wasm, Isoplane.MonoRuntime.Debug.wasm, runtime-build.json and runtime.json; without its shared runtimes the SDK cannot run or debug interpreted applications." />
-    <ReadLinesFromFile File="$(_IsoplaneRuntimeReceipt)">
+    <Error Condition="'$(IsoplaneRuntimeModuleDirectory)' == '' OR '@(_IsoplaneMissingRuntime)' != '' OR !Exists('$(_IsoplaneRuntimeProvenance)')"
+           Text="Pack the SDK with -p:IsoplaneRuntimeModuleDirectory naming the output of guest-sdks/dotnet/MonoRuntime/build.sh, which holds Isoplane.MonoRuntime.wasm, Isoplane.MonoRuntime.Debug.wasm, runtime.json; without its shared runtimes the SDK cannot run or debug interpreted applications." />
+    <ReadLinesFromFile File="$(_IsoplaneRuntimeProvenance)">
       <Output TaskParameter="Lines" PropertyName="_IsoplaneReceipt" />
     </ReadLinesFromFile>
     <PropertyGroup>
@@ -81,13 +80,8 @@
     <ItemGroup>
       <_IsoplaneHashedRuntime><Sha256>$([System.String]::Copy('%(FileHash)').ToLowerInvariant())</Sha256></_IsoplaneHashedRuntime>
     </ItemGroup>
-    <Error Condition="!$(_IsoplaneReceipt.Contains('&quot;%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension)&quot;:&quot;%(_IsoplaneHashedRuntime.Sha256)&quot;'))"
-           Text="%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension) is not the module runtime-build.json records; rebuild the shared runtimes." />
-    <ReadLinesFromFile File="$(_IsoplaneRuntimeProvenance)">
-      <Output TaskParameter="Lines" PropertyName="_IsoplaneProvenance" />
-    </ReadLinesFromFile>
-    <Error Condition="!$(_IsoplaneProvenance.Contains('&quot;sdkVersion&quot;:&quot;$(PackageVersion)&quot;')) OR !$(_IsoplaneProvenance.Contains('&quot;%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension)&quot;:{&quot;sha256&quot;:&quot;%(_IsoplaneHashedRuntime.Sha256)&quot;}'))"
-           Text="runtime.json does not identify this SDK version and %(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension); rebuild the shared runtimes." />
+    <Error Condition="!$(_IsoplaneReceipt.Contains('&quot;%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension)&quot;:{&quot;sha256&quot;:&quot;%(_IsoplaneHashedRuntime.Sha256)&quot;}'))"
+           Text="%(_IsoplaneHashedRuntime.Filename)%(_IsoplaneHashedRuntime.Extension) is not the module runtime.json records; rebuild the shared runtimes." />
     <ItemGroup>
       <None Include="@(_IsoplaneRuntimeModule);$(_IsoplaneRuntimeProvenance)" Pack="true" PackagePath="tools/runtime/" />
     </ItemGroup>

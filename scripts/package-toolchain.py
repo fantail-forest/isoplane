@@ -60,7 +60,7 @@ def make_world_readable(directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runtime-output', type=Path, required=True, help='guest-runtime/out containing feed and packs')
+    parser.add_argument('--runtime-output', type=Path, required=True, help='.build/wasm32/runtime containing feed and packs')
     parser.add_argument('--wasi-sdk', type=Path, required=True)
     parser.add_argument('--wasm-tools', type=Path, required=True)
     parser.add_argument('--native-library', type=Path, required=True, help='built isoplane-native library matching the CLI package')
@@ -114,7 +114,7 @@ def main():
         parser.error(f'expected wasm-tools {expected_wasm}; got {actual_wasm}')
     if not (args.dotnet_root / 'sdk' / sdk).is_dir():
         parser.error(f'dotnet root does not contain pinned SDK {sdk}')
-    subprocess.run([sys.executable, str(root / 'guest-runtime/feed-identity.py'), 'verify-current', str(root / 'guest-runtime'), str(args.runtime_output / 'feed')], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([sys.executable, str(root / 'guest-runtime/feed-identity.py'), 'verify-artifact', str(args.runtime_output / 'feed')], check=True, stdout=subprocess.DEVNULL)
     if subprocess.check_output([str(args.dotnet_root / ('dotnet' + executable)), '--list-sdks'], text=True).splitlines() == []:
         parser.error('dotnet root is not runnable')
     if not (args.notices / 'rust-dependencies.json').is_file():
