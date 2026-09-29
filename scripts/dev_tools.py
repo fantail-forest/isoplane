@@ -76,7 +76,7 @@ def installation_ready(directory, name, wasm, sdk, root):
 
 
 def setup(root):
-    subprocess.run(['git', 'submodule', 'update', '--init', '--recursive'], cwd=root, check=True)
+    subprocess.run(['git', 'submodule', 'update', '--init'], cwd=root, check=True)
     install_task(root)
     name, wasm, rid = identity(root)
     sdk = json.loads((root / 'global.json').read_text())['sdk']['version']

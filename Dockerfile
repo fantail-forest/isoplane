@@ -15,11 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       util-linux zstd unzip xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY scripts/dev_tools.py scripts/build_storage.py /opt/isoplane-tool-setup/
-RUN PYTHONPATH=/opt/isoplane-tool-setup python3 -c 'from pathlib import Path; import dev_tools; dev_tools.install_task(Path("/opt/isoplane-tool-setup"))' \
-    && mv /root/.local/bin/task /usr/local/bin/task \
-    && rm -rf /opt/isoplane-tool-setup
-
 # --- Rust (host runtime + Rust guests) -------------------------------------
 ARG RUST_VERSION=1.98.0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -61,10 +56,17 @@ RUN case "$TARGETARCH" in \
     && /opt/wasi-sdk/bin/clang --version
 ENV WASI_SDK_PATH=/opt/wasi-sdk
 
+COPY scripts/dev_tools.py scripts/build_storage.py /opt/isoplane-tool-setup/
+RUN PYTHONPATH=/opt/isoplane-tool-setup python3 -c 'from pathlib import Path; import dev_tools; dev_tools.install_task(Path("/opt/isoplane-tool-setup"))' \
+    && mv /root/.local/bin/task /usr/local/bin/task \
+    && rm -rf /opt/isoplane-tool-setup
+
 # Cache volumes are writable by the invoking host user.
 ARG HOST_UID=1000
 ARG HOST_GID=1000
-RUN mkdir -p /opt/cargo /opt/cargo/registry /nuget /tmp/home \
+RUN (getent group ${HOST_GID} >/dev/null || groupadd --gid ${HOST_GID} isoplane) \
+    && (getent passwd ${HOST_UID} >/dev/null || useradd --uid ${HOST_UID} --gid ${HOST_GID} --home-dir /tmp/home --no-create-home isoplane) \
+    && mkdir -p /opt/cargo /opt/cargo/registry /nuget /tmp/home \
     && chown -R ${HOST_UID}:${HOST_GID} /opt/cargo /nuget /tmp/home \
     && chmod -R u+rwX /opt/cargo /nuget
 

@@ -2,3 +2,5 @@
 **
 !Dockerfile
 !global.json
+!scripts/dev_tools.py
+!scripts/build_storage.py

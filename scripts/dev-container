@@ -175,6 +175,7 @@ create_container() {
     -w "$ROOT" \
     -e CARGO_HOME=/opt/cargo \
     -e NUGET_PACKAGES=/nuget \
+    -e NUGET_SCRATCH=/nuget/.scratch \
     -e HOME=/tmp/home \
     -e CARGO_TERM_COLOR=always \
     -e RUST_BACKTRACE=1 \
