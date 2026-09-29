@@ -165,20 +165,14 @@ fn build_release(worktree: &Path, output: &Path) -> Release {
     }
 }
 
-/// The scratch tree for two releases lives under `.isoplane-dev` and is rebuilt on every run, so a finished
-/// run leaves one copy behind rather than one per run in a temporary directory nobody removes.
 fn scratch_tree(root: &Path) -> PathBuf {
-    let scratch = root.join(".isoplane-dev/release-journey");
-    if scratch.exists() {
-        let _ = Command::new("git")
-            .args(["worktree", "remove", "--force"])
-            .arg(scratch.join("worktree"))
-            .current_dir(root)
-            .output();
-        std::fs::remove_dir_all(&scratch).expect("remove the previous run's scratch tree");
-    }
-    std::fs::create_dir_all(&scratch).expect("create the scratch tree");
-    scratch
+    let runs = root.join(".test-runs/release-journey");
+    std::fs::create_dir_all(&runs).expect("create the release journey diagnostics directory");
+    tempfile::Builder::new()
+        .prefix("run-")
+        .tempdir_in(runs)
+        .expect("create a unique release journey directory")
+        .keep()
 }
 
 fn build_releases() -> Releases {
@@ -196,12 +190,12 @@ fn build_releases() -> Releases {
     );
     succeed(
         Command::new("git")
-            .args(["submodule", "update", "--init", "--recursive"])
+            .args(["submodule", "update", "--init"])
             .current_dir(&worktree),
         "initializing the snapshot's pinned source dependencies",
     );
-    let output = scratch.join("releases");
-    let current = build_release(&worktree, &output);
+    let output = worktree.join(".build/releases");
+    let mut current = build_release(&worktree, &output);
     let next_version = format!("{}.upgrade.1", current.version);
     succeed(
         Command::new("python3")
@@ -225,7 +219,7 @@ fn build_releases() -> Releases {
             .current_dir(&worktree),
         "committing the next preview version",
     );
-    let next = build_release(&worktree, &output);
+    let mut next = build_release(&worktree, &output);
     assert_eq!(
         next.version, next_version,
         "the next release must carry the moved version"
@@ -234,6 +228,18 @@ fn build_releases() -> Releases {
         current.revision, next.revision,
         "two previews come from two revisions"
     );
+    let retained = scratch.join("releases");
+    std::fs::rename(&output, &retained)
+        .expect("retain the releases before removing their source checkout");
+    for release in [&mut current, &mut next] {
+        release.directory = retained.join(
+            release
+                .directory
+                .file_name()
+                .expect("a release directory has a name"),
+        );
+    }
+    let output = retained;
     succeed(
         Command::new("git")
             .args(["worktree", "remove", "--force"])
