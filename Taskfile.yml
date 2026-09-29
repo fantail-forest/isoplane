@@ -140,6 +140,7 @@ tasks:
 
   release:windows:
     desc: Assemble the Windows release from shared Linux outputs
+    deps: [runtime:toolchain]
     cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-windows.py {{.CLI_ARGS}}'
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-windows.py --assemble {{.CLI_ARGS}}'
 

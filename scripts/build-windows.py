@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import tarfile
 import urllib.request
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).absolute().parents[1]
 
 
 def load(name):
@@ -59,11 +60,6 @@ def redistributable(installation, requested):
     if not requested.is_file():
         raise ValueError(f'Visual C++ redistributable not found: {requested}')
     return requested.resolve()
-
-
-def runtime_command(msys, runtime, stages):
-    return [msys / 'usr/bin/bash.exe', '-lc', 'exec bash "$@"', 'isoplane-runtime',
-            (runtime / 'build.sh').as_posix(), *stages]
 
 
 def stock_pack(name, version, cache):
@@ -113,7 +109,6 @@ def build(args):
 
     runtime_output = ROOT / '.build/wasm32/runtime'
     runtime_work = load('build_storage').build_root(ROOT) / 'development/runtime-work'
-    run(runtime_command(args.msys_root.resolve(), runtime, ['toolchain']), 'runtime-tools')
     run(['cargo', 'build', '--locked', '--release', '-p', 'isoplane-native'], 'native')
     native = native_target / 'release/isoplane_native.dll'
     wasm_version = re.search(r'cargo install --locked wasm-tools@([^\s]+)', (source / 'Dockerfile').read_text()).group(1)
@@ -165,6 +160,7 @@ def build(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--assemble', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--cache', type=Path, default=None)
     parser.add_argument('--output', type=Path, default=ROOT / '.build/releases')
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
@@ -173,7 +169,7 @@ def main():
     parser.add_argument('--check-prerequisites', action='store_true', help='check local build tools without starting a build')
     args = parser.parse_args()
     for path in (args.cache, args.output):
-        if path is not None and not path.resolve().is_relative_to(ROOT):
+        if path is not None and not path.resolve().is_relative_to(ROOT.resolve()):
             parser.error('build and release directories must be inside this worktree')
     if platform.system() != 'Windows' or platform.machine().lower() not in ('amd64', 'x86_64'):
         parser.error('run this builder on Windows x64')
@@ -200,6 +196,10 @@ def main():
     rust_version = re.search(r'^ARG RUST_VERSION=(\S+)', (ROOT / 'Dockerfile').read_text(), re.MULTILINE).group(1)
     os.environ['RUSTUP_TOOLCHAIN'] = rust_version + '-x86_64-pc-windows-msvc'
     if args.check_prerequisites:
+        return
+    if not args.assemble:
+        import tasks
+        tasks.run(ROOT, 'release:windows', 'CLI_ARGS=' + shlex.join(sys.argv[1:]))
         return
     with load('build_storage').workspace('release-win-x64', args.cache) as cache:
         args.cache = cache
