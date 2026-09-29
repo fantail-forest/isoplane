@@ -18,11 +18,11 @@ Under the [fixture failure rule](../../../AGENTS.md#common-operations), missing 
 
 ## Keep a hostile-guest corpus
 
-For every rejection rule the validator enforces and every limit the engine imposes, keep a small module that trips it: an undeclared import, a shared memory, a function bomb, a spinner, an allocator that never stops. The corpus is the proof that the sandbox is a sandbox; run it on every change to the engine or the validator. The validator corpus test is the reference pattern.
+For every rejection rule the validator enforces and every limit the engine imposes, keep a small module that trips it through the real validator or engine boundary. Run the corpus on every change to the engine or validator. Inline WAT, standalone WAT and compiled fixture projects are all suitable; choose the representation that makes the property clear and keeps the suite fast.
 
-**Not this:** Rules tested only against WAT strings inline in a test, so that a build-configuration change re-enabling threads is caught by a reader.
+**Not this:** Inspecting a feature flag or testing a fake validator without showing that the real boundary rejects the hostile module.
 
-**Exception:** Hostile fixtures may be written in any language that compiles to WASM, because the sandbox does not care.
+**Exception:** Compiler- or SDK-specific behavior needs a fixture built with that toolchain; hand-written WAT alone cannot qualify that integration.
 
 ## Make a fixture prove one property
 

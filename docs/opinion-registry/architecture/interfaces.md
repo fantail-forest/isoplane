@@ -2,11 +2,11 @@
 
 ## Make a crate only where there is a real interface
 
-Create a crate because two things depend on it, because it has its own toolchain or target, or because it must build without the rest of the tree. A crate with one consumer is a directory with a longer build graph and a public API that outlives its reason for being public.
+Create a crate when it enforces a useful dependency or visibility boundary, isolates a toolchain or target, or supports independent building and reuse. One consumer can justify that boundary. Judge what the separation prevents callers from depending on, balanced against build and API maintenance costs.
 
-**Not this:** A documentation generator that depends on a benchmark crate, so that regenerating a reference page compiles the engine.
+**Not this:** Splitting files into crates without reducing coupling, or making a documentation generator depend on a benchmark crate and compile the engine.
 
-**Exception:** A crate whose second consumer is known and imminent may be split early if the boundary is cheap to define.
+**Exception:** An early extraction can support a known, imminent consumer when the boundary is already clear and cheap to validate. Consumer count alone does not justify it.
 
 ## Make a trait a boundary between concerns, not a mirror of one implementation
 

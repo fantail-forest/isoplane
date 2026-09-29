@@ -37,10 +37,10 @@ Enforce a CPU budget in the engine that meters it, a memory ceiling in the alloc
 
 **Exception:** None.
 
-## One budget, from one table
+## Share production defaults and choose test budgets deliberately
 
-Take the CPU budget a dispatch runs under from one place, and run tests under the same budget production does. A test-only default that differs from the production table by orders of magnitude means every test proves something production never runs.
+Define production CPU defaults once and test that production wiring applies them. Qualify budget enforcement with explicit boundary and rejection cases. Tests of unrelated behavior may supply a budget that lets that behavior complete; their result does not establish that the workload fits a production tier.
 
-**Not this:** A default budget constant used by every scenario while the plan table production reads carries a different value.
+**Not this:** An implicit test-only default presented as production qualification, or an unrelated behavior test failing because it inherited a tight production budget.
 
-**Exception:** None.
+**Exception:** A test specifically qualifying a production budget uses that budget and names the workload it qualifies.

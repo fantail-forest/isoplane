@@ -16,13 +16,13 @@ Make a scenario assert: every check is pass or fail, runs under `cargo test`, an
 
 **Exception:** A benchmark may render a report. It does not live under `cargo test`.
 
-## Test behaviour through public interfaces, not implementation
+## Prefer behavior tests at the interface that owns it
 
-A good test says what the system does ("a tombstoned instance refuses the next call"), not how ("the slot's state hint is set to 3"). If you refactor the internals and no behaviour changes, zero tests should break.
+Test observable contracts through the interfaces their consumers use, so internal refactors preserve that coverage. Focused tests may also exercise internal algorithms and state machines when they give clearer, faster or more thorough coverage. Those tests can change with the structure they exercise; they do not replace integration coverage.
 
-**Not this:** Asserting on a lock's wait count or a queue's internal depth from a test in another crate.
+**Not this:** Adding a production interface solely to avoid testing internal logic, or coupling a cross-crate contract test to private queue bookkeeping.
 
-**Exception:** None. If you need to verify internal calls, the design needs an interface at a different boundary.
+**Exception:** Tests qualifying an internal invariant may inspect internal state directly. Keep them with the implementation that owns the invariant.
 
 ## Cover critical paths deeply, not every line
 

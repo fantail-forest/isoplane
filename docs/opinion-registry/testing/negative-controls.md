@@ -24,10 +24,10 @@ A control proves the detector works by presenting the condition it detects. Buil
 
 **Exception:** None.
 
-## Prove the guard by breaking the code
+## Demonstrate that the test detects the defect
 
-Before trusting a new check, revert the fix it guards and watch the test fail, then restore. A guard added alongside its fix and never seen red is a guess about what the test observes.
+Use a meaningful negative control when adding a regression test or guard: reproduce the defect before the fix, temporarily mutate the guarded behavior, or supply invalid input that reaches the real rejection path. Check that the relevant assertion detects the wrong behavior. Choose the control for the claim being made; invalid input proves rejection, while a claim that an assertion catches a missing guard needs that guard disabled or equivalent faulty behavior.
 
-**Not this:** Adding an assertion and a fix in one commit and reporting both as verified.
+**Not this:** Calling a compile failure after deleting a new API proof that its behavioral assertions work, or treating an unrelated setup failure as the expected red result.
 
-**Exception:** None.
+**Exception:** Reverting a fix is unnecessary when another control demonstrates the same failure. Report which control was exercised and any limits on what it proves.

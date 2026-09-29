@@ -53,17 +53,10 @@ Produce every figure on a dashboard from an event or span that a test observes. 
 
 **Exception:** None.
 
-## Export complete local traces or discard them
+## Preserve useful partial traces
 
-Buffer a local trace until its root and all started spans finish, then admit it
-to export as one unit. Apply configurable bounds to both unfinished traces and
-the export queue. Discard the whole trace on overflow or termination; flushing
-must not release fragments of an unfinished trace. Keep the maintained OTLP
-transport and canonical completion logs independent of this diagnostic policy.
+Allow completed spans to leave the process while their root or sibling spans are still running. A hung or interrupted operation can leave useful diagnostic evidence even when its trace never completes. Bound buffering and export queues, expose dropped spans and known truncation, and do not present missing spans as proof that a stage never ran. Keep canonical completion records independent of diagnostic sampling and export policy.
 
-**Not this:** Streaming ended child spans while their request is still live, or
-letting queue pressure drop individual spans from an otherwise exported trace.
+**Not this:** Withholding every completed stage of a hung request, then deliberately discarding those stages at shutdown because the root never ended.
 
-**Exception:** This does not promise atomic persistence at a remote collector or
-global completeness across multiple processes; transport and collector failures
-still require explicit handling.
+**Exception:** Bounded buffering for whole-trace sampling is appropriate when its diagnostic benefit justifies delayed visibility and potential loss. It does not establish atomic delivery or completeness across processes.

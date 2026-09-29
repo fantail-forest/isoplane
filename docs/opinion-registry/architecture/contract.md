@@ -34,8 +34,8 @@ Add an enum variant, a dispatch kind, or an import only when code constructs it 
 
 ## Version the wire format
 
-Give records that cross the boundary or land on disk (dispatch records, deltas, manifests) one encoder, one decoder, a version field, and a round-trip test with a stored golden byte string. Bump the version on any change to the format, and keep the old decoder until every consumer has migrated.
+Give records that cross the boundary or land on disk (dispatch records, deltas, manifests) one canonical codec per supported version, a version field, and a round-trip test with a stored golden byte string. Change the version when the format changes and reject unsupported versions explicitly. Keep older decoders only while supported consumers or retained data require them.
 
-**Not this:** A hand-rolled postcard reader in the guest SDK with a comment saying that in a real SDK it would be generated.
+**Not this:** Silently interpreting obsolete bytes as the current format, or maintaining legacy readers for consumers and data the project does not support.
 
-**Exception:** None.
+**Exception:** The [pre-release authorization](../../../AGENTS.md#workflow-develop-validate-replan) permits breaking formats without legacy readers or data migration. Update current producers and consumers together and regenerate affected artifacts.

@@ -18,7 +18,7 @@ If the behaviour under test is "B is not blocked by A", make A's blocking explic
 
 ## Tests assert logic; benchmarks measure
 
-A test passes or fails on a logical assertion about behaviour: this request got this status, this instance refused this call, this delta restored these bytes. A benchmark produces a measurement and has no verdict. The two do not mix: a test with a machine-dependent performance threshold is a measurement with a pass mark painted on, green on one machine and red on another, and a benchmark that says "pass" is claiming something no single run can know.
+A test passes or fails on a logical assertion about behaviour: this request got this status, this instance refused this call, this delta restored these bytes. Machine-dependent performance checks belong in a separate benchmark workflow, with the [baseline and noise requirements](../measurement/benchmarking.md#keep-performance-measurement-reproducible-and-separate-from-correctness-tests). A timing threshold in the correctness suite can turn machine load into a false behavior failure.
 
 **Not this:** A "conformance" test asserting p90 overshoot on thirty samples; a density test asserting a slope from `smaps_rollup`; a scenario runner that renders a verdict from a figure.
 

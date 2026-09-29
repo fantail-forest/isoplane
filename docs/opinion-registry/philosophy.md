@@ -12,21 +12,15 @@ A deep module with a simple interface is a pit of success. A clock that tests mu
 
 ## Broken Windows
 
-A broken window is any visible signal of neglect: dead code, copy-pasted boilerplate, incomplete abstractions, inconsistent patterns, a config knob nothing reads, a stub that silently succeeds, a comment narrating a bug from months ago. Left unrepaired, broken windows signal "no one cares about this area" and invite further degradation. The damage isn't the defect itself; it's the cascade it triggers as future developers and agents replicate the pattern.
+Address concrete defects and maintenance friction in the responsibility a change touches. Fix nearby problems when the benefit is clear and the change is small and safe. Report consequential debt outside that scope; create a follow-up when it describes actionable work worth prioritizing. Cosmetic inconsistency alone does not require cleanup or a ticket.
 
-Every change should leave the codebase in a state that signals care. When you encounter a broken window:
-
-1. **Fix it** if the fix is small and safe.
-2. **Board it up** if you can't fix it now: raise an issue that says what's needed, when, and why. A boarded-up window signals awareness, not neglect.
-3. **Never walk past it silently.** Acknowledge it exists, even if you can't address it in this change.
-
-**The test:** would a new developer reading this code conclude that quality is valued here, or that shortcuts are normal?
+**The test:** does this cleanup reduce a concrete risk or make the current work easier to understand and maintain, enough to justify its review and regression cost?
 
 ## Trendline Reversal
 
-The goal of every change is to make the codebase better, not just consistent. "This is how we already do it" is not a justification for perpetuating a pattern that should be improved. When a better approach exists, new code should follow the better approach even if existing code doesn't.
+Existing patterns are evidence, not automatic justification. Improve a pattern when there is a concrete benefit, while accounting for the cost of maintaining multiple approaches. Follow established project decisions; a personal preference for a different abstraction is not enough to introduce one.
 
-This means reviews will sometimes flag code that "works" and is "consistent with existing patterns." That's intentional: the reviewer is enforcing the direction, not the status quo.
+Keep changes within the touched responsibility. When improvement needs a broader migration, describe the tradeoff and proposed scope rather than starting the migration as incidental cleanup.
 
 ## Spreading Risk
 

@@ -1,12 +1,14 @@
 # Benchmarking
 
-## A benchmark is a run of a load tool against a node, never a test
+## Keep performance measurement reproducible and separate from correctness tests
 
-Generate load with a maintained open-loop HTTP generator against a running `isoplaned`, and read its latency histogram. Nothing in the repository generates load or renders a report, and nothing under `cargo test` measures: a measurement with a pass mark painted on is green on one machine and red on another. Give a benchmark no verdict; what to do about its figure is a decision a person makes reading it.
+Keep maintained benchmark workloads, invocation scripts and report tooling when they make measurements reproducible. Prefer maintained load generators over building our own; use an open-loop HTTP generator for platform latency under a specified arrival rate. Keep machine-dependent performance checks outside `cargo test`.
 
-**Not this:** Density, activation-latency, and park-cost measurements in a crate's `tests/` directory, passing on every machine because their thresholds cannot fail. A load generator of our own with a SKU projection, a campaign planner, and a report renderer.
+Report measurements with their workload, source revision, environment and uncertainty. A regression gate needs an owner-approved threshold, a comparable baseline, repeated measurements and an explicit policy for noise or inconclusive results. A single favorable run does not qualify performance.
 
-**Exception:** A small in-tree generator for a specific arrival process the maintained tools lack, kept to what that process needs, and kept out of `cargo test`.
+**Not this:** A machine-dependent threshold in the correctness suite, a custom load framework where a maintained tool suffices, or deleting the only reproducible workload after making a performance decision.
+
+**Exception:** A small custom generator is appropriate for an arrival process maintained tools cannot express. Microbenchmarks may exercise a named internal mechanism.
 
 ## Measure the path a customer takes
 
@@ -16,10 +18,10 @@ Send load in through the proxy with a stated arrival process and measure at the 
 
 **Exception:** A microbenchmark of one mechanism, named as such, quoted with the interface it drove.
 
-## Keep the instrument out of the product
+## Retain instrumentation according to its ongoing value
 
-Ship the product with `tracing` spans and nothing else of a benchmark's instrument. Machinery a benchmark needs to attribute time (sample carriers, lock statistics, comparison arms) lives with the benchmark, on a branch or behind a feature that production builds do not enable, and is deleted with it.
+Prefer the product's tracing mechanism for attribution. Keep expensive experimental probes disabled in production, and remove comparison implementations when the experiment ends. Retain reusable benchmark instrumentation when it supports a maintained workload; production instrumentation earns its place through operational value and acceptable measured overhead.
 
-**Not this:** A benchmark's timestamp instrument compiled into the cell and sampling production traffic by default.
+**Not this:** Leaving a costly experimental probe enabled on production traffic, or deleting useful measurement tooling merely because its first experiment finished.
 
-**Exception:** None.
+**Exception:** A temporary probe may run in production for a specific investigation with bounded overhead and a defined removal or disablement condition.
