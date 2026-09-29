@@ -9,11 +9,18 @@ $manifest = Get-Content "$Release\release.json" -Raw | ConvertFrom-Json
 if ($manifest.runtimeIdentifier -ne 'win-x64') { throw 'The journey requires a Windows x64 release.' }
 $sdk = Join-Path $env:ProgramW6432 "Isoplane\SDK\$($manifest.packageVersion)"
 if (Test-Path $sdk) { throw "The journey requires this release to be absent: $sdk" }
-$workspace = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))
+$runs = Join-Path (Split-Path $PSScriptRoot -Parent) '.test-runs\win-x64\installation'
+$workspace = Join-Path $runs ([Guid]::NewGuid().ToString('N'))
 $previousHome = $env:ISOPLANE_HOME
 $previousPackages = $env:NUGET_PACKAGES
+$previousTemp = $env:TEMP
+$previousTmp = $env:TMP
 $previousLocation = Get-Location
-New-Item -ItemType Directory $workspace | Out-Null
+New-Item -ItemType Directory $workspace -Force | Out-Null
+$scratch = Join-Path $workspace 'tmp'
+New-Item -ItemType Directory $scratch | Out-Null
+$env:TEMP = $scratch
+$env:TMP = $scratch
 $env:ISOPLANE_HOME = Join-Path $workspace 'installation'
 $env:NUGET_PACKAGES = Join-Path $workspace 'packages'
 $toolDirectory = Join-Path $workspace 'tools'
@@ -89,6 +96,8 @@ finally {
     Set-Location $previousLocation
     $env:ISOPLANE_HOME = $previousHome
     $env:NUGET_PACKAGES = $previousPackages
+    $env:TEMP = $previousTemp
+    $env:TMP = $previousTmp
     if ($KeepArtifacts) {
         Write-Output "Journey artifacts (caller-managed): $workspace"
     } else {
