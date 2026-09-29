@@ -17,7 +17,7 @@ struct Rig {
     cell: Arc<Cell>,
 }
 
-fn rig(cfg: CellConfig) -> Rig {
+fn rig(cfg: CellConfig, ) -> Rig {
     let (cell, _fetcher) = common::rig_resolving(cfg, "93.184.216.34:80");
     Rig { cell }
 }
@@ -40,7 +40,7 @@ const T: Duration = Duration::from_secs(10);
 
 #[tokio::test]
 async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
-    let r = rig(CellConfig::for_test("async-drop"));
+    let r = rig(CellConfig::for_test("async-drop"), );
     let task = r.cell.reactor().spawn(std::future::pending::<()>());
     r.cell.shutdown();
     tokio::spawn(async move { drop(r) })
@@ -60,7 +60,7 @@ async fn dropping_a_cell_from_an_async_task_cancels_its_reactor_tasks() {
 /// `1` for a previous request's residue.
 #[test]
 fn fresh_leaves_no_residue_reuse_does() {
-    let r = rig(CellConfig::for_test("residue"));
+    let r = rig(CellConfig::for_test("residue"), );
 
     for (app, lifecycle) in [
         ("reuse-app", HandlerLifecycle::Reuse),
@@ -116,9 +116,10 @@ fn fresh_leaves_no_residue_reuse_does() {
     r.cell.shutdown();
 }
 
+
 #[test]
 fn clones_of_one_template_never_share_entropy() {
-    let r = rig(CellConfig::for_test("entropy"));
+    let r = rig(CellConfig::for_test("entropy"), );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("rng", "v1"),
         FakeBehaviour::program([Step::Entropy { bytes: 32 }]),
@@ -164,7 +165,7 @@ fn clones_of_one_template_never_share_entropy() {
 
 #[test]
 fn a_retired_module_refuses_new_work_and_discards_its_idle_instances() {
-    let r = rig(CellConfig::for_test("retire"));
+    let r = rig(CellConfig::for_test("retire"), );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("retired-app", "v1"),
         FakeBehaviour::done(),

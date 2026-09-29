@@ -24,7 +24,7 @@ description = "The Isoplane Rust guest SDK: the isoplane scheduler (a single-thr
 
 [lib]
 # rlib only: the `#[no_mangle]` exports are emitted into the *guest* crate by
-# `isoplane_guest::export_handler!` / `export_durable!`, so the linker cannot GC
+# `isoplane_guest::export_handler!`, so the linker cannot GC
 # them and every guest gets exactly one copy.
 crate-type = ["rlib"]
 

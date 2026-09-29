@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Isoplane.Durable;
+using Isoplane;
 using Isoplane.Runtime;
 
 namespace Isoplane.Abi;
@@ -158,6 +158,7 @@ public static unsafe class Exports<TRouter>
 
             Log(1, "isoplane_wake enter: future=" + future.ToString());
 
+
             FutureTable.Complete(future, r);
 
             return _initialization is not null ? SettleInitialization() : Settle();
@@ -241,6 +242,7 @@ public static unsafe class Exports<TRouter>
         int handle = resp.Finish();
 
         Log(1, "done: status=" + resp.Status.ToString());
+
         return PollStatus.Done((uint)handle);
     }
 
@@ -295,10 +297,13 @@ public static unsafe class Exports<TRouter>
         return PollStatus.Trapped(TrapCode.Panic);
     }
 
-    /// <summary>Records entry into a managed dispatch.</summary>
+    /// <summary>
+    /// Records entry into a managed dispatch.
+    /// </summary>
     private static void TraceDispatch(DispatchRecord d)
     {
         Log(1, "isoplane_handle enter: " + d.Method + " " + d.Path);
+
     }
 
     /// <summary>

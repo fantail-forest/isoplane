@@ -10,7 +10,6 @@ namespace Acceptance;
 
 internal sealed partial class Reflection
 {
-#if ISOPLANE_MONO
     private static async Task<string> LoadedAssemblyAfterPark()
     {
         using var stream = typeof(Reflection).Assembly.GetManifestResourceStream("dynamic-payload")
@@ -51,7 +50,6 @@ internal sealed partial class Reflection
     {
         public int AddOne(int value) => value + 1;
     }
-#endif
 
     private static async Task<string> EventsAfterPark()
     {

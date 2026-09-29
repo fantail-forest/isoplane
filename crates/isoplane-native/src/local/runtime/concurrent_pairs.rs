@@ -168,12 +168,11 @@ async fn execute(
     let host =
         LocalApp::start(first.prepared.clone(), storage, first.configuration.clone()).await?;
     let routes = Arc::new(Routes(RwLock::new(HashMap::new())));
-    let proxy = isoplane_proxy::Proxy::with_hub(
+    let proxy = isoplane_proxy::Proxy::new(
         routes.clone(),
         host.cell.clone(),
         host.proxy.metrics.clone(),
         Default::default(),
-        host.proxy.hub.clone(),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;

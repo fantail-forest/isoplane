@@ -1,4 +1,6 @@
-//! HTTP dispatch and guest response encoding.
+//! HTTP dispatch: turning a resolved route and a hyper
+//! request into a call through `Dispatcher`, and a guest's reply into an
+//! HTTP response.
 
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering::Relaxed;
@@ -75,7 +77,6 @@ impl Proxy {
             }
         }
     }
-
 }
 
 fn tier_str(t: isoplane_abi::host::CodeTier) -> &'static str {

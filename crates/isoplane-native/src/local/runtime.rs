@@ -6,17 +6,12 @@ mod preparation_cache;
 
 pub use baseline::Baselines;
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use isoplane_abi::config::AppManifest;
-use isoplane_abi::host::{DiId, Dispatcher, DurableStore, RouteTarget};
-use isoplane_durable::activation::{ActivationConfig, ActivationRegistry, DiGuest};
+use isoplane_abi::host::RouteTarget;
 use isoplane_host::{Cell, CellConfig, EngineActivator, ModuleId};
-use isoplane_runtime::durable::{DurableBridge, DurableCalls, UnusedGuest};
-use isoplane_runtime::sockets::{GatedSocketSink, ProxySocketOps};
-use parking_lot::RwLock;
 
 use super::Inputs as Project;
 
@@ -265,7 +260,6 @@ pub struct LocalApp {
     pub cell: Arc<Cell>,
     /// Routes local HTTP through the shared request pipeline.
     pub proxy: Arc<isoplane_proxy::Proxy>,
-    target: RouteTarget,
     _scratch: tempfile::TempDir,
     debug: Option<Arc<isoplane_host::debug::DebugActivator>>,
 }
@@ -276,7 +270,6 @@ impl LocalApp {
         if let Some(debug) = &self.debug {
             debug.stop();
         }
-        self.proxy.shutdown_sockets();
         self.cell.shutdown();
     }
 
@@ -325,43 +318,7 @@ impl LocalApp {
         let scratch = tempfile::tempdir_in(data)?;
         let metrics = Arc::new(isoplane_proxy::ProxyMetrics::new());
         let cfg = isoplane_proxy::ProxyConfig::default();
-        let hub = Arc::new(isoplane_proxy::SocketHub::new(metrics.clone(), cfg.sockets));
-        let sockets = ProxySocketOps::new(hub.clone());
-        let store = Arc::new(isoplane_store::SqliteStore::open(data.join("store.db"))?);
-        let di_store: Arc<dyn DurableStore> = Arc::new(isoplane_store::SqliteDurableStore::open(
-            data.join("store.db"),
-        )?);
-        let tenants = Arc::new(RwLock::new(HashMap::from([(
-            prepared.manifest.name.clone(),
-            prepared.tenant.clone(),
-        )])));
-        let directory = Arc::new(isoplane_runtime::directory::LocalDirectory::open(
-            data.join("directory.jsonl"),
-        )?);
-        let alarms = Arc::new(isoplane_runtime::alarms::LocalAlarmService::open(
-            data.join("alarms.jsonl"),
-        )?);
-        let registry = ActivationRegistry::new(
-            ActivationConfig {
-                cell: prepared.version.clone(),
-                ..Default::default()
-            },
-            di_store.clone(),
-            directory,
-            Some(alarms.clone()),
-            Arc::new(GatedSocketSink {
-                sockets: sockets.clone(),
-                tenants,
-            }),
-            Arc::new(|_: &DiId| Arc::new(UnusedGuest) as Arc<dyn DiGuest>),
-            None,
-        );
-        let durable = DurableBridge::new(registry, di_store, alarms);
         let services = Arc::new(isoplane_host::cell::Services {
-            store,
-            durable: durable.clone(),
-            leases: durable.clone(),
-            sockets,
             egress: egress.clone(),
             fetcher: Arc::new(isoplane_host::PinnedHttpFetcher::new(
                 egress.clone(),
@@ -404,47 +361,14 @@ impl LocalApp {
             tier: isoplane_abi::host::CodeTier::Fast,
         };
         let routes = Arc::new(AppRoute(target.clone()));
-        let proxy = isoplane_proxy::Proxy::with_hub(routes, cell.clone(), metrics, cfg, hub);
+        let proxy = isoplane_proxy::Proxy::new(routes, cell.clone(), metrics, cfg);
         let app = Arc::new(Self {
             cell,
             proxy,
-            target,
             _scratch: scratch,
             debug,
         });
-        durable.attach(
-            app.cell.reactor().clone(),
-            Arc::downgrade(&(app.clone() as Arc<dyn DurableCalls>)),
-        )?;
         Ok(app)
-    }
-}
-
-#[async_trait::async_trait]
-impl DurableCalls for LocalApp {
-    async fn call(
-        &self,
-        tenant: &str,
-        req: isoplane_abi::calls::DiCall,
-    ) -> Result<isoplane_abi::result::DiCallResponse, isoplane_abi::FutureError> {
-        if tenant != self.target.tenant {
-            return Err(isoplane_abi::FutureError::Denied(
-                "the caller does not own this local app".into(),
-            ));
-        }
-        let id = DiId {
-            app: self.target.app.clone(),
-            class: req.class,
-            name: req.name,
-        };
-        let response = self
-            .cell
-            .dispatch_di(&self.target, &id, &req.method, req.payload)
-            .await
-            .map_err(|e| isoplane_abi::FutureError::Io(e.to_string()))?;
-        Ok(isoplane_abi::result::DiCallResponse {
-            payload: response.body,
-        })
     }
 }
 

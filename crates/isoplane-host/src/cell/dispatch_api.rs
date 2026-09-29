@@ -8,6 +8,10 @@ pub enum Target {
     Handler { route: String },
 }
 
+enum DispatchResources {
+    Http(super::HttpDispatch),
+}
+
 impl Target {
     pub(super) fn route(&self) -> String {
         match self {
@@ -151,7 +155,13 @@ impl Cell {
         timeout: Duration,
         http: Option<super::HttpDispatch>,
     ) -> crate::Result<DispatchResult> {
-        self.dispatch_with_resources(module, target, rec, timeout, http)
+        self.dispatch_with_resources(
+            module,
+            target,
+            rec,
+            timeout,
+            http.map(DispatchResources::Http),
+        )
     }
 
     pub(crate) async fn dispatch_http_async(
@@ -162,8 +172,14 @@ impl Cell {
         timeout: Duration,
         http: super::HttpDispatch,
     ) -> crate::Result<DispatchResult> {
-        self.dispatch_resources_async(module, target, rec, timeout, Some(http))
-            .await
+        self.dispatch_resources_async(
+            module,
+            target,
+            rec,
+            timeout,
+            Some(DispatchResources::Http(http)),
+        )
+        .await
     }
 
     fn dispatch_with_resources(
@@ -172,7 +188,7 @@ impl Cell {
         target: Target,
         rec: DispatchRecord,
         timeout: Duration,
-        resources: Option<super::HttpDispatch>,
+        resources: Option<DispatchResources>,
     ) -> crate::Result<DispatchResult> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         self.enqueue_dispatch(module, target, rec, resources, tx.into())?;
@@ -185,10 +201,10 @@ impl Cell {
         module: &ModuleId,
         target: Target,
         rec: DispatchRecord,
-        resources: Option<super::HttpDispatch>,
+        resources: Option<DispatchResources>,
         responder: Responder,
     ) -> crate::Result<()> {
-        let http = resources;
+        let http = resources.map(|DispatchResources::Http(http)| http);
         let (stream, upload) = match http {
             Some(http) => (Some(http.response), http.upload),
             None => (None, None),
@@ -236,7 +252,7 @@ impl Cell {
         target: Target,
         rec: DispatchRecord,
         timeout: Duration,
-        resources: Option<super::HttpDispatch>,
+        resources: Option<DispatchResources>,
     ) -> crate::Result<DispatchResult> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.enqueue_dispatch(
@@ -334,8 +350,7 @@ impl Cell {
             .await
     }
 
-    /// The completion path for an alarm, a socket frame, a DI reply or a
-    /// test; the vtable's own futures come through the same runtime call.
+    /// Delivers a host future's result through the cell runtime.
     pub fn complete_future(&self, id: u64, result: isoplane_abi::result::ResultRecord) {
         self.rt.settle_future(id, result);
     }

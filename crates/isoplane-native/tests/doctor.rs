@@ -321,7 +321,11 @@ fn doctor_has_a_machine_readable_form() {
             &v["capabilities"][0]["group"],
             &v["capabilities"][0]["kind"]
         ),
-        (&"http_fetch".into(), &"http".into(), &"future".into()),
+        (
+            &"http_fetch".into(),
+            &"http".into(),
+            &"future".into()
+        ),
         "each capability carries its name, group and kind"
     );
     assert_eq!(

@@ -19,7 +19,7 @@ struct Rig {
     cell: Arc<Cell>,
 }
 
-fn rig(cfg: CellConfig) -> Rig {
+fn rig(cfg: CellConfig, ) -> Rig {
     let (cell, _fetcher) = common::rig_resolving(cfg, "93.184.216.34:80");
     Rig { cell }
 }
@@ -58,10 +58,12 @@ const PARK_MS: u64 = 600_000;
 /// Budget kills release the only worker so another tenant can park and wake.
 #[test]
 fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
-    let r = rig(CellConfig {
-        exec_threads: 1,
-        ..CellConfig::for_test("c7")
-    });
+    let r = rig(
+        CellConfig {
+            exec_threads: 1,
+            ..CellConfig::for_test("c7")
+        },
+    );
 
     let spinner = Arc::new(FakeActivator::named(
         ModuleId::new("spinner", "v1"),
@@ -191,10 +193,12 @@ fn wake_once(r: &Rig, module: &ModuleId) {
 
 #[test]
 fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
-    let r = rig(CellConfig {
-        exec_threads: 2,
-        ..CellConfig::for_test("breaker")
-    });
+    let r = rig(
+        CellConfig {
+            exec_threads: 2,
+            ..CellConfig::for_test("breaker")
+        },
+    );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("hangs", "v1"),
         FakeBehaviour::program([Step::Spin]),
@@ -271,11 +275,13 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
 /// the first result off the shared channel is not the first request in.
 #[test]
 fn many_dispatches_share_one_channel_and_stay_matchable() {
-    let r = rig(CellConfig {
-        exec_threads: 4,
-        queue_depth_per_worker: 64,
-        ..CellConfig::for_test("share")
-    });
+    let r = rig(
+        CellConfig {
+            exec_threads: 4,
+            queue_depth_per_worker: 64,
+            ..CellConfig::for_test("share")
+        },
+    );
 
     let slow = Arc::new(FakeActivator::named(
         ModuleId::new("slow", "v1"),
@@ -386,11 +392,13 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
 /// it.
 #[test]
 fn a_shed_submission_says_so_rather_than_going_quiet() {
-    let r = rig(CellConfig {
-        exec_threads: 1,
-        queue_depth_per_worker: 1,
-        ..CellConfig::for_test("shed")
-    });
+    let r = rig(
+        CellConfig {
+            exec_threads: 1,
+            queue_depth_per_worker: 1,
+            ..CellConfig::for_test("shed")
+        },
+    );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("spin", "v1"),
         FakeBehaviour::program([Step::Spin]),
@@ -465,7 +473,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
 
 #[test]
 fn async_dispatch_completes_while_the_blocking_pool_is_occupied() {
-    let r = rig(CellConfig::for_test("async-dispatch"));
+    let r = rig(CellConfig::for_test("async-dispatch"), );
     let guest = Arc::new(FakeActivator::named(
         ModuleId::new("async-dispatch", "v1"),
         FakeBehaviour::program([

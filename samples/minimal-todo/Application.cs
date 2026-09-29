@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Text.Json;
 using Npgsql;
 using Isoplane;
-using Isoplane.Durable;
 
 namespace MinimalTodo;
 

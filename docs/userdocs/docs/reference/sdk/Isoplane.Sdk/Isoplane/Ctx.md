@@ -15,7 +15,6 @@ public sealed class Ctx
 
 | name | description |
 | --- | --- |
-| [Cache](Ctx/Cache.md) { get; } | The KV namespace bound as `cache` in `isoplane.toml`. |
 | [CpuBudgetMs](Ctx/CpuBudgetMs.md) { get; } | CPU milliseconds this dispatch may use before it is killed. |
 | [NowMs](Ctx/NowMs.md) { get; } | The clock at dispatch start, in milliseconds, frozen for the slice. |
 

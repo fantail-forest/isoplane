@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use isoplane_abi::calls::*;
-use isoplane_abi::dispatch::{DispatchRecord};
+use isoplane_abi::dispatch::DispatchRecord;
 use isoplane_abi::host::{PinnedTarget};
 use isoplane_abi::result::*;
 use isoplane_abi::status::{PollStatus, TrapCode};
@@ -572,8 +572,6 @@ impl Activator for FakeActivator {
 
 
 
-
-
 /// Records the address it was told to connect to.
 #[derive(Default)]
 pub struct FakeFetcher {
@@ -596,15 +594,6 @@ impl crate::bindings::Fetcher for FakeFetcher {
         })
     }
 }
-
-
-
-
-
-
-
-
-
 
 /// A [`crate::bindings::WakeSink`] that records, for tests without a cell.
 #[derive(Default)]

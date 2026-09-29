@@ -10,7 +10,6 @@
 use core::cell::UnsafeCell;
 use core::future::Future;
 
-
 use crate::ctx::Ctx;
 use crate::http::{Request, Response};
 
@@ -48,7 +47,6 @@ pub trait Handler: Sized + 'static {
     fn handle(&'static self, req: Request, ctx: Ctx) -> impl Future<Output = Response> + 'static;
 
 }
-
 
 /// Guest GC pressure levels for `isoplane_gc_hint`.
 ///
@@ -116,14 +114,11 @@ macro_rules! export_handler {
                         let r = <$ty as $crate::Handler>::handle(app, req, ctx).await;
                         $crate::rt::TaskOutcome::Response($crate::__rexport::into_handle(r))
                     }),
-                    // A Handler cannot receive DI triggers. Say so loudly
-                    // rather than silently returning done.
                 }
             })
         }
     };
 }
-
 
 /// The exports that do not depend on the entrypoint kind.
 #[macro_export]

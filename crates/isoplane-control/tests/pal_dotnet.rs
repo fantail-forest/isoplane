@@ -15,7 +15,7 @@ fn engine() -> IsoplaneEngine {
 
 #[test]
 fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator() {
-    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet");
+    let wasm = isoplane_fixtures::mono_runtime();
     let report = validator::validate(&wasm, Limits::default())
         .expect("the Mono fixture must satisfy admission");
     let template = engine()
@@ -41,7 +41,7 @@ fn the_mono_module_links_exactly_the_platform_imports_admitted_by_the_validator(
 
 #[test]
 fn an_undeclared_mono_platform_interface_is_refused_by_admission_and_execution() {
-    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet");
+    let wasm = isoplane_fixtures::mono_runtime();
     let mutated = rename_import(&wasm, "wasi:io/poll@0.2.0", "wasi:io/poll@0.9.0");
     let violations = validator::validate(&mutated, Limits::default())
         .expect_err("an unknown platform interface must fail admission");

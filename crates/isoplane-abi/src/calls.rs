@@ -10,18 +10,3 @@ pub struct FetchRequest {
     pub body: Vec<u8>,
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

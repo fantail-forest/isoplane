@@ -8,7 +8,7 @@
 //!
 //! The table is sized to the closure of imports the toolchain emits for the
 //! guests in this tree, read out of the built modules with the guest-side PAL
-//! object disabled (`guests/dotnet/build.sh -p:IsoplanePalObject=`), not to a
+//! object disabled (`-p:IsoplanePalObject=`), not to a
 //! hello-world module: pulling in LINQ, source-generated `Regex` or
 //! `System.Text.Json` drags further filesystem and stream imports out of the
 //! BCL. It is still enumerated; the next unlisted import is a rejection.
@@ -406,9 +406,7 @@ mod tests {
     #[test]
     fn native_io_delegation_cannot_reach_unrelated_capabilities() {
         use imports::Group::*;
-        let forbidden = [
-            Http, Kv, Blob, Queue, Sql, Durable, Socket, Service, Response, Ctx,
-        ];
+        let forbidden = [Http, Socket, Service, Response, Ctx];
         for p in delegated() {
             let Some(cap) = p.disposition.capability() else {
                 continue;

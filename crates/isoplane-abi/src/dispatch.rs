@@ -22,7 +22,6 @@ pub enum DispatchKind {
     Http(HttpRequest),
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpRequest {
     pub method: String,
@@ -32,7 +31,6 @@ pub struct HttpRequest {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
-
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceContext {
@@ -53,8 +51,6 @@ pub struct ResponseHead {
 }
 
 impl DispatchKind {
-
-
     pub fn label(&self) -> &'static str {
         match self {
             DispatchKind::Http(_) => "http",

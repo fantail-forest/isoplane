@@ -268,7 +268,14 @@ mod queue_tests {
     ) -> Box<DispatchJob> {
         let rec = isoplane_abi::dispatch::DispatchRecord {
             dispatch_id,
-            kind: crate::cell::pool::cell_tests::http(dispatch_id).kind,
+            kind: isoplane_abi::dispatch::DispatchKind::Http(isoplane_abi::HttpRequest {
+                method: "GET".into(),
+                url: "/".into(),
+                path: "/".into(),
+                query: vec![],
+                headers: vec![],
+                body: vec![],
+            }),
             trace: Default::default(),
             cancel_future: 0,
             cpu_budget_ms: 30_000,

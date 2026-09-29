@@ -1,11 +1,17 @@
 //! Node measurement interfaces and latency summaries.
 
+
 use serde::{Deserialize, Serialize};
 
 pub trait NodeAdmin: Send + Sync + 'static {
+
+
+
+
     /// Current node measurements.
     fn snapshot(&self) -> NodeSnapshot;
 }
+
 
 /// A latency series reduced to the quantiles the exporter publishes.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]

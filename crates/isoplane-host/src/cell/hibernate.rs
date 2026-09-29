@@ -233,7 +233,7 @@ impl Cell {
         Ok(())
     }
 
-    /// Discards an idle instance after releasing its host resources.
+    /// Discards an idle instance without saving a delta.
     pub fn discard_instance(self: &Arc<Self>, id: InstanceId) -> crate::Result<()> {
         let slot = self
             .slot(id)

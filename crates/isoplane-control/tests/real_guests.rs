@@ -1,7 +1,7 @@
 //! Validation and initializer replay against prepared guest modules.
 
 
-use isoplane_abi::config::{InitSandbox, Limits, };
+use isoplane_abi::config::{InitSandbox, Limits};
 use isoplane_control::preinit::{PreInitRequest, PreInitializer};
 use isoplane_control::validator::{self, ViolationCode as V};
 

@@ -19,9 +19,10 @@ async fn the_packaged_aspnet_provider_emits_attributed_customer_logs() {
     .await
     .expect("logging setup task")
     .expect("one test subscriber");
-    let aspnet = tokio::task::spawn_blocking(|| isoplane_fixtures::dotnet("isoplane_guest_aspnet"))
-        .await
-        .expect("the ASP.NET logging fixture must build");
+    let aspnet =
+        tokio::task::spawn_blocking(|| common::preparation::Guest::from("isoplane_guest_aspnet"))
+            .await
+            .expect("the ASP.NET logging fixture must build");
     let rig = common::start_with_policy(aspnet, InitSandbox::RuntimeBringUp, None, |_| {}).await;
     let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logs").await;
     assert_eq!(

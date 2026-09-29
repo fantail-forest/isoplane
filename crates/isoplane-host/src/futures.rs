@@ -536,8 +536,8 @@ mod tests {
     fn ids_are_never_zero_and_never_reused() {
         let t = table();
         let i = InstanceId(1);
-        let a = t.alloc(i, 1, "kv_get", 64).expect("alloc");
-        let b = t.alloc(i, 1, "kv_get", 64).expect("alloc");
+        let a = t.alloc(i, 1, "clock_deadline_in", 64).expect("alloc");
+        let b = t.alloc(i, 1, "clock_deadline_in", 64).expect("alloc");
         assert_ne!(a, INVALID_FUTURE, "0 is reserved for a refused allocation");
         assert_ne!(a, b, "ids are never reused");
     }
@@ -617,12 +617,12 @@ mod tests {
 
         for n in 0..limit {
             assert!(
-                t.alloc(i, 7, "kv_get", limit).is_ok(),
+                t.alloc(i, 7, "clock_deadline_in", limit).is_ok(),
                 "alloc {n} refused early"
             );
         }
         let err = t
-            .alloc(i, 7, "kv_get", limit)
+            .alloc(i, 7, "clock_deadline_in", limit)
             .expect_err("the seventh future is over the cap");
         assert_eq!(
             err,
@@ -633,7 +633,7 @@ mod tests {
             "the refusal names the cap and the count"
         );
         assert!(
-            t.alloc(i, 8, "kv_get", limit).is_ok(),
+            t.alloc(i, 8, "clock_deadline_in", limit).is_ok(),
             "another dispatch on the same instance has its own cap"
         );
     }
@@ -644,12 +644,15 @@ mod tests {
         let i = InstanceId(1);
         let mut ids = Vec::new();
         for _ in 0..6 {
-            ids.push(t.alloc(i, 1, "kv_get", 6).expect("alloc"));
+            ids.push(t.alloc(i, 1, "clock_deadline_in", 6).expect("alloc"));
         }
-        assert!(t.alloc(i, 1, "kv_get", 6).is_err(), "the cap is reached");
+        assert!(
+            t.alloc(i, 1, "clock_deadline_in", 6).is_err(),
+            "the cap is reached"
+        );
         t.complete(ids[0], ResultRecord::Ok(vec![1]));
         assert!(
-            t.alloc(i, 1, "kv_get", 6).is_ok(),
+            t.alloc(i, 1, "clock_deadline_in", 6).is_ok(),
             "a completion frees a slot under the cap"
         );
     }
@@ -659,8 +662,8 @@ mod tests {
         let t = table();
         let a = InstanceId(1);
         let b = InstanceId(2);
-        let fa = t.alloc(a, 1, "kv_get", 64).expect("alloc");
-        let fb = t.alloc(b, 1, "kv_get", 64).expect("alloc");
+        let fa = t.alloc(a, 1, "clock_deadline_in", 64).expect("alloc");
+        let fb = t.alloc(b, 1, "clock_deadline_in", 64).expect("alloc");
         assert_eq!(
             t.complete(fa, ResultRecord::Ok(vec![1])),
             WakeTarget::Instance(a),
@@ -700,7 +703,7 @@ mod tests {
         let owner = InstanceId(1);
         t.alloc_cancellation(owner, 1);
         let id = t
-            .alloc(owner, 1, "kv_get", 64)
+            .alloc(owner, 1, "clock_deadline_in", 64)
             .expect("guest work must allocate");
         t.complete(id, ResultRecord::Ok(vec![1]));
         assert!(
@@ -726,7 +729,9 @@ mod tests {
     fn ending_a_dispatch_reclaims_only_its_own_handles() {
         let t = table();
         let owner = InstanceId(1);
-        let doomed = t.alloc(owner, 1, "kv_get", 64).expect("alloc");
+        let doomed = t
+            .alloc(owner, 1, "clock_deadline_in", 64)
+            .expect("alloc");
         let other = t.alloc(owner, 2, "queue_send", 64).expect("alloc");
         assert!(
             t.end_dispatch(owner, 1),
@@ -753,7 +758,9 @@ mod tests {
     fn a_completed_but_undelivered_result_does_not_outlive_its_dispatch() {
         let t = table();
         let owner = InstanceId(1);
-        let id = t.alloc(owner, 1, "kv_get", 64).expect("alloc");
+        let id = t
+            .alloc(owner, 1, "clock_deadline_in", 64)
+            .expect("alloc");
         assert_eq!(
             t.complete(id, ResultRecord::Ok(vec![1])),
             WakeTarget::Instance(owner),
@@ -775,7 +782,7 @@ mod tests {
     fn releasing_an_instance_reclaims_every_handle() {
         let t = table();
         let i = InstanceId(1);
-        let f = t.alloc(i, 1, "kv_get", 64).expect("alloc");
+        let f = t.alloc(i, 1, "clock_deadline_in", 64).expect("alloc");
         t.release_instance(i);
         assert_eq!(t.live_futures(), 0, "the dead instance's futures are gone");
         assert_eq!(

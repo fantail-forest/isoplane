@@ -12,6 +12,9 @@ use isoplane_engine::{
     Template,
 };
 pub use isoplane_fixtures::GuestRuntime;
+#[path = "managed.rs"]
+mod managed;
+pub use managed::probe_files;
 
 /// Writes `mod $name { fn mono() {..} }` from one body,
 /// so `cargo test mono` or `cargo test hashing::` select what to run.
@@ -61,11 +64,13 @@ pub fn fixture(name: &'static str, runtime: GuestRuntime) -> &'static Fixture {
             ..EngineConfig::default()
         })
         .unwrap_or_else(|error| panic!("the {name} fixture engine must initialize: {error:#}"));
-        let template = engine
-            .load_template(&isoplane_fixtures::dotnet_for(name, runtime))
-            .unwrap_or_else(|error| {
-                panic!("the {name} fixture must load under {runtime}: {error:#}")
-            });
+        let module = isoplane_fixtures::mono_runtime();
+        let template = engine.load_template(&module).unwrap_or_else(|error| {
+            panic!("the {name} fixture must load under {runtime}: {error:#}")
+        });
+        let template = template
+            .with_application_files(probe_files(name))
+            .expect("bind managed probe to shared runtime");
         Fixture { engine, template }
     })
 }

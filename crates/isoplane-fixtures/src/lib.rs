@@ -1,41 +1,13 @@
-//! Test support: the one way a test obtains a guest module from `guests/`.
-//!
-//! The first access to each fixture runs its build script with `--if-stale`.
-//! Task tracks fixture inputs and rebuilds stale or missing output.
-//! Successful selections are reused for the remainder of the test process. The scripts
-//! use distinct host intermediates. This crate serialises callers within a process;
-//! scripts/test prepares shared fixtures before launching parallel consumers.
-//! A missing toolchain fails the test with the script's message naming the tool.
-//!
-//! This crate is for `[dev-dependencies]` only; it panics on every failure
-//! because its callers are tests.
+//! Readers for fixtures prepared by Task before the test suite starts.
+//! This crate is for test dependencies and panics when required artifacts are absent.
 #![forbid(unsafe_code)]
 
 mod dotnet_template;
 
 pub use dotnet_template::{aspnet_project, debugger_python, managed_cli, release_version};
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::{Mutex, OnceLock};
-
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct BuildSelection {
-    script: String,
-    fixture: Option<String>,
-    runtime: Option<String>,
-}
-
-static BUILT: Mutex<BTreeSet<BuildSelection>> = Mutex::new(BTreeSet::new());
-
-fn python() -> &'static str {
-    if cfg!(windows) {
-        "python"
-    } else {
-        "python3"
-    }
-}
+use std::sync::OnceLock;
 
 pub(crate) fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -45,90 +17,30 @@ pub(crate) fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Resolve Cargo's configured output directory without acquiring its build lock.
+/// Cargo output selected by the test task, or Cargo's default directory.
 pub fn target_directory() -> &'static Path {
     static TARGET: OnceLock<PathBuf> = OnceLock::new();
     TARGET.get_or_init(|| {
-        let root = repo_root();
-        let output = Command::new(python())
-            .arg(root.join("scripts/fixture-tools.py"))
-            .arg("target-directory")
-            .arg(&root)
-            .output()
-            .expect("resolve the Cargo target directory");
-        assert!(
-            output.status.success(),
-            "Cargo output discovery failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        PathBuf::from(
-            String::from_utf8(output.stdout)
-                .expect("Cargo target path is UTF-8")
-                .trim(),
-        )
+        std::env::var_os("CARGO_TARGET_DIR")
+            .map(|path| repo_root().join(path))
+            .unwrap_or_else(|| repo_root().join("target"))
     })
-}
-
-fn build(script: &str) -> PathBuf {
-    build_selected(script, None, None)
-}
-
-fn build_selected(script: &str, fixture: Option<&str>, runtime: Option<&str>) -> PathBuf {
-    let root = repo_root();
-    let path = root.join(script);
-    let mut built = BUILT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let selection = BuildSelection {
-        script: script.to_owned(),
-        fixture: fixture.map(str::to_owned),
-        runtime: runtime.map(str::to_owned),
-    };
-    if built.contains(&selection) {
-        return root;
-    }
-    let mut command = Command::new(python());
-    command
-        .arg(root.join("scripts/dev"))
-        .arg("bash")
-        .arg(&path)
-        .arg("--if-stale");
-    if let Some(name) = fixture {
-        command.arg("--fixture").arg(name);
-    }
-    if let Some(runtime) = runtime {
-        command.arg("--runtime").arg(runtime);
-    }
-    let out = command
-        .env("ISOPLANE_BUILD_QUIET", "1")
-        .current_dir(&root)
-        .output()
-        .unwrap_or_else(|e| panic!("could not run {}: {e}", path.display()));
-    assert!(
-        out.status.success(),
-        "{} failed, so the fixture could not be built:\n{}{}",
-        path.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    built.insert(selection);
-    root
 }
 
 fn read(path: &Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| {
         panic!(
-            "{} is missing after a successful build ({e}); the build script no longer writes it",
+            "cannot read prepared fixture {} ({e}); run python3 scripts/tasks.py fixtures before cargo test",
             path.display()
         )
     })
 }
 
-/// The path of a module `guests/build.sh` writes, built if missing or stale.
+/// The path of a module `guests/build.sh` writes, prepared by Task.
 /// A name the script's manifest does not list fails here, naming the script,
 /// rather than as a missing file or a stale module left in `.build/wasm32/rust-guests`.
 pub fn rust_path(name: &str) -> PathBuf {
-    let root = build("guests/build.sh");
+    let root = repo_root();
     let manifest = rust_manifest();
     assert!(
         manifest.iter().any(|built| built == name),
@@ -139,7 +51,7 @@ pub fn rust_path(name: &str) -> PathBuf {
         .join(format!("{name}.wasm"))
 }
 
-/// The bytes of a module `guests/build.sh` writes, built if missing or stale.
+/// The bytes of a module `guests/build.sh` writes, prepared by Task.
 pub fn rust(name: &str) -> Vec<u8> {
     read(&rust_path(name))
 }
@@ -147,7 +59,7 @@ pub fn rust(name: &str) -> Vec<u8> {
 /// The names of every module `guests/build.sh` writes, from the manifest the
 /// script leaves beside them.
 pub fn rust_manifest() -> Vec<String> {
-    let manifest = build("guests/build.sh").join(".build/wasm32/rust-guests/manifest");
+    let manifest = repo_root().join(".build/wasm32/rust-guests/manifest");
     String::from_utf8_lossy(&read(&manifest))
         .lines()
         .map(str::to_string)
@@ -157,7 +69,7 @@ pub fn rust_manifest() -> Vec<String> {
 /// The runtime used by C# sandbox fixtures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GuestRuntime {
-    /// The Mono interpreter with the guest's IL bundled into the module.
+    /// The shared Mono interpreter with application IL supplied separately.
     Mono,
 }
 
@@ -170,43 +82,12 @@ impl GuestRuntime {
             GuestRuntime::Mono => "mono",
         }
     }
-
-    fn output_directory(self) -> &'static str {
-        match self {
-            GuestRuntime::Mono => ".build/wasm32/dotnet/mono",
-        }
-    }
 }
 
 impl std::fmt::Display for GuestRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.script_name())
     }
-}
-
-/// The bytes of a Mono C# guest `guests/build-dotnet.sh` writes under
-/// `.build/wasm32/dotnet`, built if missing or stale.
-pub fn dotnet(name: &str) -> Vec<u8> {
-    dotnet_for(name, GuestRuntime::Mono)
-}
-
-/// The bytes of a C# guest published for `runtime`, built if missing or
-/// stale. Only the fixtures `guests/build-dotnet.sh` lists for Mono exist in
-/// that runtime; asking for another fails with the script's message.
-pub fn dotnet_for(name: &str, runtime: GuestRuntime) -> Vec<u8> {
-    let path = dotnet_path(name, runtime);
-    assert_attributed_to_feed(&path, runtime);
-    read(&path)
-}
-
-fn dotnet_path(name: &str, runtime: GuestRuntime) -> PathBuf {
-    build_selected(
-        "guests/build-dotnet.sh",
-        Some(name),
-        Some(runtime.script_name()),
-    )
-    .join(runtime.output_directory())
-    .join(format!("{name}.wasm"))
 }
 
 /// A module is only usable as evidence when the pack it links is the pack
@@ -223,27 +104,15 @@ fn assert_attributed_to_feed(module: &Path, runtime: GuestRuntime) {
     );
 }
 
-/// The bytes of the runtime acceptance guest, `guest-runtime/tests/guest`,
-/// published for `runtime` with the source-built pack, built if missing or
-/// stale. A missing pack fails with the message naming
-/// `guest-runtime/build.sh`.
-pub fn runtime_acceptance_for(runtime: GuestRuntime) -> Vec<u8> {
-    let path = runtime_acceptance_path(runtime);
-    assert_attributed_to_feed(&path, runtime);
-    read(&path)
-}
-
-const PACKAGES: &str = "guest-runtime/tests/packages";
-
 /// The application-independent Mono runtime, `guest-sdks/dotnet/MonoRuntime`,
-/// published with the source-built pack and built if missing or stale. It
+/// published with the source-built pack and prepared by Task. It
 /// runs whichever package the host serves it.
 pub fn mono_runtime() -> Vec<u8> {
     read(&mono_runtime_module())
 }
 
 /// The path of the shared Mono runtime module, as the SDK package carries it
-/// beside its Mono pack identity, built if missing or stale.
+/// beside its Mono pack identity, prepared by Task.
 pub fn mono_runtime_module() -> PathBuf {
     shared_runtime("Isoplane.MonoRuntime.wasm")
 }
@@ -255,84 +124,27 @@ pub fn mono_debug_runtime() -> Vec<u8> {
 }
 
 fn shared_runtime(name: &str) -> PathBuf {
-    let path = build_selected(&format!("{PACKAGES}/build.sh"), Some("runtime"), None)
-        .join(".build/wasm32/runtime-modules")
-        .join(name);
+    let directory = std::env::var_os("ISOPLANE_TEST_RUNTIME_MODULES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join(".build/wasm32/runtime-modules"));
+    let path = directory.join(name);
     assert_attributed_to_feed(&path, GuestRuntime::Mono);
     path
 }
 
 /// The path of the package fixture `guest-runtime/tests/packages/<name>`,
-/// the archive `isoplane bundle` writes, built if missing or stale.
+/// the archive `isoplane bundle` writes, prepared by Task.
 pub fn mono_package(name: &str) -> PathBuf {
-    build_selected(&format!("{PACKAGES}/build.sh"), Some(name), None)
+    repo_root()
         .join(".build/clr-anycpu/package-fixtures")
         .join(format!("{name}.tar"))
 }
 
-fn runtime_acceptance_path(runtime: GuestRuntime) -> PathBuf {
-    build_selected(
-        "guest-runtime/tests/guest/build.sh",
-        None,
-        Some(runtime.script_name()),
-    )
-    .join(".build/wasm32/acceptance")
-    .join(runtime.script_name())
-    .join("guest_runtime_acceptance.wasm")
-}
-
-/// The identity of the pack a fixture was published with for `runtime`.
-pub fn dotnet_runtime_identity(name: &str, runtime: GuestRuntime) -> String {
-    identity_beside(&dotnet_path(name, runtime))
-}
-
-/// The local feed `guest-runtime/build.sh feed` publishes the runtime packs to. An
-/// installed package has no checkout to find it in, so a test points one at
-/// this path through `ISOPLANE_GUEST_RUNTIME_FEED`, as a customer names theirs.
-/// The feed is verified once per test process against current build inputs.
-/// `ISOPLANE_TEST_RUNTIME_FEED` explicitly selects an independently verified artifact
-/// feed instead, including when deliberately qualifying historical artifacts.
+/// The runtime package feed prepared or explicitly selected by Task.
 pub fn guest_runtime_feed() -> PathBuf {
-    static FEED: OnceLock<PathBuf> = OnceLock::new();
-    FEED.get_or_init(|| {
-        let root = repo_root().join("guest-runtime");
-        let explicit = std::env::var_os("ISOPLANE_TEST_RUNTIME_FEED");
-        let feed = explicit
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| repo_root().join(".build/wasm32/runtime/feed"));
-        assert!(
-            feed.is_absolute(),
-            "ISOPLANE_TEST_RUNTIME_FEED must name an absolute artifact-feed path"
-        );
-        let mut command = Command::new(python());
-        command.arg(root.join("feed-identity.py"));
-        if explicit.is_some() {
-            command.arg("verify-artifact");
-        } else {
-            command.arg("verify-current").arg(&root);
-        }
-        let output = command
-            .arg(&feed)
-            .output()
-            .expect("runtime artifact verifier must execute");
-        assert!(
-            output.status.success(),
-            "runtime artifacts at {} are not valid for this test run:\n{}{}",
-            feed.display(),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        if explicit.is_some() {
-            eprintln!(
-                "explicitly selected runtime artifacts: {}\n{}",
-                feed.display(),
-                String::from_utf8_lossy(&output.stdout)
-            );
-        }
-        feed
-    })
-    .clone()
+    std::env::var_os("ISOPLANE_TEST_RUNTIME_FEED")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join(".build/wasm32/runtime/feed"))
 }
 
 /// The identity of the pack the local feed currently offers `runtime`, from
@@ -445,4 +257,42 @@ pub fn assert_cpu_clock_advances(read_clock: impl Fn() -> Option<u64>) {
         after > before,
         "CPU work must advance the native clock, including on ARM"
     );
+}
+
+/// An immutable application file served to a shared-runtime probe.
+pub struct ProbeFile {
+    /// Absolute guest-visible path.
+    pub path: String,
+    /// Managed assembly, resource, or application manifest contents.
+    pub bytes: Vec<u8>,
+}
+
+/// Reads the guest-visible files from a prepared managed probe package.
+pub fn managed_probe(name: &str) -> Vec<ProbeFile> {
+    let path = repo_root()
+        .join(".build/clr-anycpu/probes")
+        .join(format!("{name}.tar"));
+    let bytes = read(&path);
+    let mut archive = tar::Archive::new(bytes.as_slice());
+    archive
+        .entries()
+        .expect("read managed probe archive")
+        .filter_map(|entry| {
+            let mut entry = entry.expect("read managed probe entry");
+            let path = entry.path().expect("read managed probe path").into_owned();
+            if path == Path::new("runtime.json") {
+                return None;
+            }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).expect("read managed probe file");
+            Some(ProbeFile {
+                path: format!(
+                    "{}/{}",
+                    isoplane_abi::filesystem::APPLICATION_PACKAGE_ROOT,
+                    path.display()
+                ),
+                bytes,
+            })
+        })
+        .collect()
 }

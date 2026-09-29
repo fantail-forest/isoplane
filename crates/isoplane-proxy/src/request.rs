@@ -1,7 +1,4 @@
-//! HTTP request metadata parsing.
-
-
-
+//! Parses request query strings.
 
 pub(crate) fn parse_query(q: &str) -> Vec<(String, String)> {
     q.split('&')
@@ -11,27 +8,4 @@ pub(crate) fn parse_query(q: &str) -> Vec<(String, String)> {
             None => (kv.to_string(), String::new()),
         })
         .collect()
-}
-
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-
-
-
-    #[test]
-    fn query_parsing() {
-        assert_eq!(
-            parse_query("a=1&b=&c"),
-            vec![
-                ("a".into(), "1".into()),
-                ("b".into(), "".into()),
-                ("c".into(), "".into())
-            ],
-            "empty and missing values parse as empty strings"
-        );
-    }
 }

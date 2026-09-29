@@ -2,7 +2,6 @@
 # Build a C# Isoplane guest to a core wasm module.
 #
 #   build-guest.sh <guest-dir> [dotnet publish args...]
-#   guests/dotnet/build.sh     # a guest's build.sh wraps this
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
@@ -25,7 +24,7 @@ NAME="${ISOPLANE_OUT:-}"
 
 # Build the managed validator separately from any parent Cargo invocation.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ISOPLANE_CLI_ASSEMBLY="$(python3 "$ROOT/scripts/fixture-tools.py" isoplane-cli "$ROOT")"
+ISOPLANE_CLI_ASSEMBLY="${ISOPLANE_CLI_ASSEMBLY:-$(python3 "$ROOT/scripts/fixture-tools.py" isoplane-cli "$ROOT")}"
 
 echo "==> dotnet publish (C# -> wasm32 core module)"
 mkdir -p "$HERE/obj"

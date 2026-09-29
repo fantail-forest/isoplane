@@ -77,7 +77,7 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
         "{}\n{}\n{}",
         import("clock_now_coarse", "", "(result i64)"),
         import("log_emit", "(param i32 i32 i32)", ""),
-        import("kv_get", "(param i32 i32)", "(result i64)"),
+        import("service_call", "(param i32 i32)", "(result i64)"),
     );
     let wasm = guest(
         4,
@@ -87,7 +87,7 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
     (i64.store (i32.const 0) (call $clock_now_coarse))
     (call $log_emit (i32.const 1) (i32.const 2048) (i32.const 4))
     (i64.store (i32.const 8) (call $clock_now_coarse))
-    (drop (call $kv_get (i32.const 2048) (i32.const 4)))
+    (drop (call $service_call (i32.const 2048) (i32.const 4)))
     (i64.store (i32.const 16) (call $clock_now_coarse))
     (i64.const 0)"#,
         DONE,
@@ -117,8 +117,8 @@ fn a_future_returning_import_is_the_only_thing_that_advances_the_clock() {
         "log_emit reached the host: {calls:?}"
     );
     assert!(
-        calls.iter().any(|c| c.starts_with("kv_get")),
-        "kv_get reached the host: {calls:?}"
+        calls.iter().any(|c| c.starts_with("service_call")),
+        "service_call reached the host: {calls:?}"
     );
     assert!(
         !calls.iter().any(|c| c.starts_with("clock_now_coarse")),
@@ -135,7 +135,7 @@ fn guest_buffers_are_copied_out_and_out_buffers_are_copied_in() {
     let e = test_engine();
     let imports = format!(
         "{}\n{}",
-        import("kv_get", "(param i32 i32)", "(result i64)"),
+        import("service_call", "(param i32 i32)", "(result i64)"),
         import("entropy_fill", "(param i32 i32)", ""),
     );
     let wasm = guest(
@@ -145,7 +145,7 @@ fn guest_buffers_are_copied_out_and_out_buffers_are_copied_in() {
         r#"
     (i64.store (i32.const 2048) (i64.const 1234567890))
     (i64.store (i32.const 2056) (i64.const 0))
-    (drop (call $kv_get (i32.const 2048) (i32.const 12)))
+    (drop (call $service_call (i32.const 2048) (i32.const 12)))
     (call $entropy_fill (i32.const 3072) (i32.const 32))
     (i64.const 0)"#,
         DONE,
@@ -165,7 +165,7 @@ fn guest_buffers_are_copied_out_and_out_buffers_are_copied_in() {
 
     let calls = rec.calls.lock().clone();
     assert!(
-        calls.contains(&"kv_get(12 bytes)".to_string()),
+        calls.contains(&"service_call(12 bytes)".to_string()),
         "the guest's 12 bytes were copied out before the call: {calls:?}"
     );
     assert!(
@@ -185,9 +185,9 @@ fn an_out_of_bounds_import_buffer_traps_rather_than_reading_host_memory() {
     let e = test_engine();
     let wasm = guest(
         4,
-        &import("kv_get", "(param i32 i32)", "(result i64)"),
+        &import("service_call", "(param i32 i32)", "(result i64)"),
         "",
-        "(drop (call $kv_get (i32.const 1000000) (i32.const 4096))) (i64.const 0)",
+        "(drop (call $service_call (i32.const 1000000) (i32.const 4096))) (i64.const 0)",
         DONE,
     );
     let t = e.load_template(&wasm).expect("template");

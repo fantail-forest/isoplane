@@ -1,7 +1,7 @@
 #if ISOPLANE_MEMORY_PROBE
 using System;
 using System.Threading.Tasks;
-using Isoplane.Durable;
+using Isoplane;
 
 namespace Isoplane.App;
 

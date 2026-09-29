@@ -204,10 +204,6 @@ pub const IMPORTS: &[ImportDef] = &[
         "ends the response, after which the handle is spent") },
 
 
-
-    // ---- sockets ----------------------------------------------------------
-
-
     // ---- the kill-cooperation ABI ------------------------------------------
     // Both engine-owned rather than in the bindings vtable: the budget state
     // they read and write lives in the engine's store, beside the meter the

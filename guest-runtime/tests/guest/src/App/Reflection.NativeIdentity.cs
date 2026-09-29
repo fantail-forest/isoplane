@@ -1,4 +1,3 @@
-#if ISOPLANE_MONO
 using System;
 using System.IO;
 using System.Reflection;
@@ -60,4 +59,3 @@ internal sealed partial class Reflection
         return bytes.ToArray();
     }
 }
-#endif

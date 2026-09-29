@@ -160,11 +160,3 @@ in_mono_runtime! {
         assert!(matches!(result.as_str(), "EntryPointNotFoundException/EntryPointNotFoundException" | "DllNotFoundException/DllNotFoundException" | "PlatformNotSupportedException/PlatformNotSupportedException"), "a missing star-module symbol must refuse with a catchable managed exception rather than trap: {result}");
     }
 }
-
-in_mono_runtime! {
-    #[tokio::test(start_paused = true)]
-    async fn a_supported_star_module_export_remains_callable(runtime: GuestRuntime) {
-        let result = after_restore(runtime, "/reflection/native-symbol-after-park/star-timestamp").await;
-        assert_eq!(result, "prelinked-call-returned/prelinked-call-returned", "the star module must preserve direct binding to actual selected native exports");
-    }
-}

@@ -2,9 +2,6 @@
 
 use async_trait::async_trait;
 
-use crate::calls::*;
-use crate::result::*;
-
 mod http;
 pub use http::{
     HttpBody, HttpExchange, HttpResponseBody, HttpUpload, ResponseDisposition,
@@ -12,13 +9,6 @@ pub use http::{
 };
 
 pub type Result<T> = anyhow::Result<T>;
-
-
-
-
-
-
-
 
 
 
@@ -58,9 +48,6 @@ pub trait Dispatcher: Send + Sync + 'static {
         self.dispatch_http_stream(target, upload.collect().await?)
             .await
     }
-
-
-
 }
 
 /// A resolved route: which app version this request runs against, and under

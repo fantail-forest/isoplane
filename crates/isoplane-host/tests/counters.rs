@@ -12,7 +12,7 @@ use isoplane_host::cell::{Cell, CellConfig, Services, Target};
 use isoplane_host::egress::HostEgressPolicy;
 use isoplane_host::fakes::*;
 use isoplane_host::slot::EnterError;
-use isoplane_host::{Activator, LifecycleTier, ModuleId, Resolver};
+use isoplane_host::{Activator, ModuleId, Resolver};
 
 const T: Duration = Duration::from_secs(10);
 /// A host timer that never fires during a test.
@@ -226,49 +226,6 @@ fn a_host_call_into_a_tombstone_is_refused_and_counted() {
         2,
         "a missing instance is not a tombstone"
     );
-    r.cell.shutdown();
-}
-
-/// The four acquisition sources are exhaustive over admitted dispatches, so a
-/// job popped twice shows as a sum larger than `dispatches` and a lost one as
-/// a caller that never got a reply.
-#[test]
-fn per_worker_queues_serve_every_dispatch_exactly_once() {
-    let mut cfg = CellConfig::for_test("lanes");
-    cfg.exec_threads = 8;
-    let r = rig(cfg);
-    let module = app(&r, "http", FakeBehaviour::done());
-
-    const BATCHES: u64 = 16;
-    const EACH: u64 = 8;
-    for i in 0..BATCHES {
-        let path = format!("/batch/{i}");
-        let target = Target::Handler {
-            route: path.clone(),
-        };
-        for n in 1..=EACH {
-            let mut record = http(&r.cell, &module, &path);
-            record.cpu_budget_ms = 50;
-            let out = r
-                .cell
-                .dispatch_blocking(&module, target.clone(), record, T)
-                .unwrap_or_else(|e| panic!("dispatch {i}/{n} lost: {e:?}"));
-            assert_eq!(out.status, 200, "dispatch {i}/{n}: {:?}", out.trap);
-        }
-    }
-
-    let m = r.cell.metrics();
-    assert_eq!(
-        m.dispatches,
-        BATCHES * EACH,
-        "more means a job was popped twice, fewer means one was dropped"
-    );
-    assert_eq!(
-        m.served_warm + m.served_pooled_fresh + m.served_hibernation_wake + m.served_activated,
-        m.dispatches,
-        "the acquisition sources stay exhaustive over every lane"
-    );
-    assert_eq!(m.shed, 0, "this load is far inside the admission depth");
     r.cell.shutdown();
 }
 

@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use isoplane_abi::dispatch::{DispatchKind, HttpRequest, };
+use isoplane_abi::dispatch::{DispatchKind, HttpRequest};
 use isoplane_abi::imports::{self, Ty};
 use isoplane_abi::result::{FutureError, };
 use isoplane_abi::status::TrapCode;
@@ -153,7 +153,6 @@ fn assert_mirror<T: serde::Serialize>(csharp_file: &str, name: &str, rust: &[(&s
 
 #[test]
 fn dispatch_kind_in_records_cs_mirrors_the_rust_enum() {
-    let state = Some(vec![1u8]);
     assert_mirror(
         "Records.cs",
         "DispatchKind",
@@ -172,7 +171,6 @@ fn dispatch_kind_in_records_cs_mirrors_the_rust_enum() {
         ],
     );
 }
-
 
 #[test]
 fn future_error_in_records_cs_mirrors_the_rust_enum() {

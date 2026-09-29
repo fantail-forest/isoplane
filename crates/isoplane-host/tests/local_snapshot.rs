@@ -22,6 +22,9 @@ use isoplane_host::egress::{
 use isoplane_host::fakes::FakeFetcher;
 use isoplane_host::{EngineActivator, InstanceId, LifecycleTier, ModuleId, Resolver};
 
+#[path = "common/managed.rs"]
+mod managed;
+
 const DEADLINE: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
@@ -131,6 +134,15 @@ struct Rig {
 
 impl Rig {
     fn new(wasm: &[u8], max_memory_bytes: u64, egress: Arc<HostEgressPolicy>) -> Self {
+        Self::with_files(wasm, max_memory_bytes, egress, Default::default())
+    }
+
+    fn with_files(
+        wasm: &[u8],
+        max_memory_bytes: u64,
+        egress: Arc<HostEgressPolicy>,
+        files: isoplane_engine::PlatformFiles,
+    ) -> Self {
         let directory = tempfile::tempdir().expect("each test owns a snapshot directory");
         let counts = Arc::new(StorageCounts::default());
         let snapshots = Arc::new(ObservedStorage {
@@ -167,9 +179,11 @@ impl Rig {
             .expect("real engine must start"),
         );
         let module = ModuleId::new("snapshot-probe", "v1");
-        let activator = Arc::new(
-            EngineActivator::load(engine, module.clone(), wasm).expect("real guest must load"),
-        );
+        let template = engine
+            .load_template(wasm)
+            .and_then(|template| template.with_application_files(files))
+            .expect("real guest must load");
+        let activator = Arc::new(EngineActivator::new(engine, template, module.clone()));
         cell.register_module(
             "snapshot-test",
             activator,
@@ -327,7 +341,8 @@ fn growing_to_the_memory_ceiling_preserves_the_final_page_through_local_reclamat
 
 fn managed_stream_snapshot(runtime: GuestRuntime) {
     isoplane_harness::LogCapture::global();
-    let wasm = isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_stream", runtime);
+    let GuestRuntime::Mono = runtime;
+    let wasm = isoplane_fixtures::mono_runtime();
     let listener =
         TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("owned peer must bind");
     let peer = listener
@@ -343,7 +358,12 @@ fn managed_stream_snapshot(runtime: GuestRuntime) {
             .with_connections(connections.clone())
             .with_destinations(Arc::new(ExactPeer(peer))),
     );
-    let rig = Rig::new(&wasm, 256 << 20, policy.clone());
+    let rig = Rig::with_files(
+        &wasm,
+        256 << 20,
+        policy.clone(),
+        managed::files("isoplane_guest_dotnet_stream"),
+    );
     let response = rig.submit(&format!("/{}/{}", peer.ip(), peer.port()));
     let instance = connected
         .recv_timeout(DEADLINE)

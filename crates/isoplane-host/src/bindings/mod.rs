@@ -138,27 +138,6 @@ pub(super) fn from_typed<T: serde::Serialize>(r: Result<T, FutureError>) -> Resu
     }
 }
 
-/// Spawns `$body` on the cell's reactor and settles `$id` with its result;
-/// every future-class arm that hands work to a service uses this. Written at
-/// module scope, rather than nested in `call_future`, so every domain module
-/// can invoke it; item paths are fully qualified since a glob-imported name
-/// does not carry through a macro's hygiene into another file's invocation.
-macro_rules! spawn {
-    ($rt:expr, $id:expr, |$svc:ident| $body:expr) => {{
-        let rt = $rt;
-        let id = $id;
-        let rt2 = rt.clone();
-        let task = rt.reactor.spawn(async move {
-            let $svc = rt2.services.clone();
-            let res: isoplane_abi::result::ResultRecord = $body;
-            CellBindings::settle(&rt2, id, res);
-        });
-        rt.futures.attach_task(id, task.abort_handle());
-        return id;
-    }};
-}
-pub(super) use spawn;
-
 impl HostBindings for CellBindings {
     fn restore_prepared_resources(
         &mut self,
@@ -261,6 +240,7 @@ impl HostBindings for CellBindings {
             "req_body_read" => self.req_body_read(rt, id, call.scalars),
             "resp_write" => self.resp_write(rt, id, call.payload, call.scalars),
 
+
             other => {
                 tracing::error!(import = other, "future-class import with no route");
                 self.settle_now(
@@ -310,6 +290,7 @@ impl HostBindings for CellBindings {
             "req_body_can_have_body" => self.req_body_can_have_body(),
             "resp_new" => self.resp_new(call.payload),
             "resp_finish" => self.resp_finish(call.scalars),
+
 
             // Answered by the engine before reaching this vtable; an engine
             // that does not intercept them gets "budget untouched, bit clear"
@@ -607,7 +588,7 @@ mod tests {
     fn the_two_call_paths_do_not_accept_each_others_imports() {
         let c = ctx();
         let mut b = CellBindings::new(c.clone());
-        b.call_sync(call("clock_deadline_in", &[], [0; 3]));
+        b.call_sync(call("http_fetch", &[], [0; 3]));
         assert_eq!(
             c.take_trap(),
             Some(TrapCode::Protocol),

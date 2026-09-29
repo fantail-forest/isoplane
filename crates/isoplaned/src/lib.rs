@@ -9,6 +9,7 @@ pub mod logs;
 pub mod metrics;
 pub mod node;
 #[cfg(feature = "real-backends")]
+#[cfg(feature = "real-backends")]
 pub mod preparation;
 #[cfg(feature = "real-backends")]
 pub mod real;

@@ -1,5 +1,5 @@
 using System.Runtime.InteropServices;
-using Guest = Isoplane.Abi.Exports<Isoplane.Durable.HandlerRouter<Handler>>;
+using Guest = Isoplane.Abi.Exports<Isoplane.HandlerRouter<Handler>>;
 
 internal static class Entrypoint
 {

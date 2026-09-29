@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
 using Isoplane.Abi;
 
-namespace Isoplane.Durable;
+namespace Isoplane;
 
 /// <summary>
 /// What routes a decoded dispatch to guest code. <see cref="Exports{T}"/>

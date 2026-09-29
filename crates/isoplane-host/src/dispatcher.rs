@@ -1,4 +1,4 @@
-//! Deliver HTTP requests from the proxy to the cell execution pool.
+//! Adapts HTTP requests to cell dispatches.
 
 use std::time::Duration;
 
@@ -125,11 +125,7 @@ impl Cell {
         let timeout = deadline(self);
         me.dispatch(&module, target, rec, timeout).await
     }
-
-
 }
-
-
 
 #[async_trait]
 impl Dispatcher for Cell {
@@ -190,9 +186,4 @@ impl Dispatcher for Cell {
         self.run_http_exchange(target, upload.request, Some(source))
             .await
     }
-
-
-
-
-
 }

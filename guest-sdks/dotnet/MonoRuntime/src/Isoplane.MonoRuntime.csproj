@@ -7,14 +7,13 @@
     serves. Its managed/native bridges come from those assemblies alone, so one
     linked and compiled module serves every interpreted application.
   -->
-  <PropertyGroup>
-  </PropertyGroup>
   <Import Project="../../Isoplane.Guest.props" />
 
   <PropertyGroup>
     <AssemblyName>Isoplane.MonoRuntime</AssemblyName>
     <RootNamespace>Isoplane.MonoRuntime</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
+    <EventSourceSupport>true</EventSourceSupport>
     <IsoplaneRouter>Isoplane.MonoRuntime.PackageRouter</IsoplaneRouter>
   </PropertyGroup>
 

@@ -14,8 +14,8 @@
 //!  host calls isoplane_handle(ptr, len)
 //!    -> rt::handle_dispatch  decodes the record, spawns ONE task, calls run()
 //!      -> run()              pops the task, polls it exactly once
-//!        -> app's async fn   awaits e.g. Kv::get(...)
-//!          -> HostFuture::poll   calls the `http_fetch` import, gets a future id,
+//!        -> app's async fn   awaits a host timer
+//!          -> HostFuture::poll   calls the `clock_deadline_in` import, gets a future id,
 //!                                records (id -> this task) in the future
 //!                                table, and returns Poll::Pending
 //!        <- Poll::Pending    every `.await` in the app's state machine

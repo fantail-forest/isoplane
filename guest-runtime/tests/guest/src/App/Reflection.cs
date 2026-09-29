@@ -18,19 +18,15 @@ internal sealed partial class Reflection
         "native-declaration-after-park" => NativeDeclarationAfterPark(),
         "native-symbol-after-park" => NativeSymbolAfterPark(path[1]),
         "native-library-after-park" => NativeLibraryAfterPark(path[1]),
-#if ISOPLANE_MONO
         "assembly-after-park" => LoadedAssemblyAfterPark(),
         "native-payload-after-park" => NativePayloadAfterPark(path[1]),
         "trusted-identity-after-park" => TrustedIdentityAfterPark(path[1]),
         "dynamic-after-park" => DynamicBindingAfterPark(path[1]),
-#endif
         "expression-after-park" => ExpressionAfterPark(preferInterpretation: true),
         "expression-default-after-park" => ExpressionAfterPark(preferInterpretation: false),
         "safe-handle-dispose" => Task.FromResult(DisposeSafeHandle()),
         "safe-handle-finalizer-after-park" => FinalizeSafeHandleAfterPark(),
-#if ISOPLANE_MONO
         "emitted-delegate-after-park" => EmittedDelegateAfterPark(),
-#endif
         _ => Task.FromResult(Run(path)),
     };
 

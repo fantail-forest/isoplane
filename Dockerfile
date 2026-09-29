@@ -40,7 +40,7 @@ RUN cargo install --locked wasm-tools@1.244.0
 
 # --- wasi-sdk (the C# guest's linker and PAL compiler) ----------------------
 # The platform runtime build uses the WASI SDK's clang for the final link, and
-# `guests/dotnet/build.sh` compiles `native/isoplane_pal.c` with the same clang.
+# the shared-runtime build compiles `native/isoplane_pal.c` with the same clang.
 ARG WASI_SDK_VERSION=29.0
 ARG TARGETARCH
 RUN case "$TARGETARCH" in \

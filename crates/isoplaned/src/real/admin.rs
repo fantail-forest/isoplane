@@ -61,6 +61,11 @@ impl RealNodeAdmin {
 }
 
 impl crate::admin::NodeAdmin for RealNodeAdmin {
+
+
+
+
+
     fn snapshot(&self) -> crate::admin::NodeSnapshot {
         let Some(m) = self.merged() else {
             return crate::admin::NodeSnapshot {

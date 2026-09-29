@@ -33,10 +33,7 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::new(
-            &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_timer", runtime),
-            &reactor,
-        );
+        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_timer", runtime, &reactor);
         let outcome = guest.start("/");
         assert_eq!(
             outcome.completion,
@@ -68,10 +65,7 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_dispatch(1, 1);
-        let mut guest = ReturnedGuest::new(
-            &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_timer", runtime),
-            &reactor,
-        );
+        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_timer", runtime, &reactor);
         let outcome = guest.start("/abandon");
         assert_eq!(
             outcome.completion,
@@ -206,7 +200,7 @@ async fn socket_transfer(
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new(&isoplane_fixtures::dotnet_for(fixture, runtime), &reactor);
+    let mut guest = ReturnedGuest::managed_probe(fixture, runtime, &reactor);
     let suffix = if half_close { "/half" } else { "" };
     let outcome = guest.start(&format!("/{}/{}{suffix}", peer.ip(), peer.port()));
     assert_eq!(
@@ -363,10 +357,7 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::new(
-            &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_dns", runtime),
-            &reactor,
-        );
+        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_dns", runtime, &reactor);
         let outcome = guest.start("/owned.test");
         assert_eq!(
             outcome.completion,
@@ -440,10 +431,7 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::new(
-            &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_dns", runtime),
-            &reactor,
-        );
+        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_dns", runtime, &reactor);
         let outcome = guest.start("/cancel.test");
         assert_eq!(
             outcome.completion,
@@ -508,10 +496,8 @@ fn managed_network_refusal(runtime: GuestRuntime, path: &str, expected: &[u8]) {
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new(
-        &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_network_refusal", runtime),
-        &reactor,
-    );
+    let mut guest =
+        ReturnedGuest::managed_probe("isoplane_guest_dotnet_network_refusal", runtime, &reactor);
     let outcome = guest.start(path);
     assert_eq!(outcome.completion, Completion::Done,
         "a forbidden managed listener must return a SocketException instead of trapping: {outcome:?}; logs: {:?}", context.emitted_logs());
@@ -582,10 +568,7 @@ in_mono_runtime! {
         let context = &reactor.context;
         let futures = &reactor.futures;
         context.begin_slice(1, 1);
-        let mut guest = ReturnedGuest::new(
-            &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_connect", runtime),
-            &reactor,
-        );
+        let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_connect", runtime, &reactor);
         let pending = guest.start(&format!("/{}/{}", peer.ip(), peer.port()));
         assert_eq!(
             pending.completion,
@@ -648,10 +631,7 @@ async fn stream_failure(runtime: GuestRuntime, mode: &str, expected: &[u8]) {
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new(
-        &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_stream", runtime),
-        &reactor,
-    );
+    let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_stream", runtime, &reactor);
     let outcome = guest.start(&format!("/{}/{}/{mode}", peer.ip(), peer.port()));
     assert_eq!(
         outcome.completion,
@@ -798,10 +778,7 @@ async fn managed_dns_error(
     let context = &reactor.context;
     let futures = &reactor.futures;
     context.begin_slice(1, 1);
-    let mut guest = ReturnedGuest::new(
-        &isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_dns", runtime),
-        &reactor,
-    );
+    let mut guest = ReturnedGuest::managed_probe("isoplane_guest_dotnet_dns", runtime, &reactor);
     let started = guest.start("/error.test");
     assert_eq!(
         started.completion,

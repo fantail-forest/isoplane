@@ -191,7 +191,10 @@ impl Reactor {
 /// What a guest's template is loaded from on each engine that serves it.
 #[derive(Clone)]
 enum Source {
-    Module(Arc<[u8]>),
+    Module {
+        bytes: Arc<[u8]>,
+        application_files: PlatformFiles,
+    },
     Prepared(Arc<PreparedTemplate>),
     #[cfg(target_os = "linux")]
     Layered {
@@ -203,7 +206,16 @@ enum Source {
 impl Source {
     fn serve(&self, files: PlatformFiles) -> (IsoplaneEngine, Template) {
         match self {
-            Source::Module(module) => engine_serving(module, files),
+            Source::Module {
+                bytes,
+                application_files,
+            } => {
+                let (engine, template) = engine_serving(bytes, files);
+                let template = template
+                    .with_application_files(application_files.clone())
+                    .expect("bind application files to the returned guest");
+                (engine, template)
+            }
             Source::Prepared(prepared) => {
                 let engine = IsoplaneEngine::new(engine_configuration(files))
                     .expect("the returned-guest engine must initialize");
@@ -254,7 +266,44 @@ pub struct ReturnedGuest {
 impl ReturnedGuest {
     /// Loads `module` for `reactor`'s instance.
     pub fn new(module: &[u8], reactor: &Reactor) -> Self {
-        Self::serving(Source::Module(module.into()), reactor)
+        Self::with_application_files(module, Default::default(), reactor)
+    }
+
+    /// Loads a runtime or prepared module with its immutable application package.
+    pub fn with_application_files(
+        module: &[u8],
+        application_files: PlatformFiles,
+        reactor: &Reactor,
+    ) -> Self {
+        Self::serving(
+            Source::Module {
+                bytes: module.into(),
+                application_files,
+            },
+            reactor,
+        )
+    }
+
+    /// Loads a managed behavior probe on the shared runtime for `reactor`.
+    pub fn managed_probe(
+        name: &str,
+        runtime: isoplane_fixtures::GuestRuntime,
+        reactor: &Reactor,
+    ) -> Self {
+        let isoplane_fixtures::GuestRuntime::Mono = runtime;
+        let application_files = isoplane_fixtures::managed_probe(name)
+            .into_iter()
+            .map(|file| isoplane_engine::PlatformFile {
+                path: file.path,
+                bytes: file.bytes.into(),
+                modified_ns: 0,
+            })
+            .collect();
+        Self::with_application_files(
+            &isoplane_fixtures::mono_runtime(),
+            PlatformFiles::new(application_files).expect("valid managed probe package"),
+            reactor,
+        )
     }
 
     /// Serves trusted preparation output for `reactor`'s instance, as a cell

@@ -7,8 +7,6 @@ using Microsoft.Extensions.Logging;
 
 namespace AdapterFixture;
 
-internal sealed class Router() : WebApplicationRouter(Application.Create);
-
 /// <summary>Exercises the ASP.NET transport, request scopes, and hosted startup.</summary>
 public static class Application
 {

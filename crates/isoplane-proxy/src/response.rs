@@ -28,32 +28,6 @@ pub(crate) fn text(
     resp
 }
 
-/// A guest's reply as the client sees it. Guest headers in the `x-isoplane-`
-/// namespace are dropped, because a guest that could set `x-isoplane-version`
-/// could lie to its operator about which build served the request; the
-/// platform's own values are appended. A status or header the guest wrote
-/// that HTTP cannot carry is a 502, not a panic.
-#[cfg(test)]
-pub(crate) fn guest_response(
-    method: &Method,
-    status: u16,
-    guest_headers: &[(String, String)],
-    platform_headers: &[(&'static str, String)],
-    body: Vec<u8>,
-) -> Response<Body> {
-    match guest_head(status, guest_headers, platform_headers) {
-        Ok(response) => {
-            let body = if permits_body(method, response.status()) {
-                body
-            } else {
-                vec![]
-            };
-            response.map(|()| full(body))
-        }
-        Err(rejection) => rejection.into_response(),
-    }
-}
-
 pub(crate) fn full(body: Vec<u8>) -> Body {
     Full::new(Bytes::from(body))
         .map_err(|never| match never {})
@@ -219,6 +193,26 @@ fn guest_head(
 
 #[cfg(test)]
 mod tests {
+    async fn guest_response(
+        method: &Method,
+        status: u16,
+        headers: &[(String, String)],
+        platform: &[(&'static str, String)],
+        body: Vec<u8>,
+    ) -> Response<Body> {
+        guest_stream_response(
+            method,
+            HttpExchange::buffered(isoplane_abi::host::HttpReply {
+                status,
+                headers: headers.to_vec(),
+                body,
+                streaming: false,
+            }),
+            platform,
+        )
+        .await
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -285,15 +279,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_guest_header_http_cannot_carry_is_a_502() {
+    #[tokio::test]
+    async fn a_guest_header_http_cannot_carry_is_a_502() {
         let resp = guest_response(
             &Method::GET,
             200,
             &[("not a header".into(), "x".into())],
             &[],
             b"body".to_vec(),
-        );
+        )
+        .await;
         assert_eq!(
             resp.status(),
             StatusCode::BAD_GATEWAY,
@@ -301,9 +296,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_guest_status_http_cannot_carry_is_a_502() {
-        let resp = guest_response(&Method::GET, 9999, &[], &[], Vec::new());
+    #[tokio::test]
+    async fn a_guest_status_http_cannot_carry_is_a_502() {
+        let resp = guest_response(&Method::GET, 9999, &[], &[], Vec::new()).await;
         assert_eq!(
             resp.status(),
             StatusCode::BAD_GATEWAY,
@@ -311,15 +306,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn guest_platform_headers_are_dropped_and_the_proxy_s_own_kept() {
+    #[tokio::test]
+    async fn guest_platform_headers_are_dropped_and_the_proxy_s_own_kept() {
         let resp = guest_response(
             &Method::GET,
             200,
             &[("X-Isoplane-Version".into(), "forged".into())],
             &[("x-isoplane-version", "v2".into())],
             Vec::new(),
-        );
+        )
+        .await;
         let values: Vec<_> = resp
             .headers()
             .get_all("x-isoplane-version")
@@ -331,10 +327,10 @@ mod tests {
             "only the platform's value survives in its own namespace"
         );
     }
-    #[test]
-    fn a_guest_cannot_use_a_final_reply_to_send_an_interim_response_or_upgrade() {
+    #[tokio::test]
+    async fn a_guest_cannot_use_a_final_reply_to_send_an_interim_response_or_upgrade() {
         for status in [100, 101, 103] {
-            let response = guest_response(&Method::GET, status, &[], &[], Vec::new());
+            let response = guest_response(&Method::GET, status, &[], &[], Vec::new()).await;
             assert_eq!(
                 response.status(),
                 StatusCode::BAD_GATEWAY,

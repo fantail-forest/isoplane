@@ -61,7 +61,6 @@ impl Rig {
         }
         self.proxy.wait_for_shutdown().await;
     }
-
 }
 
 impl Drop for Rig {

@@ -40,14 +40,13 @@ Put responsibilities that discover, place, distribute, replicate, coordinate, se
 | Failure recovery | Failure detection, process supervision, replacement placement, regional failover and disaster recovery |
 | Machine isolation and operation | Namespaces, cgroups, seccomp deployment, privileges, mounts, CPU placement and host patching |
 | Egress infrastructure | Caching DNS services, NAT, routing rules, private tunnels, proxies and connection placement |
-| Durable event delivery | Persistent alarm queues, queue partitions, outbox delivery, retries, deduplication and dead-letter handling |
 | Operational observability | Exporters, collectors, aggregation, retention, dashboards, alerting, SLO calculation and durable usage delivery |
 | Identity and security operations | User/service authentication, IAM, vault/KMS, credential issuance, key rotation and audit retention |
 | Management surfaces | Operator APIs, consoles, support tooling, remote diagnostics and configuration distribution |
 
 **Not this:** Making every local test start a node supervisor, telemetry exporter and distributed directory, or implement no-op substitutes for them.
 
-**Exception:** Their local execution consequences remain real: enforce supplied limits and ownership, bound queues, serialize dispatch, mediate capabilities, retain host resources, and emit accurate outcomes. Storage providers still enforce their transaction and fencing semantics; moving service operation out does not erase those guarantees.
+**Exception:** Their local execution consequences remain real: enforce supplied limits and ownership, bound queues, serialize dispatch, mediate capabilities, retain host resources, and emit accurate outcomes.
 
 ## Introduce only the infrastructure interfaces execution consumes
 
@@ -63,7 +62,7 @@ Compose the shared core with session-scoped in-memory service implementations an
 
 **Not this:** Asking a test author to assemble a vault, directory, spool and resolver, or calling retention of a live guest object a hibernation implementation.
 
-**Exception:** A capability may genuinely need an external dependency, and tests of crash durability or production infrastructure need the corresponding provider. Optional persistence belongs in local-host configuration; unsupported capabilities fail explicitly rather than silently succeeding.
+**Exception:** Applications may need external services, including their own databases. The local host mediates those connections; it provides no guest persistence API.
 
 ## Share failure semantics without importing recovery orchestration
 

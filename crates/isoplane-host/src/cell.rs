@@ -248,8 +248,6 @@ impl Cell {
             index,
             tombstoned: Mutex::new(std::collections::VecDeque::new()),
             modules: RwLock::new(HashMap::new()),
-            // Handle 0 is reserved, so an uninitialised field in a guest
-            // names no socket.
             residents: Mutex::new(HashMap::new()),
             active: ShardedMap::new(ACTIVE_SHARDS),
             snapshots,
@@ -351,14 +349,6 @@ impl Cell {
     }
     pub fn reactor(&self) -> &tokio::runtime::Handle {
         &self.rt.reactor
-    }
-
-    pub(crate) fn rt_services(&self) -> &Arc<Services> {
-        &self.rt.services
-    }
-
-    pub(crate) fn next_dispatch_id(&self) -> u64 {
-        self.next_dispatch.fetch_add(1, Ordering::Relaxed)
     }
 }
 

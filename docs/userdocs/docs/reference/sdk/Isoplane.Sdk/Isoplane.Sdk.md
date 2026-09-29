@@ -13,18 +13,16 @@ mdx:
 | class [BindingException](./Isoplane/BindingException.md) | A capability call the host refused or could not complete; [`IsoplaneError`](./Isoplane/BindingException/IsoplaneError.md) says which. |
 | class [Ctx](./Isoplane/Ctx.md) | The per-dispatch context. |
 | static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |
+| class [HandlerFactoryRouter](./Isoplane/HandlerFactoryRouter.md) | Routes every dispatch, as a request, to the handler a factory builds once per wasm instance. This is the router the SDK generates for an application factory returning [`IIsoplaneHandler`](./Isoplane/IIsoplaneHandler.md). |
+| class [HandlerRouter&lt;TApp&gt;](./Isoplane/HandlerRouter-1.md) | Routes HTTP dispatches to a Handler; any other trigger is a `PostcardException`. |
+| interface [IIsoplaneHandler](./Isoplane/IIsoplaneHandler.md) | A Handler: an HTTP request in, a response out. |
+| interface [IIsoplaneRouter](./Isoplane/IIsoplaneRouter.md) | What routes a decoded dispatch to guest code. `Exports` is generic over one of these, so the SDK names no tenant type. |
 | static class [Initialization](./Isoplane/Initialization.md) | Initializes reusable application state before its deployment template is captured. |
 | class [IsoplaneLoggerProvider](./Isoplane/IsoplaneLoggerProvider.md) | Writes .NET application logs through the sandbox's bounded host logging capability. |
-| class [Kv](./Isoplane/Kv.md) | Reads values from a host-provided key-value namespace. |
+| interface [IStreamingHttpRouter](./Isoplane/IStreamingHttpRouter.md) | Explicitly selects HTTP routes that consume uploads without SDK buffering. |
 | class [Request](./Isoplane/Request.md) | An HTTP request delivered by the host, for any HTTP method. |
 | class [RequestHead](./Isoplane/RequestHead.md) | HTTP request metadata, independent of whether the body is buffered or streamed. |
 | class [Response](./Isoplane/Response.md) | A buffered or completed streaming response. |
 | class [ResponseStream](./Isoplane/ResponseStream.md) | A response whose headers are published immediately and whose writes await host acceptance. |
 | static class [RuntimeConfiguration](./Isoplane/RuntimeConfiguration.md) | Deployment-bound application settings supplied during preparation and activation. |
 | class [StreamingRequest](./Isoplane/StreamingRequest.md) | A request whose upload can arrive while its handler is running. |
-
-## Isoplane.Durable namespace
-
-| public type | description |
-| --- | --- |
-| interface [IIsoplaneHandler](./Isoplane.Durable/IIsoplaneHandler.md) | A Handler: an HTTP request in, a response out. |

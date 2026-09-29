@@ -3,9 +3,7 @@ using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-#if ISOPLANE_MONO
 using System.Reflection.Emit;
-#endif
 
 namespace Acceptance;
 
@@ -73,7 +71,6 @@ internal sealed partial class Reflection
         }
     }
 
-#if ISOPLANE_MONO
     private static async Task<string> EmittedDelegateAfterPark()
     {
         var method = new DynamicMethod("AddOne", typeof(int), new[] { typeof(int) });
@@ -87,5 +84,4 @@ internal sealed partial class Reflection
         await Task.Delay(50).ConfigureAwait(false);
         return before + "/" + emitted(42);
     }
-#endif
 }

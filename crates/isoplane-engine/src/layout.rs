@@ -53,11 +53,6 @@ mod tests {
             "log_emit(level, ptr, len): the level is the only scalar"
         );
         assert_eq!(
-            scalars_of(def("di_alarm_set"), &[1024, 4, 999]),
-            [999, 0, 0],
-            "di_alarm_set(ptr, len, at_ms): the deadline is the only scalar"
-        );
-        assert_eq!(
             scalars_of(def("http_body_read"), &[7, 65536]),
             [7, 65536, 0],
             "http_body_read(handle, max) carries no buffer, so both are scalars"

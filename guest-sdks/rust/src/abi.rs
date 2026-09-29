@@ -160,9 +160,6 @@ isoplane_imports! {
     fn resp_finish(handle: i32);
 
 
-
-
-
     // ---- the kill-cooperation ABI ------------------------------------------
     /// The host-published remaining-budget value: signed nanoseconds left
     /// against this dispatch's budget B. Negative once the dispatch is in its

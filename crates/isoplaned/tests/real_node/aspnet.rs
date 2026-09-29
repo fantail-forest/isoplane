@@ -11,7 +11,7 @@ use isoplane_abi::config::InitSandbox;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_aspnet_route_receives_host_fields_and_returns_its_buffered_response() {
     let rig = common::start_with(
-        isoplane_fixtures::dotnet("isoplane_guest_aspnet"),
+        common::preparation::Guest::from("isoplane_guest_aspnet"),
         InitSandbox::RuntimeBringUp,
     )
     .await;
@@ -61,7 +61,7 @@ async fn an_aspnet_upload_is_read_and_echoed_before_the_client_finishes_sending(
     use std::time::Duration;
 
     let rig = common::start_with(
-        isoplane_fixtures::dotnet("isoplane_guest_aspnet"),
+        common::preparation::Guest::from("isoplane_guest_aspnet"),
         InitSandbox::RuntimeBringUp,
     )
     .await;

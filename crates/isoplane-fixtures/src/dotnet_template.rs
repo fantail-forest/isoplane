@@ -2,23 +2,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn stage_packages(destination: &Path) -> PathBuf {
-    let _build = super::BUILT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let root = super::repo_root();
+    let source = std::env::var_os("ISOPLANE_TEST_PACKAGE_FEED")
+        .map(PathBuf::from)
+        .expect("run tests through Task to select the prepared SDK package feed");
     let packages = destination.join("packages");
-    let output = Command::new(super::python())
-        .arg(root.join("scripts/fixture-packages.py"))
-        .arg(&root)
-        .arg(&packages)
-        .output()
-        .expect("Python is required to stage the installed SDK and CLI packages");
-    assert!(
-        output.status.success(),
-        "SDK and CLI packages must build and stage: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    std::fs::create_dir_all(&packages).expect("create the isolated package feed");
+    for entry in std::fs::read_dir(&source).expect("read the prepared SDK package feed") {
+        let entry = entry.expect("read a prepared package");
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "nupkg")
+        {
+            std::fs::copy(entry.path(), packages.join(entry.file_name()))
+                .expect("copy a prepared SDK package");
+        }
+    }
     packages
 }
 
@@ -93,29 +92,11 @@ fn run(command: &mut Command) {
     );
 }
 
-/// Provisions the pinned DAP framing library in a shared test environment.
+/// The debugger test interpreter prepared by Task.
 pub fn debugger_python() -> PathBuf {
-    let _build = super::BUILT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let root = super::repo_root();
-    let output = Command::new(super::python())
-        .arg(root.join("scripts/fixture-tools.py"))
-        .arg("dap-python")
-        .arg(root)
-        .output()
-        .expect("Python with venv and pip is required for debugger acceptance tests");
-    assert!(
-        output.status.success(),
-        "the pinned debugger test dependency must install: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    PathBuf::from(
-        String::from_utf8(output.stdout)
-            .expect("debugger Python path is UTF-8")
-            .trim(),
-    )
+    std::env::var_os("ISOPLANE_TEST_DEBUGGER_PYTHON")
+        .map(PathBuf::from)
+        .expect("run tests through Task to select the prepared debugger Python environment")
 }
 
 /// Installs the packaged managed CLI with native local support into a local tool directory.

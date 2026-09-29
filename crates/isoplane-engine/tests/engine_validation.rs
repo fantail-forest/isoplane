@@ -50,7 +50,7 @@ fn an_import_outside_the_table_fails_to_load() {
 
     let wasm = guest(
         4,
-        &import("kv_get", "(param i32 i32)", "(result i64)"),
+        &import("service_call", "(param i32 i32)", "(result i64)"),
         "",
         DONE,
         DONE,

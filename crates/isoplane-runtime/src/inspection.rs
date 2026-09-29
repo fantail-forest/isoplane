@@ -361,7 +361,10 @@ mod tests {
 
     #[test]
     fn a_module_missing_a_required_export_is_not_deployable() {
-        let m = module(&[("isoplane", "http_body_read")], &["isoplane_alloc", "memory"]);
+        let m = module(
+            &[("isoplane", "http_body_read")],
+            &["isoplane_alloc", "memory"],
+        );
         let r = analyse(&m).unwrap();
         assert!(
             r.would_be_rejected(),

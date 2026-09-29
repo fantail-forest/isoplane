@@ -32,7 +32,7 @@ FEED="${ISOPLANE_GUEST_RUNTIME_FEED:-${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/.build/
 python3 "$ROOT/guest-runtime/feed-identity.py" verify-artifact "$FEED"
 export ISOPLANE_GUEST_RUNTIME_FEED="$FEED"
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the package fixtures cannot be built." >&2; exit 1; }
-RUNTIME_OUTPUT="$ROOT/.build/wasm32/runtime-modules"
+RUNTIME_OUTPUT="${ISOPLANE_TEST_RUNTIME_MODULES:-$ROOT/.build/wasm32/runtime-modules}"
 PACKAGE_OUTPUT="$ROOT/.build/clr-anycpu/package-fixtures"
 
 SDK="$ROOT/guest-sdks/dotnet"

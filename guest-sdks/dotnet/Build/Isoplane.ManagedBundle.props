@@ -2,6 +2,8 @@
   <PropertyGroup>
     <IsoplaneManagedBundleBuild>true</IsoplaneManagedBundleBuild>
     <OutputType>Library</OutputType>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <IntermediateOutputPath>$(BaseIntermediateOutputPath)$(Configuration)/managed-bundle/</IntermediateOutputPath>
     <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/</BaseOutputPath>

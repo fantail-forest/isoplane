@@ -48,7 +48,6 @@ internal static class Reference
     private static readonly Regex Link = new(@"\[([^\]]+)\]\(([^)]+)\)", RegexOptions.CultureInvariant);
     private static readonly Assembly[] Assemblies = [typeof(Isoplane.Request).Assembly, typeof(Isoplane.AspNetCore.IsoplaneHosting).Assembly, typeof(Isoplane.Testing.IsoplaneApplication).Assembly];
     private static readonly HashSet<string> Namespaces = ["Isoplane", "Isoplane.AspNetCore", "Isoplane.Testing"];
-    private static readonly HashSet<string> ExcludedMembers = [nameof(Isoplane.Ctx.Fencing), nameof(Isoplane.Ctx.Outbox)];
 
     internal static Dictionary<string, string> Generate(string temporary)
     {
@@ -59,7 +58,7 @@ internal static class Reference
             var directory = Path.Combine(temporary, name);
             XmlDocMarkdownGenerator.Generate(new XmlDocInput { Assembly = assembly }, directory,
                 new XmlDocMarkdownSettings { VisibilityLevel = XmlDocVisibilityLevel.Public, SkipCompilerGenerated = true, NewLine = "\n" });
-            var types = assembly.GetExportedTypes().Where(type => Namespaces.Contains(type.Namespace ?? "") || type == typeof(Isoplane.Durable.IIsoplaneHandler)).ToArray();
+            var types = assembly.GetExportedTypes().Where(type => Namespaces.Contains(type.Namespace ?? "")).ToArray();
             var pages = Directory.EnumerateFiles(directory, "*.md", SearchOption.AllDirectories)
                 .Where(path => Included(Path.GetRelativePath(directory, path), name, types)).ToHashSet(StringComparer.Ordinal);
             foreach (var page in pages)
@@ -82,7 +81,6 @@ internal static class Reference
             if (path == stem + ".md") return true;
             if (!path.StartsWith(stem + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
             var member = Path.GetFileNameWithoutExtension(path);
-            if (type == typeof(Isoplane.Ctx) && ExcludedMembers.Contains(member)) return false;
             return !type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
                 .Any(method => method.Name == member && (ReferencesInterop(method.ReturnType) || method.GetParameters().Any(parameter => ReferencesInterop(parameter.ParameterType))));
         }

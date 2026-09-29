@@ -21,9 +21,13 @@ def main():
     modules = ROOT / '.build/wasm32/release-runtime'
     compiled = ROOT / '.build/clr-anycpu/release'
     environment = dict(os.environ, ISOPLANE_MANAGED_ARTIFACTS=str(compiled / 'artifacts'))
-    subprocess.run(['bash', str(ROOT / 'guest-sdks/dotnet/MonoRuntime/build.sh'),
-                    '--output', str(modules), '--source-revision', revision],
-                   cwd=ROOT, env=environment, check=True)
+    prepared = Path(os.environ.get('ISOPLANE_RUNTIME_DIRECTORY', ROOT / '.build/wasm32/runtime-modules'))
+    manifest = preview.load(ROOT / 'guest-sdks/dotnet/MonoRuntime/manifest.py')
+    modules.mkdir(parents=True, exist_ok=True)
+    for name in manifest.MODULES:
+        shutil.copy2(prepared / name, modules / name)
+        shutil.copy2(prepared / (name + '.runtime'), modules / (name + '.runtime'))
+    manifest.main(modules, ROOT, revision)
     for project in preview.PROJECTS.values():
         subprocess.run(['dotnet', 'pack', str(ROOT / project), '-c', 'Release',
                         '-o', str(compiled / 'packages'), '--artifacts-path', str(compiled / 'artifacts'),

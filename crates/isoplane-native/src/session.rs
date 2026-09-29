@@ -302,7 +302,6 @@ async fn prepare(
 }
 
 async fn shutdown(app: Arc<LocalApp>) -> anyhow::Result<()> {
-    app.proxy.shutdown_sockets();
     tokio::task::spawn_blocking(move || app.shutdown()).await?;
     Ok(())
 }

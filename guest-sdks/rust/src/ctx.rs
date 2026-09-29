@@ -7,11 +7,6 @@ use isoplane_abi::dispatch::{DispatchRecord, TraceContext};
 use crate::future::{decode_unit, HostFuture};
 use crate::rt;
 
-
-
-
-
-
 /// Handed to every entrypoint. Cheap to clone; it is a view of the current
 /// dispatch, not a resource.
 #[derive(Clone)]
@@ -54,8 +49,6 @@ impl Ctx {
     pub fn cancelled(&self) -> HostFuture<()> {
         HostFuture::new(self.cancel_future, decode_unit)
     }
-
-
 
     /// Instrumentation for the host-side park tests.
     pub fn park_count(&self) -> u64 {

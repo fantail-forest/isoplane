@@ -44,7 +44,7 @@ Follow the [assertion guidance](../../../AGENTS.md#structure): use equality, col
 
 The [iteration workflow](../../../AGENTS.md#workflow-develop-validate-replan) makes each increment earn its place through a consumed interface. Building several unvalidated layers together can leave a complete-looking subsystem reachable only through fakes.
 
-**Not this:** A durability crate with leases, inbox, outbox, alarms, migration, and rollout, of which the daemon wires a third and the rest is exercised only by the crate's own fakes.
+**Not this:** A subsystem whose features are exercised only through its own fakes while the daemon consumes a small fraction of its interface.
 
 **Exception:** None.
 

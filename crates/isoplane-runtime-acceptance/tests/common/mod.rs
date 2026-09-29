@@ -38,8 +38,7 @@ macro_rules! in_mono_runtime {
     };
 }
 
-/// The acceptance guest for `runtime`, built on demand against the
-/// source-built pack the feed offers it.
+/// The prepared acceptance application on the source-built shared runtime.
 pub fn guest(reactor: &Reactor, runtime: GuestRuntime) -> ReturnedGuest {
-    ReturnedGuest::new(&isoplane_fixtures::runtime_acceptance_for(runtime), reactor)
+    ReturnedGuest::managed_probe("guest_runtime_acceptance", runtime, reactor)
 }

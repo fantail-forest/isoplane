@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 using System.Threading.Tasks;
-using Isoplane.Durable;
+using Isoplane;
 
 namespace Isoplane.App;
 
@@ -11,7 +11,7 @@ public sealed class RequestProbe : IIsoplaneHandler
     /// <summary>Returns 200 only when the request matches the caller's expected field summary.</summary>
     public async Task<Response> HandleAsync(Request req, Ctx ctx)
     {
-        await ctx.Cache.GetAsync(req.Path);
+        await Task.Delay(1);
         var summary = new StringBuilder();
         summary.Append(req.Method).Append('\n').Append(req.Url).Append('\n').Append(req.Path).Append('\n');
         foreach (var pair in req.Query)

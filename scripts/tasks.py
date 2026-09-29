@@ -22,6 +22,7 @@ def run(root, *tasks):
         executable = str(installed)
     environment = dict(os.environ, TASK_TEMP_DIR=str(root / ".build/task"),
                        ISOPLANE_PYTHON=sys.executable)
+    environment.setdefault("TASK_CONCURRENCY", str(min(24, max(1, (os.cpu_count() or 1) // 2))))
     subprocess.run([executable, "--taskfile", str(root / "Taskfile.yml"), *tasks],
                    cwd=root, env=environment, stdout=sys.stderr, check=True)
 

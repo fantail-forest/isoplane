@@ -1,4 +1,5 @@
-//! HTTP routing, admission and connection lifecycle.
+//! HTTP/1.1 termination, route resolution and
+//! shedding. The listener is plaintext; TLS termination is not implemented.
 
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering::Relaxed;
@@ -13,7 +14,7 @@ use hyper::header::{HeaderValue, RETRY_AFTER};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use isoplane_abi::host::{Dispatcher, };
+use isoplane_abi::host::Dispatcher;
 use tokio::net::TcpListener;
 use tracing::Instrument;
 
@@ -77,9 +78,6 @@ impl Proxy {
         })
     }
 
-
-
-
     /// Stops HTTP admission and cancels accepted HTTP transports.
     /// This does not wait for guest activation or other host work to settle.
     pub fn shutdown(&self) {
@@ -126,7 +124,8 @@ impl Proxy {
         let io = TokioIo::new(stream);
         let svc = service_fn(move |request| self.clone().handle(request, peer));
         let connection = hyper::server::conn::http1::Builder::new()
-            .serve_connection(io, svc);
+            .serve_connection(io, svc)
+            .with_upgrades();
         tokio::select! {
             biased;
             () = shutdown.cancelled() => {},
@@ -203,8 +202,6 @@ impl Proxy {
         };
         self.metrics.route_resolutions_total.fetch_add(1, Relaxed);
         self.metrics.note_tier(target.tier);
-
-
 
         let response = self.dispatch_http(req, target, peer).await;
         response.map(|body| crate::response::hold_until_body_end(body, permit))

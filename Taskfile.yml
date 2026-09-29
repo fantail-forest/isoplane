@@ -12,6 +12,16 @@ includes:
   runtime: taskfiles/runtime.yml
 
 tasks:
+  test:
+    desc: Prepare fixtures, then run the Rust test suite
+    deps: [fixtures]
+    env:
+      ISOPLANE_TEST_CLI_ASSEMBLY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/cli/bin/Isoplane.Cli.dll'
+      ISOPLANE_TEST_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/fixture-packages/packages'
+      ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
+    cmds:
+      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/test {{.CLI_ARGS}}'
+
   fixtures:
     desc: Prepare shared fixtures before running parallel tests
     cmds:
@@ -31,7 +41,7 @@ tasks:
 
   managed:cli:
     desc: Build the portable managed CLI on Linux
-    sources: &managed_sources
+    sources:
       - tools/**/*.cs
       - tools/**/*.csproj
       - tools/**/*.props
@@ -40,27 +50,43 @@ tasks:
       - global.json
       - nuget.config
       - licenses/SdkPackage.props
-      - Taskfile.yml
       - scripts/fixture-tools.py
       - exclude: tools/**/obj/**/*
       - exclude: tools/**/bin/**/*
+      - exclude: tools/**/*.Tests/**/*
     generates:
       - .build/clr-anycpu/isoplane-cli/artifacts/bin/Isoplane.Cli/debug/Isoplane.Cli.dll
     cmds:
       - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py compile-managed cli'
 
   managed:debugger:
-    sources: *managed_sources
+    sources:
+      - tools/**/*.cs
+      - tools/**/*.csproj
+      - tools/**/*.props
+      - tools/**/*.targets
+      - Directory.Build.props
+      - global.json
+      - nuget.config
+      - licenses/SdkPackage.props
+      - scripts/fixture-tools.py
+      - exclude: tools/**/obj/**/*
+      - exclude: tools/**/bin/**/*
+      - exclude: tools/**/*.Tests/**/*
+      - tools/Isoplane.Debugging.Tests/**/*.cs
+      - tools/Isoplane.Debugging.Tests/*.csproj
     generates:
       - .build/clr-anycpu/debugger-protocol/artifacts/bin/Isoplane.Debugging.Tests/debug/Isoplane.Debugging.Tests.dll
     cmds:
       - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py compile-managed debugger'
 
   native:
+    run: once
     cmds:
       - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py isoplane-native . debug'
 
   cli:
+    run: once
     desc: Stage the managed CLI with native support for this platform
     deps: [managed:cli, native]
     cmds:
@@ -77,7 +103,6 @@ tasks:
       - guest-sdks/rust/**/Cargo.toml
       - crates/isoplane-abi/**/*
       - guests/build.sh
-      - Taskfile.yml
     generates:
       - .build/wasm32/rust-guests/manifest
       - .build/wasm32/rust-guests/hello.wasm
@@ -91,6 +116,9 @@ tasks:
       - '"{{.PYTHON}}" scripts/dev bash guests/build.sh --compile'
 
   managed:packages:
+    run: once
+    deps:
+      - '{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
     sources:
       - guest-sdks/dotnet/**/*
       - tools/**/*.cs
@@ -100,31 +128,37 @@ tasks:
       - Directory.Build.props
       - global.json
       - nuget.config
-      - Taskfile.yml
       - scripts/fixture-packages.py
       - '{{.MODULES}}/runtime.json'
-      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__}/**/*'
-      - exclude: 'tools/**/{obj,bin,out,__pycache__}/**/*'
+      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
+      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
     generates:
       - .build/clr-anycpu/fixture-packages/packages/Isoplane.Sdk.*.nupkg
       - .build/clr-anycpu/fixture-packages/packages/Isoplane.AspNetCore.*.nupkg
       - .build/clr-anycpu/fixture-packages/packages/Isoplane.Templates.*.nupkg
       - .build/clr-anycpu/fixture-packages/packages/Isoplane.Cli.*.nupkg
+      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Native.*.nupkg
+      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Testing.*.nupkg
     cmds:
       - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-packages.py pack-managed'
 
   native:release:
+    run: once
     cmds:
       - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py isoplane-native . release'
 
   fixtures:feed:
+    run: once
     deps: [managed:packages, native:release]
     cmds:
       - '"{{.PYTHON}}" scripts/fixture-packages.py attach-native'
 
   release:shared:
+    deps:
+      - '{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
+    env:
+      ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
     cmds:
-      - task: runtime
       - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/release-managed.py'
 
   release:linux:

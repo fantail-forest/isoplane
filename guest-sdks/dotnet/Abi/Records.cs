@@ -41,7 +41,6 @@ public sealed class DispatchRecord
                 d.Headers = r.StringPairs();
                 d.Body = r.Bytes().ToArray();
                 break;
-
             default:
                 throw new PostcardException();
         }
@@ -56,6 +55,7 @@ public sealed class DispatchRecord
         d.NowMs = r.U64();
         return d;
     }
+
 }
 
 /// <summary>Mirrors <c>isoplane-abi::dispatch::DispatchKind</c>.</summary>
@@ -65,12 +65,6 @@ public enum DispatchKind : uint
     /// An inbound HTTP request. The only trigger a Handler receives.
     /// </summary>
     Http = 0,
-
-
-
-
-
-
 
 }
 
@@ -98,7 +92,6 @@ internal enum FutureError : uint
 
     Cancelled = 0,
     Denied = 1,
-
     NotFound = 2,
     Io = 3,
 }

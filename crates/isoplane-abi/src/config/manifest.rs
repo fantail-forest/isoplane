@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::Limits;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppManifest {
     pub name: String,
     #[serde(default)]
@@ -70,14 +71,12 @@ pub enum HandlerLifecycle {
 impl HandlerLifecycle {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Bindings {
     /// Egress allowlist. `None` leaves the platform's default egress policy in force.
     #[serde(default)]
     pub fetch_allowlist: Option<Vec<String>>,
 }
-
-
-
 
 impl AppManifest {
     /// Resource ceilings after applying operator overrides.

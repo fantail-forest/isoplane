@@ -144,14 +144,6 @@ def execute(args, parser, cpus, selection, packages, runs, logs):
     binaries.sort(key=lambda binary: (history.get(name(binary), 0),
                                      "test" in binary["target"]["kind"],
                                      Path(binary["executable"]).stat().st_size), reverse=True)
-    if any(dependency['name'] == 'isoplane-fixtures'
-           for binary in binaries
-           for dependency in packages[binary['package_id']]['dependencies']):
-        preparation = run([sys.executable, str(ROOT / "scripts/prepare-fixtures.py")],
-                          ROOT, environment, logs / "fixtures.log", max(3600, args.timeout_seconds))
-        if preparation["code"]:
-            print(f"Fixture preparation failed: {preparation['log']}", flush=True)
-            return preparation["code"]
     print(f"Running {len(binaries)} binaries, {args.jobs} at a time, "
           f"{args.test_threads} test threads each", flush=True)
     results = []

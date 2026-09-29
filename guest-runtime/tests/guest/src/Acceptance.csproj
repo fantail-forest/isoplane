@@ -3,19 +3,20 @@
 
   <!--
     The acceptance guest for the source-built runtime: one handler per family
-    of runtime modification, each request path one behaviour. Built by
-    ../build.sh against the Mono pack guest-runtime/build.sh publishes.
+    of runtime modification, each request path one behaviour. Task packages
+    its managed assemblies for the shared Mono runtime.
   -->
-  <Import Project="../../../../guest-sdks/dotnet/Isoplane.Guest.props" />
 
   <PropertyGroup>
     <AssemblyName>guest_runtime_acceptance</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <BaseOutputPath>$(ISOPLANE_MANAGED_ARTIFACTS)/bin/</BaseOutputPath>
+    <IsoplaneApplicationFactory>Acceptance.Application.Create</IsoplaneApplicationFactory>
     <RootNamespace>Acceptance</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
-    <EventSourceSupport>true</EventSourceSupport>
-    <!-- The multi-family fixture exceeds WASI's 50 MiB static-image default. -->
-    <WasmInitialHeapSize>67108864</WasmInitialHeapSize>
   </PropertyGroup>
+  <Import Project="../../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
 
   <ItemGroup>
     <Compile Remove="Payload/**/*.cs" />
@@ -37,14 +38,10 @@
 
   <ItemGroup>
     <TrimmerRootAssembly Include="System.Runtime" />
-    <EmbeddedResource Include="$(IsoplaneAcceptancePayload)" LogicalName="dynamic-payload" />
+    <ProjectReference Include="Payload/Payload.csproj" ReferenceOutputAssembly="false" OutputItemType="EmbeddedResource" LogicalName="dynamic-payload" />
   </ItemGroup>
 
-  <Target Name="RequireAcceptancePayload" BeforeTargets="PrepareForBuild">
-    <Error Condition="!Exists('$(IsoplaneAcceptancePayload)')"
-           Text="Build the acceptance payload through guest-runtime/tests/guest/build.sh." />
-  </Target>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
-  <Import Project="../../../../guest-sdks/dotnet/Isoplane.Guest.targets" />
+  <Import Project="../../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
 </Project>

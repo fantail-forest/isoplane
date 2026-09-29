@@ -8,7 +8,6 @@ pub mod common;
 pub mod otlp;
 
 use isoplane_abi::config::InitSandbox;
-use isoplane_fixtures::GuestRuntime;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response_work() {
@@ -21,10 +20,9 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
     .expect("logging setup task")
     .expect("one test subscriber");
     {
-        let runtime = GuestRuntime::Mono;
         let before = otlp::output::guest_logs(&output).len();
         let wasm = tokio::task::spawn_blocking(move || {
-            isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_logs", runtime)
+            common::preparation::Guest::from("isoplane_guest_dotnet_logs")
         })
         .await
         .expect("the managed logging fixture must build");
@@ -40,11 +38,11 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
         let response = common::get(rig.proxy, "quotes.isoplane.dev", "/logging").await;
         assert_eq!(
             response.status, 200,
-            "the {runtime} handler must finish after its logged host future"
+            "the Mono handler must finish after its logged host future"
         );
         assert_eq!(
             response.body, "logged",
-            "the {runtime} handler must return its own response"
+            "the Mono handler must return its own response"
         );
         let records: Vec<_> = otlp::output::guest_logs(&output)
             .into_iter()
@@ -60,7 +58,7 @@ async fn managed_logs_keep_host_ownership_across_park_wake_without_post_response
             records
                 .iter()
                 .find(|record| record.fields.contains(text))
-                .unwrap_or_else(|| panic!("the {runtime} host did not emit {text}: {records:?}"))
+                .unwrap_or_else(|| panic!("the Mono host did not emit {text}: {records:?}"))
         };
         let first = find("console-before");
         let warning = find("sdk-before");

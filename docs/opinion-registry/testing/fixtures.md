@@ -12,7 +12,7 @@ Follow the [preparation boundary](../workflow/tooling.md#prepare-test-prerequisi
 
 Under the [fixture failure rule](../../../AGENTS.md#common-operations), failed preparation fails the workflow, and missing or incompatible artifacts fail the selected test with the preparation command. A developer can explicitly select a suite or filter tests, but an automatic skip would make the same green result mean different coverage on different machines.
 
-**Not this:** A pre-initialisation test that reports a gap and returns `Ok` when the module is not on disk.
+**Not this:** A pre-initialization test returning success when its module is absent.
 
 **Exception:** None.
 

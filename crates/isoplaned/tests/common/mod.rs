@@ -54,7 +54,7 @@ pub struct Rig {
     pub proxy: SocketAddr,
     pub admin: SocketAddr,
     pub node: Arc<Node>,
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
     listeners: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -67,10 +67,6 @@ impl Drop for Rig {
 }
 
 impl Rig {
-    pub fn data_dir(&self) -> &std::path::Path {
-        self.dir.path()
-    }
-
     /// Join cell workers without blocking the test's async executor.
     pub async fn shutdown(mut self) {
         self.node.shutdown();
@@ -96,12 +92,12 @@ impl Rig {
 
 /// A node serving `wasm` as `quotes@v1`, deployed through the real pipeline
 /// under `sandbox`.
-pub async fn start_with(wasm: Vec<u8>, sandbox: InitSandbox) -> Rig {
+pub async fn start_with(wasm: impl Into<preparation::Guest>, sandbox: InitSandbox) -> Rig {
     start_with_policy(wasm, sandbox, None, |_| {}).await
 }
 
 pub async fn start_with_policy(
-    wasm: Vec<u8>,
+    wasm: impl Into<preparation::Guest>,
     sandbox: InitSandbox,
     destinations: Option<Arc<dyn DestinationPolicy>>,
     configure: impl FnOnce(&mut NodeConfig),
@@ -118,7 +114,7 @@ pub async fn start_with_policy(
         .real
         .clone()
         .expect("the node has its execution backend");
-    real.deploy_locally("quotes", "v1", "acme", manifest("quotes"), &wasm, sandbox)
+    real.deploy_locally("quotes", "v1", "acme", manifest("quotes"), wasm, sandbox)
         .await
         .expect("deploying the module");
     serve(node, dir).await
@@ -137,7 +133,7 @@ pub async fn serve(node: Arc<Node>, dir: tempfile::TempDir) -> Rig {
         proxy,
         admin,
         node,
-        dir,
+        _dir: dir,
         listeners,
     }
 }

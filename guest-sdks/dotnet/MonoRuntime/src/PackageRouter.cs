@@ -1,6 +1,6 @@
 using System.Threading.Tasks;
 using Isoplane.Abi;
-using Isoplane.Durable;
+using Isoplane;
 
 namespace Isoplane.MonoRuntime;
 

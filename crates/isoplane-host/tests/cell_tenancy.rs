@@ -15,7 +15,7 @@ struct Rig {
     cell: Arc<Cell>,
 }
 
-fn rig(cfg: CellConfig) -> Rig {
+fn rig(cfg: CellConfig, ) -> Rig {
     let (cell, _fetcher) = common::rig_resolving(cfg, "93.184.216.34:80");
     Rig { cell }
 }
@@ -23,7 +23,7 @@ fn rig(cfg: CellConfig) -> Rig {
 #[test]
 fn runtime_configuration_requires_the_registered_module_owner() {
     use isoplane_host::bindings::{RuntimeConfiguration, RuntimeConfigurationError};
-    let rig = rig(CellConfig::for_test("configuration"));
+    let rig = rig(CellConfig::for_test("configuration"), );
     let module = ModuleId::new("app", "v1");
     assert!(
         matches!(

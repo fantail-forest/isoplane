@@ -1,5 +1,5 @@
 //! The real collectors observe host memory capacity before the template is captured.
-use crate::dotnet::{budget, Fixture, GuestRuntime, Request};
+use crate::dotnet::{budget, probe_files, Fixture, GuestRuntime, Request};
 use isoplane_engine::{Completion, EngineConfig, IsoplaneEngine};
 
 fn initialized_limit_survives_restore(wasm: &[u8], limit_bytes: u64) {
@@ -13,7 +13,9 @@ fn initialized_limit_survives_restore(wasm: &[u8], limit_bytes: u64) {
     .expect("the managed memory probe engine must start");
     let template = engine
         .load_template(wasm)
-        .expect("the managed memory probe must load");
+        .expect("the managed memory probe must load")
+        .with_application_files(probe_files("isoplane_guest_dotnet_memory"))
+        .expect("bind the managed memory probe");
     let fixture = Fixture { engine, template };
     let (mut original, _) = fixture.activate();
     let initialized = original.run_initialize(budget());
@@ -31,8 +33,9 @@ fn initialized_limit_survives_restore(wasm: &[u8], limit_bytes: u64) {
 
 in_mono_runtime! {
     fn the_gc_observes_its_limit_during_initialization_and_after_restore(runtime: GuestRuntime) {
-        let wasm = isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_memory", runtime);
-        for limit_bytes in [96 << 20, isoplane_abi::config::WASM32_MEMORY_MAX_BYTES] {
+        let GuestRuntime::Mono = runtime;
+        let wasm = isoplane_fixtures::mono_runtime();
+        for limit_bytes in [96 << 20, 128 << 20] {
             initialized_limit_survives_restore(&wasm, limit_bytes);
         }
     }

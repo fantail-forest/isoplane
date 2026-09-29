@@ -44,8 +44,7 @@ pub trait Activator: Send + Sync + 'static {
 /// What a dispatch paid for its instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquireSource {
-    /// A parked instance with residue: `reuse` Handlers, and a resident
-    /// durable instance.
+    /// A parked handler eligible for reuse.
     WarmParked,
     /// A reset Handler instance from the pool.
     PooledFresh,

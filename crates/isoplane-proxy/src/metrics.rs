@@ -1,4 +1,6 @@
-//! Proxy HTTP request, routing and admission measurements.
+//! Proxy-side meters: the outermost layer of a request's latency
+//! decomposition, since only the proxy knows how long a request waited behind
+//! the admission queue, and which code tier served it.
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
@@ -94,7 +96,8 @@ impl Histogram {
     }
 }
 
-/// Measurements collected at the proxy boundary.
+/// What the proxy layer knows. Cell-side meters live in the cell and are
+/// joined by `isoplaned`.
 #[derive(Debug, Default)]
 pub struct ProxyMetrics {
     pub requests_total: AtomicU64,
@@ -103,8 +106,6 @@ pub struct ProxyMetrics {
     pub requests_failed: AtomicU64,
     pub dispatches_tier_fast: AtomicU64,
     pub dispatches_tier_optimized: AtomicU64,
-
-
 
     pub route_resolutions_total: AtomicU64,
     pub route_generation: AtomicU64,

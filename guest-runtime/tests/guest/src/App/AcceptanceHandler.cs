@@ -1,7 +1,6 @@
 using System;
 using System.Threading.Tasks;
 using Isoplane;
-using Isoplane.Durable;
 
 namespace Acceptance;
 

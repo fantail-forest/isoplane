@@ -41,7 +41,6 @@ internal sealed partial class Reflection
         return before + "/" + Isoplane.Abi.NativeLibraryProbe.Invoke(operation);
     }
 
-#if ISOPLANE_MONO
     private static async Task<string> NativePayloadAfterPark(string operation)
     {
         using var stream = typeof(Reflection).Assembly.GetManifestResourceStream("dynamic-payload")
@@ -55,5 +54,4 @@ internal sealed partial class Reflection
         await Task.Delay(50).ConfigureAwait(false);
         return before + "/" + method.Invoke(null, new object[] { operation });
     }
-#endif
 }

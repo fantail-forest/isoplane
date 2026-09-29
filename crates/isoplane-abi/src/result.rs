@@ -62,13 +62,8 @@ pub struct FetchResponse {
     pub body_inline: Option<Vec<u8>>,
 }
 
-
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyChunk {
     pub data: Vec<u8>,
     pub eof: bool,
 }
-
-
-

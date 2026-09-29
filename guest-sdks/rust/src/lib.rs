@@ -1,6 +1,23 @@
 //! Internal Rust guest-test support for capability bindings, async execution
 //! and host preparation. Awaiting a host future returns control on an empty
 //! guest stack; the host owns wake sources and resource lifetimes.
+//!
+//! ## Writing a guest
+//!
+//! ```ignore
+//! use isoplane_guest::{Ctx, Handler, Request, Response};
+//!
+//! struct Api;
+//!
+//! impl Handler for Api {
+//!     fn new() -> Self { Api }
+//!     async fn handle(&'static self, req: Request, _ctx: Ctx) -> Response {
+//!         Response::new(200, req.path.into_bytes())
+//!     }
+//! }
+//!
+//! isoplane_guest::export_handler!(Api);
+//! ```
 
 pub mod abi;
 pub mod alloc;
@@ -18,8 +35,7 @@ pub mod rt;
 pub mod testing;
 
 pub use app::{GcPressure, Handler};
-pub use bindings::{
-    fetch_bytes, log, BodyReader, Clock, Entropy, HttpFetch, Level, Span, };
+pub use bindings::{fetch_bytes, log, BodyReader, Clock, Entropy, HttpFetch, Level, Span};
 pub use budget::{Budget, UnsafeToTrap};
 pub use ctx::Ctx;
 pub use error::{IsoplaneError, Result};

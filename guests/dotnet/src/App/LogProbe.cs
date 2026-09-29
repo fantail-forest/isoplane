@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Isoplane.Durable;
+using Isoplane;
 
 namespace Isoplane.App;
 
@@ -20,7 +20,7 @@ public sealed class LogProbe : IIsoplaneHandler
         var logger = provider.CreateLogger("LoggingFixture");
         Console.WriteLine("console-before");
         logger.LogWarning("sdk-before");
-        await ctx.Cache.GetAsync(req.Path);
+        await Task.Delay(1);
         Console.Error.WriteLine("console-after");
         logger.LogCritical("sdk-after");
         return Response.Text("logged");
@@ -28,7 +28,7 @@ public sealed class LogProbe : IIsoplaneHandler
 
     private static async Task LogAfterResponse(Ctx ctx)
     {
-        await ctx.Cache.GetAsync("late-log");
+        await Task.Delay(1);
         Console.WriteLine("forbidden-after-response");
     }
 }

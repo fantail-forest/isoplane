@@ -12,9 +12,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use isoplane_abi::config::InitSandbox;
-use isoplane_control::{PreInitRequest, PreInitializer};
-use isoplane_engine::{ModuleHash, PlatformFile, PlatformFiles};
+use isoplane_engine::{PlatformFile, PlatformFiles};
 use isoplane_fixtures::GuestRuntime;
 use isoplane_harness::EmittedGuestLogs as _;
 use isoplane_harness::{Reactor, ReturnedGuest};
@@ -22,6 +20,9 @@ use isoplane_host::egress::DnsError;
 use isoplane_host::{InstanceId, Resolver};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
+
+#[path = "common/managed.rs"]
+mod managed;
 
 /// Where every guest finds the platform's root bundle.
 const BUNDLE_PATH: &str = "/etc/ssl/certs/ca-certificates.crt";
@@ -96,21 +97,15 @@ fn listing(roots: &[&Root]) -> String {
     format!("roots={} {}", thumbprints.len(), thumbprints.join(","))
 }
 
-/// Initializes the fixture with the supplied read-only platform files.
-fn prepared_template(runtime: GuestRuntime, served: PlatformFiles) -> Vec<u8> {
-    let wasm = isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_trust", runtime);
-    PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
-        .with_platform_files(served)
-        .run(
-            &wasm,
-            &PreInitRequest {
-                module_hash: ModuleHash::of(&wasm),
-                init_blob: b"{}".to_vec(),
-            },
-        )
-        .expect("the trust fixture initializes with the supplied platform files")
-        .template_wasm
+/// Prepares the managed application with the supplied platform root bundle.
+async fn prepared_template(runtime: GuestRuntime, served: PlatformFiles) -> Vec<u8> {
+    let GuestRuntime::Mono = runtime;
+    let prepared = managed::prepare("isoplane_guest_dotnet_trust", served)
+        .expect("prepare the trust application with the supplied bundle");
+    prepared
+        .portable_template()
+        .expect("portable prepared output")
+        .to_vec()
 }
 
 struct NoDns;
@@ -131,7 +126,11 @@ fn node_serving(files: PlatformFiles, template: &[u8], clock_ms: u64) -> (Reacto
         files,
     );
     reactor.context.begin_slice(clock_ms, 1);
-    let guest = ReturnedGuest::new(template, &reactor);
+    let guest = ReturnedGuest::with_application_files(
+        template,
+        managed::files("isoplane_guest_dotnet_trust"),
+        &reactor,
+    );
     (reactor, guest)
 }
 
@@ -140,7 +139,7 @@ async fn the_template_carries_the_store_loaded_at_preparation(runtime: GuestRunt
     let dir = tempfile::tempdir().expect("a temporary directory");
     let a = self_signed_root(dir.path(), "root-a");
     let b = self_signed_root(dir.path(), "root-b");
-    let template = prepared_template(runtime, bundle(&[&a]));
+    let template = prepared_template(runtime, bundle(&[&a])).await;
 
     let (reactor, mut guest) = node_serving(bundle(&[&b]), &template, PAST_RECHECK_MS);
     let at_boot = guest.answer(&reactor, "/at-boot", 4).await;
@@ -160,7 +159,7 @@ async fn a_removed_root_is_gone_from_the_prepared_templates_store_after_the_rech
     let dir = tempfile::tempdir().expect("a temporary directory");
     let a = self_signed_root(dir.path(), "root-a");
     let b = self_signed_root(dir.path(), "root-b");
-    let template = prepared_template(runtime, bundle(&[&a]));
+    let template = prepared_template(runtime, bundle(&[&a])).await;
 
     let (reactor, mut guest) = node_serving(bundle(&[&b]), &template, PAST_RECHECK_MS);
     let roots = guest.answer(&reactor, "/roots", 4).await;
@@ -180,7 +179,7 @@ async fn the_prepared_templates_store_keeps_its_roots_within_the_recheck_interva
     let dir = tempfile::tempdir().expect("a temporary directory");
     let a = self_signed_root(dir.path(), "root-a");
     let b = self_signed_root(dir.path(), "root-b");
-    let template = prepared_template(runtime, bundle(&[&a]));
+    let template = prepared_template(runtime, bundle(&[&a])).await;
 
     let (reactor, mut guest) = node_serving(bundle(&[&b]), &template, WITHIN_RECHECK_MS);
     let roots = guest.answer(&reactor, "/roots", 4).await;

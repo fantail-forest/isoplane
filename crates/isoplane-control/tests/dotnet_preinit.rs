@@ -2,38 +2,31 @@
 //! its first call with the managed runtime already up and no init entry left
 //! to run.
 
-use isoplane_abi::config::InitSandbox;
 use isoplane_abi::config::Limits;
-use isoplane_control::preinit::{PreInitRequest, PreInitializer};
 use isoplane_control::validator;
 use isoplane_engine::pal::{self, PalSource};
+#[path = "common/managed.rs"]
+mod managed;
 
 #[test]
 fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
-    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet");
+    let wasm = isoplane_fixtures::mono_runtime();
     validator::validate(&wasm, Limits::default()).expect(".NET guest must validate");
 
-    let out = PreInitializer::new()
-        // The managed runtime comes up outside any init unit, so its clock and
-        // entropy reads are answered from the escrowed seed; a tenant static
-        // constructor doing the same still traps and defers.
-        .with_pal(InitSandbox::RuntimeBringUp)
-        .run(
-            &wasm,
-            &PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(&wasm),
-                init_blob: Vec::new(),
-            },
-        )
-        .expect("pre-init must succeed on the .NET guest");
+    let out = managed::prepare("isoplane_guest_dotnet", Default::default())
+        .expect("pre-init must succeed on the managed application");
     assert!(
-        !out.pal_calls.is_empty(),
+        !out.initialized.pal_calls.is_empty(),
         "the runtime reaches the PAL while coming up; nothing reached means no runtime start-up \
          was captured"
     );
 
     let engine = engine();
-    let module = wasmtime::Module::new(&engine, &out.template_wasm).expect("the template compiles");
+    let module = wasmtime::Module::new(
+        &engine,
+        out.portable_template().expect("portable prepared output"),
+    )
+    .expect("the template compiles");
     let mut store = wasmtime::Store::new(&engine, Host);
     let mut linker = host_linker(&engine);
     // The runtime's readiness imports compose through the adapter, as in the
@@ -122,22 +115,13 @@ fn host_linker(engine: &wasmtime::Engine) -> wasmtime::Linker<Host> {
 
 #[test]
 fn a_failed_managed_application_factory_refuses_pre_initialization() {
-    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet_failing_boot");
-    let result = PreInitializer::new()
-        .with_pal(InitSandbox::RuntimeBringUp)
-        .run(
-            &wasm,
-            &PreInitRequest {
-                module_hash: isoplane_engine::ModuleHash::of(&wasm),
-                init_blob: Vec::new(),
-            },
-        );
-    let Err(isoplane_control::preinit::PreInitError::Trapped(error)) = result else {
-        panic!(
-            "a failed managed factory must fail deployment rather than produce a broken template"
-        );
+    let result = managed::prepare("isoplane_guest_dotnet_failing_boot", Default::default());
+    let Err(error) = result else {
+        panic!("a failed application factory must fail deployment");
     };
-    let diagnostic = format!("{error:#}");
-    assert!(diagnostic.contains("pre-initialization failed") && diagnostic.contains("FailingBoot"),
-        "the deployment failure must identify the initialization operation and application: {diagnostic}");
+    assert_eq!(
+        error.stage,
+        isoplane_prepare::BuildStage::Initialization,
+        "the deployment must fail while initializing the application"
+    );
 }

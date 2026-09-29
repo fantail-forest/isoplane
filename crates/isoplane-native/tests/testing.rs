@@ -1,6 +1,5 @@
 //! An ordinary test project consumes the local testing package and installed CLI.
 
-use std::path::Path;
 use std::process::Command;
 
 #[test]
@@ -8,17 +7,6 @@ fn a_dotnet_test_project_runs_its_application_in_the_installed_sandbox() {
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for package in ["Isoplane.Native", "Isoplane.Testing"] {
-        run(Command::new("dotnet")
-            .arg("pack")
-            .arg(root.join(format!("tools/{package}/{package}.csproj")))
-            .arg("--artifacts-path")
-            .arg(directory.path().join("testing-artifacts"))
-            .arg("-o")
-            .arg(directory.path().join("packages"))
-            .arg("--disable-build-servers"));
-    }
     let consumer = directory.path().join("consumer");
     std::fs::create_dir(&consumer).unwrap();
     std::fs::copy(app.join("nuget.config"), consumer.join("nuget.config")).unwrap();

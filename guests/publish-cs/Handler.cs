@@ -1,6 +1,5 @@
 using System.Threading.Tasks;
 using Isoplane;
-using Isoplane.Durable;
 
 /// <summary>Returns a literal that the reload test edits.</summary>
 public sealed class Handler : IIsoplaneHandler

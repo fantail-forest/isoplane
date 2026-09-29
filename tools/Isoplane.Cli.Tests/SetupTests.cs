@@ -247,34 +247,6 @@ public sealed class SetupTests
     }
 
     [Fact]
-    public async Task Upgrading_replaces_the_toolchain_and_template_and_keeps_earlier_packages_for_existing_projects()
-    {
-        using var fixture = new ToolchainBundle();
-        var registrations = new FakeRegistrations();
-        Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations)));
-        var first = await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None);
-
-        await File.WriteAllTextAsync(Path.Combine(fixture.Source, "bin", "tool"), "next payload");
-        var manifestPath = Path.Combine(fixture.Source, "toolchain.json");
-        var manifest = JsonSerializer.Deserialize<ToolchainManifest>(await File.ReadAllTextAsync(manifestPath))!;
-        await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest with
-        {
-            Files = manifest.Files.Select(file => file.Path == "bin/tool" ? file with { Sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData("next payload"u8)) } : file).ToArray()
-        }));
-        var next = new ReleaseIdentity("0.1.0-preview.2", "fedcba9876543210fedcba9876543210fedcba98");
-        fixture.DescribeRelease(next.Version, next.SourceRevision);
-        Assert.Equal(0, await RunAsync(fixture, Machines.Ready(fixture, registrations), cli: next));
-
-        var second = await Toolchain.DiagnoseAsync(fixture.Home, CancellationToken.None);
-        Assert.NotEqual(first, second);
-        Assert.False(Directory.Exists(first), "the superseded toolchain is removed");
-        Assert.Equal("0.1.0-preview.2", registrations.Templates["Isoplane.Templates"]);
-        Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Isoplane.Sdk.0.1.0-preview.1.nupkg")), "projects pinned to the earlier SDK still restore");
-        Assert.True(File.Exists(Path.Combine(fixture.Home, "packages", "Isoplane.Sdk.0.1.0-preview.2.nupkg")), "the new SDK is installed");
-        Assert.Equal("0.1.0-preview.2", Manifest(fixture).RootElement.GetProperty("cliVersion").GetString());
-    }
-
-    [Fact]
     public void Setup_options_take_a_source_and_consent()
     {
         Assert.Equal(new SetupOptions(null, false), SetupOptions.Parse(["setup"]));

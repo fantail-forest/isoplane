@@ -72,13 +72,13 @@ cargo build --workspace --all-targets              # Build crates, tests, exampl
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check && (cd guests && cargo fmt --all --check)   # The format gate
 
-scripts/dev scripts/test --exclude-binary isoplane-native/release_journey # Rust suite, parallel binaries
-cargo test --workspace                             # Everything, including release-installation journeys
+python3 scripts/tasks.py test -- --exclude-binary isoplane-native/release_journey # Rust suite, parallel binaries
+cargo test --workspace                             # Requires a prepared release for the installation journey
 cargo test -p isoplane-host                            # One crate
 cargo test -p isoplane-host --test cell                # One integration test binary
 
 scripts/dev guests/build.sh                        # Rust guests -> .build/wasm32/rust-guests/*.wasm
-scripts/dev guests/build-dotnet.sh --if-stale      # C# guests -> .build/wasm32/dotnet/mono/*.wasm
+scripts/dev guests/build-dotnet.sh --if-stale      # managed probes -> .build/clr-anycpu/probes/*.tar
 
 cargo run -p isoplaned -- --config isoplaned.toml          # Run a node
 cargo run -p isoplaned -- --config isoplaned.toml --check  # Validate a config without running
@@ -302,7 +302,7 @@ Keep the host interface to one definition. Generate every other representation o
 ## Observability
 
 - Prefer wide events: one structured completion enriched with the context and outcome of a logical operation. Use nested spans for stage timing and standalone metrics or plain log lines where they fit better. Never log secrets, tokens, keys, or guest memory in any of them. See the [observability opinion](docs/opinion-registry/production/observability.md) for rationale and examples.
-- A dispatch is one work item delivered to an instance (a request, a frame, an alarm), from delivery to its final outcome, across every hot interval it takes between parks. Record one wide completion event per dispatch, with attribution (who, what), outcome, CPU across its hot intervals, and wall time, for every outcome the host handles, including cancellation and caught unwinding. The execution boundary owns panic containment and finalization; parking does not complete a dispatch. Treat that record as the source of truth for load, error rates, and resource usage. This is an in-process emission requirement, not a guarantee of durable delivery: aborts, forced termination, process crashes, and exporter failures can leave missing records. Do not infer successful completion or zero usage from a missing event.
+- A dispatch is one work item delivered to an instance (an HTTP request or a scheduled tick), from delivery to its final outcome, across every hot interval it takes between parks. Record one wide completion event per dispatch, with attribution (who, what), outcome, CPU across its hot intervals, and wall time, for every outcome the host handles, including cancellation and caught unwinding. The execution boundary owns panic containment and finalization; parking does not complete a dispatch. Treat that record as the source of truth for load, error rates, and resource usage. This is an in-process emission requirement, not a guarantee of durable delivery: aborts, forced termination, process crashes, and exporter failures can leave missing records. Do not infer successful completion or zero usage from a missing event.
 - Make where a dispatch's time went observable per request, as nested timed stages, so latency can be decomposed without reading logs. Keep one tracing mechanism in the host for that; don't build a second, bespoke one beside it. How tracing is done may change; that it is one mechanism does not.
 
 ## Opinion Registry

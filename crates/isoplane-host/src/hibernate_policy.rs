@@ -1,7 +1,9 @@
-//! Pressure thresholds for ordinary handlers and age thresholds for the durable
-//! instance trajectory. Capture always requires a returned-stack boundary.
+//! Pressure thresholds for handler reclamation.
 
-pub use crate::hibernate_capture::{CaptureEnv, CaptureObserver, CaptureRefused, GC_HINT_SNAPSHOT};
+pub use crate::hibernate_capture::{
+    CaptureEnv, CaptureObserver, CaptureRefused, 
+    GC_HINT_SNAPSHOT,
+};
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]

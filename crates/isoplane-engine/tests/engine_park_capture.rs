@@ -1,6 +1,8 @@
 //! Park state, hibernation capture and restore, and the pre-capture GC hint.
 
 mod common;
+#[path = "common/managed.rs"]
+mod managed;
 
 use common::*;
 use isoplane_abi::result::ResultRecord;
@@ -181,7 +183,10 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
     })
     .expect("the ASP.NET engine must construct");
     let template = engine
-        .load_template(&isoplane_fixtures::dotnet("isoplane_guest_aspnet"))
+        .load_template(&isoplane_fixtures::mono_runtime())
+        .and_then(|template| {
+            template.with_application_files(managed::probe_files("isoplane_guest_aspnet"))
+        })
         .expect("the packaged ASP.NET guest must load");
     let recorder = Recorder::default();
     let mut instance = engine
@@ -235,7 +240,10 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
     })
     .expect("the ASP.NET engine must construct");
     let template = engine
-        .load_template(&isoplane_fixtures::dotnet("isoplane_guest_aspnet"))
+        .load_template(&isoplane_fixtures::mono_runtime())
+        .and_then(|template| {
+            template.with_application_files(managed::probe_files("isoplane_guest_aspnet"))
+        })
         .expect("the packaged ASP.NET guest must load");
     let recorder = Recorder::default();
     let mut instance = engine

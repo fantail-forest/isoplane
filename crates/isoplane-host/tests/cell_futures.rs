@@ -1,4 +1,4 @@
-//! The pending-futures cap, single-writer reentrancy for a durable instance, and `WaitUntil`.
+//! The pending-futures cap and post-response work rejection.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use isoplane_abi::dispatch::{HttpRequest, };
+use isoplane_abi::dispatch::HttpRequest;
 use isoplane_abi::host::{
-Dispatcher, HttpBody, HttpExchange, HttpReply, HttpResponseBody, ResponseDisposition,
+    Dispatcher, HttpBody, HttpExchange, HttpReply, HttpResponseBody, ResponseDisposition,
     RouteTarget,
 };
 use crate::common::fake::FakeCell;

@@ -19,8 +19,6 @@ pub(super) struct Resident {
     pub(super) module: ModuleId,
 }
 
-impl Resident {}
-
 pub(super) struct ActiveRequest {
     pub(super) dispatch_id: u64,
     pub(super) lifecycle: HandlerLifecycle,

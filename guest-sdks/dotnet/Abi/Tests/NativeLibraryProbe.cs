@@ -18,9 +18,6 @@ internal static class NativeLibraryProbe
     [DllImport("*", EntryPoint = "isoplane_missing_star_symbol")]
     private static extern int MissingStarSymbol();
 
-    [DllImport("*", EntryPoint = "SystemNative_GetTimestamp")]
-    private static extern long StarTimestamp();
-
     [DllImport("libSystem.Native", EntryPoint = "SystemNative_GetTimestamp")]
     private static extern long Timestamp();
 
@@ -43,7 +40,6 @@ internal static class NativeLibraryProbe
             if (operation == "symbol") _ = MissingSymbol();
             else if (operation == "internal") _ = MissingInternalSymbol();
             else if (operation == "star") _ = MissingStarSymbol();
-            else if (operation == "star-timestamp") { _ = StarTimestamp(); return "prelinked-call-returned"; }
             else if (operation == "timestamp") { _ = Timestamp(); return "prelinked-call-returned"; }
             else throw new ArgumentException("unknown native probe");
         }

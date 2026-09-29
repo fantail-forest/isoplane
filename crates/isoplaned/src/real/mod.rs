@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use isoplane_abi::dispatch::HttpRequest;
-use isoplane_abi::host::{Dispatcher, HttpReply, RouteTarget};
+use isoplane_abi::host::{Dispatcher, HttpReply};
 use isoplane_host::ModuleId;
 use isoplane_host::{Cell, CellConfig, EngineActivator};
 use parking_lot::RwLock;
@@ -203,9 +203,6 @@ fn initialization_network(
         pending_futures: manifest.effective_limits().pending_futures_per_dispatch,
     }
 }
-
-#[cfg(test)]
-mod identity_tests;
 
 #[cfg(test)]
 mod engine_policy_tests {

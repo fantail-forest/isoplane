@@ -49,28 +49,6 @@ impl Cell {
             // the dispatch rather than each wake.
             spent_ns: 0,
         };
-        // A Handler never reaches this: a parked instance is not in the pool.
-        // A durable instance is addressed by identity and takes one dispatch
-        // at a time; serialising its messages is the durability layer's job.
-        // Counted before `dispatches`, so a 409 is not a dispatch.
-        if self.active.contains_key(&slot.id) {
-            job.completion.select(TerminalReason::EntryRefused, 409);
-            job.completion.finish();
-            self.metrics
-                .single_writer_refusals
-                .fetch_add(1, Ordering::Relaxed);
-            job.completion.answer(
-                &job.responder,
-                DispatchResult {
-                    status: 409,
-                    body: "durable instance already has a dispatch in flight"
-                        .as_bytes()
-                        .to_vec(),
-                    ..DispatchResult::shed(did)
-                },
-            );
-            return;
-        }
         // The cancellation future is allocated before the guest is entered,
         // because the epoch callback that completes it runs with the guest on
         // the stack.
@@ -267,7 +245,11 @@ impl Cell {
                     self.count_enter_refusal(error);
                     owner.select(TerminalReason::EntryRefused, 409);
                     self.respond(slot, owner.failure_result(409, "instance_unavailable"));
-                    self.finish_and_release(slot, &entry, evict());
+                    self.finish_and_release(
+                        slot,
+                        &entry,
+                        evict(),
+                    );
                     return;
                 }
             };
@@ -368,7 +350,7 @@ impl Cell {
         }
 
         match completion {
-            Completion::Parked => self.park_after_slice(slot),
+            Completion::Parked => self.park_after_slice(slot, ),
             Completion::Done => {
                 // Open response handles retain the active dispatch. A streaming
                 // caller consumes the transport; buffered callers keep their
@@ -410,7 +392,7 @@ impl Cell {
                         self.finish_and_release(slot, entry, d);
                         true
                     }
-                    RequestEnd::Parked => self.park_after_slice(slot),
+                    RequestEnd::Parked => self.park_after_slice(slot, ),
                 }
             }
             // The request still fails with `budget_exceeded`, but the
@@ -451,7 +433,7 @@ impl Cell {
                         true
                     }
                     RequestEnd::Parked | RequestEnd::RetainedForStreaming => {
-                        self.park_after_slice(slot)
+                        self.park_after_slice(slot, )
                     }
                 }
             }
@@ -502,7 +484,9 @@ impl Cell {
     }
 
     /// The instance parks between slices. Returns whether the wake loop is done with it.
-    fn park_after_slice(&self, slot: &Arc<Slot>) -> bool {
+    fn park_after_slice(
+&self,        slot: &Arc<Slot>,
+    ) -> bool {
         slot.park(crate::now_ms());
         // A completion that landed while Hot is drained now.
         !self.rt.futures.has_ready(slot.id)
@@ -629,7 +613,6 @@ impl Cell {
             .with(&slot.id, |request| request.completion.clone());
         let _completion = completion.as_ref().map(|owner| owner.settlement());
         slot.ctx.end_http_dispatch();
-
         let req = self.active.remove(&slot.id);
         let mut abandoned_guest_work = false;
         if let Some(r) = &req {
@@ -642,6 +625,7 @@ impl Cell {
         }
 
         let d = if abandoned_guest_work { evict() } else { d };
+
 
         if !d.is_warm() && !matches!(d.kind(), crate::disposition::DispositionKind::Reset) {
             self.forget(slot);

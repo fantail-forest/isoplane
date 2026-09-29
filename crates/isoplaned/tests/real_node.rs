@@ -161,7 +161,7 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
     use hyper::Request;
 
     let rig = start_with(
-        isoplane_fixtures::dotnet("isoplane_guest_dotnet_request"),
+        common::preparation::Guest::from("isoplane_guest_dotnet_request"),
         InitSandbox::RuntimeBringUp,
     )
     .await;
@@ -395,7 +395,7 @@ async fn response_framing_respects_methods_and_statuses_that_forbid_content() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn csharp_deployment_variables_are_captured_before_requests_run() {
-    let wasm = isoplane_fixtures::dotnet("isoplane_guest_dotnet_config");
+    let wasm = common::preparation::Guest::from("isoplane_guest_dotnet_config");
     let directory = tempfile::tempdir().expect("a unique node directory");
     let node = Node::build(common::config(directory.path())).expect("the real node must start");
     let mut manifest = common::manifest("quotes");
@@ -433,7 +433,7 @@ async fn csharp_deployment_variables_are_captured_before_requests_run() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn managed_libraries_observe_a_read_only_disk_holding_only_the_platform_files() {
     let rig = start_with(
-        isoplane_fixtures::dotnet("isoplane_guest_dotnet_filesystem"),
+        common::preparation::Guest::from("isoplane_guest_dotnet_filesystem"),
         InitSandbox::RuntimeBringUp,
     )
     .await;

@@ -36,7 +36,8 @@ impl Cell {
             while !stop.load(Ordering::Relaxed) {
                 std::thread::sleep(interval);
                 let Some(cell) = me.upgrade() else { return };
-                // A failed capture must not stop memory-pressure reclamation.
+                // Nothing restarts this thread, and its loss is silent:
+                // captures stop and parked instances stay resident.
                 let swept =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cell.sweep_idle()));
                 if swept.is_err() {
@@ -186,6 +187,7 @@ pub(super) mod cell_tests {
                 64,
             )),
             fetcher: Arc::new(FakeFetcher::default()),
+            hibernation: Arc::new(FakeHibernationStore::default()),
         })
     }
 
@@ -230,8 +232,11 @@ pub(super) mod cell_tests {
         module
     }
 
-    pub(in crate::cell) fn cell(cfg: CellConfig) -> Arc<Cell> {
-        Cell::new(cfg, services()).expect("a cell starts")
+    pub(in crate::cell) fn cell(
+        cfg: CellConfig,
+        hib: Arc<dyn isoplane_hibernate::Hibernator>,
+    ) -> Arc<Cell> {
+        Cell::new(cfg, services(), hib).expect("a cell starts")
     }
 
     pub(in crate::cell) fn wait_for(mut p: impl FnMut() -> bool, within: Duration) -> bool {
@@ -250,10 +255,13 @@ pub(super) mod cell_tests {
     /// bug and stays loud.
     #[test]
     fn a_panicking_dispatch_does_not_take_the_execution_thread_with_it() {
-        let cell = cell(CellConfig {
-            exec_threads: 1,
-            ..CellConfig::for_test("panic-dispatch")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 1,
+                ..CellConfig::for_test("panic-dispatch")
+            },
+            Arc::new(FakeHibernator),
+        );
 
         let bad = ModuleId::new("bad", "v1");
         cell.register_module(
@@ -340,10 +348,13 @@ pub(super) mod cell_tests {
         let events = Events::default();
         let _trace = events.install();
         use crate::bindings::request_body::RequestBodyScope;
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("busy-upload")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("busy-upload")
+            },
+            Arc::new(FakeHibernator),
+        );
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
         let mut app = manifest("busy-upload");
@@ -406,10 +417,13 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_queued_wake_after_reset_leaves_the_pooled_instance_pristine() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("stale-reset-wake")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("stale-reset-wake")
+            },
+            Arc::new(FakeHibernator),
+        );
         let act = Arc::new(FakeActivator::new(
             FakeBehaviour::done().with_lazy_init_probe(),
         ));
@@ -470,10 +484,13 @@ pub(super) mod cell_tests {
 
     #[test]
     fn a_failed_deferred_reset_removes_the_discarded_resident() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("reset-failure-cleanup")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("reset-failure-cleanup")
+            },
+            Arc::new(FakeHibernator),
+        );
         let act = Arc::new(FakeActivator::new(FakeBehaviour::done()));
         let module = act.module().clone();
         let mut manifest = manifest("reset-failure-cleanup");
@@ -600,10 +617,13 @@ pub(super) mod cell_tests {
 
     #[test]
     fn an_in_flight_hibernated_handler_cannot_be_discarded() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("protected-continuation")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("protected-continuation")
+            },
+            Arc::new(FakeHibernator),
+        );
         let (slot, response, future) = hibernated_request(&cell);
         assert!(
             cell.discard_instance(slot.id).is_err(),
@@ -636,10 +656,13 @@ pub(super) mod cell_tests {
 
     #[test]
     fn concurrent_io_wakes_restore_a_hibernated_dispatch_once() {
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("restoring-io")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("restoring-io")
+            },
+            Arc::new(FakeHibernator),
+        );
         let events = super::super::completion::test_events::Events::default();
         let clock = Arc::new(AtomicU64::new(100));
         let observed = clock.clone();
@@ -705,10 +728,13 @@ pub(super) mod cell_tests {
     fn a_missing_checkpoint_ends_its_pending_dispatch_and_releases_owned_work() {
         let events = Events::default();
         let _trace = events.install();
-        let cell = cell(CellConfig {
-            exec_threads: 0,
-            ..CellConfig::for_test("missing-checkpoint")
-        });
+        let cell = cell(
+            CellConfig {
+                exec_threads: 0,
+                ..CellConfig::for_test("missing-checkpoint")
+            },
+            Arc::new(FakeHibernator),
+        );
         let (slot, response, future) = hibernated_request(&cell);
         slot.ctx.snapshot.lock().take();
         cell.futures()
@@ -760,10 +786,14 @@ pub(super) mod cell_tests {
     /// would satisfy the guard.
     #[test]
     fn a_stale_panic_handler_does_not_answer_another_requests_caller() {
-        let cell = cell(CellConfig {
-            exec_threads: 2,
-            ..CellConfig::for_test("stale-panic")
-        });
+        const LIVE: u64 = 900;
+        let cell = cell(
+            CellConfig {
+                exec_threads: 2,
+                ..CellConfig::for_test("stale-panic")
+            },
+            Arc::new(FakeHibernator),
+        );
         let m = app(
             &cell,
             "parker",
@@ -772,24 +802,12 @@ pub(super) mod cell_tests {
             }]),
         );
         let target = Target::Handler { route: "/".into() };
-
-        const LIVE: u64 = 7;
         let rx = cell.submit(&m, target, http(LIVE)).expect("admitted");
         assert!(
-            wait_for(
-                || !cell.residents.lock().is_empty(),
-                Duration::from_secs(10)
-            ),
-            "the Handler instance never became resident"
+            wait_for(|| !cell.resident_ids().is_empty(), Duration::from_secs(10)),
+            "the handler never became resident"
         );
-        let id = {
-            let residents = cell.residents.lock();
-            assert_eq!(residents.len(), 1, "the single parked Handler is resident");
-            *residents
-                .keys()
-                .next()
-                .expect("the resident count was checked")
-        };
+        let id = *cell.resident_ids().first().expect("resident");
         assert!(
             wait_for(
                 || cell.active.with(&id, |a| a.dispatch_id) == Some(LIVE),
@@ -834,7 +852,7 @@ pub(super) mod cell_tests {
 
     #[tokio::test]
     async fn a_streaming_dispatch_bills_every_hot_slice_once_at_final_completion() {
-        let cell = cell(CellConfig::for_test("stream-cpu"));
+        let cell = cell(CellConfig::for_test("stream-cpu"), Arc::new(FakeHibernator));
         let mut behaviour = FakeBehaviour::program([
             Step::Park {
                 imports: vec![("clock_deadline_in", 0)],

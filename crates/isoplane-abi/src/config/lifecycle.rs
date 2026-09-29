@@ -34,8 +34,7 @@ impl LifecycleTier {
         }
     }
 
-    /// Whether an instance in this tier occupies linear memory. The proxy's
-    /// wake coalescing and the cell's residency accounting both key off it.
+    /// Whether an instance in this tier occupies linear memory.
     pub fn is_resident(self) -> bool {
         matches!(self, LifecycleTier::Hot | LifecycleTier::Parked)
     }

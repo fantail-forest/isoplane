@@ -186,7 +186,7 @@ async fn a_managed_network_stream_exchanges_partial_payloads_through_a_real_node
             "v1",
             "acme",
             manifest("quotes"),
-            &isoplane_fixtures::dotnet("isoplane_guest_dotnet_stream"),
+            &common::preparation::Guest::from("isoplane_guest_dotnet_stream"),
             InitSandbox::RuntimeBringUp,
         )
         .await

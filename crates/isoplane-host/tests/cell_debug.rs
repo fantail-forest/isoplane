@@ -14,7 +14,6 @@ use std::time::Duration;
 struct Rig {
     cell: Arc<Cell>,
     module: ModuleId,
-    activator: Arc<DebugActivator>,
 }
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -68,11 +67,7 @@ fn rig(park: bool) -> Rig {
         common::manifest("debug-cell", HandlerLifecycle::Reuse, Limits::default()),
     )
     .expect("debug registration must establish fresh execution");
-    Rig {
-        cell,
-        module,
-        activator,
-    }
+    Rig { cell, module }
 }
 
 fn request() -> HttpRequest {
@@ -212,12 +207,11 @@ fn debug_registration_refuses_a_production_wall_backstop() {
     let activator = Arc::new(
         DebugActivator::load(engine, module.clone(), &raw).expect("the debug fixture must load"),
     );
-    let (cell, _) = common::rig_resolving(CellConfig::for_test("ordinary"), "93.184.216.34:80");
-    let rig = Rig {
-        cell,
-        module,
-        activator: activator.clone(),
-    };
+    let (cell, _) = common::rig_resolving(
+        CellConfig::for_test("ordinary"),
+        "93.184.216.34:80",
+    );
+    let rig = Rig { cell, module };
     assert!(
         rig.cell
             .register_debug_module(
@@ -231,21 +225,5 @@ fn debug_registration_refuses_a_production_wall_backstop() {
             )
             .is_err(),
         "debug registration must not silently inherit production wall limits"
-    );
-}
-
-#[test]
-fn debug_registration_refuses_durable_classes() {
-    let rig = rig(false);
-    let mut manifest = common::manifest("debug-cell", HandlerLifecycle::Fresh, Limits::default());
-    manifest.durable_classes.push(
-        serde_json::from_str(r#"{"name":"Counter"}"#)
-            .expect("the durable class must use its normal manifest defaults"),
-    );
-    assert!(
-        rig.cell
-            .register_debug_module("owner", rig.activator.clone(), manifest)
-            .is_err(),
-        "a one-request debugger cannot claim durable identity scheduling"
     );
 }

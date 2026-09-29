@@ -96,6 +96,7 @@ fn v1_undeclared_import() {
     );
 }
 
+
 /// Declared imports must match the canonical host signature.
 #[test]
 fn v1_right_name_wrong_signature() {

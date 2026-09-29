@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Isoplane.Build;
 using Isoplane.AspNetCore;
-using Isoplane.Durable;
+using Isoplane;
 using Microsoft.AspNetCore.Builder;
 
 namespace Isoplane.MonoRuntime;

@@ -5,23 +5,15 @@ use std::process::Command;
 fn cli() -> &'static std::path::Path {
     static ASSEMBLY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     ASSEMBLY.get_or_init(|| {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let output = Command::new("python3")
-            .arg(root.join("scripts/fixture-tools.py"))
-            .arg("isoplane-cli")
-            .arg(&root)
-            .output()
-            .expect("build the managed CLI");
+        let path = std::env::var_os("ISOPLANE_TEST_CLI_ASSEMBLY")
+            .map(std::path::PathBuf::from)
+            .expect("run tests through Task to select the prepared CLI");
         assert!(
-            output.status.success(),
-            "managed CLI must build: {}",
-            String::from_utf8_lossy(&output.stderr)
+            path.is_file(),
+            "prepared CLI is missing at {}",
+            path.display()
         );
-        std::path::PathBuf::from(
-            String::from_utf8(output.stdout)
-                .expect("CLI assembly path is UTF-8")
-                .trim(),
-        )
+        path
     })
 }
 

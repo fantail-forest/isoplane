@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Fixture build tools and content identities, shared by guest builders."""
 
-import hashlib
 import json
 import os
 import shutil
@@ -78,8 +77,8 @@ def main():
     if action == "dap-python":
         root = Path(args[0]).resolve()
         version = "1.8.20"
-        identity = hashlib.sha256((sys.version + version).encode()).hexdigest()
-        target = target_directory(root) / "dap-python" / identity
+        import build_storage
+        target = build_storage.build_root(root) / "dap-python"
         target.mkdir(parents=True, exist_ok=True)
         executable = target / ("Scripts/python.exe" if os.name == 'nt' else "bin/python")
         if not executable.is_file():

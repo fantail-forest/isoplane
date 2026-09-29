@@ -24,7 +24,7 @@ async fn start() -> (common::Rig, TcpListener) {
         .expect("the test must own its release endpoint");
     let endpoint = gate.local_addr().expect("the gate must have an address");
     let rig = common::start_with_policy(
-        isoplane_fixtures::dotnet("isoplane_guest_aspnet"),
+        common::preparation::Guest::from("isoplane_guest_aspnet"),
         InitSandbox::RuntimeBringUp,
         Some(Arc::new(crate::owned_endpoint::OwnedEndpoint(endpoint))),
         |cfg| {

@@ -1,6 +1,8 @@
 //! Real .NET guest resource cleanup through the production cell's dispatch boundary.
 
 mod common;
+#[path = "common/managed.rs"]
+mod managed;
 use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::{EngineConfig, IsoplaneEngine};
@@ -16,7 +18,8 @@ fn cleanup_cell(
     work: Arc<PendingWork>,
     operation: &str,
 ) -> (Arc<Cell>, ModuleId) {
-    let wasm = isoplane_fixtures::dotnet_for("isoplane_guest_dotnet_cleanup", runtime);
+    let GuestRuntime::Mono = runtime;
+    let wasm = isoplane_fixtures::mono_runtime();
     let engine = Arc::new(
         IsoplaneEngine::new(EngineConfig {
             max_instances: 4,
@@ -27,8 +30,13 @@ fn cleanup_cell(
         .expect("the managed fixture engine must start"),
     );
     let module = ModuleId::new("managed-cleanup", "v1");
-    let activator = EngineActivator::load(engine, module.clone(), &wasm)
+    let template = engine
+        .load_template(&wasm)
+        .and_then(|template| {
+            template.with_application_files(managed::files("isoplane_guest_dotnet_cleanup"))
+        })
         .expect("the cleanup fixture must load through the real engine");
+    let activator = EngineActivator::new(engine, template, module.clone());
     let cell = if operation == "/timer" {
         common::rig_resolving(CellConfig::for_test("managed-cleanup"), "93.184.216.34:80").0
     } else {

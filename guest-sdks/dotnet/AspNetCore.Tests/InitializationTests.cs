@@ -1,5 +1,5 @@
 using Isoplane.Abi;
-using Isoplane.Durable;
+using Isoplane;
 using Isoplane.Runtime;
 using Xunit;
 
@@ -115,8 +115,8 @@ public sealed class InitializationTests
         try
         {
             var router = new RecordingRouter();
-            var record = new DispatchRecord { Kind = DispatchKind.Alarm };
-            var context = new Ctx(new Kv("test"), 0, 1);
+            var record = new DispatchRecord { Kind = DispatchKind.CronTick };
+            var context = new Ctx(0, 1);
             Task<Response> dispatch = RequestDispatch.RouteAsync(router, record, context);
             Assert.False(dispatch.IsCompleted || router.Called || Activation.IsActivated,
                 "an unfinished activation must prevent dispatch and remain inactive");

@@ -114,11 +114,6 @@ pub struct Metrics {
     /// A wake that found a previous call into its instance still running and
     /// left the result queued for it to drain.
     pub reentrancy_refusals: AtomicU64,
-    /// The 409 for a second concurrent dispatch to one durable instance,
-    /// raised before the guest is entered and before `dispatches` is counted.
-    /// A caller's submitted count exceeds `dispatches` by exactly
-    /// `shed + breaker_rejections + single_writer_refusals`.
-    pub single_writer_refusals: AtomicU64,
     pub pending_cap_rejections: AtomicU64,
     /// Egress-policy refusals plus subrequest-cap refusals.
     pub egress_denials: AtomicU64,
@@ -241,7 +236,6 @@ impl Metrics {
             shed: l(&self.shed),
             breaker_rejections: l(&self.breaker_rejections),
             reentrancy_refusals: l(&self.reentrancy_refusals),
-            single_writer_refusals: l(&self.single_writer_refusals),
             pending_cap_rejections: l(&self.pending_cap_rejections),
             egress_denials: l(&self.egress_denials),
             live: l(&self.live),
@@ -336,7 +330,6 @@ pub struct MetricsSnapshot {
     pub shed: u64,
     pub breaker_rejections: u64,
     pub reentrancy_refusals: u64,
-    pub single_writer_refusals: u64,
     pub pending_cap_rejections: u64,
     pub egress_denials: u64,
     pub live: u64,
@@ -393,10 +386,6 @@ impl MetricsSnapshot {
             ("shed", self.shed.to_string()),
             ("breaker_rejections", self.breaker_rejections.to_string()),
             ("reentrancy_refusals", self.reentrancy_refusals.to_string()),
-            (
-                "single_writer_refusals",
-                self.single_writer_refusals.to_string(),
-            ),
             (
                 "pending_cap_rejections",
                 self.pending_cap_rejections.to_string(),
