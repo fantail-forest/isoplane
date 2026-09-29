@@ -7,16 +7,16 @@ Builds still launch .NET, the supplied LLVM/compiler tools and wasm-tools.
 Node operators use the daemon's HTTP administration API.
 
 The .NET tool owns publication and source watching; its bundled native runtime
-validates, prepares and executes WASM. Packages are built separately for Linux
-x64 and Windows x64. macOS packages are not yet validated.
+validates, prepares and executes WASM. Release builds share Linux-built managed assemblies and attach native support
+for Linux x64, Windows x64 and macOS ARM64.
 
 From the repository root, build and pack into a local feed:
 
 ```sh
 git submodule update --init tools/debugger-libs
-dotnet pack tools/Isoplane.Cli -o /tmp/isoplane-preview-feed
-dotnet tool install Isoplane.Cli --version "$(scripts/release-version.py show)" --tool-path /tmp/isoplane-tools --add-source /tmp/isoplane-preview-feed
-/tmp/isoplane-tools/isoplane --version
+scripts/dev dotnet pack tools/Isoplane.Cli -o .isoplane-dev/preview-feed
+scripts/dev dotnet tool install Isoplane.Cli --version "$(scripts/release-version.py show)" --tool-path .isoplane-dev/cli --add-source .isoplane-dev/preview-feed
+.isoplane-dev/cli/isoplane --version
 ```
 
 Every first-party package packs as the release version `Directory.Build.props`
@@ -45,7 +45,7 @@ build targets and repackages them under Isoplane-owned identities. Customer
 installation uses the customer's existing .NET SDK and preserves shell SDK
 selection. No Rust compiler or host Mono is required.
 
-Run a generated app with `/tmp/isoplane-tools/isoplane dev --project /path/to/app`.
+Run a generated app with `.isoplane-dev/cli/isoplane dev --project /path/to/app`.
 Project-generated caches, preparation state, and staging files live under the
 project's `.isoplane/` directory. Standard NuGet and SourceLink caches remain shared.
 Publication follows the module path in `isoplane.toml`. Source edits rebuild into a

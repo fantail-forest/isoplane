@@ -1,6 +1,9 @@
-<Project>
-  <!-- Guest builds load this host task from a fixed path; transitive restores must use that same path. -->
-  <PropertyGroup><UseArtifactsOutput>false</UseArtifactsOutput></PropertyGroup>
+<Project TreatAsLocalProperty="ArtifactsPath;UseArtifactsOutput">
+  <Import Project="Build.props" />
+  <PropertyGroup>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(_IsoplaneConformanceArtifacts)</ArtifactsPath>
+  </PropertyGroup>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

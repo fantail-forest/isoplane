@@ -26,39 +26,35 @@ done
 
 TOOLS="$ROOT/../scripts/fixture-tools.py"
 
+OUTPUT="$ROOT/../.build/wasm32/dotnet/mono"
+
 # name | output path | guest dir | extra dotnet publish args
 FIXTURES=(
-  "isoplane_guest_dotnet_activation|$ROOT/dotnet/out/isoplane_guest_dotnet_activation.wasm|$ROOT/dotnet|-p:IsoplaneActivationProbe=true"
-  "isoplane_guest_dotnet_certificates|$ROOT/dotnet/out/isoplane_guest_dotnet_certificates.wasm|$ROOT/dotnet|-p:IsoplaneCertificateProbe=true"
-  "isoplane_guest_dotnet_streaming|$ROOT/dotnet/out/isoplane_guest_dotnet_streaming.wasm|$ROOT/dotnet|-p:IsoplaneStreamingProbe=true"
-  "isoplane_guest_dotnet_hashing|$ROOT/dotnet/out/isoplane_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:IsoplaneHashingProbe=true"
-  "isoplane_guest_dotnet_trust|$ROOT/dotnet/out/isoplane_guest_dotnet_trust.wasm|$ROOT/dotnet|-p:IsoplaneTrustProbe=true"
-  "isoplane_guest_dotnet_randomness|$ROOT/dotnet/out/isoplane_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:IsoplaneRandomnessProbe=true"
-  "isoplane_guest_dotnet_memory|$ROOT/dotnet/out/isoplane_guest_dotnet_memory.wasm|$ROOT/dotnet|-p:IsoplaneMemoryProbe=true -p:IsoplaneMemoryMaxBytes=4294967296 -p:IsoplaneGuestMemoryBytes=4294967296"
-  "isoplane_guest_dotnet_config|$ROOT/dotnet/out/isoplane_guest_dotnet_config.wasm|$ROOT/dotnet|-p:IsoplaneConfigProbe=true"
-  "isoplane_guest_dotnet_failing_boot|$ROOT/dotnet/out/isoplane_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:IsoplaneFailingBoot=true"
-  "isoplane_guest_dotnet_network_refusal|$ROOT/dotnet/out/isoplane_guest_dotnet_network_refusal.wasm|$ROOT/dotnet|-p:IsoplaneNetworkRefusalProbe=true"
-  "isoplane_guest_dotnet_dns|$ROOT/dotnet/out/isoplane_guest_dotnet_dns.wasm|$ROOT/dotnet|-p:IsoplaneDnsProbe=true"
-  "isoplane_guest_dotnet_stream|$ROOT/dotnet/out/isoplane_guest_dotnet_stream.wasm|$ROOT/dotnet|-p:IsoplaneStreamProbe=true"
-  "isoplane_guest_dotnet_connect|$ROOT/dotnet/out/isoplane_guest_dotnet_connect.wasm|$ROOT/dotnet|-p:IsoplaneConnectProbe=true"
-  "isoplane_guest_dotnet_cleanup|$ROOT/dotnet/out/isoplane_guest_dotnet_cleanup.wasm|$ROOT/dotnet|-p:IsoplaneCleanupProbe=true"
-  "isoplane_guest_dotnet_timer|$ROOT/dotnet/out/isoplane_guest_dotnet_timer.wasm|$ROOT/dotnet|-p:IsoplaneTimerProbe=true"
-  "isoplane_guest_dotnet_logs|$ROOT/dotnet/out/isoplane_guest_dotnet_logs.wasm|$ROOT/dotnet|-p:IsoplaneLogProbe=true"
-  "isoplane_guest_dotnet_async|$ROOT/dotnet/out/isoplane_guest_dotnet_async.wasm|$ROOT/dotnet|-p:IsoplaneAsyncProbe=true"
-  "isoplane_guest_dotnet_filesystem|$ROOT/dotnet/out/isoplane_guest_dotnet_filesystem.wasm|$ROOT/dotnet|-p:IsoplaneFilesystemProbe=true"
-  "isoplane_guest_aspnet|$ROOT/dotnet/out/isoplane_guest_aspnet.wasm|$ROOT/aspnet|"
-  "isoplane_guest_dotnet_request|$ROOT/dotnet/out/isoplane_guest_dotnet_request.wasm|$ROOT/dotnet|-p:IsoplaneRequestProbe=true"
-  "isoplane_guest_dotnet|$ROOT/dotnet/out/isoplane_guest_dotnet.wasm|$ROOT/dotnet|"
-  "isoplane_guest_dotnet_compat|$ROOT/dotnet/out/isoplane_guest_dotnet_compat.wasm|$ROOT/dotnet|-p:IsoplaneCompatProbe=true"
-  "isoplane_guest_dotnet_entropy|$ROOT/dotnet/out/isoplane_guest_dotnet_entropy.wasm|$ROOT/dotnet|-p:IsoplaneEntropyProbe=true"
+  "isoplane_guest_dotnet_activation|$OUTPUT/isoplane_guest_dotnet_activation.wasm|$ROOT/dotnet|-p:IsoplaneActivationProbe=true"
+  "isoplane_guest_dotnet_certificates|$OUTPUT/isoplane_guest_dotnet_certificates.wasm|$ROOT/dotnet|-p:IsoplaneCertificateProbe=true"
+  "isoplane_guest_dotnet_streaming|$OUTPUT/isoplane_guest_dotnet_streaming.wasm|$ROOT/dotnet|-p:IsoplaneStreamingProbe=true"
+  "isoplane_guest_dotnet_hashing|$OUTPUT/isoplane_guest_dotnet_hashing.wasm|$ROOT/dotnet|-p:IsoplaneHashingProbe=true"
+  "isoplane_guest_dotnet_trust|$OUTPUT/isoplane_guest_dotnet_trust.wasm|$ROOT/dotnet|-p:IsoplaneTrustProbe=true"
+  "isoplane_guest_dotnet_randomness|$OUTPUT/isoplane_guest_dotnet_randomness.wasm|$ROOT/dotnet|-p:IsoplaneRandomnessProbe=true"
+  "isoplane_guest_dotnet_memory|$OUTPUT/isoplane_guest_dotnet_memory.wasm|$ROOT/dotnet|-p:IsoplaneMemoryProbe=true -p:IsoplaneMemoryMaxBytes=4294967296 -p:IsoplaneGuestMemoryBytes=4294967296"
+  "isoplane_guest_dotnet_config|$OUTPUT/isoplane_guest_dotnet_config.wasm|$ROOT/dotnet|-p:IsoplaneConfigProbe=true"
+  "isoplane_guest_dotnet_failing_boot|$OUTPUT/isoplane_guest_dotnet_failing_boot.wasm|$ROOT/dotnet|-p:IsoplaneFailingBoot=true"
+  "isoplane_guest_dotnet_network_refusal|$OUTPUT/isoplane_guest_dotnet_network_refusal.wasm|$ROOT/dotnet|-p:IsoplaneNetworkRefusalProbe=true"
+  "isoplane_guest_dotnet_dns|$OUTPUT/isoplane_guest_dotnet_dns.wasm|$ROOT/dotnet|-p:IsoplaneDnsProbe=true"
+  "isoplane_guest_dotnet_stream|$OUTPUT/isoplane_guest_dotnet_stream.wasm|$ROOT/dotnet|-p:IsoplaneStreamProbe=true"
+  "isoplane_guest_dotnet_connect|$OUTPUT/isoplane_guest_dotnet_connect.wasm|$ROOT/dotnet|-p:IsoplaneConnectProbe=true"
+  "isoplane_guest_dotnet_cleanup|$OUTPUT/isoplane_guest_dotnet_cleanup.wasm|$ROOT/dotnet|-p:IsoplaneCleanupProbe=true"
+  "isoplane_guest_dotnet_timer|$OUTPUT/isoplane_guest_dotnet_timer.wasm|$ROOT/dotnet|-p:IsoplaneTimerProbe=true"
+  "isoplane_guest_dotnet_logs|$OUTPUT/isoplane_guest_dotnet_logs.wasm|$ROOT/dotnet|-p:IsoplaneLogProbe=true"
+  "isoplane_guest_dotnet_async|$OUTPUT/isoplane_guest_dotnet_async.wasm|$ROOT/dotnet|-p:IsoplaneAsyncProbe=true"
+  "isoplane_guest_dotnet_filesystem|$OUTPUT/isoplane_guest_dotnet_filesystem.wasm|$ROOT/dotnet|-p:IsoplaneFilesystemProbe=true"
+  "isoplane_guest_aspnet|$OUTPUT/isoplane_guest_aspnet.wasm|$ROOT/aspnet|"
+  "isoplane_guest_dotnet_request|$OUTPUT/isoplane_guest_dotnet_request.wasm|$ROOT/dotnet|-p:IsoplaneRequestProbe=true"
+  "isoplane_guest_dotnet|$OUTPUT/isoplane_guest_dotnet.wasm|$ROOT/dotnet|"
+  "isoplane_guest_dotnet_compat|$OUTPUT/isoplane_guest_dotnet_compat.wasm|$ROOT/dotnet|-p:IsoplaneCompatProbe=true"
+  "isoplane_guest_dotnet_entropy|$OUTPUT/isoplane_guest_dotnet_entropy.wasm|$ROOT/dotnet|-p:IsoplaneEntropyProbe=true"
 )
 
-mono=()
-for spec in "${FIXTURES[@]}"; do
-  IFS='|' read -r name out dir extra <<<"$spec"
-  mono+=("$name|$ROOT/../.build/wasm32/dotnet/mono/$name.wasm|$dir|$extra")
-done
-FIXTURES=("${mono[@]}")
 
 if [ -n "$SELECTED" ]; then
   selected=()

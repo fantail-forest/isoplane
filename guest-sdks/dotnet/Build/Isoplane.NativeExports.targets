@@ -6,10 +6,11 @@
   </PropertyGroup>
   <ItemGroup Condition="Exists('$(_IsoplaneNativeTaskProject)')">
     <ProjectReference Include="$(_IsoplaneNativeTaskProject)" ReferenceOutputAssembly="false" PrivateAssets="all"
-                      AdditionalProperties="Configuration=$(_IsoplaneNativeTaskConfiguration);UseArtifactsOutput=false"
+                      AdditionalProperties="Configuration=$(_IsoplaneNativeTaskConfiguration)"
                       GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained;OutputPath;BaseOutputPath;BaseIntermediateOutputPath;ArtifactsPath;PublishDir;TargetFramework;TargetFrameworks" />
   </ItemGroup>
-  <UsingTask TaskName="Isoplane.Conformance.NativeExports" AssemblyFile="$(MSBuildThisFileDirectory)../Conformance/bin/$(_IsoplaneNativeTaskConfiguration)/net10.0/Isoplane.Conformance.dll"
+  <Import Project="../Conformance/Build.props" Condition="Exists('$(_IsoplaneNativeTaskProject)')" />
+  <UsingTask TaskName="Isoplane.Conformance.NativeExports" AssemblyFile="$(_IsoplaneConformanceArtifacts)bin/Conformance/$(_IsoplaneNativeTaskConfiguration.ToLowerInvariant())/Isoplane.Conformance.dll"
              Condition="Exists('$(_IsoplaneNativeTaskProject)')" />
   <UsingTask TaskName="Isoplane.Conformance.NativeExports" AssemblyFile="$(MSBuildThisFileDirectory)../Conformance/Isoplane.Conformance.dll"
              Condition="!Exists('$(_IsoplaneNativeTaskProject)')" />

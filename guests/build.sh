@@ -69,7 +69,6 @@ fi
 # `undeclared-import` is built twice, once per variant.
 GUESTS=(hello quotes-api misbehaver bigheap impure-cctor undeclared-import)
 
-# Remove only outputs owned by this script; other toolchains share the directory.
 echo "==> building guests for $TARGET ($PROFILE)"
 for g in "${GUESTS[@]}"; do
   rm -f "$OUT/$g.wasm"

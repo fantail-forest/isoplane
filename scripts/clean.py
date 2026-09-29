@@ -42,6 +42,20 @@ def inventory(root, target):
                 yield path, purpose, storage.size_bytes(path)
 
 
+def clean_output(path, dry_run):
+    reason = storage.source_preservation_reason(path)
+    if reason:
+        print(f'retained {path}: {reason}')
+        removed = storage.clean_source_siblings(path, dry_run)
+    else:
+        removed = [(path, storage.size_bytes(path))]
+        if not dry_run:
+            import shutil
+            shutil.rmtree(path)
+    for child, size in removed:
+        print(f'{size:>14,} bytes  {"would remove" if dry_run else "removed"}  {child}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--all', action='store_true')
@@ -60,43 +74,28 @@ def main():
                 if path.is_dir() and not path.is_symlink():
                     if path.name == storage.platform_name() or args.all:
                         roots.append(path)
-                        if name == ".build":
-                            for group in ("products", "fixtures", "published"):
-                                products = path / group
-                                if products.is_dir() and not products.is_symlink():
-                                    roots.append(products)
                     else:
-                        print(f'retained {path}: use --all to discard other platforms' output')
-    if args.all and not args.report:
-        for path, size in storage.clean(ROOT / ".artifacts/shared", dry_run=args.dry_run):
-            print(f'{size:>14,} bytes  {"would remove" if args.dry_run else "removed"}  {path}')
+                        print(f"retained {path}: use --all to discard output for other platforms or portable targets")
+    shared = ROOT / ".artifacts/shared"
+    if args.all and shared.is_dir() and not shared.is_symlink():
+        roots.append(shared)
     for root in roots:
         if not root.exists():
             continue
         print(f'{storage.size_bytes(root):>14,} bytes  worktree output  {root}')
         if not args.report:
-            for path, size in storage.clean(root, dry_run=args.dry_run):
-                print(f'{size:>14,} bytes  {"would remove" if args.dry_run else "removed"}  {path}')
+            clean_output(root, args.dry_run)
     local = list(inventory(ROOT, target))
     for path, purpose, size in local:
         removable = False
         if args.all and path.is_relative_to(ROOT) and not path.is_symlink() and path.name in {
                 'target', 'out', 'work', 'bin', 'obj', 'obj-mono'}:
-            ignored = subprocess.run(['git', 'check-ignore', '-q', '--', str(path)], cwd=ROOT)
+            ignored = subprocess.run(['git', 'check-ignore', '-q', '--', path.name], cwd=path.parent)
             if ignored.returncode not in (0, 1):
                 raise RuntimeError(f'Cannot determine whether output is ignored: {path}')
             removable = ignored.returncode == 0
         if removable and not args.report:
-            reason = storage.source_preservation_reason(path)
-            if reason:
-                print(f'retained {path}: {reason}')
-                for child, child_size in storage.clean_source_siblings(path, args.dry_run):
-                    print(f'{child_size:>14,} bytes  {"would remove" if args.dry_run else "removed"}  {child}')
-            else:
-                if not args.dry_run:
-                    import shutil
-                    shutil.rmtree(path)
-                print(f'{size:>14,} bytes  {"would remove" if args.dry_run else "removed"}  {path}')
+            clean_output(path, args.dry_run)
         else:
             print(f'{size:>14,} bytes  retained  {path} ({purpose})')
     print('Sizes are logical file bytes; shared data may be counted more than once.')
