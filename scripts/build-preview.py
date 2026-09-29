@@ -132,6 +132,10 @@ def export_git_tree(root, revision, destination, archive, log):
     run(['git', 'archive', '--format=tar', '-o', archive, revision], root, log)
     with tarfile.open(archive) as tree:
         tree.extractall(destination, filter='data')
+        # Git commit timestamps can go backwards when selecting an older revision.
+        for member in tree.getmembers():
+            if member.isfile():
+                os.utime(destination / member.name, None)
     archive.unlink()
     entries = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=root)
     for entry in entries.split(b'\0'):
@@ -154,15 +158,11 @@ def export_source(root, source, cache, revision, logs):
     identity = output(['git', 'rev-parse', revision], root)
     receipt = cache / 'source-revision'
     if not receipt.is_file() or receipt.read_text() != identity:
-        for directory in (cache / 'target', source, cache / 'runtime-build'):
+        for directory in (source, cache / 'runtime-build'):
             reason = load(ROOT / 'scripts/build_storage.py').source_preservation_reason(directory)
             if reason:
                 raise ValueError(f'cannot replace release workspace: {reason}')
-        # Cargo uses source timestamps; git archives can move those backwards.
         receipt.unlink(missing_ok=True)
-        for directory in (cache / 'target', source, cache / 'runtime-build'):
-            if directory.exists():
-                shutil.rmtree(directory)
     preserved = cache / 'runtime-build'
     preserved.mkdir(exist_ok=True)
     for name in ('work', 'out'):

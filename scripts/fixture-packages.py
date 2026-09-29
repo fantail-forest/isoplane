@@ -50,7 +50,7 @@ def package_feed(root, destination):
         "guest-sdks/dotnet", "tools", "Directory.Build.props", "global.json", "nuget.config",
         "scripts/fixture-tools.py", "scripts/fixture-packages.py", "scripts/managed_packages.py",
     )] + modules.files(runtime)
-    toolchains = subprocess.check_output(["dotnet", "--version"], cwd=root)
+    toolchains = subprocess.check_output(["dotnet", "--version"], cwd=root).strip()
     portable_identity = hashlib.sha256(tools.fingerprint(sources).encode() + toolchains).hexdigest()
     toolchains += subprocess.check_output(["rustc", "-vV"], cwd=root)
     native_sources = [root / name for name in ("crates", ".cargo", "Cargo.toml", "Cargo.lock")]
