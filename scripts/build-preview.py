@@ -100,6 +100,7 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
         installed = subprocess.run([str(executable), '--version'], cwd=source, text=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if installed.returncode == 0 and installed.stdout.strip() == version:
+            install_wasi_workload(source, cache, logs, runtime_identifier)
             return directory, {'version': version, 'runtimeIdentifier': runtime_identifier}
     metadata_url = f'https://builds.dotnet.microsoft.com/dotnet/release-metadata/{version.rsplit(".", 1)[0]}/releases.json'
     with urllib.request.urlopen(metadata_url, timeout=60) as response:
@@ -119,15 +120,20 @@ def prepare_sdk(source, cache, logs, runtime_identifier=RUNTIME_IDENTIFIER):
     else:
         with tarfile.open(path) as bundle:
             bundle.extractall(directory, filter='data')
+    install_wasi_workload(source, cache, logs, runtime_identifier)
+    identity = {'version': version, 'runtimeIdentifier': runtime_identifier, 'url': archive['url'], 'sha512': archive['hash'].lower()}
+    return directory, identity
+
+
+def install_wasi_workload(source, cache, logs, runtime_identifier):
+    if runtime_identifier.startswith('win-'):
+        return
+    directory = cache / 'dotnet'
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(directory), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_NOLOGO='1')
-    if not windows:
-        run([directory / 'dotnet', 'workload', 'install', 'wasi-experimental', '--skip-manifest-update',
-             '--source', 'https://api.nuget.org/v3/index.json'], source, logs / 'sdk-workload.log', environment)
-    identity = {'version': version, 'runtimeIdentifier': runtime_identifier, 'url': archive['url'], 'sha512': archive['hash'].lower(),
-                }
-    return directory, identity
+    run([directory / 'dotnet', 'workload', 'install', 'wasi-experimental', '--skip-manifest-update',
+         '--source', 'https://api.nuget.org/v3/index.json'], source, logs / 'sdk-workload.log', environment)
 
 
 def package_metadata(package):
