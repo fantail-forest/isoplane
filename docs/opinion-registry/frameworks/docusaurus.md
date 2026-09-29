@@ -26,11 +26,11 @@ Generate API references, config references, and capability tables from the doc c
 
 **Exception:** None.
 
-## Describe only what is built and tested
+## Describe supported behavior and its limits
 
-Add a page for a feature when a test exercises that feature through the interface a customer would use. Document configuration keys, entrypoint kinds, and SDK methods when they have a producer and a test, not when they have a struct field.
+Describe behavior the implementation provides, using evidence appropriate to the claim. Customer-visible guarantees need validation through the relevant interface; structural explanations and limitations can be established from the implementation. Reuse existing evidence and coverage rather than adding a test for each page or sentence. A declared configuration field or SDK method alone does not establish a working feature.
 
-**Not this:** A configuration reference documenting entrypoint kinds that nothing in the tree can dispatch.
+**Not this:** A configuration reference advertising entrypoint kinds that nothing can dispatch, or a test that checks incidental source text solely to justify a documentation sentence.
 
 **Exception:** None.
 

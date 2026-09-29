@@ -1,16 +1,16 @@
 # Negative Controls
 
-## Make every guard fire in a test
+## Exercise critical rejection paths
 
-The [guard coverage rule](../../../AGENTS.md#principles) proves a rejection path is reachable. Without a test that trips it, a check might be compiled out, gated on an unused flag, or checking the wrong condition.
+The [rejection coverage rule](../../../AGENTS.md#principles) requires real-boundary tests for sandbox rejections and engine limits. Test other guards according to the correctness, security or contract failure they prevent. Existing tests can exercise several checks; do not add a separate test for each conditional merely to satisfy a count.
 
 **Not this:** A `debug_assert!` on an engine invariant, compiled out in release, whose doc comment says the check happens at construction, where no such check exists.
 
 **Exception:** None.
 
-## Give every limit a test that exceeds it
+## Exercise enforced resource limits at their boundaries
 
-A memory ceiling, a pending-future cap, a queue depth, a module size limit: give each a test that goes one past it and observes the refusal, and one at the boundary that observes acceptance.
+A memory ceiling, a pending-future cap, a queue depth, a module size limit: cover acceptance at the supported boundary and refusal beyond it. Related limits can use table-driven cases and shared immutable fixtures. A test of one layer's accounting does not replace coverage of enforcement at the real boundary.
 
 **Not this:** Pool caps "sized several times past the richest guest in the tree" with no test that ever hits them.
 
@@ -26,7 +26,7 @@ A control proves the detector works by presenting the condition it detects. Buil
 
 ## Demonstrate that the test detects the defect
 
-Use a meaningful negative control when adding a regression test or guard: reproduce the defect before the fix, temporarily mutate the guarded behavior, or supply invalid input that reaches the real rejection path. Check that the relevant assertion detects the wrong behavior. Choose the control for the claim being made; invalid input proves rejection, while a claim that an assertion catches a missing guard needs that guard disabled or equivalent faulty behavior.
+Use a meaningful negative control when adding regression coverage or qualifying a critical guard: reproduce the defect before the fix, temporarily mutate the guarded behavior, or supply invalid input that reaches the real rejection path. Existing tests can supply the control. Check that the relevant assertion detects the wrong behavior. Choose the control for the claim being made; invalid input proves rejection, while a claim that an assertion catches a missing guard needs that guard disabled or equivalent faulty behavior.
 
 **Not this:** Calling a compile failure after deleting a new API proof that its behavioral assertions work, or treating an unrelated setup failure as the expected red result.
 

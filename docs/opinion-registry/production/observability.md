@@ -45,11 +45,11 @@ Put tenant, app, version, instance, and dispatch identifiers on the enclosing sp
 
 **Exception:** None.
 
-## Show the operator only what a test can assert
+## Validate telemetry according to the decisions it drives
 
-Produce every figure on a dashboard from an event or span that a test observes. A metric no test reads is a metric that can silently go to zero.
+Keep dashboard figures traceable to real measurements with clear meanings. Test canonical completion records, resource usage and telemetry that drives critical alerts or control decisions through their owning boundaries. Reuse behavior tests and shared schema or export checks where they provide coverage. Diagnostic counters and dashboard presentations do not each require a dedicated test; verify their wiring according to the risk of an incorrect or missing value.
 
-**Not this:** Dozens of counters of which several count faults of an instrument that no longer exists.
+**Not this:** Counters for an instrument that no longer exists, or a separate expensive end-to-end test for every label and display value.
 
 **Exception:** None.
 

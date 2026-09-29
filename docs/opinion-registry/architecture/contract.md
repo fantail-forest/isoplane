@@ -12,15 +12,17 @@ Give every type, constant, and capability that crosses the sandbox boundary one 
 
 When a language boundary forces a copy of a table (C# import declarations, a documentation page listing capabilities, an MSBuild property holding a limit), produce the copy with a generator from the ABI crate, or keep a test that compares the two and fails on any difference. A hand-maintained copy with a "keep in sync" comment is a bug scheduled for later.
 
+Compare the declarations or values that form the contract. Do not freeze incidental source spelling or treat the presence of an expression in a patch as proof of runtime behavior. Group related drift checks when they share the same inputs; retain real-boundary tests for capability enforcement.
+
 **Not this:** A C# extern list declaring roughly half of the imports by hand, guarded by argument-order comments, with no test that reads both tables.
 
 **Exception:** None.
 
 ## One constant, one home
 
-A limit, a port, or a deadline is configuration with a default; a page size or a header name is a fact. Either way, define the value or its default once, in the crate that owns the concept, and import it everywhere else. Two definitions that agree today are one refactor away from disagreeing silently.
+Follow the [configuration guidance](../../../AGENTS.md#environment--configuration): expose a value when there is an operational need to vary it, and keep fixed policy or protocol facts as constants. Give each shared concept one definition in its owning crate. Equal literals do not by themselves establish a shared concept; unrelated policies may need to change independently.
 
-**Not this:** A memory ceiling repeated across a dozen files in four languages; a deploy deadline in three crates; a `now_ms()` helper defined in five.
+**Not this:** A contract memory ceiling repeated across languages without a drift check, a new configuration knob with no operational use, or coupling unrelated timeouts because their defaults currently match.
 
 **Exception:** A guest-side build property that cannot import Rust may hold the value, provided a test compares it against the ABI crate.
 

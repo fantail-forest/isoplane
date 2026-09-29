@@ -6,7 +6,7 @@ Mandatory reading. These principles cut across every concern category and inform
 
 The correct path should be the easiest path. Structure code, interfaces, and infrastructure so that developers and AI agents naturally fall into doing the right thing. When a mistake keeps happening, don't fix it by adding documentation or call-site boilerplate; fix the default.
 
-A deep module with a simple interface is a pit of success. A clock that tests must inject is a pit of success. A shared helper that builds missing or stale fixtures for tests is a pit of success. A host interface with one definition that every other representation is generated from is a pit of success.
+A deep module with a simple interface is a pit of success. A clock that tests must inject is a pit of success. A build tool that prepares declared prerequisites before tests run is a pit of success. A host interface with one definition that every other representation is generated from is a pit of success. Apply the same principle by [letting established tools own their responsibilities](workflow/tooling.md), including in repository automation.
 
 **The test:** if doing the wrong thing requires less effort than doing the right thing, the design is backwards. Fix the design, not the developer.
 
@@ -34,4 +34,4 @@ A plan is a hypothesis. It earns the right to be extended only when the previous
 
 Work is therefore iterative: develop against the current plan, validate by reviewing whether the work achieved the goal and reflecting on the deviations from the plan that were necessary and why, then replan, reworking the path or the goal only when what was learned warrants it. A design document, a specification, or a roadmap is input to the first iteration and nothing more. The plan for any iteration is narrow: what this iteration needs, with longer-range goals present only as the rationale for its decisions. Detailed instructions for iterations that have not been reached yet are speculation, and they age worst of all.
 
-**The test:** for any sentence that says the system does X, can you name the test that fails when it doesn't? If not, the sentence is a plan, and plans don't go in comments, docs, or reference pages.
+**The test:** what evidence supports the claim at the level it makes it? Runtime guarantees need tests through the relevant interface; structural explanations can be established by reading the implementation. Existing coverage counts. Do not add a test solely to license a sentence, and do not present a proposed behavior as one the system provides.

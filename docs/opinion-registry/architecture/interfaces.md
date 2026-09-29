@@ -10,11 +10,11 @@ Create a crate when it enforces a useful dependency or visibility boundary, isol
 
 ## Make a trait a boundary between concerns, not a mirror of one implementation
 
-Have a trait name a responsibility and hide how any implementation satisfies it, and keep it deep: a consumer uses it through a few methods and never sees the mechanism behind them. Write it from the consuming side, while writing the code that needs it, or from the providing side, while writing the code that offers it; what matters is keeping it generic enough that either side could be replaced without the other changing. Always consume infrastructure and external services (a database engine, a message broker, an object store, a vault) through such a trait.
+Isolate infrastructure and external services behind responsibility-focused interfaces. A concrete module can provide that boundary; use a trait when actual substitution, test isolation or ownership needs justify it. Shape the interface around what consumers need, keeping backend machinery private. Do not generalize it for a hypothetical replacement or copy a backend's whole API into a trait.
 
-**Not this:** A trait whose method shapes mirror one backend's API so closely that no second implementation could satisfy it, or one lifted from a specification with no code on either side of it.
+**Not this:** A trait, fake and conformance suite added solely because a module calls a database, or an unused interface lifted from a specification.
 
-**Exception:** None.
+**Exception:** A framework may require a trait even when the application has no substitution need.
 
 ## Prefer deep modules over shallow ones
 

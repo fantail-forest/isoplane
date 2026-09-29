@@ -30,7 +30,7 @@ For conflicts with AGENTS.md, follow its [owner-resolution procedure](../../AGEN
 - [production/](production/INDEX.md): isolation, metering, observability
 - [measurement/](measurement/INDEX.md): quoting measurements, benchmarking
 
-- [workflow/](workflow/INDEX.md): issue types, functional tracking, milestone scope, triage and closure
+- [workflow/](workflow/INDEX.md): tools and custom automation, documentation lifecycle, issue tracking and closure
 
 ## Adding Opinions
 

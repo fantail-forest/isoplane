@@ -32,12 +32,15 @@ representations from the host contract, or drift-test them against it.
 
 **Exception:** None.
 
-## Serialize shared fixture builds
+## Prepare shared runtime fixtures before tests
 
-Use the shared fixture helper, per-build intermediates and its cross-process
-lock. A nested build must not acquire its parent's lock. Missing toolchains fail
-tests with an actionable diagnostic.
+Follow the [preparation boundary](../workflow/tooling.md#prepare-test-prerequisites-in-the-build-graph).
+Declare runtime and application fixture dependencies in Task, leaving native build
+coordination to the build tools. Test helpers load the prepared artifacts; missing
+toolchains fail preparation and missing artifacts fail selected tests with an
+actionable diagnostic.
 
-**Not this:** Parallel MSBuild writers sharing intermediates or silently skipped fixtures.
+**Not this:** Test binaries coordinating MSBuild writers with their own lock protocol,
+or silently skipped fixtures.
 
-**Exception:** None.
+**Exception:** Tests of the build workflow may invoke it with isolated inputs.
