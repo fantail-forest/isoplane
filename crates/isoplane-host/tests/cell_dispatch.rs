@@ -462,3 +462,72 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     );
     r.cell.shutdown();
 }
+
+#[test]
+fn async_dispatch_completes_while_the_blocking_pool_is_occupied() {
+    let r = rig(CellConfig::for_test("async-dispatch"));
+    let guest = Arc::new(FakeActivator::named(
+        ModuleId::new("async-dispatch", "v1"),
+        FakeBehaviour::program([
+            Step::Park {
+                imports: vec![("clock_deadline_in", 0)],
+            },
+            Step::Done {
+                status: 200,
+                body: b"resumed".to_vec(),
+            },
+        ]),
+    ));
+    let module = guest.module().clone();
+    r.cell
+        .register_module(
+            "tenant",
+            guest,
+            manifest("async-dispatch", HandlerLifecycle::Fresh, Limits::default()),
+        )
+        .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let blocker = runtime.spawn_blocking(move || {
+        started
+            .send(())
+            .expect("test must wait for the blocking worker");
+        // Dropping the sender also releases this worker if the test fails.
+        match wait.recv() {
+            Ok(()) | Err(_) => {}
+        }
+    });
+    let result = runtime.block_on(async {
+        running.await.expect("blocking worker must start");
+        tokio::time::timeout(
+            T,
+            r.cell.dispatch(
+                &module,
+                Target::Handler { route: "/".into() },
+                http(&r.cell, &module, "/"),
+                T,
+            ),
+        )
+        .await
+        .expect("async dispatch must not hang behind the occupied blocking pool")
+    });
+    drop(release);
+    runtime
+        .block_on(blocker)
+        .expect("blocking worker must exit");
+    let result = result.expect("dispatch must finish without a blocking worker");
+    assert_eq!(
+        result.body, b"resumed",
+        "a parked dispatch must resume through the async completion channel"
+    );
+    assert_eq!(
+        result.slices, 2,
+        "the regression must exercise a park and wake"
+    );
+    r.cell.shutdown();
+}

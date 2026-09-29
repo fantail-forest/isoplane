@@ -79,11 +79,30 @@ pub(super) fn ends_in_tombstone(out: &DispatchOutcome, slot: &Arc<Slot>) -> bool
         || (matches!(out.completion, Completion::Done | Completion::Parked) && slot.ctx.has_trap())
 }
 
+#[derive(Clone)]
+pub(super) enum Responder {
+    Blocking(std::sync::mpsc::SyncSender<DispatchResult>),
+    Async(Arc<Mutex<Option<tokio::sync::oneshot::Sender<DispatchResult>>>>),
+}
+
+impl From<std::sync::mpsc::SyncSender<DispatchResult>> for Responder {
+    fn from(sender: std::sync::mpsc::SyncSender<DispatchResult>) -> Self {
+        Self::Blocking(sender)
+    }
+}
+
 /// Sends a result to a caller that may have stopped waiting, which is not an
 /// error in the cell.
-pub(super) fn answer(tx: &std::sync::mpsc::SyncSender<DispatchResult>, result: DispatchResult) {
+pub(super) fn answer(tx: &Responder, result: DispatchResult) {
     let dispatch_id = result.dispatch_id;
-    if tx.send(result).is_err() {
+    let disconnected = match tx {
+        Responder::Blocking(tx) => tx.send(result).is_err(),
+        Responder::Async(tx) => match tx.lock().take() {
+            Some(tx) => tx.send(result).is_err(),
+            None => return,
+        },
+    };
+    if disconnected {
         tracing::debug!(
             dispatch_id,
             "the caller stopped waiting before its dispatch was answered"
@@ -135,6 +154,18 @@ impl Cell {
         self.dispatch_with_resources(module, target, rec, timeout, http)
     }
 
+    pub(crate) async fn dispatch_http_async(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        timeout: Duration,
+        http: super::HttpDispatch,
+    ) -> crate::Result<DispatchResult> {
+        self.dispatch_resources_async(module, target, rec, timeout, Some(http))
+            .await
+    }
+
     fn dispatch_with_resources(
         &self,
         module: &ModuleId,
@@ -143,13 +174,26 @@ impl Cell {
         timeout: Duration,
         resources: Option<super::HttpDispatch>,
     ) -> crate::Result<DispatchResult> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.enqueue_dispatch(module, target, rec, resources, tx.into())?;
+        rx.recv_timeout(timeout)
+            .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))
+    }
+
+    fn enqueue_dispatch(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        resources: Option<super::HttpDispatch>,
+        responder: Responder,
+    ) -> crate::Result<()> {
         let http = resources;
         let (stream, upload) = match http {
             Some(http) => (Some(http.response), http.upload),
             None => (None, None),
         };
         let completion = self.completion_owner(module, &rec)?;
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let route = target.route();
         let now = crate::now_ms();
         let key = BreakerKey {
@@ -162,13 +206,14 @@ impl Cell {
             self.metrics
                 .breaker_rejections
                 .fetch_add(1, Ordering::Relaxed);
-            return Ok(DispatchResult::breaker_open(dispatch_id));
+            answer(&responder, DispatchResult::breaker_open(dispatch_id));
+            return Ok(());
         }
         let job = Box::new(DispatchJob {
             module: module.clone(),
             target,
             rec,
-            responder: tx,
+            responder,
             stream,
             upload,
             completion,
@@ -180,10 +225,31 @@ impl Cell {
             if let Some(m) = self.meters(module) {
                 m.record_shed();
             }
-            return Ok(DispatchResult::shed(dispatch_id));
+            answer(&job.responder, DispatchResult::shed(dispatch_id));
         }
-        rx.recv_timeout(timeout)
-            .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))
+        Ok(())
+    }
+
+    async fn dispatch_resources_async(
+        &self,
+        module: &ModuleId,
+        target: Target,
+        rec: DispatchRecord,
+        timeout: Duration,
+        resources: Option<super::HttpDispatch>,
+    ) -> crate::Result<DispatchResult> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.enqueue_dispatch(
+            module,
+            target,
+            rec,
+            resources,
+            Responder::Async(Arc::new(Mutex::new(Some(tx)))),
+        )?;
+        tokio::time::timeout(timeout, rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("dispatch did not complete within {timeout:?}"))?
+            .map_err(|_| anyhow::anyhow!("dispatch response channel closed before completion"))
     }
 
     /// Submits without waiting; `None` if the cell shed at admission.
@@ -211,6 +277,7 @@ impl Cell {
         rec: DispatchRecord,
         responder: std::sync::mpsc::SyncSender<DispatchResult>,
     ) -> bool {
+        let responder = Responder::Blocking(responder);
         let completion = match self.completion_owner(module, &rec) {
             Ok(completion) => completion,
             Err(error) => {
@@ -263,12 +330,8 @@ impl Cell {
         rec: DispatchRecord,
         timeout: Duration,
     ) -> crate::Result<DispatchResult> {
-        let me = self.clone();
-        let module = module.clone();
-        crate::dispatcher::spawn_blocking(move || {
-            me.dispatch_blocking(&module, target, rec, timeout)
-        })
-        .await?
+        self.dispatch_resources_async(module, target, rec, timeout, None)
+            .await
     }
 
     /// The completion path for an alarm, a socket frame, a DI reply or a

@@ -8,7 +8,9 @@ use std::sync::Arc;
 use isoplane_abi::dispatch::DispatchRecord;
 use parking_lot::{Condvar, Mutex};
 
-use super::{DispatchResult, Target};
+#[cfg(test)]
+use super::DispatchResult;
+use super::Target;
 use crate::slot::Slot;
 use crate::ModuleId;
 
@@ -32,7 +34,7 @@ pub(super) struct DispatchJob {
     pub(super) module: ModuleId,
     pub(super) target: Target,
     pub(super) rec: DispatchRecord,
-    pub(super) responder: std::sync::mpsc::SyncSender<DispatchResult>,
+    pub(super) responder: super::dispatch_api::Responder,
     pub(super) stream: Option<Arc<crate::response_transport::ResponseTransport>>,
     pub(super) upload: Option<Arc<crate::bindings::request_body::RequestBodyScope>>,
     pub(super) completion: Arc<super::DispatchCompletion>,
@@ -309,7 +311,7 @@ mod queue_tests {
             module: ModuleId::new("t", "v1"),
             target: Target::Handler { route: "/".into() },
             rec,
-            responder,
+            responder: responder.into(),
             completion,
         })
     }

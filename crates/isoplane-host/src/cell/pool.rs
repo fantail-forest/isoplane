@@ -358,7 +358,7 @@ pub(super) mod cell_tests {
                 module: module.clone(),
                 target: Target::Handler { route: "/".into() },
                 rec: http(id),
-                responder,
+                responder: responder.into(),
                 completion: cell
                     .completion_owner(&module, &http(id))
                     .expect("registered dispatch owner"),
@@ -428,7 +428,7 @@ pub(super) mod cell_tests {
                     route: "/go".into(),
                 },
                 rec: http(id),
-                responder,
+                responder: responder.into(),
                 completion: cell
                     .completion_owner(&module, &http(id))
                     .expect("registered dispatch owner"),
@@ -573,7 +573,7 @@ pub(super) mod cell_tests {
             module: module.clone(),
             target: Target::Handler { route: "/".into() },
             rec: http(1),
-            responder,
+            responder: responder.into(),
             completion: cell
                 .completion_owner(&module, &http(1))
                 .expect("registered dispatch owner"),

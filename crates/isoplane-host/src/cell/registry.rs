@@ -26,7 +26,7 @@ pub(super) struct ActiveRequest {
     pub(super) lifecycle: HandlerLifecycle,
     pub(super) module: ModuleId,
     pub(super) route: String,
-    pub(super) responder: Option<std::sync::mpsc::SyncSender<DispatchResult>>,
+    pub(super) responder: Option<super::dispatch_api::Responder>,
     pub(super) completion: Arc<DispatchCompletion>,
 }
 

@@ -149,7 +149,7 @@ fn dispatch(cell: &Arc<Cell>, module: &ModuleId, id: u64) -> Receiver<DispatchRe
             .completion_owner(module, &rec)
             .expect("registered completion owner"),
         rec,
-        responder,
+        responder: responder.into(),
     });
     response
 }

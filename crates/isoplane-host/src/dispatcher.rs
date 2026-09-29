@@ -6,20 +6,10 @@ use async_trait::async_trait;
 use isoplane_abi::dispatch::{DispatchRecord, HttpRequest};
 use isoplane_abi::host::{Dispatcher, HttpExchange, HttpReply, HttpUpload, RouteTarget};
 use tracing::instrument::WithSubscriber;
+use tracing::Instrument;
 
 use crate::cell::{Cell, DispatchResult, Target};
 use crate::ModuleId;
-
-/// Runs blocking dispatch work with the caller's tracing context.
-pub(crate) fn spawn_blocking<T: Send + 'static>(
-    operation: impl FnOnce() -> T + Send + 'static,
-) -> tokio::task::JoinHandle<T> {
-    let subscriber = tracing::dispatcher::get_default(Clone::clone);
-    let span = tracing::Span::current();
-    tokio::task::spawn_blocking(move || {
-        tracing::dispatcher::with_default(&subscriber, || span.in_scope(operation))
-    })
-}
 
 /// The wall cap plus a margin: the budget and the wall cap fire inside the
 /// cell, and this only keeps a caller from waiting forever on a cell bug.
@@ -45,26 +35,22 @@ impl Cell {
             crate::response_transport::ResponseTransport::new(self.cfg.response_queue_bytes);
         let output = transport.clone();
         let timeout = deadline(self);
-        let request_span = tracing::Span::current();
         let exchange_task = async move {
             let stream = output.clone();
-            let result = spawn_blocking(move || {
-                request_span.in_scope(|| {
-                    cell.dispatch_with_http(
-                        &module,
-                        Target::Handler { route },
-                        record,
-                        timeout,
-                        Some(crate::cell::HttpDispatch {
-                            response: stream,
-                            upload,
-                        }),
-                    )
-                })
-            })
-            .await;
+            let result = cell
+                .dispatch_http_async(
+                    &module,
+                    Target::Handler { route },
+                    record,
+                    timeout,
+                    crate::cell::HttpDispatch {
+                        response: stream,
+                        upload,
+                    },
+                )
+                .await;
             match result {
-                Ok(Ok(result)) => {
+                Ok(result) => {
                     if output.has_started() {
                         if let Some(error) = result.trap {
                             output.fail(error);
@@ -91,16 +77,18 @@ impl Cell {
                         }
                     }
                 }
-                Ok(Err(error)) => output.fail(format!("dispatch failed: {error}")),
-                Err(error) => output.fail(format!("dispatch task failed: {error}")),
+                Err(error) => output.fail(format!("dispatch failed: {error}")),
             }
             if !output.has_owner() {
                 output.acknowledge_settlement();
             }
             output.record_buffers(dispatch_id);
         };
-        self.reactor()
-            .spawn(exchange_task.with_current_subscriber());
+        self.reactor().spawn(
+            exchange_task
+                .instrument(tracing::Span::current())
+                .with_current_subscriber(),
+        );
         transport.exchange().await
     }
 
@@ -124,8 +112,7 @@ impl Cell {
         Ok(module)
     }
 
-    /// A `Dispatcher` method runs on a reactor thread, so the blocking
-    /// dispatch is handed to a blocking task.
+    /// Waits for execution-pool completion without retaining a worker thread.
     async fn run(
         &self,
         module: ModuleId,
@@ -136,7 +123,7 @@ impl Cell {
             .me()
             .ok_or_else(|| anyhow::anyhow!("cell `{}` is shutting down", self.cfg.name))?;
         let timeout = deadline(self);
-        spawn_blocking(move || me.dispatch_blocking(&module, target, rec, timeout)).await?
+        me.dispatch(&module, target, rec, timeout).await
     }
 
 

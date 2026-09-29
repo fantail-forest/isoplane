@@ -237,11 +237,7 @@ impl DispatchCompletion {
         }
     }
 
-    pub(super) fn answer(
-        &self,
-        sender: &std::sync::mpsc::SyncSender<DispatchResult>,
-        result: DispatchResult,
-    ) {
+    pub(super) fn answer(&self, sender: &super::dispatch_api::Responder, result: DispatchResult) {
         let mut state = self.state.lock();
         if state.responded {
             return;
