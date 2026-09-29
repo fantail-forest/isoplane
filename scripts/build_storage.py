@@ -1,4 +1,4 @@
-"""Owned build output with process leases and automatic retention."""
+"""Worktree-owned build output and explicit cleanup."""
 
 from contextlib import contextmanager
 import errno
@@ -7,76 +7,13 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
-import time
-import threading
 import urllib.request
-
-
-LOG_BYTES = 1024 ** 3
-LOG_AGE_SECONDS = 7 * 24 * 60 * 60
-PRODUCT_BYTES = 20 * 1024 ** 3
-_handles = set()
-_handles_lock = threading.Lock()
-
-
-@contextmanager
-def inherited_lease(handle):
-    with _handles_lock:
-        _handles.add(handle.fileno())
-    try:
-        yield
-    finally:
-        with _handles_lock:
-            _handles.remove(handle.fileno())
-
-
-def subprocess_options():
-    """Keep POSIX child builds leased even if their coordinating process exits."""
-    with _handles_lock:
-        return {"pass_fds": tuple(_handles)} if os.name != "nt" else {}
-
-
-def lock(handle, blocking=True, shared=False):
-    if os.name == "nt":
-        return windows_lock(handle, blocking, shared)
-    else:
-        import fcntl
-        try:
-            fcntl.flock(handle, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | (0 if blocking else fcntl.LOCK_NB))
-        except BlockingIOError:
-            return False
-    return True
-
-
-def windows_lock(handle, blocking, shared):
-    """Use kernel shared locks; the C runtime's byte locks are exclusive only."""
-    import ctypes
-    from ctypes import wintypes
-    import msvcrt
-
-    class Overlapped(ctypes.Structure):
-        _fields_ = [("Internal", ctypes.c_size_t), ("InternalHigh", ctypes.c_size_t),
-                    ("Offset", wintypes.DWORD), ("OffsetHigh", wintypes.DWORD),
-                    ("hEvent", wintypes.HANDLE)]
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    acquire = kernel.LockFileEx
-    acquire.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
-                        wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
-    acquire.restype = wintypes.BOOL
-    flags = (0 if shared else 2) | (0 if blocking else 1)
-    overlapped = Overlapped()
-    if acquire(msvcrt.get_osfhandle(handle.fileno()), flags, 0, 1, 0, ctypes.byref(overlapped)):
-        return True
-    error = ctypes.get_last_error()
-    if not blocking and error == 33:  # ERROR_LOCK_VIOLATION
-        return False
-    raise ctypes.WinError(error)
 
 
 def size_bytes(path):
@@ -90,17 +27,6 @@ def size_bytes(path):
     except FileNotFoundError:
         # Active producers may finish and remove temporary files during inventory.
         return 0
-
-
-@contextmanager
-def catalog(root):
-    root = Path(root)
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if root.is_symlink() or (root / ".storage.lock").is_symlink():
-        raise ValueError(f"build storage must not be a symlink: {root}")
-    with (root / ".storage.lock").open("a+b") as handle:
-        lock(handle)
-        yield
 
 
 def source_preservation_reason(directory):
@@ -157,70 +83,75 @@ def source_preservation_reason(directory):
     return None
 
 
-def prune(root, max_bytes, max_age_seconds=None, now=None, protected=(), dry_run=False):
-    """Remove inactive owned entries unless the root contains .pruning-disabled."""
-    now = time.time() if now is None else now
+def clean(root, dry_run=False):
+    """Explicitly remove owned output; callers must stop its producers first."""
     root = Path(root)
-    if (root / ".pruning-disabled").is_file():
+    if not root.exists():
         return []
     removed = []
-    with catalog(root):
-        entries = []
-        for directory in root.iterdir():
-            marker = directory / ".lease"
-            if directory.is_symlink() or not directory.is_dir() or not marker.is_file() or marker.is_symlink():
-                continue
-            entries.append((marker.stat().st_mtime, directory, size_bytes(directory)))
-        total = sum(size for _, _, size in entries)
-        for touched, directory, size in sorted(entries):
-            expired = max_age_seconds is not None and now - touched > max_age_seconds
-            if directory in protected or (not expired and total <= max_bytes):
-                continue
-            with (directory / ".lease").open("r+b") as handle:
-                if not lock(handle, blocking=False):
-                    continue
-                reason = source_preservation_reason(directory)
-                if reason:
-                    print(f'Retained {directory}: {reason}', file=sys.stderr)
-                    continue
-                # Windows cannot unlink the open lease. The catalog excludes new owners.
-            if not dry_run:
-                shutil.rmtree(directory)
-            removed.append((directory, size))
-            total -= size
+    for directory in sorted(root.iterdir()):
+        owner = directory / 'owner.json'
+        if directory.is_symlink() or not directory.is_dir() or not owner.is_file() or owner.is_symlink():
+            continue
+        reason = source_preservation_reason(directory)
+        if reason:
+            print(f'Retained {directory}: {reason}', file=sys.stderr)
+            removed.extend(clean_source_siblings(directory, dry_run))
+            continue
+        removed.append((directory, size_bytes(directory)))
+        if not dry_run:
+            remove_owned_directory(directory)
+    return removed
+
+
+def remove_owned_directory(directory):
+    """Keep the ownership record if deleting build contents fails."""
+    for path in directory.iterdir():
+        if path.name == 'owner.json':
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+    shutil.rmtree(directory)
+
+
+def clean_source_siblings(directory, dry_run):
+    """Keep edited repositories without retaining unrelated compiler output."""
+    if (directory / '.git').exists():
+        return []
+    removed = []
+    for path in sorted(directory.iterdir()):
+        if path.name == 'owner.json':
+            continue
+        if path.is_symlink():
+            continue
+        if path.is_dir() and source_preservation_reason(path):
+            removed.extend(clean_source_siblings(path, dry_run))
+            continue
+        removed.append((path, size_bytes(path)))
+        if not dry_run:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
     return removed
 
 
 @contextmanager
-def retained_run(root, max_bytes=LOG_BYTES, max_age_seconds=LOG_AGE_SECONDS, now=None,
-                 remove_on_success=False):
-    """Lease a run until completion, then retain its diagnostics within the budget."""
+def retained_run(root, remove_on_success=False):
+    """Keep diagnostics until explicit cleanup; optionally remove successful scratch."""
     root = Path(root)
-    prune(root, max_bytes, max_age_seconds, now)
-    with catalog(root):
-        directory = Path(tempfile.mkdtemp(prefix="run-", dir=root))
-        handle = (directory / ".lease").open("a+b")
-        lock(handle)
-    succeeded = False
-    try:
-        with inherited_lease(handle):
-            yield directory, handle.fileno()
-        succeeded = True
-    finally:
-        with catalog(root):
-            touched = time.time() if now is None else now
-            os.utime(directory / ".lease", (touched, touched))
-            handle.close()
-            if succeeded and remove_on_success:
-                with (directory / ".lease").open("r+b") as released:
-                    removable = lock(released, blocking=False)
-                if removable:
-                    shutil.rmtree(directory)
-        prune(root, max_bytes, max_age_seconds, now)
+    root.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="run-", dir=root))
+    (directory / 'owner.json').write_text(json.dumps({'pid': os.getpid(), 'platform': platform_name()}))
+    yield directory
+    if remove_on_success:
+        remove_owned_directory(directory)
 
 
-def shared_root():
-    """Use the platform's standard user cache directory, shared across worktrees."""
+def tools_root():
+    """Locate installed tools shared by worktrees on this host."""
     if os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
     elif platform.system() == "Darwin":
@@ -230,70 +161,70 @@ def shared_root():
     return base / "isoplane/build-products"
 
 
+def repository_root():
+    return Path(__file__).resolve().parents[1]
+
+
+def platform_name():
+    """Separate incompatible platform outputs without tying them to a machine."""
+    system = {'Linux': 'linux', 'Darwin': 'osx', 'Windows': 'win'}.get(platform.system(), platform.system().lower())
+    machine = platform.machine().lower()
+    architecture = {'x86_64': 'x64', 'amd64': 'x64', 'aarch64': 'arm64'}.get(machine, machine)
+    return f'{system}-{architecture}'
+
+
+def build_root(root=None):
+    return (repository_root() if root is None else Path(root)) / '.build' / platform_name()
+
+
+def shared_root():
+    """Immutable artifacts shared by consumers of this worktree."""
+    return repository_root() / '.artifacts' / 'shared'
+
+
 def diagnostics_root():
-    """One diagnostic budget shared by runs from all worktrees."""
-    return shared_root().parent / "diagnostics"
+    return repository_root() / '.test-runs' / platform_name()
 
 
 @contextmanager
 def records(explicit=None):
-    """Remove successful scratch runs; retain failures under the diagnostic budget."""
+    """Remove successful scratch runs and keep failure evidence in the worktree."""
     if explicit is not None:
         directory = Path(explicit).resolve()
         directory.mkdir(parents=True, exist_ok=True)
         yield directory
     else:
-        with retained_run(diagnostics_root(), remove_on_success=True) as (directory, _):
+        with retained_run(diagnostics_root(), remove_on_success=True) as directory:
             yield directory
 
 
 @contextmanager
-def product(identity, root=None, read_only=False, shared=False):
-    """Lease a product, sharing readers or locking a producer, and prune on release."""
-    root = shared_root() if root is None else Path(root)
-    name = hashlib.sha256(identity.encode()).hexdigest()
-    # Wait outside the catalog: an owner needs it to release its lease.
-    while True:
-        with catalog(root):
-            directory = root / name
-            if read_only and not (directory / ".lease").is_file():
-                handle = None
-                break
-            if directory.is_symlink() or (directory / ".lease").is_symlink():
-                raise ValueError(f"product storage must not be a symlink: {directory}")
-            if directory.exists() and not (directory / ".lease").is_file():
-                raise ValueError(f"product storage is not owned: {directory}")
-            directory.mkdir(exist_ok=True, mode=0o700)
-            handle = (directory / ".lease").open("a+b")
-            if lock(handle, blocking=False, shared=read_only or shared):
-                if not read_only and (not shared or not (directory / 'owner.json').exists()):
-                    pending = directory / ".owner.pending"
-                    pending.write_text(json.dumps({"identity": identity, "workspace": str(Path.cwd()),
-                                                   "pid": os.getpid()}))
-                    pending.replace(directory / "owner.json")
-                break
-        # Wait for the current owner, then recheck under the catalog in case it was evicted.
-        lock(handle, shared=read_only or shared)
-        handle.close()
-    if handle is None:
-        yield None
+def product(identity, root=None, read_only=False, name=None):
+    """Locate build output without coordinating concurrent producers."""
+    root = build_root() / 'products' if root is None else Path(root)
+    name = hashlib.sha256(identity.encode()).hexdigest() if name is None else name
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", name):
+        raise ValueError(f"invalid build directory name: {name}")
+    directory = root / name
+    owner = directory / 'owner.json'
+    if directory.is_symlink() or owner.is_symlink():
+        raise ValueError(f"product storage must not be a symlink: {directory}")
+    if read_only:
+        yield directory if owner.is_file() else None
         return
-    try:
-        prune(root, PRODUCT_BYTES)
-        with inherited_lease(handle):
-            yield directory
-    finally:
-        with catalog(root):
-            os.utime(directory / ".lease", None)
-            handle.close()
-        prune(root, PRODUCT_BYTES)
+    if directory.exists() and not owner.is_file():
+        raise ValueError(f"product storage is not owned: {directory}")
+    directory.mkdir(parents=True, exist_ok=True)
+    if not owner.exists():
+        owner.write_text(json.dumps({'identity': identity}))
+    yield directory
 
 
 @contextmanager
 def development(root, inherited):
-    """Lease a worktree's build intermediates under the shared product budget."""
+    """Keep a host's mutable build and temporary files inside its worktree."""
     root = Path(root).resolve()
-    with product('development:' + str(root), shared=True) as directory:
+    with product('development', root=build_root(root), name='development') as directory:
         environment = dict(inherited)
         previous = inherited.get('ISOPLANE_BUILD_DIRECTORY')
         if previous and inherited.get('ISOPLANE_BUILD_ROOT') != str(root):
@@ -306,18 +237,37 @@ def development(root, inherited):
         environment['ISOPLANE_BUILD_DIRECTORY'] = str(directory)
         environment['ISOPLANE_RUNTIME_SOURCE'] = str(root / 'guest-runtime')
         environment['ISOPLANE_RUNTIME_WORK'] = str(directory / 'runtime-work')
-        yield environment
+        yield temporary_environment(directory / 'tmp', environment)
+
+
+def temporary_environment(directory, inherited):
+    """Keep subprocess scratch local without splitting NuGet's package-cache locks."""
+    environment = dict(inherited)
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    # NuGet's shared package cache requires a common lock namespace across worktrees.
+    if 'NUGET_SCRATCH' not in environment:
+        if os.name == 'nt' or platform.system() == 'Darwin':
+            environment['NUGET_SCRATCH'] = str(Path(tempfile.gettempdir()) / 'NuGetScratch')
+        else:
+            import getpass
+            environment['NUGET_SCRATCH'] = '/tmp/NuGetScratch' + getpass.getuser()
+    for name in ('TMPDIR', 'TMP', 'TEMP'):
+        environment[name] = str(directory)
+    return environment
+
 
 
 @contextmanager
 def workspace(name, explicit=None):
-    """Use a bounded shared build workspace unless the caller selects its own location."""
+    """Use this host's worktree storage unless a caller supplies a workspace."""
     if explicit is not None:
         path = Path(explicit).resolve()
         path.mkdir(parents=True, exist_ok=True)
         yield path
     else:
-        with product(f"workspace:{name}") as path:
+        directory_name = re.sub(r'[^a-zA-Z0-9._-]', '-', name)
+        with product(f"workspace:{name}", root=build_root(), name=directory_name) as path:
             yield path
 
 
@@ -326,64 +276,89 @@ def digest(path, algorithm="sha256"):
         return hashlib.file_digest(source, algorithm).hexdigest()
 
 
-def cached_files(identity, outputs, produce):
-    """Reuse verified immutable products, retaining independent consumer files."""
-    outputs = [Path(path) for path in outputs]
-    with product("files:" + identity) as entry:
-        receipt = entry / "files.json"
-        files = [entry / str(index) for index in range(len(outputs))]
-        try:
-            hashes = json.loads(receipt.read_text())
-            valid = isinstance(hashes, list) and len(hashes) == len(files) and all(
-                digest(path) == expected for path, expected in zip(files, hashes))
-        except (FileNotFoundError, json.JSONDecodeError):
-            valid = False
-        if not valid:
-            produce()
-            for source, destination in zip(outputs, files):
-                shutil.copy2(source, destination)
-            receipt.write_text(json.dumps([digest(path) for path in files]))
-        else:
-            for source, destination in zip(files, outputs):
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with tempfile.TemporaryDirectory(prefix=".product-", dir=destination.parent) as temporary:
-                    staged = Path(temporary) / "file"
-                    shutil.copy2(source, staged)
-                    staged.replace(destination)
-
-
-def link_or_copy(source, destination):
-    """Share immutable bytes on one filesystem, copying across filesystem boundaries."""
+def restore_files(entry, outputs):
+    receipt = entry / 'files.json'
+    files = [entry / str(index) for index in range(len(outputs))]
     try:
-        os.link(source, destination)
-    except OSError as error:
-        if error.errno not in (errno.EXDEV, errno.EPERM, errno.EACCES, errno.ENOTSUP):
-            raise
-        shutil.copy2(source, destination)
+        hashes = json.loads(receipt.read_text())
+        valid = isinstance(hashes, list) and len(hashes) == len(files) and all(
+            digest(path) == expected for path, expected in zip(files, hashes))
+    except (FileNotFoundError, json.JSONDecodeError):
+        valid = False
+    if not valid:
+        return False
+    for source, destination in zip(files, outputs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='.product-', dir=destination.parent) as temporary:
+            staged = Path(temporary) / 'file'
+            shutil.copy2(source, staged)
+            staged.replace(destination)
+    return True
+
+
+def artifact_directory(identity):
+    return shared_root() / hashlib.sha256(identity.encode()).hexdigest()
+
+
+def publish_files(identity, outputs):
+    """Publish a complete artifact directory; consumers only read completed files."""
+    entry = artifact_directory(identity)
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    if entry.is_symlink():
+        raise ValueError(f'shared artifact directory must not be a symlink: {entry}')
+    hashes = [digest(path) for path in outputs]
+    with tempfile.TemporaryDirectory(prefix='.publish-', dir=entry.parent) as temporary:
+        staged = Path(temporary) / 'artifact'
+        staged.mkdir()
+        for index, source in enumerate(outputs):
+            shutil.copy2(source, staged / str(index))
+        (staged / 'files.json').write_text(json.dumps(hashes))
+        (staged / 'owner.json').write_text(json.dumps({'identity': identity}))
+        try:
+            staged.rename(entry)
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) or not entry.is_dir():
+                raise
+            if json.loads((entry / 'files.json').read_text()) != hashes or any(
+                    digest(entry / str(index)) != expected for index, expected in enumerate(hashes)):
+                raise ValueError(f'Shared artifacts differ at {entry}; clean them before rebuilding') from error
+
+
+def cached_files(identity, outputs, produce, linux_only=False):
+    """Consume published files, or publish a completed build from its owning host."""
+    outputs = [Path(path) for path in outputs]
+    identity = 'files:' + identity
+    entry = artifact_directory(identity)
+    if restore_files(entry, outputs):
+        return
+    if produce is None or (linux_only and platform.system() != 'Linux'):
+        raise RuntimeError('Shared build outputs are missing or stale. Build them on Linux in this worktree first.')
+    if entry.exists():
+        raise ValueError(f'Shared artifacts are invalid at {entry}; clean them before rebuilding')
+    produce()
+    publish_files(identity, outputs)
+
+
+def clean_shared(dry_run=False):
+    """Explicitly remove published artifacts after their consumers have stopped."""
+    return clean(shared_root(), dry_run=dry_run)
 
 
 def download(url, destination, expected, algorithm="sha256"):
-    """Verify downloads once per content identity and atomically stage a consumer copy."""
+    """Verify and publish downloads, with each consumer staging its own copy."""
     destination = Path(destination)
     if destination.is_file() and digest(destination, algorithm) == expected:
         return
-    with product(f"download:{algorithm}:{expected}") as entry:
-        archive = entry / "archive"
-        if not archive.is_file() or digest(archive, algorithm) != expected:
-            pending = entry / "download.pending"
-            try:
-                with urllib.request.urlopen(url, timeout=60) as response, pending.open("wb") as output:
-                    shutil.copyfileobj(response, output)
-                if digest(pending, algorithm) != expected:
-                    raise ValueError(f"download hash mismatch: {url}")
-                pending.replace(archive)
-            finally:
-                pending.unlink(missing_ok=True)
+    def fetch():
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=".download-", dir=destination.parent) as temporary:
-            staged = Path(temporary) / "archive"
-            link_or_copy(archive, staged)
-            staged.replace(destination)
+        with tempfile.TemporaryDirectory(prefix='.download-', dir=destination.parent) as temporary:
+            pending = Path(temporary) / 'archive'
+            with urllib.request.urlopen(url, timeout=60) as response, pending.open('wb') as output:
+                shutil.copyfileobj(response, output)
+            if digest(pending, algorithm) != expected:
+                raise ValueError(f'download hash mismatch: {url}')
+            pending.replace(destination)
+    cached_files(f'download:{algorithm}:{expected}', [destination], fetch)
 
 
 if __name__ == "__main__":
@@ -394,9 +369,10 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ["runtime"]:
         root = Path(sys.argv[2]).resolve()
         with development(root, os.environ) as environment:
-            raise SystemExit(subprocess.call(sys.argv[3:], env=environment, **subprocess_options()))
+            raise SystemExit(subprocess.call(sys.argv[3:], env=environment))
     elif sys.argv[1:2] == ["files"]:
         parser.add_argument("identity")
+        parser.add_argument("--linux-only", action="store_true")
         parser.add_argument("--output", type=Path, action="append", required=True)
         if "--" not in sys.argv:
             parser.error("files requires -- followed by the build command")
@@ -406,7 +382,8 @@ if __name__ == "__main__":
         if not command:
             parser.error("files requires a build command")
         cached_files(arguments.identity, arguments.output,
-                     lambda: subprocess.run(command, check=True, **subprocess_options()))
+                     lambda: subprocess.run(command, check=True),
+                     linux_only=arguments.linux_only)
     else:
         parser.add_argument("url")
         parser.add_argument("destination", type=Path)

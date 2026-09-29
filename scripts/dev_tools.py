@@ -1,4 +1,4 @@
-"""Versioned development tools shared across worktrees under the build-product budget."""
+"""Versioned development tools shared across worktrees on this host."""
 
 import importlib.util
 import json
@@ -53,26 +53,31 @@ def installation_ready(directory, name, wasm, sdk, root):
 def setup(root):
     name, wasm, rid = identity(root)
     sdk = json.loads((root / 'global.json').read_text())['sdk']['version']
-    with storage.product(name, read_only=True) as directory:
+    with storage.product(name, root=storage.tools_root(), read_only=True) as directory:
         if installation_ready(directory, name, wasm, sdk, root):
             ensure_rust_targets(root)
             print('Development tools are already installed and verified.')
             return
-    if name in os.environ.get('ISOPLANE_DEV_TOOL_LEASES', '').splitlines():
+    if directory is not None and os.environ.get('ISOPLANE_DEV_TOOLS') == str(directory):
         raise SystemExit('Development tools need repair, but this development session is using them. '
                          'Exit the development shell and run scripts/setup directly.')
     ensure_rust_targets(root)
     preview = preview_builder(root)
-    with storage.product(name) as directory:
+    with storage.product(name, root=storage.tools_root()) as directory:
         if installation_ready(directory, name, wasm, sdk, root):
             print('Development tools are already installed and verified.')
             return
         (directory / 'complete').unlink(missing_ok=True)
         (directory / 'dotnet.json').unlink(missing_ok=True)
-        logs = directory / 'logs'
-        logs.mkdir(exist_ok=True)
-        preview.run(['cargo', 'install', '--locked', '--force', f'wasm-tools@{wasm}', '--root', directory], root, logs / 'wasm-tools.log')
-        preview.prepare_sdk(root, directory, logs, rid)
+        with storage.workspace('tool-setup') as work:
+            logs = work / 'logs'
+            logs.mkdir(exist_ok=True)
+            environment = storage.temporary_environment(work / 'tmp', os.environ)
+            environment['CARGO_TARGET_DIR'] = str(work / 'target')
+            environment['CARGO_BUILD_BUILD_DIR'] = str(work / 'target')
+            preview.run(['cargo', 'install', '--locked', '--force', f'wasm-tools@{wasm}', '--root', directory],
+                        root, logs / 'wasm-tools.log', environment)
+            preview.prepare_sdk(root, directory, logs, rid)
         (directory / 'complete').write_text(name)
     print('Development tools installed in the shared user cache.')
 
@@ -83,8 +88,7 @@ def ensure_rust_targets(root):
         log = directory / 'rust-targets.log'
         with log.open('w') as output:
             result = subprocess.run(['rustup', 'target', 'add', 'wasm32-unknown-unknown', 'wasm32-wasip1'],
-                                    cwd=root, stdout=output, stderr=subprocess.STDOUT,
-                                    **storage.subprocess_options())
+                                    cwd=root, stdout=output, stderr=subprocess.STDOUT)
         if result.returncode:
             raise RuntimeError(f'Installing Rust guest targets failed; see {log}')
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Reclaim inactive managed build storage; report other generated directories.
+# Remove inactive worktree build and test output.
 set -euo pipefail
-usage() { printf 'Usage: scripts/clean [--all] [--dry-run | --report]\nReclaim managed caches; --all clears inactive entries regardless of age or size.\nUnleased and legacy output is reported, never removed while its ownership is unknown.\n'; }
+usage() { printf 'Usage: scripts/clean [--all] [--dry-run | --report]\nClean worktree output for this platform; other platforms are reported. Use --all to include every platform, shared artifacts and ignored legacy build outputs.\nStop builds and tests before cleanup. Saved deployments and release archives are retained.\n'; }
 for argument in "$@"; do
   case "$argument" in
     --all|--dry-run|--report) ;;

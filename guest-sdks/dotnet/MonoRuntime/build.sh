@@ -4,16 +4,10 @@
 # the SDK version, source revision and Mono pack they were built from.
 # Usage: guest-sdks/dotnet/MonoRuntime/build.sh --output DIRECTORY [--source-revision REVISION]
 # The revision defaults to the checkout's HEAD, marked +dirty when it has changes.
-# Serialised with the other C# guest builds: they share the SDK project's
-# intermediate files.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-LOCK="$ROOT/guests/.build-dotnet.lock"
-if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$HERE/build.sh" ]; then
-  exec python3 "$ROOT/scripts/fixture-tools.py" lock "$LOCK" "$HERE/build.sh" "$@"
-fi
 
 OUTPUT=""
 REVISION=""
@@ -25,6 +19,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$OUTPUT" ] || { echo "missing --output DIRECTORY" >&2; exit 2; }
+python3 "$ROOT/scripts/fixture-tools.py" require-linux
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the shared runtime cannot be built." >&2; exit 1; }
 
 mkdir -p "$OUTPUT"

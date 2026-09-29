@@ -120,5 +120,3 @@ class SharedModulesTests(unittest.TestCase):
         (self.directory / modules.module_names()[0]).write_bytes(b'')
         with self.assertRaisesRegex(ValueError, 'nonempty'):
             self.verify()
-
-

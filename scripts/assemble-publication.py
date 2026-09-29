@@ -48,7 +48,7 @@ def verify_release(directory):
     library_name = native_name(rid)
     with zipfile.ZipFile(directory / 'packages' / f'Isoplane.Native.{version}.nupkg') as package:
         library = package.read(f'runtimes/{rid}/native/{library_name}')
-    with tempfile.TemporaryDirectory(prefix='native-check-') as temporary:
+    with load('build_storage').records() as temporary:
         path = Path(temporary) / library_name
         path.write_bytes(library)
         preview.verify_packages(directory / 'packages', version, revision, path, rid)

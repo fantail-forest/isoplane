@@ -63,17 +63,18 @@ class SourceTreeTests(unittest.TestCase):
 
     def test_unmodified_generated_sources_are_reclaimed(self):
         products = self.retained_tree()
-        storage.prune(products, 0)
-        self.assertFalse(self.tree.exists(), 'regenerable source must remain subject to the product budget')
+        storage.clean(products)
+        self.assertFalse(self.tree.exists(), 'explicit cleanup must reclaim unmodified generated sources')
 
-    def test_automatic_retention_preserves_local_source_edits(self):
-        with patch.object(storage, 'PRODUCT_BYTES', 0):
+    def test_explicit_cleanup_preserves_local_source_edits(self):
+        with patch.object(storage, 'shared_root', return_value=self.root / 'products'):
             with storage.product('runtime', root=self.root / 'products') as entry:
                 self.tree = entry / 'source'
                 self.materialize()
                 (self.tree / 'value.txt').write_text('unfinished work')
+        storage.clean(self.root / 'products')
         self.assertEqual((self.tree / 'value.txt').read_text(), 'unfinished work',
-                         'automatic retention on command exit must protect unfinished source edits')
+                         'explicit cleanup must protect unfinished source edits')
 
     def test_cleanup_preserves_dirty_source_and_untracked_files(self):
         products = self.retained_tree()
@@ -81,7 +82,7 @@ class SourceTreeTests(unittest.TestCase):
             with self.subTest(name=name):
                 original = (self.tree / name).read_bytes() if (self.tree / name).exists() else None
                 (self.tree / name).write_text('local edit')
-                storage.prune(products, 0)
+                storage.clean(products)
                 self.assertEqual((self.tree / name).read_text(), 'local edit', 'cleanup must preserve local source edits')
                 if original is None:
                     (self.tree / name).unlink()
@@ -93,7 +94,7 @@ class SourceTreeTests(unittest.TestCase):
         (self.tree / 'value.txt').write_text('local commit')
         subprocess.run(['git', '-C', str(self.tree), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                         'commit', '-am', 'local change'], check=True, capture_output=True)
-        storage.prune(products, 0)
+        storage.clean(products)
         self.assertEqual((self.tree / 'value.txt').read_text(), 'local commit', 'cleanup must preserve committed local changes')
 
     def test_cleanup_preserves_reconciled_backup_history(self):
@@ -104,7 +105,7 @@ class SourceTreeTests(unittest.TestCase):
         previous = subprocess.check_output(['git', '-C', str(self.tree), 'rev-parse', 'HEAD'], text=True).strip()
         self.write_patch('second')
         self.materialize()
-        storage.prune(products, 0)
+        storage.clean(products)
         refs = subprocess.check_output(['git', '-C', str(self.tree), 'for-each-ref', '--format=%(objectname)',
                                         'refs/isoplane/source-backups'], text=True)
         self.assertIn(previous, refs, 'cleanup must preserve the history that source reconciliation saved')
@@ -113,7 +114,7 @@ class SourceTreeTests(unittest.TestCase):
         products = self.retained_tree()
         self.write_patch('second')
         self.materialize()
-        storage.prune(products, 0)
+        storage.clean(products)
         self.assertFalse(self.tree.exists(), 'ordinary generated source updates must remain reclaimable')
 
     def test_cleanup_preserves_ignored_authored_source_inputs(self):
@@ -122,7 +123,7 @@ class SourceTreeTests(unittest.TestCase):
         result = self.run_source(extra=['--build-layout', 'dotnet'])
         self.assertEqual(result.returncode, 0, 'the .NET source layout must be recorded: ' + result.stderr)
         (self.tree / 'Directory.Build.rsp').write_text('local settings')
-        storage.prune(products, 0)
+        storage.clean(products)
         self.assertEqual((self.tree / 'Directory.Build.rsp').read_text(), 'local settings',
                          'ignored authored inputs must not be mistaken for generated output')
 
@@ -133,13 +134,13 @@ class SourceTreeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, 'the .NET source layout must be recorded: ' + result.stderr)
         (self.tree / 'artifacts').mkdir()
         (self.tree / 'artifacts/object.o').write_bytes(b'compiled')
-        storage.prune(products, 0)
+        storage.clean(products)
         self.assertFalse(self.tree.exists(), 'owned ignored build artifacts must remain reclaimable')
 
     def test_unattributed_source_repositories_are_retained(self):
         products = self.retained_tree()
         (self.tree / '.git/isoplane-source.json').unlink()
-        storage.prune(products, 0)
+        storage.clean(products)
         self.assertTrue((self.tree / 'value.txt').exists(), 'unknown source ownership must prevent deletion')
 
     def test_cleanup_preserves_untracked_source_backups(self):
@@ -148,7 +149,7 @@ class SourceTreeTests(unittest.TestCase):
         (self.tree / 'Directory.Build.rsp').write_text('local input')
         self.write_archive('old\n', {'.gitignore': '*.rsp\n', 'Directory.Build.rsp': 'upstream'})
         self.materialize()
-        storage.prune(products, 0)
+        storage.clean(products)
         backups = list((self.tree / '.git/isoplane-source-backups').glob('*/Directory.Build.rsp'))
         self.assertEqual(len(backups), 1, 'cleanup must preserve saved untracked input')
         self.assertEqual(backups[0].read_text(), 'local input', 'saved local input must remain recoverable')

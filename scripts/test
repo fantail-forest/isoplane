@@ -50,15 +50,19 @@ def require_guest_tools(environment):
         raise RuntimeError("The test suite needs the WASI compiler. Build the guest-runtime toolchain, then run scripts/dev scripts/test.")
 
 
-def run(command, cwd, environment, log, timeout_seconds, lease_fds=()):
+def run(command, cwd, environment, log, timeout_seconds):
     started = time.monotonic()
     with log.open("w") as output:
         with subprocess.Popen(command, cwd=cwd, env=environment, stdout=output,
-                              stderr=subprocess.STDOUT, start_new_session=True, pass_fds=lease_fds) as process:
+                              stderr=subprocess.STDOUT, start_new_session=True) as process:
             try:
                 code = process.wait(timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                   stdout=output, stderr=subprocess.STDOUT, check=True)
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
                 output.write(f"\nTest process exceeded {timeout_seconds}s; its process group was stopped.\n")
                 code = 124
@@ -98,7 +102,7 @@ def main():
         ["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=ROOT))
     packages = {package["id"]: package for package in metadata["packages"]}
     runs = storage.diagnostics_root()
-    with storage.retained_run(runs) as (logs, _):
+    with storage.retained_run(runs) as logs:
         (logs / "owner.json").write_text(json.dumps({"workspace": str(ROOT), "pid": os.getpid(),
                                                     "command": sys.argv}) + "\n")
         return execute(args, parser, cpus, selection, packages, runs, logs)
@@ -111,7 +115,7 @@ def execute(args, parser, cpus, selection, packages, runs, logs):
     started = time.monotonic()
     print(f"Logs: {logs}", flush=True)
     build = run(["cargo", "test", *selection, "--no-run", "--message-format=json"],
-                ROOT, environment, logs / "build.log", args.timeout_seconds, storage.subprocess_options().get('pass_fds', ()))
+                ROOT, environment, logs / "build.log", args.timeout_seconds)
     if build["code"]:
         print(f"Build failed: {build['log']}", flush=True)
         return build["code"]
@@ -124,7 +128,7 @@ def execute(args, parser, cpus, selection, packages, runs, logs):
         raise RuntimeError("Cargo produced no test binaries")
     library_paths.add(subprocess.check_output(
         ["rustc", "--print", "target-libdir"], cwd=ROOT, text=True).strip())
-    variable = "DYLD_FALLBACK_LIBRARY_PATH" if os.uname().sysname == "Darwin" else "LD_LIBRARY_PATH"
+    variable = {"darwin": "DYLD_FALLBACK_LIBRARY_PATH", "win32": "PATH"}.get(sys.platform, "LD_LIBRARY_PATH")
     environment[variable] = os.pathsep.join(sorted(library_paths) + [environment.get(variable, "")])
     history_path = runs / "durations.json"
     history = json.loads(history_path.read_text()) if history_path.exists() else {}
@@ -142,6 +146,14 @@ def execute(args, parser, cpus, selection, packages, runs, logs):
     binaries.sort(key=lambda binary: (history.get(name(binary), 0),
                                      "test" in binary["target"]["kind"],
                                      Path(binary["executable"]).stat().st_size), reverse=True)
+    if any(dependency['name'] == 'isoplane-fixtures'
+           for binary in binaries
+           for dependency in packages[binary['package_id']]['dependencies']):
+        preparation = run([sys.executable, str(ROOT / "scripts/prepare-fixtures.py")],
+                          ROOT, environment, logs / "fixtures.log", max(3600, args.timeout_seconds))
+        if preparation["code"]:
+            print(f"Fixture preparation failed: {preparation['log']}", flush=True)
+            return preparation["code"]
     print(f"Running {len(binaries)} binaries, {args.jobs} at a time, "
           f"{args.test_threads} test threads each", flush=True)
     results = []
@@ -155,7 +167,7 @@ def execute(args, parser, cpus, selection, packages, runs, logs):
                 cwd = Path(package["manifest_path"]).parent
                 future = executor.submit(run, [binary["executable"]], cwd, binary_environment(name(binary), environment),
                                          logs / f"{index:03d}-{binary['target']['name']}.log",
-                                         args.timeout_seconds, storage.subprocess_options().get('pass_fds', ()))
+                                         args.timeout_seconds)
                 pending[future] = name(binary)
             for future in as_completed(pending):
                 result = {"name": pending[future], **future.result()}
@@ -166,7 +178,7 @@ def execute(args, parser, cpus, selection, packages, runs, logs):
                 if result["code"]:
                     print(f"  {result['log']}", flush=True)
     docs = run(["cargo", "test", *selection, "--doc"], ROOT, environment,
-               logs / "doctests.log", args.timeout_seconds, storage.subprocess_options().get('pass_fds', ()))
+               logs / "doctests.log", args.timeout_seconds)
     results.append({"name": "doctests", **docs})
     elapsed = time.monotonic() - started
     summary = {"seconds": elapsed, "build": build, "excluded": args.exclude_binary,

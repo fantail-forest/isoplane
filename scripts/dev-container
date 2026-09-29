@@ -17,7 +17,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${ISOPLANE_IMAGE:-isoplane-dev:latest}"
-NAME="${ISOPLANE_CONTAINER_NAME:-isoplane-$(id -u)-shared}"
+TREE_ID="$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-12)"
+NAME="${ISOPLANE_CONTAINER_NAME:-isoplane-$(id -u)-$TREE_ID}"
 LABEL="isoplane.owner=$(id -u)"
 PROBE_TIMEOUT="${ISOPLANE_PROBE_TIMEOUT:-15}"
 DOCKER_TIMEOUT="${ISOPLANE_DOCKER_TIMEOUT:-60}"
@@ -159,19 +160,16 @@ fi
 PORTS=()
 for p in ${ISOPLANE_PORTS:-}; do PORTS+=(-p "$p"); done
 create_container() {
-  d run -d --name "$NAME" \
+  d run -d --name "$NAME" --hostname "$NAME" \
     --label "$LABEL" --label "isoplane.created=$(date -u +%FT%TZ)" \
     --user "$(id -u):$(id -g)" \
     -v "$ROOT:/isoplane" \
-    -v isoplane-ctarget:/ctarget \
     -v isoplane-cargo-registry:/opt/cargo/registry \
     -v isoplane-nuget:/nuget \
     -w /isoplane \
-    -e CARGO_TARGET_DIR=/ctarget \
-    -e CARGO_BUILD_BUILD_DIR=/ctarget \
     -e CARGO_HOME=/opt/cargo \
     -e NUGET_PACKAGES=/nuget \
-    -e HOME=/tmp \
+    -e HOME=/tmp/home \
     -e CARGO_TERM_COLOR=always \
     -e RUST_BACKTRACE=1 \
     ${PORTS[@]+"${PORTS[@]}"} "$IMAGE" sleep infinity
@@ -275,4 +273,4 @@ done
 [ -t 0 ] && EXEC+=(-it)
 EXEC+=("$NAME")
 [ $# -eq 0 ] && set -- bash
-exec "${EXEC[@]}" "$@"
+exec "${EXEC[@]}" python3 /isoplane/scripts/build_storage.py runtime /isoplane "$@"

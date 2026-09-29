@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # Build the C# test fixtures; samples have their own build scripts.
 # Usage: guests/build-dotnet.sh [--if-stale] [--fixture name]
-# Serial because the fixtures share the SDK project's intermediate files.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IF_STALE=0
 SELECTED=""
 RUNTIME=mono
-ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --if-stale) IF_STALE=1; shift ;;
@@ -27,9 +25,6 @@ while [ $# -gt 0 ]; do
 done
 
 TOOLS="$ROOT/../scripts/fixture-tools.py"
-if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$ROOT/build-dotnet.sh" ]; then
-  exec python3 "$TOOLS" lock "$ROOT/.build-dotnet.lock" "$ROOT/build-dotnet.sh" "${ARGS[@]}"
-fi
 
 # name | output path | guest dir | extra dotnet publish args
 FIXTURES=(
@@ -61,7 +56,7 @@ FIXTURES=(
 mono=()
 for spec in "${FIXTURES[@]}"; do
   IFS='|' read -r name out dir extra <<<"$spec"
-  mono+=("$name|$ROOT/dotnet/out/mono/$name.wasm|$dir|$extra --artifacts-path $ROOT/dotnet/obj-mono")
+  mono+=("$name|$ROOT/dotnet/out/mono/$name.wasm|$dir|$extra")
 done
 FIXTURES=("${mono[@]}")
 
@@ -105,6 +100,7 @@ if [ "$IF_STALE" = 1 ]; then
   fi
 fi
 
+python3 "$TOOLS" require-linux
 # Checked only once a build is needed: fresh fixtures need no SDK.
 if ! command -v dotnet >/dev/null 2>&1; then
   {
@@ -122,10 +118,12 @@ for spec in "${FIXTURES[@]}"; do
     skipped=$((skipped + 1))
     continue
   fi
-  log=$(mktemp)
+  mkdir -p "$(dirname "$out")"
+  log=$(mktemp "$(dirname "$out")/.build-log-XXXXXXXX")
   ok=0
   # shellcheck disable=SC2086
-  if ISOPLANE_OUT_DIR="$(dirname "$out")" ISOPLANE_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
+  build_directory=$(python3 "$TOOLS" build-directory "$ROOT/.." "$name")
+  if ISOPLANE_BUILD_DIRECTORY="$build_directory" ISOPLANE_BUILD_ROOT="$(cd "$ROOT/.." && pwd)" ISOPLANE_OUT_DIR="$(dirname "$out")" ISOPLANE_OUT="$name" "$dir/build.sh" $extra >"$log" 2>&1; then ok=1; fi
   built=$((built + 1))
 
   if [ "$ok" = 1 ]; then

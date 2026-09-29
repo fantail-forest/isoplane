@@ -59,8 +59,8 @@ ENV WASI_SDK_PATH=/opt/wasi-sdk
 # Cache volumes are writable by the invoking host user.
 ARG HOST_UID=1000
 ARG HOST_GID=1000
-RUN mkdir -p /ctarget /opt/cargo /opt/cargo/registry /nuget /tmp/home \
-    && chown -R ${HOST_UID}:${HOST_GID} /ctarget /opt/cargo /nuget /tmp/home \
-    && chmod -R u+rwX /ctarget /opt/cargo /nuget
+RUN mkdir -p /opt/cargo /opt/cargo/registry /nuget /tmp/home \
+    && chown -R ${HOST_UID}:${HOST_GID} /opt/cargo /nuget /tmp/home \
+    && chmod -R u+rwX /opt/cargo /nuget
 
 WORKDIR /isoplane

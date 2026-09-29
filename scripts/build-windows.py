@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Windows x64 SDK release locally, from source or a verified runtime artifact."""
+"""Build a Windows x64 SDK release using the Linux-built shared runtime."""
 import argparse
 import importlib.util
 import json
@@ -12,7 +12,6 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
-import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +92,8 @@ def build(args):
     cache = args.cache.resolve()
     logs = cache / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
+    if not args.runtime_artifact:
+        args.runtime_artifact, args.runtime_sha256 = preview.shared_runtime_archive(ROOT, cache, revision)
     releases = args.output.resolve()
     releases.mkdir(parents=True, exist_ok=True)
     release = releases / f'isoplane-win-x64-{version}'
@@ -118,25 +119,17 @@ def build(args):
         preview.run(command, source, logs / (name + '.log'), environment)
 
     runtime_output = runtime / 'out'
-    if args.runtime_artifact:
-        imported = cache / 'imported-runtime'
-        if imported.exists():
-            shutil.rmtree(imported)
-        load('runtime-artifact').import_artifact(args.runtime_artifact, args.runtime_sha256, imported)
-        runtime_output.mkdir(exist_ok=True)
-        for name in ('feed', 'packs'):
-            if (runtime_output / name).exists():
-                shutil.rmtree(runtime_output / name)
-            shutil.move(imported / name, runtime_output / name)
-        imported.rmdir()
-        stages = ['acquire', 'toolchain', 'patch']
-    else:
-        try:
-            preview.load(runtime / 'feed-identity.py').verify_feed(runtime_output / 'feed', runtime)
-            stages = ['acquire', 'toolchain', 'patch']
-        except (OSError, ValueError, ET.ParseError, zipfile.BadZipFile) as error:
-            print(f'Runtime build required: {error}', flush=True)
-            stages = []
+    imported = cache / 'imported-runtime'
+    if imported.exists():
+        shutil.rmtree(imported)
+    load('runtime-artifact').import_artifact(args.runtime_artifact, args.runtime_sha256, imported)
+    runtime_output.mkdir(exist_ok=True)
+    for name in ('feed', 'packs'):
+        if (runtime_output / name).exists():
+            shutil.rmtree(runtime_output / name)
+        shutil.move(imported / name, runtime_output / name)
+    imported.rmdir()
+    stages = ['acquire', 'toolchain', 'patch']
     try:
         run(runtime_command(args.msys_root.resolve(), runtime, stages), 'runtime')
     finally:
@@ -149,22 +142,21 @@ def build(args):
     run(['cargo', 'install', '--locked', f'wasm-tools@{wasm_version}', '--root', cache / 'tools'], 'wasm-tools')
     runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else cache / 'runtime-modules'
     if not args.runtime_modules:
-        if runtime_modules.exists():
-            shutil.rmtree(runtime_modules)
-        environment['PATH'] = str(cache / 'tools/bin') + os.pathsep + environment['PATH']
-        run([args.msys_root.resolve() / 'usr/bin/bash.exe', '-lc', 'exec bash "$@"', 'isoplane-shared-runtime',
-             (source / 'guest-sdks/dotnet/MonoRuntime/build.sh').as_posix(), '--output', runtime_modules.as_posix(),
-             '--source-revision', revision], 'shared-runtime')
+        load('build_storage').cached_files(
+            f'release-runtime-modules:{revision}:{version}',
+            load('shared-runtime-modules').files(runtime_modules),
+            None,
+            linux_only=True)
     load('shared-runtime-modules').verify(runtime_modules, version, revision, runtime_output / 'feed')
     packages = cache / 'packages'
     if packages.exists():
         shutil.rmtree(packages)
     packages.mkdir()
     for name, project in preview.PROJECTS.items():
-        run([sdk / 'dotnet.exe', 'pack', source / project, '-c', 'Release', '-o', packages,
+        preview.pack_project(name, version, revision, packages, lambda: run([sdk / 'dotnet.exe', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
-             f'-p:IsoplaneNativePath={native}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'], 'pack-' + name)
+             f'-p:IsoplaneNativePath={native}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'], 'pack-' + name), args.managed_packages)
     preview.verify_packages(packages, version, revision, native, 'win-x64')
     runtime_version = re.search(r'^RUNTIME_TAG=v(.+)$', (runtime / 'manifest.env').read_text(), re.MULTILINE).group(1)
     mono = stock_pack('Microsoft.NET.Runtime.MonoTargets.Sdk', runtime_version, cache)
@@ -214,8 +206,9 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / '.isoplane-dev/releases')
     parser.add_argument('--msys-root', type=Path, default=Path('C:/msys64'))
     parser.add_argument('--vc-redist', type=Path)
+    parser.add_argument('--managed-packages', type=Path, help='verified portable packages exported by the Linux builder')
     parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
-    parser.add_argument('--runtime-artifact', help='shared runtime archive file or HTTPS URL; omitted to build from source')
+    parser.add_argument('--runtime-artifact', help='shared runtime archive file or HTTPS URL; omitted to reuse the Linux publication in this worktree')
     parser.add_argument('--runtime-sha256', help='required checksum for --runtime-artifact')
     parser.add_argument('--check-prerequisites', action='store_true', help='check local build tools without starting a build')
     args = parser.parse_args()
@@ -253,9 +246,7 @@ def main():
         return
     with load('build_storage').workspace('release-win-x64', args.cache) as cache:
         args.cache = cache
-        with (args.cache / '.lock').open('a+b') as lock:
-            load('fixture-tools').lock_file(lock)
-            build(args)
+        build(args)
 
 
 if __name__ == '__main__':

@@ -3,9 +3,9 @@
 //! The first access to each fixture runs its build script with `--if-stale`.
 //! A fresh fixture validates its content receipt; stale or missing output is rebuilt.
 //! Successful selections are reused for the remainder of the test process. The scripts
-//! take a file lock, and this crate serialises callers within a process, so
-//! concurrent test binaries never build the same fixture twice. A missing
-//! toolchain fails the test with the script's message naming the tool.
+//! use distinct host intermediates. This crate serialises callers within a process;
+//! scripts/test prepares shared fixtures before launching parallel consumers.
+//! A missing toolchain fails the test with the script's message naming the tool.
 //!
 //! This crate is for `[dev-dependencies]` only; it panics on every failure
 //! because its callers are tests.
@@ -87,8 +87,12 @@ fn build_selected(script: &str, fixture: Option<&str>, runtime: Option<&str>) ->
     if built.contains(&selection) {
         return root;
     }
-    let mut command = Command::new(root.join("scripts/dev"));
-    command.arg("bash").arg(&path).arg("--if-stale");
+    let mut command = Command::new(python());
+    command
+        .arg(root.join("scripts/dev"))
+        .arg("bash")
+        .arg(&path)
+        .arg("--if-stale");
     if let Some(name) = fixture {
         command.arg("--fixture").arg(name);
     }

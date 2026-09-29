@@ -121,7 +121,7 @@ $env:CHERE_INVOKING = '1'
 $packages = @{
     'usr\bin\make.exe' = 'make'; 'usr\bin\perl.exe' = 'perl'; 'usr\bin\diff.exe' = 'diffutils'
     'usr\bin\patch.exe' = 'patch'; 'usr\bin\tar.exe' = 'tar'; 'usr\bin\unzip.exe' = 'unzip'
-    'usr\bin\flock.exe' = 'util-linux'; 'usr\bin\curl.exe' = 'curl'
+    'usr\bin\curl.exe' = 'curl'
     'mingw64\bin\gcc.exe' = 'mingw-w64-x86_64-gcc'; 'mingw64\bin\python.exe' = 'mingw-w64-x86_64-python'
     'mingw64\bin\wixl.exe' = 'mingw-w64-x86_64-msitools'
 }

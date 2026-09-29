@@ -12,7 +12,7 @@ fn stage_packages(destination: &Path) -> PathBuf {
         .expect("Python is required to stage the installed SDK and CLI packages");
     assert!(
         output.status.success(),
-        "SDK and CLI packages must build and stage under their build lock: {}{}",
+        "SDK and CLI packages must build and stage: {}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -90,7 +90,7 @@ fn run(command: &mut Command) {
     );
 }
 
-/// Provisions the pinned DAP framing library in a locked, shared test environment.
+/// Provisions the pinned DAP framing library in a shared test environment.
 pub fn debugger_python() -> PathBuf {
     let root = super::repo_root();
     let output = Command::new(super::python())

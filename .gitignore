@@ -71,3 +71,8 @@ __pycache__/
 
 # ephemeral handoffs dir
 handoffs/
+
+# Worktree-owned build products and test runs.
+/.build/
+/.artifacts/
+/.test-runs/

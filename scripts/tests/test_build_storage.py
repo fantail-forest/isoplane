@@ -1,4 +1,4 @@
-"""Retention must bound owned output without deleting another run's files."""
+"""Worktree outputs remain reusable until explicit cleanup."""
 
 import importlib.util
 import os
@@ -23,35 +23,23 @@ class Retention(unittest.TestCase):
         self.root = Path(directory.name)
 
     def run_output(self, touched, size=4):
-        with storage.retained_run(self.root, max_bytes=100, now=touched) as (directory, _):
+        with storage.retained_run(self.root) as directory:
             (directory / "build.log").write_bytes(b"x" * size)
         return directory
 
-    def test_the_next_run_reclaims_expired_logs_automatically(self):
+    def test_starting_a_run_preserves_previous_diagnostics(self):
         old = self.run_output(1)
-        with storage.retained_run(self.root, max_age_seconds=10, now=12):
-            self.assertFalse(old.exists(), "starting a run must reclaim expired diagnostics")
+        with storage.retained_run(self.root):
+            self.assertTrue(old.exists(), "starting a run must preserve previous diagnostics")
 
-    def test_a_disabled_cache_preserves_reclaimable_output(self):
-        old = self.run_output(1)
-        (self.root / '.pruning-disabled').touch()
-        self.assertEqual(storage.prune(self.root, 0, 0, now=100), [],
-                         "disabled pruning must not select owned output for deletion")
-        self.assertTrue(old.exists(), "disabled pruning must preserve expired output")
 
-    def test_finishing_a_run_evicts_the_oldest_logs_to_meet_the_budget(self):
+    def test_finishing_a_run_preserves_previous_diagnostics(self):
         old = self.run_output(1)
-        with storage.retained_run(self.root, max_bytes=5, now=2) as (current, _):
+        with storage.retained_run(self.root) as current:
             (current / "build.log").write_bytes(b"1234")
-        self.assertFalse(old.exists(), "the previous run must be evicted when the new output exceeds the budget")
+        self.assertTrue(old.exists(), "finishing a run must preserve previous diagnostics")
         self.assertTrue(current.exists(), "the just-finished run must remain available for diagnosis")
 
-    def test_retention_protects_a_run_held_by_another_process(self):
-        with storage.retained_run(self.root, now=1) as (active, _):
-            (active / "output").write_bytes(b"active")
-            program = "import importlib.util,sys; s=importlib.util.spec_from_file_location('storage',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.prune(sys.argv[2],0,0,now=100)"
-            subprocess.run([sys.executable, "-c", program, str(Path(storage.__file__)), str(self.root)], check=True)
-            self.assertTrue(active.exists(), "a concurrent cleaner must preserve another process's live output")
 
     def test_unknown_directories_and_symlink_targets_are_never_deleted(self):
         unknown = self.root / "customer"
@@ -59,15 +47,10 @@ class Retention(unittest.TestCase):
         (unknown / "data").write_text("keep")
         link = self.root / "link"
         link.symlink_to(unknown, target_is_directory=True)
-        storage.prune(self.root, 0, 0, now=100)
+        storage.clean(self.root)
         self.assertTrue((unknown / "data").exists(), "retention must not adopt unowned directories")
         self.assertTrue(link.is_symlink(), "retention must not traverse or remove unowned links")
 
-    def test_released_abandoned_output_is_reclaimed(self):
-        program = "import importlib.util,sys,os; s=importlib.util.spec_from_file_location('storage',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); c=m.retained_run(sys.argv[2],now=1); d,_=c.__enter__(); (d/'output').write_bytes(b'abandoned'); os._exit(0)"
-        subprocess.run([sys.executable, "-c", program, str(Path(storage.__file__)), str(self.root)], check=True)
-        storage.prune(self.root, 0)
-        self.assertEqual(list(self.root.glob("run-*")), [], "an exited owner must not leave output permanently exempt from retention")
 
     def test_worktrees_reuse_verified_downloads_without_another_fetch(self):
         source = self.root / "upstream"
@@ -93,13 +76,12 @@ class Retention(unittest.TestCase):
         self.assertEqual(destination.read_bytes(), b"previous",
                          "failed acquisition must leave the prior consumer artifact intact")
 
-    def test_releasing_a_product_enforces_the_shared_budget(self):
-        with patch.object(storage, "PRODUCT_BYTES", 1):
+    def test_releasing_a_product_keeps_the_completed_build(self):
+        with patch.object(storage, "clean", side_effect=AssertionError("completion must not prune")):
             with storage.product("large-product", root=self.root) as entry:
                 (entry / "artifact").write_bytes(b"large")
-                storage.prune(self.root, 1)
                 self.assertTrue(entry.exists(), "shared product acquisition must protect live copies")
-            self.assertFalse(entry.exists(), "a released oversized product must not escape automatic retention")
+            self.assertTrue(entry.exists(), "a completed build must remain reusable")
 
     def test_successful_scratch_is_removed_automatically(self):
         with patch.object(storage, "diagnostics_root", return_value=self.root):
@@ -116,10 +98,10 @@ class Retention(unittest.TestCase):
             self.assertEqual((directory / "output").read_bytes(), b"failure",
                              "failed scratch must survive for diagnosis under automatic retention")
 
-    def test_a_finished_oversized_run_does_not_escape_the_budget(self):
-        with storage.retained_run(self.root, max_bytes=1) as (directory, _):
+    def test_a_finished_run_is_preserved_until_explicit_cleanup(self):
+        with storage.retained_run(self.root) as directory:
             (directory / "output").write_bytes(b"large")
-        self.assertFalse(directory.exists(), "even the newest inactive run must respect the disk budget")
+        self.assertTrue(directory.exists(), "a finished run must remain available until cleanup")
 
     def test_worktrees_reuse_immutable_products_and_verify_cached_bytes(self):
         produced = []
@@ -137,47 +119,19 @@ class Retention(unittest.TestCase):
             self.assertEqual(first.read_bytes(), b"compiled", "consumer modifications must not corrupt another worktree")
             cached = next((self.root / "shared").glob("*/0"))
             cached.write_bytes(b"corrupt")
-            storage.cached_files("runtime", [first], build)
-            self.assertEqual(len(produced), 2, "corrupt shared products must be rebuilt before reuse")
+            with self.assertRaises(ValueError, msg="corrupt publications must be rejected before reuse"):
+                storage.cached_files("runtime", [first], build)
 
-    @unittest.skipIf(sys.platform == "win32", "POSIX file descriptor inheritance")
-    def test_a_child_build_retains_the_lease_after_its_coordinator_releases_it(self):
-        with patch.object(storage, "PRODUCT_BYTES", 0):
-            child = None
-            try:
-                with storage.product("child-build", root=self.root) as entry:
-                    (entry / "output").write_bytes(b"active")
-                    child = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
-                                             stdin=subprocess.PIPE, **storage.subprocess_options())
-                self.assertTrue(entry.exists(), "a child still using build products must protect them after the parent releases")
-                child.communicate(timeout=10)
-                storage.prune(self.root, 0)
-                self.assertFalse(entry.exists(), "the child's exit must make its products reclaimable")
-            finally:
-                if child is not None and child.poll() is None:
-                    child.kill()
-                    child.communicate(timeout=10)
 
-    def test_concurrent_tool_readers_keep_the_installation_leased(self):
-        with storage.product("tools", root=self.root) as installed:
-            (installed / "tool").write_bytes(b"executable")
-        with patch.object(storage, "PRODUCT_BYTES", 0):
-            with storage.product("tools", root=self.root, read_only=True) as first:
-                program = "import importlib.util,sys; s=importlib.util.spec_from_file_location('storage',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\nwith m.product('tools',root=sys.argv[2],read_only=True) as directory: print(directory)"
-                second = subprocess.check_output([sys.executable, '-c', program, str(Path(storage.__file__)), str(self.root)],
-                                                 text=True, timeout=15).strip()
-                self.assertEqual(first, Path(second), "another development command must acquire tools while the first is still running")
-                self.assertTrue(first.exists(), "one command finishing must not evict another command's tools")
-            self.assertFalse(installed.exists(), "the final reader's exit must enforce the shared budget")
 
     def test_missing_tool_readers_do_not_create_installations(self):
         with storage.product("missing-tools", root=self.root, read_only=True) as directory:
             self.assertIsNone(directory, "missing tools must remain distinguishable from a completed installation")
-        self.assertEqual(list(self.root.glob("*/.lease")), [], "read-only lookup must not accumulate empty installations")
+        self.assertEqual(list(self.root.iterdir()), [], "read-only lookup must not accumulate empty installations")
 
     def test_dry_run_reports_reclaimable_entries_without_removing_them(self):
         old = self.run_output(1)
-        planned = storage.prune(self.root, 0, dry_run=True)
+        planned = storage.clean(self.root, dry_run=True)
         self.assertEqual([path for path, _ in planned], [old],
                          "dry run must report the same owned entries as cleanup")
         self.assertTrue((old / "build.log").exists(), "dry run must preserve all output bytes")
@@ -192,8 +146,8 @@ class Retention(unittest.TestCase):
                 self.fail("an unowned directory must not be leased")
         self.assertTrue((directory / "customer").exists(), "ownership rejection must preserve existing files")
 
-    def test_worktree_intermediates_are_isolated_and_automatically_reclaimed(self):
-        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'), patch.object(storage, 'PRODUCT_BYTES', 0):
+    def test_worktree_intermediates_are_isolated_and_retained(self):
+        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'):
             with storage.development(self.root / 'a', {}) as first:
                 entry = Path(first['ISOPLANE_BUILD_DIRECTORY'])
                 for name in ('target/debug', 'target/native-support', 'managed/obj', 'runtime-work/compiler'):
@@ -203,17 +157,17 @@ class Retention(unittest.TestCase):
                 with storage.development(self.root / 'b', first) as second:
                     self.assertNotEqual(first['CARGO_TARGET_DIR'], second['CARGO_TARGET_DIR'],
                                         'entering another worktree must not share mutable Cargo outputs')
-                    storage.prune(self.root / 'shared', 0)
+                    storage.clean(self.root / 'shared')
                     self.assertTrue(entry.exists(), 'another worktree must not evict active build intermediates')
                 self.assertTrue(entry.exists(), 'active work remains protected when another worktree finishes')
-            self.assertFalse(entry.exists(), 'finishing a command must enforce retention on all owned intermediates')
+            self.assertTrue(entry.exists(), 'finishing a command must preserve reusable intermediates')
 
     def test_explicit_cargo_paths_are_not_adopted_for_cleanup(self):
         target = self.root / 'caller-target'
         target.mkdir()
         (target / 'keep').touch()
         inherited = {'CARGO_TARGET_DIR': str(target), 'CARGO_BUILD_BUILD_DIR': str(target / 'build')}
-        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'), patch.object(storage, 'PRODUCT_BYTES', 0):
+        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'):
             with storage.development(self.root, inherited) as environment:
                 self.assertEqual(environment['CARGO_TARGET_DIR'], inherited['CARGO_TARGET_DIR'],
                                  'explicit Cargo paths must remain caller-managed')
@@ -225,7 +179,7 @@ class Retention(unittest.TestCase):
         shutil.copyfile(Path(__file__).parents[2] / 'Directory.Build.props', project / 'Directory.Build.props')
         (project / 'Probe.csproj').write_text('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>')
         (project / 'Probe.cs').write_text('public class Probe {}')
-        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'), patch.object(storage, 'PRODUCT_BYTES', 0):
+        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'):
             with storage.development(project, os.environ) as environment:
                 result = subprocess.run(['dotnet', 'build', '--disable-build-servers', '-p:NuGetAudit=false'],
                                         cwd=project, env=environment, capture_output=True, text=True, timeout=90)
@@ -234,7 +188,7 @@ class Retention(unittest.TestCase):
                 self.assertTrue(list((directory / 'managed/bin').rglob('Probe.dll')), 'the managed assembly must be inside retained storage')
                 self.assertTrue(list((directory / 'managed/obj').rglob('project.assets.json')), 'restore intermediates must be inside retained storage')
                 self.assertFalse((project / 'obj').exists(), 'repository builds must not leave unbounded per-project intermediates')
-            self.assertFalse(directory.exists(), 'completed managed builds must obey automatic retention')
+            self.assertTrue(directory.exists(), 'completed managed builds must remain reusable')
 
     def test_runtime_toolchain_extraction_uses_retained_work_storage(self):
         project = self.root / 'source'
@@ -250,7 +204,7 @@ class Retention(unittest.TestCase):
         (runtime / 'manifest.env').write_text('WASI_SDK_VERSION=test\nWASI_SDK_SHA256=' + storage.digest(archive)
                                             + '\nWASI_SDK_WINDOWS_SHA256=' + storage.digest(archive)
                                             + '\nWASI_SDK_WINDOWS_URL=unused\n')
-        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'), patch.object(storage, 'PRODUCT_BYTES', 0):
+        with patch.object(storage, 'shared_root', return_value=self.root / 'shared'):
             with storage.development(project, os.environ) as environment:
                 work = Path(environment['ISOPLANE_RUNTIME_WORK'])
                 (work / 'downloads').mkdir(parents=True)
@@ -262,7 +216,7 @@ class Retention(unittest.TestCase):
                 self.assertEqual((work / 'wasi-sdk/bin/clang').read_bytes(), b'compiler fixture',
                                  'the runtime builder must extract into owned work storage')
                 self.assertFalse((runtime / 'work').exists(), 'runtime intermediates must not accumulate under the worktree')
-            self.assertFalse(work.exists(), 'runtime build intermediates must obey automatic retention')
+            self.assertTrue(work.exists(), 'runtime intermediates must remain reusable')
 
     def test_managed_projects_with_the_same_name_keep_separate_outputs(self):
         project = self.root / 'source'

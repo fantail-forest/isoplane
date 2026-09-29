@@ -25,8 +25,8 @@ class NestedSetup(unittest.TestCase):
             cache = Path(temporary) / 'cache'
             name, wasm, rid = tools.identity(ROOT)
             sdk = json.loads((ROOT / 'global.json').read_text())['sdk']['version']
-            with patch.object(tools.storage, 'shared_root', return_value=cache):
-                with tools.storage.product(name) as directory:
+            with patch.object(tools.storage, 'tools_root', return_value=cache):
+                with tools.storage.product(name, root=cache) as directory:
                     for path, value in [(directory / 'bin/wasm-tools', 'wasm-tools ' + wasm),
                                         (directory / 'dotnet/dotnet', sdk),
                                         (directory / 'bin/rustup', '')]:
@@ -49,7 +49,7 @@ from pathlib import Path
 root, cache, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 sys.path.insert(0, str(root / 'scripts'))
 import dev_tools
-dev_tools.storage.shared_root = lambda: cache
+dev_tools.storage.tools_root = lambda: cache
 if mode == 'setup':
     dev_tools.setup(root)
 else:

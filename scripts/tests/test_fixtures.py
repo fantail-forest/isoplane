@@ -19,6 +19,7 @@ def stage_dotnet_fixture(root, build_script):
     scripts.mkdir()
     shutil.copy2(ROOT / "guests/build-dotnet.sh", guests / "build-dotnet.sh")
     shutil.copy2(TOOLS, scripts / TOOLS.name)
+    shutil.copy2(ROOT / "scripts/build_storage.py", scripts / "build_storage.py")
     (guests / "aspnet").mkdir()
     (root / "guest-sdks/dotnet").mkdir(parents=True)
     (root / "nuget.config").write_text("<configuration />")
@@ -51,23 +52,6 @@ def build_dotnet_fixture(root):
 
 
 class FixtureTests(unittest.TestCase):
-    def test_the_aspnet_builder_does_not_reacquire_its_parents_fixture_lock(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            guest = root / "guests/aspnet"
-            guest.mkdir(parents=True)
-            shutil.copy2(ROOT / "guests/aspnet/build.sh", guest / "build.sh")
-            sdk = root / "guest-sdks/dotnet"
-            sdk.mkdir(parents=True)
-            builder = sdk / "build-guest.sh"
-            builder.write_text("#!/bin/sh\nexit 0\n")
-            builder.chmod(0o755)
-            scripts = root / "scripts"
-            scripts.mkdir()
-            (scripts / "fixture-tools.py").write_text("raise SystemExit(23)\n")
-            environment = dict(os.environ, ISOPLANE_FIXTURE_LOCK=str(root / "guests/build-dotnet.sh"))
-            result = subprocess.run(["bash", str(guest / "build.sh")], env=environment)
-            self.assertEqual(result.returncode, 0, "a nested guest build must not wait on the lock held by its parent")
 
     def test_an_unknown_dotnet_fixture_is_rejected_before_building(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -135,8 +119,7 @@ class FixtureTests(unittest.TestCase):
                 "assert output.read_text() == 'published', 'the previous package vanished during its rebuild'\n"
                 "output.write_text('replacement')\n")
             dotnet.chmod(0o755)
-            environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
-                               ISOPLANE_FIXTURE_LOCK=str(packages / "build.sh"))
+            environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"])
             environment.pop("ISOPLANE_TEST_RUNTIME_FEED", None)
             result = subprocess.run(["bash", str(packages / "build.sh"), "--fixture", "alpha"],
                                     env=environment, capture_output=True, text=True)
@@ -162,31 +145,3 @@ class FixtureTests(unittest.TestCase):
             os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
             after = subprocess.check_output(["python3", str(TOOLS), "fingerprint", scratch], text=True)
             self.assertNotEqual(before, after, "editing source must invalidate its fixture despite preserved timestamps")
-
-    def test_the_build_lock_is_held_until_the_builder_exits(self):
-        import fcntl
-        with tempfile.TemporaryDirectory() as scratch:
-            lock = Path(scratch) / "build.lock"
-            script = Path(scratch) / "build.sh"
-            script.write_text('''python3 - "$1" <<'PROBE'
-import fcntl, sys
-with open(sys.argv[1], 'a') as handle:
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        pass
-    else:
-        raise AssertionError('another builder could take the lock during the build')
-PROBE
-''')
-            result = subprocess.run(["python3", str(TOOLS), "lock", str(lock), str(script), str(lock)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            with lock.open("a") as handle:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-    def test_a_failed_builder_returns_its_exit_status(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            script = Path(scratch) / "build.sh"
-            script.write_text("exit 23\n")
-            result = subprocess.run(["python3", str(TOOLS), "lock", str(Path(scratch) / "lock"), str(script)])
-            self.assertEqual(result.returncode, 23, "fixture helper concealed a failed build")

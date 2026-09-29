@@ -2,6 +2,7 @@
 """Run a local development command: scripts/dev [--container] [command ...]"""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 import sys
@@ -15,7 +16,7 @@ def development_environment(root, inherited, tools=None):
     sdk = tools / "dotnet" if tools is not None else None
     if tools is not None:
         paths.append(str(tools / "bin"))
-    if sdk is not None and (sdk / "dotnet").is_file():
+    if sdk is not None and (sdk / ("dotnet.exe" if os.name == "nt" else "dotnet")).is_file():
         paths.append(str(sdk))
         environment["DOTNET_ROOT"] = str(sdk)
     wasi = (Path(environment['ISOPLANE_RUNTIME_WORK']) / 'wasi-sdk'
@@ -43,15 +44,19 @@ def main():
     os.chdir(ROOT)
     import dev_tools
     name, _, _ = dev_tools.identity(ROOT)
-    with dev_tools.storage.product(name, read_only=True) as tools:
+    with dev_tools.storage.product(name, root=dev_tools.storage.tools_root(), read_only=True) as tools:
         if tools is not None and not (tools / "complete").is_file():
             raise SystemExit("Development tool installation is incomplete; run scripts/setup.")
         with dev_tools.storage.development(ROOT, os.environ) as environment:
             if tools is not None:
-                held = environment.get('ISOPLANE_DEV_TOOL_LEASES', '').splitlines()
-                environment['ISOPLANE_DEV_TOOL_LEASES'] = '\n'.join([*held, name])
-            return subprocess.call(args, env=development_environment(ROOT, environment, tools),
-                                   **dev_tools.storage.subprocess_options())
+                environment['ISOPLANE_DEV_TOOLS'] = str(tools)
+            environment = development_environment(ROOT, environment, tools)
+            if os.name == "nt" and args[0] == "bash":
+                bash = shutil.which("bash") or "C:/msys64/usr/bin/bash.exe"
+                environment.update(MSYSTEM="MINGW64", MSYS2_PATH_TYPE="inherit", CHERE_INVOKING="1")
+                args = [bash, "-lc", 'exec bash "$@"', "isoplane-fixture",
+                        *[arg.replace("\\", "/") for arg in args[1:]]]
+            return subprocess.call(args, env=environment)
 
 
 if __name__ == "__main__":

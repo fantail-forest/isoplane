@@ -2,33 +2,35 @@
 # Build the application-independent Mono runtime module or one application
 # package fixture: the package is the archive `isoplane bundle` writes.
 # Usage: guest-runtime/tests/packages/build.sh [--if-stale] --fixture runtime|alpha|beta|native|web|diagnostics
-# Serialised with the other C# guest builds: they share the SDK project's
-# intermediate files.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 TOOLS="$ROOT/scripts/fixture-tools.py"
-LOCK="$ROOT/guests/.build-dotnet.lock"
-if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$HERE/build.sh" ]; then
-  exec python3 "$TOOLS" lock "$LOCK" "$HERE/build.sh" "$@"
-fi
 
 IF_STALE=0
 FIXTURE=""
+FIXTURES=(runtime alpha beta native web diagnostics)
 while [ $# -gt 0 ]; do
   case "$1" in
     --if-stale) IF_STALE=1; shift ;;
     --fixture)
-      case "${2:-}" in
-        runtime|alpha|beta|native|web|diagnostics) FIXTURE="$2" ;;
-        *) echo "unknown package fixture: ${2:-} (expected runtime, alpha, beta, native, web or diagnostics)" >&2; exit 2 ;;
-      esac
+      for fixture in "${FIXTURES[@]}"; do
+        [ "$fixture" != "${2:-}" ] || FIXTURE="$fixture"
+      done
+      [ -n "$FIXTURE" ] || { echo "unknown package fixture: ${2:-} (expected ${FIXTURES[*]})" >&2; exit 2; }
       shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$FIXTURE" ] || { echo "missing --fixture runtime|alpha|beta|native|web|diagnostics" >&2; exit 2; }
+if [ -z "$FIXTURE" ]; then
+  flags=()
+  [ "$IF_STALE" = 0 ] || flags+=(--if-stale)
+  for fixture in "${FIXTURES[@]}"; do
+    "$HERE/build.sh" "${flags[@]}" --fixture "$fixture"
+  done
+  exit 0
+fi
 
 FEED="${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/guest-runtime/out/feed}"
 if [ -n "${ISOPLANE_TEST_RUNTIME_FEED:-}" ]; then
@@ -52,15 +54,14 @@ if [ "$FIXTURE" = runtime ]; then
     echo "==> shared Mono runtime is up to date"
     exit 0
   fi
-  # This build already holds the lock the runtime's own script takes.
   SHARED_OUTPUTS=()
   for output in "${OUTPUTS[@]}"; do SHARED_OUTPUTS+=(--output "$output"); done
-  ISOPLANE_FIXTURE_LOCK="$SDK/MonoRuntime/build.sh" python3 "$ROOT/scripts/build_storage.py" files \
+  python3 "$ROOT/scripts/build_storage.py" files \
     "mono-runtime:$INPUTS:$(git -C "$ROOT" rev-parse HEAD):$(dotnet --version)" \
-    "${SHARED_OUTPUTS[@]}" -- "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
+    --linux-only "${SHARED_OUTPUTS[@]}" -- "$SDK/MonoRuntime/build.sh" --output "$HERE/out/runtime"
 else
   # A package carries the identity of the runtime it is built against, and
-  # these packages run on the fixture runtime. This build already holds the lock.
+  # these packages run on the fixture runtime.
   "$HERE/build.sh" --if-stale --fixture runtime
   export ISOPLANE_RUNTIME_DIRECTORY="$HERE/out/runtime"
   OUT="$HERE/out/$FIXTURE"
@@ -71,6 +72,7 @@ else
     echo "==> package $FIXTURE is up to date"
     exit 0
   fi
+  python3 "$TOOLS" require-linux
   CLI="$(python3 "$TOOLS" isoplane-cli "$ROOT")"
   dotnet "$CLI" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
 fi

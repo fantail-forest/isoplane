@@ -160,7 +160,7 @@ def main():
     if args.output.exists() or (args.bundle and args.bundle.exists()) or (args.release and args.release.exists()):
         parser.error('output paths must not already exist; use a new release version or destination')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='isoplane-msi-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='isoplane-msi-', dir=args.output.parent) as temporary:
         authoring = Path(temporary) / 'sdk.wxs'
         author(args.toolchain, args.version, authoring)
         subprocess.run(['wixl', '-a', 'x64', '-o', str(args.output.resolve()), str(authoring)], check=True)

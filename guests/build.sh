@@ -12,9 +12,6 @@ IF_STALE=0
 [ "${1:-}" = "--if-stale" ] && IF_STALE=1
 
 TOOLS="$ROOT/../scripts/fixture-tools.py"
-if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$ROOT/build.sh" ]; then
-  exec python3 "$TOOLS" lock "$ROOT/.build.lock" "$ROOT/build.sh" "$@"
-fi
 
 INPUTS=$(python3 "$TOOLS" fingerprint "$ROOT" "$ROOT/../guest-sdks/rust" "$ROOT/../crates/isoplane-abi" "$TOOLS" "$ROOT/build.sh")
 
@@ -36,6 +33,7 @@ PROFILE=release
 # wait on its parent forever.
 TDIR="${CARGO_TARGET_DIR:+${CARGO_TARGET_DIR%/}/guests}"
 TDIR="${TDIR:-$ROOT/target}"
+TDIR="${TDIR//\\//}"
 export CARGO_TARGET_DIR="$TDIR"
 export CARGO_BUILD_BUILD_DIR="$TDIR"
 

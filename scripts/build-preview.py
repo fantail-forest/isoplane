@@ -42,6 +42,38 @@ PROJECTS = {
 }
 
 
+PORTABLE_PACKAGES = {'Isoplane.Sdk', 'Isoplane.AspNetCore', 'Isoplane.Templates'}
+
+
+def pack_project(name, version, revision, packages, produce, portable=None):
+    """Reuse Linux-built portable packages; build platform packages on their host."""
+    if name in PORTABLE_PACKAGES and portable is not None:
+        receipt = json.loads((portable / 'packages.json').read_text())
+        source = portable / f'{name}.{version}.nupkg'
+        if receipt['sourceRevision'] != revision or sha(source) != receipt['files'][source.name]:
+            raise ValueError(f'portable package identity or content differs: {source}')
+        shutil.copy2(source, packages / source.name)
+    elif name in PORTABLE_PACKAGES:
+        storage = load(ROOT / 'scripts/build_storage.py')
+        storage.cached_files(f'release-package:{revision}:{version}:{name}',
+                             [packages / f'{name}.{version}.nupkg'], produce, linux_only=True)
+    else:
+        produce()
+
+
+def shared_runtime_archive(source, cache, revision, runtime_output=None):
+    """Publish on Linux or copy a verified runtime archive into a consumer workspace."""
+    storage = load(ROOT / 'scripts/build_storage.py')
+    archive = cache / 'shared-runtime.tgz'
+    def produce():
+        if runtime_output is None:
+            raise RuntimeError('Build the shared runtime on Linux in this worktree first.')
+        archive.unlink(missing_ok=True)
+        load(source / 'scripts/runtime-artifact.py').export_artifact(runtime_output, archive)
+    storage.cached_files(f'release-runtime-feed:{revision}', [archive], produce, linux_only=True)
+    return str(archive), sha(archive)
+
+
 def load(path):
     if path.name == "build_storage.py" and "build_storage" in sys.modules:
         return sys.modules["build_storage"]
@@ -65,16 +97,15 @@ def output(command, cwd=ROOT):
 def run(command, cwd, log, env=None):
     print(f'{log.stem}: {log}', flush=True)
     command = [str(arg) for arg in command]
-    env = dict(os.environ if env is None else env)
-    # Release source exports already live under the enclosing workspace lease.
+    env = load(ROOT / "scripts/build_storage.py").temporary_environment(
+        log.parent / "tmp", os.environ if env is None else env)
     env.update(ISOPLANE_RUNTIME_SOURCE=str(Path(cwd) / 'guest-runtime'),
                ISOPLANE_RUNTIME_WORK=str(Path(cwd) / 'guest-runtime/work'))
     if env is not None:
         command[0] = shutil.which(command[0], path=env.get('PATH')) or command[0]
     with log.open('w') as stream:
         subprocess.run(command, cwd=cwd, env=env,
-                       stdout=stream, stderr=subprocess.STDOUT, check=True,
-                       **load(ROOT / "scripts/build_storage.py").subprocess_options())
+                       stdout=stream, stderr=subprocess.STDOUT, check=True)
 
 
 def source_revision(root):
@@ -344,9 +375,13 @@ def build(root, cache, releases, logs, args):
         return
     candidates = [Path(line[9:]) for line in output(['git', 'worktree', 'list', '--porcelain'], root).splitlines()
                   if line.startswith('worktree ')]
+    if platform.system() == 'Darwin' and not args.runtime_artifact:
+        args.runtime_artifact, args.runtime_sha256 = shared_runtime_archive(source, cache, revision)
     runtime_output = (load(source / 'scripts/macos-build.py').prepare(
         load(source / 'scripts/build-preview.py'), source, cache, logs, args) if platform.system() == 'Darwin'
         else prepare_runtime(source, candidates, logs))
+    if platform.system() == 'Linux':
+        shared_runtime_archive(source, cache, revision, runtime_output)
     sdk, sdk_identity = prepare_sdk(source, cache, logs, RUNTIME_IDENTIFIER)
     environment = os.environ.copy()
     environment.update(DOTNET_ROOT=str(sdk), DOTNET_CLI_HOME=str(cache / 'dotnet-home'),
@@ -363,11 +398,15 @@ def build(root, cache, releases, logs, args):
         raise ValueError('installed wasm-tools version differs from the pin')
     runtime_modules = args.runtime_modules.resolve() if args.runtime_modules else cache / 'runtime-modules'
     if not args.runtime_modules:
-        if runtime_modules.exists():
-            shutil.rmtree(runtime_modules)
-        run(['bash', source / 'guest-sdks/dotnet/MonoRuntime/build.sh', '--output', runtime_modules,
-             '--source-revision', revision], source,
-            logs / 'shared-runtime.log', dict(environment, PATH=str(wasm_tools.parent) + os.pathsep + environment['PATH']))
+        def produce_modules():
+            if runtime_modules.exists():
+                shutil.rmtree(runtime_modules)
+            run(['bash', source / 'guest-sdks/dotnet/MonoRuntime/build.sh', '--output', runtime_modules,
+                 '--source-revision', revision], source, logs / 'shared-runtime.log',
+                dict(environment, PATH=str(wasm_tools.parent) + os.pathsep + environment['PATH']))
+        load(ROOT / 'scripts/build_storage.py').cached_files(
+            f'release-runtime-modules:{revision}:{version}',
+            load(ROOT / 'scripts/shared-runtime-modules.py').files(runtime_modules), produce_modules, linux_only=True)
     load(source / 'scripts/shared-runtime-modules.py').verify(runtime_modules, version, revision, runtime_output / 'feed')
     packages = cache / 'packages'
     if packages.exists():
@@ -375,11 +414,11 @@ def build(root, cache, releases, logs, args):
     packages.mkdir()
     for name, project in PROJECTS.items():
         # The version comes from Directory.Build.props alone; only the revision is supplied here.
-        run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
+        pack_project(name, version, revision, packages, lambda: run([sdk / 'dotnet', 'pack', source / project, '-c', 'Release', '-o', packages,
              f'-p:RepositoryCommit={revision}', f'-p:SourceRevisionId={revision}',
              '-p:EnableSourceControlManagerQueries=false', '-p:ContinuousIntegrationBuild=true',
              f'-p:IsoplaneNativePath={native_library}', f'-p:IsoplaneRuntimeModuleDirectory={runtime_modules}'],
-            source, logs / f'pack-{name}.log', environment)
+            source, logs / f'pack-{name}.log', environment), args.managed_packages)
     verify_packages(packages, version, revision, native_library)
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     wasm_sources = list((cargo_home / 'registry/src').glob(f'*/wasm-tools-{wasm_version}/Cargo.toml'))
@@ -425,17 +464,19 @@ def main():
                         help='where the release directory, archive and checksum are written')
     parser.add_argument('--runtime-artifact', help='verified shared runtime archive for a macOS builder')
     parser.add_argument('--runtime-sha256', help='SHA256 of --runtime-artifact')
+    parser.add_argument('--managed-packages', type=Path, help='verified portable packages exported by the Linux builder')
     parser.add_argument('--runtime-modules', type=Path, help='reuse shared WASM modules and their build receipt from this SDK revision')
     parser.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()
     if platform.system() == 'Darwin':
         if RUNTIME_IDENTIFIER not in ('osx-arm64', 'osx-x64'):
             parser.error('macOS builds require an ARM64 or x64 host')
-        if not args.runtime_artifact or not args.runtime_sha256:
-            parser.error('macOS builds require --runtime-artifact, --runtime-sha256')
-        if not re.fullmatch('[a-fA-F0-9]{64}', args.runtime_sha256):
+        if bool(args.runtime_artifact) != bool(args.runtime_sha256):
+            parser.error('--runtime-artifact and --runtime-sha256 must be supplied together')
+        if args.runtime_sha256 and not re.fullmatch('[a-fA-F0-9]{64}', args.runtime_sha256):
             parser.error('--runtime-sha256 must contain 64 hexadecimal digits')
-        args.runtime_sha256 = args.runtime_sha256.lower()
+        if args.runtime_sha256:
+            args.runtime_sha256 = args.runtime_sha256.lower()
     elif platform.system() != 'Linux' or platform.machine() != 'x86_64':
         parser.error('build-preview requires Linux x64 or macOS')
     elif args.runtime_artifact or args.runtime_sha256:
@@ -449,12 +490,10 @@ def main():
         logs = cache / 'logs'
         logs.mkdir(parents=True, exist_ok=True)
         releases.mkdir(parents=True, exist_ok=True)
-        with (cache / '.lock').open('w') as lock:
-            load(ROOT / 'scripts/fixture-tools.py').lock_file(lock)
-            try:
-                build(ROOT, cache, releases, logs, args)
-            except (ValueError, OSError, subprocess.CalledProcessError) as error:
-                raise SystemExit(f'preview build failed: {error}; see {logs}') from error
+        try:
+            build(ROOT, cache, releases, logs, args)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            raise SystemExit(f'preview build failed: {error}; see {logs}') from error
 
 
 if __name__ == '__main__':

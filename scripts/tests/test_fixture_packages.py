@@ -31,6 +31,14 @@ class PackageFeed(unittest.TestCase):
         for name in ("Cargo.toml", "Cargo.lock", "Directory.Build.props", "global.json",
                      "nuget.config", "scripts/fixture-tools.py", "scripts/fixture-packages.py"):
             (self.root / name).write_text("input")
+        (self.root / 'Directory.Build.props').write_text(
+            '<Project><PropertyGroup><Version>1.0.0</Version></PropertyGroup></Project>')
+        shared = patch.object(packages.storage, 'shared_root', return_value=self.root / 'shared')
+        shared.start()
+        self.addCleanup(shared.stop)
+        producer = patch.object(packages.storage.platform, 'system', return_value='Linux')
+        producer.start()
+        self.addCleanup(producer.stop)
         toolchain = patch.object(packages.subprocess, "check_output", return_value=b"toolchain")
         toolchain.start()
         self.addCleanup(toolchain.stop)
@@ -48,7 +56,7 @@ class PackageFeed(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0)
         output = Path(command[command.index("-o") + 1])
         output.mkdir(parents=True, exist_ok=True)
-        (output / (Path(command[2]).stem + ".nupkg")).write_bytes(b"package")
+        (output / (Path(command[2]).stem + ".1.0.0.nupkg")).write_bytes(b"package")
         return subprocess.CompletedProcess(command, 0)
 
     def test_unchanged_consumers_reuse_packages_and_corruption_rebuilds_them(self):

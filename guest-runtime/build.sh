@@ -38,8 +38,6 @@ ICU_MONO_NATIVE="$OUT/icu/mono/runtimes/wasi-wasm/native"
 DOWNLOADS="$WORK/downloads"
 LOGS="$WORK/logs"
 mkdir -p "$DOWNLOADS" "$LOGS" "$OUT"
-exec 9>"$WORK/.build.lock"
-flock 9
 
 fetch() {
   python3 "$HERE/../scripts/build_storage.py" "$1" "$3" "$2"

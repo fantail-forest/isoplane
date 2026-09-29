@@ -11,7 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 MATERIAL_PORT=47001
 DENIED_PORT=47002
-OUT="$(mktemp -d)"
+mkdir -p "$ROOT/.test-runs/material"
+OUT="$(mktemp -d "$ROOT/.test-runs/material/run-XXXXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
 cd "$OUT"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out root.key 2>/dev/null
 openssl req -x509 -new -key root.key -days 36500 -subj "/CN=Isoplane Acceptance Root" -sha256 -out root.pem \

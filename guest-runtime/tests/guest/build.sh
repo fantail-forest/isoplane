@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 # Publish the runtime acceptance guest for Mono.
 # Usage: guest-runtime/tests/guest/build.sh [--if-stale]
-# Serialised with the other C# guest builds: they share the SDK project's
-# intermediate files.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 TOOLS="$ROOT/scripts/fixture-tools.py"
-LOCK="$ROOT/guests/.build-dotnet.lock"
-if [ "${ISOPLANE_FIXTURE_LOCK:-}" != "$HERE/build.sh" ]; then
-  exec python3 "$TOOLS" lock "$LOCK" "$HERE/build.sh" "$@"
-fi
 
 IF_STALE=0
 RUNTIME=mono
@@ -48,6 +42,7 @@ if [ "$IF_STALE" = 1 ] && [ -f "$OUT.runtime" ] \
   echo "==> acceptance guest ($RUNTIME) is up to date"
   exit 0
 fi
+python3 "$TOOLS" require-linux
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the acceptance guest cannot be built." >&2; exit 1; }
 
 # Symbols stay in the interpreter's module so a trap names its frames.

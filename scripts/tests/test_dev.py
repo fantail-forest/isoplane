@@ -13,7 +13,7 @@ spec.loader.exec_module(dev)
 
 
 class DevelopmentEnvironmentTests(unittest.TestCase):
-    def test_finishing_a_development_command_reclaims_its_oversized_intermediates(self):
+    def test_finishing_a_development_command_preserves_worktree_intermediates(self):
         with tempfile.TemporaryDirectory() as temporary:
             shared = Path(temporary)
             launcher = """import sys,runpy
@@ -21,8 +21,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[2]).parent))
 import dev_tools
 shared_path = Path(sys.argv[1])
-dev_tools.storage.shared_root = lambda: shared_path
-dev_tools.storage.PRODUCT_BYTES = 0
+dev_tools.storage.build_root = lambda root=None: shared_path / ".build"
+dev_tools.storage.tools_root = lambda: shared_path / "tools"
 sys.argv = sys.argv[2:]
 runpy.run_path(sys.argv[0], run_name='__main__')
 """
@@ -35,7 +35,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
             self.assertEqual(result.returncode, 0, 'the development command must complete: ' + result.stderr)
             target = Path(result.stdout.strip())
             self.assertTrue(target.is_relative_to(shared), 'default Cargo output must belong to managed storage')
-            self.assertFalse(target.exists(), 'command completion must trigger retention without a manual cleaner')
+            self.assertTrue(target.exists(), 'command completion must preserve reusable build output')
 
     def test_repository_tools_are_selected_without_changing_the_parent_environment(self):
         with tempfile.TemporaryDirectory() as temporary:

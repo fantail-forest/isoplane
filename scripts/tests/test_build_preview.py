@@ -44,7 +44,7 @@ class SourceExportTests(unittest.TestCase):
             root = directory / 'repository'
             root.mkdir()
             (root / 'src').mkdir()
-            (root / 'Cargo.toml').write_text('[package]\nname="revision_probe"\nversion="0.1.0"\nedition="2021"\n')
+            (root / 'Cargo.toml').write_text('[package]\nname="revision_probe"\nversion="0.1.0"\nedition="2021"\n[workspace]\n')
             subprocess.run(['git', 'init', '-q', root], check=True)
             revisions = []
             for value, date in [('older', '2001-01-01T00:00:00Z'), ('newer', '2002-01-01T00:00:00Z')]:
