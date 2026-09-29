@@ -68,14 +68,14 @@ stage_acquire() {
 stage_toolchain() {
   echo "==> toolchain"
   # The marker is what the runtime build checks before provisioning its own copy.
-  if [ -f "$WASI_SDK/VERSION" ] && [ "$(head -n 1 "$WASI_SDK/VERSION")" = "$WASI_SDK_VERSION" ]; then
+  if [ -f "$WASI_SDK/VERSION" ] && [ "$(head -n 1 "$WASI_SDK/VERSION" | tr -d '\r')" = "$WASI_SDK_VERSION" ]; then
     echo "    wasi-sdk $WASI_SDK_VERSION already unpacked"
     return
   fi
   verify_archive "$WASI_SDK_SHA256" "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
   rm -rf "$WASI_SDK"
   mkdir -p "$WASI_SDK"
-  tar --strip-components=1 -xzf "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz" -C "$WASI_SDK"
+  tar --strip-components=1 -xzf - -C "$WASI_SDK" < "$DOWNLOADS/wasi-sdk-$WASI_SDK_VERSION-x86_64-$BUILD_HOST.tar.gz"
   echo "$WASI_SDK_VERSION" > "$WASI_SDK/wasi-sdk-version.txt"
   touch "$WASI_SDK/WASI-SDK-VERSION-$WASI_SDK_VERSION"
 }
