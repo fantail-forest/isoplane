@@ -83,4 +83,7 @@ def exercise(source, send, response, until):
         hits = set(stopped.get("hitBreakpointIds", []))
         assert hits and hits <= pending, "the stop must identify the expected managed storage location"
         pending -= hits
+        if not pending:
+            response(send("setDataBreakpoints", {"breakpoints": []}))
+            response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": []}))
         response(send("continue", {"threadId": stopped["threadId"]}))

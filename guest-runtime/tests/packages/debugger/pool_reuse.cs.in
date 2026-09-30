@@ -1,0 +1,35 @@
+    private static async Task VerifyPoolReuse()
+    {
+        ValueTask<int> first = ReusedOperation(false);
+        object box = OperationBox(first);
+        if (await first != 7) throw new InvalidOperationException("The pooled operation must return its result.");
+        EnsureTrackingReleased(box);
+
+        ValueTask<int> failed = ReusedOperation(true);
+        if (!ReferenceEquals(box, OperationBox(failed))) throw new InvalidOperationException("The consumed operation must return its box to the pool.");
+        try
+        {
+            await failed;
+            throw new InvalidOperationException("The pooled operation must propagate its failure.");
+        }
+        catch (ArgumentException error) when (error.Message == "pooled failure") { }
+        EnsureTrackingReleased(box);
+
+        ValueTask<int> reused = ReusedOperation(false);
+        if (!ReferenceEquals(box, OperationBox(reused))) throw new InvalidOperationException("A failed operation must return its box to the pool.");
+        if (await reused != 7) throw new InvalidOperationException("A reused operation must retain its result.");
+        EnsureTrackingReleased(box);
+    }
+
+    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]
+    private static async ValueTask<int> ReusedOperation(bool fail)
+    {
+        await Task.Yield();
+        if (fail) throw new ArgumentException("pooled failure");
+        return 7;
+    }
+
+    private static object OperationBox(ValueTask<int> operation) =>
+        (typeof(ValueTask<int>).GetField("_obj", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("The value task backing field is missing.")).GetValue(operation)
+            ?? throw new InvalidOperationException("An incomplete pooled operation must have a backing box.");

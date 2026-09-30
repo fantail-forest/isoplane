@@ -23,8 +23,27 @@ composed = replace_once(normal,
 composed = replace_once(composed,
     'Task delay = Task.Delay(100);\n        if (delay.IsCompleted) throw new InvalidOperationException("the host timer must be pending before await");\n        await delay;',
     "await new DebugYield();",
-) + (here / "awaiter.cs.in").read_text(encoding="utf-8")
-for route, namespace, body in [("async-stack", "Async", normal), ("async-composed", "Composed", composed)]:
+) + (here / "awaiter.cs.in").read_text(encoding="utf-8") + (here / "tracking.cs.in").read_text(encoding="utf-8")
+value_task = normal.replace("async Task<int>", "async ValueTask<int>")
+def pool(body):
+    body = body.replace("async Task<int>", "async ValueTask<int>")
+    body = body.replace("    private static async ValueTask<int>",
+        "    [System.Runtime.CompilerServices.AsyncMethodBuilder(typeof(System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder<>))]\n"
+        "    private static async ValueTask<int>")
+    body = replace_once(body, "        return (result + seed - 21).ToString();",
+                        "        await VerifyPoolReuse();\n        return (result + seed - 21).ToString();")
+    return body + (here / "pool_reuse.cs.in").read_text(encoding="utf-8")
+
+
+pooled = pool(normal) + (here / "tracking.cs.in").read_text(encoding="utf-8")
+pooled_composed = pool(replace_once(composed,
+    "Task<int> child = Inner(outer, outerSample, outerNumbers);",
+    "Task<int> child = Inner(outer, outerSample, outerNumbers).AsTask();"))
+for route, namespace, body in [
+    ("async-stack", "Async", normal), ("async-composed", "Composed", composed),
+    ("async-valuetask", "ValueTasks", value_task), ("async-pooled", "Pooled", pooled),
+    ("async-pooled-composed", "PooledComposed", pooled_composed),
+]:
     source = ("using System;\nusing System.Threading.Tasks;\nusing Microsoft.AspNetCore.Builder;\n\n"
               f"namespace Debugger.{namespace};\n\ninternal static class Application\n{{\n"
               f'    internal static void Map(WebApplication app) => app.MapGet("/{route}", Handle);\n\n'

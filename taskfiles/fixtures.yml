@@ -292,6 +292,9 @@ tasks:
     generates:
       - .build/clr-anycpu/debugger-sources/async-stack.cs
       - .build/clr-anycpu/debugger-sources/async-composed.cs
+      - .build/clr-anycpu/debugger-sources/async-valuetask.cs
+      - .build/clr-anycpu/debugger-sources/async-pooled.cs
+      - .build/clr-anycpu/debugger-sources/async-pooled-composed.cs
     cmds:
       - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
 

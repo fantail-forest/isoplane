@@ -379,6 +379,36 @@ fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
 }
 
 #[test]
+fn value_task_async_callers_preserve_saved_values_and_watchpoints() {
+    debugger::prepared_acceptance("async-valuetask");
+}
+
+#[test]
+fn optimized_value_task_async_callers_preserve_saved_values_and_watchpoints() {
+    debugger::prepared_acceptance("async-valuetask-optimized");
+}
+
+#[test]
+fn pooled_value_task_async_callers_preserve_saved_values_and_watchpoints() {
+    debugger::prepared_acceptance("async-pooled");
+}
+
+#[test]
+fn optimized_pooled_value_task_async_callers_preserve_saved_values_and_watchpoints() {
+    debugger::prepared_acceptance("async-pooled-optimized");
+}
+
+#[test]
+fn pooled_value_task_combinators_keep_callers_and_release_reused_state() {
+    debugger::prepared_acceptance("async-pooled-composed");
+}
+
+#[test]
+fn optimized_pooled_value_task_combinators_keep_callers_and_release_reused_state() {
+    debugger::prepared_acceptance("async-pooled-composed-optimized");
+}
+
+#[test]
 fn interpreted_debugging_reconstructs_suspended_async_callers() {
     debugger::prepared_acceptance("async-stack");
 }

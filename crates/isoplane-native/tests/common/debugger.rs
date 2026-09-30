@@ -90,6 +90,9 @@ pub fn prepared_acceptance(mode: &str) {
         "watchpoint-steps" => "watchpoints",
         "async-optimized" => "async-stack",
         "async-composed-optimized" => "async-composed",
+        "async-valuetask-optimized" => "async-valuetask",
+        "async-pooled-optimized" => "async-pooled",
+        "async-pooled-composed-optimized" => "async-pooled-composed",
         other => other,
     };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

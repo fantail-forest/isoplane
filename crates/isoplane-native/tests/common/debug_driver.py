@@ -38,7 +38,7 @@ if mode == "protocol":
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
 scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "watchpoint-steps": debug_watchpoint_steps, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
-if mode in ("async-composed", "async-composed-optimized"):
+if mode.startswith("async-"):
     scenario = debug_async_stack
 adapter_command = ["dotnet", launcher] if Path(launcher).suffix == ".dll" else [launcher]
 adapter = subprocess.Popen([*adapter_command, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
