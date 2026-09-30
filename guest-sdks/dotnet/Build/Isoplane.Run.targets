@@ -3,8 +3,10 @@
   <Target Name="ComputeRunArguments">
     <PropertyGroup>
       <RunCommand>isoplane</RunCommand>
-      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-watch</RunArguments>
-      <RunArguments Condition="'$(IsoplaneDebug)' == 'true'">dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --debug --no-watch</RunArguments>
+      <RunArguments>dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --no-watch --no-build</RunArguments>
+      <RunArguments Condition="'$(IsoplaneDebug)' == 'true'">dev --project &quot;$(MSBuildProjectDirectory)&quot; --configuration &quot;$(Configuration)&quot; --debug --no-watch --no-build</RunArguments>
+      <RunCommand Condition="'$(ISOPLANE_CLI_ASSEMBLY)' != ''">dotnet</RunCommand>
+      <RunArguments Condition="'$(ISOPLANE_CLI_ASSEMBLY)' != ''">&quot;$(ISOPLANE_CLI_ASSEMBLY)&quot; $(RunArguments)</RunArguments>
       <RunWorkingDirectory>$(MSBuildProjectDirectory)</RunWorkingDirectory>
     </PropertyGroup>
   </Target>

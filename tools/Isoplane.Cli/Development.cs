@@ -103,7 +103,7 @@ internal static class Development
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(package)!);
-                runtime = (await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package), cancellation)).Module;
+                runtime = (await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation)).Module;
                 return 0;
             }
             catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)

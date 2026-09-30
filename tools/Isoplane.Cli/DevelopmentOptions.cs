@@ -1,10 +1,11 @@
 namespace Isoplane.Cli;
 
-internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, bool Debug, string Configuration = "Debug")
+internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, bool Debug, string Configuration = "Debug", bool NoBuild = false)
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
         var configuration = "Debug";
+        var noBuild = false;
         var directory = Environment.CurrentDirectory;
         ushort? port = null;
         var watch = true;
@@ -36,6 +37,9 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                 case "--shutdown-on-stdin-close":
                     shutdownOnInputClose = true;
                     break;
+                case "--no-build":
+                    noBuild = true;
+                    break;
                 case "--no-watch":
                     watch = false;
                     break;
@@ -43,6 +47,8 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                     throw new ArgumentException($"Invalid or incomplete option '{arguments[index]}'. Run isoplane --help.");
             }
         }
+        if (noBuild && watch)
+            throw new ArgumentException("--no-build requires --no-watch; compile changes explicitly before running again.");
         if (debug && watch)
             throw new ArgumentException("--debug requires --no-watch; each debug session handles one request.");
         if (!System.IO.Directory.Exists(directory))
@@ -51,6 +57,6 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException($"No isoplane.toml in {directory}; create a project with dotnet new isoplane-web.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
-        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration);
+        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild);
     }
 }

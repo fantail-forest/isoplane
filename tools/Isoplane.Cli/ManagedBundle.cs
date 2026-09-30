@@ -5,7 +5,7 @@ using Isoplane.Build;
 
 namespace Isoplane.Cli;
 
-internal sealed record BundleOptions(string Directory, string Configuration, string Output)
+internal sealed record BundleOptions(string Directory, string Configuration, string Output, bool NoBuild = false)
 {
     internal static BundleOptions Parse(string[] arguments)
     {
@@ -62,12 +62,17 @@ internal static class ManagedBundle
         try
         {
             var metadata = Path.Combine(temporary.FullName, "inputs.json");
-            var exit = await Processes.RunAsync("dotnet", ["msbuild", projects[0], "-restore", "-target:IsoplaneManagedBundle",
+            List<string> arguments = ["msbuild", projects[0], "-target:IsoplaneManagedBundle",
                 "-nodeReuse:false", "-property:UseSharedCompilation=false",
                 "-property:IsoplaneManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
                 "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory",
                 "-getItem:IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference",
-                "-getResultOutputFile:" + metadata, "-nologo"], options.Directory, cancellation, redirectOutput: true);
+                "-getResultOutputFile:" + metadata, "-nologo"];
+            if (options.NoBuild)
+                arguments.AddRange(["-property:NoBuild=true", "-property:BuildProjectReferences=false"]);
+            else
+                arguments.Add("-restore");
+            var exit = await Processes.RunAsync("dotnet", arguments.ToArray(), options.Directory, cancellation, redirectOutput: true);
             if (exit != 0) throw new InvalidOperationException($"Managed application compilation failed (exit {exit}); resolve the build diagnostics before submitting.");
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(metadata, cancellation));
             await WriteAsync(document.RootElement, options.Output, cancellation);

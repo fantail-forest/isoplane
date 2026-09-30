@@ -107,7 +107,7 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
             properties["Properties"]["RuntimeIdentifier"], "",
             "an application package must not require a native runtime toolchain"
         );
-        let mut running = start_dotnet(&app, &cli, configuration, false);
+        let mut running = start_dotnet(&app, &cli, configuration, false, false);
         let response = reqwest::get(&running.url)
             .await
             .expect("the published sandbox must accept HTTP");
@@ -130,9 +130,14 @@ async fn an_unchanged_interpreted_run_reuses_its_prepared_template() {
     let directory = tempfile::tempdir().expect("isolate the incremental installed project journey");
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut first = start_dotnet(&app, &cli, "Debug", false);
+    let mut first = start_dotnet(&app, &cli, "Debug", false, false);
     first.stop();
-    let mut second = start_dotnet(&app, &cli, "Debug", false);
+    std::fs::write(
+        app.join("Application.cs"),
+        "invalid C# that must not be compiled",
+    )
+    .expect("change source after building the application");
+    let mut second = start_dotnet(&app, &cli, "Debug", false, true);
     let diagnostics = second.diagnostics();
     // Linux prepares a package over a published runtime baseline; other
     // platforms reuse the whole initialized module.
@@ -169,6 +174,7 @@ fn start_dotnet(
     cli: &std::path::Path,
     configuration: &str,
     watch: bool,
+    no_build: bool,
 ) -> common::Dev {
     let mut command = Command::new("dotnet");
     let mut paths = vec![cli
@@ -181,9 +187,12 @@ fn start_dotnet(
     if watch {
         command.args(["watch", "--non-interactive", "--no-hot-reload"]);
     }
+    command.arg("run");
+    if no_build {
+        command.arg("--no-build");
+    }
     command
         .args([
-            "run",
             "--no-launch-profile",
             "--configuration",
             configuration,
@@ -213,7 +222,7 @@ async fn dotnet_watch_rebuilds_the_guest_after_a_compilation_error_is_repaired()
     let directory = tempfile::tempdir().expect("isolate the installed watch workflow");
     let app = isoplane_fixtures::aspnet_project(directory.path());
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut running = start_dotnet(&app, &cli, "Debug", true);
+    let mut running = start_dotnet(&app, &cli, "Debug", true, false);
     let source = app.join("Application.cs");
     let original = std::fs::read_to_string(&source).expect("read the generated application");
     std::fs::write(&source, "this is not valid C#").expect("introduce a compile failure");

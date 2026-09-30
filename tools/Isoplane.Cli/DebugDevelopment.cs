@@ -39,7 +39,7 @@ internal static class DebugDevelopment
     {
         var package = Path.Combine(session, "application.tar");
         SharedRuntime runtime;
-        try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package), cancellation); }
+        try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation); }
         catch (InvalidOperationException error)
         {
             Console.Error.WriteLine($"isoplane: package build failed: {error.Message}");

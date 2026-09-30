@@ -14,7 +14,12 @@
       <IsoplaneRuntimeDirectory Condition="'$(IsoplaneRuntimeDirectory)' == '' AND '$(_IsoplaneSdkLibrary)' != ''">$([System.IO.Path]::GetFullPath('$(_IsoplaneSdkLibrary)../../tools/runtime/'))</IsoplaneRuntimeDirectory>
     </PropertyGroup>
   </Target>
-  <Target Name="IsoplaneManagedBundle" DependsOnTargets="Build;IsoplaneResolveManagedPlatform">
+  <PropertyGroup>
+    <IsoplaneBundlePreparation Condition="'$(NoBuild)' != 'true'">Build</IsoplaneBundlePreparation>
+    <IsoplaneBundlePreparation Condition="'$(NoBuild)' == 'true'">ResolveReferences;GetCopyToOutputDirectoryItems</IsoplaneBundlePreparation>
+  </PropertyGroup>
+  <Target Name="IsoplaneManagedBundle" DependsOnTargets="$(IsoplaneBundlePreparation);IsoplaneResolveManagedPlatform">
+    <Error Condition="!Exists('$(TargetPath)')" Text="The application has not been built for $(Configuration). Run dotnet build -c $(Configuration) first." />
     <Error Condition="'$(IsoplaneManagedBundleBuild)' != 'true'" Text="Use isoplane bundle to build managed deployment input." />
     <Error Condition="'$(IsoplaneApplicationFactory)' == ''" Text="Set IsoplaneApplicationFactory to the application's public static factory method." />
     <ItemGroup>
