@@ -115,6 +115,8 @@ fn read_payload(file: &File, length_bytes: u64, scratch: &mut [u8]) -> io::Resul
 }
 
 fn read_range(file: &File, range: std::ops::Range<u64>, scratch: &mut [u8]) -> io::Result<()> {
+    #[cfg(windows)]
+    let reader = independent_reader(file)?;
     let mut offset_bytes = range.start;
     while offset_bytes < range.end {
         let count = (range.end - offset_bytes).min(scratch.len() as u64) as usize;
@@ -122,7 +124,7 @@ fn read_range(file: &File, range: std::ops::Range<u64>, scratch: &mut [u8]) -> i
         let read = std::os::unix::fs::FileExt::read_at(file, &mut scratch[..count], offset_bytes);
         #[cfg(windows)]
         let read =
-            std::os::windows::fs::FileExt::seek_read(file, &mut scratch[..count], offset_bytes);
+            std::os::windows::fs::FileExt::seek_read(&reader, &mut scratch[..count], offset_bytes);
         match read {
             Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
             Ok(count) => offset_bytes += count as u64,
@@ -133,6 +135,32 @@ fn read_range(file: &File, range: std::ops::Range<u64>, scratch: &mut [u8]) -> i
     Ok(())
 }
 
+#[cfg(windows)]
+fn independent_reader(file: &File) -> io::Result<File> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        ReOpenFile, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    // Windows positioned reads move the cursor. Reopening the verified handle
+    // preserves file identity while giving prefetch its own cursor.
+    // SAFETY: `file` keeps the original handle valid throughout this call.
+    let handle = unsafe {
+        ReOpenFile(
+            file.as_raw_handle(),
+            FILE_GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: ReOpenFile returned a new owned handle, transferred to File once.
+    Ok(unsafe { File::from_raw_handle(handle) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,11 +169,12 @@ mod tests {
     #[test]
     fn prefetch_reads_through_the_last_partial_chunk_without_moving_the_file_cursor(
     ) -> io::Result<()> {
-        let mut file = tempfile::tempfile()?;
+        let mut temporary = tempfile::NamedTempFile::new()?;
+        let file = temporary.as_file_mut();
         file.write_all(b"abcdefghijklmnopq")?;
         file.rewind()?;
         let mut scratch = [0; 8];
-        read_payload(&file, 17, &mut scratch)?;
+        read_payload(file, 17, &mut scratch)?;
         assert_eq!(
             scratch[0], b'q',
             "prefetch must read the final partial chunk"
@@ -160,8 +189,9 @@ mod tests {
 
     #[test]
     fn prefetch_refuses_an_incomplete_payload() -> io::Result<()> {
-        let file = tempfile::tempfile()?;
-        let error = read_payload(&file, 1, &mut [0; 8])
+        let temporary = tempfile::NamedTempFile::new()?;
+        let file = temporary.as_file();
+        let error = read_payload(file, 1, &mut [0; 8])
             .expect_err("a missing payload byte must fail prefetch");
         assert_eq!(
             error.kind(),
@@ -172,11 +202,12 @@ mod tests {
     }
     #[test]
     fn a_range_reads_only_its_selected_bytes_without_moving_the_cursor() -> io::Result<()> {
-        let mut file = tempfile::tempfile()?;
+        let mut temporary = tempfile::NamedTempFile::new()?;
+        let file = temporary.as_file_mut();
         file.write_all(b"abcdefghijklmnopq")?;
         file.rewind()?;
         let mut scratch = [b'!'; 8];
-        read_range(&file, 3..7, &mut scratch)?;
+        read_range(file, 3..7, &mut scratch)?;
         assert_eq!(
             &scratch, b"defg!!!!",
             "range reads must respect both selected boundaries"
@@ -189,14 +220,18 @@ mod tests {
         Ok(())
     }
 
-    fn payloads() -> Payloads {
-        let files: [File; 3] = std::array::from_fn(|_| {
-            let mut file = tempfile::tempfile().expect("payload");
+    fn payloads() -> ([tempfile::NamedTempFile; 3], Payloads) {
+        let files = std::array::from_fn(|_| {
+            let mut file = tempfile::NamedTempFile::new().expect("payload");
             file.write_all(b"abcdefghijklmnopq").expect("payload bytes");
             file
         });
-        Payloads::new(files.each_ref().map(Some), Path::new("test-payloads"))
-            .expect("retained payloads")
+        let payloads = Payloads::new(
+            files.each_ref().map(|file| Some(file.as_file())),
+            Path::new("test-payloads"),
+        )
+        .expect("retained payloads");
+        (files, payloads)
     }
 
     fn native_range(offset_bytes: u64, length_bytes: u64) -> super::super::ReadAhead {
@@ -209,9 +244,10 @@ mod tests {
 
     #[test]
     fn selection_refuses_empty_ranges() {
+        let (_files, payloads) = payloads();
         assert!(
             matches!(
-                payloads().select(&[native_range(0, 0)]),
+                payloads.select(&[native_range(0, 0)]),
                 Err(PreparedError::Invalid(_))
             ),
             "an empty learned range must be refused"
@@ -220,9 +256,10 @@ mod tests {
 
     #[test]
     fn selection_refuses_overflowing_ranges() {
+        let (_files, payloads) = payloads();
         assert!(
             matches!(
-                payloads().select(&[native_range(u64::MAX, 1)]),
+                payloads.select(&[native_range(u64::MAX, 1)]),
                 Err(PreparedError::Invalid(_))
             ),
             "a learned range end must not overflow"
@@ -231,9 +268,10 @@ mod tests {
 
     #[test]
     fn selection_refuses_ranges_beyond_the_payload() {
+        let (_files, payloads) = payloads();
         assert!(
             matches!(
-                payloads().select(&[native_range(16, 2)]),
+                payloads.select(&[native_range(16, 2)]),
                 Err(PreparedError::Invalid(_))
             ),
             "a learned range must fit the verified file"
@@ -242,9 +280,10 @@ mod tests {
 
     #[test]
     fn selection_refuses_overlaps_even_when_input_is_unordered() {
+        let (_files, payloads) = payloads();
         assert!(
             matches!(
-                payloads().select(&[native_range(5, 4), native_range(3, 4)]),
+                payloads.select(&[native_range(5, 4), native_range(3, 4)]),
                 Err(PreparedError::Invalid(_))
             ),
             "overlapping learned ranges must be refused regardless of input order"
@@ -253,7 +292,8 @@ mod tests {
 
     #[test]
     fn selection_accepts_adjacent_ranges_and_omits_unselected_bytes() {
-        let selected = payloads()
+        let (_files, payloads) = payloads();
+        let selected = payloads
             .select(&[native_range(3, 1), native_range(1, 2)])
             .expect("adjacent ranges");
         assert_eq!(
