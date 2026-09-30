@@ -55,3 +55,20 @@ tasks:
     cmds:
       - '"{{.PYTHON}}" -m venv "{{.DIRECTORY}}"'
       - '"{{.EXECUTABLE}}" -m pip install --disable-pip-version-check debugpy==1.8.20'
+
+  editor:
+    desc: Exercise launch and value editing inside VS Code using ISOPLANE_TEST_CLI
+    deps: [':fixtures:editor', ':cli', editor:environment]
+    env:
+      ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
+    cmds:
+      - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane run test:launch'
+
+  editor:environment:
+    sources:
+      - tools/vscode-isoplane/package.json
+      - tools/vscode-isoplane/package-lock.json
+    generates:
+      - tools/vscode-isoplane/node_modules/.package-lock.json
+    cmds:
+      - npm --prefix tools/vscode-isoplane ci

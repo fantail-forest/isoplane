@@ -126,6 +126,7 @@
   },
   "scripts": {
     "test": "node test/run.js",
+    "test:launch": "node test/run.js launch",
     "package": "vsce package --skip-license --out out/isoplane-debugger.vsix",
     "prepackage": "node -e \"require('node:fs').mkdirSync('out', {recursive:true})\""
   },

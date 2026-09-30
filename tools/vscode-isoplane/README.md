@@ -46,3 +46,8 @@ the resulting VSIX with VS Code's **Extensions: Install from VSIX** command.
 `ISOPLANE_TEST_CLI=/absolute/path/to/isoplane npm test` exercises registration
 and the real CLI adapter inside VS Code. Linux CI needs a display, such as
 `xvfb-run -a npm test`.
+
+The full editor journey launches a prepared customer application, inspects hover
+and watch expressions, edits a local, and debugs a second request. From the
+repository root, run `ISOPLANE_TEST_CLI=/absolute/path/to/isoplane task test:editor`.
+Task prepares the application and editor dependencies; Linux uses `xvfb-run`.
