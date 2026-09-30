@@ -229,7 +229,9 @@ fn write_debug_library(directory: &std::path::Path, app: &std::path::Path) -> st
     let library = directory.join("library");
     std::fs::create_dir(&library).unwrap();
     std::fs::write(library.join("Library.csproj"),
-        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><DebugType>portable</DebugType><Optimize>false</Optimize></PropertyGroup></Project>").unwrap();
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><DebugType>portable</DebugType><Optimize>false</Optimize></PropertyGroup><ItemGroup><EmbeddedResource Include=\"payload.bin\" /></ItemGroup></Project>").unwrap();
+    // Metadata replies include the assembly image and must survive socket backpressure.
+    std::fs::write(library.join("payload.bin"), vec![0_u8; 8 * 1024 * 1024]).unwrap();
     let library_source = library.join("Calculator.cs");
     std::fs::write(&library_source, include_str!("common/debug_library.cs")).unwrap();
     let project = std::fs::read_dir(app)

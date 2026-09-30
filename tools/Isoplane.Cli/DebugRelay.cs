@@ -76,6 +76,8 @@ internal sealed class DebugRelay : IAsyncDisposable
 
     private static async Task ForwardPairAsync(TcpClient adapter, TcpClient guest, CancellationToken cancellation)
     {
+        adapter.NoDelay = true;
+        guest.NoDelay = true;
         using var connection = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var outbound = adapter.GetStream().CopyToAsync(guest.GetStream(), connection.Token);
         var inbound = guest.GetStream().CopyToAsync(adapter.GetStream(), connection.Token);

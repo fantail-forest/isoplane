@@ -3,4 +3,4 @@ from pathlib import Path
 
 
 def same_source(actual, expected):
-    return bool(actual) and Path(actual).resolve() == Path(expected).resolve()
+    return bool(actual) and Path(actual).samefile(expected)

@@ -8,7 +8,7 @@ namespace Isoplane.Debugging;
 
 internal sealed class GuestConnection(IPEndPoint endpoint, Action<Exception> failed) : SoftDebuggerStartArgs, ISoftDebuggerConnectionProvider, IAsyncDisposable
 {
-    private readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new(true, 0) };
+    private readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new(true, 0), NoDelay = true };
     private Task completion = Task.CompletedTask;
 
     /// <summary>The session-owned connection provider.</summary>

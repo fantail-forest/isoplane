@@ -105,11 +105,17 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         ObjectValue value;
         try { value = frame.Async is { } saved ? saved.Evaluate(expression) : frame.Physical.GetExpressionValue(expression, options); }
         catch (Mono.Debugging.Evaluation.EvaluatorException error) { throw new ProtocolException(error.Message, error); }
-        if (value.IsEvaluating && !value.WaitHandle.WaitOne(options.EvaluationTimeout))
-            throw new ProtocolException("Expression evaluation timed out.");
+        WaitForValue(value);
         if (value.IsError || value.IsUnknown || value.IsNotSupported || value.IsImplicitNotSupported)
             throw new ProtocolException(value.Value ?? "The expression cannot be evaluated in this frame.");
         return value;
+    }
+
+    private void WaitForValue(ObjectValue value)
+    {
+        FrameValues.Attach(stopped.Backtrace.GetFrame(0), value);
+        if (value.IsEvaluating && !value.WaitHandle.WaitOne(EvaluationOptions.DefaultOptions.EvaluationTimeout))
+            throw new ProtocolException("Value evaluation timed out.");
     }
 
     internal bool IsConditionMet(string expression)
@@ -158,7 +164,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
 
     private Variable Variable(ObjectValue value, Frame frame, string expression)
     {
-        FrameValues.Attach(stopped.Backtrace.GetFrame(0), value);
+        WaitForValue(value);
         int reference = 0;
         if (value.HasChildren)
         {
