@@ -133,6 +133,11 @@ impl Dev {
             std::thread::spawn(move || {
                 for line in BufReader::new(stream).lines() {
                     let line = line.expect("development output remains readable");
+                    let line = if structured_stdout {
+                        line
+                    } else {
+                        strip_ansi_escapes::strip_str(line)
+                    };
                     if !structured_stdout {
                         eprintln!("{line}");
                     }

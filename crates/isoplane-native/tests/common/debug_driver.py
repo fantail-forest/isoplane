@@ -204,7 +204,7 @@ try:
     if mode == "stop":
         until(lambda item: item.get("event") == "terminated")
     response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
-    assert adapter.wait(timeout=10) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
+    assert adapter.wait(timeout=30) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
     if launched:
         assert not any_running(owned), "disconnect must reap the launched application and its children"
         with socket.socket() as check:

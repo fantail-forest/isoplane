@@ -15,7 +15,7 @@ internal sealed class LocalDebugLauncher : DebugLauncher
             "--configuration", options.Configuration, "--debug", "--json", "--shutdown-on-stdin-close"];
         if (!options.Watch) arguments = [.. arguments, "--no-watch"];
         if (options.Port is { } port) arguments = [.. arguments, "--port", port.ToString(CultureInfo.InvariantCulture)];
-        using var process = Processes.Start("dotnet", arguments, options.Project, captureOutput: true, captureErrors: true);
+        using var process = Processes.Start("dotnet", arguments, options.Project, captureOutput: true, captureErrors: true, shutdownGrace: TimeSpan.FromSeconds(10));
         var stdout = ForwardAsync(process, process.StandardOutput, line => Report(line, ready, output));
         var stderr = ForwardAsync(process, process.StandardError, line => Report(line, ready, output));
         try

@@ -10,7 +10,7 @@ fn package_feed(variable: &str) -> PathBuf {
         "prepared package feed is missing: {}",
         source.display()
     );
-    source
+    source.components().collect()
 }
 
 /// The release version `Directory.Build.props` declares: the version every

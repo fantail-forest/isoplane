@@ -266,6 +266,7 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
                 "0",
             ])
             .current_dir(app)
+            .env("MSBUILDTERMINALLOGGER", "off")
             .env("ISOPLANE_CLI", cli)
             .env("PATH", std::env::join_paths(paths).unwrap());
         Dev::spawn(&mut command, std::time::Duration::from_secs(600), false)
@@ -342,7 +343,9 @@ fn installed_debug_acceptance(mode: &str) {
             .unwrap()
             .next()
             .is_none(),
-        "debugger exit must remove the entire owned session, including runtime scratch"
+        "debugger exit must remove the entire owned session, including runtime scratch: {}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
     );
 }
 
