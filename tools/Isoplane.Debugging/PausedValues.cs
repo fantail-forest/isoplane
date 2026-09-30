@@ -5,7 +5,7 @@ using Dap = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 
 namespace Isoplane.Debugging;
 
-internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, Mono.Debugging.Soft.SoftDebuggerSession session)
+internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, Mono.Debugging.Soft.SoftDebuggerSession session) : IDisposable
 {
     private readonly Dictionary<int, Frame> frames = [];
     private readonly Dictionary<int, VariableSet> variables = [];
@@ -49,9 +49,10 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         {
             var frame = stopped.Backtrace.GetFrame(index);
             if (!frame.IsExternalCode && !frame.IsDebuggerHidden && physical[index].Method is { } method && code.Contains(method))
+            {
                 result.Add(new Frame(frame, index));
-            if (index == 0)
-                result.AddRange(AsyncFrames.Read(session, code).Select(caller => new Frame(null, null, caller)));
+                result.AddRange(AsyncFrames.Read(session, code, physical, index).Select(caller => new Frame(null, null, caller)));
+            }
         }
         return result;
     }
@@ -60,48 +61,50 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     {
         if (!frames.TryGetValue(frameId, out var frame)) throw new ProtocolException("The stack frame is not part of the current pause.");
         int id = allocate();
-        variables.Add(id, new VariableSet(frame.Locals, frame.Index, null));
+        variables.Add(id, new VariableSet(frame.Locals, frame, null));
         return new ScopesResponse { Scopes = [new Scope { Name = "Locals", VariablesReference = id, Expensive = false }] };
     }
 
     internal VariablesResponse Variables(int reference)
     {
         if (!variables.TryGetValue(reference, out var read)) throw new ProtocolException("The variable reference is not part of the current pause.");
-        return new VariablesResponse { Variables = read.Read().Select(value => Variable(value, read.FrameIndex, read.Expression(value))).ToList() };
+        return new VariablesResponse { Variables = read.Read().Select(value => Variable(value, read.Frame, read.Expression(value))).ToList() };
     }
 
     internal EvaluateResponse Evaluate(EvaluateArguments arguments)
     {
         var value = Evaluate(arguments.Expression, arguments.FrameId);
-        var variable = Variable(value, FrameFor(arguments.FrameId).Index, arguments.Expression);
+        var variable = Variable(value, FrameFor(arguments.FrameId), arguments.Expression);
         return new EvaluateResponse { Result = variable.Value, Type = variable.Type, VariablesReference = variable.VariablesReference };
     }
 
     internal SetVariableResponse SetVariable(SetVariableArguments arguments)
     {
         if (!variables.TryGetValue(arguments.VariablesReference, out var read)) throw new ProtocolException("The variable reference is not part of the current pause.");
-        if (read.FrameIndex is null) SavedLocalAssignment.RequireLiteral(arguments.Value);
         var matches = read.Read().Where(value => value.Name == arguments.Name).ToArray();
         if (matches.Length != 1) throw new ProtocolException("The named variable is missing or ambiguous in this scope.");
-        Assign(matches[0], arguments.Value);
-        var value = Variable(matches[0], read.FrameIndex, read.Expression(matches[0]));
+        string expression = read.Expression(matches[0]);
+        var assigned = Assign(read.Frame, expression, arguments.Value);
+        var value = Variable(assigned, read.Frame, expression);
         return new SetVariableResponse { Value = value.Value, Type = value.Type, VariablesReference = value.VariablesReference };
     }
 
     internal SetExpressionResponse SetExpression(SetExpressionArguments arguments)
     {
-        var value = Evaluate(arguments.Expression, arguments.FrameId);
-        Assign(value, arguments.Value);
-        var variable = Variable(value, FrameFor(arguments.FrameId).Index, arguments.Expression);
+        var frame = FrameFor(arguments.FrameId);
+        var value = Assign(frame, arguments.Expression, arguments.Value);
+        var variable = Variable(value, frame, arguments.Expression);
         return new SetExpressionResponse { Value = variable.Value, Type = variable.Type, VariablesReference = variable.VariablesReference };
     }
 
     private ObjectValue Evaluate(string expression, int? frameId)
     {
         if (string.IsNullOrWhiteSpace(expression)) throw new ProtocolException("An expression is required.");
-        var frame = FrameFor(frameId).Physical;
+        var frame = FrameFor(frameId);
         var options = EvaluationOptions.DefaultOptions;
-        var value = frame.GetExpressionValue(expression, options);
+        ObjectValue value;
+        try { value = frame.Async is { } saved ? saved.Evaluate(expression) : frame.Physical.GetExpressionValue(expression, options); }
+        catch (Mono.Debugging.Evaluation.EvaluatorException error) { throw new ProtocolException(error.Message, error); }
         if (value.IsEvaluating && !value.WaitHandle.WaitOne(options.EvaluationTimeout))
             throw new ProtocolException("Expression evaluation timed out.");
         if (value.IsError || value.IsUnknown || value.IsNotSupported || value.IsImplicitNotSupported)
@@ -115,10 +118,19 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         return value is bool result ? result : throw new ProtocolException("A data breakpoint condition must evaluate to bool.");
     }
 
-    private static void Assign(ObjectValue value, string expression)
+    private ObjectValue Assign(Frame frame, string target, string expression)
     {
-        if (value.IsReadOnly) throw new ProtocolException("The selected value is read-only.");
-        try { value.SetValue(expression, EvaluationOptions.DefaultOptions); }
+        var context = Context(frame);
+        try
+        {
+            var reference = context.Evaluator.Evaluate(context, target);
+            if ((reference.Flags & ObjectValueFlags.ReadOnly) != 0)
+                throw new ProtocolException("The selected value is read-only.");
+            var value = context.Evaluator.Evaluate(context, expression, reference.Type);
+            var converted = context.Adapter.Convert(context, value.Value, reference.Type);
+            reference.SetValue(context, converted);
+            return reference.CreateObjectValue(false);
+        }
         catch (Exception error) when (error is InvalidOperationException or NotSupportedException or Mono.Debugging.Evaluation.EvaluatorException)
         {
             throw new ProtocolException(error.Message, error);
@@ -144,41 +156,50 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         };
     }
 
-    private Variable Variable(ObjectValue value, int? frameIndex, string expression)
+    private Variable Variable(ObjectValue value, Frame frame, string expression)
     {
+        FrameValues.Attach(stopped.Backtrace.GetFrame(0), value);
         int reference = 0;
         if (value.HasChildren)
         {
             reference = allocate();
-            variables.Add(reference, new VariableSet(value.GetAllChildren, frameIndex, expression));
+            variables.Add(reference, new VariableSet(() => value.GetAllChildren(EvaluationOptions.DefaultOptions), frame, expression));
         }
         return new Variable { Name = value.Name, Value = value.Value, Type = value.TypeName, VariablesReference = reference, EvaluateName = expression };
     }
 
-    internal (int FrameIndex, string Expression) DataExpression(DataBreakpointInfoArguments arguments)
+    internal (Mono.Debugging.Soft.SoftEvaluationContext Context, string Expression) DataExpression(DataBreakpointInfoArguments arguments)
     {
         if (arguments.AsAddress == true || arguments.Bytes is not null)
             throw new ProtocolException("Data breakpoints support managed fields and array elements, not raw memory.");
-        if (arguments.VariablesReference is not > 0) return (RequirePhysicalIndex(FrameFor(arguments.FrameId).Index), arguments.Name);
+        if (arguments.VariablesReference is not > 0) return (Context(FrameFor(arguments.FrameId)), arguments.Name);
         if (!variables.TryGetValue(arguments.VariablesReference.Value, out var set))
             throw new ProtocolException("The variable reference is not part of the current pause.");
         var matches = set.Read().Where(value => value.Name == arguments.Name).ToArray();
         if (matches.Length != 1) throw new ProtocolException("The named variable is missing or ambiguous in this scope.");
-        return (RequirePhysicalIndex(set.FrameIndex), set.Expression(matches[0]));
+        return (Context(set.Frame), set.Expression(matches[0]));
     }
 
-    private static int RequirePhysicalIndex(int? index) => index
-        ?? throw new ProtocolException("Data breakpoints cannot be configured from a suspended async caller.");
+    private Mono.Debugging.Soft.SoftEvaluationContext Context(Frame frame) => frame.Async?.Context
+        ?? ManagedLocations.Context(session, frame.Index ?? throw new ProtocolException("The frame has no evaluation context."));
+
+    /// <summary>Releases evaluators owned by the reconstructed callers at the end of this pause.</summary>
+    public void Dispose()
+    {
+        if (visibleFrames is null) return;
+        foreach (var frame in visibleFrames)
+            frame.Async?.Context.Adapter.Dispose();
+    }
 
     private Frame FrameFor(int? frameId) => frameId is null ? new Frame(stopped.Backtrace.GetFrame(0), 0)
         : frames.TryGetValue(frameId.Value, out var known) ? known : throw new ProtocolException("The stack frame is not part of the current pause.");
 
     private sealed record Frame(Mono.Debugging.Client.StackFrame? Value, int? Index, AsyncFrame? Async = null)
     {
-        internal Mono.Debugging.Client.StackFrame Physical => Value ?? throw new ProtocolException("Expression evaluation is not supported in a suspended async caller.");
+        internal Mono.Debugging.Client.StackFrame Physical => Value ?? throw new ProtocolException("The selected frame has no live invocation.");
         internal ObjectValue[] Locals() => Async is null ? Physical.GetAllLocals() : Async.Locals();
     }
-    private sealed record VariableSet(Func<ObjectValue[]> Read, int? FrameIndex, string? ParentExpression)
+    private sealed record VariableSet(Func<ObjectValue[]> Read, Frame Frame, string? ParentExpression)
     {
         internal string Expression(ObjectValue value) => ParentExpression is null ? value.Name : ParentExpression + value.ChildSelector;
     }

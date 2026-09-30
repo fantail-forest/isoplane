@@ -206,6 +206,7 @@ public sealed class DebugAdapterTests
         listener.Start();
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var attached = client.Send(Attach("127.0.0.1", port));
+        using var control = await AcceptControlAsync(listener, client.Cancellation);
         await client.Initialized.Task.WaitAsync(client.Cancellation);
         if (configure) await client.Send(new ConfigurationDoneRequest());
         var error = await Assert.ThrowsAsync<ProtocolException>(() => configure
@@ -228,6 +229,7 @@ public sealed class DebugAdapterTests
         listener.Start();
         var endpoint = (IPEndPoint)listener.LocalEndpoint;
         var attached = client.Send(Attach("127.0.0.1", endpoint.Port));
+        using var control = await AcceptControlAsync(listener, client.Cancellation);
         await client.Initialized.Task.WaitAsync(client.Cancellation);
         await client.Send(new ConfigurationDoneRequest());
         using var peer = await listener.AcceptTcpClientAsync(client.Cancellation);
@@ -244,6 +246,34 @@ public sealed class DebugAdapterTests
         }
         catch (IOException error) { client.Diagnostics.WriteLine("Expected closed debugger transport: " + error.Message); }
         Assert.False(client.Adapter.Failed, "An explicitly stopped handshake must release ownership without reporting an unexpected adapter failure.");
+    }
+
+    [Theory]
+    [InlineData("{\"version\":2,\"port\":1234}")]
+    [InlineData("{\"version\":1,\"port\":0}")]
+    [InlineData("{\"version\":1,\"port\":65536}")]
+    [InlineData("not-json")]
+    [InlineData("null")]
+    public async Task invalid_session_control_endpoints_fail_attachment(string message)
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var attached = client.Send(Attach("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port));
+        using var control = await listener.AcceptTcpClientAsync(client.Cancellation);
+        using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
+        await writer.WriteLineAsync(message);
+        await Assert.ThrowsAsync<ProtocolException>(() => attached);
+        Assert.True(client.Adapter.Failed, "an invalid local-session handshake must not start a guest connection");
+    }
+
+    private static async Task<TcpClient> AcceptControlAsync(TcpListener listener, CancellationToken cancellation)
+    {
+        var control = await listener.AcceptTcpClientAsync(cancellation);
+        using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
+        await writer.WriteLineAsync(System.Text.Json.JsonSerializer.Serialize(new { version = 1, port = ((IPEndPoint)listener.LocalEndpoint).Port }));
+        return control;
     }
 
     private static AttachRequest Attach(string address, int port) => new()

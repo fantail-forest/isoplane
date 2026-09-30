@@ -1,4 +1,7 @@
 <Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Mono.Debugging'">
+    <Compile Include="$(MSBuildThisFileDirectory)FrameValues.cs" />
+  </ItemGroup>
   <UsingTask TaskName="IsoplanePrepareDebuggerSource" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
       <Source ParameterType="System.String" Required="true" />

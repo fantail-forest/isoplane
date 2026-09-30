@@ -8,11 +8,13 @@
     private static async Task<int> Outer(int input)
     {
         int outer = input + 1;
-        int result = await Inner(outer).ConfigureAwait(false);
-        return result + outer;
+        var outerSample = new DebugSample { Value = 1 };
+        int[] outerNumbers = [2, 3];
+        int result = await Inner(outer, outerSample, outerNumbers).ConfigureAwait(false);
+        return result + outer + outerSample.Value + outerNumbers[1];
     }
 
-    private static async Task<int> Inner(int input)
+    private static async Task<int> Inner(int input, DebugSample watched, int[] watchedNumbers)
     {
         int answer = input;
         var sample = new DebugSample { Value = 7, Name = "hello" };
@@ -20,8 +22,18 @@
         Task delay = Task.Delay(100);
         if (delay.IsCompleted) throw new InvalidOperationException("the host timer must be pending before await");
         await delay;
-        int total = answer + sample.Value + numbers[1];
+        int total = ComputeTotal(answer, sample, numbers);
+        await Task.Delay(1);
+        GC.Collect();
+        watched.Value += 1;
+        watchedNumbers[1] += 1;
         return total;
+    }
+
+    private static int ComputeTotal(int answer, DebugSample sample, int[] numbers)
+    {
+        int sum = answer + sample.Value + numbers[1];
+        return sum;
     }
 
     private sealed class DebugSample

@@ -52,6 +52,13 @@ def exercise(source, send, response, until):
     numbers = next(value for value in values if value['name'] == 'numbers')
     children = response(send('variables', {'variablesReference': numbers['variablesReference']}))['body']['variables']
     assert any(value['value'] == '4' for value in children), 'array children must expose their actual values'
+    for command, arguments in [('setVariable', {'variablesReference': scope, 'name': 'answer'}),
+                               ('setExpression', {'frameId': frame['id'], 'expression': 'numbers[1]'})]:
+        identifier = send(command, {**arguments, 'value': '"invalid integer"'})
+        rejected = until(lambda item: item.get('type') == 'response' and item.get('request_seq') == identifier)
+        assert not rejected.get('success'), 'an invalid assignment must report an error rather than return an unchanged value as success'
+    assert evaluate('answer', frame)['result'] == '41', 'a rejected local edit must preserve its value'
+    assert evaluate('numbers[1]', frame)['result'] == '4', 'a rejected array edit must preserve its value'
     changed = response(send('setVariable', {'variablesReference': scope, 'name': 'answer', 'value': '100'}))['body']
     assert changed['value'] == '100', 'editing a local must return its changed value'
     for expression, value in [('numbers[1]', '8'), ('sample.Value', '9')]:

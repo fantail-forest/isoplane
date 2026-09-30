@@ -16,8 +16,8 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
     {
         try
         {
-            var (frame, expression) = paused.DataExpression(arguments);
-            var target = ManagedLocations.Resolve(session, frame, expression, allocate());
+            var (context, expression) = paused.DataExpression(arguments);
+            var target = ManagedLocations.Resolve(context, expression, allocate());
             string dataId = target.Id.ToString(CultureInfo.InvariantCulture);
             locations.Add(dataId, target);
             return new DataBreakpointInfoResponse
@@ -58,6 +58,18 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
         else if (next.Count != 0) throw new ProtocolException("Set data breakpoints while the guest is paused.");
         Volatile.Write(ref active, next);
         return response;
+    }
+
+    internal void Invalidate(Action<Dap.BreakpointEvent> changed)
+    {
+        foreach (int id in active.Keys)
+            changed(new Dap.BreakpointEvent
+            {
+                Reason = Dap.BreakpointEvent.ReasonValue.Changed,
+                Breakpoint = new Dap.Breakpoint { Id = id, Verified = false, Message = "The request ended; select this location again in the next guest." }
+            });
+        active.Clear();
+        locations.Clear();
     }
 
     internal void Resuming()

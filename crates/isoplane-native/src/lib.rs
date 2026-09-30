@@ -141,7 +141,7 @@ pub extern "C" fn isoplane_session_create() -> *mut std::ffi::c_void {
     Box::into_raw(Box::new(session::Session::new())).cast()
 }
 
-/// Runs a local application's native host until stopped, or one debug request completes.
+/// Runs a local application's native host until stopped, including across debug requests.
 ///
 /// # Safety
 /// The session comes from `isoplane_session_create` and remains alive for the call.

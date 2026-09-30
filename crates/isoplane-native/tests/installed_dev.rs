@@ -191,7 +191,7 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
-    } else if mode == "async-stack" {
+    } else if matches!(mode, "async-stack" | "async-optimized") {
         include_str!("common/debug_async.cs")
     } else if mode == "library" {
         "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
@@ -278,6 +278,18 @@ fn installed_debug_acceptance(mode: &str) {
     let python = isoplane_fixtures::debugger_python();
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
+    if mode == "async-optimized" {
+        let project = app.join("Template-App.csproj");
+        let xml = std::fs::read_to_string(&project).expect("read the async fixture project");
+        std::fs::write(
+            &project,
+            xml.replace(
+                "</Project>",
+                "<PropertyGroup><Optimize>true</Optimize></PropertyGroup></Project>",
+            ),
+        )
+        .expect("enable optimized async state machines in the fixture");
+    }
     let source = write_debug_application(&app, mode);
     let debug_source = if mode == "library" {
         write_debug_library(directory.path(), &app)
@@ -325,6 +337,11 @@ fn installed_debug_acceptance(mode: &str) {
 }
 
 #[test]
+fn one_debugger_connection_preserves_breakpoints_across_requests() {
+    installed_debug_acceptance("requests");
+}
+
+#[test]
 fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
     installed_debug_acceptance("continue");
 }
@@ -332,6 +349,11 @@ fn installed_debugging_inspects_a_local_and_steps_across_a_host_await() {
 #[test]
 fn interpreted_debugging_reconstructs_suspended_async_callers() {
     installed_debug_acceptance("async-stack");
+}
+
+#[test]
+fn optimized_async_callers_keep_editable_state_and_watchpoints() {
+    installed_debug_acceptance("async-optimized");
 }
 
 #[test]

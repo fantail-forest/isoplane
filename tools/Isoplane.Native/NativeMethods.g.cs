@@ -57,7 +57,7 @@ namespace Isoplane.Native.Interop
         internal static extern void* isoplane_session_create();
 
         /// <summary>
-        ///  Runs a local application's native host until stopped, or one debug request completes.
+        ///  Runs a local application's native host until stopped, including across debug requests.
         ///
         ///  # Safety
         ///  The session comes from `isoplane_session_create` and remains alive for the call.

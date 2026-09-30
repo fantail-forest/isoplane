@@ -66,7 +66,14 @@ Start a local debug session with:
 isoplane dev --debug --no-watch
 ```
 
-Connect an editor through `isoplane debug-adapter`. The session uses the SDK's
-shared debug runtime and serves one request. Use ordinary .NET unit tests for
-isolated application logic and [sandbox integration tests](test-an-application.md)
-to exercise platform behavior.
+Attach through `isoplane debug-adapter` using the printed loopback address and
+port. In VS Code with the Isoplane debugger extension installed, choose
+**Run and Debug → Isoplane** and enter that port. Set a breakpoint before sending
+an HTTP request to the application's local URL. Keep the debugger attached for
+subsequent requests; source breakpoints are rebound for each fresh guest.
+
+The session uses the SDK's shared debug runtime. The debugger supports stepping,
+watches, editing live locals, exception stops, and data breakpoints on managed
+fields and array elements. Debug sessions require source watching to be disabled.
+Use ordinary .NET unit tests for isolated application logic and
+[sandbox integration tests](test-an-application.md) to exercise platform behavior.

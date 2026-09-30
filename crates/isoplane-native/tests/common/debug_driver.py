@@ -29,7 +29,7 @@ if mode == "protocol":
     if not driver.is_file():
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
-scenario = {"features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack}.get(mode)
+scenario = {"features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()
@@ -64,6 +64,7 @@ def until(predicate):
         value = messages.get(timeout=max(0, deadline - time.monotonic()))
         print(json.dumps(value), flush=True)
         assert not value.get("closed"), "adapter closed before the expected debug result"
+        assert mode == "stop" or value.get("event") != "terminated", "the debug session must remain attached between requests"
         if predicate(value):
             return value
         deferred.append(value)
@@ -121,54 +122,65 @@ try:
     else:
         response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [{"line": before}], "lines": [before]}))
     response(send("configurationDone", {}))
-    http_result = concurrent.futures.Future()
-    threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
-    response(attached)
-    if scenario is not None:
-        scenario.exercise(source, send, response, until)
-    else:
-        bound = until(lambda item: item.get("event") == "breakpoint" and item["body"]["breakpoint"]["verified"])
-        assert bound["body"]["breakpoint"]["line"] == before, "the adapter must confirm binding at the requested customer line"
-        for expected in [before, after]:
-            stopped = until(lambda item: item.get("event") == "stopped")
-            thread = stopped["body"]["threadId"]
-            frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
-            assert frame["line"] == expected and same_source(frame["source"]["path"], source), "debugger must stop in the actual customer source"
-            values = []
-            for scope in response(send("scopes", {"frameId": frame["id"]}))["body"]["scopes"]:
-                values.extend(response(send("variables", {"variablesReference": scope["variablesReference"]}))["body"]["variables"])
-            assert any(value["name"] == "answer" and value["value"] == "42" for value in values), "customer local answer must remain inspectable"
-            if mode == "stop":
-                owned = [owner] + children(owner, process_tree())
-                print('request-owner-stop', flush=True)
-                assert sys.stdin.readline() == 'owner-stopped\n', 'the development harness must complete the requested shutdown'
-                deadline = time.monotonic() + 120
-                while any_running(owned):
-                    assert time.monotonic() < deadline, "CLI stop left an owned process running while paused"
-                    time.sleep(0.01)
-                assert not Path(module).exists(), "CLI stop must remove the private session artifact"
-                with socket.socket() as check:
-                    assert check.connect_ex((address, int(port))) != 0, "CLI stop must close its debugger relay"
-                with socket.socket() as check:
-                    assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "CLI stop must close its HTTP listener"
-                try:
-                    http_result.result(timeout=30)
-                except (concurrent.futures.TimeoutError, socket.timeout) as error:
-                    raise AssertionError("paused HTTP requester did not observe connection termination") from error
-                except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.IncompleteRead):
-                    print("paused HTTP connection terminated", flush=True)
-                except urllib.error.URLError as error:
-                    assert isinstance(error.reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)), f"HTTP failed without proving connection termination: {error}"
-                else:
-                    raise AssertionError("a paused request must not complete normally after CLI stop")
-                break
-            if expected == after:
-                assert any(value["name"] == "delay" and "RanToCompletion" in value["value"] for value in values), "DAP next must cross the incomplete await and preserve completed task state"
-            response(send("next" if expected == before else "continue", {"threadId": thread}))
-    if mode != "stop":
-        assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"42"), "continued customer code must complete the actual HTTP response"
-    until(lambda item: item.get("event") == "terminated")
-    response(send("disconnect", {"terminateDebuggee": False}))
+    previous_frame = None
+    for attempt in range(2 if mode == "requests" else 1):
+        http_result = concurrent.futures.Future()
+        threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
+        if attempt == 0:
+            response(attached)
+        if scenario is not None:
+            scenario.exercise(source, send, response, until)
+        else:
+            bound = until(lambda item: item.get("event") == "breakpoint" and item["body"]["breakpoint"]["verified"])
+            assert bound["body"]["breakpoint"]["line"] == before, "the adapter must confirm binding at the requested customer line"
+            for expected in [before, after]:
+                stopped = until(lambda item: item.get("event") == "stopped")
+                thread = stopped["body"]["threadId"]
+                frame = response(send("stackTrace", {"threadId": thread}))["body"]["stackFrames"][0]
+                if attempt > 0 and previous_frame is not None:
+                    stale = send("scopes", {"frameId": previous_frame})
+                    rejected = until(lambda item: item.get("type") == "response" and item.get("request_seq") == stale)
+                    assert not rejected.get("success"), "frame handles from an earlier request must not resolve in the new guest"
+                    previous_frame = None
+                assert frame["line"] == expected and same_source(frame["source"]["path"], source), "debugger must stop in the actual customer source"
+                values = []
+                for scope in response(send("scopes", {"frameId": frame["id"]}))["body"]["scopes"]:
+                    values.extend(response(send("variables", {"variablesReference": scope["variablesReference"]}))["body"]["variables"])
+                assert any(value["name"] == "answer" and value["value"] == "42" for value in values), "customer local answer must remain inspectable"
+                if mode == "stop":
+                    owned = [owner] + children(owner, process_tree())
+                    print('request-owner-stop', flush=True)
+                    assert sys.stdin.readline() == 'owner-stopped\n', 'the development harness must complete the requested shutdown'
+                    deadline = time.monotonic() + 120
+                    while any_running(owned):
+                        assert time.monotonic() < deadline, "CLI stop left an owned process running while paused"
+                        time.sleep(0.01)
+                    assert not Path(module).exists(), "CLI stop must remove the private session artifact"
+                    with socket.socket() as check:
+                        assert check.connect_ex((address, int(port))) != 0, "CLI stop must close its debugger relay"
+                    with socket.socket() as check:
+                        assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "CLI stop must close its HTTP listener"
+                    try:
+                        http_result.result(timeout=30)
+                    except (concurrent.futures.TimeoutError, socket.timeout) as error:
+                        raise AssertionError("paused HTTP requester did not observe connection termination") from error
+                    except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError, http.client.IncompleteRead):
+                        print("paused HTTP connection terminated", flush=True)
+                    except urllib.error.URLError as error:
+                        assert isinstance(error.reason, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)), f"HTTP failed without proving connection termination: {error}"
+                    else:
+                        raise AssertionError("a paused request must not complete normally after CLI stop")
+                    break
+                if expected == after:
+                    assert any(value["name"] == "delay" and "RanToCompletion" in value["value"] for value in values), "DAP next must cross the incomplete await and preserve completed task state"
+                response(send("next" if expected == before else "continue", {"threadId": thread}))
+        if mode == "requests":
+            previous_frame = frame["id"]
+        if mode != "stop":
+            assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"42"), "continued customer code must complete the actual HTTP response"
+    if mode == "stop":
+        until(lambda item: item.get("event") == "terminated")
+    response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
     assert adapter.wait(timeout=10) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
     print("debug acceptance passed: " + mode, flush=True)
 finally:

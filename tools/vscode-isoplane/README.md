@@ -10,8 +10,9 @@ dotnet run -c Debug -p:IsoplaneDebug=true
 In VS Code, choose **Run and Debug → Isoplane** and enter the printed debugger port. Set a
 breakpoint, then make an HTTP request to the local application.
 
-Each local session serves one request. Start another CLI session to debug the
-next request. Stopping the debugger ends its local guest session.
+Keep the debugger attached for subsequent requests. Breakpoint configuration
+is retained as each fresh guest starts. Stopping the debugger ends the local
+development session.
 
 An existing launch configuration can specify the port directly:
 

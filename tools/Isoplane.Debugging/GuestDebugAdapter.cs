@@ -10,11 +10,16 @@ namespace Isoplane.Debugging;
 
 internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 {
-    private readonly SoftDebuggerSession session = new();
+    private SoftDebuggerSession session = new() { Breakpoints = new BreakpointStore() };
     private readonly TextWriter diagnostics;
     private readonly GuestBreakpoints breakpoints;
-    private readonly GuestDataBreakpoints dataBreakpoints;
+    private GuestDataBreakpoints dataBreakpoints;
+    private IPEndPoint? endpoint;
+    private Task reconnecting = Task.CompletedTask;
+    private readonly object lifecycle = new();
     private GuestConnection? connection;
+    private GuestSession? owner;
+    private Task opening = Task.CompletedTask;
     private IRequestResponder<AttachArguments>? attach;
     private PausedValues? paused;
     private int nextHandle;
@@ -33,18 +38,23 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     {
         this.diagnostics = diagnostics;
         InitializeProtocolClient(input, output);
-        session.TargetHitBreakpoint += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Breakpoint);
-        session.TargetInterrupted += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Pause);
-        session.TargetStopped += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Step);
-        session.TargetExceptionThrown += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Exception);
-        session.TargetUnhandledException += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Exception);
-        session.TargetReady += (_, _) => Interlocked.Exchange(ref attach, null)?.SetResponse(new AttachResponse());
-        session.TargetExited += (_, _) => Ended();
-        session.ExceptionHandler = error => { Fail(error); return true; };
-        session.LogWriter = (_, text) => diagnostics.WriteLine(text);
-        session.OutputWriter = (_, text) => diagnostics.WriteLine(text);
+        ConfigureSession(session);
         dataBreakpoints = new GuestDataBreakpoints(session, Allocate);
         breakpoints = new GuestBreakpoints(session, Allocate, message => Protocol.SendEvent(message), message => Protocol.SendEvent(message));
+    }
+
+    private void ConfigureSession(SoftDebuggerSession backend)
+    {
+        backend.TargetHitBreakpoint += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Breakpoint);
+        backend.TargetInterrupted += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Pause);
+        backend.TargetStopped += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Step);
+        backend.TargetExceptionThrown += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Exception);
+        backend.TargetUnhandledException += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Exception);
+        backend.TargetReady += (_, _) => Interlocked.Exchange(ref attach, null)?.SetResponse(new AttachResponse());
+        backend.TargetExited += (_, _) => Ended();
+        backend.ExceptionHandler = error => { if (!backend.HasExited) Fail(error); return true; };
+        backend.LogWriter = (_, text) => diagnostics.WriteLine(text);
+        backend.OutputWriter = (_, text) => diagnostics.WriteLine(text);
     }
 
     protected override void HandleInitializeRequestAsync(IRequestResponder<InitializeArguments, InitializeResponse> request)
@@ -84,7 +94,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             request.SetError(new ProtocolException("Initialize the debug adapter before attaching."));
             return;
         }
-        if (connection is not null)
+        if (owner is not null)
         {
             request.SetError(new ProtocolException("This adapter already owns a debug session."));
             return;
@@ -97,9 +107,25 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             request.SetError(new ProtocolException("Attach requires the session-owned address 127.0.0.1 and port 1..65535."));
             return;
         }
-        connection = new GuestConnection(new IPEndPoint(IPAddress.Loopback, (int)port.Value), Fail);
+        owner = new GuestSession(SessionEnded);
         attach = request;
-        Protocol.SendEvent(new InitializedEvent());
+        opening = OpenAsync(new IPEndPoint(IPAddress.Loopback, (int)port.Value));
+    }
+
+    private async Task OpenAsync(IPEndPoint address)
+    {
+        try
+        {
+            var target = await owner!.ConnectAsync(address);
+            lock (lifecycle)
+            {
+                if (Volatile.Read(ref stopping) != 0) return;
+                endpoint = target;
+                connection = new GuestConnection(target, Fail);
+                Protocol.SendEvent(new InitializedEvent());
+            }
+        }
+        catch (Exception error) { Fail(error); }
     }
 
     protected override void HandleConfigurationDoneRequestAsync(IRequestResponder<ConfigurationDoneArguments> request)
@@ -114,9 +140,18 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         session.Run(new SoftDebuggerStartInfo(connection), new DebuggerSessionOptions { EvaluationOptions = EvaluationOptions.DefaultOptions });
     }
 
-    protected override SetBreakpointsResponse HandleSetBreakpointsRequest(SetBreakpointsArguments arguments) => breakpoints.SetSource(arguments);
-    protected override SetFunctionBreakpointsResponse HandleSetFunctionBreakpointsRequest(SetFunctionBreakpointsArguments arguments) => breakpoints.SetFunctions(arguments);
-    protected override SetExceptionBreakpointsResponse HandleSetExceptionBreakpointsRequest(SetExceptionBreakpointsArguments arguments) => breakpoints.SetExceptions(arguments);
+    protected override SetBreakpointsResponse HandleSetBreakpointsRequest(SetBreakpointsArguments arguments)
+    {
+        lock (lifecycle) return breakpoints.SetSource(arguments);
+    }
+    protected override SetFunctionBreakpointsResponse HandleSetFunctionBreakpointsRequest(SetFunctionBreakpointsArguments arguments)
+    {
+        lock (lifecycle) return breakpoints.SetFunctions(arguments);
+    }
+    protected override SetExceptionBreakpointsResponse HandleSetExceptionBreakpointsRequest(SetExceptionBreakpointsArguments arguments)
+    {
+        lock (lifecycle) return breakpoints.SetExceptions(arguments);
+    }
 
     protected override DataBreakpointInfoResponse HandleDataBreakpointInfoRequest(DataBreakpointInfoArguments arguments) => dataBreakpoints.Describe(Pause, arguments);
     protected override SetDataBreakpointsResponse HandleSetDataBreakpointsRequest(SetDataBreakpointsArguments arguments) => dataBreakpoints.Set(arguments);
@@ -197,7 +232,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     private void Resume(int threadId, Action resume)
     {
         Pause.RequireThread(threadId);
-        Interlocked.Exchange(ref paused, null);
+        Interlocked.Exchange(ref paused, null)?.Dispose();
         dataBreakpoints.Resuming();
         resume();
     }
@@ -227,6 +262,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         {
             if (hits.BreakpointIds.Length == 0)
             {
+                state.Dispose();
                 session.Continue();
                 return;
             }
@@ -251,26 +287,74 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 
     private void Fail(Exception error)
     {
-        if (Volatile.Read(ref stopping) != 0) return;
+        if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
         Interlocked.Exchange(ref failed, 1);
         diagnostics.WriteLine($"isoplane debugger: {error}");
         Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException(error.Message));
         Stop();
     }
 
+    private void SessionEnded()
+    {
+        lock (lifecycle)
+        {
+            if (Interlocked.Exchange(ref ended, 1) != 0 || Volatile.Read(ref stopping) != 0) return;
+            Interlocked.Exchange(ref paused, null)?.Dispose();
+            Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException("The local development session ended."));
+            connection?.Close();
+            Protocol.SendEvent(new TerminatedEvent());
+        }
+    }
+
     private void Ended()
     {
-        Interlocked.Exchange(ref ended, 1);
-        Interlocked.Exchange(ref paused, null);
-        Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException("The guest exited before attachment completed."));
-        if (Volatile.Read(ref stopping) == 0) Protocol.SendEvent(new TerminatedEvent());
+        lock (lifecycle)
+        {
+            Interlocked.Exchange(ref paused, null)?.Dispose();
+            if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
+            if (attach is not null)
+            {
+                Fail(new InvalidOperationException("The guest exited before attachment completed."));
+                return;
+            }
+            reconnecting = ReconnectAsync(session, connection!);
+        }
+    }
+
+    private async Task ReconnectAsync(SoftDebuggerSession previous, GuestConnection previousConnection)
+    {
+        try
+        {
+            await Task.Yield();
+            await previousConnection.DisposeAsync();
+            lock (lifecycle)
+            {
+                if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
+                var store = previous.Breakpoints;
+                previous.Breakpoints = null;
+                previous.Dispose();
+                session = new SoftDebuggerSession { Breakpoints = store };
+                ConfigureSession(session);
+                breakpoints.Bind(session, message => Protocol.SendEvent(message));
+                dataBreakpoints.Invalidate(message => Protocol.SendEvent(message));
+                dataBreakpoints = new GuestDataBreakpoints(session, Allocate);
+                Interlocked.Exchange(ref pauseRequested, 0);
+                Interlocked.Exchange(ref pauseStep, null);
+                connection = new GuestConnection(endpoint!, Fail);
+                session.Run(new SoftDebuggerStartInfo(connection), new DebuggerSessionOptions { EvaluationOptions = EvaluationOptions.DefaultOptions });
+            }
+        }
+        catch (Exception error) { Fail(error); }
     }
 
     internal void Stop()
     {
         if (Interlocked.Exchange(ref stopping, 1) != 0) return;
         Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException("The local debug session was stopped."));
-        connection?.Close();
+        lock (lifecycle)
+        {
+            owner?.Close();
+        }
         Protocol.Stop();
     }
 
@@ -279,6 +363,10 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         Stop();
+        Interlocked.Exchange(ref paused, null)?.Dispose();
+        await opening;
+        await reconnecting;
+        if (owner is not null) await owner.DisposeAsync();
         if (connection is not null) await connection.DisposeAsync();
         session.Dispose();
     }

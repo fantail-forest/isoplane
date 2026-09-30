@@ -7,7 +7,7 @@ internal static class AsyncDebugSymbols
     private static readonly Guid Stepping = new("54FD2AC5-E925-401A-9C2A-F94F171072F8");
 
     internal sealed record AwaitLocation(string Source, int Line, int Column);
-    internal sealed record Method(string StateMachineType, string Name, string NativeState, bool IsValueType, AwaitLocation[] Awaits);
+    internal sealed record Method(string StateMachineType, string DeclaringType, string Name, string NativeState, bool IsValueType, AwaitLocation[] Awaits);
 
     internal static Method? Read(MetadataReader assembly, MetadataReader symbols, MethodDefinitionHandle handle)
     {
@@ -37,7 +37,7 @@ internal static class AsyncDebugSymbols
             }
         }
         var type = method.GetDeclaringType();
-        return new Method(TypeName(assembly, type), TypeName(assembly, original.GetDeclaringType()).Replace('+', '.') + "." + assembly.GetString(original.Name),
+        return new Method(TypeName(assembly, type), TypeName(assembly, original.GetDeclaringType()), TypeName(assembly, original.GetDeclaringType()).Replace('+', '.') + "." + assembly.GetString(original.Name),
             string.Concat((assembly.GetString(assembly.GetAssemblyDefinition().Name) + "_" + TypeName(assembly, type))
                 .Select(character => char.IsAsciiLetterOrDigit(character) || character == '_' ? character : '_')), IsValueType(assembly, type), awaits.ToArray());
     }

@@ -47,9 +47,9 @@ internal static class DebugDevelopment
         }
         var module = runtime.DebugModule;
         if (options.Json)
-            Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint, module, package, runtime = "mono" }));
+            Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint = relay.AdapterEndpoint.ToString(), module, package, runtime = "mono" }));
         else
-            Console.WriteLine($"Debugger target: {endpoint}. Connect your editor through isoplane debug-adapter; this session serves one HTTP request.");
+            Console.WriteLine($"Debugger target: {relay.AdapterEndpoint}. Connect your editor through isoplane debug-adapter; the connection remains available across HTTP requests.");
         await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
             new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
             message => LocalEvents.Write(message, options.Json));
@@ -63,7 +63,10 @@ internal static class DebugDevelopment
         try
         {
             if (await Task.WhenAny(host.Completion, relay.Completion) == relay.Completion)
+            {
                 await relay.Completion;
+                host.Stop();
+            }
             await host.Completion;
         }
         finally

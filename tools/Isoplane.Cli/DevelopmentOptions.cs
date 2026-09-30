@@ -50,7 +50,7 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
         if (noBuild && watch)
             throw new ArgumentException("--no-build requires --no-watch; compile changes explicitly before running again.");
         if (debug && watch)
-            throw new ArgumentException("--debug requires --no-watch; each debug session handles one request.");
+            throw new ArgumentException("--debug requires --no-watch.");
         if (!System.IO.Directory.Exists(directory))
             throw new ArgumentException($"Project directory does not exist: {directory}");
         if (!File.Exists(Path.Combine(directory, "isoplane.toml")))

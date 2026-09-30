@@ -8,6 +8,7 @@
     <Description>Local interpreted guest debugging through the Debug Adapter Protocol.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../BuildProtocol/DebugSessionProtocol.cs" Link="DebugSessionProtocol.cs" />
     <Compile Remove="Backend/**/*.cs" />
     <Compile Include="../BuildProtocol/AsyncDebugSymbols.cs" Link="AsyncDebugSymbols.cs" />
     <ProjectReference Include="../debugger-libs/Mono.Debugging.Soft/Mono.Debugging.Soft.csproj" />

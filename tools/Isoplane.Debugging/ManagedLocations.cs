@@ -9,13 +9,17 @@ namespace Isoplane.Debugging;
 
 internal static class ManagedLocations
 {
-    internal static ManagedDataBreakpoint Resolve(SoftDebuggerSession session, int frameIndex, string expression, int id)
+    internal static SoftEvaluationContext Context(SoftDebuggerSession session, int frameIndex)
     {
         var threads = session.VirtualMachine.GetThreads();
         if (threads.Count != 1) throw new ProtocolException("The local WASM debugger requires one guest thread.");
         var frames = threads[0].GetFrames();
         if (frameIndex < 0 || frameIndex >= frames.Length) throw new ProtocolException("The stack frame is not part of the current pause.");
-        var context = new SoftEvaluationContext(session, frames[frameIndex], EvaluationOptions.DefaultOptions);
+        return new SoftEvaluationContext(session, frames[frameIndex], EvaluationOptions.DefaultOptions);
+    }
+
+    internal static ManagedDataBreakpoint Resolve(SoftEvaluationContext context, string expression, int id)
+    {
         var syntax = SyntaxFactory.ParseExpression(expression);
         if (syntax.ContainsDiagnostics) throw new ProtocolException("A managed field or array element expression is required.");
         if (syntax is ElementAccessExpressionSyntax element) return Element(context, element, id);

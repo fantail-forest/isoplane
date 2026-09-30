@@ -8,7 +8,6 @@ namespace Isoplane.Debugging;
 
 internal sealed class GuestConnection(IPEndPoint endpoint, Action<Exception> failed) : SoftDebuggerStartArgs, ISoftDebuggerConnectionProvider, IAsyncDisposable
 {
-    // A debugger disconnect cannot leave a paused guest running; the relay treats a reset as terminal.
     private readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { LingerState = new(true, 0) };
     private Task completion = Task.CompletedTask;
 

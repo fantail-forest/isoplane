@@ -47,6 +47,7 @@ public sealed class AsyncDebugSymbolsTests
         Assert.True(methods.Length == 1, "Only the async continuation must have awaiting-frame symbols.");
         var method = methods[0]!;
         Assert.True(method.IsValueType == valueType, "Boxed optimized state must be distinguished from live reference state.");
+        Assert.True(method.DeclaringType == "Example", "Async evaluation must resolve members in the original declaring type.");
         Assert.True(method.Name == "Example.Run", "The logical frame must retain the source method name.");
         Assert.True(method.Awaits.Select(location => location.Line).SequenceEqual([6, 7]),
             "Each suspension must map to its own await statement, including ConfigureAwait(false).");

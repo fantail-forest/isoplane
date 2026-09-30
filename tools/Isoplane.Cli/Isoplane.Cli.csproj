@@ -12,6 +12,7 @@
     <Description>Isoplane local application development using the shared WASM runtime.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../BuildProtocol/DebugSessionProtocol.cs" Link="DebugSessionProtocol.cs" />
     <ProjectReference Include="../Isoplane.Native/Isoplane.Native.csproj" />
     <ProjectReference Include="../Isoplane.Debugging/Isoplane.Debugging.csproj" />
     <PackageReference Include="Tomlyn" Version="2.10.1" />

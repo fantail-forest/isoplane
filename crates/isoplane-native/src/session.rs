@@ -236,7 +236,6 @@ impl Session {
                     completed = connections.join_next(), if !connections.is_empty() => {
                         if let Some(completed) = completed {
                             match completed {
-                                Ok(handled) if debug && handled => break,
                                 Ok(_) => {},
                                 Err(error) => tracing::warn!(%error, "local connection task failed"),
                             }
@@ -306,7 +305,7 @@ async fn shutdown(app: Arc<LocalApp>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn stop_connections(connections: &mut JoinSet<bool>) {
+async fn stop_connections(connections: &mut JoinSet<()>) {
     connections.abort_all();
     while let Some(result) = connections.join_next().await {
         if let Err(error) = result {
@@ -323,9 +322,10 @@ async fn connection_task(
     current_proxy: Arc<RwLock<Arc<isoplane_proxy::Proxy>>>,
     debug: bool,
     admitted: Arc<AtomicBool>,
-) -> bool {
+) {
     let handled = Arc::new(AtomicBool::new(false));
     let observed = handled.clone();
+    let admission = admitted.clone();
     let service = service_fn(move |request| {
         let proxy = current_proxy.read().clone();
         let admitted = admitted.clone();
@@ -348,5 +348,7 @@ async fn connection_task(
     {
         tracing::debug!(%error, "local connection closed");
     }
-    observed.load(Ordering::Acquire)
+    if debug && observed.load(Ordering::Acquire) {
+        admission.store(false, Ordering::Release);
+    }
 }

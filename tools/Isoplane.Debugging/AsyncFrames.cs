@@ -5,38 +5,35 @@ using Isoplane.Build;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Mono.Debugger.Soft;
 using Mono.Debugging.Client;
+using Mono.Debugging.Evaluation;
 using Mono.Debugging.Soft;
 
 namespace Isoplane.Debugging;
 
-internal sealed record AsyncFrame(ObjectMirror State, AsyncDebugSymbols.Method Method, AsyncDebugSymbols.AwaitLocation Location,
+internal sealed record AsyncFrame(AsyncDebugSymbols.Method Method, AsyncDebugSymbols.AwaitLocation Location,
     SoftEvaluationContext Context)
 {
-    internal ObjectValue[] Locals() => State.Type.GetFields().Where(field => !field.IsStatic)
-        .Select(field => (Field: field, Name: LocalName(field.Name))).Where(field => field.Name is not null)
-        .Select(field => new FieldValueReference(Context, field.Field, State, State.Type, field.Name!, ObjectValueFlags.Variable)
-            .CreateObjectValue(false)).ToArray();
+    internal ObjectValue[] Locals() => Context.Adapter.GetLocalVariables(Context)
+        .Concat(Context.Adapter.GetParameters(Context)).Select(value => value.CreateObjectValue(false)).ToArray();
 
-    private static string? LocalName(string name)
+    internal ObjectValue Evaluate(string expression)
     {
-        if (name == "<>4__this") return "this";
-        if (!name.StartsWith('<')) return name;
-        int end = name.IndexOf(">5__", StringComparison.Ordinal);
-        return end > 1 ? name[1..end] : null;
+        var value = Context.Evaluator.Evaluate(Context, expression);
+        if (value is NamespaceValueReference)
+            throw new EvaluatorException("The expression '{0}' does not resolve to a value in this async frame.", expression);
+        return value.CreateObjectValue(false);
     }
 }
 
 internal static class AsyncFrames
 {
-    internal static IReadOnlyList<AsyncFrame> Read(SoftDebuggerSession session, GuestCode code)
+    internal static IReadOnlyList<AsyncFrame> Read(SoftDebuggerSession session, GuestCode code,
+        IReadOnlyList<Mono.Debugger.Soft.StackFrame> physical, int frameIndex)
     {
-        var threads = session.VirtualMachine.GetThreads();
-        if (threads.Count != 1) throw new ProtocolException("Async stack reconstruction requires one guest thread.");
-        var physical = threads[0].GetFrames();
-        if (physical.Length == 0 || physical[0].Method.Name != "MoveNext" || physical[0].Method.IsStatic
-            || physical[0].GetThis() is not ObjectMirror current)
+        var frame = physical[frameIndex];
+        if (frame.Method.Name != "MoveNext" || frame.Method.IsStatic)
             return [];
-        var task = physical[0].Domain.Corlib.GetType("System.Threading.Tasks.Task");
+        var task = frame.Domain.Corlib.GetType("System.Threading.Tasks.Task");
         var head = task.GetField("s_isoplaneAsyncState")
             ?? throw new ProtocolException("The guest runtime does not contain async debugger tracking.");
         if (task.GetValue(head) is not ObjectMirror tracking) return [];
@@ -44,10 +41,9 @@ internal static class AsyncFrames
         var seen = new HashSet<ObjectMirror>();
         for (var node = Field(tracking, "Frames") as ObjectMirror; node is not null && seen.Add(node); node = Field(node, "Next") as ObjectMirror)
             nodes.Add(node);
-        var root = nodes.SingleOrDefault(node => ReferenceEquals(Field(node, "StateMachine"), current));
+        var root = Root(nodes, physical, frameIndex);
         if (root is null) return [];
         var result = new List<AsyncFrame>();
-        var context = new SoftEvaluationContext(session, physical[0], EvaluationOptions.DefaultOptions);
         var visited = new HashSet<ObjectMirror> { root };
         Append(root);
         return result;
@@ -58,28 +54,71 @@ internal static class AsyncFrames
             foreach (var parent in nodes.Where(node => ReferenceEquals(Field(node, "Awaited"), operation)))
             {
                 if (!visited.Add(parent)) continue;
-                if (Field(parent, "StateMachine") is not ObjectMirror state) continue;
-                if (state.Type.IsValueType)
-                {
-                    Append(parent);
-                    continue;
-                }
-                var method = state.Type.GetMethod("MoveNext");
-                var assembly = method.DeclaringType.Assembly;
-                var pdb = code.Contains(method) && assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
-                if (pdb is not null)
-                {
-                    using var pe = new PEReader(new MemoryStream(assembly.GetMetadataBlob()));
-                    using var symbols = MetadataReaderProvider.FromPortablePdbStream(new MemoryStream(pdb));
-                    var info = AsyncDebugSymbols.Read(pe.GetMetadataReader(), symbols.GetMetadataReader(), (MethodDefinitionHandle)MetadataTokens.Handle(method.MetadataToken));
-                    var stateField = state.Type.GetField("<>1__state");
-                    if (info is not null && stateField is not null && state.GetValue(stateField) is PrimitiveValue { Value: int index }
-                        && index >= 0 && index < info.Awaits.Length)
-                        result.Add(new AsyncFrame(state, info, info.Awaits[index], context));
-                }
+                if (ReadCaller(session, code, frame, parent) is { } caller) result.Add(caller);
                 Append(parent);
             }
         }
+    }
+
+    private static AsyncFrame? ReadCaller(SoftDebuggerSession session, GuestCode code,
+        Mono.Debugger.Soft.StackFrame frame, ObjectMirror node)
+    {
+        var owner = Field(node, "Operation") as ObjectMirror;
+        var storageField = owner is null ? null : StateMachineField(owner.Type);
+        if (owner is null || storageField is null) return null;
+        var state = owner.GetValue(storageField);
+        var stateType = StateType(state);
+        if (stateType is null) return null;
+        var method = stateType.GetMethod("MoveNext");
+        var assembly = method.DeclaringType.Assembly;
+        var pdb = code.Contains(method) && assembly.HasDebugInfoLoaded() ? assembly.GetPdbBlob() : null;
+        if (pdb is null) return null;
+        using var pe = new PEReader(new MemoryStream(assembly.GetMetadataBlob()));
+        using var symbols = MetadataReaderProvider.FromPortablePdbStream(new MemoryStream(pdb));
+        var info = AsyncDebugSymbols.Read(pe.GetMetadataReader(), symbols.GetMetadataReader(), (MethodDefinitionHandle)MetadataTokens.Handle(method.MetadataToken));
+        var stateField = stateType.GetField("<>1__state");
+        var stateValue = stateField is null ? null : state switch
+        {
+            ObjectMirror value => value.GetValue(stateField),
+            StructMirror value => value[stateField.Name],
+            _ => null
+        };
+        if (info is null || stateValue is not PrimitiveValue { Value: int index }
+            || index < 0 || index >= info.Awaits.Length) return null;
+        var context = new SoftEvaluationContext(session, frame, EvaluationOptions.DefaultOptions);
+        var storage = new FieldValueReference(context, storageField, owner, owner.Type);
+        context.Adapter = new AsyncVariables(storage, stateType, assembly.GetType(info.DeclaringType)
+            ?? throw new ProtocolException("The async caller's declaring type is unavailable.")) { Session = session };
+        return new AsyncFrame(info, info.Awaits[index], context);
+    }
+
+    private static ObjectMirror? Root(List<ObjectMirror> nodes, IReadOnlyList<Mono.Debugger.Soft.StackFrame> physical, int frameIndex)
+    {
+        var frame = physical[frameIndex];
+        if (frame.GetThis() is ObjectMirror current)
+            return nodes.SingleOrDefault(node => ReferenceEquals(Field(node, "StateMachine"), current));
+        foreach (var caller in physical.Skip(frameIndex + 1))
+        {
+            if (caller.Method.Name != "MoveNext" || caller.Method.IsStatic || caller.GetThis() is not ObjectMirror owner) continue;
+            var node = nodes.SingleOrDefault(node => ReferenceEquals(Field(node, "Operation"), owner)
+                && StateType(Field(node, "StateMachine")) == frame.Method.DeclaringType);
+            if (node is not null) return node;
+        }
+        return null;
+    }
+
+    private static TypeMirror? StateType(Value value) => value switch
+    {
+        ObjectMirror instance => instance.Type,
+        StructMirror instance => instance.Type,
+        _ => null
+    };
+
+    private static FieldInfoMirror? StateMachineField(TypeMirror type)
+    {
+        for (TypeMirror? current = type; current is not null; current = current.BaseType)
+            if (current.GetField("StateMachine") is { } field) return field;
+        return null;
     }
 
     private static Value Field(ObjectMirror instance, string name) => instance.GetValue(instance.Type.GetField(name)

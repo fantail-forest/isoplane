@@ -8,7 +8,7 @@ namespace Isoplane.Debugging;
 
 internal sealed class GuestBreakpoints
 {
-    private readonly SoftDebuggerSession session;
+    private SoftDebuggerSession session;
     private readonly Func<int> allocate;
     private readonly Dictionary<Mono.Debugging.Client.Breakpoint, int> identifiers = [];
     private readonly object gate = new();
@@ -24,6 +24,12 @@ internal sealed class GuestBreakpoints
             lock (gate) if (!identifiers.TryGetValue(args.Breakpoint, out id)) return;
             changed(new BreakpointEvent { Reason = BreakpointEvent.ReasonValue.Changed, Breakpoint = Describe(args.Breakpoint, id) });
         };
+        Bind(session, output);
+    }
+
+    internal void Bind(SoftDebuggerSession next, Action<OutputEvent> output)
+    {
+        session = next;
         session.BreakpointTraceHandler = (breakpoint, text) => output(new OutputEvent
         {
             Category = OutputEvent.CategoryValue.Console, Output = text + Environment.NewLine,
