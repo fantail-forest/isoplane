@@ -4,7 +4,12 @@ const vscode = require('vscode');
 function activate(context) {
     context.subscriptions.push(
         vscode.debug.registerDebugConfigurationProvider('isoplane', {
-            resolveDebugConfigurationWithSubstitutedVariables(_folder, configuration) {
+            resolveDebugConfigurationWithSubstitutedVariables(folder, configuration) {
+                if (configuration.request === 'launch') {
+                    const project = configuration.project || folder?.uri.fsPath;
+                    if (!project) throw new Error('Open an Isoplane project folder or set project in your launch configuration.');
+                    return { ...configuration, project };
+                }
                 const port = Number(configuration.port);
                 if (!Number.isInteger(port) || port < 1 || port > 65535) {
                     throw new Error('Enter the debugger port printed by your local Isoplane debug session.');

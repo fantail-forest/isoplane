@@ -297,32 +297,41 @@ fn installed_debug_acceptance(mode: &str) {
         source
     };
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut dev = start_debug_session(&app, &cli, mode);
-    let metadata = dev
-        .debugger
-        .as_ref()
-        .expect("debug CLI must report its exact relay and module/symbol pair");
+    let mut dev = (mode != "launch").then(|| start_debug_session(&app, &cli, mode));
     let driver =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
     let mut command = std::process::Command::new(python);
-    command
-        .arg(driver)
-        .arg(&cli)
-        .arg(metadata["endpoint"].as_str().unwrap())
-        .arg(&dev.url)
-        .arg(debug_source)
-        .arg(dev.pid().to_string())
-        .arg(mode)
-        .arg(metadata["package"].as_str().unwrap());
-    let result = debugger::drive(&mut dev, &mut command);
+    command.arg(driver).arg(&cli);
+    if let Some(dev) = &dev {
+        let metadata = dev
+            .debugger
+            .as_ref()
+            .expect("debug CLI must report its relay and package");
+        command
+            .arg(metadata["endpoint"].as_str().unwrap())
+            .arg(&dev.url)
+            .arg(debug_source)
+            .arg(dev.pid().to_string())
+            .arg(mode)
+            .arg(metadata["package"].as_str().unwrap());
+    } else {
+        command
+            .args(["", ""])
+            .arg(debug_source)
+            .args(["0", mode])
+            .arg(&app);
+    }
+    let result = debugger::drive(dev.as_mut(), &mut command);
     assert!(
         result.status.success(),
         "installed debug {mode} acceptance failed: {}{}\nRuntime output:\n{}",
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr),
-        dev.diagnostics()
+        dev.as_ref().map(Dev::diagnostics).unwrap_or_default()
     );
-    dev.wait_exit();
+    if let Some(dev) = &mut dev {
+        dev.wait_exit();
+    }
     assert!(
         !app.join(".isoplane/state").exists(),
         "a disposable debugger session must not leave runtime state in the application's persistent directory"
@@ -334,6 +343,11 @@ fn installed_debug_acceptance(mode: &str) {
             .is_none(),
         "debugger exit must remove the entire owned session, including runtime scratch"
     );
+}
+
+#[test]
+fn an_editor_launches_and_debugs_multiple_requests_without_a_manual_port() {
+    installed_debug_acceptance("launch");
 }
 
 #[test]

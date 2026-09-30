@@ -268,6 +268,58 @@ public sealed class DebugAdapterTests
         Assert.True(client.Adapter.Failed, "an invalid local-session handshake must not start a guest connection");
     }
 
+    [Fact]
+    public async Task disconnect_cancels_a_launch_before_the_application_is_ready()
+    {
+        var launcher = new PendingLaunch();
+        await using var client = await Client.StartAsync(launcher);
+        await client.Initialize();
+        var project = Path.GetFullPath("application");
+        var launching = client.Send(new LaunchRequest
+        {
+            Args = { ConfigurationProperties = new Dictionary<string, JToken> { ["project"] = project } }
+        });
+        var options = await launcher.Started.Task.WaitAsync(client.Cancellation);
+        Assert.Equal(new DebugLaunchOptions(project, "Debug", null), options);
+        await client.Send(new DisconnectRequest { Args = { TerminateDebuggee = true } });
+        await Assert.ThrowsAsync<ProtocolException>(() => launching);
+        await launcher.Completed.Task.WaitAsync(client.Cancellation);
+        Assert.False(client.Adapter.Failed);
+    }
+
+    [Theory]
+    [InlineData("project", "\"relative/path\"")]
+    [InlineData("configuration", "false")]
+    [InlineData("port", "-1")]
+    [InlineData("port", "65536")]
+    public async Task invalid_launch_options_do_not_start_an_application(string property, string json)
+    {
+        var launcher = new PendingLaunch();
+        await using var client = await Client.StartAsync(launcher);
+        await client.Initialize();
+        var properties = new Dictionary<string, JToken> { ["project"] = Path.GetFullPath("application") };
+        properties[property] = JToken.Parse(json);
+        await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new LaunchRequest
+        {
+            Args = { ConfigurationProperties = properties }
+        }));
+        Assert.False(launcher.Started.Task.IsCompleted);
+        Assert.False(client.Adapter.Failed);
+    }
+
+    private sealed class PendingLaunch : DebugLauncher
+    {
+        internal TaskCompletionSource<DebugLaunchOptions> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task RunAsync(DebugLaunchOptions options, Action<IPEndPoint> ready, Action<string> output, CancellationToken cancellation)
+        {
+            Started.SetResult(options);
+            try { await Task.Delay(Timeout.Infinite, cancellation); }
+            finally { Completed.SetResult(); }
+        }
+    }
+
     private static async Task<TcpClient> AcceptControlAsync(TcpListener listener, CancellationToken cancellation)
     {
         var control = await listener.AcceptTcpClientAsync(cancellation);
@@ -293,11 +345,11 @@ public sealed class DebugAdapterTests
         internal TaskCompletionSource Initialized { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal CancellationToken Cancellation => lifetime.Token;
 
-        private Client(TcpClient editor, TcpClient adapter)
+        private Client(TcpClient editor, TcpClient adapter, DebugLauncher? launcher)
         {
             this.editor = editor;
             this.adapter = adapter;
-            Adapter = new GuestDebugAdapter(adapter.GetStream(), adapter.GetStream(), Diagnostics);
+            Adapter = new GuestDebugAdapter(adapter.GetStream(), adapter.GetStream(), Diagnostics, launcher);
             host = new Editor(editor.GetStream(), Initialized, Diagnostics);
             Adapter.Protocol.Run();
             Protocol.LogMessage += (_, message) => Diagnostics.WriteLine(message.Category + ": " + message.Message);
@@ -305,7 +357,7 @@ public sealed class DebugAdapterTests
             Protocol.Run();
         }
 
-        internal static async Task<Client> StartAsync()
+        internal static async Task<Client> StartAsync(DebugLauncher? launcher = null)
         {
             using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -313,7 +365,7 @@ public sealed class DebugAdapterTests
             try
             {
                 await editor.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
-                return new Client(editor, await listener.AcceptTcpClientAsync());
+                return new Client(editor, await listener.AcceptTcpClientAsync(), launcher);
             }
             catch { editor.Dispose(); throw; }
         }

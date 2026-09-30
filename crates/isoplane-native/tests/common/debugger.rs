@@ -6,7 +6,7 @@ use std::process::{Child, Command, Output, Stdio};
 use crate::common::Dev;
 
 /// Runs the DAP driver, relaying shutdown requests to the development owner.
-pub fn drive(dev: &mut Dev, command: &mut Command) -> Output {
+pub fn drive(mut dev: Option<&mut Dev>, command: &mut Command) -> Output {
     let mut errors = tempfile::tempfile().expect("create the debugger diagnostic capture");
     let mut driver = Driver(
         command
@@ -24,7 +24,9 @@ pub fn drive(dev: &mut Dev, command: &mut Command) -> Output {
     for line in BufReader::new(driver.0.stdout.take().expect("capture DAP driver output")).lines() {
         let line = line.expect("read DAP driver output");
         if line == "request-owner-stop" {
-            dev.stop();
+            dev.as_mut()
+                .expect("owner-stop requires an externally started session")
+                .stop();
             driver
                 .0
                 .stdin

@@ -20,7 +20,10 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     private GuestConnection? connection;
     private GuestSession? owner;
     private Task opening = Task.CompletedTask;
-    private IRequestResponder<AttachArguments>? attach;
+    private ConnectionRequest? attach;
+    private readonly DebugLauncher? launcher;
+    private readonly CancellationTokenSource launchCancellation = new();
+    private Task launching = Task.CompletedTask;
     private PausedValues? paused;
     private int nextHandle;
     private int pauseRequested;
@@ -34,9 +37,10 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 
     internal bool Failed => Volatile.Read(ref failed) != 0;
 
-    internal GuestDebugAdapter(Stream input, Stream output, TextWriter diagnostics)
+    internal GuestDebugAdapter(Stream input, Stream output, TextWriter diagnostics, DebugLauncher? launcher = null)
     {
         this.diagnostics = diagnostics;
+        this.launcher = launcher;
         InitializeProtocolClient(input, output);
         ConfigureSession(session);
         dataBreakpoints = new GuestDataBreakpoints(session, Allocate);
@@ -50,7 +54,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         backend.TargetStopped += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Step);
         backend.TargetExceptionThrown += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Exception);
         backend.TargetUnhandledException += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Exception);
-        backend.TargetReady += (_, _) => Interlocked.Exchange(ref attach, null)?.SetResponse(new AttachResponse());
+        backend.TargetReady += (_, _) => Interlocked.Exchange(ref attach, null)?.Complete();
         backend.TargetExited += (_, _) => Ended();
         backend.ExceptionHandler = error => { if (!backend.HasExited) Fail(error); return true; };
         backend.LogWriter = (_, text) => diagnostics.WriteLine(text);
@@ -108,11 +112,63 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             return;
         }
         owner = new GuestSession(SessionEnded);
-        attach = request;
+        attach = new ConnectionRequest(() => request.SetResponse(new AttachResponse()), request.SetError);
         opening = OpenAsync(new IPEndPoint(IPAddress.Loopback, (int)port.Value));
     }
 
-    private async Task OpenAsync(IPEndPoint address)
+    protected override void HandleLaunchRequestAsync(IRequestResponder<LaunchArguments> request)
+    {
+        if (!initialized)
+        {
+            request.SetError(new ProtocolException("Initialize the debug adapter before launching."));
+            return;
+        }
+        if (owner is not null)
+        {
+            request.SetError(new ProtocolException("This adapter already owns a debug session."));
+            return;
+        }
+        if (launcher is null)
+        {
+            request.SetError(new ProtocolException("Launch requires the installed Isoplane CLI debug adapter."));
+            return;
+        }
+        if (request.Arguments.NoDebug == true)
+        {
+            request.SetError(new ProtocolException("Use isoplane dev to run without debugging."));
+            return;
+        }
+        var properties = request.Arguments.ConfigurationProperties;
+        string? project = properties.TryGetValue("project", out var projectValue) && projectValue.Type == JTokenType.String ? projectValue.Value<string>() : null;
+        string? configuration = properties.TryGetValue("configuration", out var configurationValue)
+            ? configurationValue.Type == JTokenType.String ? configurationValue.Value<string>() : null : "Debug";
+        long? port = properties.TryGetValue("port", out var portValue) && portValue.Type == JTokenType.Integer ? portValue.Value<long>() : null;
+        if (string.IsNullOrWhiteSpace(project) || !Path.IsPathFullyQualified(project) || string.IsNullOrWhiteSpace(configuration)
+            || properties.ContainsKey("port") && (port is null or < 0 or > 65535))
+        {
+            request.SetError(new ProtocolException("Launch requires an absolute project directory, a build configuration, and an optional HTTP port from 0 to 65535."));
+            return;
+        }
+        owner = new GuestSession(SessionEnded);
+        attach = new ConnectionRequest(() => request.SetResponse(new LaunchResponse()), request.SetError);
+        launching = LaunchAsync(new DebugLaunchOptions(project, configuration, port is { } number ? (ushort)number : null));
+    }
+
+    private async Task LaunchAsync(DebugLaunchOptions options)
+    {
+        try
+        {
+            await launcher!.RunAsync(options,
+                address => opening = OpenAsync(address, completeOnOpen: true),
+                text => Protocol.SendEvent(new OutputEvent { Category = OutputEvent.CategoryValue.Console, Output = text + Environment.NewLine }),
+                launchCancellation.Token);
+            SessionEnded();
+        }
+        catch (OperationCanceledException) when (launchCancellation.IsCancellationRequested) { return; }
+        catch (Exception error) { Fail(error); }
+    }
+
+    private async Task OpenAsync(IPEndPoint address, bool completeOnOpen = false)
     {
         try
         {
@@ -123,6 +179,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
                 endpoint = target;
                 connection = new GuestConnection(target, Fail);
                 Protocol.SendEvent(new InitializedEvent());
+                if (completeOnOpen) Interlocked.Exchange(ref attach, null)?.Complete();
             }
         }
         catch (Exception error) { Fail(error); }
@@ -290,7 +347,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
         Interlocked.Exchange(ref failed, 1);
         diagnostics.WriteLine($"isoplane debugger: {error}");
-        Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException(error.Message));
+        Interlocked.Exchange(ref attach, null)?.Reject(new ProtocolException(error.Message));
         Stop();
     }
 
@@ -300,7 +357,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         {
             if (Interlocked.Exchange(ref ended, 1) != 0 || Volatile.Read(ref stopping) != 0) return;
             Interlocked.Exchange(ref paused, null)?.Dispose();
-            Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException("The local development session ended."));
+            Interlocked.Exchange(ref attach, null)?.Reject(new ProtocolException("The local development session ended."));
             connection?.Close();
             Protocol.SendEvent(new TerminatedEvent());
         }
@@ -350,7 +407,8 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     internal void Stop()
     {
         if (Interlocked.Exchange(ref stopping, 1) != 0) return;
-        Interlocked.Exchange(ref attach, null)?.SetError(new ProtocolException("The local debug session was stopped."));
+        Interlocked.Exchange(ref attach, null)?.Reject(new ProtocolException("The local debug session was stopped."));
+        launchCancellation.Cancel();
         lock (lifecycle)
         {
             owner?.Close();
@@ -364,10 +422,14 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         Stop();
         Interlocked.Exchange(ref paused, null)?.Dispose();
+        await launching;
         await opening;
         await reconnecting;
         if (owner is not null) await owner.DisposeAsync();
         if (connection is not null) await connection.DisposeAsync();
         session.Dispose();
+        launchCancellation.Dispose();
     }
+
+    private sealed record ConnectionRequest(Action Complete, Action<ProtocolException> Reject);
 }

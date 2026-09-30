@@ -4,22 +4,24 @@ namespace Isoplane.Cli;
 
 internal static class LocalEvents
 {
-    internal static void Write(JsonObject message, bool json)
+    internal static void Write(JsonObject message, bool json, Action<string>? destination = null)
     {
+        var output = destination ?? Console.WriteLine;
+        var errors = destination ?? Console.Error.WriteLine;
         var kind = message["event"]!.GetValue<string>();
         if (kind == "diagnostic")
         {
-            if (json) Console.Error.WriteLine(message.ToJsonString());
+            if (json) errors(message.ToJsonString());
             else if (message["target"]!.GetValue<string>() == "isoplane_host::bindings::observability")
-                ApplicationLog(message["fields"]!.AsObject());
+                ApplicationLog(message["fields"]!.AsObject(), errors);
             return;
         }
-        if (json) Console.WriteLine(message.ToJsonString());
-        else if (kind == "reload_failed") Console.Error.WriteLine($"isoplane: reload failed; keeping the last working app: {message["detail"]}");
-        else Console.WriteLine($"  {kind} {message["app"]} at {message["url"]} (local guest execution)");
+        if (json) output(message.ToJsonString());
+        else if (kind == "reload_failed") errors($"isoplane: reload failed; keeping the last working app: {message["detail"]}");
+        else output($"  {kind} {message["app"]} at {message["url"]} (local guest execution)");
     }
 
-    private static void ApplicationLog(JsonObject fields)
+    private static void ApplicationLog(JsonObject fields, Action<string> output)
     {
         if (fields["level"] is not { } levelNode || fields["fields"] is not { } data) return;
         var level = levelNode.GetValue<int>();
@@ -32,7 +34,7 @@ internal static class LocalEvents
         var content = TerminalText(structured?["message"]?.GetValue<string>() ?? text).Replace("\n", "\n         ", StringComparison.Ordinal);
         var category = structured?["category"]?.GetValue<string>();
         var exception = structured?["exception"]?.GetValue<string>();
-        Console.Error.WriteLine($"  {severity,-5}  {content}"
+        output($"  {severity,-5}  {content}"
             + (category is null ? "" : $"  [{TerminalText(category).Replace('\n', ' ')}]")
             + (exception is null ? "" : "\n         " + TerminalText(exception).Replace("\n", "\n         ", StringComparison.Ordinal)));
     }

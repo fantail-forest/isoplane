@@ -5,6 +5,7 @@ import http.client
 import os
 from pathlib import Path
 import queue
+import re
 import socket
 import subprocess
 import sys
@@ -109,24 +110,33 @@ try:
     if scenario is None:
         before = next(index + 1 for index, line in enumerate(lines) if "await delay;" in line)
         after = next(index + 1 for index, line in enumerate(lines) if "bool resumed = true;" in line)
-    http_endpoint = urllib.parse.urlsplit(url)
-    with socket.create_connection((http_endpoint.hostname, http_endpoint.port), timeout=30) as probe:
-        probe.shutdown(socket.SHUT_WR)
-        assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     response(send("initialize", {"adapterID": "isoplane", "pathFormat": "path", "linesStartAt1": True, "columnsStartAt1": True}))
-    address, port = endpoint.rsplit(":", 1)
-    attached = send("attach", {"address": address, "port": int(port)})
+    if mode == "launch":
+        attached = send("launch", {"project": module, "configuration": "Debug", "port": 0})
+    else:
+        address, port = endpoint.rsplit(":", 1)
+        attached = send("attach", {"address": address, "port": int(port)})
     until(lambda item: item.get("event") == "initialized")
     if scenario is not None:
         scenario.configure(source, send, response)
     else:
         response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [{"line": before}], "lines": [before]}))
     response(send("configurationDone", {}))
+    if mode == "launch":
+        response(attached)
+        ready = until(lambda item: item.get("event") == "output" and re.search(r"ready .+ at (http://\S+)", item["body"]["output"]))
+        url = re.search(r"ready .+ at (http://\S+)", ready["body"]["output"]).group(1)
+        owned = children(adapter.pid, process_tree())
+        assert owned, "launch must own the local application process"
+    http_endpoint = urllib.parse.urlsplit(url)
+    with socket.create_connection((http_endpoint.hostname, http_endpoint.port), timeout=30) as probe:
+        probe.shutdown(socket.SHUT_WR)
+        assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     previous_frame = None
-    for attempt in range(2 if mode == "requests" else 1):
+    for attempt in range(2 if mode in ("requests", "launch") else 1):
         http_result = concurrent.futures.Future()
         threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
-        if attempt == 0:
+        if attempt == 0 and mode != "launch":
             response(attached)
         if scenario is not None:
             scenario.exercise(source, send, response, until)
@@ -174,7 +184,7 @@ try:
                 if expected == after:
                     assert any(value["name"] == "delay" and "RanToCompletion" in value["value"] for value in values), "DAP next must cross the incomplete await and preserve completed task state"
                 response(send("next" if expected == before else "continue", {"threadId": thread}))
-        if mode == "requests":
+        if mode in ("requests", "launch"):
             previous_frame = frame["id"]
         if mode != "stop":
             assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"42"), "continued customer code must complete the actual HTTP response"
@@ -182,6 +192,10 @@ try:
         until(lambda item: item.get("event") == "terminated")
     response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
     assert adapter.wait(timeout=10) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
+    if mode == "launch":
+        assert not any_running(owned), "disconnect must reap the launched application and its children"
+        with socket.socket() as check:
+            assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "disconnect must close the launched HTTP listener"
     print("debug acceptance passed: " + mode, flush=True)
 finally:
     if adapter.poll() is None:

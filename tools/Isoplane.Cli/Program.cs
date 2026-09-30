@@ -16,7 +16,7 @@ try
         return 0;
     }
     using var cancellation = new CommandCancellation();
-    if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(cancellation.Token);
+    if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(cancellation.Token, new LocalDebugLauncher());
     if (args[0] == "setup")
     {
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };

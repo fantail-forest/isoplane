@@ -4,7 +4,7 @@ namespace Isoplane.Debugging;
 public static class AdapterCommand
 {
     /// <summary>Serves DAP on standard input/output until EOF or cancellation, closing the guest connection on exit.</summary>
-    public static async Task<int> RunAsync(CancellationToken cancellation)
+    public static async Task<int> RunAsync(CancellationToken cancellation, DebugLauncher? launcher = null)
     {
         using var input = new DebuggerInput(Console.OpenStandardInput());
         using var output = Console.OpenStandardOutput();
@@ -12,7 +12,7 @@ public static class AdapterCommand
         Console.SetOut(Console.Error);
         try
         {
-            await using var adapter = new GuestDebugAdapter(input, output, Console.Error);
+            await using var adapter = new GuestDebugAdapter(input, output, Console.Error, launcher);
             cancellation.ThrowIfCancellationRequested();
             adapter.Protocol.Run();
             using var stop = cancellation.Register(adapter.Stop);

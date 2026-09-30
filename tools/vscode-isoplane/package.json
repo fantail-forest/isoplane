@@ -50,9 +50,44 @@
                 "description": "Path to the installed Isoplane CLI executable."
               }
             }
+          },
+          "launch": {
+            "required": [
+              "project"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "default": "${workspaceFolder}",
+                "description": "Directory containing the Isoplane application project."
+              },
+              "configuration": {
+                "type": "string",
+                "default": "Debug",
+                "description": "MSBuild configuration to compile for debugging."
+              },
+              "port": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 65535,
+                "description": "HTTP listener port. Use 0 to select an available port."
+              },
+              "cliPath": {
+                "type": "string",
+                "default": "isoplane",
+                "description": "Path to the installed Isoplane CLI executable."
+              }
+            }
           }
         },
         "initialConfigurations": [
+          {
+            "type": "isoplane",
+            "request": "launch",
+            "name": "Debug local Isoplane",
+            "project": "${workspaceFolder}",
+            "configuration": "Debug"
+          },
           {
             "type": "isoplane",
             "request": "attach",
@@ -61,6 +96,16 @@
           }
         ],
         "configurationSnippets": [
+          {
+            "label": "Isoplane: launch local application",
+            "body": {
+              "type": "isoplane",
+              "request": "launch",
+              "name": "Debug local Isoplane",
+              "project": "${workspaceFolder}",
+              "configuration": "Debug"
+            }
+          },
           {
             "label": "Isoplane: attach to local guest",
             "body": {

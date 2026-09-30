@@ -60,7 +60,13 @@ configuration you would pass to `dotnet run`.
 
 ## Debugging
 
-Start a local debug session with:
+With the Isoplane debugger extension installed in VS Code, open your application
+folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. The
+adapter builds and starts the application. Send an HTTP request to the URL printed
+in the Debug Console. Stopping the debugger stops the application and its owned
+processes.
+
+To start a session in a terminal instead:
 
 ```bash
 isoplane dev --debug --no-watch
