@@ -1,3 +1,13 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+namespace Debugger.Protocol;
+
+internal static class Application
+{
+    internal static void Map(WebApplication app) => app.MapGet("/protocol", Handle);
+
     private static bool ReleaseProtocolProbe = false;
 
     private sealed class ProtocolSample
@@ -22,3 +32,4 @@
         GC.KeepAlive(typeof(ProtocolSample).GetFields());
         return sample.Value.ToString();
     }
+}

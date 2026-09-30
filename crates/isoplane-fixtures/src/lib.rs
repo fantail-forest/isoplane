@@ -120,7 +120,12 @@ pub fn mono_runtime_module() -> PathBuf {
 /// The shared runtime's local-debug variant, which connects its debugger
 /// agent to the session the host serves it.
 pub fn mono_debug_runtime() -> Vec<u8> {
-    read(&shared_runtime("Isoplane.MonoRuntime.Debug.wasm"))
+    read(&mono_debug_runtime_module())
+}
+
+/// The prepared local-debug runtime module shared by isolated debugger sessions.
+pub fn mono_debug_runtime_module() -> PathBuf {
+    shared_runtime("Isoplane.MonoRuntime.Debug.wasm")
 }
 
 fn shared_runtime(name: &str) -> PathBuf {

@@ -1,3 +1,13 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+namespace Debugger.Statements;
+
+internal static class Application
+{
+    internal static void Map(WebApplication app) => app.MapGet("/statements", Handle);
+
     private static bool finished;
 
     private static string Handle()
@@ -23,3 +33,4 @@
         answer *= 2;
         return answer;
     }
+}

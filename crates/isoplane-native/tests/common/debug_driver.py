@@ -39,7 +39,8 @@ if mode == "protocol":
 scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 if mode in ("async-composed", "async-composed-optimized"):
     scenario = debug_async_stack
-adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+adapter_command = ["dotnet", launcher] if Path(launcher).suffix == ".dll" else [launcher]
+adapter = subprocess.Popen([*adapter_command, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()
 deferred = []
@@ -163,7 +164,10 @@ try:
         attached = send("launch", {"project": module, "configuration": "Debug", "port": 0})
     else:
         address, port = endpoint.rsplit(":", 1)
-        attached = send("attach", {"address": address, "port": int(port)})
+        attach_options = {"address": address, "port": int(port)}
+        if Path(launcher).suffix == ".dll":
+            attach_options["sourceFileMap"] = {"/isoplane-debugger-fixture": str(Path(source).parent)}
+        attached = send("attach", attach_options)
     until(lambda item: item.get("event") == "initialized")
     if scenario is not None:
         scenario.configure(source, send, response)

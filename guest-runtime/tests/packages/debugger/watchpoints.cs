@@ -1,3 +1,13 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+namespace Debugger.Watchpoints;
+
+internal static class Application
+{
+    internal static void Map(WebApplication app) => app.MapGet("/watchpoints", Handle);
+
     private static int StaticValue = 0;
 
     private sealed class WatchedSample
@@ -90,3 +100,4 @@
         doomed = 31;
         throw new InvalidOperationException(doomed.ToString());
     }
+}

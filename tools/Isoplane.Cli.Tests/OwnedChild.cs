@@ -6,6 +6,8 @@ internal static class OwnedChild
 {
     internal static async Task<int> Main(string[] arguments)
     {
+        if (arguments is ["--debug-fixture", var project, var package, var module])
+            return await PreparedDebugSession.RunAsync(project, package, module);
         if (arguments is ["--run-process", var command])
         {
             using var cancellation = new CommandCancellation();

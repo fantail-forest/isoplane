@@ -194,23 +194,13 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         modified
     };
     let position = modified.rfind('}').unwrap();
-    let handler = if mode == "features" {
-        include_str!("common/debug_features.cs")
-    } else if matches!(
+    let handler = if matches!(
         mode,
         "async-stack" | "async-optimized" | "async-composed" | "async-composed-optimized"
     ) {
         include_str!("common/debug_async.cs")
     } else if mode == "library" {
         "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
-    } else if mode == "statements" {
-        include_str!("common/debug_statements.cs")
-    } else if mode == "protocol" {
-        include_str!("common/debug_protocol.cs")
-    } else if mode == "uncaught" {
-        include_str!("common/debug_uncaught.cs")
-    } else if mode == "watchpoints" {
-        include_str!("common/debug_watchpoints.cs")
     } else {
         r#"
     private static async Task<string> Handle()
@@ -398,7 +388,7 @@ fn installed_debug_acceptance(mode: &str) {
 
 #[test]
 fn moving_execution_preserves_locals_and_rejects_stale_statement_targets() {
-    installed_debug_acceptance("statements");
+    debugger::prepared_acceptance("statements");
 }
 
 #[test]
@@ -447,18 +437,18 @@ fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
 }
 
 #[test]
-fn installed_debugging_evaluates_and_edits_values_with_conditional_breakpoints() {
-    installed_debug_acceptance("features");
+fn debugging_evaluates_and_edits_values_with_conditional_breakpoints() {
+    debugger::prepared_acceptance("features");
 }
 
 #[test]
-fn installed_watchpoints_observe_fields_arrays_and_scoped_locals() {
-    installed_debug_acceptance("watchpoints");
+fn watchpoints_observe_fields_arrays_and_scoped_locals() {
+    debugger::prepared_acceptance("watchpoints");
 }
 
 #[test]
-fn installed_debugger_rejects_invalid_watchpoint_commands_without_losing_the_session() {
-    installed_debug_acceptance("protocol");
+fn debugger_rejects_invalid_watchpoint_commands_without_losing_the_session() {
+    debugger::prepared_acceptance("protocol");
 }
 
 #[test]
@@ -472,8 +462,8 @@ fn installed_debugging_binds_source_and_inspects_locals_in_referenced_projects()
 }
 
 #[test]
-fn installed_uncaught_exception_filter_skips_caught_exceptions_and_reports_unhandled_ones() {
-    installed_debug_acceptance("uncaught");
+fn uncaught_exception_filter_skips_caught_exceptions_and_reports_unhandled_ones() {
+    debugger::prepared_acceptance("uncaught");
 }
 
 #[test]

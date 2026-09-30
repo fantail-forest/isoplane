@@ -1,3 +1,13 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+namespace Debugger.Features;
+
+internal static class Application
+{
+    internal static void Map(WebApplication app) => app.MapGet("/features", Handle);
+
     private static bool ReleasePause = false;
 
     private sealed class DebugSample
@@ -44,3 +54,4 @@
         }
         return answer;
     }
+}

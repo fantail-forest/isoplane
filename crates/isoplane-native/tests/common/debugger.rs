@@ -83,3 +83,59 @@ impl Drop for Driver {
         }
     }
 }
+
+/// Runs feature scenarios against one prepared package with private host/session state.
+pub fn prepared_acceptance(mode: &str) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let package = isoplane_fixtures::mono_package("debugger");
+    let host = root
+        .join(".build/clr-anycpu/managed/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll");
+    assert!(
+        package.is_file() && host.is_file(),
+        "run task fixtures:package:debugger test:debugger:host before debugger feature tests"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    crate::common::manifest(directory.path(), "[dev]\ninit_sandbox='runtime-bringup'\n");
+    let mut command = std::process::Command::new("dotnet");
+    command
+        .arg(host)
+        .arg("--debug-fixture")
+        .arg(directory.path())
+        .arg(&package)
+        .arg(isoplane_fixtures::mono_debug_runtime_module());
+    let mut dev = Dev::spawn(&mut command, std::time::Duration::from_secs(120), true);
+    let metadata = dev
+        .debugger
+        .as_ref()
+        .expect("prepared debugger host reports its relay");
+    let mut driver = std::process::Command::new(isoplane_fixtures::debugger_python());
+    driver
+        .arg(root.join("crates/isoplane-native/tests/common/debug_driver.py"))
+        .arg(std::env::var_os("ISOPLANE_TEST_CLI_ASSEMBLY").expect("Task selects the prepared CLI"))
+        .arg(metadata["endpoint"].as_str().unwrap())
+        .arg(format!("{}/{mode}", dev.url.trim_end_matches('/')))
+        .arg(root.join(format!("guest-runtime/tests/packages/debugger/{mode}.cs")))
+        .arg(dev.pid().to_string())
+        .arg(mode)
+        .arg(&package);
+    let result = drive(Some(&mut dev), &mut driver);
+    assert!(
+        result.status.success(),
+        "prepared debug {mode} failed: {}{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr),
+        dev.diagnostics()
+    );
+    dev.wait_exit();
+    assert!(
+        !directory.path().join("session").exists(),
+        "host shutdown removes its private runtime state"
+    );
+    assert!(
+        package.is_file(),
+        "host shutdown preserves the shared package"
+    );
+}
