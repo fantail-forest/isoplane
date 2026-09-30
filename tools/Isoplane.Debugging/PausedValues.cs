@@ -172,7 +172,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         RequireThread(threadId);
         if (!IsUnhandled && stopped.Type != TargetEventType.ExceptionThrown)
             throw new ProtocolException("The guest is not stopped on an exception.");
-        var exception = IsBoundaryFailure ? BoundaryException() : stopped.Backtrace.GetFrame(0).GetException();
+        var exception = ReadException();
         if (exception is null) throw new ProtocolException("The runtime did not provide exception details.");
         return new ExceptionInfoResponse
         {
@@ -186,12 +186,15 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
         };
     }
 
-    private Mono.Debugging.Client.ExceptionInfo BoundaryException()
+    private Mono.Debugging.Client.ExceptionInfo ReadException()
     {
         var context = Context(new Frame(stopped.Backtrace.GetFrame(0), 0));
-        var error = context.Evaluator.Evaluate(context, "error");
+        var error = IsBoundaryFailure ? context.Evaluator.Evaluate(context, "error") : context.Adapter.GetCurrentException(context);
+        if (error is null) throw new ProtocolException("The runtime did not provide exception details.");
         var value = new Mono.Debugging.Evaluation.ExceptionInfoSource(context, error).CreateObjectValue(false, EvaluationOptions.DefaultOptions);
         WaitForValue(value);
+        foreach (string name in new[] { "Message", "StackTrace" })
+            if (value.GetChild(name) is { } child) WaitForValue(child);
         return new Mono.Debugging.Client.ExceptionInfo(value);
     }
 
