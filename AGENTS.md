@@ -223,9 +223,10 @@ Behavior changes need coverage that detects their absence or regression. Extend 
 
 ## Git & Commit Conventions
 
-Don't create branches unless asked.
-
-Write all commits in [Conventional Commits](https://www.conventionalcommits.org/):
+- Work in `main` unless you are asked to do otherwise.
+- If you are asked to work in a worktree, create a topic branch for your work in that worktree.
+- If you think that the work that you're doing belongs in a different branch or worktree, just ask.
+- Write all commits in [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 <type>(<scope>)[!]: <description>
