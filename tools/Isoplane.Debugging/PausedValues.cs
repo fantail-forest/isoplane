@@ -5,7 +5,7 @@ using Dap = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 
 namespace Isoplane.Debugging;
 
-internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, Mono.Debugging.Soft.SoftDebuggerSession session) : IDisposable
+internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, Mono.Debugging.Soft.SoftDebuggerSession session, SourcePaths sources) : IDisposable
 {
     private readonly Dictionary<int, Frame> frames = [];
     private readonly Dictionary<int, VariableSet> variables = [];
@@ -28,7 +28,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     internal GotoTargetsResponse GotoTargets(GotoTargetsArguments arguments) =>
         (IsUnhandled || stopped.Type == TargetEventType.ExceptionThrown)
             ? new GotoTargetsResponse { Targets = [] }
-            : (statements ??= new StatementTargets(session, ThreadId, allocate)).Find(arguments);
+            : (statements ??= new StatementTargets(session, ThreadId, allocate, sources)).Find(arguments);
 
     internal TargetEventArgs Goto(GotoArguments arguments)
     {
@@ -58,7 +58,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
             {
                 Id = id, Name = location.MethodName,
                 Line = Math.Max(0, location.Line), Column = Math.Max(0, location.Column),
-                Source = string.IsNullOrEmpty(location.FileName) ? null : new Source { Path = location.FileName }
+                Source = string.IsNullOrEmpty(location.FileName) ? null : new Source { Path = sources.ToClient(location.FileName) }
             });
         }
         return new StackTraceResponse { StackFrames = result, TotalFrames = trace.Count };

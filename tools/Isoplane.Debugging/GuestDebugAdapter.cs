@@ -12,6 +12,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 {
     private SoftDebuggerSession session = new() { Breakpoints = new BreakpointStore() };
     private readonly TextWriter diagnostics;
+    private readonly SourcePaths sources = new();
     private readonly GuestBreakpoints breakpoints;
     private GuestDataBreakpoints dataBreakpoints;
     private IPEndPoint? endpoint;
@@ -121,6 +122,8 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             request.SetError(new ProtocolException("Attach requires the session-owned address 127.0.0.1 and port 1..65535."));
             return;
         }
+        try { sources.Configure(options.GetValueOrDefault("sourceFileMap")); }
+        catch (ProtocolException error) { request.SetError(error); return; }
         owner = new GuestSession(SessionEnded);
         attach = new ConnectionRequest(() => request.SetResponse(new AttachResponse()), request.SetError);
         opening = OpenAsync(new IPEndPoint(IPAddress.Loopback, (int)port.Value));
@@ -169,6 +172,8 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             request.SetError(new ProtocolException("Launch console must be internalConsole, or integratedTerminal when the editor supports runInTerminal."));
             return;
         }
+        try { sources.Configure(properties.GetValueOrDefault("sourceFileMap")); }
+        catch (ProtocolException error) { request.SetError(error); return; }
         launchInTerminal = console == "integratedTerminal";
         owner = new GuestSession(SessionEnded);
         attach = new ConnectionRequest(() => request.SetResponse(new LaunchResponse()), request.SetError);
@@ -350,7 +355,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             if (step?.Enabled == true) step.Disable();
             reason = StoppedEvent.ReasonValue.Pause;
         }
-        var state = new PausedValues(args, Allocate, session);
+        var state = new PausedValues(args, Allocate, session, sources);
         if (!breakpoints.ShouldStop(state.IsUnhandled))
         {
             state.Dispose();

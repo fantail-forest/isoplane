@@ -5,7 +5,7 @@ using Mono.Debugging.Soft;
 
 namespace Isoplane.Debugging;
 
-internal sealed class StatementTargets(SoftDebuggerSession session, int threadId, Func<int> allocate)
+internal sealed class StatementTargets(SoftDebuggerSession session, int threadId, Func<int> allocate, SourcePaths sources)
 {
     private readonly Dictionary<int, int> offsets = [];
 
@@ -25,7 +25,7 @@ internal sealed class StatementTargets(SoftDebuggerSession session, int threadId
         if (!empty.Contains(frame.ILOffset)) return result;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var location in method.Locations.Where(location => location.LineNumber == arguments.Line
-            && string.Equals(location.SourceFile, path, comparison) && empty.Contains(location.ILOffset)))
+            && string.Equals(sources.ToClient(location.SourceFile), path, comparison) && empty.Contains(location.ILOffset)))
         {
             int id = allocate();
             offsets.Add(id, location.ILOffset);

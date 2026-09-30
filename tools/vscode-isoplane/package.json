@@ -48,6 +48,13 @@
                 "type": "string",
                 "default": "isoplane",
                 "description": "Path to the installed Isoplane CLI executable."
+              },
+              "sourceFileMap": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Map source directories recorded by the compiler to absolute local directories."
               }
             }
           },
@@ -90,6 +97,13 @@
                 ],
                 "default": "integratedTerminal",
                 "description": "The integrated terminal keeps the application running after debugger detach; Ctrl+C stops it."
+              },
+              "sourceFileMap": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Map source directories recorded by the compiler to absolute local directories."
               }
             }
           }

@@ -78,6 +78,11 @@ port. In VS Code with the Isoplane debugger extension installed, choose
 an HTTP request to the application's local URL. Keep the debugger attached for
 subsequent requests; source breakpoints are rebound for each fresh guest.
 
+If symbols record a different source checkout, set `sourceFileMap` in the launch
+or attach configuration, for example `"sourceFileMap": { "/build/app": "${workspaceFolder}" }`.
+Stack frames and execution-move targets use the mapped local files; source
+breakpoints also verify the file checksum when the build path differs.
+
 In VS Code, choose **Isoplane: Disconnect and Keep Running** from the debug toolbar
 or command palette. This prepares the ordinary runtime before disconnecting.
 For a terminal-owned session, detaching resumes the current request and leaves
