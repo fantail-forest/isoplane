@@ -88,6 +88,11 @@ working application available. Use `--no-watch` (or `"watch": false` in an IDE
 launch configuration) to disable automatic rebuilds. This rebuilds the application;
 it does not apply in-place Hot Reload to the active request.
 
+Select an async caller in the call stack to inspect its saved locals, evaluate
+watches, edit values, or set data breakpoints on its captured fields and array
+elements. Task-based callers remain visible across suspension, including custom
+awaiters and `Task.WhenAll`/`Task.WhenAny` chains.
+
 In the current physical frame, **Jump to Cursor** can move execution to another
 statement in the same method without executing the intervening statements or
 resetting locals. The debugger offers only locations with an empty evaluation

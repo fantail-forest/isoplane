@@ -1,0 +1,30 @@
+
+    private readonly struct DebugYield : System.Runtime.CompilerServices.ICriticalNotifyCompletion
+    {
+        public DebugYield GetAwaiter() => this;
+        public bool IsCompleted => false;
+        public void GetResult() { }
+        public void OnCompleted(Action continuation) => Task.Yield().GetAwaiter().OnCompleted(continuation);
+        public void UnsafeOnCompleted(Action continuation) => Task.Yield().GetAwaiter().UnsafeOnCompleted(continuation);
+    }
+
+    private static void EnsureTrackingReleased(params Task[] completed)
+    {
+        var field = typeof(Task).GetField("s_isoplaneAsyncState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("Async debugger tracking is missing.");
+        var tracking = field.GetValue(null) ?? throw new InvalidOperationException("Async debugger tracking is disabled.");
+        foreach (string list in new[] { "Frames", "Dependencies" })
+        {
+            for (object? node = TrackingField(tracking, list); node is not null; node = TrackingField(node, "Next"))
+            {
+                foreach (Task operation in completed)
+                    if (ReferenceEquals(TrackingField(node, "Operation"), operation)
+                        || (list == "Dependencies" && ReferenceEquals(TrackingField(node, "Awaited"), operation)))
+                        throw new InvalidOperationException("Completed operations must leave async debugger tracking.");
+            }
+        }
+    }
+
+    private static object? TrackingField(object value, string name) =>
+        (value.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Missing async tracking field: " + name)).GetValue(value);

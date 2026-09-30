@@ -33,6 +33,8 @@ if mode == "protocol":
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
 scenario = {"statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
+if mode in ("async-composed", "async-composed-optimized"):
+    scenario = debug_async_stack
 adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()

@@ -191,7 +191,10 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
-    } else if matches!(mode, "async-stack" | "async-optimized") {
+    } else if matches!(
+        mode,
+        "async-stack" | "async-optimized" | "async-composed" | "async-composed-optimized"
+    ) {
         include_str!("common/debug_async.cs")
     } else if mode == "library" {
         "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
@@ -213,6 +216,22 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         return resumed ? answer.ToString() : throw new InvalidOperationException("continuation did not run");
     }
 "#
+    };
+    let composed;
+    let handler = if mode.starts_with("async-composed") {
+        composed = handler
+            .replace(
+                "int result = await Inner(outer, outerSample, outerNumbers).ConfigureAwait(false);",
+                "Task<int> child = Inner(outer, outerSample, outerNumbers);\n        Task<int[]> combined = Task.WhenAll(child, Task.FromResult(0));\n        Task<Task<int[]>> choice = Task.WhenAny(combined, new TaskCompletionSource<int[]>().Task);\n        Task<int[]> winner = await choice;\n        int result = (await winner.ConfigureAwait(false))[0];\n        EnsureTrackingReleased(child, combined, choice);",
+            )
+            .replace(
+                "Task delay = Task.Delay(100);\n        if (delay.IsCompleted) throw new InvalidOperationException(\"the host timer must be pending before await\");\n        await delay;",
+                "await new DebugYield();",
+            )
+            + include_str!("common/debug_awaiter.cs");
+        composed.as_str()
+    } else {
+        handler
     };
     std::fs::write(
         &source,
@@ -283,7 +302,7 @@ fn installed_debug_acceptance(mode: &str) {
     let python = isoplane_fixtures::debugger_python();
     let directory = tempfile::tempdir().unwrap();
     let app = isoplane_fixtures::aspnet_project(directory.path());
-    if mode == "async-optimized" {
+    if matches!(mode, "async-optimized" | "async-composed-optimized") {
         let project = app.join("Template-App.csproj");
         let xml = std::fs::read_to_string(&project).expect("read the async fixture project");
         std::fs::write(
@@ -386,6 +405,16 @@ fn interpreted_debugging_reconstructs_suspended_async_callers() {
 #[test]
 fn optimized_async_callers_keep_editable_state_and_watchpoints() {
     installed_debug_acceptance("async-optimized");
+}
+
+#[test]
+fn async_composed_callers_preserve_custom_awaits_and_task_combinators() {
+    installed_debug_acceptance("async-composed");
+}
+
+#[test]
+fn optimized_async_composed_callers_keep_editable_state_and_watchpoints() {
+    installed_debug_acceptance("async-composed-optimized");
 }
 
 #[test]

@@ -17,8 +17,9 @@ def configure(source, send, response):
 def inspect(source, send, response, thread, until):
     trace = response(send("stackTrace", {"threadId": thread}))["body"]
     frames = trace["stackFrames"]
+    outer_await = "await choice;" if "await choice;" in Path(source).read_text() else "Inner(outer, outerSample, outerNumbers)"
     expected = [("Inner", "int total =", "answer", "22"),
-                ("Outer", "int result = await Inner", "outer", "22"),
+                ("Outer", outer_await, "outer", "22"),
                 ("Handle", "int result = await Outer", "seed", "21")]
     application = [frame for frame in frames if same_source(frame.get("source", {}).get("path"), source)]
     assert all(not frame["name"].startswith(("System.", "Microsoft.AspNetCore.", "Isoplane.")) for frame in frames), "runtime and SDK frames must not appear in the customer async stack"
