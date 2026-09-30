@@ -22,6 +22,7 @@ import debug_uncaught
 import debug_features
 import debug_statements
 import debug_watchpoints
+import debug_watchpoint_steps
 from debug_sources import same_source
 
 launcher, endpoint, url, source, owner, mode, module = sys.argv[1:]
@@ -36,7 +37,7 @@ if mode == "protocol":
     if not driver.is_file():
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
-scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
+scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "watchpoint-steps": debug_watchpoint_steps, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 if mode in ("async-composed", "async-composed-optimized"):
     scenario = debug_async_stack
 adapter_command = ["dotnet", launcher] if Path(launcher).suffix == ".dll" else [launcher]

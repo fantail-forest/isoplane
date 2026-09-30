@@ -57,8 +57,12 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 
     private void ConfigureSession(SoftDebuggerSession backend)
     {
-        backend.IgnoreInternalUserBreak = () => Volatile.Read(ref stopping) == 0 && Volatile.Read(ref pauseRequested) == 0
-            && dataBreakpoints.IgnoreExpirationStop(value => Protocol.SendEvent(value));
+        backend.IgnoreInternalUserBreak = args =>
+        {
+            if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref pauseRequested) != 0) return false;
+            using var state = new PausedValues(args, Allocate, backend, sources);
+            return dataBreakpoints.IgnoreInternalStop(state, value => Protocol.SendEvent(value));
+        };
         backend.TargetHitBreakpoint += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Breakpoint);
         backend.TargetInterrupted += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Pause);
         backend.TargetStopped += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Step);

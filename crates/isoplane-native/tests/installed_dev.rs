@@ -442,6 +442,11 @@ fn debugging_evaluates_and_edits_values_with_conditional_breakpoints() {
 }
 
 #[test]
+fn filtered_watchpoints_preserve_steps_across_calls_and_local_expiration() {
+    debugger::prepared_acceptance("watchpoint-steps");
+}
+
+#[test]
 fn watchpoints_observe_fields_arrays_and_scoped_locals() {
     debugger::prepared_acceptance("watchpoints");
 }

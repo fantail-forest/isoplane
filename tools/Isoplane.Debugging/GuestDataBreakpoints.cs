@@ -11,7 +11,7 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
 {
     private readonly Dictionary<string, ManagedDataBreakpoint> locations = [];
     private Dictionary<int, ActiveBreakpoint> active = [];
-    private ManagedDataBreakpointEvents? pending;
+    private DataStop? pending;
 
     internal DataBreakpointInfoResponse Describe(PausedValues paused, DataBreakpointInfoArguments arguments)
     {
@@ -78,13 +78,12 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
         foreach (var pair in locations.Where(pair => !active.ContainsKey(pair.Value.Id)).ToArray()) locations.Remove(pair.Key);
     }
 
-    internal bool IgnoreExpirationStop(Action<Dap.BreakpointEvent> changed)
+    internal bool IgnoreInternalStop(PausedValues paused, Action<Dap.BreakpointEvent> changed)
     {
-        if (Volatile.Read(ref active).Count == 0) return false;
-        var events = session.VirtualMachine.TakeManagedDataBreakpointHits();
-        Expire(events, changed);
-        if (events.Expired.Length != 0 && events.Hits.Length == 0) return true;
-        pending = events with { Expired = [] };
+        var hits = ReadHits(paused, changed);
+        if (!hits.IsDataStop) return false;
+        if (hits.BreakpointIds.Length == 0) return true;
+        pending = hits;
         return false;
     }
 
@@ -104,10 +103,16 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
 
     internal DataStop TakeHits(PausedValues paused, Action<Dap.BreakpointEvent> changed)
     {
+        var hits = pending;
+        pending = null;
+        return hits ?? ReadHits(paused, changed);
+    }
+
+    private DataStop ReadHits(PausedValues paused, Action<Dap.BreakpointEvent> changed)
+    {
         var configured = Volatile.Read(ref active);
         if (configured.Count == 0) return new(false, [], null);
-        var hits = pending ?? session.VirtualMachine.TakeManagedDataBreakpointHits();
-        pending = null;
+        var hits = session.VirtualMachine.TakeManagedDataBreakpointHits();
         var matched = new List<int>();
         string? description = null;
         Expire(hits, changed);

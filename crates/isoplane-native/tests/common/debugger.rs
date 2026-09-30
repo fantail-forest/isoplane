@@ -86,6 +86,11 @@ impl Drop for Driver {
 
 /// Runs feature scenarios against one prepared package with private host/session state.
 pub fn prepared_acceptance(mode: &str) {
+    let fixture = if mode == "watchpoint-steps" {
+        "watchpoints"
+    } else {
+        mode
+    };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
@@ -116,8 +121,10 @@ pub fn prepared_acceptance(mode: &str) {
         .arg(root.join("crates/isoplane-native/tests/common/debug_driver.py"))
         .arg(std::env::var_os("ISOPLANE_TEST_CLI_ASSEMBLY").expect("Task selects the prepared CLI"))
         .arg(metadata["endpoint"].as_str().unwrap())
-        .arg(format!("{}/{mode}", dev.url.trim_end_matches('/')))
-        .arg(root.join(format!("guest-runtime/tests/packages/debugger/{mode}.cs")))
+        .arg(format!("{}/{fixture}", dev.url.trim_end_matches('/')))
+        .arg(root.join(format!(
+            "guest-runtime/tests/packages/debugger/{fixture}.cs"
+        )))
         .arg(dev.pid().to_string())
         .arg(mode)
         .arg(&package);
