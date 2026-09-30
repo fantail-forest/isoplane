@@ -85,7 +85,8 @@ fn run(command: &mut Command) {
     });
     assert!(
         result.status.success(),
-        "template consumer setup must succeed ({command:?}):\n{}{}",
+        "template consumer setup must succeed ({command:?}), got {}:\n{}{}",
+        result.status,
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );

@@ -166,7 +166,8 @@ try:
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
                     assert saved["body"]["result"] == "42", "a failed rebuild must leave the paused invocation inspectable"
                     Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
-                    until(lambda item: item.get("event") == "output" and "rebuilt application;" in item["body"]["output"])
+                    rebuilt = until(lambda item: item.get("seq", 0) > saved["seq"] and item.get("event") == "output"
+                                    and "rebuilt application;" in item["body"]["output"])
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
                     assert saved["body"]["result"] == "42", "a successful rebuild must preserve the active invocation until it completes"
                 if mode == "stop":
@@ -201,7 +202,8 @@ try:
         if mode != "stop":
             assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode == "reload" and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
         if mode == "reload" and attempt == 0:
-            until(lambda item: item.get("event") == "output" and "  reloaded " in item["body"]["output"])
+            until(lambda item: item.get("seq", 0) > rebuilt["seq"] and item.get("event") == "output"
+                  and "  reloaded " in item["body"]["output"])
     if mode == "stop":
         until(lambda item: item.get("event") == "terminated")
     response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
