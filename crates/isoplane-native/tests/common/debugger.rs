@@ -23,6 +23,20 @@ pub fn drive(mut dev: Option<&mut Dev>, command: &mut Command) -> Output {
     let mut output = Vec::new();
     for line in BufReader::new(driver.0.stdout.take().expect("capture DAP driver output")).lines() {
         let line = line.expect("read DAP driver output");
+        if let Some(event) = line.strip_prefix("request-owner-event:") {
+            assert!(matches!(
+                event,
+                "debugger_detached" | "reloaded" | "reload_pending" | "reload_failed"
+            ));
+            dev.as_mut()
+                .expect("session events require a development owner")
+                .wait_event(event);
+            writeln!(
+                driver.0.stdin.as_mut().expect("driver control input"),
+                "owner-event:{event}"
+            )
+            .expect("acknowledge the development event");
+        }
         if line == "request-owner-stop" {
             dev.as_mut()
                 .expect("owner-stop requires an externally started session")

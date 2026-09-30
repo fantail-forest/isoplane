@@ -78,6 +78,12 @@ port. In VS Code with the Isoplane debugger extension installed, choose
 an HTTP request to the application's local URL. Keep the debugger attached for
 subsequent requests; source breakpoints are rebound for each fresh guest.
 
+For a terminal-started session, disconnecting without terminating the application
+resumes the current request and leaves the application running. Subsequent requests
+and source reloads use the ordinary runtime. Stop it with Ctrl+C in its terminal.
+If that runtime cannot be prepared, detach is rejected and the paused debug session
+remains available. IDE-launched sessions currently require termination on disconnect.
+
 The session uses the SDK's shared debug runtime. The debugger supports stepping,
 watches, editing live locals, exception stops, and data breakpoints on managed
 fields and array elements. Source edits rebuild the package while keeping the

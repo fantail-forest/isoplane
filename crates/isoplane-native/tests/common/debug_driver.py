@@ -140,7 +140,7 @@ try:
         probe.shutdown(socket.SHUT_WR)
         assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     previous_frame = None
-    for attempt in range(2 if mode in ("requests", "launch", "reload", "uncaught") else 1):
+    for attempt in range(2 if mode in ("requests", "launch", "reload", "uncaught", "detach-failure") else 1):
         http_result = concurrent.futures.Future()
         threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
         if attempt == 0 and not launched:
@@ -163,7 +163,7 @@ try:
                 values = []
                 for scope in response(send("scopes", {"frameId": frame["id"]}))["body"]["scopes"]:
                     values.extend(response(send("variables", {"variablesReference": scope["variablesReference"]}))["body"]["variables"])
-                assert any(value["name"] == "answer" and value["value"] == ("84" if mode == "reload" and attempt == 1 else "42") for value in values), "customer local answer must remain inspectable"
+                assert any(value["name"] == "answer" and value["value"] == ("84" if mode in ("reload", "detach-failure") and attempt == 1 else "42") for value in values), "customer local answer must remain inspectable"
                 if mode == "reload" and attempt == 0 and expected == before:
                     original = Path(source).read_text()
                     Path(source).write_text(original + "\n#error debugger reload regression\n")
@@ -175,6 +175,40 @@ try:
                                     and "rebuilt application;" in item["body"]["output"])
                     saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
                     assert saved["body"]["result"] == "42", "a successful rebuild must preserve the active invocation until it completes"
+                if mode == "detach-failure" and expected == before and attempt == 0:
+                    original = Path(source).read_text()
+                    Path(source).write_text(original + "\n#error detach rebuild ordering\n")
+                    print('request-owner-event:reload_failed', flush=True)
+                    assert sys.stdin.readline() == 'owner-event:reload_failed\n'
+                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    print('request-owner-event:reload_pending', flush=True)
+                    assert sys.stdin.readline() == 'owner-event:reload_pending\n'
+                    rejected_id = send("disconnect", {"terminateDebuggee": False})
+                    rejected = until(lambda item: item.get("type") == "response" and item.get("request_seq") == rejected_id)
+                    assert not rejected.get("success"), "failed ordinary-runtime preparation must reject detach"
+                    retained = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
+                    assert retained["body"]["result"] == "42", "failed detach must preserve the paused guest and its frame handles"
+                if mode == "detach":
+                    response(send("setExpression", {"expression": "answer", "frameId": frame["id"], "value": "84"}))
+                    response(send("disconnect", {"terminateDebuggee": False}))
+                    assert adapter.wait(timeout=30) == 0, "detach must close the editor adapter"
+                    assert http_result.result(timeout=180) == (200, b"84"), "detach must resume the same guest with its edited local"
+                    print('request-owner-event:debugger_detached', flush=True)
+                    assert sys.stdin.readline() == 'owner-event:debugger_detached\n'
+                    with urllib.request.urlopen(url, timeout=180) as reply:
+                        assert (reply.status, reply.read()) == (200, b"42"), "subsequent requests must run without a debugger"
+                    with socket.socket() as check:
+                        assert check.connect_ex((address, int(port))) != 0, "detach must release the debugger control listener"
+                    original = Path(source).read_text()
+                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    print('request-owner-event:reloaded', flush=True)
+                    assert sys.stdin.readline() == 'owner-event:reloaded\n'
+                    with urllib.request.urlopen(url, timeout=180) as reply:
+                        assert (reply.status, reply.read()) == (200, b"84"), "source reload must keep using the ordinary runtime after detach"
+                    print('request-owner-stop', flush=True)
+                    assert sys.stdin.readline() == 'owner-stopped\n'
+                    assert not Path(module).exists(), "stopping the terminal owner must release detached session artifacts"
+                    break
                 if mode == "stop":
                     owned = [owner] + children(owner, process_tree())
                     print('request-owner-stop', flush=True)
@@ -204,14 +238,27 @@ try:
                 response(send("next" if expected == before else "continue", {"threadId": thread}))
         if mode in ("requests", "launch", "reload"):
             previous_frame = frame["id"]
-        if mode != "stop":
-            assert http_result.result(timeout=180) == (getattr(scenario, "EXPECTED_STATUS", 200), scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode == "reload" and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
+        if mode not in ("stop", "detach"):
+            assert http_result.result(timeout=180) == (getattr(scenario, "EXPECTED_STATUS", 200), scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode in ("reload", "detach-failure") and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
+        if mode == "detach-failure" and attempt == 0:
+            print('request-owner-event:reloaded', flush=True)
+            assert sys.stdin.readline() == 'owner-event:reloaded\n'
         if mode == "reload" and attempt == 0:
             until(lambda item: item.get("seq", 0) > rebuilt["seq"] and item.get("event") == "output"
                   and "  reloaded " in item["body"]["output"])
+    if mode == "detach-idle":
+        response(send("disconnect", {"terminateDebuggee": False}))
+        assert adapter.wait(timeout=30) == 0, "idle detach must cancel the pending guest handshake"
+        print('request-owner-event:debugger_detached', flush=True)
+        assert sys.stdin.readline() == 'owner-event:debugger_detached\n'
+        with urllib.request.urlopen(url, timeout=180) as reply:
+            assert (reply.status, reply.read()) == (200, b"42"), "idle detach must keep the application serving requests"
+        print('request-owner-stop', flush=True)
+        assert sys.stdin.readline() == 'owner-stopped\n'
     if mode == "stop":
         until(lambda item: item.get("event") == "terminated")
-    response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
+    if mode not in ("detach", "detach-idle"):
+        response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
     assert adapter.wait(timeout=30) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
     if launched:
         assert not any_running(owned), "disconnect must reap the launched application and its children"

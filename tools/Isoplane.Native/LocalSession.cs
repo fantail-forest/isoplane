@@ -13,6 +13,7 @@ internal sealed class LocalSession : IAsyncDisposable
     private readonly object access = new();
     private ExceptionDispatchInfo? callbackFailure;
     private bool disposed;
+    private TaskCompletionSource? detaching;
 
     internal Task Completion { get; }
 
@@ -35,6 +36,24 @@ internal sealed class LocalSession : IAsyncDisposable
             fixed (byte* settings = options)
                 NativeRuntime.Read(NativeMethods.isoplane_session_reload((void*)handle, wasm, (nuint)module.Length, settings, (nuint)options.Length));
         }
+    }
+
+    internal async Task PrepareDetachAsync(byte[] module, byte[] options)
+    {
+        var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (Interlocked.CompareExchange(ref detaching, prepared, null) is not null)
+            throw new InvalidOperationException("Debugger detachment is already being prepared.");
+        try
+        {
+            Reload(module, options);
+            if (await Task.WhenAny(prepared.Task, Completion) == Completion)
+            {
+                await Completion;
+                throw new IOException("The local host ended before preparing debugger detachment.");
+            }
+            await prepared.Task;
+        }
+        finally { Interlocked.CompareExchange(ref detaching, null, prepared); }
     }
 
     internal unsafe void Stop()
@@ -66,7 +85,18 @@ internal sealed class LocalSession : IAsyncDisposable
         try
         {
             var message = JsonNode.Parse(new ReadOnlySpan<byte>(data, checked((int)length)))!.AsObject();
-            session.events(message);
+            switch (message["event"]?.GetValue<string>())
+            {
+                case "debugger_detach_prepared":
+                    Volatile.Read(ref session.detaching)?.TrySetResult();
+                    return;
+                case "debugger_detach_failed":
+                    Volatile.Read(ref session.detaching)?.TrySetException(new InvalidOperationException(message["detail"]!.GetValue<string>()));
+                    return;
+                default:
+                    session.events(message);
+                    break;
+            }
         }
         catch (Exception error)
         {

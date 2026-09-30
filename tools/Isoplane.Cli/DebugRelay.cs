@@ -15,6 +15,8 @@ internal sealed class DebugRelay : IAsyncDisposable
     internal IPEndPoint Endpoint { get; }
     internal IPEndPoint AdapterEndpoint { get; }
     internal Task Completion => forwarding;
+    internal bool Detached { get; private set; }
+    internal Func<CancellationToken, Task>? PrepareDetach { get; set; }
 
     internal DebugRelay(CancellationToken cancellation)
     {
@@ -35,8 +37,8 @@ internal sealed class DebugRelay : IAsyncDisposable
             await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, cancellation);
             using var connected = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             var pairs = ForwardGuestsAsync(connected.Token);
-            var control = DebugSessionProtocol.ReadTerminationAsync(editor.GetStream(), connected.Token);
-            await Task.WhenAny(pairs, control);
+            var control = DebugSessionProtocol.ReadTerminationAsync(editor.GetStream(), token => PrepareDetach is { } prepare ? prepare(token) : throw new InvalidOperationException("The local host is not ready to detach."), connected.Token);
+            if (await Task.WhenAny(pairs, control) == control) Detached = await control;
             connected.Cancel();
             try { await Task.WhenAll(pairs, control); }
             catch (OperationCanceledException) when (connected.IsCancellationRequested)

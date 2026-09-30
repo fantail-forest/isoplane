@@ -48,6 +48,8 @@ internal static class DebugDevelopment
             return 1;
         }
         var module = runtime.DebugModule;
+        using var publications = new SemaphoreSlim(1, 1);
+        bool debugging = true;
         if (options.Json)
             Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint = relay.AdapterEndpoint.ToString(), module, package, runtime = "mono" }));
         else
@@ -55,23 +57,37 @@ internal static class DebugDevelopment
         await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
             new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
             message => LocalEvents.Write(message, options.Json));
+        relay.PrepareDetach = async token =>
+        {
+            await publications.WaitAsync(token);
+            try
+            {
+                await host.PrepareDetachAsync(await File.ReadAllBytesAsync(runtime.Module, token),
+                    new LocalProject(options.Directory).SessionOptions(options.Port, [], null, Path.Combine(session, "runtime"), package: package));
+                debugging = false;
+            }
+            finally { publications.Release(); }
+        };
         var running = RunHostAsync(host, relay, lifetime.Token);
         try
         {
             if (options.Watch)
                 await SourceReload.RunAsync(changes, running, async token =>
                 {
+                    await publications.WaitAsync(token);
                     try
                     {
                         var replacement = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), token);
-                        host.Reload(await File.ReadAllBytesAsync(replacement.DebugModule, token),
-                            new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package));
+                        host.Reload(await File.ReadAllBytesAsync(debugging ? replacement.DebugModule : replacement.Module, token),
+                            new LocalProject(options.Directory).SessionOptions(options.Port, [], debugging ? endpoint : null, Path.Combine(session, "runtime"), package: package));
+                        runtime = replacement;
                         LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_pending" }, options.Json);
                     }
                     catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
                     {
                         LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_failed", ["detail"] = error.Message }, options.Json);
                     }
+                    finally { publications.Release(); }
                 }, lifetime.Token);
             else
                 await running;
@@ -93,7 +109,7 @@ internal static class DebugDevelopment
             if (await Task.WhenAny(host.Completion, relay.Completion) == relay.Completion)
             {
                 await relay.Completion;
-                host.Stop();
+                if (!relay.Detached) host.Stop();
             }
             await host.Completion;
         }

@@ -9,6 +9,11 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
     private readonly TcpClient client = new();
     private readonly CancellationTokenSource lifetime = new();
 
+    private readonly SemaphoreSlim writes = new(1, 1);
+    private TaskCompletionSource? prepared;
+    private TaskCompletionSource? committed;
+    private bool detached;
+
     private Task monitoring = Task.CompletedTask;
     private bool disposed;
     private readonly object gate = new();
@@ -26,10 +31,22 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
     {
         try
         {
-            byte[] unexpected = new byte[1];
-            if (await client.GetStream().ReadAsync(unexpected, lifetime.Token) != 0)
-                throw new IOException("The local session sent an unexpected control message.");
-            if (!lifetime.IsCancellationRequested) ended?.Invoke();
+            while (await DebugSessionProtocol.ReadReplyAsync(client.GetStream(), lifetime.Token) is { } reply)
+            {
+                var pending = reply.Action switch
+                {
+                    "detachReady" => prepared,
+                    "detached" => committed,
+                    _ => throw new IOException("The local session sent an unexpected control message.")
+                } ?? throw new IOException("The local session replied without a matching detach request.");
+                if (reply.Error is { } error) pending.TrySetException(new IOException(error));
+                else
+                {
+                    if (reply.Action == "detached") detached = true;
+                    pending.TrySetResult();
+                }
+            }
+            if (!lifetime.IsCancellationRequested && !detached) ended?.Invoke();
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
@@ -42,6 +59,32 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
             Console.Error.WriteLine($"isoplane: local session control closed: {error.Message}");
             ended?.Invoke();
         }
+        finally
+        {
+            prepared?.TrySetException(new IOException("The local session closed during detach preparation."));
+            committed?.TrySetException(new IOException("The local session closed before confirming detachment."));
+        }
+    }
+
+    internal async Task PrepareDetachAsync()
+    {
+        prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await WriteAsync(stream => DebugSessionProtocol.RequestDetachAsync(stream, false, lifetime.Token));
+        await prepared.Task;
+    }
+
+    internal async Task DetachAsync()
+    {
+        committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await WriteAsync(stream => DebugSessionProtocol.RequestDetachAsync(stream, true, lifetime.Token));
+        await committed.Task;
+    }
+
+    private async Task WriteAsync(Func<Stream, Task> write)
+    {
+        await writes.WaitAsync();
+        try { await write(client.GetStream()); }
+        finally { writes.Release(); }
     }
 
     internal void Close()
@@ -59,8 +102,8 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
         lifetime.Cancel();
         try
         {
-            if (client.Connected)
-                await DebugSessionProtocol.TerminateAsync(client.GetStream());
+            if (client.Connected && !detached)
+                await WriteAsync(DebugSessionProtocol.TerminateAsync);
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException)
         {
@@ -76,5 +119,6 @@ internal sealed class GuestSession(Action? ended = null) : IAsyncDisposable
         await closing;
         await monitoring;
         lifetime.Dispose();
+        writes.Dispose();
     }
 }

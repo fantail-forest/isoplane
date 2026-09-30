@@ -188,6 +188,11 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         "app.MapGet(\"/\", () => \"Hello from Isoplane!\");",
         "app.MapGet(\"/\", Handle);\n        app.MapGet(\"/warmup\", async () => { await Task.Delay(1); return \"warm\"; });",
     ).replace("WarmupAsync(\"/\")", "WarmupAsync(\"/warmup\")");
+    let modified = if mode == "detach-failure" {
+        modified.replace("app.MapGet(\"/\", Handle);", "if (!System.Diagnostics.Debugger.IsAttached) throw new InvalidOperationException(\"ordinary runtime preparation rejected\");\n        app.MapGet(\"/\", Handle);")
+    } else {
+        modified
+    };
     let position = modified.rfind('}').unwrap();
     let handler = if mode == "features" {
         include_str!("common/debug_features.cs")
@@ -218,6 +223,16 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         return resumed ? answer.ToString() : throw new InvalidOperationException("continuation did not run");
     }
 "#
+    };
+    let detached;
+    let handler = if mode == "detach" {
+        detached = handler.replace(
+            "return resumed ?",
+            "return resumed && !System.Diagnostics.Debugger.IsAttached ?",
+        );
+        detached.as_str()
+    } else {
+        handler
     };
     let composed;
     let handler = if mode.starts_with("async-composed") {
@@ -295,6 +310,8 @@ fn start_debug_session(app: &std::path::Path, cli: &std::path::Path, mode: &str)
             .env("ISOPLANE_CLI", cli)
             .env("PATH", std::env::join_paths(paths).unwrap());
         Dev::spawn(&mut command, std::time::Duration::from_secs(600), false)
+    } else if matches!(mode, "detach" | "detach-failure") {
+        Dev::start_managed_with_args(app, cli, &["--debug"])
     } else {
         Dev::start_managed_with_args(app, cli, &["--debug", "--no-watch"])
     }
@@ -452,4 +469,19 @@ fn installed_debugging_binds_source_and_inspects_locals_in_referenced_projects()
 #[test]
 fn installed_uncaught_exception_filter_skips_caught_exceptions_and_reports_unhandled_ones() {
     installed_debug_acceptance("uncaught");
+}
+
+#[test]
+fn detaching_preserves_the_active_request_and_keeps_serving_and_reloading() {
+    installed_debug_acceptance("detach");
+}
+
+#[test]
+fn failed_detach_preparation_leaves_the_paused_guest_inspectable_and_resumable() {
+    installed_debug_acceptance("detach-failure");
+}
+
+#[test]
+fn detaching_between_requests_closes_the_pending_guest_connection() {
+    installed_debug_acceptance("detach-idle");
 }

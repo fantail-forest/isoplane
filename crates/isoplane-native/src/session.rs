@@ -22,13 +22,22 @@ pub(crate) struct Session {
     pub cancellation: CancellationToken,
     baselines: Baselines,
     pending: Mutex<Option<Update>>,
+    admission: Arc<Mutex<Admission>>,
     changed: Notify,
     started: AtomicBool,
+}
+
+#[derive(Default)]
+struct Admission {
+    debug: bool,
+    active: bool,
+    queued: bool,
 }
 
 struct Update {
     wasm: Vec<u8>,
     options: Options,
+    fallback: Option<(Vec<u8>, Options)>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +129,7 @@ impl Session {
         Self {
             cancellation: CancellationToken::new(),
             pending: Mutex::new(None),
+            admission: Arc::new(Mutex::new(Admission::default())),
             changed: Notify::new(),
             started: AtomicBool::new(false),
             baselines: Baselines::default(),
@@ -131,13 +141,36 @@ impl Session {
             !self.cancellation.is_cancelled(),
             "local session has stopped"
         );
-        let update = Update {
+        let mut update = Update {
             wasm: wasm.to_vec(),
             options: serde_json::from_slice(options)?,
+            fallback: None,
         };
-        *self.pending.lock() = Some(update);
+        let mut admission = self.admission.lock();
+        admission.queued = true;
+        let mut pending = self.pending.lock();
+        if admission.debug && update.options.debug_endpoint.is_none() {
+            update.fallback = pending.take().and_then(|previous| {
+                if previous.options.debug_endpoint.is_some() {
+                    Some((previous.wasm, previous.options))
+                } else {
+                    previous.fallback
+                }
+            });
+        }
+        *pending = Some(update);
+        drop(pending);
+        drop(admission);
         self.changed.notify_one();
         Ok(())
+    }
+
+    fn can_prepare_update(&self) -> bool {
+        let admission = self.admission.lock();
+        self.pending
+            .lock()
+            .as_ref()
+            .is_some_and(|update| !admission.active || update.options.debug_endpoint.is_none())
     }
 
     pub fn run(
@@ -174,7 +207,7 @@ impl Session {
     async fn serve(
         &self,
         wasm: &[u8],
-        options: Options,
+        mut options: Options,
         events: &crate::session_events::Events,
     ) -> anyhow::Result<()> {
         let inputs = options.inputs()?;
@@ -201,8 +234,8 @@ impl Session {
         let mut app = prepared.start().await?;
         let current_proxy = Arc::new(RwLock::new(app.proxy.clone()));
         let mut connections = JoinSet::new();
-        let debug = options.debug_endpoint.is_some();
-        let admitted = Arc::new(AtomicBool::new(false));
+        self.admission.lock().debug = options.debug_endpoint.is_some();
+        let mut prepared_update: Option<(PendingApp, Options)> = None;
         let result = async {
             if self.cancellation.is_cancelled() { return Ok(()); }
             events.emit(serde_json::json!({"event":"ready", "app":options.manifest.name, "url":format!("http://{address}")}));
@@ -210,36 +243,68 @@ impl Session {
                 tokio::select! {
                     biased;
                     _ = self.cancellation.cancelled() => break,
-                    _ = self.changed.notified(), if !debug || !admitted.load(Ordering::Acquire) => {
-                        if debug && admitted.swap(true, Ordering::AcqRel) {
-                            self.changed.notify_one();
-                            continue;
-                        }
-                        let Some(update) = self.pending.lock().take() else {
-                            if debug { admitted.store(false, Ordering::Release); }
-                            continue;
+                    _ = self.changed.notified() => {},
+                    _ = std::future::ready(()), if self.can_prepare_update() => {
+                        let update = {
+                            let admission = self.admission.lock();
+                            let mut pending = self.pending.lock();
+                            if admission.active && pending.as_ref().is_some_and(|update| update.options.debug_endpoint.is_some()) {
+                                continue;
+                            }
+                            pending.take()
                         };
+                        let Some(update) = update else { continue; };
+                        let detaching = options.debug_endpoint.is_some() && update.options.debug_endpoint.is_none();
                         let replacement = async {
-                        anyhow::ensure!(update.options.state_directory == options.state_directory
-                            && update.options.manifest.name == options.manifest.name
-                            && update.options.debug_endpoint == options.debug_endpoint, "reload cannot change local session identity or debugger mode");
+                            anyhow::ensure!(update.options.state_directory == options.state_directory
+                                && update.options.manifest.name == options.manifest.name
+                                && (update.options.debug_endpoint == options.debug_endpoint || detaching),
+                                "reload cannot change local session identity or enable a debugger");
                             let inputs = update.options.inputs()?;
                             prepare(update.wasm, &update.options, inputs, &self.baselines).await
-                        }.await;
+                        };
+                        let replacement = tokio::select! {
+                            _ = self.cancellation.cancelled() => break,
+                            replacement = replacement => replacement,
+                        };
                         match replacement {
                             Ok(next) => {
-                                shutdown(app.clone()).await?;
-                                app = next.start().await?;
-                                *current_proxy.write() = app.proxy.clone();
-                                events.emit(serde_json::json!({"event":"reloaded", "app":options.manifest.name, "url":format!("http://{address}")}));
+                                prepared_update = Some((next, update.options));
+                                if detaching {
+                                    events.emit(serde_json::json!({"event":"debugger_detach_prepared"}));
+                                }
                             }
-                            Err(error) => events.emit(serde_json::json!({"event":"reload_failed", "detail":format!("{error:#}")})),
+                            Err(error) => {
+                                let mut admission = self.admission.lock();
+                                let mut pending = self.pending.lock();
+                                if pending.is_none() {
+                                    *pending = update.fallback.map(|(wasm, options)| Update { wasm, options, fallback: None });
+                                }
+                                admission.queued = prepared_update.is_some() || pending.is_some();
+                                drop(pending);
+                                drop(admission);
+                                events.emit(serde_json::json!({"event":if detaching { "debugger_detach_failed" } else { "reload_failed" }, "detail":format!("{error:#}")}));
+                            }
                         }
-                        if debug { admitted.store(false, Ordering::Release); }
+                    }
+                    _ = std::future::ready(()), if prepared_update.is_some() && !self.admission.lock().active => {
+                        let Some((next, next_options)) = prepared_update.take() else { continue; };
+                        shutdown(app.clone()).await?;
+                        app = next.start().await?;
+                        let detached = options.debug_endpoint.is_some() && next_options.debug_endpoint.is_none();
+                        options = next_options;
+                        {
+                            let mut admission = self.admission.lock();
+                            *current_proxy.write() = app.proxy.clone();
+                            admission.debug = options.debug_endpoint.is_some();
+                            admission.queued = self.pending.lock().is_some();
+                        }
+                        events.emit(serde_json::json!({"event":if detached { "debugger_detached" } else { "reloaded" }, "app":options.manifest.name, "url":format!("http://{address}")}));
                     }
                     connection = listener.accept() => {
                         let (stream, peer) = connection?;
-                        connections.spawn(connection_task(stream, peer, current_proxy.clone(), debug, admitted.clone()));
+                        let debug = self.admission.lock().debug;
+                        connections.spawn(connection_task(stream, peer, current_proxy.clone(), debug, self.admission.clone()));
                     }
                     completed = connections.join_next(), if !connections.is_empty() => {
                         if let Some(completed) = completed {
@@ -329,23 +394,34 @@ async fn connection_task(
     peer: SocketAddr,
     current_proxy: Arc<RwLock<Arc<isoplane_proxy::Proxy>>>,
     debug: bool,
-    admitted: Arc<AtomicBool>,
+    admission: Arc<Mutex<Admission>>,
 ) {
     let handled = Arc::new(AtomicBool::new(false));
     let observed = handled.clone();
-    let admission = admitted.clone();
+    let completed = admission.clone();
     let service = service_fn(move |request| {
-        let proxy = current_proxy.read().clone();
-        let admitted = admitted.clone();
-        let handled = handled.clone();
-        async move {
-            if debug && admitted.swap(true, Ordering::AcqRel) {
-                let mut response = hyper::Response::new(isoplane_proxy::server::Body::default());
-                *response.status_mut() = hyper::StatusCode::SERVICE_UNAVAILABLE;
-                return Ok(response);
+        let proxy = {
+            let mut admission = admission.lock();
+            if admission.debug && (admission.active || admission.queued) {
+                None
+            } else {
+                if admission.debug {
+                    admission.active = true;
+                    handled.store(true, Ordering::Release);
+                }
+                Some(current_proxy.read().clone())
             }
-            handled.store(true, Ordering::Release);
-            proxy.handle(request, peer).await
+        };
+        async move {
+            match proxy {
+                Some(proxy) => proxy.handle(request, peer).await,
+                None => {
+                    let mut response =
+                        hyper::Response::new(isoplane_proxy::server::Body::default());
+                    *response.status_mut() = hyper::StatusCode::SERVICE_UNAVAILABLE;
+                    Ok(response)
+                }
+            }
         }
     });
     if let Err(error) = hyper::server::conn::http1::Builder::new()
@@ -356,7 +432,7 @@ async fn connection_task(
     {
         tracing::debug!(%error, "local connection closed");
     }
-    if debug && observed.load(Ordering::Acquire) {
-        admission.store(false, Ordering::Release);
+    if observed.load(Ordering::Acquire) {
+        completed.lock().active = false;
     }
 }

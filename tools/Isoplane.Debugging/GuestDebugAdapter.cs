@@ -24,6 +24,9 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     private readonly DebugLauncher? launcher;
     private readonly CancellationTokenSource launchCancellation = new();
     private Task launching = Task.CompletedTask;
+    private Task disconnecting = Task.CompletedTask;
+    private int detaching;
+    private bool launched;
     private PausedValues? paused;
     private int nextHandle;
     private int pauseRequested;
@@ -153,6 +156,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         }
         owner = new GuestSession(SessionEnded);
         attach = new ConnectionRequest(() => request.SetResponse(new LaunchResponse()), request.SetError);
+        launched = true;
         launching = LaunchAsync(new DebugLaunchOptions(project, configuration, port is { } number ? (ushort)number : null, watch.Value));
     }
 
@@ -345,11 +349,60 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     {
         if (request.Arguments.TerminateDebuggee == false && Volatile.Read(ref ended) == 0)
         {
-            request.SetError(new ProtocolException("Detaching while leaving the guest running is not supported. Stop the local session or set terminateDebuggee to true."));
+            if (launched)
+            {
+                request.SetError(new ProtocolException("Detach currently requires a terminal-started application. Stop the launched session or attach to isoplane dev --debug."));
+                return;
+            }
+            if (owner is null || Interlocked.Exchange(ref detaching, 1) != 0)
+            {
+                request.SetError(new ProtocolException("No attached session is available to detach."));
+                return;
+            }
+            disconnecting = DetachAsync(request);
             return;
         }
         request.SetResponse(new DisconnectResponse());
         Stop();
+    }
+
+    private async Task DetachAsync(IRequestResponder<DisconnectArguments> request)
+    {
+        bool prepared = false;
+        try
+        {
+            await owner!.PrepareDetachAsync();
+            prepared = true;
+            if (session.IsConnected && !session.HasExited)
+            {
+                try { await Task.Run(() => session.VirtualMachine.Detach()); }
+                catch (Mono.Debugger.Soft.VMDisconnectedException)
+                {
+                    // Request completion can close the guest before its exit event reaches the adapter.
+                }
+            }
+            else
+                connection?.Close();
+            await owner.DetachAsync();
+            request.SetResponse(new DisconnectResponse());
+            Stop();
+        }
+        catch (Exception error)
+        {
+            Interlocked.Exchange(ref detaching, 0);
+            if (Volatile.Read(ref stopping) != 0)
+            {
+                diagnostics.WriteLine($"isoplane debugger: detach ended during shutdown: {error.Message}");
+                return;
+            }
+            request.SetError(new ProtocolException($"Could not detach the debugger: {error.Message}", error));
+            if (prepared) Fail(error);
+            else
+            {
+                lock (lifecycle)
+                    if (session.HasExited && connection is not null) reconnecting = ReconnectAsync(session, connection);
+            }
+        }
     }
 
     protected override void HandleProtocolError(Exception error) => Fail(error);
@@ -380,7 +433,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         lock (lifecycle)
         {
             Interlocked.Exchange(ref paused, null)?.Dispose();
-            if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
+            if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0 || Volatile.Read(ref detaching) != 0) return;
             if (attach is not null)
             {
                 Fail(new InvalidOperationException("The guest exited before attachment completed."));
@@ -398,7 +451,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             await previousConnection.DisposeAsync();
             lock (lifecycle)
             {
-                if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0) return;
+                if (Volatile.Read(ref stopping) != 0 || Volatile.Read(ref ended) != 0 || Volatile.Read(ref detaching) != 0) return;
                 var store = previous.Breakpoints;
                 previous.Breakpoints = null;
                 previous.Dispose();
@@ -434,6 +487,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         Stop();
         Interlocked.Exchange(ref paused, null)?.Dispose();
+        await disconnecting;
         await launching;
         await opening;
         await reconnecting;

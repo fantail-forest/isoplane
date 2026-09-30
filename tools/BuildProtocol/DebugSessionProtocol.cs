@@ -9,6 +9,7 @@ internal static class DebugSessionProtocol
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private sealed record Endpoint(int Version, int Port);
     private sealed record Command(int Version, string Action);
+    internal sealed record Reply(int Version, string Action, string? Error = null);
 
     internal static Task WriteEndpointAsync(Stream stream, IPEndPoint endpoint, CancellationToken cancellation) =>
         WriteAsync(stream, new Endpoint(Version, endpoint.Port), cancellation);
@@ -24,12 +25,49 @@ internal static class DebugSessionProtocol
 
     internal static Task TerminateAsync(Stream stream) => WriteAsync(stream, new Command(Version, "terminate"), CancellationToken.None);
 
-    internal static async Task ReadTerminationAsync(Stream stream, CancellationToken cancellation)
+    internal static Task RequestDetachAsync(Stream stream, bool prepared, CancellationToken cancellation) =>
+        WriteAsync(stream, new Command(Version, prepared ? "detach" : "prepareDetach"), cancellation);
+
+    internal static Task ReplyAsync(Stream stream, string action, string? error, CancellationToken cancellation) =>
+        WriteAsync(stream, new Reply(Version, action, error), cancellation);
+
+    internal static async Task<Reply?> ReadReplyAsync(Stream stream, CancellationToken cancellation)
     {
-        var command = await ReadAsync<Command>(stream, cancellation);
-        if (command is null) return;
-        RequireVersion(command.Version);
-        if (command.Action != "terminate") throw new IOException("The debugger sent an unsupported session command.");
+        var reply = await ReadAsync<Reply>(stream, cancellation);
+        if (reply is not null) RequireVersion(reply.Version);
+        return reply;
+    }
+
+    internal static async Task<bool> ReadTerminationAsync(Stream stream, Func<CancellationToken, Task>? prepareDetach, CancellationToken cancellation)
+    {
+        bool prepared = false;
+        while (true)
+        {
+            var command = await ReadAsync<Command>(stream, cancellation);
+            if (command is null) return false;
+            RequireVersion(command.Version);
+            switch (command.Action)
+            {
+                case "terminate": return false;
+                case "prepareDetach" when !prepared:
+                    try
+                    {
+                        if (prepareDetach is null) throw new InvalidOperationException("This local session cannot detach from its debugger.");
+                        await prepareDetach(cancellation);
+                        prepared = true;
+                        await ReplyAsync(stream, "detachReady", null, cancellation);
+                    }
+                    catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException)
+                    {
+                        await ReplyAsync(stream, "detachReady", error.Message, cancellation);
+                    }
+                    break;
+                case "detach" when prepared:
+                    await ReplyAsync(stream, "detached", null, cancellation);
+                    return true;
+                default: throw new IOException("The debugger sent an unsupported session command.");
+            }
+        }
     }
 
     private static void RequireVersion(int version)

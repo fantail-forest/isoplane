@@ -64,12 +64,12 @@ public sealed class DebugAdapterTests
     }
 
     [Fact]
-    public async Task detaching_without_ending_the_guest_is_explicitly_unsupported()
+    public async Task detachment_requires_an_attached_session()
     {
         await using var client = await Client.StartAsync();
         await client.Initialize();
         var error = await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } }));
-        Assert.True(error.Message.Contains("terminateDebuggee", StringComparison.Ordinal), "Detachment must name the supported way to stop the session.");
+        Assert.True(error.Message.Contains("No attached session", StringComparison.Ordinal), "Detachment requires a session whose ownership can be released.");
     }
 
     [Fact]
