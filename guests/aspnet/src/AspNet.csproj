@@ -1,4 +1,7 @@
 <Project>
+  <PropertyGroup>
+    <ArtifactsPath>$(ISOPLANE_FIXTURE_ARTIFACTS)</ArtifactsPath>
+  </PropertyGroup>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
     <AssemblyName>isoplane_guest_aspnet</AssemblyName>
@@ -6,7 +9,7 @@
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <BaseOutputPath>$(ISOPLANE_MANAGED_ARTIFACTS)/bin/</BaseOutputPath>
+    <BaseOutputPath>$(ISOPLANE_FIXTURE_ARTIFACTS)/bin/</BaseOutputPath>
     <IsoplaneApplicationFactory>AdapterFixture.Application.Create</IsoplaneApplicationFactory>
   </PropertyGroup>
   <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />

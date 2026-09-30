@@ -242,7 +242,6 @@ stage_feed() {
   rm -f "$feed"/*.nupkg
   cp "$pack" "$sdkpack" "$feed/"
   rm -rf "$OUT/packs"
-  unpack "$pack" "$OUT/packs/runtime"
   unpack "$sdkpack" "$OUT/packs/wasi-sdk"
   # The platform runtime build selects its packs by version and checks
   # each resolved pack against the feed's digest.
@@ -253,7 +252,6 @@ stage_feed() {
     <IsoplaneGuestWasiSdkPackSha512>$(pack_digest "$sdkpack")</IsoplaneGuestWasiSdkPackSha512>
     <IsoplaneGuestRuntimePackVersion>$version</IsoplaneGuestRuntimePackVersion>
     <IsoplaneGuestRuntimePackSha512>$(pack_digest "$pack")</IsoplaneGuestRuntimePackSha512>
-    <IsoplaneGuestRuntimePackDirectory>\$(MSBuildThisFileDirectory)../packs/runtime/</IsoplaneGuestRuntimePackDirectory>
     <IsoplaneGuestWasiSdkPackDirectory>\$(MSBuildThisFileDirectory)../packs/wasi-sdk/</IsoplaneGuestWasiSdkPackDirectory>
   </PropertyGroup>
 </Project>

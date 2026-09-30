@@ -284,6 +284,7 @@ tasks:
     sources:
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.cs'
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.csproj'
+      - '{{.ROOT_DIR}}/taskfiles/fixtures.yml'
       - '{{.ROOT_DIR}}/guests/dotnet/src/App/filesystem-resource.txt'
       - '{{.ROOT_DIR}}/guests/dotnet/src/App/{{.PROBE}}.cs'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
@@ -300,8 +301,9 @@ tasks:
     env:
       IsoplaneProbe: '{{.PROBE}}'
       IsoplaneProbeSymbol: 'ISOPLANE_{{trimSuffix "Probe" .PROBE | upper}}_PROBE'
-      ISOPLANE_MANAGED_ARTIFACTS: '{{.ROOT_DIR}}/.build/clr-anycpu/probe-intermediates/{{.NAME}}'
-      ArtifactsPath: '{{.ROOT_DIR}}/.build/clr-anycpu/probe-intermediates/{{.NAME}}'
+      ISOPLANE_FIXTURE_ARTIFACTS: '{{.ROOT_DIR}}/.build/clr-anycpu/probe-intermediates/{{.NAME}}'
+      ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
+      ArtifactsPath: '{{.MANAGED}}'
       ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
     cmds:
       - mkdir -p "{{.ROOT_DIR}}/.build/clr-anycpu/probes"

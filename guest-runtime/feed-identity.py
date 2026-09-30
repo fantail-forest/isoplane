@@ -4,7 +4,6 @@ import base64
 import hashlib
 from pathlib import Path
 import xml.etree.ElementTree as ET
-import zipfile
 
 
 def file_digest(stream, algorithm):
@@ -40,11 +39,12 @@ def verify_feed(feed):
             actual = base64.b64encode(file_digest(stream, 'sha512')).decode()
         if actual != field(prefix + 'Sha512'):
             raise ValueError(f'runtime package content differs from published identity: {path}')
-        directory = field(prefix + 'Directory').replace('$(MSBuildThisFileDirectory)', str(feed.resolve()) + '/')
-        if '$(' in directory:
-            raise ValueError(f'unsupported runtime directory expression: {directory}')
-        if not Path(directory).is_dir():
-            raise ValueError(f'unpacked runtime package is missing: {directory}')
+    directory = field('IsoplaneGuestWasiSdkPackDirectory').replace(
+        '$(MSBuildThisFileDirectory)', str(feed.resolve()) + '/')
+    if '$(' in directory:
+        raise ValueError(f'unsupported WASI SDK directory expression: {directory}')
+    if not Path(directory).is_dir():
+        raise ValueError(f'unpacked WASI SDK package is missing: {directory}')
     return field('IsoplaneGuestRuntimePackVersion') + '@sha512:' + field('IsoplaneGuestRuntimePackSha512')
 
 
@@ -56,7 +56,7 @@ def main():
     args = parser.parse_args()
     try:
         print(verify_feed(args.feed))
-    except (OSError, ValueError, ET.ParseError, zipfile.BadZipFile) as error:
+    except (OSError, ValueError, ET.ParseError) as error:
         parser.exit(1, f'{error}\n')
 
 

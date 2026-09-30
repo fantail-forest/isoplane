@@ -1,4 +1,7 @@
 <Project>
+  <PropertyGroup>
+    <ArtifactsPath>$(ISOPLANE_FIXTURE_ARTIFACTS)</ArtifactsPath>
+  </PropertyGroup>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
   <!--
@@ -11,7 +14,7 @@
     <AssemblyName>guest_runtime_acceptance</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <BaseOutputPath>$(ISOPLANE_MANAGED_ARTIFACTS)/bin/</BaseOutputPath>
+    <BaseOutputPath>$(ISOPLANE_FIXTURE_ARTIFACTS)/bin/</BaseOutputPath>
     <IsoplaneApplicationFactory>Acceptance.Application.Create</IsoplaneApplicationFactory>
     <RootNamespace>Acceptance</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
