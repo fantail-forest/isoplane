@@ -307,11 +307,6 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     private void Stopped(TargetEventArgs args, StoppedEvent.ReasonValue reason)
     {
         if (Volatile.Read(ref stopping) != 0) return;
-        if (!breakpoints.ShouldStop(args))
-        {
-            session.Continue();
-            return;
-        }
         if (args.Backtrace is null || args.Thread is null)
         {
             Fail(new InvalidOperationException("The debugger stopped without a guest thread and stack trace."));
@@ -324,6 +319,13 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             reason = StoppedEvent.ReasonValue.Pause;
         }
         var state = new PausedValues(args, Allocate, session);
+        if (!breakpoints.ShouldStop(state.IsUnhandled))
+        {
+            state.Dispose();
+            session.Continue();
+            return;
+        }
+        if (state.IsUnhandled) reason = StoppedEvent.ReasonValue.Exception;
         var hits = dataBreakpoints.TakeHits(state);
         if (hits.IsDataStop)
         {

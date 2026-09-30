@@ -281,7 +281,7 @@ public static unsafe class Exports<TRouter>
         {
             // Diagnosis must not be what breaks the trap path.
         }
-        return PollStatus.Trapped(TrapCode.Panic);
+        return PollStatus.Unhandled(e);
     }
 
     private static long Panic(Exception e)
@@ -294,7 +294,7 @@ public static unsafe class Exports<TRouter>
         {
             // Diagnosis must not be what breaks the trap path.
         }
-        return PollStatus.Trapped(TrapCode.Panic);
+        return PollStatus.Unhandled(e);
     }
 
     /// <summary>

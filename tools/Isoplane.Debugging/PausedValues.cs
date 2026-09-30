@@ -11,11 +11,22 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     private readonly Dictionary<int, VariableSet> variables = [];
     internal int ThreadId => checked((int)stopped.Thread.Id);
 
+    private bool? boundaryFailure;
+    internal bool IsUnhandled => stopped.Type == TargetEventType.UnhandledException || IsBoundaryFailure;
+    private bool IsBoundaryFailure => boundaryFailure ??= IsGuestFailureBoundary();
+
+    private bool IsGuestFailureBoundary()
+    {
+        var method = session.VirtualMachine.GetThreads().Single(thread => thread.Id == stopped.Thread.Id).GetFrames().FirstOrDefault()?.Method;
+        return method?.Name == "Unhandled" && method.DeclaringType.FullName == "Isoplane.Abi.PollStatus"
+            && method.DeclaringType.Assembly.GetName().Name == "Isoplane.Sdk";
+    }
+
     private List<Frame>? visibleFrames;
     private StatementTargets? statements;
 
     internal GotoTargetsResponse GotoTargets(GotoTargetsArguments arguments) =>
-        stopped.Type is TargetEventType.ExceptionThrown or TargetEventType.UnhandledException
+        (IsUnhandled || stopped.Type == TargetEventType.ExceptionThrown)
             ? new GotoTargetsResponse { Targets = [] }
             : (statements ??= new StatementTargets(session, ThreadId, allocate)).Find(arguments);
 
@@ -159,20 +170,29 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     internal ExceptionInfoResponse ExceptionInfo(int threadId)
     {
         RequireThread(threadId);
-        if (stopped.Type is not (TargetEventType.ExceptionThrown or TargetEventType.UnhandledException))
+        if (!IsUnhandled && stopped.Type != TargetEventType.ExceptionThrown)
             throw new ProtocolException("The guest is not stopped on an exception.");
-        var exception = stopped.Backtrace.GetFrame(0).GetException();
+        var exception = IsBoundaryFailure ? BoundaryException() : stopped.Backtrace.GetFrame(0).GetException();
         if (exception is null) throw new ProtocolException("The runtime did not provide exception details.");
         return new ExceptionInfoResponse
         {
             ExceptionId = exception.Type, Description = exception.Message,
-            BreakMode = stopped.Type == TargetEventType.UnhandledException ? ExceptionBreakMode.Unhandled : ExceptionBreakMode.Always,
+            BreakMode = IsUnhandled ? ExceptionBreakMode.Unhandled : ExceptionBreakMode.Always,
             Details = new ExceptionDetails
             {
                 TypeName = exception.Type, FullTypeName = exception.Type, Message = exception.Message,
                 StackTrace = string.Join(Environment.NewLine, exception.StackTrace.Select(frame => frame.DisplayText))
             }
         };
+    }
+
+    private Mono.Debugging.Client.ExceptionInfo BoundaryException()
+    {
+        var context = Context(new Frame(stopped.Backtrace.GetFrame(0), 0));
+        var error = context.Evaluator.Evaluate(context, "error");
+        var value = new Mono.Debugging.Evaluation.ExceptionInfoSource(context, error).CreateObjectValue(false, EvaluationOptions.DefaultOptions);
+        WaitForValue(value);
+        return new Mono.Debugging.Client.ExceptionInfo(value);
     }
 
     private Variable Variable(ObjectValue value, Frame frame, string expression)

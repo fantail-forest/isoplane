@@ -93,6 +93,11 @@ watches, edit values, or set data breakpoints on its captured fields and array
 elements. Task-based callers remain visible across suspension, including custom
 awaiters and `Task.WhenAll`/`Task.WhenAny` chains.
 
+The **Uncaught exceptions** filter also stops on failures the SDK converts into
+guest traps. Exception details retain the original throw stack. At this boundary,
+methods may already have unwound; their original locals are no longer live.
+Disabling the filter lets the failed request finish without this stop.
+
 In the current physical frame, **Jump to Cursor** can move execution to another
 statement in the same method without executing the intervening statements or
 resetting locals. The debugger offers only locations with an empty evaluation

@@ -18,6 +18,7 @@ import urllib.parse
 from debugpy.common.messaging import JsonIOStream
 import debug_async_stack
 import debug_library
+import debug_uncaught
 import debug_features
 import debug_statements
 import debug_watchpoints
@@ -32,7 +33,7 @@ if mode == "protocol":
     if not driver.is_file():
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
-scenario = {"statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
+scenario = {"uncaught": debug_uncaught, "statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 if mode in ("async-composed", "async-composed-optimized"):
     scenario = debug_async_stack
 adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -85,6 +86,8 @@ def request_http(result):
     try:
         with urllib.request.urlopen(url, timeout=180) as reply:
             result.set_result((reply.status, reply.read()))
+    except urllib.error.HTTPError as error:
+        result.set_result((error.code, error.read()))
     except Exception as error:
         result.set_exception(error)
 
@@ -137,7 +140,7 @@ try:
         probe.shutdown(socket.SHUT_WR)
         assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     previous_frame = None
-    for attempt in range(2 if mode in ("requests", "launch", "reload") else 1):
+    for attempt in range(2 if mode in ("requests", "launch", "reload", "uncaught") else 1):
         http_result = concurrent.futures.Future()
         threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
         if attempt == 0 and not launched:
@@ -202,7 +205,7 @@ try:
         if mode in ("requests", "launch", "reload"):
             previous_frame = frame["id"]
         if mode != "stop":
-            assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode == "reload" and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
+            assert http_result.result(timeout=180) == (getattr(scenario, "EXPECTED_STATUS", 200), scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode == "reload" and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
         if mode == "reload" and attempt == 0:
             until(lambda item: item.get("seq", 0) > rebuilt["seq"] and item.get("event") == "output"
                   and "  reloaded " in item["body"]["output"])

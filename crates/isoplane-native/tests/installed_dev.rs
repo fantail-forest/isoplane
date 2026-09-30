@@ -202,6 +202,8 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         include_str!("common/debug_statements.cs")
     } else if mode == "protocol" {
         include_str!("common/debug_protocol.cs")
+    } else if mode == "uncaught" {
+        include_str!("common/debug_uncaught.cs")
     } else if mode == "watchpoints" {
         include_str!("common/debug_watchpoints.cs")
     } else {
@@ -445,4 +447,9 @@ fn dotnet_run_starts_an_inspectable_interpreted_debug_session() {
 #[test]
 fn installed_debugging_binds_source_and_inspects_locals_in_referenced_projects() {
     installed_debug_acceptance("library");
+}
+
+#[test]
+fn installed_uncaught_exception_filter_skips_caught_exceptions_and_reports_unhandled_ones() {
+    installed_debug_acceptance("uncaught");
 }

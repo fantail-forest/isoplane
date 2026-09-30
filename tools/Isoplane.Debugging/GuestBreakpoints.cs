@@ -77,7 +77,7 @@ internal sealed class GuestBreakpoints
         return new SetExceptionBreakpointsResponse();
     }
 
-    internal bool ShouldStop(TargetEventArgs stopped) => stopped.Type != TargetEventType.UnhandledException || breakOnUnhandled;
+    internal bool ShouldStop(bool unhandled) => !unhandled || breakOnUnhandled;
 
     private static void Configure(BreakEvent breakpoint, string? condition, string? hitCondition, string? logMessage)
     {

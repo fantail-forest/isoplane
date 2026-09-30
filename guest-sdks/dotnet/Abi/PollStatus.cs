@@ -1,3 +1,7 @@
+using System;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+
 namespace Isoplane.Abi;
 
 /// <summary>
@@ -23,6 +27,15 @@ internal static class PollStatus
     internal static long Done(uint responseHandle) => Pack(TagDone, responseHandle);
     internal static long Pending() => Pack(TagPending, 0);
     internal static long Trapped(TrapCode code) => Pack(TagTrapped, (uint)code);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static long Unhandled(Exception error)
+    {
+        // The guest boundary catches failures to contain them; notify the editor before returning the trap.
+        if (Debugger.IsAttached) Debugger.Break();
+        GC.KeepAlive(error);
+        return Trapped(TrapCode.Panic);
+    }
 
     private static long Pack(uint tag, uint payload) => (long)((ulong)tag | ((ulong)payload << 32));
 }
