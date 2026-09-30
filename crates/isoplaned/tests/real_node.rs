@@ -438,9 +438,9 @@ async fn managed_libraries_observe_a_read_only_disk_holding_only_the_platform_fi
     )
     .await;
     let mut mismatches = Vec::new();
-    // `/etc` exists because the trust bundle lives under it; nothing else does.
+    // The platform serves its trust bundle and the application's managed package.
     for (path, expected) in [
-        ("/root", "/|True|/etc"),
+        ("/root", "/|True|/.isoplane,/etc"),
         ("/missing", "False|False|False"),
         ("/read", "FileNotFoundException:80070002"),
         ("/read-root-file", "FileNotFoundException:80070002"),

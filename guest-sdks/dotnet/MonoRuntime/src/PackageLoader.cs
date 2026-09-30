@@ -35,7 +35,7 @@ public static class PackageLoader
     /// Throws when the manifest selects another execution mode, when the
     /// runtime already supplies a package assembly's name, or when the factory
     /// is not a public static parameterless method returning
-    /// <see cref="IIsoplaneHandler"/> or an ASP.NET <c>WebApplication</c>.
+    /// <see cref="IIsoplaneHandler"/>, <see cref="IIsoplaneRouter"/>, or an ASP.NET <c>WebApplication</c>.
     /// </summary>
     public static IIsoplaneRouter Load()
     {
@@ -107,6 +107,11 @@ public static class PackageLoader
         MethodInfo? method = type?.GetMethod(factory[(separator + 1)..], BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes);
         if (method is null || method.IsGenericMethodDefinition)
             throw Refuse(new PackageFactoryException($"'{factory}' is not a public static parameterless method of '{entry.GetName().Name}'"));
+        if (typeof(IIsoplaneRouter).IsAssignableFrom(method.ReturnType))
+        {
+            Func<IIsoplaneRouter?> create = method.CreateDelegate<Func<IIsoplaneRouter?>>();
+            return create() ?? throw Refuse(new PackageFactoryException($"'{factory}' returned no router"));
+        }
         if (typeof(IIsoplaneHandler).IsAssignableFrom(method.ReturnType))
         {
             Func<IIsoplaneHandler?> create = method.CreateDelegate<Func<IIsoplaneHandler?>>();
@@ -117,7 +122,7 @@ public static class PackageLoader
         // an ASP.NET package carries.
         if (method.ReturnType.FullName == WebApplications.TypeName)
             return WebApplications.Router(method, factory);
-        throw Refuse(new PackageFactoryException($"'{factory}' returns '{method.ReturnType.FullName}', not IIsoplaneHandler or WebApplication"));
+        throw Refuse(new PackageFactoryException($"'{factory}' returns '{method.ReturnType.FullName}', not IIsoplaneHandler, IIsoplaneRouter or WebApplication"));
     }
 
     /// <summary>
