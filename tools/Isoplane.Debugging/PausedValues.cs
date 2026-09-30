@@ -12,6 +12,19 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     internal int ThreadId => checked((int)stopped.Thread.Id);
 
     private List<Frame>? visibleFrames;
+    private StatementTargets? statements;
+
+    internal GotoTargetsResponse GotoTargets(GotoTargetsArguments arguments) =>
+        stopped.Type is TargetEventType.ExceptionThrown or TargetEventType.UnhandledException
+            ? new GotoTargetsResponse { Targets = [] }
+            : (statements ??= new StatementTargets(session, ThreadId, allocate)).Find(arguments);
+
+    internal TargetEventArgs Goto(GotoArguments arguments)
+    {
+        RequireThread(arguments.ThreadId);
+        if (statements is null) throw new ProtocolException("Request a statement target before moving execution.");
+        return statements.Move(arguments.TargetId);
+    }
 
     internal StackTraceResponse StackTrace(StackTraceArguments arguments)
     {

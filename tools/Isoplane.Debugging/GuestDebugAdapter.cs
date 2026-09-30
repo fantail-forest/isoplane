@@ -82,7 +82,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             SupportsConditionalBreakpoints = true, SupportsHitConditionalBreakpoints = true, SupportsLogPoints = true,
             SupportsFunctionBreakpoints = true, SupportsEvaluateForHovers = true, SupportsSetVariable = true,
             SupportsSetExpression = true, SupportsExceptionInfoRequest = true, SupportsDataBreakpoints = true,
-            SupportsDataBreakpointBytes = false,
+            SupportsDataBreakpointBytes = false, SupportsGotoTargetsRequest = true,
             ExceptionBreakpointFilters =
             [
                 new ExceptionBreakpointsFilter { Filter = "all", Label = "All thrown exceptions" },
@@ -232,6 +232,14 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     protected override SetExpressionResponse HandleSetExpressionRequest(SetExpressionArguments arguments) => Pause.SetExpression(arguments);
     protected override ExceptionInfoResponse HandleExceptionInfoRequest(ExceptionInfoArguments arguments) => Pause.ExceptionInfo(arguments.ThreadId);
 
+    protected override GotoTargetsResponse HandleGotoTargetsRequest(GotoTargetsArguments arguments) => Pause.GotoTargets(arguments);
+
+    protected override GotoResponse HandleGotoRequest(GotoArguments arguments)
+    {
+        Stopped(Pause.Goto(arguments), StoppedEvent.ReasonValue.Goto);
+        return new GotoResponse();
+    }
+
     protected override StepInResponse HandleStepInRequest(StepInArguments arguments)
     {
         Resume(arguments.ThreadId, session.StepLine);
@@ -327,7 +335,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             }
             reason = StoppedEvent.ReasonValue.DataBreakpoint;
         }
-        Volatile.Write(ref paused, state);
+        Interlocked.Exchange(ref paused, state)?.Dispose();
         Protocol.SendEvent(new StoppedEvent { Reason = reason, ThreadId = state.ThreadId, AllThreadsStopped = true, HitBreakpointIds = hits.BreakpointIds.ToList(), Description = hits.Description });
     }
 

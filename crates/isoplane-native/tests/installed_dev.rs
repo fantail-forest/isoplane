@@ -195,6 +195,8 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
         include_str!("common/debug_async.cs")
     } else if mode == "library" {
         "    private static string Handle() => DebugLibrary.Calculator.Work(41).ToString();\n"
+    } else if mode == "statements" {
+        include_str!("common/debug_statements.cs")
     } else if mode == "protocol" {
         include_str!("common/debug_protocol.cs")
     } else if mode == "watchpoints" {
@@ -349,6 +351,11 @@ fn installed_debug_acceptance(mode: &str) {
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
+}
+
+#[test]
+fn moving_execution_preserves_locals_and_rejects_stale_statement_targets() {
+    installed_debug_acceptance("statements");
 }
 
 #[test]

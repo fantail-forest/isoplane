@@ -88,5 +88,11 @@ working application available. Use `--no-watch` (or `"watch": false` in an IDE
 launch configuration) to disable automatic rebuilds. This rebuilds the application;
 it does not apply in-place Hot Reload to the active request.
 
+In the current physical frame, **Jump to Cursor** can move execution to another
+statement in the same method without executing the intervening statements or
+resetting locals. The debugger offers only locations with an empty evaluation
+stack. Constructors, async and iterator methods, synchronized methods, and
+methods containing exception handlers do not offer jump targets.
+
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.

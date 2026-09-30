@@ -19,6 +19,7 @@ from debugpy.common.messaging import JsonIOStream
 import debug_async_stack
 import debug_library
 import debug_features
+import debug_statements
 import debug_watchpoints
 from debug_sources import same_source
 
@@ -31,7 +32,7 @@ if mode == "protocol":
     if not driver.is_file():
         sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
-scenario = {"features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
+scenario = {"statements": debug_statements, "features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack, "async-optimized": debug_async_stack}.get(mode)
 adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 stream = JsonIOStream.from_process(adapter)
 messages = queue.Queue()
