@@ -28,7 +28,6 @@ if [ "$COMPILE" = 0 ]; then
 fi
 
 FEED="${ISOPLANE_GUEST_RUNTIME_FEED:-${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/.build/wasm32/runtime/feed}}"
-python3 "$ROOT/guest-runtime/feed-identity.py" verify-artifact "$FEED"
 export ISOPLANE_GUEST_RUNTIME_FEED="$FEED"
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the package fixtures cannot be built." >&2; exit 1; }
 RUNTIME_OUTPUT="${ISOPLANE_TEST_RUNTIME_MODULES:-$ROOT/.build/wasm32/runtime-modules}"
@@ -36,6 +35,7 @@ PACKAGE_OUTPUT="$ROOT/.build/clr-anycpu/package-fixtures"
 
 SDK="$ROOT/guest-sdks/dotnet"
 if [ "$FIXTURE" = runtime ]; then
+  python3 "$ROOT/guest-runtime/feed-identity.py" verify-artifact "$FEED"
   OUT="$RUNTIME_OUTPUT/Isoplane.MonoRuntime.wasm"
   DEBUG="$RUNTIME_OUTPUT/Isoplane.MonoRuntime.Debug.wasm"
   [ "$(uname -s)" = Linux ] || { echo "Build shared fixtures on Linux first." >&2; exit 1; }

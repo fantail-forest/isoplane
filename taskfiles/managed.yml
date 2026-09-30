@@ -5,7 +5,7 @@ tasks:
     run: once
     desc: Build portable managed tools and SDK assemblies on Linux
     deps: [":initialize"]
-    sources:
+    sources: &managed_sources
       - '{{.SOURCE_REF}}'
       - '{{.ROOT_DIR}}/tools/**/*.cs'
       - '{{.ROOT_DIR}}/tools/**/*.csproj'
@@ -16,6 +16,7 @@ tasks:
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.props'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.targets'
       - '{{.ROOT_DIR}}/Isoplane.slnx'
+      - '{{.ROOT_DIR}}/Isoplane.Build.slnf'
       - '{{.ROOT_DIR}}/taskfiles/managed.yml'
       - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
       - '{{.ROOT_DIR}}/Directory.Build.props'
@@ -26,7 +27,6 @@ tasks:
       - exclude: 'guest-sdks/dotnet/**/{obj,bin}/**/*'
     generates:
       - '{{.CLI}}'
-      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.Sdk/release/Isoplane.Sdk.dll'
       - '{{.MANAGED}}/bin/Isoplane.AspNetCore/release/Isoplane.AspNetCore.dll'
       - '{{.MANAGED}}/bin/Isoplane.Testing/release/Isoplane.Testing.dll'
@@ -34,21 +34,33 @@ tasks:
       - '{{.MANAGED}}/obj/Isoplane.Cli/release/DotnetToolSettings.xml'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task managed:build on Linux first." >&2; exit 1; }'
-      - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+      - '"{{.DOTNET}}" build Isoplane.Build.slnf -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
       - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli/Isoplane.Cli.csproj -t:Publish,GenerateToolsSettingsFileFromBuildProperty -p:Configuration=Release -p:NoBuild=true -p:ArtifactsPath="{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
 
   cli:
     deps: [build]
 
-  debugger:
+  tests:
+    run: once
+    desc: Build managed test assemblies on Linux
     deps: [build]
+    sources: *managed_sources
+    generates:
+      - '{{.MANAGED}}/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Run task managed:tests on Linux first." >&2; exit 1; }'
+      - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+
+  debugger:
+    deps: [tests]
 
   packages:
     run: once
     desc: Pack the prepared managed assemblies and shared runtime
     deps:
       - build
-      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
+      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}'
     sources:
       - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'
@@ -115,4 +127,4 @@ tasks:
       - '{{.OUTPUT}}/Isoplane.Native.*.nupkg'
     cmds:
       - for: [Isoplane.Native, Isoplane.Cli]
-        cmd: '"{{.DOTNET}}" pack taskfiles/NativePackages/NativePackages.csproj -c Release --artifacts-path "{{.OUTPUT}}/intermediates/{{.ITEM}}" -o "{{.OUTPUT}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativePath="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:IsoplaneNativeRid={{.PLATFORM}}'
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.OUTPUT}}/intermediates/{{.ITEM}}" -p:PackageOutputPath="{{.OUTPUT}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativePath="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:IsoplaneNativeRid={{.PLATFORM}}'

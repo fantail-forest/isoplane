@@ -232,35 +232,35 @@ tasks:
       - 'bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
 
   package:alpha:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
+    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
     cmds:
       - task: package:build
         vars:
           NAME: alpha
 
   package:beta:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
+    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
     cmds:
       - task: package:build
         vars:
           NAME: beta
 
   package:native:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
+    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
     cmds:
       - task: package:build
         vars:
           NAME: native
 
   package:web:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
+    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
     cmds:
       - task: package:build
         vars:
           NAME: web
 
   package:diagnostics:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
+    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
     cmds:
       - task: package:build
         vars:
@@ -274,7 +274,7 @@ tasks:
     label: 'probe:{{.NAME}}'
     deps:
       - ':cli'
-      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
+      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}'
     sources:
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.cs'
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.csproj'

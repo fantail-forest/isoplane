@@ -1,23 +1,17 @@
 """Exercise installed tools, User Secrets and verified-TLS PostgreSQL."""
 
-import argparse
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
 import selectors
 import shutil
 import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.request
 import uuid
-import xml.etree.ElementTree as ET
-import os
 import sys
-
-
 
 
 def command(arguments, *, env=None, cwd=None, data=None, timeout=120):
@@ -126,7 +120,7 @@ def application(dotnet, project, configuration, env, records, suffix=""):
             if not line:
                 status = process.wait(timeout=30)
                 assert status != 0, 'the CLI must not exit successfully without reporting readiness'
-                raise StartupRejected(f'The installed CLI rejected startup with status {status}; inspect the runtime log')
+                raise StartupRejected(f'The installed CLI rejected startup with status {status}: {(records / f"{configuration}{suffix}.log").read_text()}')
             ready = json.loads(line)
             assert ready['event'] == 'ready', 'the CLI must report readiness before requests'
             yield ready['url']
@@ -138,6 +132,7 @@ def application(dotnet, project, configuration, env, records, suffix=""):
                 process.kill()
                 process.wait(timeout=30)
                 raise RuntimeError('The CLI failed to stop after its owner closed input')
+            process.stdout.close()
             if process.returncode != 0:
                 if failure := sys.exception():
                     failure.add_note(f'The installed CLI exited with status {process.returncode}.')
@@ -145,76 +140,13 @@ def application(dotnet, project, configuration, env, records, suffix=""):
                     raise AssertionError('the installed CLI must stop cleanly')
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--cli', type=Path, required=True)
-    parser.add_argument('--dotnet', type=Path, required=True)
-    parser.add_argument('--package-feed', type=Path, required=True)
-    parser.add_argument('--records', type=Path, default=None)
-    parser.add_argument('--sample', type=Path, default=Path(__file__).resolve().parents[2] / 'samples/aspnet-todo')
-    parser.add_argument('--configuration', action='append', choices=['Debug', 'Release'])
-    arguments = parser.parse_args()
-    scratch = Path(__file__).resolve().parents[2] / '.test-runs/postgres'
-    scratch.mkdir(parents=True, exist_ok=True)
-    context = (nullcontext(arguments.records) if arguments.records else
-               tempfile.TemporaryDirectory(prefix='run-', dir=scratch))
-    with context as temporary:
-        records = Path(temporary)
-        records.mkdir(parents=True, exist_ok=True)
-        execute(arguments, records)
-
-
-def execute(arguments, records):
-    print(f'Records: {records}', flush=True)
-    with tempfile.TemporaryDirectory(prefix='application-', dir=records) as work:
-        directory = Path(work)
-        project = directory / 'app'
-        shutil.copytree(arguments.sample, project, ignore=shutil.ignore_patterns('bin', 'obj', 'out'))
-        config = ET.parse(project / 'nuget.config')
-        ET.SubElement(config.getroot().find('packageSources'), 'add',
-                      {'key': 'local-preview', 'value': str(arguments.package_feed.resolve())})
-        settings = ET.SubElement(config.getroot(), 'config')
-        ET.SubElement(settings, 'add', {'key': 'globalPackagesFolder', 'value': str(directory / 'packages')})
-        config.write(project / 'nuget.config')
-        env = os.environ.copy()
-        env['APPDATA'] = str(directory / 'user-secrets')
-        env['PATH'] = str(arguments.cli.resolve().parent) + os.pathsep + env['PATH']
-        env['DOTNET_ROOT'] = str(arguments.dotnet.resolve().parent)
-        dotnet = str(arguments.dotnet.resolve())
-        command([dotnet, 'user-secrets', 'init', '--project', str(project)], env=env)
-        print(f'Working directory: {directory}', flush=True)
-        with database(directory) as (container, port, password):
-            command(['docker', 'exec', '-i', container, 'psql', '-U', 'postgres', '-d', 'todo', '-v', 'ON_ERROR_STOP=1'],
-                    data=(project / 'schema.sql').read_text())
-            connection = f'Host=127.0.0.1;Port={port};Database=todo;Username=postgres;Password={password}'
-            command([dotnet, 'user-secrets', 'set', '--project', str(project)], env=env,
-                    data=json.dumps({'ConnectionStrings:Todo': connection}))
-            manifest = project / 'isoplane.toml'
-            base = manifest.read_text().replace('127.0.0.1:5432', f'127.0.0.1:{port}')
-            trust = f'\n[dev.trust]\nbundle = {json.dumps(str(directory / "ca.crt"))}\nsha256 = "{hashlib.sha256((directory / "ca.crt").read_bytes()).hexdigest()}"\n'
-            for configuration in arguments.configuration or ['Debug', 'Release']:
-                manifest.write_text(base + trust)
-                with (records / f'{configuration}-build.log').open('w') as log:
-                    subprocess.run([dotnet, 'build', '-c', configuration, '--disable-build-servers'],
-                                   cwd=project, env=env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
-                with application(arguments.dotnet.resolve(), project, configuration, env, records) as address:
-                    shutil.copy2(project / '.isoplane/package/application.tar', records / f'{configuration}.tar')
-                    verify_crud(address, container)
-                manifest.write_text(base)
-                try:
-                    with application(arguments.dotnet.resolve(), project, configuration, env, records, "-untrusted"):
-                        raise AssertionError('database warmup must refuse startup without the trusted root')
-                except StartupRejected:
-                    pass
-                rejected = (records / f'{configuration}-untrusted.log').read_text()
-                assert 'System.Security.Authentication.AuthenticationException' in rejected, 'removing trust must fail TLS authentication, not merely return an unrelated server error'
-                assert 'outbound operation denied' not in rejected, 'the untrusted-root test must reach the database'
-                print(f'{configuration}: verified-TLS CRUD and untrusted-root rejection passed', flush=True)
-            for record in records.glob('*.log'):
-                assert password not in record.read_text(), 'development credentials must not appear in build or runtime logs'
-            for package in records.glob('*.tar'):
-                assert password.encode() not in package.read_bytes(), 'runtime secrets must not be embedded in the application package'
-
-
-if __name__ == '__main__':
-    main()
+def prepared_project(source, destination):
+    """Isolate mutable scenario settings while reusing prepared compiler outputs."""
+    if not (source / 'bin').is_dir() or not (source / 'obj/project.assets.json').is_file():
+        raise FileNotFoundError(f'Prepare {source.name} with task scenarios:prepare SAMPLE={source.name}')
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns('bin', 'obj', 'out', '.isoplane'))
+    (destination / 'bin').symlink_to((source / 'bin').resolve(), target_is_directory=True)
+    (destination / 'obj').mkdir()
+    for pattern in ('project.assets.json', '*.nuget.g.props', '*.nuget.g.targets'):
+        for metadata in (source / 'obj').glob(pattern):
+            shutil.copy2(metadata, destination / 'obj' / metadata.name)

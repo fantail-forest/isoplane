@@ -1,6 +1,5 @@
 """Validate the packaged PostgreSQL helper; requires installed dotnet, Docker and OpenSSL."""
 
-import argparse
 import json
 import os
 from pathlib import Path
@@ -9,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 
 
 class Sample:
@@ -153,23 +153,19 @@ def unavailable_docker_preserves_cleanup_state(sample, directory):
     sample.run(['dotnet', 'user-secrets', 'remove', 'ConnectionStrings:Todo'])
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--release', required=True, type=Path)
-    arguments = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='isoplane-local-postgres-scenario-') as temporary:
-        directory = Path(temporary)
-        sample = Sample(arguments.release.resolve(), directory)
-        try:
-            verifies_tls_and_cleanup(sample)
-            failed_setup_cleans_resources(sample, directory)
-            failed_container_creation_allows_stop_and_retry(sample, directory)
-            unavailable_docker_preserves_cleanup_state(sample, directory)
-        finally:
-            if sample.state_path.exists():
-                sample.helper('stop')
-    print('PASS: packaged helper TLS, schema, authentication, loopback binding, ownership, cleanup and failure recovery')
-
-
-if __name__ == '__main__':
-    main()
+class LocalPostgres(unittest.TestCase):
+    def test_packaged_database_helper_verifies_tls_and_recovers_from_failures(self):
+        scratch = Path(__file__).resolve().parents[2] / '.test-runs/local-postgres'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='run-', dir=scratch) as temporary:
+            directory = Path(temporary)
+            sample = Sample(Path(os.environ['ISOPLANE_TEST_RELEASE']).resolve(), directory)
+            try:
+                verifies_tls_and_cleanup(sample)
+                failed_setup_cleans_resources(sample, directory)
+                failed_container_creation_allows_stop_and_retry(sample, directory)
+                unavailable_docker_preserves_cleanup_state(sample, directory)
+            finally:
+                if sample.state_path.exists():
+                    sample.helper('stop')
+        print('PASS: packaged helper TLS, schema, authentication, loopback binding, ownership, cleanup and failure recovery')

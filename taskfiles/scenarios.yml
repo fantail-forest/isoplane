@@ -1,0 +1,123 @@
+version: '3'
+
+vars:
+  SCENARIOS: '{{.ROOT_DIR}}/.build/clr-anycpu/scenarios'
+  ENVIRONMENT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/scenario-python'
+  SCENARIO_PYTHON: '{{.ENVIRONMENT}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
+
+env:
+  ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
+  ISOPLANE_MANAGED_ARTIFACTS: '{{.MANAGED}}'
+
+tasks:
+  environment:
+    internal: true
+    sources:
+      - '{{.ROOT_DIR}}/scenario-tests/developer-experience/requirements.txt'
+    generates: ['{{.SCENARIO_PYTHON}}']
+    cmds:
+      - '"{{.PYTHON}}" -m venv "{{.ENVIRONMENT}}"'
+      - '"{{.SCENARIO_PYTHON}}" -m pip install --disable-pip-version-check -r scenario-tests/developer-experience/requirements.txt'
+
+  prepare:
+    desc: Prepare a reusable scenario application (SAMPLE and CONFIGURATION)
+    deps:
+      - ':cli'
+      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}'
+    requires:
+      vars:
+        - name: SAMPLE
+          enum: [aspnet-todo, minimal-gallery, aspnet-gallery]
+    vars:
+      CONFIGURATION: '{{.CONFIGURATION | default "Release"}}'
+      DIRECTORY: '{{.SCENARIOS}}/{{.CONFIGURATION}}'
+    label: 'scenario:{{.SAMPLE}}:{{.CONFIGURATION}}'
+    sources:
+      - '{{.ROOT_DIR}}/samples/{{.SAMPLE}}/**/*'
+      - '{{.ROOT_DIR}}/samples/minimal-gallery/**/*'
+      - exclude: 'samples/**/{bin,obj,out,.isoplane}/**/*'
+      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore}/release/*.dll'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/buildTransitive/*'
+      - '{{.CLI}}'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/taskfiles/Scenario.proj'
+      - '{{.ROOT_DIR}}/taskfiles/Scenario.xslt'
+      - '{{.ROOT_DIR}}/taskfiles/scenarios.yml'
+    generates:
+      - '{{.DIRECTORY}}/{{.SAMPLE}}/bin/{{.CONFIGURATION}}/**/{{if eq .SAMPLE "aspnet-todo"}}Todo{{else}}Gallery{{end}}.dll'
+      - '{{.DIRECTORY}}/{{.SAMPLE}}/obj/project.assets.json'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Prepare scenario applications on Linux first." >&2; exit 1; }'
+      - task: stage
+        vars: {SAMPLE: '{{.SAMPLE}}', DIRECTORY: '{{.DIRECTORY}}'}
+      - task: ':{{if eq .SAMPLE "aspnet-gallery"}}scenarios:stage{{else}}initialize{{end}}'
+        vars: {SAMPLE: minimal-gallery, DIRECTORY: '{{.DIRECTORY}}'}
+      - '"{{.DOTNET}}" build "{{.DIRECTORY}}/{{.SAMPLE}}" --configuration {{.CONFIGURATION}}'
+
+  stage:
+    internal: true
+    label: 'stage:{{.SAMPLE}}:{{.DIRECTORY}}'
+    run: when_changed
+    cmds:
+      - 'mkdir -p "{{.DIRECTORY}}/{{.SAMPLE}}"'
+      - 'rsync -a --delete --exclude bin --exclude obj --exclude out --exclude .isoplane --exclude .local-postgres.json "{{.ROOT_DIR}}/samples/{{.SAMPLE}}/" "{{.DIRECTORY}}/{{.SAMPLE}}/"'
+      - '"{{.DOTNET}}" msbuild taskfiles/Scenario.proj -nologo -t:StageProject -p:Directory="{{.DIRECTORY}}/{{.SAMPLE}}" -p:Root="{{.ROOT_DIR}}"'
+
+  postgres:
+    desc: Run PostgreSQL behavior against a prepared application
+    deps:
+      - task: prepare
+        vars: {SAMPLE: aspnet-todo, CONFIGURATION: Release}
+    env:
+      ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
+      ISOPLANE_TEST_DOTNET: '{{.DOTNET}}'
+      ISOPLANE_TEST_SAMPLE: '{{.SCENARIOS}}/Release/aspnet-todo'
+      ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
+    cmds:
+      - '"{{.PYTHON}}" -m unittest discover -s scenario-tests/developer-experience -p test_postgres.py -v'
+
+  gallery:
+    desc: Run gallery behavior against a prepared application
+    vars:
+      SAMPLE: '{{.SAMPLE | default "minimal-gallery"}}'
+    deps:
+      - environment
+      - task: prepare
+        vars: {SAMPLE: '{{.SAMPLE}}', CONFIGURATION: Release}
+    env:
+      ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
+      ISOPLANE_TEST_DOTNET: '{{.DOTNET}}'
+      ISOPLANE_TEST_SAMPLE_NAME: '{{.SAMPLE}}'
+      ISOPLANE_TEST_SCHEMA: '{{.SCENARIOS}}/gallery.sql'
+      ISOPLANE_TEST_SCENARIO_DIRECTORY: '{{.SCENARIOS}}/Release'
+      ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
+    cmds:
+      - task: schema
+      - '"{{.SCENARIO_PYTHON}}" -m unittest discover -s scenario-tests/developer-experience -p test_gallery.py -v'
+
+  schema:
+    internal: true
+    sources:
+      - '{{.ROOT_DIR}}/samples/minimal-gallery/Design/**/*'
+      - exclude: 'samples/**/{bin,obj}/**/*'
+      - '{{.ROOT_DIR}}/.config/dotnet-tools.json'
+      - '{{.ROOT_DIR}}/taskfiles/scenarios.yml'
+    generates: ['{{.SCENARIOS}}/gallery.sql']
+    cmds:
+      - task: stage
+        vars: {SAMPLE: minimal-gallery, DIRECTORY: '{{.SCENARIOS}}/Release'}
+      - '"{{.DOTNET}}" tool restore'
+      - '"{{.DOTNET}}" build "{{.SCENARIOS}}/Release/minimal-gallery/Design" -c Release'
+      - '"{{.DOTNET}}" ef migrations script --no-build --configuration Release --project "{{.SCENARIOS}}/Release/minimal-gallery/Design" --output "{{.SCENARIOS}}/gallery.sql"'
+
+  local-postgres:
+    desc: Check the PostgreSQL helper in an explicitly prepared release
+    requires:
+      vars: [RELEASE]
+    preconditions:
+      - 'test -f "{{.RELEASE}}/release.json"'
+    env:
+      ISOPLANE_TEST_RELEASE: '{{.RELEASE}}'
+    cmds:
+      - '"{{.PYTHON}}" -m unittest discover -s scenario-tests/developer-experience -p test_local_postgres.py -v'

@@ -61,13 +61,10 @@ The Stb ports use permissive/public-domain licensing and MetadataExtractor uses
 Apache 2.0. The small Stb resize port has a lower maintenance cadence than the
 larger image frameworks; this sample keeps processing behind one shared module.
 
-`verify.py` builds and checks an application package against disposable PostgreSQL 16 and Garage
-2.3.0 containers. Install `verification-requirements.txt` in a virtual environment,
-then pass `--package-feed`, `--dotnet`, `--isoplane`, `--schema`, and `--records`.
-Use `--sample minimal-gallery` or `--sample aspnet-gallery`, and
-`--configuration Debug` or `--configuration Release`. Generate the
-SQL supplied to `--schema` with `dotnet ef migrations script --project Design
---output <path>`. The verifier creates a deterministic JPEG with actual EXIF,
+`task scenarios:gallery` prepares and checks an
+application package against disposable PostgreSQL 16 and Garage 2.3.0 containers.
+Task prepares the Python environment, application, CLI and schema using the
+pinned EF tool. Select `SAMPLE=minimal-gallery` or `SAMPLE=aspnet-gallery`. The verifier creates a deterministic JPEG with actual EXIF,
 checks the response and independent PostgreSQL/S3 reads, decodes the thumbnail
 with Pillow, and removes its containers on exit. Its startup/request deadlines
 only detect hangs. It requires Docker and OpenSSL on the machine running it.

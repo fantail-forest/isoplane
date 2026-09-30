@@ -4,13 +4,22 @@ tasks:
   selected:
     run: once
     cmds:
-      - task: '{{if or .ISOPLANE_TEST_RUNTIME_FEED (ne OS "linux")}}verify-selected{{else}}build{{end}}'
+      - task: '{{if or .ISOPLANE_TEST_RUNTIME_FEED (ne OS "linux")}}feed{{else}}build{{end}}'
 
-  verify-selected:
-    run: once
+  feed:
     internal: true
-    cmds:
-      - '"{{.PYTHON}}" guest-runtime/feed-identity.py verify-artifact "{{.FEED}}"'
+    preconditions:
+      - msg: Prepare the compiler feed with task runtime on Linux.
+        sh: 'test -f "{{.FEED}}/Isoplane.GuestRuntime.props"'
+    cmds: []
+
+  modules:
+    internal: true
+    run: once
+    preconditions:
+      - msg: Prepare the shared runtime with task fixtures:package:runtime on Linux.
+        sh: 'test -f "{{.MODULES}}/runtime.json" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.wasm" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.Debug.wasm"'
+    cmds: []
 
   build:
     run: once

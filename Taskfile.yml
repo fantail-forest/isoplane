@@ -35,6 +35,10 @@ env:
   TMPDIR: '{{.SCRATCH}}'
   TMP: '{{.SCRATCH}}'
   TEMP: '{{.SCRATCH}}'
+  ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
+  ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
+  ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
+  ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
 
 includes:
   notices: taskfiles/notices.yml
@@ -45,6 +49,7 @@ includes:
   managed: taskfiles/managed.yml
   fixtures: taskfiles/fixtures.yml
   runtime: taskfiles/runtime.yml
+  scenarios: taskfiles/scenarios.yml
 
 tasks:
   initialize:
@@ -62,13 +67,38 @@ tasks:
   test:
     desc: Prepare fixtures, then run the Rust test suite
     deps: [initialize, fixtures]
-    env:
-      ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
-      ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
-      ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
-      ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
     cmds:
       - 'cargo test --workspace {{.CLI_ARGS}}'
+
+  test:unit:
+    desc: Run Rust library tests without preparing integration fixtures
+    deps: [initialize]
+    cmds:
+      - 'cargo test --lib {{.CLI_ARGS}}'
+
+  test:rust:
+    desc: Prepare Rust WASM fixtures and run selected Rust tests
+    deps: [initialize, fixtures:rust]
+    cmds:
+      - 'cargo test {{.CLI_ARGS}}'
+
+  test:runtime:
+    desc: Run shared runtime acceptance tests
+    deps: [initialize, fixtures:acceptance]
+    cmds:
+      - 'cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
+
+  test:native:
+    desc: Run SDK and CLI integration tests using prepared packages
+    deps: [initialize, cli, fixtures:feed, fixtures:package, managed:debugger, debugger:environment]
+    cmds:
+      - 'cargo test -p isoplane-native {{.CLI_ARGS}}'
+
+  test:debugger:
+    desc: Run selected native debugger integration tests
+    deps: [initialize, cli, managed:debugger, debugger:environment, fixtures:feed]
+    cmds:
+      - 'cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
 
   fixtures:
     desc: Prepare shared fixtures before running tests
@@ -146,7 +176,7 @@ tasks:
 
   test:managed:
     desc: Run the managed CLI and debugger tests using prepared assemblies
-    deps: [managed:build, native]
+    deps: [managed:tests, native]
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/Isoplane.Cli.Tests/release" -p:Platform={{.PLATFORM}}'
       - '"{{.DOTNET}}" test tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'

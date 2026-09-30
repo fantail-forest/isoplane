@@ -11,8 +11,7 @@ behavior, and verification procedure. `../minimal-gallery/Design` owns the sole
 EF migration schema. This sample's `Design` project generates its compiled model
 and query interceptors; it does not own another schema.
 
-Build with `dotnet build -c Debug` or `dotnet build -c Release`. Run the shared
-verifier with `--sample aspnet-gallery --name aspnet-gallery --limits-json '{"module_bytes_compressed":52428800,"package_bytes":52428800,"instance_memory_max":536870912,"cpu_ms_per_http_dispatch":300000,"subrequests_per_dispatch":10000,"pending_futures_per_dispatch":4096}'`.
+Build with `dotnet build -c Debug` or `dotnet build -c Release`. Run `task scenarios:gallery SAMPLE=aspnet-gallery` from the repository root.
 Each verification run provisions and removes its own PostgreSQL and S3
 containers, checks ingest and retrieval, and verifies that a failing read query
 rejects preparation before the application becomes ready.

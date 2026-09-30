@@ -10,8 +10,8 @@ manifest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(manifest)
 
 
-def record(path, key):
-    return dict(file=str(path.resolve()), key=key, sha256=manifest.digest(path),
+def record(path, key, sha256=None):
+    return dict(file=str(path.resolve()), key=key, sha256=sha256 or manifest.digest(path),
                 contentType='application/json' if path.suffix == '.json' else
                 'application/gzip' if path.suffix == '.tgz' else 'application/octet-stream')
 
@@ -30,8 +30,8 @@ def main():
     operations, metadata = [], []
     publication = dict(version=args.version, sourceRevision=descriptions[0]['sourceRevision'], packages={}, releases={})
     for path, description in zip(releases, descriptions):
-        operations.append(record(path / 'toolchain.tgz', f'{path.name}/toolchain.tgz'))
-        operations.extend(record(path / p['file'], f"{path.name}/{p['file']}") for p in description['packages'])
+        operations.append(record(path / 'toolchain.tgz', f'{path.name}/toolchain.tgz', description['toolchain']['archiveSha256']))
+        operations.extend(record(path / p['file'], f"{path.name}/{p['file']}", p['sha256']) for p in description['packages'])
         metadata.append(record(path / 'release.json', f'{path.name}/release.json'))
         publication['releases'][description['runtimeIdentifier']] = metadata[-1]['sha256']
     packages = sorted((args.output / 'nuget' / args.version).glob('*.nupkg'))

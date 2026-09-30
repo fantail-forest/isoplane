@@ -58,9 +58,9 @@ tasks:
     generates: ['{{.RELEASE}}/toolchain.tgz']
     cmds:
       - defer: 'rm -rf "{{.STAGE}}"'
+      - 'rm -rf "{{.STAGE}}"'
       - 'mkdir -p "{{.STAGE}}" "{{.RELEASE}}"'
       - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageToolchain -p:ManagedDirectory="{{.MANAGED}}" -p:NativeLibrary="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:NoticeDirectory="{{.NOTICES}}" -p:StageDirectory="{{.STAGE}}/payload"'
-      - '{{.PYTHON}} scripts/release-manifest.py toolchain "{{.STAGE}}/payload" --platform {{.PLATFORM}} --version {{.VERSION}}'
       - task: '{{if eq OS "windows"}}windows-installer{{else}}workload{{end}}'
       - '{{if eq OS "windows"}}tar.exe{{else}}tar{{end}} -czf "{{.STAGE}}/toolchain.tgz" -C "{{.STAGE}}/bundle" .'
       - 'mv "{{.STAGE}}/toolchain.tgz" "{{.RELEASE}}/toolchain.tgz"'
@@ -68,7 +68,8 @@ tasks:
   workload:
     internal: true
     cmds:
-      - '"{{.DOTNET}}" pack taskfiles/Toolchain/Toolchain.csproj -c Release --artifacts-path "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/workload" -o "{{.STAGE}}/bundle/packages" -p:Platform={{.PLATFORM}} -p:StageDirectory="{{.STAGE}}/payload"'
+      - '{{.PYTHON}} scripts/release-manifest.py toolchain "{{.STAGE}}/payload" --platform {{.PLATFORM}} --version {{.VERSION}}'
+      - '"{{.DOTNET}}" msbuild taskfiles/Toolchain/Toolchain.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/workload" -p:PackageOutputPath="{{.STAGE}}/bundle/packages" -p:Platform={{.PLATFORM}} -p:StageDirectory="{{.STAGE}}/payload"'
       - 'cp "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" "{{.STAGE}}/bundle/packages/"'
       - |
         jq -n --arg version '{{.VERSION}}' --arg rid '{{.PLATFORM}}' '
@@ -95,13 +96,38 @@ tasks:
           scripts/developer-preview-readme.md > "{{.RELEASE}}/README.md"
 
   publication:
+    method: timestamp
     desc: Pack the publication feed with native libraries from all three platforms
     deps: [shared]
     vars:
       PUBLICATION: '{{.RELEASES}}/publication-{{.VERSION}}'
+    sources:
+      - '{{.RELEASES}}/isoplane-*-{{.VERSION}}/release.json'
+      - '{{.PACKAGES}}/*.{{.VERSION}}.nupkg'
+      - '{{.MANAGED}}/publish/Isoplane.Cli/release/**/*'
+      - '{{.MANAGED}}/bin/Isoplane.Native/release/*'
+      - '{{.ROOT_DIR}}/.build/*/native/release/*isoplane_native*'
+      - '{{.ROOT_DIR}}/taskfiles/NativePackages/**/*'
+      - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
+      - '{{.ROOT_DIR}}/taskfiles/release.yml'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/licenses/**/*'
+      - '{{.ROOT_DIR}}/tools/{Isoplane.Cli,Isoplane.Native}/README.md'
+      - '{{.ROOT_DIR}}/scripts/assemble-publication.py'
+      - '{{.ROOT_DIR}}/scripts/release-manifest.py'
+    generates:
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Sdk.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Templates.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Testing.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Native.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/nuget/{{.VERSION}}/Isoplane.Cli.{{.VERSION}}.nupkg'
+      - '{{.PUBLICATION}}/publication/{{.VERSION}}/manifest.json'
+      - '{{.PUBLICATION}}/upload-plan.json'
+      - '{{.PUBLICATION}}/packages.json'
     cmds:
       - 'mkdir -p "{{.PUBLICATION}}/nuget/{{.VERSION}}"'
       - for: [Isoplane.Native, Isoplane.Cli]
-        cmd: '"{{.DOTNET}}" pack taskfiles/NativePackages/NativePackages.csproj -c Release --artifacts-path "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -o "{{.PUBLICATION}}/nuget/{{.VERSION}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.ROOT_DIR}}/.build"'
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -p:PackageOutputPath="{{.PUBLICATION}}/nuget/{{.VERSION}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.ROOT_DIR}}/.build"'
       - 'cp "{{.PACKAGES}}/Isoplane.Sdk.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Testing.{{.VERSION}}.nupkg" "{{.PUBLICATION}}/nuget/{{.VERSION}}/"'
       - '{{.PYTHON}} scripts/assemble-publication.py --releases "{{.RELEASES}}" --version {{.VERSION}} --output "{{.PUBLICATION}}"'
