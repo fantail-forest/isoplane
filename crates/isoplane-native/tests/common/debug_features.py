@@ -47,6 +47,8 @@ def exercise(source, send, response, until):
     assert frame['line'] == lines['answer += 1;'], 'a conditional breakpoint must stop at its requested source line'
     assert evaluate('index', frame)['result'] == '1', 'the condition and hit count must skip the first loop iteration'
     assert evaluate('answer + numbers[1] + sample.Value', frame)['result'] == '52', 'watches must evaluate arithmetic, array access and object fields'
+    hovered = response(send('evaluate', {'expression': 'sample.Value', 'frameId': frame['id'], 'context': 'hover'}))['body']
+    assert hovered['result'] == '7' and hovered['type'] == 'int', 'hover must return the field value and managed type from the selected frame'
     scope = locals_scope(frame)
     values = response(send('variables', {'variablesReference': scope}))['body']['variables']
     numbers = next(value for value in values if value['name'] == 'numbers')
