@@ -261,11 +261,7 @@ mod tests {
     #[test]
     fn a_well_formed_module_yields_its_capability_manifest() {
         let m = module(
-            &[
-                ("isoplane", "http_body_read"),
-                ("isoplane", "http_fetch"),
-                ("isoplane", "resp_new"),
-            ],
+            &[("isoplane", "http_body_read"), ("isoplane", "http_fetch")],
             &[
                 "isoplane_alloc",
                 "isoplane_handle",
@@ -278,7 +274,7 @@ mod tests {
         let names: Vec<_> = r.declared.iter().map(|i| i.name).collect();
         assert_eq!(
             names,
-            vec!["http_fetch", "http_body_read", "resp_new"],
+            vec!["http_fetch", "http_body_read"],
             "declared imports come out in table order"
         );
         assert!(r.has_memory, "the memory export is seen");

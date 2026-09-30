@@ -217,7 +217,7 @@ spec = importlib.util.spec_from_file_location("cutover", sys.argv[1])
 cutover = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cutover)
 async def run():
-    supervisor = cutover.Cutover(SimpleNamespace(cli=sys.argv[2], output=sys.argv[4], startup_timeout=600))
+    supervisor = cutover.Cutover(SimpleNamespace(cli=sys.argv[2], output=sys.argv[4], startup_timeout=600, no_build=False, configuration="Debug"))
     owner, url = await supervisor.worker("managed", sys.argv[3])
     try:
         with urllib.request.urlopen(url, timeout=30) as response:

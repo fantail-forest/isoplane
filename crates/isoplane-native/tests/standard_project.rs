@@ -104,8 +104,8 @@ async fn dotnet_run_executes_an_application_package_with_an_existing_library() {
             "an ordinary SDK application must build a package"
         );
         assert_eq!(
-            properties["Properties"]["RuntimeIdentifier"], "",
-            "an application package must not require a native runtime toolchain"
+            properties["Properties"]["RuntimeIdentifier"], "wasi-wasm",
+            "an application package must resolve dependencies for the guest runtime"
         );
         let mut running = start_dotnet(&app, &cli, configuration, false, false);
         let response = reqwest::get(&running.url)

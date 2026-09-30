@@ -5,9 +5,23 @@ fn the_installed_dotnet_tool_reports_its_package_version() {
     let directory = tempfile::tempdir().expect("create an isolated local tool feed");
     std::fs::write(
         directory.path().join("nuget.config"),
-        r#"<configuration><packageSources><clear/><add key="local" value="./packages"/></packageSources></configuration>"#,
+        r#"<configuration><packageSources><clear/></packageSources></configuration>"#,
     )
     .expect("configure the isolated local package feed");
+    let source = std::env::var_os("ISOPLANE_TEST_NATIVE_PACKAGE_FEED")
+        .expect("run task test:native to prepare the native package feed");
+    let configured = Command::new("dotnet")
+        .args(["nuget", "add", "source"])
+        .arg(source)
+        .args(["--name", "local", "--configfile"])
+        .arg(directory.path().join("nuget.config"))
+        .output()
+        .expect("configure the prepared package feed");
+    assert!(
+        configured.status.success(),
+        "configuring the prepared package feed failed: {}",
+        String::from_utf8_lossy(&configured.stderr)
+    );
     let cli = isoplane_fixtures::managed_cli(directory.path(), directory.path());
     let installed = Command::new("dotnet")
         .args(["tool", "list", "--tool-path"])
