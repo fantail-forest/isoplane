@@ -64,22 +64,17 @@ fn the_binary_refuses_an_operator_trust_bundle_whose_hash_does_not_match() {
     )
     .unwrap();
     let path = dir.path().join("bad-trust.toml");
+    let config = toml::toml! {
+        node = "n1"
+        [[cells]]
+        name = "cell-1"
+        [trust]
+        bundle = (bundle.to_str().expect("temporary path is UTF-8"))
+        sha256 = ("0".repeat(64))
+    };
     std::fs::write(
         &path,
-        format!(
-            r#"
-node = "n1"
-
-[[cells]]
-name = "cell-1"
-
-[trust]
-bundle = "{}"
-sha256 = "{}"
-"#,
-            bundle.display(),
-            "0".repeat(64)
-        ),
+        toml::to_string(&config).expect("configuration serializes"),
     )
     .unwrap();
 

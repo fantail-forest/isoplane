@@ -164,18 +164,10 @@ mod tests {
         FORCE_CLOCK_FAILURE.with(|f| f.set(false));
 
         let iv = CpuInterval::start();
-        let mut x = 0u64;
-        for i in 0..300_000u64 {
-            x = x.wrapping_add(i ^ x);
-        }
-        std::hint::black_box(x);
         let measured = iv.try_elapsed_ns();
-        assert!(
-            measured.is_some(),
-            "a working clock must produce a measurement"
-        );
+        let measured_ns = measured.expect("a working clock must produce a measurement");
         m.record_interval(measured);
-        assert!(m.cpu_ns() > 0, "a working clock measures the interval");
+        assert_eq!(m.cpu_ns(), measured_ns, "the measured interval is recorded");
         assert_eq!(
             m.incomplete_intervals(),
             1,
