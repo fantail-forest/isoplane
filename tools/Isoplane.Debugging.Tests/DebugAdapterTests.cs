@@ -290,6 +290,7 @@ public sealed class DebugAdapterTests
     [Theory]
     [InlineData("project", "\"relative/path\"")]
     [InlineData("configuration", "false")]
+    [InlineData("watch", "1")]
     [InlineData("port", "-1")]
     [InlineData("port", "65536")]
     public async Task invalid_launch_options_do_not_start_an_application(string property, string json)

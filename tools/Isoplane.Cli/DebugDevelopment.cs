@@ -37,6 +37,8 @@ internal static class DebugDevelopment
     /// </summary>
     private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string endpoint, DebugRelay relay, CancellationToken cancellation)
     {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        using var changes = new SourceChanges(options.Directory);
         var package = Path.Combine(session, "application.tar");
         SharedRuntime runtime;
         try { runtime = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), cancellation); }
@@ -53,8 +55,34 @@ internal static class DebugDevelopment
         await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
             new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
             message => LocalEvents.Write(message, options.Json));
-        await RunHostAsync(host, relay, cancellation);
-        return 0;
+        var running = RunHostAsync(host, relay, lifetime.Token);
+        try
+        {
+            if (options.Watch)
+                await SourceReload.RunAsync(changes, running, async token =>
+                {
+                    try
+                    {
+                        var replacement = await ManagedBundle.CreateAsync(new(options.Directory, options.Configuration, package, options.NoBuild), token);
+                        host.Reload(await File.ReadAllBytesAsync(replacement.DebugModule, token),
+                            new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package));
+                        LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_pending" }, options.Json);
+                    }
+                    catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                    {
+                        LocalEvents.Write(new System.Text.Json.Nodes.JsonObject { ["event"] = "reload_failed", ["detail"] = error.Message }, options.Json);
+                    }
+                }, lifetime.Token);
+            else
+                await running;
+            return 0;
+        }
+        finally
+        {
+            lifetime.Cancel();
+            host.Stop();
+            await running;
+        }
     }
 
     internal static async Task RunHostAsync(LocalSession host, DebugRelay relay, CancellationToken cancellation)

@@ -57,33 +57,14 @@ internal static class Development
                 await exited;
                 return 0;
             }
-            while (true)
+            await SourceReload.RunAsync(changes, exited, async token =>
             {
-                var changed = changes.WaitAsync(lifetime.Token);
-                if (await Task.WhenAny(exited, changed) == exited)
-                {
-                    await exited;
-                    return 0;
-                }
-                await changed;
-                using var buildLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                var rebuild = build.BuildAsync(buildLifetime.Token);
-                if (await Task.WhenAny(rebuild, exited) == exited)
-                {
-                    buildLifetime.Cancel();
-                    try { await rebuild; }
-                    catch (OperationCanceledException) when (buildLifetime.IsCancellationRequested)
-                    {
-                        Console.Error.WriteLine("isoplane: cancelled publication because the runtime exited.");
-                    }
-                    await exited;
-                    return 0;
-                }
-                if (await rebuild != 0)
+                if (await build.BuildAsync(token) != 0)
                     Console.Error.WriteLine("isoplane: rebuild failed; keeping the last working application. Edit the source to retry.");
                 else
-                    host.Reload(await build.ModuleAsync(lifetime.Token), build.SessionOptions(configuration));
-            }
+                    host.Reload(await build.ModuleAsync(token), build.SessionOptions(configuration));
+            }, lifetime.Token);
+            return 0;
         }
         finally
         {

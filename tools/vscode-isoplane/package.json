@@ -66,6 +66,11 @@
                 "default": "Debug",
                 "description": "MSBuild configuration to compile for debugging."
               },
+              "watch": {
+                "type": "boolean",
+                "default": true,
+                "description": "Rebuild source edits for the next request while keeping the debugger attached."
+              },
               "port": {
                 "type": "number",
                 "minimum": 0,

@@ -12,7 +12,8 @@ internal sealed class LocalDebugLauncher : DebugLauncher
     public async Task RunAsync(DebugLaunchOptions options, Action<IPEndPoint> ready, Action<string> output, CancellationToken cancellation)
     {
         string[] arguments = [typeof(LocalDebugLauncher).Assembly.Location, "dev", "--project", options.Project,
-            "--configuration", options.Configuration, "--debug", "--no-watch", "--json", "--shutdown-on-stdin-close"];
+            "--configuration", options.Configuration, "--debug", "--json", "--shutdown-on-stdin-close"];
+        if (!options.Watch) arguments = [.. arguments, "--no-watch"];
         if (options.Port is { } port) arguments = [.. arguments, "--port", port.ToString(CultureInfo.InvariantCulture)];
         using var process = Processes.Start("dotnet", arguments, options.Project, captureOutput: true, captureErrors: true);
         var stdout = ForwardAsync(process, process.StandardOutput, line => Report(line, ready, output));

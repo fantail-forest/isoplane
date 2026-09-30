@@ -6,7 +6,8 @@ namespace Isoplane.Debugging;
 /// <param name="Project">Absolute project directory.</param>
 /// <param name="Configuration">MSBuild configuration to compile.</param>
 /// <param name="Port">HTTP listener port, or null to use the project's default.</param>
-public sealed record DebugLaunchOptions(string Project, string Configuration, ushort? Port);
+/// <param name="Watch">Rebuild source edits for subsequent requests.</param>
+public sealed record DebugLaunchOptions(string Project, string Configuration, ushort? Port, bool Watch = true);
 
 /// <summary>Owns local application execution for an editor's debug session.</summary>
 public interface DebugLauncher

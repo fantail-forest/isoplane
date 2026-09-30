@@ -210,12 +210,19 @@ impl Session {
                 tokio::select! {
                     biased;
                     _ = self.cancellation.cancelled() => break,
-                    _ = self.changed.notified(), if !debug => {
-                        let Some(update) = self.pending.lock().take() else { continue };
+                    _ = self.changed.notified(), if !debug || !admitted.load(Ordering::Acquire) => {
+                        if debug && admitted.swap(true, Ordering::AcqRel) {
+                            self.changed.notify_one();
+                            continue;
+                        }
+                        let Some(update) = self.pending.lock().take() else {
+                            if debug { admitted.store(false, Ordering::Release); }
+                            continue;
+                        };
                         let replacement = async {
                         anyhow::ensure!(update.options.state_directory == options.state_directory
                             && update.options.manifest.name == options.manifest.name
-                            && update.options.debug_endpoint.is_none(), "reload cannot change local session identity or debugger mode");
+                            && update.options.debug_endpoint == options.debug_endpoint, "reload cannot change local session identity or debugger mode");
                             let inputs = update.options.inputs()?;
                             prepare(update.wasm, &update.options, inputs, &self.baselines).await
                         }.await;
@@ -228,6 +235,7 @@ impl Session {
                             }
                             Err(error) => events.emit(serde_json::json!({"event":"reload_failed", "detail":format!("{error:#}")})),
                         }
+                        if debug { admitted.store(false, Ordering::Release); }
                     }
                     connection = listener.accept() => {
                         let (stream, peer) = connection?;

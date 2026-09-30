@@ -69,7 +69,7 @@ processes.
 To start a session in a terminal instead:
 
 ```bash
-isoplane dev --debug --no-watch
+isoplane dev --debug
 ```
 
 Attach through `isoplane debug-adapter` using the printed loopback address and
@@ -80,6 +80,13 @@ subsequent requests; source breakpoints are rebound for each fresh guest.
 
 The session uses the SDK's shared debug runtime. The debugger supports stepping,
 watches, editing live locals, exception stops, and data breakpoints on managed
-fields and array elements. Debug sessions require source watching to be disabled.
+fields and array elements. Source edits rebuild the package while keeping the
+debugger attached. A paused request keeps its current code and locals; continue
+it to completion before the replacement takes effect. The next request runs the
+rebuilt code with source breakpoints rebound. A failed build leaves the last
+working application available. Use `--no-watch` (or `"watch": false` in an IDE
+launch configuration) to disable automatic rebuilds. This rebuilds the application;
+it does not apply in-place Hot Reload to the active request.
+
 Use ordinary .NET unit tests for isolated application logic and
 [sandbox integration tests](test-an-application.md) to exercise platform behavior.

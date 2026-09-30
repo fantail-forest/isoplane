@@ -24,6 +24,7 @@ from debug_sources import same_source
 
 launcher, endpoint, url, source, owner, mode, module = sys.argv[1:]
 owner = int(owner)
+launched = mode in ("launch", "reload")
 if mode == "protocol":
     root = Path(__file__).resolve().parents[4]
     driver = root / ".build/clr-anycpu/managed/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll"
@@ -111,7 +112,7 @@ try:
         before = next(index + 1 for index, line in enumerate(lines) if "await delay;" in line)
         after = next(index + 1 for index, line in enumerate(lines) if "bool resumed = true;" in line)
     response(send("initialize", {"adapterID": "isoplane", "pathFormat": "path", "linesStartAt1": True, "columnsStartAt1": True}))
-    if mode == "launch":
+    if launched:
         attached = send("launch", {"project": module, "configuration": "Debug", "port": 0})
     else:
         address, port = endpoint.rsplit(":", 1)
@@ -122,7 +123,7 @@ try:
     else:
         response(send("setBreakpoints", {"source": {"path": source}, "breakpoints": [{"line": before}], "lines": [before]}))
     response(send("configurationDone", {}))
-    if mode == "launch":
+    if launched:
         response(attached)
         ready = until(lambda item: item.get("event") == "output" and re.search(r"ready .+ at (http://\S+)", item["body"]["output"]))
         url = re.search(r"ready .+ at (http://\S+)", ready["body"]["output"]).group(1)
@@ -133,10 +134,10 @@ try:
         probe.shutdown(socket.SHUT_WR)
         assert probe.recv(1) == b"", "an empty connection must close without consuming the debug request"
     previous_frame = None
-    for attempt in range(2 if mode in ("requests", "launch") else 1):
+    for attempt in range(2 if mode in ("requests", "launch", "reload") else 1):
         http_result = concurrent.futures.Future()
         threading.Thread(target=request_http, args=(http_result,), daemon=True).start()
-        if attempt == 0 and mode != "launch":
+        if attempt == 0 and not launched:
             response(attached)
         if scenario is not None:
             scenario.exercise(source, send, response, until)
@@ -156,7 +157,17 @@ try:
                 values = []
                 for scope in response(send("scopes", {"frameId": frame["id"]}))["body"]["scopes"]:
                     values.extend(response(send("variables", {"variablesReference": scope["variablesReference"]}))["body"]["variables"])
-                assert any(value["name"] == "answer" and value["value"] == "42" for value in values), "customer local answer must remain inspectable"
+                assert any(value["name"] == "answer" and value["value"] == ("84" if mode == "reload" and attempt == 1 else "42") for value in values), "customer local answer must remain inspectable"
+                if mode == "reload" and attempt == 0 and expected == before:
+                    original = Path(source).read_text()
+                    Path(source).write_text(original + "\n#error debugger reload regression\n")
+                    until(lambda item: item.get("event") == "output" and "reload failed; keeping" in item["body"]["output"])
+                    saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
+                    assert saved["body"]["result"] == "42", "a failed rebuild must leave the paused invocation inspectable"
+                    Path(source).write_text(original.replace("int answer = 42;", "int answer = 84;"))
+                    until(lambda item: item.get("event") == "output" and "rebuilt application;" in item["body"]["output"])
+                    saved = response(send("evaluate", {"expression": "answer", "frameId": frame["id"], "context": "watch"}))
+                    assert saved["body"]["result"] == "42", "a successful rebuild must preserve the active invocation until it completes"
                 if mode == "stop":
                     owned = [owner] + children(owner, process_tree())
                     print('request-owner-stop', flush=True)
@@ -184,15 +195,17 @@ try:
                 if expected == after:
                     assert any(value["name"] == "delay" and "RanToCompletion" in value["value"] for value in values), "DAP next must cross the incomplete await and preserve completed task state"
                 response(send("next" if expected == before else "continue", {"threadId": thread}))
-        if mode in ("requests", "launch"):
+        if mode in ("requests", "launch", "reload"):
             previous_frame = frame["id"]
         if mode != "stop":
-            assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"42"), "continued customer code must complete the actual HTTP response"
+            assert http_result.result(timeout=180) == (200, scenario.EXPECTED_RESPONSE if scenario is not None else b"84" if mode == "reload" and attempt == 1 else b"42"), "continued customer code must complete the actual HTTP response"
+        if mode == "reload" and attempt == 0:
+            until(lambda item: item.get("event") == "output" and "  reloaded " in item["body"]["output"])
     if mode == "stop":
         until(lambda item: item.get("event") == "terminated")
     response(send("disconnect", {"terminateDebuggee": mode != "stop"}))
     assert adapter.wait(timeout=10) == 0, "the adapter must exit cleanly after editor disconnect or owner cancellation"
-    if mode == "launch":
+    if launched:
         assert not any_running(owned), "disconnect must reap the launched application and its children"
         with socket.socket() as check:
             assert check.connect_ex((http_endpoint.hostname, http_endpoint.port)) != 0, "disconnect must close the launched HTTP listener"

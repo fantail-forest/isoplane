@@ -19,8 +19,13 @@ prints its local HTTP URL. Send a request to that URL to reach the breakpoint.
 `port` selects the HTTP listener port; zero chooses an available port.
 
 Keep the debugger attached for subsequent requests. Breakpoint configuration
-is retained as each fresh guest starts. Stopping the debugger ends the local
-development session.
+is retained as each fresh guest starts. Source edits rebuild automatically; a
+paused request keeps its existing code and locals until it finishes. The next
+request uses the rebuilt application. A failed rebuild preserves the last working
+application. Set `"watch": false` to disable rebuilds. This is request-boundary
+replacement, not in-place Hot Reload.
+
+Stopping the debugger ends the local development session.
 
 To attach to a session started in a terminal, run
 `isoplane dev --debug --no-watch` and use its printed debugger port:

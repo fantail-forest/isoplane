@@ -297,7 +297,8 @@ fn installed_debug_acceptance(mode: &str) {
         source
     };
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut dev = (mode != "launch").then(|| start_debug_session(&app, &cli, mode));
+    let mut dev =
+        (!matches!(mode, "launch" | "reload")).then(|| start_debug_session(&app, &cli, mode));
     let driver =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
     let mut command = std::process::Command::new(python);
@@ -346,6 +347,11 @@ fn installed_debug_acceptance(mode: &str) {
 }
 
 #[test]
+fn source_reloads_preserve_the_paused_request_and_rebind_the_next_request() {
+    installed_debug_acceptance("reload");
+}
+
+#[test]
 fn an_editor_launches_and_debugs_multiple_requests_without_a_manual_port() {
     installed_debug_acceptance("launch");
 }
@@ -373,32 +379,6 @@ fn optimized_async_callers_keep_editable_state_and_watchpoints() {
 #[test]
 fn stopping_the_installed_cli_terminates_a_paused_debug_session() {
     installed_debug_acceptance("stop");
-}
-
-#[test]
-fn debug_mode_requires_nonwatching_execution() {
-    let directory = tempfile::tempdir().unwrap();
-    let app = isoplane_fixtures::aspnet_project(directory.path());
-    let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let result = std::process::Command::new(&cli)
-        .args(["dev", "--project"])
-        .arg(&app)
-        .arg("--debug")
-        .output()
-        .unwrap();
-    assert!(
-        !result.status.success(),
-        "unsupported debug modes must fail before publication"
-    );
-    assert!(
-        String::from_utf8_lossy(&result.stderr).contains("--debug requires --no-watch"),
-        "debug mode rejection must explain the supported workflow: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert!(
-        !app.join(".isoplane/debug").exists(),
-        "invalid debug options must not create a session"
-    );
 }
 
 #[test]

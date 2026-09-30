@@ -142,16 +142,18 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         string? project = properties.TryGetValue("project", out var projectValue) && projectValue.Type == JTokenType.String ? projectValue.Value<string>() : null;
         string? configuration = properties.TryGetValue("configuration", out var configurationValue)
             ? configurationValue.Type == JTokenType.String ? configurationValue.Value<string>() : null : "Debug";
+        bool? watch = properties.TryGetValue("watch", out var watchValue)
+            ? watchValue.Type == JTokenType.Boolean ? watchValue.Value<bool>() : null : true;
         long? port = properties.TryGetValue("port", out var portValue) && portValue.Type == JTokenType.Integer ? portValue.Value<long>() : null;
-        if (string.IsNullOrWhiteSpace(project) || !Path.IsPathFullyQualified(project) || string.IsNullOrWhiteSpace(configuration)
+        if (string.IsNullOrWhiteSpace(project) || !Path.IsPathFullyQualified(project) || string.IsNullOrWhiteSpace(configuration) || watch is null
             || properties.ContainsKey("port") && (port is null or < 0 or > 65535))
         {
-            request.SetError(new ProtocolException("Launch requires an absolute project directory, a build configuration, and an optional HTTP port from 0 to 65535."));
+            request.SetError(new ProtocolException("Launch requires an absolute project directory, a build configuration, an optional HTTP port from 0 to 65535, and a boolean watch option."));
             return;
         }
         owner = new GuestSession(SessionEnded);
         attach = new ConnectionRequest(() => request.SetResponse(new LaunchResponse()), request.SetError);
-        launching = LaunchAsync(new DebugLaunchOptions(project, configuration, port is { } number ? (ushort)number : null));
+        launching = LaunchAsync(new DebugLaunchOptions(project, configuration, port is { } number ? (ushort)number : null, watch.Value));
     }
 
     private async Task LaunchAsync(DebugLaunchOptions options)
