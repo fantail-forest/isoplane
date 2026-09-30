@@ -11,6 +11,7 @@
         var outerSample = new DebugSample { Value = 1 };
         int[] outerNumbers = [2, 3];
         int result = await Inner(outer, outerSample, outerNumbers).ConfigureAwait(false);
+        outer += 1;
         return result + outer + outerSample.Value + outerNumbers[1];
     }
 

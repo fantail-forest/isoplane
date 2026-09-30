@@ -110,10 +110,10 @@ storage. Parameters and by-reference locals cannot be watched directly. Reads
 and writes that leave the value unchanged do not stop execution.
 
 Select an async caller in the call stack to inspect its saved locals, evaluate
-watches, edit values, or set data breakpoints on its captured fields and array
-elements. `Task` and `ValueTask` callers remain visible across suspension in
-normal and optimized builds, including pooled async method builders, custom
-awaiters, and `Task.WhenAll`/`Task.WhenAny` chains.
+watches, edit values, or set data breakpoints on saved locals, captured object
+fields and array elements. `Task` and `ValueTask` callers remain visible across
+suspension in normal and optimized builds, including pooled async method builders,
+custom awaiters, and `Task.WhenAll`/`Task.WhenAny` chains.
 
 The **Uncaught exceptions** filter also stops on failures the SDK converts into
 guest traps. Exception details retain the original throw stack. At this boundary,

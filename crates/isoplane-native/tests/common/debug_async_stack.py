@@ -2,7 +2,7 @@
 from pathlib import Path
 from debug_sources import same_source
 
-EXPECTED_RESPONSE = b"103"
+EXPECTED_RESPONSE = b"104"
 
 
 def source_line(source, text):
@@ -28,6 +28,7 @@ def inspect(source, send, response, thread, until):
     page = response(send("stackTrace", {"threadId": thread, "startFrame": 1, "levels": 1}))["body"]
     assert page["totalFrames"] == len(frames) and [frame["name"] for frame in page["stackFrames"]] == [frames[1]["name"]], "stack pagination must use visible frame positions"
     watchpoints = set()
+    saved_local_watchpoint = None
     for frame, (method, line, local, value) in zip(application, expected):
         assert method in frame["name"], f"the async frame must name its original C# method {method}"
         assert frame["line"] == source_line(source, line), f"{method} must point at its current statement or suspended await"
@@ -53,14 +54,16 @@ def inspect(source, send, response, thread, until):
             edited = response(send("variables", {"variablesReference": scope}))["body"]["variables"]
             assert any(item["name"] == "outer" and item["value"] == "30" for item in edited), "expression assignment must update the suspended caller's saved state"
             locations = [response(send("dataBreakpointInfo", arguments))["body"] for arguments in [
+                {"frameId": frame["id"], "name": "outer"},
                 {"frameId": frame["id"], "name": "outerSample.Value"},
                 {"variablesReference": numbers["variablesReference"], "name": element["name"]}]]
             assert all(location.get("dataId") for location in locations), "managed watchpoints must resolve from a suspended caller"
             configured = response(send("setDataBreakpoints", {"breakpoints": [{"dataId": location["dataId"]} for location in locations]}))["body"]["breakpoints"]
-            assert all(item["verified"] for item in configured), "both suspended-frame watchpoints must bind"
+            assert all(item["verified"] for item in configured), "all suspended-frame watchpoints must bind"
             watchpoints = {item["id"] for item in configured}
-    assert len(watchpoints) == 2, "the suspended caller must provide both watchpoints"
-    return watchpoints
+            saved_local_watchpoint = configured[0]["id"]
+    assert len(watchpoints) == 3, "the suspended caller must provide local, field and array watchpoints"
+    return watchpoints, saved_local_watchpoint
 
 
 def exercise(source, send, response, until):
@@ -68,7 +71,7 @@ def exercise(source, send, response, until):
     if stopped["reason"] == "exception":
         details = response(send("exceptionInfo", {"threadId": stopped["threadId"]}))
         raise AssertionError(f"async debugging must reach the resumed application without an unhandled exception: {details}")
-    pending = inspect(source, send, response, stopped["threadId"], until)
+    pending, saved_local_watchpoint = inspect(source, send, response, stopped["threadId"], until)
     response(send("continue", {"threadId": stopped["threadId"]}))
     helper = until(lambda message: message.get("event") == "stopped")["body"]
     assert helper["reason"] == "breakpoint", "execution must reach the synchronous helper before writing watched storage"
@@ -82,6 +85,11 @@ def exercise(source, send, response, until):
         assert stopped["reason"] == "data breakpoint", "saved-frame watchpoints must observe writes after another await and GC"
         hits = set(stopped.get("hitBreakpointIds", []))
         assert hits and hits <= pending, "the stop must identify the expected managed storage location"
+        if saved_local_watchpoint in hits:
+            frames = response(send("stackTrace", {"threadId": stopped["threadId"]}))["body"]["stackFrames"]
+            outer = next(frame for frame in frames if "Outer" in frame["name"])
+            value = response(send("evaluate", {"frameId": outer["id"], "expression": "outer", "context": "watch"}))["body"]
+            assert value["result"] == "31", "the saved local watch must observe the resumed caller's increment, not unrelated state-machine fields"
         pending -= hits
         if not pending:
             response(send("setDataBreakpoints", {"breakpoints": []}))

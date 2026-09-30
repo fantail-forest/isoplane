@@ -37,9 +37,15 @@ internal static class ProtocolAcceptance
         var literal = sample.Type.GetField("Constant");
         var threadStatic = sample.Type.GetField("ThreadValue");
         var target = new ManagedFieldBreakpoint(1, sample, field);
+        var nested = sample.Type.GetField("Nested");
+        var leaf = nested.FieldType.GetField("Leaf");
+        var leafValue = leaf.FieldType.GetField("Value");
+        var leafName = leaf.FieldType.GetField("Name");
+        var nestedTarget = new ManagedFieldPathBreakpoint(2, new(2, sample, nested), [leaf, leafValue]);
+        var referenceTarget = new ManagedFieldPathBreakpoint(3, new(3, sample, nested), [leaf, leafName]);
         machine.Suspend();
         machine.Resume();
-        machine.SetManagedDataBreakpoints([target]);
+        machine.SetManagedDataBreakpoints([target, nestedTarget, referenceTarget]);
         Reject(() => machine.SetManagedDataBreakpoints([target with { Id = 0 }]));
         Reject(() => machine.SetManagedDataBreakpoints([target, target]));
         Reject(() => machine.SetManagedDataBreakpoints([target with { Receiver = null }]));
@@ -49,6 +55,10 @@ internal static class ProtocolAcceptance
         Reject(() => machine.SetManagedDataBreakpoints([new ManagedFieldBreakpoint(2, null, threadStatic)]));
         Reject(() => machine.SetManagedDataBreakpoints([new ManagedArrayBreakpoint(2, numbers, -1)]));
         Reject(() => machine.SetManagedDataBreakpoints([new ManagedArrayBreakpoint(2, numbers, numbers.Length)]));
+        Reject(() => machine.SetManagedDataBreakpoints([nestedTarget with { Fields = [] }]));
+        Reject(() => machine.SetManagedDataBreakpoints([nestedTarget with { Fields = [field] }]));
+        Reject(() => machine.SetManagedDataBreakpoints([nestedTarget with { Fields = [staticField] }]));
+        Reject(() => machine.SetManagedDataBreakpoints([nestedTarget with { Fields = [leaf, leafName, leafValue] }]));
         var wire = new ProtocolPackets(machine);
         Reject(() => wire.Send());
         Reject(() => wire.Send(("WriteByte", (byte)255)));
@@ -61,6 +71,11 @@ internal static class ProtocolAcceptance
         Reject(() => wire.Location(wire.Field, Id(sample), 0));
         Reject(() => wire.Location(wire.Field, Id(sample), int.MaxValue));
         Reject(() => wire.Location(wire.Field, int.MaxValue, Id(field)));
+        Reject(() => wire.Location(wire.FieldPath, Id(sample), Id(nested)));
+        Reject(() => wire.FieldPathLocation(Id(sample), Id(nested), -1));
+        Reject(() => wire.FieldPathLocation(Id(sample), Id(nested), int.MaxValue));
+        Reject(() => wire.FieldPathLocation(Id(sample), Id(nested), 1, 0));
+        Reject(() => wire.FieldPathLocation(Id(sample), Id(nested), 1, int.MaxValue));
         Reject(() => wire.Location(wire.Array, 0, 0));
         Reject(() => wire.Location(wire.Array, Id(sample), 0));
         Reject(() => wire.Location(wire.Local, Id(stopped.Thread), Id(frame)));
@@ -77,6 +92,15 @@ internal static class ProtocolAcceptance
         Assert.True(events.Hits.SequenceEqual([1]), "Rejected replacements must leave the original field watchpoint installed.");
         Assert.True(((PrimitiveValue)sample.GetValue(field)).Value is 9, "The retained watchpoint must stop on the actual managed write.");
         Assert.True(machine.TakeManagedDataBreakpointHits().Hits.Length == 0, "Reading watchpoint hits must consume the pending event identifiers.");
+        foreach (int id in new[] { 2, 3 })
+        {
+            machine.Resume();
+            changed = UserBreak(machine);
+            Assert.Equal(new[] { id }, machine.TakeManagedDataBreakpointHits().Hits);
+        }
+        var nestedValue = (StructMirror)((StructMirror)sample.GetValue(nested))[leaf.Name];
+        Assert.Equal(11, ((PrimitiveValue)nestedValue[leafValue.Name]).Value);
+        Assert.Equal("after", ((StringMirror)nestedValue[leafName.Name]).Value);
         machine.SetManagedDataBreakpoints([]);
         machine.Resume();
         Reject(() => wire.Send(("WriteByte", wire.Set), ("WriteInt", 0)));
@@ -124,6 +148,7 @@ internal static class ProtocolAcceptance
         internal byte Field { get; } = Constant<byte>("ManagedDataBreakpointField");
         internal byte Array { get; } = Constant<byte>("ManagedDataBreakpointArray");
         internal byte Local { get; } = Constant<byte>("ManagedDataBreakpointLocal");
+        internal byte FieldPath { get; } = Constant<byte>("ManagedDataBreakpointFieldPath");
 
         internal ProtocolPackets(VirtualMachine machine)
         {
@@ -139,8 +164,14 @@ internal static class ProtocolAcceptance
             ("WriteByte", kind), ("WriteId", owner), ("WriteId", member));
 
         internal void LocalLocation(long thread, long frame, int index) => Send(
-            ("WriteByte", Set), ("WriteInt", 1), ("WriteInt", 2),
+            ("WriteByte", Set), ("WriteInt", 1), ("WriteInt", 4),
             ("WriteByte", Local), ("WriteId", thread), ("WriteId", frame), ("WriteInt", index));
+
+        internal void FieldPathLocation(long owner, long field, int count, params long[] path) => Send(
+            new (string Method, object Value)[] {
+                ("WriteByte", Set), ("WriteInt", 1), ("WriteInt", 2),
+                ("WriteByte", FieldPath), ("WriteId", owner), ("WriteId", field), ("WriteInt", count)
+            }.Concat(path.Select(id => ("WriteId", (object)id))).ToArray());
 
         internal void Frames(long thread) => Exchange(
             Enum.Parse(typeof(Connection).GetNestedType("CommandSet", BindingFlags.NonPublic)!, "THREAD"),

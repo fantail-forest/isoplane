@@ -13,9 +13,21 @@ internal static class Application
     private sealed class ProtocolSample
     {
         public int Value = 7;
+        public ProtocolNested Nested = new() { Leaf = new() { Value = 3, Name = "before" } };
         public static int StaticValue = 0;
         public const int Constant = 12;
         [ThreadStatic] public static int ThreadValue;
+    }
+
+    private struct ProtocolNested
+    {
+        public ProtocolLeaf Leaf;
+    }
+
+    private struct ProtocolLeaf
+    {
+        public int Value;
+        public string Name;
     }
 
     private static string Handle()
@@ -26,6 +38,9 @@ internal static class Application
         ProtocolSample.ThreadValue = 1;
         System.Diagnostics.Debugger.Break();
         sample.Value = 9;
+        GC.Collect();
+        sample.Nested.Leaf.Value = 11;
+        sample.Nested.Leaf.Name = "after";
         while (!ReleaseProtocolProbe) { }
         GC.KeepAlive(numbers);
         GC.KeepAlive(other);

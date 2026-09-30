@@ -14,6 +14,12 @@ public abstract record ManagedDataBreakpoint(int Id);
 /// <param name="Field">The field to observe.</param>
 public sealed record ManagedFieldBreakpoint(int Id, ObjectMirror? Receiver, FieldInfoMirror Field) : ManagedDataBreakpoint(Id);
 
+/// <summary>Watches a field nested inside value-type fields of an object or static field.</summary>
+/// <param name="Id">The editor's identifier for the breakpoint.</param>
+/// <param name="Root">The owning object or static field storage.</param>
+/// <param name="Fields">The instance fields traversed within the root value.</param>
+public sealed record ManagedFieldPathBreakpoint(int Id, ManagedFieldBreakpoint Root, IReadOnlyList<FieldInfoMirror> Fields) : ManagedDataBreakpoint(Id);
+
 /// <summary>Watches one flattened element of a managed array.</summary>
 /// <param name="Id">The editor's identifier for the breakpoint.</param>
 /// <param name="Array">The owning array.</param>
@@ -48,6 +54,7 @@ public abstract partial class Connection
     internal const byte ManagedDataBreakpointField = 1;
     internal const byte ManagedDataBreakpointArray = 2;
     internal const byte ManagedDataBreakpointLocal = 3;
+    internal const byte ManagedDataBreakpointFieldPath = 4;
 
     internal void SetManagedDataBreakpoints(IReadOnlyList<ManagedDataBreakpoint> breakpoints)
     {
@@ -57,6 +64,10 @@ public abstract partial class Connection
             packet.WriteInt(breakpoint.Id);
             switch (breakpoint)
             {
+                case ManagedFieldPathBreakpoint path:
+                    packet.WriteByte(ManagedDataBreakpointFieldPath).WriteId(path.Root.Receiver?.Id ?? 0).WriteId(path.Root.Field.Id).WriteInt(path.Fields.Count);
+                    foreach (var field in path.Fields) packet.WriteId(field.Id);
+                    break;
                 case ManagedFieldBreakpoint field:
                     packet.WriteByte(ManagedDataBreakpointField).WriteId(field.Receiver?.Id ?? 0).WriteId(field.Field.Id);
                     break;
