@@ -1,7 +1,8 @@
 """Prove managed data breakpoints against interpreter writes and garbage collection."""
 from pathlib import Path
+import debug_local_watchpoints
 
-EXPECTED_RESPONSE = b'7:4:0:0:old:0'
+EXPECTED_RESPONSE = b'7:4:0:0:old:0:31'
 
 
 def configure(source, send, response):
@@ -45,7 +46,7 @@ def exercise(source, send, response, until):
         assert target['dataId'], 'managed fields and array elements must resolve to watchable storage'
         assert target['accessTypes'] == ['write'], 'the editor must offer value-change watchpoints'
         assert target['canPersist'] is False, 'managed object locations must not be reused across guest sessions'
-    for expression in ('checkpoint', 'numbers[-1]', 'numbers[3]', 'numbers[0.5]', 'grid[0]', 'sample.Value[0]', 'sample.Missing', 'sample.', 'numbers[long.MinValue]', 'numbers[ulong.MaxValue]'):
+    for expression in ('numbers[-1]', 'numbers[3]', 'numbers[0.5]', 'grid[0]', 'sample.Value[0]', 'sample.Missing', 'sample.', 'numbers[long.MinValue]', 'numbers[ulong.MaxValue]'):
         unavailable = response(send('dataBreakpointInfo', {'frameId': frame['id'], 'name': expression}))['body']
         assert unavailable['dataId'] is None, f'{expression} must not be advertised as watchable managed storage'
     unavailable = response(send('dataBreakpointInfo', {'frameId': frame['id'], 'name': '0x100', 'asAddress': True}))['body']
@@ -103,4 +104,6 @@ def exercise(source, send, response, until):
         assert actual == expected, 'conditions and hit counts must skip nonmatching managed changes'
         if target == 1:
             response(send('setDataBreakpoints', {'breakpoints': []}))
+            debug_local_watchpoints.configure(source, send, response)
         response(send('continue', {'threadId': thread}))
+    debug_local_watchpoints.exercise(source, send, response, until)

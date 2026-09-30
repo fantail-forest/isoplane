@@ -36,5 +36,57 @@
         sample.Value = 10; sample.Value = 11; sample.Value = 7;
         numbers[1] = 10; numbers[1] = 12; numbers[1] = 4;
         sample.Value = 8; sample.Value = 7;
-        return $"{sample.Value}:{numbers[1]}:{grid[1, 0]}:{StaticValue}:{sample.Text}:{checkpoint}";
+        return $"{sample.Value}:{numbers[1]}:{grid[1, 0]}:{StaticValue}:{sample.Text}:{checkpoint}:{LocalWatchJourney()}";
+    }
+
+    private static string LocalWatchJourney()
+    {
+        int result = LocalWork() + LocalWork();
+        try { ThrowWork(); }
+        catch (InvalidOperationException) { result += 1; }
+        int finished = result; // local-watch-finished
+        return finished.ToString();
+    }
+
+    private static int LocalWork()
+    {
+        int value = 10;
+        int checkpoint = value; // local-watch-start
+        value = 11;
+        Change(ref value, 2);
+        try
+        {
+            GC.Collect();
+            value = 13;
+        }
+        finally
+        {
+            value = 14;
+        }
+        {
+            int scoped = 20;
+            checkpoint = scoped; // local-watch-scope
+            scoped = 21;
+            GC.KeepAlive(scoped);
+        }
+        value = 15;
+        return value;
+    }
+
+    private static void Change(ref int value, int depth)
+    {
+        if (depth != 0) Change(ref value, depth - 1);
+        else
+        {
+            GC.Collect();
+            value = 12;
+        }
+    }
+
+    private static void ThrowWork()
+    {
+        int doomed = 30;
+        GC.KeepAlive(doomed); // local-watch-throw
+        doomed = 31;
+        throw new InvalidOperationException(doomed.ToString());
     }

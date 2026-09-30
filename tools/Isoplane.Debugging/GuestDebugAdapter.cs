@@ -56,6 +56,8 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
 
     private void ConfigureSession(SoftDebuggerSession backend)
     {
+        backend.IgnoreInternalUserBreak = () => Volatile.Read(ref stopping) == 0 && Volatile.Read(ref pauseRequested) == 0
+            && dataBreakpoints.IgnoreExpirationStop(value => Protocol.SendEvent(value));
         backend.TargetHitBreakpoint += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Breakpoint);
         backend.TargetInterrupted += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Pause);
         backend.TargetStopped += (_, args) => Stopped(args, StoppedEvent.ReasonValue.Step);
@@ -356,8 +358,8 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             return;
         }
         if (state.IsUnhandled) reason = StoppedEvent.ReasonValue.Exception;
-        var hits = dataBreakpoints.TakeHits(state);
-        if (hits.IsDataStop)
+        var hits = dataBreakpoints.TakeHits(state, value => Protocol.SendEvent(value));
+        if (hits.IsDataStop && reason != StoppedEvent.ReasonValue.Pause)
         {
             if (hits.BreakpointIds.Length == 0)
             {

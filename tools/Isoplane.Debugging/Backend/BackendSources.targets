@@ -48,15 +48,27 @@
       <Compile Include="@(_IsoplaneAttributeSource->'$(IntermediateOutputPath)Isoplane/%(Filename).cs')" />
     </ItemGroup>
   </Target>
+  <Target Name="IsoplanePrepareDebuggerSessionSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
+    <IsoplanePrepareDebuggerSource Source="SoftDebuggerSession.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Match="class SoftDebuggerSession : DebuggerSession" Replacement="partial class SoftDebuggerSession : DebuggerSession" />
+    <IsoplanePrepareDebuggerSource Source="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.partial.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs"
+      Match="TargetEventType etype = TargetEventType.TargetStopped;"
+      Replacement="if (ResumeInternalUserBreak(es)) return;&#10;            TargetEventType etype = TargetEventType.TargetStopped;" />
+    <ItemGroup>
+      <_IsoplaneSessionOriginal Include="SoftDebuggerSession.cs" />
+      <Compile Remove="@(_IsoplaneSessionOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/SoftDebuggerSession.cs;$(MSBuildThisFileDirectory)InternalDebuggerStops.cs" />
+    </ItemGroup>
+  </Target>
   <Target Name="IsoplanePrepareDebuggerFieldSource" BeforeTargets="CoreCompile" Condition="'$(MSBuildProjectName)' == 'Mono.Debugging.Soft'">
+    <IsoplanePrepareDebuggerSource Source="VariableValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/VariableValueReference.cs" Match="class VariableValueReference" Replacement="partial class VariableValueReference" />
     <IsoplanePrepareDebuggerSource Source="FieldValueReference.cs" Destination="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs" Match="class FieldValueReference" Replacement="partial class FieldValueReference" />
     <IsoplanePrepareDebuggerSource Source="SoftDebuggerAdaptor.cs" Destination="$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs"
       Match="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive);"
       Replacement="var field = FindByName (type.GetFields (), f =&gt; MapTupleName(f.Name, tupleNames), name, ctx.CaseSensitive) ?? FindByName (type.GetFields (), f =&gt; f.Name, name, ctx.CaseSensitive);" />
     <ItemGroup>
-      <_IsoplaneFieldOriginal Include="FieldValueReference.cs;SoftDebuggerAdaptor.cs" />
+      <_IsoplaneFieldOriginal Include="FieldValueReference.cs;VariableValueReference.cs;SoftDebuggerAdaptor.cs" />
       <Compile Remove="@(_IsoplaneFieldOriginal)" MatchOnMetadata="FullPath" MatchOnMetadataOptions="PathLike" />
-      <Compile Include="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs;$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs;$(MSBuildThisFileDirectory)ManagedFieldLocation.cs" />
+      <Compile Include="$(IntermediateOutputPath)Isoplane/FieldValueReference.cs;$(IntermediateOutputPath)Isoplane/SoftDebuggerAdaptor.cs;$(MSBuildThisFileDirectory)ManagedFieldLocation.cs;$(MSBuildThisFileDirectory)ManagedLocalLocation.cs;$(IntermediateOutputPath)Isoplane/VariableValueReference.cs" />
     </ItemGroup>
   </Target>
 </Project>

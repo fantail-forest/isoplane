@@ -21,11 +21,18 @@ internal static class ManagedLocations
     internal static ManagedDataBreakpoint Resolve(SoftEvaluationContext context, string expression, int id)
     {
         var syntax = SyntaxFactory.ParseExpression(expression);
-        if (syntax.ContainsDiagnostics) throw new ProtocolException("A managed field or array element expression is required.");
+        if (syntax.ContainsDiagnostics) throw new ProtocolException("A local, managed field or array element expression is required.");
         if (syntax is ElementAccessExpressionSyntax element) return Element(context, element, id);
         var reference = context.Evaluator.Evaluate(context, expression);
-        if (reference is not FieldValueReference field) throw new ProtocolException("Data breakpoints require a managed field or an array element.");
-        try { return field.GetManagedDataBreakpoint(id); }
+        try
+        {
+            return reference switch
+            {
+                FieldValueReference field => field.GetManagedDataBreakpoint(id),
+                VariableValueReference local => local.GetManagedDataBreakpoint(id),
+                _ => throw new ProtocolException("Data breakpoints require a local, managed field or array element.")
+            };
+        }
         catch (NotSupportedException error) { throw new ProtocolException(error.Message, error); }
     }
 

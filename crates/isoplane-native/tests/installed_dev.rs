@@ -452,7 +452,7 @@ fn installed_debugging_evaluates_and_edits_values_with_conditional_breakpoints()
 }
 
 #[test]
-fn installed_watchpoints_observe_managed_field_and_array_changes_between_source_lines() {
+fn installed_watchpoints_observe_fields_arrays_and_scoped_locals() {
     installed_debug_acceptance("watchpoints");
 }
 

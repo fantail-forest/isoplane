@@ -89,14 +89,20 @@ remains available. IDE launches use the integrated terminal when supported. Sett
 termination on disconnect.
 
 The session uses the SDK's shared debug runtime. The debugger supports stepping,
-watches, editing live locals, exception stops, and data breakpoints on managed
-fields and array elements. Source edits rebuild the package while keeping the
+watches, editing live locals, exception stops, and data breakpoints on ordinary
+locals, managed fields and array elements. Source edits rebuild the package while keeping the
 debugger attached. A paused request keeps its current code and locals; continue
 it to completion before the replacement takes effect. The next request runs the
 rebuilt code with source breakpoints rebound. A failed build leaves the last
 working application available. Use `--no-watch` (or `"watch": false` in an IDE
 launch configuration) to disable automatic rebuilds. This rebuilds the application;
 it does not apply in-place Hot Reload to the active request.
+
+Data breakpoints stop when a value changes. A local watch expires when its lexical
+scope or method invocation ends, including exception unwinding; the editor marks
+it unverified. Select the local again in a later invocation to watch its new
+storage. Parameters and by-reference locals cannot be watched directly. Reads
+and writes that leave the value unchanged do not stop execution.
 
 Select an async caller in the call stack to inspect its saved locals, evaluate
 watches, edit values, or set data breakpoints on its captured fields and array

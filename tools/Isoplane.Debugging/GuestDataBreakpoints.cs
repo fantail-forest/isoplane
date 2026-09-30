@@ -11,6 +11,7 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
 {
     private readonly Dictionary<string, ManagedDataBreakpoint> locations = [];
     private Dictionary<int, ActiveBreakpoint> active = [];
+    private ManagedDataBreakpointEvents? pending;
 
     internal DataBreakpointInfoResponse Describe(PausedValues paused, DataBreakpointInfoArguments arguments)
     {
@@ -50,7 +51,7 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
         if (session.IsConnected)
         {
             try { session.VirtualMachine.SetManagedDataBreakpoints(next.Values.Select(value => value.Target).ToArray()); }
-            catch (Exception error) when (error is CommandException or ObjectCollectedException or VMNotSuspendedException or NotSupportedException)
+            catch (Exception error) when (error is CommandException or ObjectCollectedException or VMNotSuspendedException or InvalidStackFrameException or NotSupportedException)
             {
                 throw new ProtocolException($"The runtime rejected the managed data breakpoint locations ({error.Message}).", error);
             }
@@ -77,14 +78,40 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
         foreach (var pair in locations.Where(pair => !active.ContainsKey(pair.Value.Id)).ToArray()) locations.Remove(pair.Key);
     }
 
-    internal DataStop TakeHits(PausedValues paused)
+    internal bool IgnoreExpirationStop(Action<Dap.BreakpointEvent> changed)
+    {
+        if (Volatile.Read(ref active).Count == 0) return false;
+        var events = session.VirtualMachine.TakeManagedDataBreakpointHits();
+        Expire(events, changed);
+        if (events.Expired.Length != 0 && events.Hits.Length == 0) return true;
+        pending = events with { Expired = [] };
+        return false;
+    }
+
+    private void Expire(ManagedDataBreakpointEvents events, Action<Dap.BreakpointEvent> changed)
+    {
+        foreach (int id in events.Expired)
+        {
+            active.Remove(id);
+            locations.Remove(id.ToString(CultureInfo.InvariantCulture));
+            changed(new Dap.BreakpointEvent
+            {
+                Reason = Dap.BreakpointEvent.ReasonValue.Changed,
+                Breakpoint = new Dap.Breakpoint { Id = id, Verified = false, Message = "The local left its scope or its invocation ended; select a live local again." }
+            });
+        }
+    }
+
+    internal DataStop TakeHits(PausedValues paused, Action<Dap.BreakpointEvent> changed)
     {
         var configured = Volatile.Read(ref active);
         if (configured.Count == 0) return new(false, [], null);
-        var hits = session.VirtualMachine.TakeManagedDataBreakpointHits();
+        var hits = pending ?? session.VirtualMachine.TakeManagedDataBreakpointHits();
+        pending = null;
         var matched = new List<int>();
         string? description = null;
-        foreach (int id in hits)
+        Expire(hits, changed);
+        foreach (int id in hits.Hits)
         {
             // An editor can remove a breakpoint while its stop event is in transit.
             if (!configured.TryGetValue(id, out var breakpoint)) continue;
@@ -99,7 +126,7 @@ internal sealed class GuestDataBreakpoints(SoftDebuggerSession session, Func<int
                 description = $"Data breakpoint {id} condition failed: {error.Message}";
             }
         }
-        return new(hits.Length != 0, matched.ToArray(), description);
+        return new(hits.Hits.Length != 0 || hits.Expired.Length != 0, matched.ToArray(), description);
     }
 
     internal sealed record DataStop(bool IsDataStop, int[] BreakpointIds, string? Description);

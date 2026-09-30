@@ -213,7 +213,7 @@ internal sealed class PausedValues(TargetEventArgs stopped, Func<int> allocate, 
     internal (Mono.Debugging.Soft.SoftEvaluationContext Context, string Expression) DataExpression(DataBreakpointInfoArguments arguments)
     {
         if (arguments.AsAddress == true || arguments.Bytes is not null)
-            throw new ProtocolException("Data breakpoints support managed fields and array elements, not raw memory.");
+            throw new ProtocolException("Data breakpoints support locals, managed fields and array elements; raw memory is unsupported.");
         if (arguments.VariablesReference is not > 0) return (Context(FrameFor(arguments.FrameId)), arguments.Name);
         if (!variables.TryGetValue(arguments.VariablesReference.Value, out var set))
             throw new ProtocolException("The variable reference is not part of the current pause.");
