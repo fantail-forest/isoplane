@@ -1,0 +1,45 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Remove intermediates; use -- --all for all platforms or -- --releases for packaged releases
+    vars:
+      BUILD_ROOT: '{{.ROOT_DIR}}/.build'
+    cmds:
+      - |
+        all=false
+        releases=false
+        dry_run=false
+        for argument in {{.CLI_ARGS}}; do
+          case "$argument" in
+            --all) all=true ;;
+            --releases) releases=true ;;
+            --dry-run|--report) dry_run=true ;;
+            *) echo "Usage: task clean -- [--all] [--releases] [--dry-run]" >&2; exit 2 ;;
+          esac
+        done
+        set -- "{{.BUILD_ROOT}}/{{.PLATFORM}}" "{{.ROOT_DIR}}/.test-runs/{{.PLATFORM}}"
+        if "$all"; then
+          set -- "{{.ROOT_DIR}}/.test-runs" "{{.ROOT_DIR}}/.artifacts/shared" \
+            "{{.ROOT_DIR}}/target" "{{.ROOT_DIR}}/guests/target" \
+            "{{.ROOT_DIR}}/guests/out" "{{.ROOT_DIR}}/guest-runtime/out" \
+            "{{.ROOT_DIR}}/guest-runtime/work"
+          for directory in "{{.BUILD_ROOT}}"/*; do
+            case "$directory" in
+              "{{.BUILD_ROOT}}/releases") ;;
+              *) set -- "$@" "$directory" ;;
+            esac
+          done
+        fi
+        if "$releases"; then
+          set -- "$@" "{{.BUILD_ROOT}}/releases"
+        fi
+        for directory do
+          [ -d "$directory" ] && [ ! -L "$directory" ] || continue
+          if "$dry_run"; then
+            echo "Would remove $directory"
+          else
+            echo "Removing $directory"
+            rm -rf -- "$directory"
+          fi
+        done

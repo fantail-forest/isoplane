@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackConformanceAssembly</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+  <Target Name="PackConformanceAssembly">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)Conformance.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained">
+      <Output TaskParameter="TargetOutputs" ItemName="_ConformanceAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(_ConformanceAssembly)" PackagePath="tools/Conformance/" />
+    </ItemGroup>
+  </Target>
+</Project>

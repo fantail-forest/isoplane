@@ -1,0 +1,7 @@
+<Project DefaultTargets="Stage">
+  <Target Name="Stage">
+    <Copy SourceFiles="$(NativeLibrary)"
+          DestinationFolder="$(CliDirectory)/runtimes/$(Platform)/native"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>

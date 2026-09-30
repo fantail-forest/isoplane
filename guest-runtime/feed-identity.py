@@ -2,8 +2,6 @@
 import argparse
 import base64
 import hashlib
-import subprocess
-import sys
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import zipfile
@@ -16,10 +14,7 @@ def file_digest(stream, algorithm):
     return digest.digest()
 
 
-def verify_feed(feed, current_root=None):
-    if current_root is not None:
-        subprocess.run([sys.executable, str(Path(current_root).parent / 'scripts/tasks.py'), 'runtime'],
-                       stdout=sys.stderr, check=True)
+def verify_feed(feed):
     feed = Path(feed)
     props = ET.parse(feed / 'Isoplane.GuestRuntime.props').getroot()
 
@@ -56,17 +51,11 @@ def verify_feed(feed, current_root=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='action', required=True)
-    current = commands.add_parser('verify-current')
-    current.add_argument('root', type=Path)
-    current.add_argument('feed', type=Path)
     artifact = commands.add_parser('verify-artifact')
     artifact.add_argument('feed', type=Path)
     args = parser.parse_args()
     try:
-        if args.action == 'verify-current':
-            print(verify_feed(args.feed, args.root))
-        else:
-            print(verify_feed(args.feed))
+        print(verify_feed(args.feed))
     except (OSError, ValueError, ET.ParseError, zipfile.BadZipFile) as error:
         parser.exit(1, f'{error}\n')
 

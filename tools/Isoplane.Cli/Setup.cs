@@ -263,22 +263,6 @@ internal static class Readiness
     internal static async Task ProveAsync(string toolchain, CancellationToken cancellation)
     {
         await SelectedSdkAsync(cancellation);
-        await ProveToolsAsync(toolchain, cancellation);
-    }
-
-    internal static async Task ProveToolsAsync(string toolchain, CancellationToken cancellation)
-    {
         NativeRuntime.EnsureLoaded();
-        foreach (var (name, path) in Probes)
-        {
-            Console.Error.WriteLine($"Checking {name}...");
-            await Processes.CheckAsync(Path.Combine(toolchain, path), ["--version"], toolchain, cancellation);
-        }
     }
-
-    internal static readonly (string Name, string Path)[] Probes =
-    [
-        ("WebAssembly compiler", "wasi-sdk/bin/clang" + Toolchain.ExecutableExtension),
-        ("WebAssembly tools", "bin/wasm-tools" + Toolchain.ExecutableExtension),
-    ];
 }

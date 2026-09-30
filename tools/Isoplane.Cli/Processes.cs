@@ -12,7 +12,6 @@ internal static class Processes
             start.ArgumentList.Add(argument);
         start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
-        Toolchain.Apply(start);
         start.Environment["ISOPLANE_CLI_ASSEMBLY"] = typeof(Processes).Assembly.Location;
         var cleanupGrace = executable == "dotnet" ? TimeSpan.FromSeconds(1) : TimeSpan.Zero;
         return OwnedProcess.Start(start, cleanupGrace);

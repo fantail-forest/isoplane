@@ -1,5 +1,4 @@
 using Isoplane.Native;
-using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
@@ -9,7 +8,7 @@ using System.Text.Json;
 namespace Isoplane.Cli;
 
 internal sealed record ToolchainFile(string Path, string Sha256, bool Executable);
-internal sealed record ToolchainManifest(string RuntimeIdentifier, string DotnetSdkVersion, string WasiWorkloadVersion, ToolchainFile[] Files, string Kind = "toolchain");
+internal sealed record ToolchainManifest(string RuntimeIdentifier, string DotnetSdkVersion, ToolchainFile[] Files, string Kind = "toolchain");
 
 internal static class Toolchain
 {
@@ -123,16 +122,6 @@ internal static class Toolchain
         return File.Exists(selected) ? JsonSerializer.Deserialize<string>(File.ReadAllText(selected)) : null;
     }
 
-    internal static void Apply(ProcessStartInfo start, string? home = null)
-    {
-        if (!File.Exists(Path.Combine(home ?? Home, "current.json")))
-            return;
-        var directory = Selected(home ?? Home)
-            ?? throw new InvalidOperationException("Invalid toolchain selection; rerun isoplane setup.");
-        start.Environment["PATH"] = Path.Combine(directory, "bin") + Path.PathSeparator
-            + (start.Environment.TryGetValue("PATH", out var searchPath) ? searchPath : "");
-    }
-
     internal static async Task<string> DiagnoseAsync(string home, CancellationToken cancellation, string? bundledRuntime = null)
     {
         var current = Path.Combine(home, "current.json");
@@ -177,7 +166,7 @@ internal static class Toolchain
     {
         var manifest = JsonSerializer.Deserialize<ToolchainManifest>(bytes, Json)
             ?? throw new InvalidOperationException("The toolchain bundle has no manifest.");
-        if (string.IsNullOrWhiteSpace(manifest.RuntimeIdentifier) || string.IsNullOrWhiteSpace(manifest.DotnetSdkVersion) || string.IsNullOrWhiteSpace(manifest.WasiWorkloadVersion) || manifest.Files is not { Length: > 0 })
+        if (string.IsNullOrWhiteSpace(manifest.RuntimeIdentifier) || string.IsNullOrWhiteSpace(manifest.DotnetSdkVersion) || manifest.Files is not { Length: > 0 })
             throw new InvalidOperationException("The toolchain manifest must identify its SDK and files.");
         if (manifest.Kind is not ("toolchain" or "workload" or "msi"))
             throw new InvalidOperationException($"Unknown toolchain bundle kind: {manifest.Kind}.");
@@ -201,8 +190,7 @@ internal static class Toolchain
 
     internal static string[] RequiredFiles() => [
         "cli/Isoplane.Cli.dll", "cli/Isoplane.Cli.runtimeconfig.json", "cli/Isoplane.Cli.deps.json",
-        "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename, "bin/wasm-tools" + ExecutableExtension, "wasi-sdk/bin/clang" + ExecutableExtension,
-        "feed/Isoplane.GuestRuntime.props"
+        "cli/Isoplane.Native.dll", "cli/runtime/" + NativeRuntime.LibraryFilename
     ];
 
     internal static string PlatformIdentifier()

@@ -20,7 +20,7 @@ fn prepared_release() -> Release {
             ))
         });
     let bytes = std::fs::read(directory.join("release.json")).unwrap_or_else(|error| {
-        panic!("Prepare the release explicitly with scripts/build-preview.py, or set ISOPLANE_TEST_RELEASE to a prepared release directory: {}: {error}", directory.display())
+        panic!("Prepare the release explicitly with task release, or set ISOPLANE_TEST_RELEASE to a prepared release directory: {}: {error}", directory.display())
     });
     let manifest: serde_json::Value = serde_json::from_slice(&bytes).expect("release.json is JSON");
     assert_eq!(

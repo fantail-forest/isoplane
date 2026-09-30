@@ -1,99 +1,114 @@
 version: '3'
 
 vars:
+  REVISION:
+    sh: git rev-parse HEAD
+  SOURCE_REF:
+    sh: git rev-parse --git-path "$(git symbolic-ref -q HEAD || echo HEAD)"
+  USER_HOME: '{{env "HOME" | default (env "USERPROFILE")}}'
+  DOTNET: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}/dotnet{{if eq OS "windows"}}.exe{{end}}'
+  PATH_SEPARATOR: '{{if eq OS "windows"}};{{else}}:{{end}}'
   PYTHON: '{{.ISOPLANE_PYTHON | default (ternary "python" "python3" (eq OS "windows"))}}'
   PLATFORM: '{{if eq OS "darwin"}}osx{{else if eq OS "windows"}}win{{else}}{{OS}}{{end}}-{{if eq ARCH "amd64"}}x64{{else}}{{ARCH}}{{end}}'
+
+  NATIVE_LIBRARY: '{{if eq OS "windows"}}isoplane_native.dll{{else if eq OS "darwin"}}libisoplane_native.dylib{{else}}libisoplane_native.so{{end}}'
+  MANAGED: '{{.ROOT_DIR}}/.build/clr-anycpu/managed'
+  PACKAGES: '{{.ROOT_DIR}}/.build/clr-anycpu/packages'
+  CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
+  NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
+  SCRATCH: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/tmp'
+  HOST_TEMP: '{{env "TEMP" | default (env "TMPDIR") | default "/tmp"}}'
 
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
 
+env:
+  PATH: '{{.USER_HOME}}/.dotnet{{.PATH_SEPARATOR}}{{.USER_HOME}}/.cargo/bin{{.PATH_SEPARATOR}}{{.USER_HOME}}/.local/bin{{.PATH_SEPARATOR}}{{env "PATH"}}{{if eq OS "windows"}};C:/msys64/mingw64/bin;C:/msys64/usr/bin{{end}}'
+  DOTNET_ROOT: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}'
+  CARGO_TARGET_DIR: '{{env "CARGO_TARGET_DIR" | default .NATIVE_TARGET}}'
+  CARGO_BUILD_BUILD_DIR: '{{env "CARGO_BUILD_BUILD_DIR" | default (env "CARGO_TARGET_DIR") | default .NATIVE_TARGET}}'
+  ISOPLANE_BUILD_ROOT: '{{.ROOT_DIR}}'
+  ISOPLANE_RUNTIME_SOURCE: '{{.ROOT_DIR}}/guest-runtime'
+  ISOPLANE_RUNTIME_WORK: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work'
+  WASI_SDK_PATH: '{{.WASI_SDK_PATH | default (printf "%s/.build/%s/development/runtime-work/wasi-sdk" .ROOT_DIR .PLATFORM)}}'
+  NUGET_SCRATCH: '{{env "NUGET_SCRATCH" | default (printf "%s/NuGetScratch%s" .HOST_TEMP (ternary (env "USER") "" (eq OS "linux")))}}'
+  TMPDIR: '{{.SCRATCH}}'
+  TMP: '{{.SCRATCH}}'
+  TEMP: '{{.SCRATCH}}'
+
 includes:
+  notices: taskfiles/notices.yml
+  node: taskfiles/node.yml
+  release: taskfiles/release.yml
+  setup: taskfiles/setup.yml
+  clean: taskfiles/clean.yml
+  managed: taskfiles/managed.yml
   fixtures: taskfiles/fixtures.yml
   runtime: taskfiles/runtime.yml
 
 tasks:
+  initialize:
+    internal: true
+    run: once
+    cmds:
+      - mkdir -p "{{.SCRATCH}}"
+
+  exec:
+    desc: Run a development command with worktree build and temporary directories
+    deps: [initialize]
+    cmds:
+      - '{{.CLI_ARGS | default (env "SHELL") | default "bash"}}'
+
   test:
     desc: Prepare fixtures, then run the Rust test suite
-    deps: [fixtures]
+    deps: [initialize, fixtures]
     env:
-      ISOPLANE_TEST_CLI_ASSEMBLY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/cli/bin/Isoplane.Cli.dll'
-      ISOPLANE_TEST_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/fixture-packages/packages'
+      ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
+      ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
+      ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
       ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/test {{.CLI_ARGS}}'
+      - 'cargo test --workspace {{.CLI_ARGS}}'
 
   fixtures:
-    desc: Prepare shared fixtures before running parallel tests
+    desc: Prepare shared fixtures before running tests
+    deps: [node:runtimes, fixtures:rust, fixtures:dotnet, fixtures:acceptance, fixtures:package, cli, managed:debugger, debugger:environment, fixtures:feed]
+
+  debugger:environment:
+    vars:
+      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python'
+      EXECUTABLE: '{{.DIRECTORY}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
+    status:
+      - |
+        "{{.EXECUTABLE}}" -c "import debugpy; assert debugpy.__version__ == '1.8.20'"
     cmds:
-      - task: fixtures:rust
-      - task: fixtures:dotnet
-      - task: fixtures:acceptance
-      - task: fixtures:package
-      - task: cli
-      - task: managed:debugger
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py dap-python .'
-      - task: fixtures:feed
+      - '"{{.PYTHON}}" -m venv "{{.DIRECTORY}}"'
+      - '"{{.EXECUTABLE}}" -m pip install --disable-pip-version-check debugpy==1.8.20'
 
   runtime:
     desc: Build the shared Mono runtime on Linux
     cmds:
       - task: runtime:build
 
-  managed:cli:
-    desc: Build the portable managed CLI on Linux
-    sources:
-      - tools/**/*.cs
-      - tools/**/*.csproj
-      - tools/**/*.props
-      - tools/**/*.targets
-      - Directory.Build.props
-      - global.json
-      - nuget.config
-      - licenses/SdkPackage.props
-      - scripts/fixture-tools.py
-      - exclude: tools/**/obj/**/*
-      - exclude: tools/**/bin/**/*
-      - exclude: tools/**/*.Tests/**/*
-    generates:
-      - .build/clr-anycpu/isoplane-cli/artifacts/bin/Isoplane.Cli/debug/Isoplane.Cli.dll
-    cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py compile-managed cli'
-
-  managed:debugger:
-    sources:
-      - tools/**/*.cs
-      - tools/**/*.csproj
-      - tools/**/*.props
-      - tools/**/*.targets
-      - Directory.Build.props
-      - global.json
-      - nuget.config
-      - licenses/SdkPackage.props
-      - scripts/fixture-tools.py
-      - exclude: tools/**/obj/**/*
-      - exclude: tools/**/bin/**/*
-      - exclude: tools/**/*.Tests/**/*
-      - tools/Isoplane.Debugging.Tests/**/*.cs
-      - tools/Isoplane.Debugging.Tests/*.csproj
-    generates:
-      - .build/clr-anycpu/debugger-protocol/artifacts/bin/Isoplane.Debugging.Tests/debug/Isoplane.Debugging.Tests.dll
-    cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py compile-managed debugger'
-
   native:
     run: once
+    deps: [initialize]
+    env:
+      CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
+      CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py isoplane-native . debug'
+      - '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/native-windows.ps1{{else}}cargo build --locked -p isoplane-native --target-dir "{{.NATIVE_TARGET}}"{{end}}'
 
   cli:
     run: once
-    desc: Stage the managed CLI with native support for this platform
+    desc: Prepare the shared managed CLI and platform native support
     deps: [managed:cli, native]
     cmds:
-      - '"{{.PYTHON}}" scripts/fixture-tools.py stage-cli'
+      - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{dir .CLI}}" -p:Platform={{.PLATFORM}}'
 
   fixtures:rust:
     desc: Build portable Rust WASM fixtures
+    deps: [initialize]
     sources:
       - guests/**/*.rs
       - guests/**/Cargo.toml
@@ -113,68 +128,26 @@ tasks:
       - .build/wasm32/rust-guests/undeclared-import.wasm
       - .build/wasm32/rust-guests/foreign-module.wasm
     cmds:
-      - '"{{.PYTHON}}" scripts/dev bash guests/build.sh --compile'
-
-  managed:packages:
-    run: once
-    deps:
-      - '{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
-    sources:
-      - guest-sdks/dotnet/**/*
-      - tools/**/*.cs
-      - tools/**/*.csproj
-      - tools/**/*.props
-      - tools/**/*.targets
-      - Directory.Build.props
-      - global.json
-      - nuget.config
-      - scripts/fixture-packages.py
-      - '{{.MODULES}}/runtime.json'
-      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
-      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
-    generates:
-      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Sdk.*.nupkg
-      - .build/clr-anycpu/fixture-packages/packages/Isoplane.AspNetCore.*.nupkg
-      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Templates.*.nupkg
-      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Cli.*.nupkg
-      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Native.*.nupkg
-      - .build/clr-anycpu/fixture-packages/packages/Isoplane.Testing.*.nupkg
-    cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-packages.py pack-managed'
+      - 'bash guests/build.sh --compile'
 
   native:release:
     run: once
+    deps: [initialize]
+    env:
+      CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
+      CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/fixture-tools.py isoplane-native . release'
+      - '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/native-windows.ps1 -Configuration release{{else}}cargo build --locked --release -p isoplane-native --target-dir "{{.NATIVE_TARGET}}"{{end}}'
 
   fixtures:feed:
     run: once
-    deps: [managed:packages, native:release]
-    cmds:
-      - '"{{.PYTHON}}" scripts/fixture-packages.py attach-native'
+    deps: [managed:packages, managed:native-packages]
 
-  release:shared:
-    deps:
-      - '{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
-    env:
-      ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
-    cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/release-managed.py'
 
-  release:linux:
-    desc: Build shared outputs and the Linux release
-    deps: [release:shared]
+  test:managed:
+    desc: Run the managed CLI and debugger tests using prepared assemblies
+    deps: [managed:build, native]
     cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-preview.py --assemble {{.CLI_ARGS}}'
-
-  release:macos:
-    desc: Assemble the macOS release from shared Linux outputs
-    cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-preview.py --assemble {{.CLI_ARGS}}'
-
-  release:windows:
-    desc: Assemble the Windows release from shared Linux outputs
-    deps: [runtime:toolchain]
-    cmds:
-      - '"{{.PYTHON}}" scripts/dev "{{.PYTHON}}" scripts/build-windows.py --assemble {{.CLI_ARGS}}'
-
+      - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/Isoplane.Cli.Tests/release" -p:Platform={{.PLATFORM}}'
+      - '"{{.DOTNET}}" test tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'
+      - '"{{.DOTNET}}" test tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'

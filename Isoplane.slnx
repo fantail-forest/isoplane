@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="guest-sdks/dotnet/Isoplane.Sdk.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
+  <Project Path="guest-sdks/dotnet/Templates/Isoplane.Templates.csproj" />
+  <Project Path="tools/Isoplane.Cli/Isoplane.Cli.csproj" />
+  <Project Path="tools/Isoplane.Native/Isoplane.Native.csproj" />
+  <Project Path="tools/Isoplane.Testing/Isoplane.Testing.csproj" />
+  <Project Path="tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj" />
+  <Project Path="tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj" />
+</Solution>

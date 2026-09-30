@@ -36,7 +36,7 @@ internal static class EnvironmentDoctor
                 throw new InvalidOperationException($"Missing native prerequisites: {Prerequisites.Describe(missing)}. Run isoplane setup to install them.");
         }
         Console.Error.WriteLine("Checking platform tools and dependencies...");
-        await Readiness.ProveToolsAsync(installed, cancellation);
+        Isoplane.Native.NativeRuntime.EnsureLoaded();
         Console.WriteLine("Your Isoplane toolchain is ready.");
         return 0;
     }

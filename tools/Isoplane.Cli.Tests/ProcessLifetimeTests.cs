@@ -111,14 +111,8 @@ public sealed class ProcessLifetimeTests
 
         internal Process StartCli(string command)
         {
-            foreach (var file in System.IO.Directory.GetFiles(AppContext.BaseDirectory))
-                File.Copy(file, Path.Combine(Directory, Path.GetFileName(file)));
-            var runtimeDirectory = Path.Combine(Directory, "runtime");
-            System.IO.Directory.CreateDirectory(runtimeDirectory);
-            var library = Isoplane.Native.NativeRuntime.LibraryFilename;
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "runtime", library), Path.Combine(runtimeDirectory, library));
             var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, WorkingDirectory = Directory };
-            start.ArgumentList.Add(Path.Combine(Directory, Path.GetFileName(typeof(OwnedChild).Assembly.Location)));
+            start.ArgumentList.Add(typeof(OwnedChild).Assembly.Location);
             start.ArgumentList.Add("--run-process");
             start.ArgumentList.Add(command);
             start.Environment["ISOPLANE_HOME"] = Path.Combine(Directory, "home");

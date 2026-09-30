@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$OUTPUT" ] || { echo "missing --output DIRECTORY" >&2; exit 2; }
-python3 "$ROOT/scripts/fixture-tools.py" require-linux
+[ "$(uname -s)" = Linux ] || { echo "Build shared runtime modules on Linux first." >&2; exit 1; }
 command -v dotnet >/dev/null 2>&1 || { echo "FATAL: no .NET SDK on PATH, so the shared runtime cannot be built." >&2; exit 1; }
 
 mkdir -p "$OUTPUT"

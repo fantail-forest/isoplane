@@ -1,24 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn stage_packages(destination: &Path) -> PathBuf {
-    let source = std::env::var_os("ISOPLANE_TEST_PACKAGE_FEED")
+fn package_feed(variable: &str) -> PathBuf {
+    let source = std::env::var_os(variable)
         .map(PathBuf::from)
-        .expect("run tests through Task to select the prepared SDK package feed");
-    let packages = destination.join("packages");
-    std::fs::create_dir_all(&packages).expect("create the isolated package feed");
-    for entry in std::fs::read_dir(&source).expect("read the prepared SDK package feed") {
-        let entry = entry.expect("read a prepared package");
-        if entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == "nupkg")
-        {
-            std::fs::copy(entry.path(), packages.join(entry.file_name()))
-                .expect("copy a prepared SDK package");
-        }
-    }
-    packages
+        .expect("run tests through Task to select the prepared SDK package feeds");
+    assert!(
+        source.is_dir(),
+        "prepared package feed is missing: {}",
+        source.display()
+    );
+    source
 }
 
 /// The release version `Directory.Build.props` declares: the version every
@@ -41,7 +33,8 @@ pub fn release_version() -> String {
 /// Isoplane packages exclusively from its local feed.
 pub fn aspnet_project(destination: &Path) -> PathBuf {
     let root = super::repo_root();
-    let packages = stage_packages(destination);
+    let packages = package_feed("ISOPLANE_TEST_PACKAGE_FEED");
+    let native_packages = package_feed("ISOPLANE_TEST_NATIVE_PACKAGE_FEED");
     std::fs::copy(root.join("global.json"), destination.join("global.json"))
         .expect("pin the template consumer SDK");
     let hive = destination.join("template-hive");
@@ -64,12 +57,18 @@ pub fn aspnet_project(destination: &Path) -> PathBuf {
         .arg(&packages)
         .args(["--name", "template-packages", "--configfile"])
         .arg(&config));
+    run(Command::new("dotnet")
+        .args(["nuget", "add", "source"])
+        .arg(&native_packages)
+        .args(["--name", "native-packages", "--configfile"])
+        .arg(&config));
     let xml = std::fs::read_to_string(&config).expect("read generated package sources");
     let xml = xml.replace(
         "</configuration>",
         &format!(
             "<config><add key=\"globalPackagesFolder\" value=\"{}\" /></config>\n\
              <packageSourceMapping>\n\
+             <packageSource key=\"native-packages\"><package pattern=\"Isoplane.Native\" /><package pattern=\"Isoplane.Cli\" /></packageSource>\n\
              <packageSource key=\"template-packages\"><package pattern=\"Isoplane.*\" /></packageSource>\n\
              <packageSource key=\"nuget\"><package pattern=\"*\" /></packageSource>\n\
              </packageSourceMapping></configuration>",
@@ -101,7 +100,6 @@ pub fn debugger_python() -> PathBuf {
 
 /// Installs the packaged managed CLI with native local support into a local tool directory.
 pub fn managed_cli(destination: &Path, app: &Path) -> PathBuf {
-    stage_packages(destination);
     let tools = destination.join("tools");
     let mut install = Command::new("dotnet");
     if cfg!(all(

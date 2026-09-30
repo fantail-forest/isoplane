@@ -182,10 +182,10 @@ tasks:
 
   package:runtime:
     run: once
-    deps: [":runtime:selected", ":cli"]
+    deps: [":runtime:selected"]
     env:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
-      ISOPLANE_CLI_ASSEMBLY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/cli/bin/Isoplane.Cli.dll'
+      ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
     sources:
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
       - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
@@ -201,14 +201,16 @@ tasks:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.Debug.wasm'
       - '{{.MODULES}}/runtime.json'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/tests/packages/build.sh --compile --fixture runtime'
+      - 'test "{{OS}}" = linux || { echo "Run task fixtures:package:runtime on Linux first." >&2; exit 1; }'
+      - task: ':cli'
+      - 'bash guest-runtime/tests/packages/build.sh --compile --fixture runtime'
 
   package:build:
     deps: [":cli"]
     internal: true
     label: 'package:{{.NAME}}'
     env:
-      ISOPLANE_CLI: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/cli/bin/Isoplane.Cli.dll'
+      ISOPLANE_CLI: '{{.CLI}}'
     sources:
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.props'
@@ -227,7 +229,7 @@ tasks:
     generates:
       - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/{{.NAME}}.tar'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
+      - 'bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
 
   package:alpha:
     deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
@@ -297,5 +299,5 @@ tasks:
       ISOPLANE_RUNTIME_DIRECTORY: '{{.MODULES}}'
     cmds:
       - mkdir -p "{{.ROOT_DIR}}/.build/clr-anycpu/probes"
-      - '"{{.PYTHON}}" scripts/fixture-tools.py require-linux'
-      - '"{{.PYTHON}}" scripts/dev dotnet "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/cli/bin/Isoplane.Cli.dll" bundle --project "{{.ROOT_DIR}}/{{.PROJECT}}" --output "{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar"'
+      - 'test "{{OS}}" = linux || { echo "Run task fixtures on Linux first." >&2; exit 1; }'
+      - '"{{.DOTNET}}" "{{.CLI}}" bundle --project "{{.ROOT_DIR}}/{{.PROJECT}}" --output "{{.ROOT_DIR}}/.build/clr-anycpu/probes/{{.NAME}}.tar"'

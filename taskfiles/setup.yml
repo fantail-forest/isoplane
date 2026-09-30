@@ -1,0 +1,59 @@
+version: '3'
+
+vars:
+  SDK_CONFIG:
+    sh: cat global.json
+  SDK_VERSION: '{{(fromJson .SDK_CONFIG).sdk.version}}'
+
+tasks:
+  default:
+    desc: Initialize source dependencies and install development tools
+    deps: [dotnet, rust, wasm-tools]
+    cmds:
+      - git submodule update --init
+
+  dotnet:
+    deps: [':initialize']
+    status:
+      - 'test "$(dotnet --version)" = "{{.SDK_VERSION}}"'
+    cmds:
+      - cmd: 'curl --fail --location --output "{{.SCRATCH}}/dotnet-install.sh" https://dot.net/v1/dotnet-install.sh'
+        platforms: [linux, darwin]
+      - cmd: 'bash "{{.SCRATCH}}/dotnet-install.sh" --version "{{.SDK_VERSION}}" --install-dir "{{.USER_HOME}}/.dotnet" --no-path'
+        platforms: [linux, darwin]
+      - cmd: 'curl.exe --fail --location --output "{{.SCRATCH}}/dotnet-install.ps1" https://dot.net/v1/dotnet-install.ps1'
+        platforms: [windows]
+      - cmd: 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{{.SCRATCH}}/dotnet-install.ps1" -Version "{{.SDK_VERSION}}" -InstallDir "{{.USER_HOME}}/.dotnet" -NoPath'
+        platforms: [windows]
+
+  rust:
+    cmds:
+      - rustup target add wasm32-unknown-unknown wasm32-wasip1
+
+  wasm-tools:
+    deps: [':initialize']
+    vars:
+      VERSION: '1.244.0'
+    status:
+      - 'test "$(wasm-tools --version)" = "wasm-tools {{.VERSION}}"'
+    cmds:
+      - cargo install --locked wasm-tools@{{.VERSION}}
+
+  workload:
+    deps: [dotnet]
+    platforms: [linux]
+    status:
+      - dotnet workload list | grep -q '^wasi-experimental '
+    cmds:
+      - dotnet workload install wasi-experimental --skip-manifest-update
+
+  licenses:
+    deps: [license-rust, license-managed]
+
+  license-rust:
+    status: ['cargo about --version | grep -q "0.9.2"']
+    cmds: ['cargo install --locked --features cli cargo-about --version 0.9.2']
+
+  license-managed:
+    status: ['"{{.USER_HOME}}/.dotnet/tools/nuget-license" --version | grep -q "4.0.18"']
+    cmds: ['"{{.DOTNET}}" tool install --global nuget-license --version 4.0.18']

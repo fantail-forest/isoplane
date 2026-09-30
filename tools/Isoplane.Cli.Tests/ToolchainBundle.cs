@@ -41,7 +41,7 @@ internal sealed class ToolchainBundle : IDisposable
             File.WriteAllText(target, content);
             entries.Add(new(required, Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))), false));
         }
-        var manifest = new ToolchainManifest(platform ?? Toolchain.PlatformIdentifier(), "10.0.400", "10.0.11", entries.ToArray());
+        var manifest = new ToolchainManifest(platform ?? Toolchain.PlatformIdentifier(), "10.0.400", entries.ToArray());
         File.WriteAllText(Path.Combine(Source, "toolchain.json"), JsonSerializer.Serialize(manifest));
         foreach (var id in PackageIds)
             File.WriteAllText(Path.Combine(Release, "packages", $"{id}.{version}.nupkg"), $"{id} {version} {revision}");

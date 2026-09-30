@@ -1,0 +1,118 @@
+version: '3'
+
+tasks:
+  build:
+    run: once
+    desc: Build portable managed tools and SDK assemblies on Linux
+    deps: [":initialize"]
+    sources:
+      - '{{.SOURCE_REF}}'
+      - '{{.ROOT_DIR}}/tools/**/*.cs'
+      - '{{.ROOT_DIR}}/tools/**/*.csproj'
+      - '{{.ROOT_DIR}}/tools/**/*.props'
+      - '{{.ROOT_DIR}}/tools/**/*.targets'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.cs'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.csproj'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.props'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*.targets'
+      - '{{.ROOT_DIR}}/Isoplane.slnx'
+      - '{{.ROOT_DIR}}/taskfiles/managed.yml'
+      - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
+      - exclude: 'tools/**/{obj,bin}/**/*'
+      - exclude: 'guest-sdks/dotnet/**/{obj,bin}/**/*'
+    generates:
+      - '{{.CLI}}'
+      - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Sdk/release/Isoplane.Sdk.dll'
+      - '{{.MANAGED}}/bin/Isoplane.AspNetCore/release/Isoplane.AspNetCore.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Testing/release/Isoplane.Testing.dll'
+      - '{{.MANAGED}}/publish/Isoplane.Cli/release/Isoplane.Cli.dll'
+      - '{{.MANAGED}}/obj/Isoplane.Cli/release/DotnetToolSettings.xml'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Run task managed:build on Linux first." >&2; exit 1; }'
+      - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli/Isoplane.Cli.csproj -t:Publish,GenerateToolsSettingsFileFromBuildProperty -p:Configuration=Release -p:NoBuild=true -p:ArtifactsPath="{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+
+  cli:
+    deps: [build]
+
+  debugger:
+    deps: [build]
+
+  packages:
+    run: once
+    desc: Pack the prepared managed assemblies and shared runtime
+    deps:
+      - build
+      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}'
+    sources:
+      - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/MSBuild/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/{Sdk,buildTransitive}/**/*'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Isoplane.Sdk,AspNetCore/Isoplane.AspNetCore,Templates/Isoplane.Templates}.csproj'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/{PackageReadme.md,AspNetCore/README.md}'
+      - '{{.ROOT_DIR}}/tools/Isoplane.Testing/{Isoplane.Testing.csproj,README.md}'
+      - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
+      - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/Templates/content/**/*'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/taskfiles/managed.yml'
+      - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
+      - '{{.MODULES}}/*.wasm'
+      - '{{.MODULES}}/runtime.json'
+    generates:
+      - '{{.PACKAGES}}/Isoplane.Sdk.*.nupkg'
+      - '{{.PACKAGES}}/Isoplane.AspNetCore.*.nupkg'
+      - '{{.PACKAGES}}/Isoplane.Templates.*.nupkg'
+      - '{{.PACKAGES}}/Isoplane.Testing.*.nupkg'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Run task managed:packages on Linux first." >&2; exit 1; }'
+      - task: pack-shared
+
+  pack-shared:
+    internal: true
+    deps:
+      - for:
+          - guest-sdks/dotnet/Isoplane.Sdk.csproj
+          - guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj
+          - guest-sdks/dotnet/Templates/Isoplane.Templates.csproj
+          - tools/Isoplane.Testing/Isoplane.Testing.csproj
+        task: pack
+        vars:
+          PROJECT: '{{.ITEM}}'
+
+  pack:
+    internal: true
+    label: 'pack:{{.PROJECT}}'
+    cmds:
+      - '"{{.DOTNET}}" pack "{{.PROJECT}}" -c Release --no-build --artifacts-path "{{.MANAGED}}" -o "{{.PACKAGES}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false -p:IsoplaneRuntimeModuleDirectory="{{.MODULES}}"'
+
+
+  native-packages:
+    run: once
+    label: 'native-packages:{{.PLATFORM}}'
+    deps: [build, ':native:release']
+    vars:
+      OUTPUT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
+    sources:
+      - '{{.MANAGED}}/publish/Isoplane.Cli/release/**/*'
+      - '{{.MANAGED}}/bin/Isoplane.Native/release/*'
+      - '{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}'
+      - '{{.ROOT_DIR}}/taskfiles/NativePackages/**/*'
+      - '{{.ROOT_DIR}}/tools/{Isoplane.Cli,Isoplane.Native}/README.md'
+      - '{{.ROOT_DIR}}/licenses/SdkPackage.props'
+      - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
+      - '{{.ROOT_DIR}}/Directory.Build.props'
+      - '{{.ROOT_DIR}}/taskfiles/managed.yml'
+      - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
+    generates:
+      - '{{.OUTPUT}}/Isoplane.Cli.*.nupkg'
+      - '{{.OUTPUT}}/Isoplane.Native.*.nupkg'
+    cmds:
+      - for: [Isoplane.Native, Isoplane.Cli]
+        cmd: '"{{.DOTNET}}" pack taskfiles/NativePackages/NativePackages.csproj -c Release --artifacts-path "{{.OUTPUT}}/intermediates/{{.ITEM}}" -o "{{.OUTPUT}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativePath="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:IsoplaneNativeRid={{.PLATFORM}}'

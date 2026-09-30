@@ -33,15 +33,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The reference's built output becomes the packed task assembly, so the pack ships what this build produced. -->
     <ProjectReference Include="Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained"
-                      OutputItemType="None" Pack="true" PackagePath="tools/Conformance/" />
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
     <None Update="PackageReadme.md" Pack="true" PackagePath="/" />
     <None Include="MSBuild/Sdk.targets" Pack="true" PackagePath="Sdk/" />
-    <None Include="Isoplane.Guest.props;Isoplane.Guest.targets" Pack="true" PackagePath="tools/" />
-    <None Include="Build/**" Exclude="Build/**/obj/**;Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
-    <None Include="native/**" Pack="true" PackagePath="tools/native/" />
+    <None Include="Build/Isoplane.ManagedBundle.*;Build/Isoplane.Conformance.targets;Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
   </ItemGroup>
   <!-- The shared runtimes interpreted applications run on, production and
        local-debug. Their directory comes from guest-sdks/dotnet/MonoRuntime/build.sh,
@@ -95,4 +91,5 @@
     <ItemGroup><None Include="$(_CoreSdkProps)" Pack="true" PackagePath="Sdk/Sdk.props" /></ItemGroup>
   </Target>
   <Import Project="../../licenses/SdkPackage.props" />
+  <Import Project="Conformance/Pack.targets" />
 </Project>

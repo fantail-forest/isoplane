@@ -8,9 +8,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$ROOT/../.build/wasm32/rust-guests"
 MANIFEST="$OUT/manifest"
-TOOLS="$ROOT/../scripts/fixture-tools.py"
 if [ "${1:-}" != --compile ]; then
-  exec python3 "$ROOT/../scripts/tasks.py" fixtures:rust
+  exec task --dir "$ROOT/.." fixtures:rust
 fi
 
 TARGET=wasm32-unknown-unknown
@@ -27,7 +26,7 @@ export CARGO_BUILD_BUILD_DIR="$TDIR"
 # ISOPLANE_BUILD_QUIET drops the size and import/export reports, which a test
 # running this never reads, and keeps every check.
 QUIET="${ISOPLANE_BUILD_QUIET:-}"
-python3 "$TOOLS" output-directory "$ROOT/.." wasm32 rust-guests >/dev/null
+mkdir -p "$OUT"
 cd "$ROOT"
 
 CARGO_FLAGS=(--target "$TARGET" --profile "$PROFILE")
@@ -73,7 +72,7 @@ if [ -z "$QUIET" ]; then
   echo "==> sizes"
   printf '%-24s %10s %10s %10s\n' MODULE BYTES GZIP ZSTD
   for f in "$OUT"/*.wasm; do
-    raw=$(python3 "$TOOLS" size "$f")
+    raw=$(wc -c < "$f")
     gz=$(gzip -9 -c "$f" | wc -c)
     if command -v zstd >/dev/null 2>&1; then
       zs=$(zstd -19 -c "$f" 2>/dev/null | wc -c)

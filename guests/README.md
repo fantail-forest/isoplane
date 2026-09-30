@@ -17,8 +17,8 @@ guests/build-dotnet.sh --if-stale
 Task prepares fixtures before running tests:
 
 ```sh
-python3 scripts/tasks.py fixtures
-python3 scripts/tasks.py test -- --exclude-binary isoplane-native/release_journey
+task fixtures
+task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls
 ```
 
 Tests read those artifacts through `isoplane-fixtures`; they do not invoke builds.

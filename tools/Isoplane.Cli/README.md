@@ -35,15 +35,13 @@ Workload installation supplies the templates and build tools. Setup requests
 prerequisites are installed through the `apt-get` command setup shows, after
 confirmation or with `--yes`.
 
-`isoplane doctor` verifies the installation and runs the compiler, wasm-tools
-and runtime. `isoplane uninstall-sdk` removes owned resources and keeps the CLI.
+`isoplane doctor` verifies the installed SDK and native runtime.
+`isoplane uninstall-sdk` removes owned resources and keeps the CLI.
 
-`scripts/package-toolchain.py` assembles workload packs from the runtime feed,
-compiler, wasi-sdk, wasm-tools, CLI and native support library, plus dependency
-notices. The build uses the SDK pinned by `global.json` to obtain the stock WASI
-build targets and repackages them under Isoplane-owned identities. Customer
-installation uses the customer's existing .NET SDK and preserves shell SDK
-selection. No Rust compiler or host Mono is required.
+`task release` packages prepared managed tools and the platform's native library
+with dependency notices. Linux and macOS use workload packs; Windows uses an MSI.
+Customer installation uses the customer's existing .NET SDK. No Rust compiler,
+WASI compiler or host Mono is required to build managed application packages.
 
 Run a generated app with `.isoplane-dev/cli/isoplane dev --project /path/to/app`.
 Project-generated caches, preparation state, and staging files live under the

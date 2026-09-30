@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
 # Remove inactive worktree build and test output.
 set -euo pipefail
-usage() { printf 'Usage: scripts/clean [--all] [--dry-run | --report]\nClean worktree output for this platform; other platforms are reported. Use --all to include every platform, shared artifacts and ignored legacy build outputs.\nStop builds and tests before cleanup. Saved deployments and release archives are retained.\n'; }
-for argument in "$@"; do
-  case "$argument" in
-    --all|--dry-run|--report) ;;
-    -h|--help) usage; exit 0 ;;
-    *) usage >&2; exit 2 ;;
-  esac
-done
-exec python3 "$(dirname "${BASH_SOURCE[0]}")/clean.py" "$@"
+exec task --dir "$(dirname "${BASH_SOURCE[0]}")/.." clean -- "$@"

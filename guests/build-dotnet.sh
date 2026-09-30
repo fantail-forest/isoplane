@@ -23,6 +23,6 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "$SELECTED" ]; then
-  exec python3 "$ROOT/../scripts/tasks.py" "fixtures:dotnet:$SELECTED"
+  exec task --dir "$ROOT/.." "fixtures:dotnet:$SELECTED"
 fi
-exec python3 "$ROOT/../scripts/tasks.py" fixtures:dotnet
+exec task --dir "$ROOT/.." fixtures:dotnet

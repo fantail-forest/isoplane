@@ -30,7 +30,7 @@ pub fn target_directory() -> &'static Path {
 fn read(path: &Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| {
         panic!(
-            "cannot read prepared fixture {} ({e}); run python3 scripts/tasks.py fixtures before cargo test",
+            "cannot read prepared fixture {} ({e}); run task fixtures before cargo test",
             path.display()
         )
     })

@@ -118,19 +118,6 @@ public sealed class ToolchainTests
     }
 
     [Fact]
-    public async Task Child_builds_preserve_sdk_selection_and_workload_discovery()
-    {
-        using var fixture = new ToolchainBundle();
-        var installed = await fixture.InstallAsync();
-        var start = new System.Diagnostics.ProcessStartInfo("dotnet");
-        start.Environment.Remove("ISOPLANE_GUEST_RUNTIME_FEED");
-        Toolchain.Apply(start, fixture.Home);
-        Assert.True(start.FileName == "dotnet", "publication must preserve the caller's SDK selection");
-        Assert.False(start.Environment.ContainsKey("ISOPLANE_GUEST_RUNTIME_FEED"), "CLI builds must discover the workload like ordinary dotnet builds");
-        Assert.True(start.Environment["PATH"]!.StartsWith(Path.Combine(installed, "bin"), StringComparison.Ordinal), "CLI tools must find the installed wasm-tools executable");
-    }
-
-    [Fact]
     public async Task A_toolchain_from_another_cli_release_is_refused_before_installation()
     {
         using var fixture = new ToolchainBundle();

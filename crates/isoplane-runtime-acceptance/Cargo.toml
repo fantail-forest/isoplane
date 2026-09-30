@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "isoplane-runtime-acceptance"
 version.workspace = true
 edition.workspace = true

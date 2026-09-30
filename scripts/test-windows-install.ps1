@@ -34,12 +34,13 @@ function Invoke-Dotnet {
     if ($LASTEXITCODE -ne 0) { throw "dotnet failed: $args (exit $LASTEXITCODE)" }
 }
 function Test-HttpGuest([string]$Profile, [string]$Configuration) {
-    Invoke-Dotnet run --project (Join-Path $workspace 'Consumer') --no-restore -- (Get-Location).Path $Cli $Configuration
+    Invoke-Dotnet run --project (Join-Path $workspace 'Consumer') --no-restore --disable-build-servers -- (Get-Location).Path $Cli $Configuration
     Write-Output "PASS: $Profile through the installed testing package"
 }
 
 try {
     Set-Location $workspace
+    Invoke-Dotnet new nugetconfig
     Invoke-Dotnet tool install Isoplane.Cli --tool-path $toolDirectory --add-source "$Release\packages" --version $manifest.packageVersion
     Invoke-Cli setup --source $Release --yes
     Invoke-Cli setup --source $Release --yes
@@ -73,13 +74,13 @@ throw new Exception("Disposal left the application listener running.");
 '@
     Invoke-Dotnet restore "$consumer/Consumer.csproj"
     Set-Location (Join-Path $workspace 'Sample')
-    Invoke-Dotnet build
+    Invoke-Dotnet build --disable-build-servers
     Test-HttpGuest Mono Debug
-    Invoke-Dotnet build -c Release
+    Invoke-Dotnet build -c Release --disable-build-servers
     Test-HttpGuest Release Release
-    Remove-Item "$sdk\bin\wasm-tools.exe"
+    Remove-Item "$sdk\cli\Isoplane.Cli.dll"
     Invoke-Cli setup --source $Release --yes
-    if (!(Test-Path "$sdk\bin\wasm-tools.exe")) { throw 'Repair did not restore the missing tool.' }
+    if (!(Test-Path "$sdk\cli\Isoplane.Cli.dll")) { throw 'Repair did not restore the missing tool.' }
     Set-Content "$sdk\customer-owned.txt" 'Customer content'
     Invoke-Cli uninstall-sdk
     if (Test-Path "$sdk\Sdk\Sdk.props") { throw 'Removal left the SDK installed.' }

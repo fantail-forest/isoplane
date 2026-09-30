@@ -1,57 +1,10 @@
-#!/usr/bin/env python3
-"""Run a local development command: scripts/dev [--container] [command ...]"""
-
-import os
-import shutil
-import subprocess
-from pathlib import Path
-import sys
-
-ROOT = Path(__file__).absolute().parent.parent
-
-
-def development_environment(root, inherited, tools=None):
-    environment = dict(inherited)
-    paths = []
-    sdk = tools / "dotnet" if tools is not None else None
-    if tools is not None:
-        paths.append(str(tools / "bin"))
-    if sdk is not None and (sdk / ("dotnet.exe" if os.name == "nt" else "dotnet")).is_file():
-        paths.append(str(sdk))
-        environment["DOTNET_ROOT"] = str(sdk)
-    wasi = Path(environment['ISOPLANE_RUNTIME_WORK']) / 'wasi-sdk'
-    if (wasi / "bin/clang").is_file():
-        environment.setdefault("WASI_SDK_PATH", str(wasi))
-    environment["PATH"] = os.pathsep.join([*paths, environment.get("PATH", os.defpath)])
-    return environment
-
-
-def main():
-    args = sys.argv[1:]
-    if args and args[0] == "--container":
-        os.execv(str(ROOT / "scripts/dev-container"), ["dev-container", *args[1:]])
-    if args and args[0] in ("--help", "-h"):
-        print(__doc__)
-        print("Commands inherit your environment and run in the repository root.")
-        return
-    if args and args[0] == "--":
-        args.pop(0)
-    args = args or [os.environ.get("SHELL", "/bin/bash")]
-    os.chdir(ROOT)
-    import dev_tools
-    name, _, _ = dev_tools.identity(ROOT)
-    with dev_tools.storage.product(name, root=dev_tools.storage.tools_root(), read_only=True) as tools:
-        with dev_tools.storage.development(ROOT, os.environ) as environment:
-            if tools is not None:
-                environment['ISOPLANE_DEV_TOOLS'] = str(tools)
-            environment = development_environment(ROOT, environment, tools)
-            if os.name == "nt" and args[0] == "bash":
-                bash = shutil.which("bash") or "C:/msys64/usr/bin/bash.exe"
-                environment.update(MSYSTEM="MINGW64", MSYS2_PATH_TYPE="inherit", CHERE_INVOKING="1")
-                args = [bash, "-lc", 'exec bash "$@"', "isoplane-fixture",
-                        *[arg.replace("\\", "/") for arg in args[1:]]]
-            return subprocess.call(args, env=environment)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+#!/usr/bin/env bash
+# Run a command in the worktree's development environment.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "${1:-}" = --container ]; then
+  shift
+  exec "$root/scripts/dev-container" "$@"
+fi
+cd "$root"
+exec task exec -- "$@"

@@ -22,9 +22,9 @@ fi
 OUT="${ISOPLANE_OUT_DIR:-$HERE/out}"
 NAME="${ISOPLANE_OUT:-}"
 
-# Build the managed validator separately from any parent Cargo invocation.
+# Task prepares the validator before runtime compilation.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ISOPLANE_CLI_ASSEMBLY="${ISOPLANE_CLI_ASSEMBLY:-$(python3 "$ROOT/scripts/fixture-tools.py" isoplane-cli "$ROOT")}"
+ISOPLANE_CLI_ASSEMBLY="${ISOPLANE_CLI_ASSEMBLY:?Run task fixtures:package:runtime to prepare the runtime build}"
 
 echo "==> dotnet publish (C# -> wasm32 core module)"
 mkdir -p "$HERE/obj"
@@ -34,7 +34,13 @@ trap 'rm -rf "$PUBLISH"; if [ -n "$PENDING" ]; then rm -f "$PENDING"; fi' EXIT
 dotnet publish "$CSPROJ" -c Release --disable-build-servers -o "$PUBLISH" "-p:IsoplaneCliAssembly=$ISOPLANE_CLI_ASSEMBLY" "$@"
 
 mkdir -p "$OUT"
-PUBLISHED=$(python3 "$ROOT/scripts/fixture-tools.py" published-guest "$PUBLISH")
+shopt -s nullglob
+modules=("$PUBLISH"/*.wasm)
+[ "${#modules[@]}" = 1 ] && [ -s "${modules[0]}.runtime" ] || {
+  echo "Expected one published WASM module with runtime provenance in $PUBLISH" >&2
+  exit 1
+}
+PUBLISHED="${modules[0]}"
 : "${NAME:=$(basename "$PUBLISHED" .wasm)}"
 # A publish records the pack it linked beside the module; the sidecar
 # travels with the module so a test can attribute its result.

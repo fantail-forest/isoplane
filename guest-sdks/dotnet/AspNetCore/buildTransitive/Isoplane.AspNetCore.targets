@@ -1,18 +1,4 @@
 <Project>
   <PropertyGroup><_IsoplaneAspNetCoreTargetsImported>true</_IsoplaneAspNetCoreTargetsImported></PropertyGroup>
   <Import Project="Isoplane.AspNetCore.Framework.targets" />
-  <Target Name="IsoplaneGenerateAspNetCoreEntrypoint" BeforeTargets="CoreCompile" Condition="'$(IsoplaneManagedBundleBuild)' != 'true'">
-    <Error Condition="'$(IsoplaneApplicationFactory)' == ''" Code="ISOPLANE0079"
-           Text="Set IsoplaneApplicationFactory to the fully qualified static method that builds and returns your WebApplication, for example MyApp.Application.Create." />
-    <PropertyGroup>
-      <_IsoplaneEntrypoint>$(IntermediateOutputPath)Isoplane.AspNetCore.g.cs</_IsoplaneEntrypoint>
-      <_IsoplaneEntrypointSource><![CDATA[
-#nullable enable
-internal sealed class IsoplaneGeneratedRouter() : Isoplane.AspNetCore.WebApplicationRouter(global::$(IsoplaneApplicationFactory));
-]]></_IsoplaneEntrypointSource>
-    </PropertyGroup>
-    <WriteLinesToFile File="$(_IsoplaneEntrypoint)" Lines="$([MSBuild]::Escape($(_IsoplaneEntrypointSource)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
-    <ItemGroup><Compile Include="$(_IsoplaneEntrypoint)" /></ItemGroup>
-  </Target>
-  <Import Project="../tools/Build/Isoplane.Exports.targets" Condition="'$(IsoplaneManagedBundleBuild)' != 'true'" />
 </Project>

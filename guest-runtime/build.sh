@@ -9,10 +9,10 @@ if command -v cygpath >/dev/null 2>&1; then
   HERE="$(cygpath -m "$HERE")"
 fi
 if [ "${1:-}" != --compile ]; then
-  if [ "$#" = 0 ]; then exec python3 "$HERE/../scripts/tasks.py" runtime; fi
+  if [ "$#" = 0 ]; then exec task --dir "$HERE/.." runtime; fi
   tasks=()
   for stage in "$@"; do tasks+=("runtime:$stage"); done
-  exec python3 "$HERE/../scripts/tasks.py" "${tasks[@]}"
+  exec task --dir "$HERE/.." "${tasks[@]}"
 fi
 shift
 # shellcheck source=manifest.env
@@ -42,7 +42,13 @@ LOGS="$WORK/logs"
 mkdir -p "$DOWNLOADS" "$LOGS" "$OUT"
 
 fetch() {
-  python3 "$HERE/../scripts/build_storage.py" "$1" "$3" "$2"
+  local url="$1" checksum="$2" destination="$3"
+  if [ -f "$destination" ] && printf '%s  %s\n' "$checksum" "$destination" | sha256sum --check --status; then
+    return
+  fi
+  curl --fail --location --retry 3 --output "$destination.part" "$url"
+  printf '%s  %s\n' "$checksum" "$destination.part" | sha256sum --check
+  mv "$destination.part" "$destination"
 }
 
 verify_archive() {
@@ -141,11 +147,6 @@ require_build_inputs() {
   [ -f "$ICU_MONO_NATIVE/lib/icudt.dat" ]
   [ -x "$WASI_SDK/bin/clang" ]
 }
-# A managed P/Invoke whose wasm signature disagrees with its C prototype
-# traps on the first call; the audit refuses to build such a pack.
-audit_pinvokes() {
-  python3 "$HERE/audit-pinvokes.py" "$1"
-}
 openssl_cmake_args() {
   local root="$OUT/openssl" cache="$WORK/$(basename "$PWD")-openssl.cmake"
   if [ "$BUILD_HOST" = windows ]; then root="$(cygpath -m "$root")"; fi
@@ -181,7 +182,6 @@ build_runtime() {
 stage_runtime() {
   echo "==> runtime (log: $LOGS/runtime-build.log)"
   require_build_inputs
-  audit_pinvokes "$RUNTIME"
   stamp_pack_version "$runtime_version_file"
   # Official versioning keeps the upstream assembly versions instead of dev versions.
   (

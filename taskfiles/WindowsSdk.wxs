@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="$(var.ProductCode)" Name="Isoplane SDK $(var.Version)" Language="1033" Version="$(var.NumericVersion)" Manufacturer="Isoplane" UpgradeCode="9FAE432C-AD48-44B7-81B0-12FECF1E3EE1">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <Media Id="1" Cabinet="sdk.cab" EmbedCab="yes" />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="Isoplane" Name="Isoplane">
+          <Directory Id="Sdk" Name="SDK">
+            <Directory Id="INSTALLDIR" Name="$(var.Version)" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id="Sdk" Title="Isoplane SDK" Level="1">
+      <ComponentGroupRef Id="Payload" />
+    </Feature>
+  </Product>
+</Wix>

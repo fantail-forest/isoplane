@@ -6,7 +6,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-TOOLS="$ROOT/scripts/fixture-tools.py"
 
 COMPILE=0
 FIXTURE=""
@@ -25,7 +24,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 if [ "$COMPILE" = 0 ]; then
-  exec python3 "$ROOT/scripts/tasks.py" "fixtures:package${FIXTURE:+:$FIXTURE}"
+  exec task --dir "$ROOT" "fixtures:package${FIXTURE:+:$FIXTURE}"
 fi
 
 FEED="${ISOPLANE_GUEST_RUNTIME_FEED:-${ISOPLANE_TEST_RUNTIME_FEED:-$ROOT/.build/wasm32/runtime/feed}}"
@@ -39,7 +38,7 @@ SDK="$ROOT/guest-sdks/dotnet"
 if [ "$FIXTURE" = runtime ]; then
   OUT="$RUNTIME_OUTPUT/Isoplane.MonoRuntime.wasm"
   DEBUG="$RUNTIME_OUTPUT/Isoplane.MonoRuntime.Debug.wasm"
-  python3 "$TOOLS" require-linux
+  [ "$(uname -s)" = Linux ] || { echo "Build shared fixtures on Linux first." >&2; exit 1; }
   "$SDK/MonoRuntime/build.sh" --output "$RUNTIME_OUTPUT"
 
 else
@@ -47,7 +46,7 @@ else
   # these packages run on the fixture runtime.
   export ISOPLANE_RUNTIME_DIRECTORY="$RUNTIME_OUTPUT"
   OUT="$PACKAGE_OUTPUT/$FIXTURE"
-  python3 "$TOOLS" require-linux
-  python3 "$TOOLS" output-directory "$ROOT" clr-anycpu package-fixtures >/dev/null
+  [ "$(uname -s)" = Linux ] || { echo "Build shared fixtures on Linux first." >&2; exit 1; }
+  mkdir -p "$PACKAGE_OUTPUT"
   dotnet "${ISOPLANE_CLI:?Task must supply the staged CLI}" bundle --project "$HERE/$FIXTURE" --output "$OUT.tar"
 fi

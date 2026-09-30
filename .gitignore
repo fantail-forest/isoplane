@@ -76,3 +76,6 @@ handoffs/
 /.build/
 /.artifacts/
 /.test-runs/
+
+# Task source fingerprints.
+/.task/

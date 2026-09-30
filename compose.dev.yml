@@ -1,0 +1,31 @@
+services:
+  toolchain:
+    image: isoplane-dev:${DEV_UID}
+    build:
+      context: .
+      args:
+        HOST_UID: ${DEV_UID}
+        HOST_GID: ${DEV_GID}
+    user: ${DEV_UID}:${DEV_GID}
+    working_dir: ${DEV_ROOT}
+    init: true
+    environment:
+      HOME: /tmp/home
+      DOTNET_ROOT: /usr/share/dotnet
+      CARGO_HOME: /opt/cargo
+      NUGET_PACKAGES: /nuget
+      NUGET_SCRATCH: /nuget/.scratch
+    volumes:
+      - ${DEV_ROOT}:${DEV_ROOT}
+      - ${DEV_GIT}:${DEV_GIT}
+      - cargo-registry:/opt/cargo/registry
+      - cargo-git:/opt/cargo/git
+      - nuget:/nuget
+
+volumes:
+  cargo-registry:
+    name: isoplane-cargo-${DEV_UID}
+  cargo-git:
+    name: isoplane-cargo-git-${DEV_UID}
+  nuget:
+    name: isoplane-nuget-${DEV_UID}

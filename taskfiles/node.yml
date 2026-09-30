@@ -1,0 +1,56 @@
+version: '3'
+
+vars:
+  ARCHIVE: '{{.ROOT_DIR}}/.build/releases/isoplane-node.tar'
+  METADATA: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/node-package'
+
+tasks:
+  package:
+    desc: Package qualified node binaries and runtime directories without copying their payloads
+    platforms: [linux]
+    requires:
+      vars: [BINARIES, RUNTIMES]
+    preconditions:
+      - sh: 'test ! -e "{{.ARCHIVE}}.gz" && test ! -e "{{.ARCHIVE}}"'
+        msg: Choose a new ARCHIVE path; packaged releases are retained.
+    cmds:
+      - defer: 'rm -rf "{{.METADATA}}"; rm -f "{{.ARCHIVE}}"'
+      - 'mkdir -p "{{.METADATA}}/runtimes" "{{dir .ARCHIVE}}"'
+      - 'tar -cf "{{.ARCHIVE}}" -C "{{.BINARIES}}" isoplaned -C "{{.ROOT_DIR}}/deploy/local" isoplaned.service install-node.sh'
+      - 'sha256sum "{{.BINARIES}}/isoplaned" | sed "s|  .*|  isoplaned|" > "{{.METADATA}}/SHA256SUMS"'
+      - 'cd deploy/local && sha256sum isoplaned.service install-node.sh >> "{{.METADATA}}/SHA256SUMS"'
+      - for: {var: RUNTIMES}
+        task: runtime
+        vars: {DIRECTORY: '{{.ITEM}}'}
+      - 'jq -s ''{sdkVersions: sort}'' "{{.METADATA}}/versions.json" > "{{.METADATA}}/runtimes/inventory.json"'
+      - 'cd "{{.METADATA}}" && sha256sum runtimes/inventory.json >> SHA256SUMS'
+      - 'tar -rf "{{.ARCHIVE}}" -C "{{.METADATA}}" SHA256SUMS runtimes/inventory.json'
+      - 'gzip "{{.ARCHIVE}}"'
+      - 'cd "{{dir .ARCHIVE}}" && sha256sum "{{base .ARCHIVE}}.gz" > "{{base .ARCHIVE}}.gz.sha256"'
+
+  runtime:
+    internal: true
+    cmds:
+      - |
+        set -eu
+        version=$(jq -er '.sdkVersion | select(test("^[0-9]+[.][0-9]+[.][0-9]+(-[A-Za-z0-9.-]+)?$"))' "{{.DIRECTORY}}/runtime.json")
+        jq '.sdkVersion' "{{.DIRECTORY}}/runtime.json" >> "{{.METADATA}}/versions.json"
+        cd "{{.DIRECTORY}}"
+        jq -r '.modules["Isoplane.MonoRuntime.wasm"].sha256 + "  Isoplane.MonoRuntime.wasm"' runtime.json | sha256sum --check
+        sha256sum Isoplane.MonoRuntime.wasm runtime.json | sed "s|  |  runtimes/$version/|" >> "{{.METADATA}}/SHA256SUMS"
+        tar -rf "{{.ARCHIVE}}" --transform "s|^|runtimes/$version/|" Isoplane.MonoRuntime.wasm runtime.json
+
+  runtimes:
+    platforms: [linux]
+    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:verify-selected{{else}}fixtures:package:runtime{{end}}']
+    vars:
+      DIRECTORY: '{{.ROOT_DIR}}/.build/linux-x64/node-runtimes'
+    sources: ['{{.MODULES}}/runtime.json', '{{.ROOT_DIR}}/taskfiles/node.yml']
+    generates: ['{{.DIRECTORY}}/inventory.json']
+    cmds:
+      - |
+        set -eu
+        version=$(jq -er '.sdkVersion' "{{.MODULES}}/runtime.json")
+        mkdir -p "{{.DIRECTORY}}"
+        ln -sfn "{{.MODULES}}" "{{.DIRECTORY}}/$version"
+        jq '{sdkVersions: [.sdkVersion]}' "{{.MODULES}}/runtime.json" > "{{.DIRECTORY}}/inventory.json"

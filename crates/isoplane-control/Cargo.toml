@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "isoplane-control"
 version.workspace = true
 edition.workspace = true

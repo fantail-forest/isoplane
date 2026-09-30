@@ -13,15 +13,11 @@
     <InternalsVisibleTo Include="Isoplane.AspNetCore.Tests" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Isoplane.Sdk.csproj" />
-    <!-- The reference's built output becomes the packed task assembly, so the pack ships what this build produced. -->
     <ProjectReference Include="../Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained"
-                      OutputItemType="None" Pack="true" PackagePath="tools/Conformance/" />
+                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;PublishAot;SelfContained" />
     <None Update="README.md" Pack="true" PackagePath="/" />
     <None Include="Sdk/**" Exclude="Sdk/Sdk.props" Pack="true" PackagePath="Sdk/" />
-    <None Include="../Isoplane.Guest.props;../Isoplane.Guest.targets" Pack="true" PackagePath="tools/" />
-    <None Include="../Build/**" Exclude="../Build/**/obj/**;../Build/**/bin/**" Pack="true" PackagePath="tools/Build/" />
-    <None Include="../native/**" Pack="true" PackagePath="tools/native/" />
+    <None Include="../Build/Isoplane.ManagedBundle.*;../Build/Isoplane.Conformance.targets;../Build/Isoplane.Run.targets" Pack="true" PackagePath="tools/Build/" />
     <None Include="buildTransitive/**" Pack="true" PackagePath="buildTransitive/" />
   </ItemGroup>
   <Target Name="StampPackagedSdkVersion" BeforeTargets="_GetPackageFiles">
@@ -37,4 +33,5 @@
     </ItemGroup>
   </Target>
   <Import Project="../../../licenses/SdkPackage.props" />
+  <Import Project="../Conformance/Pack.targets" />
 </Project>

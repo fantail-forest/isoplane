@@ -14,6 +14,7 @@ tasks:
 
   build:
     run: once
+    deps: [":initialize", ":setup:workload"]
     sources:
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/src/**/*'
       - '{{.ROOT_DIR}}/vendor/dotnet-runtime/eng/**/*'
@@ -35,10 +36,10 @@ tasks:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.*.nupkg'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.*.nupkg'
     cmds:
-      - '"{{.PYTHON}}" scripts/fixture-tools.py require-linux'
+      - 'test "{{OS}}" = linux || { echo "Run task runtime on Linux first." >&2; exit 1; }'
       - task: toolchain
       - task: dependencies
-      - 'ISOPLANE_RUNTIME_INPUTS="{{.CHECKSUM}}" "{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile runtime feed'
+      - 'ISOPLANE_RUNTIME_INPUTS="{{.CHECKSUM}}" bash guest-runtime/build.sh --compile runtime feed'
 
   runtime:
     cmds:
@@ -53,8 +54,9 @@ tasks:
     deps: [openssl, icu]
 
   acquire:
+    deps: [':initialize']
     cmds:
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile acquire'
+      - 'bash guest-runtime/build.sh --compile acquire'
 
   toolchain:
     run: once
@@ -66,7 +68,7 @@ tasks:
       - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work/wasi-sdk/VERSION'
     cmds:
       - task: acquire
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile toolchain'
+      - 'bash guest-runtime/build.sh --compile toolchain'
 
   openssl:
     run: once
@@ -79,7 +81,7 @@ tasks:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libcrypto.a'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/openssl/lib/libssl.a'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile openssl'
+      - 'bash guest-runtime/build.sh --compile openssl'
 
   icu:
     run: once
@@ -91,4 +93,4 @@ tasks:
     generates:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/icu/mono/runtimes/wasi-wasm/native/lib/icudt.dat'
     cmds:
-      - '"{{.PYTHON}}" scripts/dev bash guest-runtime/build.sh --compile icu'
+      - 'bash guest-runtime/build.sh --compile icu'

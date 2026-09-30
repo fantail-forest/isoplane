@@ -10,28 +10,21 @@
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Linux'))">libisoplane_native.so</NativeLibraryName>
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libisoplane_native.dylib</NativeLibraryName>
     <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Windows'))">isoplane_native.dll</NativeLibraryName>
-    <NativeProfile Condition="'$(Configuration)' == 'Debug'">debug</NativeProfile>
-    <NativeProfile Condition="'$(NativeProfile)' == ''">release</NativeProfile>
-    <NativeBuildPython Condition="$([MSBuild]::IsOSPlatform('Windows'))">python</NativeBuildPython>
-    <NativeBuildPython Condition="'$(NativeBuildPython)' == ''">python3</NativeBuildPython>
-    <BuildNativeSupport Condition="'$(IsoplaneNativePath)' == ''">true</BuildNativeSupport>
   </PropertyGroup>
+  <Import Project="../../taskfiles/NativeAssets.props" />
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="@(IsoplaneNativeAsset)" Pack="true" PackagePath="runtimes/%(RuntimeIdentifier)/native/" />
     <InternalsVisibleTo Include="Isoplane.Cli" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
     <InternalsVisibleTo Include="Isoplane.Testing" />
     <InternalsVisibleTo Include="Isoplane.Testing.Tests" />
   </ItemGroup>
-  <Target Name="RequireNativeLibrary" BeforeTargets="PrepareForBuild;_GetPackageFiles" Condition="'$(IsoplaneManagedOnly)' != 'true'">
-    <Exec Condition="'$(BuildNativeSupport)' == 'true'" Command="$(NativeBuildPython) &quot;$(MSBuildThisFileDirectory)../../scripts/fixture-tools.py&quot; isoplane-native &quot;$(MSBuildThisFileDirectory)../..&quot; $(NativeProfile)" ConsoleToMSBuild="true" StandardOutputImportance="Low">
-      <Output TaskParameter="ConsoleOutput" PropertyName="IsoplaneNativePath" />
-    </Exec>
+  <Target Name="RequireNativeLibrary" BeforeTargets="PrepareForBuild;_GetPackageFiles" Condition="'$(IsoplaneManagedOnly)' != 'true' AND '$(IsoplaneNativeRoot)' == ''">
+    <Error Condition="!Exists('$(IsoplaneNativePath)')" Text="Run task native, then supply -p:IsoplaneNativePath with the prepared library, or use task cli." />
     <ItemGroup>
       <None Include="$(IsoplaneNativePath)" Link="runtime/$(NativeLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-      <None Include="$(IsoplaneNativePath)" Pack="true" PackagePath="runtimes/$(NETCoreSdkPortableRuntimeIdentifier)/native/$(NativeLibraryName)" Visible="false" />
     </ItemGroup>
-    <Error Condition="!Exists('$(IsoplaneNativePath)')" Text="Build isoplane-native with cargo build -p isoplane-native, or set IsoplaneNativePath to its built library." />
   </Target>
   <Import Project="../../licenses/SdkPackage.props" />
 </Project>

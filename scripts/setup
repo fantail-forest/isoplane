@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
-# Install the pinned development SDK and native helpers for this host.
+# Bootstrap Task, then install the repository's development tools.
 set -euo pipefail
-exec python3 "$(dirname "${BASH_SOURCE[0]}")/dev_tools.py"
+if ! command -v task >/dev/null; then
+  curl --fail --location https://taskfile.dev/install.sh | sh -s -- -b "$HOME/.local/bin" v3.53.1
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+exec task setup

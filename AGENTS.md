@@ -62,7 +62,7 @@ cargo metadata --no-deps --format-version 1 \
 
 ```sh
 scripts/setup                                     # Initialize submodules and install Task/native tools
-python3 scripts/tasks.py --list                    # List build and release tasks
+task --list                    # List build and release tasks
 scripts/dev <command>                              # Run a native development command
 scripts/dev                                       # A development shell
 scripts/dev --container --build                    # Optional Linux toolchain image
@@ -72,7 +72,7 @@ cargo build --workspace --all-targets              # Build crates, tests, exampl
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check && (cd guests && cargo fmt --all --check)   # The format gate
 
-python3 scripts/tasks.py test -- --exclude-binary isoplane-native/release_journey # Rust suite, parallel binaries
+task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls # Rust suite without the installation journey
 cargo test --workspace                             # Requires a prepared release for the installation journey
 cargo test -p isoplane-host                            # One crate
 cargo test -p isoplane-host --test cell                # One integration test binary

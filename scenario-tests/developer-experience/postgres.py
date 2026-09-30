@@ -1,8 +1,7 @@
 """Exercise installed tools, User Secrets and verified-TLS PostgreSQL."""
 
 import argparse
-import importlib.util
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 from pathlib import Path
@@ -19,9 +18,6 @@ import os
 import sys
 
 
-STORAGE_SPEC = importlib.util.spec_from_file_location("build_storage", Path(__file__).resolve().parents[2] / "scripts/build_storage.py")
-storage = importlib.util.module_from_spec(STORAGE_SPEC)
-STORAGE_SPEC.loader.exec_module(storage)
 
 
 def command(arguments, *, env=None, cwd=None, data=None, timeout=120):
@@ -158,13 +154,19 @@ def main():
     parser.add_argument('--sample', type=Path, default=Path(__file__).resolve().parents[2] / 'samples/aspnet-todo')
     parser.add_argument('--configuration', action='append', choices=['Debug', 'Release'])
     arguments = parser.parse_args()
-    with storage.records(arguments.records) as records:
+    scratch = Path(__file__).resolve().parents[2] / '.test-runs/postgres'
+    scratch.mkdir(parents=True, exist_ok=True)
+    context = (nullcontext(arguments.records) if arguments.records else
+               tempfile.TemporaryDirectory(prefix='run-', dir=scratch))
+    with context as temporary:
+        records = Path(temporary)
+        records.mkdir(parents=True, exist_ok=True)
         execute(arguments, records)
 
 
 def execute(arguments, records):
     print(f'Records: {records}', flush=True)
-    with tempfile.TemporaryDirectory(prefix='isoplane-dx-postgres-') as work:
+    with tempfile.TemporaryDirectory(prefix='application-', dir=records) as work:
         directory = Path(work)
         project = directory / 'app'
         shutil.copytree(arguments.sample, project, ignore=shutil.ignore_patterns('bin', 'obj', 'out'))

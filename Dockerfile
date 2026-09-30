@@ -30,7 +30,7 @@ RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
     && /tmp/dotnet-install.sh --version "$(jq -er .sdk.version /tmp/isoplane-global.json)" --install-dir /usr/share/dotnet \
     && rm /tmp/dotnet-install.sh /tmp/isoplane-global.json \
     && ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
-    && dotnet --info | head -5
+    && dotnet workload install wasi-experimental --skip-manifest-update
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
@@ -56,17 +56,16 @@ RUN case "$TARGETARCH" in \
     && /opt/wasi-sdk/bin/clang --version
 ENV WASI_SDK_PATH=/opt/wasi-sdk
 
-COPY scripts/dev_tools.py scripts/build_storage.py /opt/isoplane-tool-setup/
-RUN PYTHONPATH=/opt/isoplane-tool-setup python3 -c 'from pathlib import Path; import dev_tools; dev_tools.install_task(Path("/opt/isoplane-tool-setup"))' \
-    && mv /root/.local/bin/task /usr/local/bin/task \
-    && rm -rf /opt/isoplane-tool-setup
+RUN curl -fLsS -o /tmp/install-task.sh https://taskfile.dev/install.sh \
+    && sh /tmp/install-task.sh -b /usr/local/bin v3.53.1 \
+    && rm /tmp/install-task.sh
 
 # Cache volumes are writable by the invoking host user.
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 RUN (getent group ${HOST_GID} >/dev/null || groupadd --gid ${HOST_GID} isoplane) \
     && (getent passwd ${HOST_UID} >/dev/null || useradd --uid ${HOST_UID} --gid ${HOST_GID} --home-dir /tmp/home --no-create-home isoplane) \
-    && mkdir -p /opt/cargo /opt/cargo/registry /nuget /tmp/home \
+    && mkdir -p /opt/cargo /opt/cargo/registry /opt/cargo/git /nuget /tmp/home \
     && chown -R ${HOST_UID}:${HOST_GID} /opt/cargo /nuget /tmp/home \
     && chmod -R u+rwX /opt/cargo /nuget
 

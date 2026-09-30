@@ -2,7 +2,6 @@
 """Download and verify a publication manifest and its canonical NuGet packages."""
 import argparse
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import re
@@ -21,10 +20,8 @@ def require(condition, message):
 
 
 def package_ids():
-    spec = importlib.util.spec_from_file_location('preview', Path(__file__).with_name('build-preview.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return tuple(module.PROJECTS)
+    return ('Isoplane.Sdk', 'Isoplane.AspNetCore', 'Isoplane.Templates',
+            'Isoplane.Native', 'Isoplane.Testing', 'Isoplane.Cli')
 
 
 def digest(value):
