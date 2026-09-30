@@ -1,27 +1,60 @@
 version: '3'
 
 tasks:
-  selected:
+  default:
+    desc: Prepare the shared runtime, or use explicitly selected modules
     run: once
     cmds:
-      - task: '{{if or .ISOPLANE_TEST_RUNTIME_FEED (ne OS "linux")}}feed{{else}}build{{end}}'
+      - task: '{{if .ISOPLANE_TEST_RUNTIME_MODULES}}modules:available{{else}}modules{{end}}'
 
-  feed:
+  modules:
+    desc: Build the shared production and debug WASM runtime modules on Linux
+    run: once
+    deps: [compiler:selected]
+    env:
+      ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
+      ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
+    sources:
+      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
+      - '{{.ROOT_DIR}}/global.json'
+      - '{{.ROOT_DIR}}/nuget.config'
+      - '{{.FEED}}/Isoplane.GuestRuntime.props'
+      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
+      - exclude: 'guests/**/{obj,bin,out,__pycache__}/**/*'
+      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
+    generates:
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.wasm'
+      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.Debug.wasm'
+      - '{{.MODULES}}/runtime.json'
+    cmds:
+      - 'test "{{OS}}" = linux || { echo "Run task runtime:modules on Linux first." >&2; exit 1; }'
+      - task: ':cli'
+      - '"{{.PYTHON}}" guest-runtime/feed-identity.py verify-artifact "{{.FEED}}"'
+      - 'bash guest-sdks/dotnet/MonoRuntime/build.sh --output "{{.MODULES}}"'
+
+  compiler:selected:
+    run: once
+    cmds:
+      - task: '{{if or .ISOPLANE_TEST_RUNTIME_FEED (ne OS "linux")}}compiler:available{{else}}compiler{{end}}'
+
+  compiler:available:
     internal: true
     preconditions:
-      - msg: Prepare the compiler feed with task runtime on Linux.
+      - msg: Prepare the compiler feed with task runtime:compiler on Linux.
         sh: 'test -f "{{.FEED}}/Isoplane.GuestRuntime.props"'
     cmds: []
 
-  modules:
+  modules:available:
     internal: true
     run: once
     preconditions:
-      - msg: Prepare the shared runtime with task fixtures:package:runtime on Linux.
+      - msg: Prepare the shared runtime with task runtime:modules on Linux.
         sh: 'test -f "{{.MODULES}}/runtime.json" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.wasm" && test -f "{{.MODULES}}/Isoplane.MonoRuntime.Debug.wasm"'
     cmds: []
 
-  build:
+  compiler:
+    desc: Build the Mono compiler packages on Linux
     run: once
     deps: [":initialize", ":setup:workload"]
     sources:
@@ -45,18 +78,10 @@ tasks:
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NETCore.App.Runtime.Mono.wasi-wasm.*.nupkg'
       - '{{.ROOT_DIR}}/.build/wasm32/runtime/feed/Microsoft.NET.Runtime.WebAssembly.Wasi.Sdk.*.nupkg'
     cmds:
-      - 'test "{{OS}}" = linux || { echo "Run task runtime on Linux first." >&2; exit 1; }'
+      - 'test "{{OS}}" = linux || { echo "Run task runtime:compiler on Linux first." >&2; exit 1; }'
       - task: toolchain
       - task: dependencies
       - 'ISOPLANE_RUNTIME_INPUTS="{{.CHECKSUM}}" bash guest-runtime/build.sh --compile runtime feed'
-
-  runtime:
-    cmds:
-      - task: build
-
-  feed:
-    cmds:
-      - task: build
 
   dependencies:
     internal: true

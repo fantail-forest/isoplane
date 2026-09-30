@@ -23,7 +23,7 @@ tasks:
     desc: Prepare a reusable scenario application (SAMPLE and CONFIGURATION)
     deps:
       - ':cli'
-      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}'
+      - ':runtime'
     requires:
       vars:
         - name: SAMPLE

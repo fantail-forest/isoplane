@@ -37,9 +37,6 @@ tasks:
       - '"{{.DOTNET}}" build Isoplane.Build.slnf -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
       - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli/Isoplane.Cli.csproj -t:Publish,GenerateToolsSettingsFileFromBuildProperty -p:Configuration=Release -p:NoBuild=true -p:ArtifactsPath="{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
 
-  cli:
-    deps: [build]
-
   tests:
     run: once
     desc: Build managed test assemblies on Linux
@@ -52,15 +49,12 @@ tasks:
       - 'test "{{OS}}" = linux || { echo "Run task managed:tests on Linux first." >&2; exit 1; }'
       - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
 
-  debugger:
-    deps: [tests]
-
   packages:
     run: once
     desc: Pack the prepared managed assemblies and shared runtime
     deps:
       - build
-      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}'
+      - ':runtime'
     sources:
       - '{{.MANAGED}}/bin/{Isoplane.Sdk,Isoplane.AspNetCore,Isoplane.Templates,Isoplane.Testing,Conformance}/release/*'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/Build/**/*'

@@ -27,7 +27,7 @@ if mode == "protocol":
     root = Path(__file__).resolve().parents[4]
     driver = root / ".build/clr-anycpu/managed/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll"
     if not driver.is_file():
-        sys.exit("Missing debugger protocol driver; run task managed:debugger before testing.")
+        sys.exit("Missing debugger protocol driver; run task managed:tests before testing.")
     sys.exit(subprocess.run(["dotnet", driver, endpoint, url], timeout=240).returncode)
 scenario = {"features": debug_features, "watchpoints": debug_watchpoints, "library": debug_library, "async-stack": debug_async_stack}.get(mode)
 adapter = subprocess.Popen([launcher, "debug-adapter"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)

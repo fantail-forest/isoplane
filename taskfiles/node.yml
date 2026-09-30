@@ -42,7 +42,7 @@ tasks:
 
   runtimes:
     platforms: [linux]
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
+    deps: [':runtime']
     vars:
       DIRECTORY: '{{.ROOT_DIR}}/.build/linux-x64/node-runtimes'
     sources: ['{{.MODULES}}/runtime.json', '{{.ROOT_DIR}}/taskfiles/node.yml']

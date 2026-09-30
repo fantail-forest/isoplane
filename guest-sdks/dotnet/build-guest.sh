@@ -24,7 +24,7 @@ NAME="${ISOPLANE_OUT:-}"
 
 # Task prepares the validator before runtime compilation.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ISOPLANE_CLI_ASSEMBLY="${ISOPLANE_CLI_ASSEMBLY:?Run task fixtures:package:runtime to prepare the runtime build}"
+ISOPLANE_CLI_ASSEMBLY="${ISOPLANE_CLI_ASSEMBLY:?Run task runtime:modules to prepare the runtime build}"
 
 echo "==> dotnet publish (C# -> wasm32 core module)"
 mkdir -p "$HERE/obj"

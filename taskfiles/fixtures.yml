@@ -1,6 +1,38 @@
 version: '3'
 
 tasks:
+  default:
+    desc: Prepare shared fixtures before running tests
+    deps: [':node:runtimes', ':fixtures:rust', ':fixtures:dotnet', ':fixtures:acceptance', ':fixtures:package', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed']
+
+  rust:
+    desc: Build portable Rust WASM fixtures
+    deps: [':initialize']
+    sources:
+      - guests/**/*.rs
+      - guests/**/Cargo.toml
+      - guests/Cargo.lock
+      - guests/.cargo/**/*
+      - guest-sdks/rust/**/*.rs
+      - guest-sdks/rust/**/Cargo.toml
+      - crates/isoplane-abi/**/*
+      - guests/build.sh
+    generates:
+      - .build/wasm32/rust-guests/manifest
+      - .build/wasm32/rust-guests/hello.wasm
+      - .build/wasm32/rust-guests/quotes-api.wasm
+      - .build/wasm32/rust-guests/misbehaver.wasm
+      - .build/wasm32/rust-guests/bigheap.wasm
+      - .build/wasm32/rust-guests/impure-cctor.wasm
+      - .build/wasm32/rust-guests/undeclared-import.wasm
+      - .build/wasm32/rust-guests/foreign-module.wasm
+    cmds:
+      - 'bash guests/build.sh --compile'
+
+  feed:
+    run: once
+    deps: [':managed:packages', ':managed:native-packages']
+
   dotnet:
     deps:
       - task: dotnet:isoplane_guest_dotnet_activation
@@ -173,37 +205,11 @@ tasks:
 
   package:
     deps:
-      - task: package:runtime
       - task: package:alpha
       - task: package:beta
       - task: package:native
       - task: package:web
       - task: package:diagnostics
-
-  package:runtime:
-    run: once
-    deps: [":runtime:selected"]
-    env:
-      ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
-      ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
-    sources:
-      - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
-      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*'
-      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/build.sh'
-      - '{{.ROOT_DIR}}/global.json'
-      - '{{.ROOT_DIR}}/nuget.config'
-      - '{{.FEED}}/Isoplane.GuestRuntime.props'
-      - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
-      - exclude: 'guests/**/{obj,bin,out,__pycache__}/**/*'
-      - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
-    generates:
-      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.wasm'
-      - '{{.ROOT_DIR}}/.build/wasm32/runtime-modules/Isoplane.MonoRuntime.Debug.wasm'
-      - '{{.MODULES}}/runtime.json'
-    cmds:
-      - 'test "{{OS}}" = linux || { echo "Run task fixtures:package:runtime on Linux first." >&2; exit 1; }'
-      - task: ':cli'
-      - 'bash guest-runtime/tests/packages/build.sh --compile --fixture runtime'
 
   package:build:
     deps: [":cli"]
@@ -232,35 +238,35 @@ tasks:
       - 'bash guest-runtime/tests/packages/build.sh --compile --fixture {{.NAME}}'
 
   package:alpha:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
+    deps: [':runtime']
     cmds:
       - task: package:build
         vars:
           NAME: alpha
 
   package:beta:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
+    deps: [':runtime']
     cmds:
       - task: package:build
         vars:
           NAME: beta
 
   package:native:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
+    deps: [':runtime']
     cmds:
       - task: package:build
         vars:
           NAME: native
 
   package:web:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
+    deps: [':runtime']
     cmds:
       - task: package:build
         vars:
           NAME: web
 
   package:diagnostics:
-    deps: [':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}']
+    deps: [':runtime']
     cmds:
       - task: package:build
         vars:
@@ -274,7 +280,7 @@ tasks:
     label: 'probe:{{.NAME}}'
     deps:
       - ':cli'
-      - ':{{if .ISOPLANE_TEST_RUNTIME_MODULES}}runtime:modules{{else}}fixtures:package:runtime{{end}}'
+      - ':runtime'
     sources:
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.cs'
       - '{{.ROOT_DIR}}/{{.PROJECT}}/**/*.csproj'

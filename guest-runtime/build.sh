@@ -9,9 +9,14 @@ if command -v cygpath >/dev/null 2>&1; then
   HERE="$(cygpath -m "$HERE")"
 fi
 if [ "${1:-}" != --compile ]; then
-  if [ "$#" = 0 ]; then exec task --dir "$HERE/.." runtime; fi
+  if [ "$#" = 0 ]; then exec task --dir "$HERE/.." runtime:compiler; fi
   tasks=()
-  for stage in "$@"; do tasks+=("runtime:$stage"); done
+  for stage in "$@"; do
+    case "$stage" in
+      runtime|feed) tasks+=(runtime:compiler) ;;
+      *) tasks+=("runtime:$stage") ;;
+    esac
+  done
   exec task --dir "$HERE/.." "${tasks[@]}"
 fi
 shift

@@ -49,6 +49,8 @@ includes:
   managed: taskfiles/managed.yml
   fixtures: taskfiles/fixtures.yml
   runtime: taskfiles/runtime.yml
+  native: taskfiles/native.yml
+  test: taskfiles/test.yml
   scenarios: taskfiles/scenarios.yml
 
 tasks:
@@ -64,120 +66,9 @@ tasks:
     cmds:
       - '{{.CLI_ARGS | default (env "SHELL") | default "bash"}}'
 
-  test:
-    desc: Prepare fixtures, then run the Rust test suite
-    deps: [initialize, fixtures]
-    cmds:
-      - 'cargo test --workspace {{.CLI_ARGS}}'
-
-  test:unit:
-    desc: Run Rust library tests without preparing integration fixtures
-    deps: [initialize]
-    cmds:
-      - 'cargo test --lib {{.CLI_ARGS}}'
-
-  test:rust:
-    desc: Prepare Rust WASM fixtures and run selected Rust tests
-    deps: [initialize, fixtures:rust]
-    cmds:
-      - 'cargo test {{.CLI_ARGS}}'
-
-  test:runtime:
-    desc: Run shared runtime acceptance tests
-    deps: [initialize, fixtures:acceptance]
-    cmds:
-      - 'cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
-
-  test:native:
-    desc: Run SDK and CLI integration tests using prepared packages
-    deps: [initialize, cli, fixtures:feed, fixtures:package, managed:debugger, debugger:environment]
-    cmds:
-      - 'cargo test -p isoplane-native {{.CLI_ARGS}}'
-
-  test:debugger:
-    desc: Run selected native debugger integration tests
-    deps: [initialize, cli, managed:debugger, debugger:environment, fixtures:feed]
-    cmds:
-      - 'cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
-
-  fixtures:
-    desc: Prepare shared fixtures before running tests
-    deps: [node:runtimes, fixtures:rust, fixtures:dotnet, fixtures:acceptance, fixtures:package, cli, managed:debugger, debugger:environment, fixtures:feed]
-
-  debugger:environment:
-    vars:
-      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python'
-      EXECUTABLE: '{{.DIRECTORY}}/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
-    status:
-      - |
-        "{{.EXECUTABLE}}" -c "import debugpy; assert debugpy.__version__ == '1.8.20'"
-    cmds:
-      - '"{{.PYTHON}}" -m venv "{{.DIRECTORY}}"'
-      - '"{{.EXECUTABLE}}" -m pip install --disable-pip-version-check debugpy==1.8.20'
-
-  runtime:
-    desc: Build the shared Mono runtime on Linux
-    cmds:
-      - task: runtime:build
-
-  native:
-    run: once
-    deps: [initialize]
-    env:
-      CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
-      CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
-    cmds:
-      - '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/native-windows.ps1{{else}}cargo build --locked -p isoplane-native --target-dir "{{.NATIVE_TARGET}}"{{end}}'
-
   cli:
     run: once
     desc: Prepare the shared managed CLI and platform native support
-    deps: [managed:cli, native]
+    deps: [managed:build, native]
     cmds:
       - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{dir .CLI}}" -p:Platform={{.PLATFORM}}'
-
-  fixtures:rust:
-    desc: Build portable Rust WASM fixtures
-    deps: [initialize]
-    sources:
-      - guests/**/*.rs
-      - guests/**/Cargo.toml
-      - guests/Cargo.lock
-      - guests/.cargo/**/*
-      - guest-sdks/rust/**/*.rs
-      - guest-sdks/rust/**/Cargo.toml
-      - crates/isoplane-abi/**/*
-      - guests/build.sh
-    generates:
-      - .build/wasm32/rust-guests/manifest
-      - .build/wasm32/rust-guests/hello.wasm
-      - .build/wasm32/rust-guests/quotes-api.wasm
-      - .build/wasm32/rust-guests/misbehaver.wasm
-      - .build/wasm32/rust-guests/bigheap.wasm
-      - .build/wasm32/rust-guests/impure-cctor.wasm
-      - .build/wasm32/rust-guests/undeclared-import.wasm
-      - .build/wasm32/rust-guests/foreign-module.wasm
-    cmds:
-      - 'bash guests/build.sh --compile'
-
-  native:release:
-    run: once
-    deps: [initialize]
-    env:
-      CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
-      CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
-    cmds:
-      - '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/native-windows.ps1 -Configuration release{{else}}cargo build --locked --release -p isoplane-native --target-dir "{{.NATIVE_TARGET}}"{{end}}'
-
-  fixtures:feed:
-    run: once
-    deps: [managed:packages, managed:native-packages]
-
-
-  test:managed:
-    desc: Run the managed CLI and debugger tests using prepared assemblies
-    deps: [managed:tests, native]
-    cmds:
-      - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/Isoplane.Cli.Tests/release" -p:Platform={{.PLATFORM}}'
-      - '"{{.DOTNET}}" test tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'
-      - '"{{.DOTNET}}" test tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'
