@@ -8,8 +8,8 @@
     "build": "docusaurus build",
     "serve": "docusaurus serve --host 127.0.0.1 --port 3123",
     "clear": "docusaurus clear",
-    "generate:reference": "dotnet run --project ../../tools/ApiReference -- docs/reference",
-    "check:reference": "dotnet run --project ../../tools/ApiReference -- docs/reference --check",
+    "generate:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference",
+    "check:reference": "dotnet run --project ../../tools/ApiReference -p:IsoplaneManagedOnly=true -- docs/reference --check",
     "prebuild": "npm run check:reference"
   },
   "dependencies": {

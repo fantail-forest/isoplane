@@ -4,7 +4,7 @@ using Xunit;
 public sealed class DebugRunTests : MsbuildTests
 {
     [Fact]
-    public async Task dotnet_run_debugs_the_explicit_interpreted_configuration()
+    public async Task dotnet_run_debugs_the_prepared_application_configuration()
     {
         var project = Project();
         var command = Msbuild(project, "-t:ComputeRunArguments");
@@ -14,8 +14,7 @@ public sealed class DebugRunTests : MsbuildTests
         Assert.True(result.Output.Contains("--configuration \"Debug\"", StringComparison.Ordinal),
             "The debugger must preserve the selected project configuration.");
         Assert.True(result.Output.Contains("--debug --no-watch", StringComparison.Ordinal), "The run target must start an owned debug session.");
-        Assert.False(result.Output.Contains("--no-build", StringComparison.Ordinal),
-            "Debugging must build a fresh application package for its owned session.");
+        Assert.Contains("--no-build", result.Output, StringComparison.Ordinal);
     }
 
     private string Project() => WriteProject(

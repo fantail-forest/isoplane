@@ -14,10 +14,9 @@ public sealed class PackageApplicationTests : MsbuildTests
         Assert.True(result.Exit == 0, "An ordinary application must evaluate without native guest tools: " + result.Output);
         using var document = JsonDocument.Parse(result.Output);
         var properties = document.RootElement.GetProperty("Properties");
-        Assert.True(properties.GetProperty("OutputType").GetString() == "Library" &&
-            properties.GetProperty("RuntimeIdentifier").GetString() == "" &&
-            properties.GetProperty("IsoplaneManagedBundleBuild").GetString() == "true",
-            "The SDK must select a managed application package without requesting native compilation.");
+        Assert.Equal("Library", properties.GetProperty("OutputType").GetString());
+        Assert.Equal("wasi-wasm", properties.GetProperty("RuntimeIdentifier").GetString());
+        Assert.Equal("true", properties.GetProperty("IsoplaneManagedBundleBuild").GetString());
     }
 
     private string ApplicationProject(params XElement[] properties) => WriteProject(

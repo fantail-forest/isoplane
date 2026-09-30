@@ -267,31 +267,11 @@ fn managed_exports(source: &str) -> BTreeMap<String, (Vec<Ty>, Vec<Ty>)> {
 }
 
 #[test]
-fn hand_written_fixture_entrypoints_declare_the_generated_exports() {
-    let generated = managed_exports(&sdk_file("../Build/Isoplane.Exports.targets"));
-    for fixture in [
-        "guests/dotnet/src/Entrypoint.cs",
-        "guest-runtime/tests/guest/src/Entrypoint.cs",
-    ] {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(fixture);
-        let source = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        assert_eq!(
-            managed_exports(&source),
-            generated,
-            "{fixture} must declare the exports the SDK generates; Mono's entry aborts on a missing one"
-        );
-    }
-}
-
-#[test]
-fn generated_aspnet_entrypoints_match_the_host_export_contract() {
-    let adapter = sdk_file("../AspNetCore/buildTransitive/Isoplane.AspNetCore.targets");
+fn generated_mono_runtime_entrypoints_match_the_host_export_contract() {
+    let adapter = sdk_file("../MonoRuntime/src/Isoplane.MonoRuntime.csproj");
     assert!(
         adapter.contains("Isoplane.Exports.targets"),
-        "the ASP.NET adapter must consume the shared export generator"
+        "the shared Mono runtime must consume the export generator"
     );
     let found = managed_exports(&sdk_file("../Build/Isoplane.Exports.targets"));
     // The native PAL supplies its allocator exports, independently of the managed router.

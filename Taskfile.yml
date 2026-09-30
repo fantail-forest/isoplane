@@ -4,7 +4,7 @@ vars:
   REVISION:
     sh: git rev-parse HEAD
   SOURCE_REF:
-    sh: git rev-parse --git-path "$(git symbolic-ref -q HEAD || echo HEAD)"
+    sh: git rev-parse --path-format=relative --git-path "$(git symbolic-ref -q HEAD || echo HEAD)"
   USER_HOME: '{{env "HOME" | default (env "USERPROFILE")}}'
   DOTNET: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}/dotnet{{if eq OS "windows"}}.exe{{end}}'
   PATH_SEPARATOR: '{{if eq OS "windows"}};{{else}}:{{end}}'
@@ -30,7 +30,7 @@ env:
   ISOPLANE_BUILD_ROOT: '{{.ROOT_DIR}}'
   ISOPLANE_RUNTIME_SOURCE: '{{.ROOT_DIR}}/guest-runtime'
   ISOPLANE_RUNTIME_WORK: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work'
-  WASI_SDK_PATH: '{{.WASI_SDK_PATH | default (printf "%s/.build/%s/development/runtime-work/wasi-sdk" .ROOT_DIR .PLATFORM)}}'
+  WASI_SDK_PATH: '{{env "WASI_SDK_PATH" | default (printf "%s/.build/%s/development/runtime-work/wasi-sdk" .ROOT_DIR .PLATFORM)}}'
   NUGET_SCRATCH: '{{env "NUGET_SCRATCH" | default (printf "%s/NuGetScratch%s" .HOST_TEMP (ternary (env "USER") "" (eq OS "linux")))}}'
   TMPDIR: '{{.SCRATCH}}'
   TMP: '{{.SCRATCH}}'
