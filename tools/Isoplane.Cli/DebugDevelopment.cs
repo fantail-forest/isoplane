@@ -1,4 +1,6 @@
+using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -7,6 +9,7 @@ internal static class DebugDevelopment
 {
     internal static async Task<int> RunAsync(DevelopmentOptions options, CancellationToken cancellation)
     {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var session = Path.Combine(options.Directory, ".isoplane", "debug", Guid.NewGuid().ToString("N"));
         try
         {
@@ -14,8 +17,14 @@ internal static class DebugDevelopment
                 Directory.CreateDirectory(session);
             else
                 Directory.CreateDirectory(session, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            await using var relay = new DebugRelay(cancellation);
-            return await RunPackageAsync(options, session, relay.Endpoint.ToString(), relay, cancellation);
+            await using var relay = new DebugRelay(lifetime.Token);
+            if (options.DebugLaunchEndpoint is not { } launchEndpoint)
+                return await RunPackageAsync(options, session, relay.Endpoint.ToString(), relay, null, lifetime.Token);
+            using var client = new TcpClient();
+            await client.ConnectAsync(launchEndpoint, lifetime.Token);
+            await using var launch = new TerminalDebugLaunch(client, relay.EditorConnected, lifetime);
+            try { return await RunPackageAsync(options, session, relay.Endpoint.ToString(), relay, launch, lifetime.Token); }
+            finally { lifetime.Cancel(); }
         }
         finally
         {
@@ -35,7 +44,7 @@ internal static class DebugDevelopment
     /// Debugs an interpreted project's package on the SDK's local-debug runtime,
     /// which connects its agent to <paramref name="endpoint"/> through the relay.
     /// </summary>
-    private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string endpoint, DebugRelay relay, CancellationToken cancellation)
+    private static async Task<int> RunPackageAsync(DevelopmentOptions options, string session, string endpoint, DebugRelay relay, TerminalDebugLaunch? launch, CancellationToken cancellation)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var changes = new SourceChanges(options.Directory);
@@ -54,9 +63,14 @@ internal static class DebugDevelopment
             Console.WriteLine(JsonSerializer.Serialize(new { @event = "debugger_ready", endpoint = relay.AdapterEndpoint.ToString(), module, package, runtime = "mono" }));
         else
             Console.WriteLine($"Debugger target: {relay.AdapterEndpoint}. Connect your editor through isoplane debug-adapter; the connection remains available across HTTP requests.");
+        var ready = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var host = new LocalSession(await File.ReadAllBytesAsync(module, cancellation),
             new LocalProject(options.Directory).SessionOptions(options.Port, [], endpoint, Path.Combine(session, "runtime"), package: package),
-            message => LocalEvents.Write(message, options.Json));
+            message =>
+            {
+                LocalEvents.Write(message, options.Json);
+                if (message["event"]?.GetValue<string>() == "ready") ready.TrySetResult(message);
+            });
         relay.PrepareDetach = async token =>
         {
             await publications.WaitAsync(token);
@@ -71,6 +85,15 @@ internal static class DebugDevelopment
         var running = RunHostAsync(host, relay, lifetime.Token);
         try
         {
+            if (launch is not null)
+            {
+                if (await Task.WhenAny(ready.Task, running) == running)
+                {
+                    await running;
+                    throw new IOException("The local application exited before its HTTP listener was ready.");
+                }
+                await launch.AnnounceAsync(relay.AdapterEndpoint.ToString(), await ready.Task, lifetime.Token);
+            }
             if (options.Watch)
                 await SourceReload.RunAsync(changes, running, async token =>
                 {

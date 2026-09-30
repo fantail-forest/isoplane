@@ -291,6 +291,8 @@ public sealed class DebugAdapterTests
     [InlineData("project", "\"relative/path\"")]
     [InlineData("configuration", "false")]
     [InlineData("watch", "1")]
+    [InlineData("console", "\"unknown\"")]
+    [InlineData("console", "\"integratedTerminal\"")]
     [InlineData("port", "-1")]
     [InlineData("port", "65536")]
     public async Task invalid_launch_options_do_not_start_an_application(string property, string json)
@@ -308,12 +310,39 @@ public sealed class DebugAdapterTests
         Assert.False(client.Adapter.Failed);
     }
 
+    [Fact]
+    public async Task prepared_detachment_rejects_a_second_disconnect_while_committing()
+    {
+        await using var client = await Client.StartAsync();
+        await client.Initialize();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var attached = client.Send(Attach("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port));
+        using var control = await AcceptControlAsync(listener, client.Cancellation);
+        await client.Initialized.Task.WaitAsync(client.Cancellation);
+        using var reader = new StreamReader(control.GetStream(), leaveOpen: true);
+        using var writer = new StreamWriter(control.GetStream(), leaveOpen: true) { AutoFlush = true };
+        var preparing = client.Send(new PrepareDetach());
+        Assert.Equal("prepareDetach", JObject.Parse((await reader.ReadLineAsync(client.Cancellation))!)["action"]!.Value<string>());
+        await writer.WriteLineAsync("{\"version\":1,\"action\":\"detachReady\"}");
+        await preparing;
+        var disconnecting = client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } });
+        Assert.Equal("detach", JObject.Parse((await reader.ReadLineAsync(client.Cancellation))!)["action"]!.Value<string>());
+        await Assert.ThrowsAsync<ProtocolException>(() => client.Send(new DisconnectRequest { Args = { TerminateDebuggee = false } }));
+        await writer.WriteLineAsync("{\"version\":1,\"action\":\"detached\"}");
+        await disconnecting;
+        await Assert.ThrowsAsync<ProtocolException>(() => attached);
+        Assert.False(client.Adapter.Failed);
+    }
+
+    private sealed class PrepareDetach() : DebugRequest<ConfigurationDoneArguments>("isoplane/prepareDetach");
+
     private sealed class PendingLaunch : DebugLauncher
     {
         internal TaskCompletionSource<DebugLaunchOptions> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task RunAsync(DebugLaunchOptions options, Action<IPEndPoint> ready, Action<string> output, CancellationToken cancellation)
+        public async Task RunAsync(DebugLaunchOptions options, Func<IPEndPoint, Task> ready, Action<string> output, Func<DebugTerminal, CancellationToken, Task>? terminal, CancellationToken cancellation)
         {
             Started.SetResult(options);
             try { await Task.Delay(Timeout.Infinite, cancellation); }

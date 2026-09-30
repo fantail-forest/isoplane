@@ -81,6 +81,15 @@
                 "type": "string",
                 "default": "isoplane",
                 "description": "Path to the installed Isoplane CLI executable."
+              },
+              "console": {
+                "type": "string",
+                "enum": [
+                  "integratedTerminal",
+                  "internalConsole"
+                ],
+                "default": "integratedTerminal",
+                "description": "The integrated terminal keeps the application running after debugger detach; Ctrl+C stops it."
               }
             }
           }
@@ -122,7 +131,24 @@
           }
         ]
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "isoplane.detach",
+        "title": "Isoplane: Disconnect and Keep Running",
+        "icon": "$(debug-disconnect)",
+        "enablement": "debugType == isoplane && inDebugMode"
+      }
+    ],
+    "menus": {
+      "debug/toolBar": [
+        {
+          "command": "isoplane.detach",
+          "when": "debugType == isoplane && inDebugMode",
+          "group": "navigation@71"
+        }
+      ]
+    }
   },
   "scripts": {
     "test": "node test/run.js",

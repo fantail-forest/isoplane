@@ -22,6 +22,14 @@ function activate(context) {
                 return new vscode.DebugAdapterExecutable(session.configuration.cliPath || 'isoplane', ['debug-adapter']);
             }
         }),
+        vscode.commands.registerCommand('isoplane.detach', async () => {
+            const session = vscode.debug.activeDebugSession;
+            if (session?.type !== 'isoplane') throw new Error('Select an Isoplane debug session to detach.');
+            // Preparation can outlast the editor's timeout for its standard disconnect request.
+            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Preparing Isoplane to run without the debugger' },
+                () => session.customRequest('isoplane/prepareDetach'));
+            await vscode.commands.executeCommand('workbench.action.debug.disconnect', undefined, { sessionId: session.id });
+        }),
         vscode.commands.registerCommand('isoplane.debugPort', () => vscode.window.showInputBox({
             prompt: 'Debugger port printed by the local Isoplane debug session',
             validateInput(value) {

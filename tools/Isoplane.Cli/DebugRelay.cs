@@ -14,6 +14,8 @@ internal sealed class DebugRelay : IAsyncDisposable
 
     internal IPEndPoint Endpoint { get; }
     internal IPEndPoint AdapterEndpoint { get; }
+    private readonly TaskCompletionSource editorConnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task EditorConnected => editorConnected.Task;
     internal Task Completion => forwarding;
     internal bool Detached { get; private set; }
     internal Func<CancellationToken, Task>? PrepareDetach { get; set; }
@@ -34,6 +36,7 @@ internal sealed class DebugRelay : IAsyncDisposable
         try
         {
             using var editor = await editorListener.AcceptTcpClientAsync(cancellation);
+            editorConnected.TrySetResult();
             await DebugSessionProtocol.WriteEndpointAsync(editor.GetStream(), (IPEndPoint)adapterListener.LocalEndpoint, cancellation);
             using var connected = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             var pairs = ForwardGuestsAsync(connected.Token);

@@ -62,8 +62,8 @@ configuration you would pass to `dotnet run`.
 
 With the Isoplane debugger extension installed in VS Code, open your application
 folder, choose **Debug local Isoplane**, set a breakpoint, and press **F5**. The
-adapter builds and starts the application. Send an HTTP request to the URL printed
-in the Debug Console. Stopping the debugger stops the application and its owned
+adapter builds and starts the application in an **Isoplane** terminal. Send an HTTP
+request to the URL printed in the terminal or Debug Console. Stopping the debugger stops the application and its owned
 processes.
 
 To start a session in a terminal instead:
@@ -78,11 +78,15 @@ port. In VS Code with the Isoplane debugger extension installed, choose
 an HTTP request to the application's local URL. Keep the debugger attached for
 subsequent requests; source breakpoints are rebound for each fresh guest.
 
-For a terminal-started session, disconnecting without terminating the application
-resumes the current request and leaves the application running. Subsequent requests
+In VS Code, choose **Isoplane: Disconnect and Keep Running** from the debug toolbar
+or command palette. This prepares the ordinary runtime before disconnecting.
+For a terminal-owned session, detaching resumes the current request and leaves
+the application running. Subsequent requests
 and source reloads use the ordinary runtime. Stop it with Ctrl+C in its terminal.
 If that runtime cannot be prepared, detach is rejected and the paused debug session
-remains available. IDE-launched sessions currently require termination on disconnect.
+remains available. IDE launches use the integrated terminal when supported. Setting
+`"console": "internalConsole"` keeps output in the Debug Console but requires
+termination on disconnect.
 
 The session uses the SDK's shared debug runtime. The debugger supports stepping,
 watches, editing live locals, exception stops, and data breakpoints on managed

@@ -1,9 +1,12 @@
+using System.Net;
+
 namespace Isoplane.Cli;
 
-internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, bool Debug, string Configuration = "Debug", bool NoBuild = false)
+internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool Watch, bool Json, bool ShutdownOnInputClose, bool Debug, string Configuration = "Debug", bool NoBuild = false, IPEndPoint? DebugLaunchEndpoint = null)
 {
     internal static DevelopmentOptions Parse(string[] arguments)
     {
+        IPEndPoint? debugLaunchEndpoint = null;
         var configuration = "Debug";
         var noBuild = false;
         var directory = Environment.CurrentDirectory;
@@ -28,6 +31,11 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                         throw new ArgumentException("--port must be between 0 and 65535.");
                     port = parsedPort;
                     break;
+                case "--debug-launch-endpoint" when index + 1 < arguments.Length:
+                    if (!IPEndPoint.TryParse(arguments[++index], out debugLaunchEndpoint)
+                        || !debugLaunchEndpoint.Address.Equals(IPAddress.Loopback) || debugLaunchEndpoint.Port == 0)
+                        throw new ArgumentException("--debug-launch-endpoint requires an IPv4 loopback endpoint with a nonzero port.");
+                    break;
                 case "--debug":
                     debug = true;
                     break;
@@ -47,6 +55,8 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
                     throw new ArgumentException($"Invalid or incomplete option '{arguments[index]}'. Run isoplane --help.");
             }
         }
+        if (debugLaunchEndpoint is not null && !debug)
+            throw new ArgumentException("--debug-launch-endpoint requires --debug.");
         if (noBuild && watch)
             throw new ArgumentException("--no-build requires --no-watch; compile changes explicitly before running again.");
         if (!System.IO.Directory.Exists(directory))
@@ -55,6 +65,6 @@ internal sealed record DevelopmentOptions(string Directory, ushort? Port, bool W
             throw new ArgumentException($"No isoplane.toml in {directory}; create a project with dotnet new isoplane-web.");
         if (System.IO.Directory.GetFiles(directory, "*.csproj").Length != 1)
             throw new ArgumentException($"Expected exactly one .NET project in {directory}.");
-        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild);
+        return new(directory, port, watch, json, shutdownOnInputClose, debug, configuration, noBuild, debugLaunchEndpoint);
     }
 }

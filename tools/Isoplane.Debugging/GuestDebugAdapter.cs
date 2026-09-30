@@ -26,7 +26,10 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
     private Task launching = Task.CompletedTask;
     private Task disconnecting = Task.CompletedTask;
     private int detaching;
+    private int detachmentPrepared;
     private bool launched;
+    private bool supportsTerminal;
+    private bool launchInTerminal;
     private PausedValues? paused;
     private int nextHandle;
     private int pauseRequested;
@@ -45,6 +48,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         this.diagnostics = diagnostics;
         this.launcher = launcher;
         InitializeProtocolClient(input, output);
+        Protocol.RegisterRequestType<PrepareDetachRequest, PrepareDetachArguments>(HandlePrepareDetach);
         ConfigureSession(session);
         dataBreakpoints = new GuestDataBreakpoints(session, Allocate);
         breakpoints = new GuestBreakpoints(session, Allocate, message => Protocol.SendEvent(message), message => Protocol.SendEvent(message));
@@ -79,6 +83,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             return;
         }
         initialized = true;
+        supportsTerminal = args.SupportsRunInTerminalRequest == true;
         request.SetResponse(new InitializeResponse
         {
             SupportsConfigurationDoneRequest = true, SupportTerminateDebuggee = true,
@@ -154,6 +159,15 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             request.SetError(new ProtocolException("Launch requires an absolute project directory, a build configuration, an optional HTTP port from 0 to 65535, and a boolean watch option."));
             return;
         }
+        string? console = properties.TryGetValue("console", out var consoleValue)
+            ? consoleValue.Type == JTokenType.String ? consoleValue.Value<string>() : null
+            : supportsTerminal ? "integratedTerminal" : "internalConsole";
+        if (console is not ("integratedTerminal" or "internalConsole") || console == "integratedTerminal" && !supportsTerminal)
+        {
+            request.SetError(new ProtocolException("Launch console must be internalConsole, or integratedTerminal when the editor supports runInTerminal."));
+            return;
+        }
+        launchInTerminal = console == "integratedTerminal";
         owner = new GuestSession(SessionEnded);
         attach = new ConnectionRequest(() => request.SetResponse(new LaunchResponse()), request.SetError);
         launched = true;
@@ -167,11 +181,23 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             await launcher!.RunAsync(options,
                 address => opening = OpenAsync(address, completeOnOpen: true),
                 text => Protocol.SendEvent(new OutputEvent { Category = OutputEvent.CategoryValue.Console, Output = text + Environment.NewLine }),
-                launchCancellation.Token);
+                launchInTerminal ? RunInTerminalAsync : null, launchCancellation.Token);
             SessionEnded();
         }
         catch (OperationCanceledException) when (launchCancellation.IsCancellationRequested) { return; }
         catch (Exception error) { Fail(error); }
+    }
+
+    private async Task RunInTerminalAsync(DebugTerminal terminal, CancellationToken cancellation)
+    {
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancelled = cancellation.Register(() => completed.TrySetCanceled(cancellation));
+        Protocol.SendClientRequest(new RunInTerminalRequest(terminal.Directory, terminal.Arguments.ToList())
+        {
+            Kind = RunInTerminalArguments.KindValue.Integrated,
+            Title = "Isoplane"
+        }, (_, _) => completed.TrySetResult(), (_, error) => completed.TrySetException(error));
+        await completed.Task;
     }
 
     private async Task OpenAsync(IPEndPoint address, bool completeOnOpen = false)
@@ -345,33 +371,65 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         Protocol.SendEvent(new StoppedEvent { Reason = reason, ThreadId = state.ThreadId, AllThreadsStopped = true, HitBreakpointIds = hits.BreakpointIds.ToList(), Description = hits.Description });
     }
 
+    private void HandlePrepareDetach(IRequestResponder<PrepareDetachArguments> request)
+    {
+        if (owner is null || launched && !launchInTerminal || Interlocked.Exchange(ref detaching, 1) != 0)
+        {
+            request.SetError(new ProtocolException("Select an attached or terminal-launched session that is not already detaching."));
+            return;
+        }
+        disconnecting = PrepareDetachAsync(request);
+    }
+
+    private async Task PrepareDetachAsync(IRequestResponder<PrepareDetachArguments> request)
+    {
+        try
+        {
+            await owner!.PrepareDetachAsync();
+            Volatile.Write(ref detachmentPrepared, 1);
+            request.SetResponse(new PrepareDetachResponse());
+        }
+        catch (Exception error)
+        {
+            Interlocked.Exchange(ref detaching, 0);
+            if (Volatile.Read(ref stopping) != 0)
+                diagnostics.WriteLine($"isoplane debugger: detach preparation ended during shutdown: {error.Message}");
+            else
+            {
+                request.SetError(new ProtocolException($"Could not prepare debugger detachment: {error.Message}", error));
+                lock (lifecycle)
+                    if (session.HasExited && connection is not null) reconnecting = ReconnectAsync(session, connection);
+            }
+        }
+    }
+
     protected override void HandleDisconnectRequestAsync(IRequestResponder<DisconnectArguments> request)
     {
         if (request.Arguments.TerminateDebuggee == false && Volatile.Read(ref ended) == 0)
         {
-            if (launched)
+            if (launched && !launchInTerminal)
             {
-                request.SetError(new ProtocolException("Detach currently requires a terminal-started application. Stop the launched session or attach to isoplane dev --debug."));
+                request.SetError(new ProtocolException("Detach requires a terminal-owned application. Launch with console: integratedTerminal or attach to isoplane dev --debug."));
                 return;
             }
-            if (owner is null || Interlocked.Exchange(ref detaching, 1) != 0)
+            bool prepared = Interlocked.Exchange(ref detachmentPrepared, 0) != 0;
+            if (owner is null || !prepared && Interlocked.Exchange(ref detaching, 1) != 0)
             {
                 request.SetError(new ProtocolException("No attached session is available to detach."));
                 return;
             }
-            disconnecting = DetachAsync(request);
+            disconnecting = DetachAsync(request, prepared);
             return;
         }
         request.SetResponse(new DisconnectResponse());
         Stop();
     }
 
-    private async Task DetachAsync(IRequestResponder<DisconnectArguments> request)
+    private async Task DetachAsync(IRequestResponder<DisconnectArguments> request, bool prepared)
     {
-        bool prepared = false;
         try
         {
-            await owner!.PrepareDetachAsync();
+            if (!prepared) await owner!.PrepareDetachAsync();
             prepared = true;
             if (session.IsConnected && !session.HasExited)
             {
@@ -383,7 +441,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             }
             else
                 connection?.Close();
-            await owner.DetachAsync();
+            await owner!.DetachAsync();
             request.SetResponse(new DisconnectResponse());
             Stop();
         }
@@ -425,6 +483,7 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
             Interlocked.Exchange(ref attach, null)?.Reject(new ProtocolException("The local development session ended."));
             connection?.Close();
             Protocol.SendEvent(new TerminatedEvent());
+            launchCancellation.Cancel();
         }
     }
 
@@ -496,6 +555,12 @@ internal sealed class GuestDebugAdapter : DebugAdapterBase, IAsyncDisposable
         session.Dispose();
         launchCancellation.Dispose();
     }
+
+    private sealed class PrepareDetachResponse : ResponseBody;
+
+    private sealed class PrepareDetachArguments : DebugRequestArguments;
+
+    private sealed class PrepareDetachRequest() : DebugRequest<PrepareDetachArguments>("isoplane/prepareDetach");
 
     private sealed record ConnectionRequest(Action Complete, Action<ProtocolException> Reject);
 }

@@ -225,7 +225,7 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
 "#
     };
     let detached;
-    let handler = if mode == "detach" {
+    let handler = if matches!(mode, "detach" | "terminal-detach") {
         detached = handler.replace(
             "return resumed ?",
             "return resumed && !System.Diagnostics.Debugger.IsAttached ?",
@@ -266,6 +266,8 @@ fn write_debug_application(app: &std::path::Path, mode: &str) -> std::path::Path
 fn write_debug_library(directory: &std::path::Path, app: &std::path::Path) -> std::path::PathBuf {
     let library = directory.join("library");
     std::fs::create_dir(&library).unwrap();
+    std::fs::copy(app.join("nuget.config"), library.join("nuget.config"))
+        .expect("share the application package sources with its referenced project");
     std::fs::write(library.join("Library.csproj"),
         "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><DebugType>portable</DebugType><Optimize>false</Optimize></PropertyGroup><ItemGroup><EmbeddedResource Include=\"payload.bin\" /></ItemGroup></Project>").unwrap();
     // Metadata replies include the assembly image and must survive socket backpressure.
@@ -340,8 +342,11 @@ fn installed_debug_acceptance(mode: &str) {
         source
     };
     let cli = isoplane_fixtures::managed_cli(directory.path(), &app);
-    let mut dev =
-        (!matches!(mode, "launch" | "reload")).then(|| start_debug_session(&app, &cli, mode));
+    let mut dev = (!matches!(
+        mode,
+        "launch" | "reload" | "terminal-launch" | "terminal-detach"
+    ))
+    .then(|| start_debug_session(&app, &cli, mode));
     let driver =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/debug_driver.py");
     let mut command = std::process::Command::new(python);
@@ -484,4 +489,14 @@ fn failed_detach_preparation_leaves_the_paused_guest_inspectable_and_resumable()
 #[test]
 fn detaching_between_requests_closes_the_pending_guest_connection() {
     installed_debug_acceptance("detach-idle");
+}
+
+#[test]
+fn an_editor_terminal_launch_serves_requests_and_stops_with_the_debugger() {
+    installed_debug_acceptance("terminal-launch");
+}
+
+#[test]
+fn an_editor_terminal_survives_detach_and_owns_subsequent_requests_and_reload() {
+    installed_debug_acceptance("terminal-detach");
 }
