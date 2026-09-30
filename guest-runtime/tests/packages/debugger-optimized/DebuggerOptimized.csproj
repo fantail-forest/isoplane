@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <IsoplaneDebuggerOptimized>true</IsoplaneDebuggerOptimized>
+  </PropertyGroup>
+  <Import Project="../debugger/Debugger.csproj" />
+  <ItemGroup>
+    <Compile Include="../debugger/*.cs" />
+  </ItemGroup>
+</Project>

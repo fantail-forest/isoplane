@@ -11,6 +11,8 @@ public static class Application
     {
         var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
         var app = builder.Build();
+        Async.Application.Map(app);
+        Composed.Application.Map(app);
         Features.Application.Map(app);
         Statements.Application.Map(app);
         Watchpoints.Application.Map(app);

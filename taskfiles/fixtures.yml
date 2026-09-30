@@ -210,28 +210,32 @@ tasks:
       - task: package:native
       - task: package:web
       - task: package:debugger
+      - task: package:debugger-optimized
       - task: package:diagnostics
 
   package:build:
-    deps: [":cli"]
+    deps: [":managed:build"]
     internal: true
     label: 'package:{{.NAME}}'
     env:
       ISOPLANE_CLI: '{{.CLI}}'
     sources:
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.NAME}}/**/*'
+      - '{{.ROOT_DIR}}/guest-runtime/tests/packages/{{.SOURCE_NAME | default .NAME}}/**/*'
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.props'
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/*.targets'
       - '{{.ROOT_DIR}}/guest-runtime/tests/packages/build.sh'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/**/*'
-      - '{{.ROOT_DIR}}/tools/**/*.cs'
-      - '{{.ROOT_DIR}}/tools/**/*.csproj'
+      - '{{.ROOT_DIR}}/tools/Isoplane.Cli/**/*.cs'
+      - '{{.ROOT_DIR}}/tools/Isoplane.Cli/*.csproj'
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/**/*.cs'
       - '{{.ROOT_DIR}}/Directory.Build.props'
       - '{{.ROOT_DIR}}/global.json'
       - '{{.ROOT_DIR}}/nuget.config'
       - '{{.MODULES}}/runtime.json'
       - exclude: 'guest-sdks/**/{obj,bin,out,__pycache__,*.Tests,Tests}/**/*'
       - exclude: 'guests/**/{obj,bin,out,__pycache__}/**/*'
+      - exclude: 'guest-runtime/tests/packages/**/{obj,bin,.isoplane,__pycache__}/**/*'
       - exclude: 'tools/**/{obj,bin,out,__pycache__,*.Tests}/**/*'
     generates:
       - '{{.ROOT_DIR}}/.build/clr-anycpu/package-fixtures/{{.NAME}}.tar'
@@ -267,11 +271,29 @@ tasks:
           NAME: web
 
   package:debugger:
-    deps: [':runtime']
+    deps: [':runtime', 'debugger:sources']
     cmds:
       - task: package:build
         vars:
           NAME: debugger
+
+  package:debugger-optimized:
+    deps: [':runtime', 'debugger:sources']
+    cmds:
+      - task: package:build
+        vars:
+          NAME: debugger-optimized
+          SOURCE_NAME: debugger
+
+  debugger:sources:
+    sources:
+      - guest-runtime/tests/packages/debugger/*.cs.in
+      - guest-runtime/tests/packages/debugger/prepare.py
+    generates:
+      - .build/clr-anycpu/debugger-sources/async-stack.cs
+      - .build/clr-anycpu/debugger-sources/async-composed.cs
+    cmds:
+      - '"{{.PYTHON}}" guest-runtime/tests/packages/debugger/prepare.py'
 
   package:diagnostics:
     deps: [':runtime']

@@ -33,7 +33,7 @@ tasks:
 
   debugger:
     desc: Run selected native debugger integration tests
-    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:package:debugger', ':test:debugger:host']
+    deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':test:debugger:host']
     cmds:
       - 'cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
 

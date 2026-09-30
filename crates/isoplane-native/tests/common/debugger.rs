@@ -84,23 +84,34 @@ impl Drop for Driver {
     }
 }
 
-/// Runs feature scenarios against one prepared package with private host/session state.
+/// Runs feature scenarios against shared prepared packages with private host/session state.
 pub fn prepared_acceptance(mode: &str) {
-    let fixture = if mode == "watchpoint-steps" {
-        "watchpoints"
-    } else {
-        mode
+    let fixture = match mode {
+        "watchpoint-steps" => "watchpoints",
+        "async-optimized" => "async-stack",
+        "async-composed-optimized" => "async-composed",
+        other => other,
     };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .unwrap();
-    let package = isoplane_fixtures::mono_package("debugger");
+    let package = isoplane_fixtures::mono_package(if mode.ends_with("-optimized") {
+        "debugger-optimized"
+    } else {
+        "debugger"
+    });
+    let sources = if mode.starts_with("async-") {
+        root.join(".build/clr-anycpu/debugger-sources")
+    } else {
+        root.join("guest-runtime/tests/packages/debugger")
+    };
+    let source = sources.join(format!("{fixture}.cs"));
     let host = root
         .join(".build/clr-anycpu/managed/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll");
     assert!(
-        package.is_file() && host.is_file(),
-        "run task fixtures:package:debugger test:debugger:host before debugger feature tests"
+        package.is_file() && host.is_file() && source.is_file(),
+        "run task fixtures:package:debugger fixtures:package:debugger-optimized test:debugger:host before debugger feature tests"
     );
     let directory = tempfile::tempdir().unwrap();
     crate::common::manifest(directory.path(), "[dev]\ninit_sandbox='runtime-bringup'\n");
@@ -122,9 +133,7 @@ pub fn prepared_acceptance(mode: &str) {
         .arg(std::env::var_os("ISOPLANE_TEST_CLI_ASSEMBLY").expect("Task selects the prepared CLI"))
         .arg(metadata["endpoint"].as_str().unwrap())
         .arg(format!("{}/{fixture}", dev.url.trim_end_matches('/')))
-        .arg(root.join(format!(
-            "guest-runtime/tests/packages/debugger/{fixture}.cs"
-        )))
+        .arg(source)
         .arg(dev.pid().to_string())
         .arg(mode)
         .arg(&package);

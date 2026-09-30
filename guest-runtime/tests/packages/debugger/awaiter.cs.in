@@ -25,6 +25,8 @@
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075",
+        Justification = "The debug runtime accesses these async tracking fields directly and retains them.")]
     private static object? TrackingField(object value, string name) =>
         (value.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("Missing async tracking field: " + name)).GetValue(value);

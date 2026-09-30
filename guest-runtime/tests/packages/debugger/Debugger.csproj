@@ -2,14 +2,19 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.Web" />
   <Import Project="../Package.props" />
   <PropertyGroup>
-    <AssemblyName>Debugger</AssemblyName>
+    <AssemblyName Condition="'$(IsoplaneDebuggerOptimized)' != 'true'">Debugger</AssemblyName>
+    <AssemblyName Condition="'$(IsoplaneDebuggerOptimized)' == 'true'">DebuggerOptimized</AssemblyName>
     <IsoplaneApplicationFactory>Debugger.Application.Create</IsoplaneApplicationFactory>
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
-    <Optimize>false</Optimize>
+    <Optimize Condition="'$(IsoplaneDebuggerOptimized)' != 'true'">false</Optimize>
+    <Optimize Condition="'$(IsoplaneDebuggerOptimized)' == 'true'">true</Optimize>
     <DebugType>portable</DebugType>
-    <PathMap>$(MSBuildProjectDirectory)=/isoplane-debugger-fixture</PathMap>
+    <_DebuggerSources>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../../.build/clr-anycpu/debugger-sources'))</_DebuggerSources>
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory).'))=/isoplane-debugger-fixture,$(_DebuggerSources)=/isoplane-debugger-fixture</PathMap>
+    <EnableSourceLink>false</EnableSourceLink>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="$(_DebuggerSources)/*.cs" />
     <ProjectReference Include="../../../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
