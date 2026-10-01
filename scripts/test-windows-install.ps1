@@ -25,6 +25,7 @@ $env:ISOPLANE_HOME = Join-Path $workspace 'installation'
 $env:NUGET_PACKAGES = Join-Path $workspace 'packages'
 $toolDirectory = Join-Path $workspace 'tools'
 $Cli = Join-Path $toolDirectory 'isoplane.exe'
+$customerFile = $null
 function Invoke-Cli {
     & $Cli @args
     if ($LASTEXITCODE -ne 0) { throw "Isoplane failed: $args (exit $LASTEXITCODE)" }
@@ -81,7 +82,8 @@ throw new Exception("Disposal left the application listener running.");
     Remove-Item "$sdk\cli\Isoplane.Cli.dll"
     Invoke-Cli setup --source $Release --yes
     if (!(Test-Path "$sdk\cli\Isoplane.Cli.dll")) { throw 'Repair did not restore the missing tool.' }
-    Set-Content "$sdk\customer-owned.txt" 'Customer content'
+    $customerFile = "$sdk\customer-owned.txt"
+    Set-Content $customerFile 'Customer content'
     Invoke-Cli uninstall-sdk
     if (Test-Path "$sdk\Sdk\Sdk.props") { throw 'Removal left the SDK installed.' }
     if (!(Test-Path "$sdk\customer-owned.txt")) { throw 'Removal deleted customer-owned content.' }
@@ -94,14 +96,31 @@ throw new Exception("Disposal left the application listener running.");
     Write-Output 'PASS: install, repeat setup, both guest profiles, repair, removal, preservation, reinstall'
 }
 finally {
-    Set-Location $previousLocation
-    $env:ISOPLANE_HOME = $previousHome
-    $env:NUGET_PACKAGES = $previousPackages
-    $env:TEMP = $previousTemp
-    $env:TMP = $previousTmp
-    if ($KeepArtifacts) {
-        Write-Output "Journey artifacts (caller-managed): $workspace"
-    } else {
-        Remove-Item -LiteralPath $workspace -Recurse -Force
+    $installationRemoved = $false
+    try {
+        if (Test-Path (Join-Path $env:ISOPLANE_HOME 'installation.json')) {
+            Invoke-Cli uninstall-sdk
+        }
+        if ($customerFile -and (Test-Path -LiteralPath $customerFile)) {
+            Remove-Item -LiteralPath $customerFile
+        }
+        if ((Test-Path -LiteralPath $sdk) -and !(Get-ChildItem -LiteralPath $sdk -Force)) {
+            Remove-Item -LiteralPath $sdk
+        }
+        $installationRemoved = $true
+    }
+    finally {
+        Set-Location $previousLocation
+        $env:ISOPLANE_HOME = $previousHome
+        $env:NUGET_PACKAGES = $previousPackages
+        $env:TEMP = $previousTemp
+        $env:TMP = $previousTmp
+        if (!$installationRemoved) {
+            Write-Warning "SDK teardown failed; recovery manifest and tool retained at $workspace"
+        } elseif ($KeepArtifacts) {
+            Write-Output "Journey artifacts (caller-managed): $workspace"
+        } else {
+            Remove-Item -LiteralPath $workspace -Recurse -Force
+        }
     }
 }

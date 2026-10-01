@@ -1,5 +1,7 @@
 //! Installs, uses and removes an explicitly prepared Linux release in a fresh customer container.
 
+#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
