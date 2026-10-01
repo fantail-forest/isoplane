@@ -74,9 +74,11 @@ public sealed class ManagedBundleTests : MsbuildTests
         using var document = JsonDocument.Parse(File.ReadAllBytes(output));
         var items = document.RootElement.GetProperty("Items");
         static string[] Names(JsonElement items, string name) => items.GetProperty(name).EnumerateArray().Select(item => item.GetProperty("Filename").GetString()!).ToArray();
-        static bool AspNetImplementation(JsonElement item) => item.GetProperty("FullPath").GetString()!.Contains("/microsoft.aspnetcore.app.runtime.linux-x64/", StringComparison.OrdinalIgnoreCase);
+        static bool AspNetImplementation(JsonElement item) => item.GetProperty("FullPath").GetString()!
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Contains("microsoft.aspnetcore.app.runtime.linux-x64", StringComparer.OrdinalIgnoreCase);
         var bundled = items.GetProperty("IsoplaneBundleAssembly").EnumerateArray().ToLookup(AspNetImplementation, item => item.GetProperty("FullPath").GetString()!);
-        Assert.True(bundled[false].Select(Path.GetFileNameWithoutExtension).Order().SequenceEqual(new[] { "Application", "Dependency" }), "The application and NuGet or project-reference implementation must both be bundled, and nothing else beside the selected ASP.NET implementation.");
+        Assert.Equal(new[] { "Application", "Dependency" }, bundled[false].Select(Path.GetFileNameWithoutExtension).Order());
         Assert.True(bundled[true].Any(), "The application's selected ASP.NET implementation must ship in the bundle instead of being inherited from the platform.");
         var aspNetPack = Directory.GetFiles(Path.GetDirectoryName(bundled[true].First())!, "*.dll").Select(Path.GetFileName);
         Assert.True(bundled[true].Select(Path.GetFileName).Order().SequenceEqual(aspNetPack.Order()), "The selected ASP.NET implementation must ship in full, at the version the application restored.");
