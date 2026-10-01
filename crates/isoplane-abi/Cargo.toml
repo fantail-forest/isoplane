@@ -22,3 +22,6 @@ host = ["dep:async-trait", "dep:anyhow"]
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[build-dependencies]
+roxmltree.workspace = true

@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Provenance supplied by the trusted build pipeline, never inferred from client WASM.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeProfile {
     /// Raw WASM admission makes no managed-runtime or hosted IL claim.
+    #[default]
     RawWasm,
     /// The shared runtime a node installs for one SDK release, which
     /// application packages built with that release run on.
@@ -23,15 +24,15 @@ impl RuntimeProfile {
 
     /// The memory maximum a module of this profile may declare, given its
     /// application's limit: that limit, except for a shared runtime, which
-    /// serves applications with different limits and is held only to its
-    /// plan's. Initialization and execution hold every instance to its
+    /// can declare the complete wasm32 address range to serve applications
+    /// with different limits. Initialization and execution hold every instance to its
     /// application's limit either way.
     pub fn declared_memory_ceiling(
         &self,
         application: Option<isoplane_abi::config::GuestMemoryBytes>,
     ) -> Option<isoplane_abi::config::GuestMemoryBytes> {
         match self {
-            Self::SharedRuntime { .. } => None,
+            Self::SharedRuntime { .. } => Some(isoplane_abi::config::GuestMemoryBytes::WASM32_MAX),
             Self::RawWasm => application,
         }
     }

@@ -31,7 +31,7 @@ pub const ABI_REV: u32 = 2;
 pub const PAGE_SIZE: usize = 4096;
 
 /// The WASM linear-memory page size.
-pub const WASM_PAGE_SIZE: usize = 65_536;
+pub const WASM_PAGE_SIZE: usize = include!(concat!(env!("OUT_DIR"), "/wasm_page_bytes.rs"));
 
 pub fn encode<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, postcard::Error> {
     postcard::to_allocvec(v)

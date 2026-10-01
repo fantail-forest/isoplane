@@ -1,0 +1,6 @@
+<Project TreatAsLocalProperty="WasmPageBytes;Wasm32MemoryMaxBytes">
+  <PropertyGroup>
+    <WasmPageBytes>65536</WasmPageBytes>
+    <Wasm32MemoryMaxBytes>4294967296</Wasm32MemoryMaxBytes>
+  </PropertyGroup>
+</Project>

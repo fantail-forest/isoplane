@@ -91,11 +91,10 @@ impl Options {
         let archive = std::fs::read(&self.package).with_context(|| {
             format!("reading the application package {}", self.package.display())
         })?;
-        let application_files = isoplane_prepare::package::read(
+        let package = isoplane_prepare::package::read(
             &archive,
             isoplane_prepare::package::PackageLimits::of(&self.manifest),
         )
-        .map(|package| package.files)
         .with_context(|| format!("serving the application package {}", self.package.display()))?;
         let trust = isoplane_trust::TrustBundle::load(&self.trust)?;
         let mut files = vec![isoplane_engine::PlatformFile {
@@ -119,7 +118,10 @@ impl Options {
             init_sandbox: self.init_sandbox,
             allow_endpoints: self.allow_endpoints.clone(),
             platform_files,
-            application_files,
+            application_files: package.files,
+            runtime_profile: isoplane_prepare::RuntimeProfile::SharedRuntime {
+                sdk_version: package.runtime.sdk_version,
+            },
         })
     }
 }

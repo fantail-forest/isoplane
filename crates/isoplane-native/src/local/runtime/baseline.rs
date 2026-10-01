@@ -99,7 +99,7 @@ fn request(
     Ok(isoplane_prepare::BuildRequest {
         engine: super::engine_configuration(project),
         application_files: project.application_files.clone(),
-        runtime: isoplane_prepare::RuntimeProfile::raw_wasm(),
+        runtime: project.runtime_profile.clone(),
         plan: manifest.limits,
         guest_memory_bytes: manifest.guest_memory_bytes,
         validation_limits: manifest.validation_limits,

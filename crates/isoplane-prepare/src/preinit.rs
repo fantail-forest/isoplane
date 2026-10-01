@@ -20,6 +20,7 @@ pub const DEFAULT_INITIALIZATION_LOG_BYTES: usize = 64 * 1024;
 #[derive(Default)]
 pub struct PreInitializer {
     pal: InitSandbox,
+    runtime: RuntimeProfile,
     platform_files: PlatformFiles,
     memory_limit: Option<GuestMemoryBytes>,
     engine: EngineConfig,
@@ -111,6 +112,11 @@ impl PreInitializer {
         self.engine = engine;
         self
     }
+    /// Select the trusted producer's permitted module declarations.
+    pub fn with_runtime_profile(mut self, runtime: RuntimeProfile) -> Self {
+        self.runtime = runtime;
+        self
+    }
     /// Match initialization to the consuming engine's linear-memory capacity.
     pub fn with_memory_limit(mut self, memory_limit: GuestMemoryBytes) -> Self {
         self.memory_limit = Some(memory_limit);
@@ -149,8 +155,15 @@ impl PreInitializer {
             return Err(PreInitError::NoInitFunc(imports::exports::INITIALIZE));
         }
         let limit = self.memory_limit.map_or(536870912, GuestMemoryBytes::get);
-        if bytes > limit {
-            return Err(PreInitError::MemoryLimit { bytes, limit });
+        let declaration_limit = self
+            .runtime
+            .declared_memory_ceiling(self.memory_limit)
+            .map_or(limit, GuestMemoryBytes::get);
+        if bytes > declaration_limit {
+            return Err(PreInitError::MemoryLimit {
+                bytes,
+                limit: declaration_limit,
+            });
         }
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(1)
@@ -187,7 +200,7 @@ impl PreInitializer {
                 validation_limits: Default::default(),
                 engine: configuration,
                 application_files: PlatformFiles::default(),
-                runtime: RuntimeProfile::RawWasm,
+                runtime: self.runtime.clone(),
                 limits: Limits {
                     module_bytes_compressed: 52428800,
                     package_bytes: 52428800,
@@ -310,10 +323,13 @@ mod tests {
     #[test]
     fn local_initialization_enforces_the_consuming_engine_capacity_during_growth() {
         let wasm = memory_module(
-            "1",
+            "1 65536",
             "(if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))",
         );
         let output = PreInitializer::new()
+            .with_runtime_profile(RuntimeProfile::SharedRuntime {
+                sdk_version: "test".into(),
+            })
             .with_memory_limit(GuestMemoryBytes::new(65536).unwrap())
             .run(&wasm, &request(&wasm))
             .unwrap();

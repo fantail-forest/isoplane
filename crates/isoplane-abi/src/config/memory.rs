@@ -2,7 +2,8 @@
 use serde::{Deserialize, Serialize};
 
 /// Largest addressable wasm32 linear memory.
-pub const WASM32_MEMORY_MAX_BYTES: u64 = 1 << 32;
+pub const WASM32_MEMORY_MAX_BYTES: u64 =
+    include!(concat!(env!("OUT_DIR"), "/wasm32_memory_max_bytes.rs"));
 
 /// A positive, page-aligned wasm32 memory ceiling in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,10 +12,15 @@ pub struct GuestMemoryBytes(u64);
 
 /// A memory ceiling outside the platform's addressable, page-aligned range.
 #[derive(Debug, Clone, Copy, thiserror::Error)]
-#[error("guest memory must be a positive multiple of 65536 bytes, at most 4294967296 bytes")]
+#[error("guest memory must be a positive multiple of {page_bytes} bytes, at most {maximum_bytes} bytes",
+    page_bytes = crate::WASM_PAGE_SIZE,
+    maximum_bytes = WASM32_MEMORY_MAX_BYTES)]
 pub struct InvalidGuestMemory;
 
 impl GuestMemoryBytes {
+    /// The complete wasm32 address range, independent of an application's allowance.
+    pub const WASM32_MAX: Self = Self(WASM32_MEMORY_MAX_BYTES);
+
     /// Validate an operator-selected linear-memory ceiling.
     pub fn new(bytes: u64) -> Result<Self, InvalidGuestMemory> {
         if bytes == 0

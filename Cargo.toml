@@ -26,6 +26,7 @@ license-file = "LICENSE.txt"
 rust-version = "1.88"
 
 [workspace.dependencies]
+roxmltree = "0.21"
 csbindgen = "=1.9.8"
 procfs = { version = "0.18", default-features = false }
 libproc = "0.14.11"

@@ -9,6 +9,7 @@ tasks:
     desc: Build portable Rust WASM fixtures
     deps: [':initialize']
     sources:
+      - tools/BuildProtocol/WasmMemory.props
       - guests/**/*.rs
       - guests/**/Cargo.toml
       - guests/Cargo.lock

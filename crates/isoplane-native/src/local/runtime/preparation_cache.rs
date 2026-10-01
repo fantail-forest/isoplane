@@ -25,7 +25,7 @@ struct Cache {
     key: blake3::Hash,
     limits: isoplane_abi::config::Limits,
     validation_limits: isoplane_abi::config::ValidationLimits,
-    guest_memory_bytes: Option<isoplane_abi::config::GuestMemoryBytes>,
+    declared_memory_ceiling: Option<isoplane_abi::config::GuestMemoryBytes>,
 }
 
 impl Cache {
@@ -45,6 +45,7 @@ impl Cache {
             configuration,
             runtime.finalize().as_bytes(),
             &serde_json::to_vec(&project.manifest)?,
+            &serde_json::to_vec(&project.runtime_profile)?,
             &serde_json::to_vec(&super::initialization_network(project))?,
             project.init_sandbox.as_str().as_bytes(),
         ] {
@@ -60,7 +61,9 @@ impl Cache {
             key: key.finalize(),
             limits: project.manifest.limits,
             validation_limits: project.manifest.validation_limits,
-            guest_memory_bytes: project.manifest.guest_memory_bytes,
+            declared_memory_ceiling: project
+                .runtime_profile
+                .declared_memory_ceiling(project.manifest.guest_memory_bytes),
         })
     }
 
@@ -72,7 +75,7 @@ impl Cache {
             match isoplane_runtime::validate_with_limits(
                 &wasm,
                 self.limits,
-                self.guest_memory_bytes,
+                self.declared_memory_ceiling,
                 &self.validation_limits,
             ) {
                 Ok(report) if !report.has_initialize() => {
@@ -177,6 +180,10 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_memory_maximum(1)
+        }
+
+        fn with_memory_maximum(maximum_pages: u64) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let project = Project {
                 manifest: serde_json::from_str(r#"{"name":"app"}"#).unwrap(),
@@ -192,18 +199,19 @@ mod tests {
                 }])
                 .unwrap(),
                 application_files: PlatformFiles::default(),
+                runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),
             };
             let executable = directory.path().join("runtime");
             std::fs::write(&executable, b"runtime version one").unwrap();
-            let wasm = wat::parse_str(
+            let wasm = wat::parse_str(format!(
                 r#"(module
-                (memory (export "memory") 1 1)
+                (memory (export "memory") 1 {maximum_pages})
                 (func (export "isoplane_initialize") (result i64)
                     (i32.store (i32.const 0) (i32.const 42)) i64.const 0)
                 (func (export "isoplane_alloc") (param i32 i32) (result i32) (i32.const 0))
                 (func (export "isoplane_handle") (param i32 i32) (result i64) (i64.const 1))
                 (func (export "isoplane_wake") (param i64 i32 i32) (result i64) (i64.const 1)))"#,
-            )
+            ))
             .unwrap();
             Self {
                 _directory: directory,
@@ -264,37 +272,46 @@ mod tests {
 
     #[test]
     fn unchanged_inputs_reuse_a_real_preinitialized_template() {
-        let fixture = Fixture::new();
-        super::super::validate(&fixture.project, &fixture.wasm, false).unwrap();
-        let first = fixture
-            .cache()
-            .get_or_prepare(|| super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}"))
-            .unwrap();
-        let cached = fixture
-            .cache()
-            .get_or_prepare(|| {
-                panic!("an unchanged local restart must not run initialization again")
+        for shared_runtime in [false, true] {
+            let mut fixture = Fixture::with_memory_maximum(if shared_runtime { 65536 } else { 1 });
+            if shared_runtime {
+                fixture.project.runtime_profile = isoplane_prepare::RuntimeProfile::SharedRuntime {
+                    sdk_version: "test".into(),
+                };
+            }
+            super::super::validate(&fixture.project, &fixture.wasm, false).unwrap();
+            let first = fixture
+                .cache()
+                .get_or_prepare(|| {
+                    super::super::preinitialize(&fixture.project, &fixture.wasm, b"{}")
+                })
+                .unwrap();
+            let cached = fixture
+                .cache()
+                .get_or_prepare(|| {
+                    panic!("an unchanged local restart must not run initialization again")
+                })
+                .unwrap();
+            assert_eq!(
+                cached, first,
+                "a cache hit must return the initialized image unchanged"
+            );
+            let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
+                pooling: false,
+                ..Default::default()
             })
             .unwrap();
-        assert_eq!(
-            cached, first,
-            "a cache hit must return the initialized image unchanged"
-        );
-        let engine = isoplane_engine::IsoplaneEngine::new(isoplane_engine::EngineConfig {
-            pooling: false,
-            ..Default::default()
-        })
-        .unwrap();
-        let template = engine.load_template(&cached).unwrap();
-        assert_ne!(
-            cached, fixture.wasm,
-            "preparation must retain the initialized image, not the original module"
-        );
-        assert_eq!(
-            template.hash,
-            isoplane_engine::ModuleHash::of(&first),
-            "the ordinary engine must load the cached sandbox bytecode"
-        );
+            let template = engine.load_template(&cached).unwrap();
+            assert_ne!(
+                cached, fixture.wasm,
+                "preparation must retain the initialized image, not the original module"
+            );
+            assert_eq!(
+                template.hash,
+                isoplane_engine::ModuleHash::of(&first),
+                "the ordinary engine must load the cached sandbox bytecode"
+            );
+        }
     }
 
     #[test]
@@ -402,6 +419,16 @@ mod tests {
             &fixture.wasm,
             &fixture.executable,
             "changed admission limits",
+        );
+        project = fixture.project.clone();
+        project.runtime_profile = isoplane_prepare::RuntimeProfile::SharedRuntime {
+            sdk_version: "another-sdk".into(),
+        };
+        assert_miss(
+            &project,
+            &fixture.wasm,
+            &fixture.executable,
+            "changed runtime provenance",
         );
         for change in ["path", "bytes", "timestamp", "removed"] {
             project = fixture.project.clone();
@@ -512,6 +539,11 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
+        // macOS stores extended attributes in AppleDouble companions on SMB.
+        #[cfg(target_os = "macos")]
+        files.retain(|name| {
+            name != "._preinitialized.wasm-cache" && name != "._preinitialized.wasm-cache.lock"
+        });
         files.sort();
         assert_eq!(
             files,

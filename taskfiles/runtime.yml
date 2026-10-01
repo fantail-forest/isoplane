@@ -15,6 +15,7 @@ tasks:
       ISOPLANE_GUEST_RUNTIME_FEED: '{{.FEED}}'
       ISOPLANE_CLI_ASSEMBLY: '{{.CLI}}'
     sources:
+      - '{{.ROOT_DIR}}/tools/BuildProtocol/WasmMemory.props'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/MonoRuntime/{src/**/*,build.sh,manifest.py}'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/{Abi,Runtime,Sdk}/**/*.cs'
       - '{{.ROOT_DIR}}/guest-sdks/dotnet/AspNetCore/**/*.cs'

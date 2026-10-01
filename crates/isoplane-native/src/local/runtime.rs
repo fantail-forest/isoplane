@@ -123,6 +123,7 @@ impl Prepared {
 
 fn engine_configuration(project: &Project) -> isoplane_engine::EngineConfig {
     isoplane_engine::EngineConfig {
+        max_memory_bytes: project.manifest.memory_max_bytes(),
         platform_files: project.platform_files.clone(),
         ..Default::default()
     }
@@ -167,6 +168,7 @@ fn compilation_cache(
 fn preinitialize(project: &Project, wasm: &[u8], configuration: &[u8]) -> anyhow::Result<Vec<u8>> {
     let files = project.served_files()?;
     Ok(isoplane_prepare::PreInitializer::new()
+        .with_runtime_profile(project.runtime_profile.clone())
         .with_memory_limit(isoplane_abi::config::GuestMemoryBytes::new(project.manifest.memory_max_bytes())?)
         .with_engine_config(isoplane_engine::EngineConfig { platform_files: files.clone(), ..engine_configuration(project) })
         .with_network(initialization_network(project))
@@ -219,18 +221,21 @@ fn validate(
     local_debug: bool,
 ) -> anyhow::Result<isoplane_runtime::ValidationReport> {
     let manifest = &project.manifest;
+    let declaration = project
+        .runtime_profile
+        .declared_memory_ceiling(manifest.guest_memory_bytes);
     let admission = if local_debug {
         isoplane_runtime::validate_local_debug_with_limits(
             wasm,
             manifest.limits,
-            manifest.guest_memory_bytes,
+            declaration,
             &manifest.validation_limits,
         )
     } else {
         isoplane_runtime::validate_with_limits(
             wasm,
             manifest.limits,
-            manifest.guest_memory_bytes,
+            declaration,
             &manifest.validation_limits,
         )
     };
@@ -386,8 +391,7 @@ impl isoplane_proxy::RouteResolver for AppRoute {
 mod storage_tests {
     use super::*;
 
-    #[test]
-    fn an_active_rebuild_does_not_pin_previous_compilation_entries() {
+    fn project() -> (tempfile::TempDir, Project) {
         let directory = tempfile::tempdir().unwrap();
         let library = directory.path().join("runtime");
         std::fs::write(&library, b"runtime").unwrap();
@@ -400,7 +404,14 @@ mod storage_tests {
             allow_endpoints: vec![],
             platform_files: Default::default(),
             application_files: Default::default(),
+            runtime_profile: isoplane_prepare::RuntimeProfile::raw_wasm(),
         };
+        (directory, project)
+    }
+
+    #[test]
+    fn an_active_rebuild_does_not_pin_previous_compilation_entries() {
+        let (_directory, project) = project();
         let previous = compilation_cache(&project, b"previous").unwrap();
         let old = previous.lease.directory().to_path_buf();
         std::fs::write(old.join("artifact"), b"compiled").unwrap();
@@ -419,6 +430,71 @@ mod storage_tests {
             current.lease.directory().exists(),
             "retention must preserve the current rebuild's storage"
         );
+    }
+
+    #[test]
+    fn shared_runtime_growth_obeys_local_application_limits_above_the_default() {
+        use isoplane_engine::{Completion, CpuBudget, InstanceOps, IsoplaneEngine};
+        use isoplane_host::bindings::{CellBindings, InstanceCtx, Tenancy};
+
+        for manifest in [
+            r#"{"name":"app","limits":"enterprise"}"#,
+            r#"{"name":"app","guest_memory_bytes":167772160}"#,
+        ] {
+            let (_directory, mut project) = project();
+            project.manifest = serde_json::from_str(manifest).unwrap();
+            project.runtime_profile = isoplane_prepare::RuntimeProfile::SharedRuntime {
+                sdk_version: "test-sdk".into(),
+            };
+            let limit = project.manifest.memory_max_bytes();
+            let wasm = wat::parse_str(format!(
+                r#"(module
+                (memory (export "memory") 1 65536)
+                (func (export "isoplane_alloc") (param i32 i32) (result i32) i32.const 4096)
+                (func (export "isoplane_handle") (param i32 i32) (result i64) i64.const 1)
+                (func (export "isoplane_initialize") (result i64)
+                    (if (i32.ne (memory.grow (i32.const 2048)) (i32.const 1))
+                        (then unreachable))
+                    (if (i32.ne (memory.grow (i32.const {over_limit_pages})) (i32.const -1))
+                        (then unreachable))
+                    i64.const 0)
+                (func (export "isoplane_wake") (param i64 i32 i32) (result i64) i64.const 1))"#,
+                over_limit_pages = limit / isoplane_abi::WASM_PAGE_SIZE as u64 - 2048,
+            ))
+            .unwrap();
+            validate(&project, &wasm, false).unwrap();
+            let engine = IsoplaneEngine::new(isoplane_engine::EngineConfig {
+                max_instances: 1,
+                pooling: false,
+                ..engine_configuration(&project)
+            })
+            .unwrap();
+            let template = engine.load_template(&wasm).unwrap();
+            let mut context = InstanceCtx::new(
+                isoplane_host::InstanceId(1),
+                Tenancy {
+                    module: ModuleId::new("app", "test"),
+                    tenant: "test".into(),
+                    limits: project.manifest.limits,
+                    lifecycle: Default::default(),
+                    allowlist: None,
+                },
+                Arc::default(),
+                None,
+            );
+            context.limits = project.manifest.effective_limits();
+            let mut instance = engine
+                .activate(&template, CellBindings::boxed(Arc::new(context)))
+                .unwrap();
+            let outcome = instance.run_initialize(CpuBudget::http());
+            assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
+            assert_eq!(instance.memory().len(), 2049 * isoplane_abi::WASM_PAGE_SIZE);
+            project.runtime_profile = isoplane_prepare::RuntimeProfile::raw_wasm();
+            assert!(
+                validate(&project, &wasm, false).is_err(),
+                "raw modules cannot claim the shared runtime's declaration ceiling"
+            );
+        }
     }
 }
 

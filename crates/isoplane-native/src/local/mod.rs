@@ -26,6 +26,8 @@ pub struct Inputs {
     /// The application package's files, for a module that runs a package
     /// rather than carrying its application; empty otherwise.
     pub application_files: isoplane_engine::PlatformFiles,
+    /// Provenance of the runtime selected for the application package.
+    pub runtime_profile: isoplane_prepare::RuntimeProfile,
 }
 
 impl Inputs {
