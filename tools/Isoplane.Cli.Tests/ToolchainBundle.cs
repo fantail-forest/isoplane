@@ -1,3 +1,4 @@
+using Isoplane.TestSupport;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -15,7 +16,8 @@ internal sealed class ToolchainBundle : IDisposable
     internal const string Revision = "0123456789abcdef0123456789abcdef01234567";
     internal static readonly string[] PackageIds = ["Isoplane.Cli", "Isoplane.Native", "Isoplane.Testing", "Isoplane.Sdk", "Isoplane.AspNetCore", "Isoplane.Templates"];
 
-    internal string Root { get; } = Directory.CreateTempSubdirectory("isoplane-toolchain-test-").FullName;
+    private readonly FileSystemTestDirectory? localDirectory;
+    internal string Root { get; }
     internal string Release => Path.Combine(Root, "release");
     internal string Source => Path.Combine(Root, "toolchain");
     internal string Home => Path.Combine(Root, "home");
@@ -23,29 +25,39 @@ internal sealed class ToolchainBundle : IDisposable
     internal string ArchivePath => Path.Combine(Release, "toolchain.tgz");
     internal ReleaseIdentity Cli { get; }
 
-    internal ToolchainBundle(string path = "bin/tool", string? platform = null, string version = Version, string revision = Revision)
+    internal ToolchainBundle(string path = "bin/tool", string? platform = null, string version = Version, string revision = Revision, bool localFileSystem = false)
     {
+        localDirectory = localFileSystem ? new FileSystemTestDirectory("isoplane-toolchain-test-") : null;
+        Root = localDirectory?.Path ?? Directory.CreateTempSubdirectory("isoplane-toolchain-test-").FullName;
         Cli = new(version, revision);
-        Directory.CreateDirectory(Path.Combine(Source, "bin"));
-        Directory.CreateDirectory(Path.Combine(Release, "packages"));
-        Directory.CreateDirectory(UserHome);
-        File.WriteAllText(Path.Combine(UserHome, ".profile"), "# user profile\n");
-        File.WriteAllText(Path.Combine(Source, "bin", "tool"), "payload");
-        var digest = Convert.ToHexStringLower(SHA256.HashData("payload"u8));
-        var entries = new List<ToolchainFile> { new(path, digest, false) };
-        foreach (var required in Toolchain.RequiredFiles())
+        try
         {
-            var target = Path.Combine(Source, required);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            var content = "payload";
-            File.WriteAllText(target, content);
-            entries.Add(new(required, Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))), false));
+            Directory.CreateDirectory(Path.Combine(Source, "bin"));
+            Directory.CreateDirectory(Path.Combine(Release, "packages"));
+            Directory.CreateDirectory(UserHome);
+            File.WriteAllText(Path.Combine(UserHome, ".profile"), "# user profile\n");
+            File.WriteAllText(Path.Combine(Source, "bin", "tool"), "payload");
+            var digest = Convert.ToHexStringLower(SHA256.HashData("payload"u8));
+            var entries = new List<ToolchainFile> { new(path, digest, false) };
+            foreach (var required in Toolchain.RequiredFiles())
+            {
+                var target = Path.Combine(Source, required);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                var content = "payload";
+                File.WriteAllText(target, content);
+                entries.Add(new(required, Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content))), false));
+            }
+            var manifest = new ToolchainManifest(platform ?? Toolchain.PlatformIdentifier(), "10.0.400", entries.ToArray());
+            File.WriteAllText(Path.Combine(Source, "toolchain.json"), JsonSerializer.Serialize(manifest));
+            foreach (var id in PackageIds)
+                File.WriteAllText(Path.Combine(Release, "packages", $"{id}.{version}.nupkg"), $"{id} {version} {revision}");
+            DescribeRelease(version, revision);
         }
-        var manifest = new ToolchainManifest(platform ?? Toolchain.PlatformIdentifier(), "10.0.400", entries.ToArray());
-        File.WriteAllText(Path.Combine(Source, "toolchain.json"), JsonSerializer.Serialize(manifest));
-        foreach (var id in PackageIds)
-            File.WriteAllText(Path.Combine(Release, "packages", $"{id}.{version}.nupkg"), $"{id} {version} {revision}");
-        DescribeRelease(version, revision);
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
     /// <summary>The identity of the toolchain as authored: the SHA-256 of its manifest.</summary>
@@ -86,7 +98,11 @@ internal sealed class ToolchainBundle : IDisposable
         return installed;
     }
 
-    public void Dispose() => Directory.Delete(Root, recursive: true);
+    public void Dispose()
+    {
+        if (localDirectory is not null) localDirectory.Dispose();
+        else Directory.Delete(Root, recursive: true);
+    }
 }
 
 /// <summary>Registrations kept in memory, recording every call.</summary>

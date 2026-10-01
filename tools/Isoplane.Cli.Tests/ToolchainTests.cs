@@ -86,7 +86,7 @@ public sealed class ToolchainTests
     [Fact]
     public async Task Source_symlinks_cannot_import_unlisted_external_files()
     {
-        using var fixture = new ToolchainBundle();
+        using var fixture = new ToolchainBundle(localFileSystem: true);
         var path = Path.Combine(fixture.Source, "bin", "tool");
         var external = Path.Combine(fixture.Root, "external");
         File.Move(path, external);
