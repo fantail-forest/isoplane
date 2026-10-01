@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using Xunit;
 
@@ -111,9 +110,9 @@ public sealed class DatabaseGenerationTests : IDisposable
         return [];
     }
 
-    private void CopyDesignProject([CallerFilePath] string source = "")
+    private void CopyDesignProject()
     {
-        var sample = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, "../../..", "samples/aspnet-todo"));
+        var sample = Path.Combine(MsbuildTests.RepositoryRoot(), "samples", "aspnet-todo");
         Directory.CreateDirectory(Path.Combine(directory, "Design"));
         foreach (var file in new[] { "Todo.cs", "Design/Design.csproj", "Design/TodoDesignFactory.cs" })
             File.Copy(Path.Combine(sample, file), Path.Combine(directory, file));

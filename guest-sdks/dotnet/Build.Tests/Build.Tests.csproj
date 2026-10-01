@@ -6,8 +6,9 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" />
-    <Reference Include="Microsoft.Build.Utilities.Core" HintPath="$(MSBuildBinPath)/Microsoft.Build.Utilities.Core.dll" />
+    <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" Private="false" />
+    <Reference Include="Microsoft.Build.Utilities.Core" HintPath="$(MSBuildBinPath)/Microsoft.Build.Utilities.Core.dll" Private="false" />
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
     <Compile Include="../Build/MonoDebugSymbols.cs" Link="MonoDebugSymbols.cs" />
     <Compile Include="../Build/DebugManifest.cs" Link="DebugManifest.cs" />
     <ProjectReference Include="../Isoplane.Sdk.csproj" />

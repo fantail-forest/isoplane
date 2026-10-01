@@ -1,13 +1,13 @@
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 
 /// <summary>Runs isolated MSBuild projects against the guest SDK targets.</summary>
 public abstract class MsbuildTests : IDisposable
 {
     protected readonly string directory = Directory.CreateTempSubdirectory("isoplane-publication-test-").FullName;
-    protected static string SdkDirectory() => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(SourcePath())!, "..", ".."));
-    private static string SourcePath([CallerFilePath] string source = "") => source;
+    internal static string RepositoryRoot() => Environment.GetEnvironmentVariable("ISOPLANE_BUILD_ROOT")
+        ?? throw new InvalidOperationException("Run task test:managed to select the source checkout for build tests.");
+    protected static string SdkDirectory() => Path.Combine(RepositoryRoot(), "guest-sdks", "dotnet");
 
     protected string WriteProject(params XElement[] elements)
     {
@@ -42,9 +42,9 @@ public abstract class MsbuildTests : IDisposable
         }
     }
 
-    protected static void WriteExecutable(string path, string text)
+    protected static void WriteExecutable(string path, string unix, string windows)
     {
-        File.WriteAllText(path, text + "\n");
+        File.WriteAllText(path, (OperatingSystem.IsWindows() ? windows : unix) + "\n");
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 

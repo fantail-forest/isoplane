@@ -23,8 +23,16 @@
       <_IsoplaneManagedToNativeOutputs Include="$(_WasmRuntimeICallTablePath);$(_WasmICallTablePath);$(_WasmPInvokeTablePath);$(_WasmInterpToNativeTablePath)" />
     </ItemGroup>
     <Error Condition="!Exists('%(_IsoplaneManagedToNativeInputs.Identity)')" Text="A managed-to-native generation input is missing: %(_IsoplaneManagedToNativeInputs.Identity)" />
+    <GetFileHash Files="$(_IsoplaneManagedToNativeInventory)" Condition="Exists('$(_IsoplaneManagedToNativeInventory)')">
+      <Output TaskParameter="Hash" PropertyName="_IsoplanePreviousManagedToNativeInventoryHash" />
+    </GetFileHash>
     <WriteLinesToFile File="$(_IsoplaneManagedToNativeInventory)" Overwrite="true" WriteOnlyWhenDifferent="true"
                       Lines="@(_IsoplaneManagedToNativeInputs);@(_WasmPInvokeModules);@(_IsoplaneManagedToNativeOutputs);$(_IsLibraryMode);$(WasmRequirePInvokeSymbolInventory);$(IsoplaneGuestRuntimePackVersion);$(IsoplaneGuestRuntimePackSha512)" />
+    <GetFileHash Files="$(_IsoplaneManagedToNativeInventory)">
+      <Output TaskParameter="Hash" PropertyName="_IsoplaneManagedToNativeInventoryHash" />
+    </GetFileHash>
+    <!-- Configuration changes can precede a client-clock stamp on shared storage. -->
+    <Delete Files="$(_IsoplaneManagedToNativeStamp)" Condition="'$(_IsoplanePreviousManagedToNativeInventoryHash)' != '$(_IsoplaneManagedToNativeInventoryHash)'" />
     <Delete Files="$(_IsoplaneManagedToNativeStamp)" Condition="!Exists('%(_IsoplaneManagedToNativeOutputs.Identity)')" />
   </Target>
 

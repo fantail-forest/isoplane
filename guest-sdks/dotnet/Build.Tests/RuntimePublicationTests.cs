@@ -11,12 +11,14 @@ public sealed class RuntimePublicationTests : MsbuildTests
     {
         var module = Path.Combine(directory, "test.wasm");
         File.WriteAllText(module, "fixture");
-        var validator = Path.Combine(directory, "validator");
-        var log = Path.Combine(directory, "validator.json");
+        var validator = Path.Combine(directory, OperatingSystem.IsWindows() ? "validator.cmd" : "validator");
+        var log = Path.Combine(directory, "validator.args");
         WriteExecutable(validator, """
-            #!/usr/bin/env python3
-            import json, os, pathlib, sys
-            pathlib.Path(os.environ['ISOPLANE_TEST_VALIDATOR_LOG']).write_text(json.dumps(sys.argv[1:]))
+            #!/bin/sh
+            printf '%s\n' "$@" > "$ISOPLANE_TEST_VALIDATOR_LOG"
+            """, """
+            @echo off
+            (for %%a in (%*) do @echo %%~a) > "%ISOPLANE_TEST_VALIDATOR_LOG%"
             """);
         var project = WriteProject(new XElement("PropertyGroup", new XElement("NativeBinary", module),
                 new XElement("IsoplaneCli", validator), new XElement("IsoplanePlan", "standard"),
@@ -26,7 +28,7 @@ public sealed class RuntimePublicationTests : MsbuildTests
         start.Environment["ISOPLANE_TEST_VALIDATOR_LOG"] = log;
         var result = await Run(start);
         Assert.True(result.Exit == 0, "The SDK validation target must run successfully: " + result.Output);
-        var arguments = JsonSerializer.Deserialize<string[]>(File.ReadAllText(log))!;
+        var arguments = File.ReadAllLines(log);
         Assert.True(arguments.Contains("--guest-memory-bytes") == (memoryBytes.Length != 0) && arguments.Contains("standard"),
             "A large linker declaration cannot grant an admission override; an explicit override preserves all other Standard limits.");
         if (memoryBytes.Length != 0) Assert.True(arguments.Contains(memoryBytes), "The admission override must preserve its exact byte value.");
