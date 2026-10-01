@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
@@ -9,7 +10,9 @@ fn the_installed_dotnet_tool_reports_its_package_version() {
     )
     .expect("configure the isolated local package feed");
     let source = std::env::var_os("ISOPLANE_TEST_NATIVE_PACKAGE_FEED")
+        .map(PathBuf::from)
         .expect("run task test:native to prepare the native package feed");
+    let source: PathBuf = source.components().collect();
     let configured = Command::new("dotnet")
         .args(["nuget", "add", "source"])
         .arg(source)
@@ -19,7 +22,9 @@ fn the_installed_dotnet_tool_reports_its_package_version() {
         .expect("configure the prepared package feed");
     assert!(
         configured.status.success(),
-        "configuring the prepared package feed failed: {}",
+        "configuring the prepared package feed failed ({}):\n{}{}",
+        configured.status,
+        String::from_utf8_lossy(&configured.stdout),
         String::from_utf8_lossy(&configured.stderr)
     );
     let cli = isoplane_fixtures::managed_cli(directory.path(), directory.path());
