@@ -57,8 +57,8 @@ pub struct PreparationContext<'a> {
 
 /// A published artifact directory, still owned until its caller keeps it.
 struct Published {
+    _publication_lock: isoplane_prepare::PreparationOwner,
     publication: tempfile::TempDir,
-    _publication_lock: std::fs::File,
     receipt: PreparedReceipt,
 }
 
@@ -264,8 +264,7 @@ impl Deployer {
         let publication = tempfile::Builder::new()
             .prefix("artifact-")
             .tempdir_in(&self.root)?;
-        let publication_lock = std::fs::File::create(publication.path().join("owner.lock"))?;
-        fs4::FileExt::lock(&publication_lock)?;
+        let publication_lock = isoplane_prepare::PreparationOwner::create(publication.path())?;
         std::fs::write(publication.path().join("version"), &opts.version.0)?;
         if let Some(name) = baseline {
             std::fs::write(publication.path().join(BASELINE_FILE), name)?;

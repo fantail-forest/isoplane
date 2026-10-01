@@ -3,8 +3,10 @@
 mod bake;
 mod initialize;
 mod network;
+mod ownership;
 pub mod package;
 pub use network::InitializationNetwork;
+pub use ownership::PreparationOwner;
 
 pub use initialize::{initialize, Initialization, Initialized, InitializedModule};
 
