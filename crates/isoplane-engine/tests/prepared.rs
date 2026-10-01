@@ -1,5 +1,7 @@
 //! Prepared templates execute through the same activation/capture interface as portable input.
 mod common;
+#[path = "common/published_files.rs"]
+mod published_files;
 
 use common::*;
 use isoplane_engine::prepared::{PreparedError, PreparedIdentity};
@@ -55,7 +57,7 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
     let prepared = engine
         .prepare_template(&wasm, identity(&wasm))
         .expect("prepare");
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("version");
     prepared.publish(&path).expect("publish");
     let loaded = load(&engine, &path, identity(&wasm)).expect("load");
@@ -64,7 +66,11 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
         expected.memory_image_arc(),
         "prepared sparse state must preserve all initial memory"
     );
-    std::fs::remove_dir_all(&path).expect("remove source files");
+    published_files::remove_dir_all(&path).expect("remove source files");
+    assert!(
+        !path.exists(),
+        "the original publication must no longer resolve"
+    );
     let mut instance = activate(&engine, &loaded);
     let mut original = activate(&engine, &expected);
     assert_eq!(
@@ -83,7 +89,7 @@ fn prepared_state_matches_portable_state_and_survives_source_removal() {
 fn changed_payloads_are_rejected_when_the_manifest_is_unchanged() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let prepared = engine
         .prepare_template(&wasm, identity(&wasm))
         .expect("prepare");
@@ -108,7 +114,7 @@ fn changed_payloads_are_rejected_when_the_manifest_is_unchanged() {
 fn an_unexpected_runtime_profile_is_rejected() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("version");
     engine
         .prepare_template(&wasm, identity(&wasm))
@@ -130,7 +136,7 @@ fn an_unexpected_runtime_profile_is_rejected() {
 fn another_initialization_context_cannot_substitute_a_prepared_template() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("version");
     engine
         .prepare_template(&wasm, identity(&wasm))
@@ -165,13 +171,13 @@ fn prepared_portable_input_cannot_rerun_a_start_function_on_activation() {
 
 fn compiled_artifact() -> (
     isoplane_engine::IsoplaneEngine,
-    tempfile::TempDir,
+    published_files::Directory,
     PreparedIdentity,
 ) {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
     let expected = identity(&wasm);
-    let directory = tempfile::tempdir().expect("compiled artifact");
+    let directory = published_files::tempdir().expect("compiled artifact");
     engine
         .prepare_template(&wasm, expected)
         .expect("prepare")
@@ -262,7 +268,7 @@ fn a_receipt_digest_refuses_a_substituted_manifest() {
         .publish(&other)
         .expect("publish");
     let manifest = path.join("manifest.bin");
-    std::fs::remove_file(&manifest).expect("remove the read-only manifest");
+    published_files::remove_file(&manifest).expect("remove the read-only manifest");
     std::fs::copy(other.join("manifest.bin"), &manifest).expect("substitute the manifest");
     assert!(
         matches!(
@@ -322,7 +328,7 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
     let engine = test_engine();
     let wasm = guest(4, "", "", DONE, DONE);
     let identity = identity(&wasm);
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let path = directory.path().join("prepared");
     engine
         .prepare_template(&wasm, identity)
@@ -331,7 +337,7 @@ fn receipt_checks_do_not_read_native_or_baseline_payloads() {
         .expect("publish");
     let digest = engine.prepared_manifest_sha256(&path).expect("receipt");
     for name in ["template.cwasm", "baseline.bin", "state.bin"] {
-        std::fs::remove_file(path.join(name)).expect("remove payload");
+        published_files::remove_file(path.join(name)).expect("remove payload");
     }
     assert_eq!(
         engine
@@ -379,7 +385,7 @@ fn profiling_an_existing_template_emits_native_symbols_without_rebuilding_it() {
         DONE,
     );
     let expected = identity(&wasm);
-    let directory = tempfile::tempdir().expect("prepared artifact");
+    let directory = published_files::tempdir().expect("prepared artifact");
     let path = directory.path().join("version");
     engine
         .prepare_template(&wasm, expected)
@@ -448,7 +454,7 @@ fn publish_mapped(
 fn tamper(payload: &std::path::Path) {
     let mut bytes = std::fs::read(payload).expect("read payload");
     bytes[0] ^= 1;
-    std::fs::remove_file(payload).expect("remove read-only payload");
+    published_files::remove_file(payload).expect("remove read-only payload");
     std::fs::write(payload, bytes).expect("write changed payload");
 }
 
@@ -483,7 +489,7 @@ fn sharing_artifacts(
 #[test]
 fn a_template_shares_native_code_its_engine_already_holds_without_reading_its_own_copy() {
     let engine = test_engine();
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let (wasm, [(first, first_identity), (second, second_identity)]) =
         sharing_artifacts(&engine, directory.path());
     tamper(&second.join("template.cwasm"));
@@ -504,7 +510,7 @@ fn a_template_shares_native_code_its_engine_already_holds_without_reading_its_ow
 #[test]
 fn a_native_payload_is_verified_again_once_no_template_holds_it() {
     let engine = test_engine();
-    let directory = tempfile::tempdir().expect("directory");
+    let directory = published_files::tempdir().expect("directory");
     let (_, [(first, first_identity), (second, second_identity)]) =
         sharing_artifacts(&engine, directory.path());
     tamper(&second.join("template.cwasm"));

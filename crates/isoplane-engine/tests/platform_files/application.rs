@@ -1,4 +1,4 @@
-use super::{common, filesystem};
+use super::{common, filesystem, published_files};
 
 use common::{activate, small_engine_config};
 use filesystem::{call, dispatch, ROOT};
@@ -156,7 +156,7 @@ fn published_application_content_restores_with_the_current_host_trust_file() {
         runtime_profile: [2; 32],
         initialization_hash: [3; 32],
     };
-    let root = tempfile::tempdir().expect("artifact registry");
+    let root = published_files::tempdir().expect("artifact registry");
     let directory = root.path().join("version");
     engine
         .prepare_template_with_files(&wasm, identity, files(&[("/config.json", b"persisted")]))
@@ -169,10 +169,14 @@ fn published_application_content_restores_with_the_current_host_trust_file() {
         ..small_engine_config()
     })
     .expect("replacement engine");
-    // SAFETY: the test unlinks the artifact only after mapping it, which leaves the mappings intact.
+    // SAFETY: unlinking the artifact preserves the contents of retained mappings.
     let template = unsafe { replacement.load_prepared(&directory, identity, &[]) }
         .expect("restore published artifact");
-    std::fs::remove_dir_all(&directory).expect("remove backing artifact");
+    published_files::remove_dir_all(&directory).expect("remove backing artifact");
+    assert!(
+        !directory.exists(),
+        "the original publication must no longer resolve"
+    );
     let mut instance = activate(&replacement, &template);
     assert_eq!(
         result(&mut instance, 0),
@@ -219,7 +223,7 @@ fn changed_application_bytes_are_rejected_before_loading() {
         runtime_profile: [2; 32],
         initialization_hash: [3; 32],
     };
-    let root = tempfile::tempdir().expect("registry");
+    let root = published_files::tempdir().expect("registry");
     let path = root.path().join("version");
     let content = b"unique authenticated application content";
     engine
@@ -234,7 +238,7 @@ fn changed_application_bytes_are_rejected_before_loading() {
         .position(|window| window == content)
         .expect("asset bytes must be in retained state");
     bytes[position] ^= 1;
-    std::fs::remove_file(&state_path).expect("remove read-only published state");
+    published_files::remove_file(&state_path).expect("remove read-only published state");
     std::fs::write(state_path, bytes).expect("simulate modified backing content");
     assert!(
         // SAFETY: the file changed before loading, which must refuse it.
@@ -297,7 +301,7 @@ fn restored_artifacts_cannot_claim_a_path_reserved_by_the_receiving_host() {
             )]),
         )
         .expect("producer with no reserved paths");
-    let root = tempfile::tempdir().expect("registry");
+    let root = published_files::tempdir().expect("registry");
     let path = root.path().join("version");
     prepared.publish(&path).expect("published artifact");
     let receiver = IsoplaneEngine::new(EngineConfig {
