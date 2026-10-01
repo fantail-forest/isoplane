@@ -3,9 +3,20 @@ param([Parameter(Mandatory)][string]$Stage, [Parameter(Mandatory)][string]$Versi
 $ErrorActionPreference = 'Stop'
 $payload = (Resolve-Path "$Stage/payload").Path
 $bundle = New-Item -ItemType Directory -Force "$Stage/bundle"
-$files = Get-ChildItem -File -Recurse $payload | ForEach-Object { $_.FullName }
+$files = Get-ChildItem -File -Recurse -Force $payload | ForEach-Object { $_.FullName }
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $fragment = $files | & wixl-heat --directory-ref INSTALLDIR --component-group Payload --var var.Payload --prefix "$payload\" --win64
 if ($LASTEXITCODE -ne 0) { throw 'WiX payload harvesting failed.' }
+$document = [xml]($fragment -join "`n")
+$harvested = @($document.SelectNodes('//*[local-name()="File"]') | ForEach-Object {
+    $_.Source.Replace('$(var.Payload)', $payload)
+})
+$manifest = Get-Content "$payload/toolchain.json" -Raw | ConvertFrom-Json
+$expected = @("$payload\toolchain.json") + @($manifest.files | ForEach-Object {
+    Join-Path $payload $_.path.Replace('/', '\')
+})
+$difference = Compare-Object $expected $harvested
+if ($difference) { throw "WiX payload differs from the toolchain manifest: $($difference | Out-String)" }
 $fragment | Set-Content -Encoding UTF8 "$Stage/payload.wxs"
 $product = [Guid]::NewGuid().ToString().ToUpperInvariant()
 & wixl -a x64 -D "Payload=$payload" -D 'Win64=yes' -D "ProductCode=$product" -D "Version=$Version" -D "NumericVersion=$($Version.Split('-')[0])" -o "$bundle/sdk.msi" "$PSScriptRoot/WindowsSdk.wxs" "$Stage/payload.wxs"
