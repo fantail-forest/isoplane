@@ -9,8 +9,9 @@
 # policy admits.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-MATERIAL_PORT=47001
-DENIED_PORT=47002
+# Stay below the default ephemeral client-port ranges on supported hosts.
+MATERIAL_PORT=27001
+DENIED_PORT=27002
 mkdir -p "$ROOT/.test-runs/material"
 OUT="$(mktemp -d "$ROOT/.test-runs/material/run-XXXXXXXX")"
 trap 'rm -rf "$OUT"' EXIT

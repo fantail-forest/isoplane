@@ -50,7 +50,7 @@ async fn answer_at(runtime: GuestRuntime, owner: u64, path: &str, now_ms: u64) -
 }
 
 /// A wall-clock instant inside the fixed certificates' validity.
-const WITHIN_VALIDITY_MS: u64 = 1_789_100_000_000;
+const WITHIN_VALIDITY_MS: u64 = 1_893_456_000_000;
 
 in_mono_runtime! {
     /// The AEAD ciphers exist only with a native backend, so this tells a
