@@ -250,12 +250,14 @@ internal sealed class Sockets
             }
             case "backpressure":
             {
-                // One write larger than the socket buffers: the runtime's send
-                // loop parks on writability as often as the peer's draining requires.
                 using var socket = await ConnectAsync(path[1], path[2]).ConfigureAwait(false);
                 byte[] payload = Pattern(int.Parse(path[3], CultureInfo.InvariantCulture));
+                int writeChunkBytes = int.Parse(path[4], CultureInfo.InvariantCulture);
                 using var stream = new NetworkStream(socket, ownsSocket: false);
-                await stream.WriteAsync(payload).ConfigureAwait(false);
+                for (int offset = 0; offset < payload.Length; offset += writeChunkBytes)
+                {
+                    await stream.WriteAsync(payload.AsMemory(offset, Math.Min(writeChunkBytes, payload.Length - offset))).ConfigureAwait(false);
+                }
                 socket.Shutdown(SocketShutdown.Send);
                 return "sent " + payload.Length.ToString(CultureInfo.InvariantCulture);
             }

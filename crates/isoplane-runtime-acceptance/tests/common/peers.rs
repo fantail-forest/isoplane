@@ -21,9 +21,8 @@ pub fn reactor_for_peers(owner: u64, peers: Vec<SocketAddr>) -> Reactor {
     Reactor::with_network(InstanceId(owner), admitting(peers, Box::new(NoDns)))
 }
 
-/// As [`reactor_for_peers`], with every outbound connection's kernel send
-/// buffer capped at `send_buffer_bytes`, so a send larger than it is sure to
-/// wait on the peer draining.
+/// As [`reactor_for_peers`], requesting a small send buffer on outbound
+/// connections. Platforms may accept an individual write larger than this.
 pub fn reactor_for_peers_with_send_buffer(
     owner: u64,
     peers: Vec<SocketAddr>,
@@ -36,7 +35,7 @@ pub fn reactor_for_peers_with_send_buffer(
     )
 }
 
-/// Opens outbound connections whose kernel send buffer is capped.
+/// Opens outbound connections with a requested kernel send-buffer size.
 struct SmallSendBuffer(u32);
 
 #[async_trait::async_trait]
