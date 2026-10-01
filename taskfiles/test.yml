@@ -39,11 +39,22 @@ tasks:
 
   managed:
     desc: Run all managed tests using prepared assemblies
+    deps: [managed:standard]
+
+  managed:prepare:
+    internal: true
+    run: once
     deps: [':managed:tests', ':native', ':runtime:toolchain', process-fixture, managed-bundle-fixture]
     cmds:
       - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
         cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
-      - '"{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}'
+
+  managed:standard:
+    internal: true
+    deps: [managed:prepare]
+    cmds:
+      - |
+        "{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}
 
   managed-bundle-fixture:
     label: 'managed-bundle-fixture:{{.PLATFORM}}'
