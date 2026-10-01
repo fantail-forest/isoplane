@@ -115,11 +115,11 @@ fn pure_module_pre_inits_in_one_pass() {
         .expect("pre-init must succeed");
 
     println!(
-        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} ms CPU, {} refusals",
+        "pure module: {} bytes in -> {} bytes template, {} pass(es), {} ms occupancy, {} refusals",
         wasm.len(),
         out.template_bytes,
         out.passes,
-        out.init_cpu_ms,
+        out.init_occupancy_ms,
         out.capability_refusals
     );
     assert_eq!(out.passes, 1);
@@ -146,12 +146,12 @@ fn impure_units_are_deferred_and_pre_init_converges() {
         .expect("pre-init must converge");
 
     println!(
-        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals, {} ms CPU",
+        "impure module: {} passes, deferred {:?}, reasons {:?}, {} refusals, {} ms occupancy",
         out.passes,
         out.deferred_units,
         out.deferred_reasons,
         out.capability_refusals,
-        out.init_cpu_ms
+        out.init_occupancy_ms
     );
     // The clock is deferred, then a fresh attempt completes.
     assert_eq!(

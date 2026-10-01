@@ -14,7 +14,7 @@ pub struct Ctx {
     pub dispatch_id: u64,
     /// Coarse wall clock at dispatch start, frozen for the slice.
     pub now_ms: u64,
-    pub cpu_budget_ms: u32,
+    pub occupancy_budget_ms: u32,
     pub trace: TraceContext,
     cancel_future: u64,
 }
@@ -25,7 +25,7 @@ impl Ctx {
         Ctx {
             dispatch_id: rec.dispatch_id,
             now_ms: rec.now_ms,
-            cpu_budget_ms: rec.cpu_budget_ms,
+            occupancy_budget_ms: rec.occupancy_budget_ms,
             trace: rec.trace.clone(),
             cancel_future: rec.cancel_future,
         }

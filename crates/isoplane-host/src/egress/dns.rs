@@ -176,7 +176,7 @@ impl Spawn for LookupRuntime {
                 tracing::error!(%error, "DNS background task failed");
             }
         }
-        tasks.jobs.spawn(future);
+        tasks.jobs.spawn(crate::reactor_accounting::inherit(future));
     }
 }
 

@@ -434,7 +434,7 @@ mod storage_tests {
 
     #[test]
     fn shared_runtime_growth_obeys_local_application_limits_above_the_default() {
-        use isoplane_engine::{Completion, CpuBudget, InstanceOps, IsoplaneEngine};
+        use isoplane_engine::{Completion, InstanceOps, IsoplaneEngine, OccupancyBudget};
         use isoplane_host::bindings::{CellBindings, InstanceCtx, Tenancy};
 
         for manifest in [
@@ -486,7 +486,7 @@ mod storage_tests {
             let mut instance = engine
                 .activate(&template, CellBindings::boxed(Arc::new(context)))
                 .unwrap();
-            let outcome = instance.run_initialize(CpuBudget::http());
+            let outcome = instance.run_initialize(OccupancyBudget::http());
             assert_eq!(outcome.completion, Completion::Done, "{outcome:?}");
             assert_eq!(instance.memory().len(), 2049 * isoplane_abi::WASM_PAGE_SIZE);
             project.runtime_profile = isoplane_prepare::RuntimeProfile::raw_wasm();

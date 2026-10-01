@@ -42,8 +42,8 @@ impl Cell {
         let acquired = src.label();
         job.completion.acquired(slot.id, acquired);
 
-        let budget = CpuBudget {
-            cpu_ms: job.rec.cpu_budget_ms,
+        let budget = OccupancyBudget {
+            occupancy_ms: job.rec.occupancy_budget_ms,
             wall_ms_cap: self.cfg.wall_ms_cap,
             // Later slices carry what earlier ones spent, so the budget binds
             // the dispatch rather than each wake.
@@ -75,6 +75,8 @@ impl Cell {
 
         slot.ctx
             .begin_dispatch(crate::now_ms(), job.rec.dispatch_id);
+        let observer: Arc<dyn crate::reactor_accounting::Observer> = job.completion.clone();
+        *slot.ctx.reactor_observer.lock() = Some(Arc::downgrade(&observer));
         slot.ctx.set_cancel_future(job.rec.cancel_future);
         if let isoplane_abi::dispatch::DispatchKind::Http(request) = &job.rec.kind {
             *slot.ctx.request_body.lock() = Some(job.upload.clone().unwrap_or_else(|| {
@@ -138,7 +140,7 @@ impl Cell {
                 .in_scope(|| guard.instance().dispatch(&job.rec, budget));
             drop(hot);
             job.completion.add_slice(&out);
-            entry.meters.record_cpu(&out);
+            entry.meters.record_occupancy(&out);
             if ends_in_tombstone(&out, &slot) {
                 guard.destroy();
             } else {
@@ -272,7 +274,7 @@ impl Cell {
                 .in_scope(|| guard.instance().wake(fid, &res, budget));
             drop(hot);
             owner.add_slice(&outcome);
-            entry.meters.record_cpu(&outcome);
+            entry.meters.record_occupancy(&outcome);
             if ends_in_tombstone(&outcome, slot) {
                 guard.destroy();
             } else {
@@ -301,7 +303,7 @@ impl Cell {
         }
         self.metrics.record_tenant(
             &entry.tenant,
-            out.cpu_ns,
+            out.occupancy_ns,
             !matches!(out.completion, Completion::Done | Completion::Parked),
         );
 
@@ -414,7 +416,7 @@ impl Cell {
                     "clean kill: dispatch unwound inside its grace window"
                 );
                 let msg = format!(
-                    "budget_exceeded: cpu budget elapsed; the dispatch unwound cleanly inside its \
+                    "budget_exceeded: occupancy budget elapsed; the dispatch unwound cleanly inside its \
                      grace window with {:.3} ms of recorded overage",
                     overage as f64 / 1e6
                 );

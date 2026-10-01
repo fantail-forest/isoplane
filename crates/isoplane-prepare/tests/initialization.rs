@@ -100,7 +100,7 @@ fn runtime_bringup_answers_deterministic_clock_without_widening_unit_policy() {
 fn an_infinite_initializer_is_killed_by_the_shared_engine_budget() {
     let wasm = guest("", "(loop $forever (br $forever))");
     let mut request = request();
-    request.cpu_ms = 1;
+    request.occupancy_ms = 1;
     let error = initialize(&engine(), &wasm, &request)
         .err()
         .expect("unbounded initialization must fail");
@@ -194,7 +194,7 @@ fn wasm_start_code_cannot_execute_before_the_initializer_budget_is_armed() {
 #[test]
 fn a_future_import_traps_before_calling_an_initialization_provider() {
     use isoplane_engine::bindings::{BindingError, InitializationBindings};
-    use isoplane_engine::{Completion, CpuBudget, ImportCall};
+    use isoplane_engine::{Completion, ImportCall, OccupancyBudget};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -229,8 +229,8 @@ fn a_future_import_traps_before_calling_an_initialization_provider() {
     let mut instance = engine
         .activate_initialization(&template, Box::new(Provider(calls.clone())))
         .expect("restricted activation must succeed");
-    let result = instance.run_initialize(CpuBudget {
-        cpu_ms: 1000,
+    let result = instance.run_initialize(OccupancyBudget {
+        occupancy_ms: 1000,
         wall_ms_cap: 5000,
         spent_ns: 0,
     });

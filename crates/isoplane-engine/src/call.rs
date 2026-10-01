@@ -80,25 +80,25 @@ pub(crate) fn classify(live: &Live, err: &wasmtime::Error) -> TrapInfo {
     if let Some(kill) = d.kill {
         let kind = TrapKind::BudgetExceeded;
         let message = match kill {
-            Kill::CpuHard => err
+            Kill::OccupancyHard => err
                 .downcast_ref::<BudgetExceeded>()
                 .map(|b| b.to_string())
-                .unwrap_or_else(|| "cpu budget exceeded".into()),
+                .unwrap_or_else(|| "occupancy budget exceeded".into()),
             Kill::Wall => err
                 .downcast_ref::<WallCapExceeded>()
-                .map(|w| format!("{w} (wall-clock backstop, not a CPU meter)"))
+                .map(|w| format!("{w} (per-invocation elapsed-time cap)"))
                 .unwrap_or_else(|| "wall-clock backstop tripped".into()),
         };
         return TrapInfo { kind, message };
     }
 
     if err
-        .downcast_ref::<crate::meter::CpuClockUnavailable>()
+        .downcast_ref::<crate::meter::OccupancyClockUnavailable>()
         .is_some()
     {
         return TrapInfo {
-            kind: TrapKind::CpuClockUnavailable,
-            message: "host CPU clock unavailable".into(),
+            kind: TrapKind::OccupancyClockUnavailable,
+            message: "host occupancy clock unavailable".into(),
         };
     }
     if let Some(v) = err.downcast_ref::<crate::state::CapabilityViolation>() {
@@ -185,7 +185,7 @@ pub(crate) fn trap_code_of_kind(k: TrapKind) -> TrapCode {
         TrapKind::BudgetExceeded
         | TrapKind::Tombstoned
         | TrapKind::Sandbox
-        | TrapKind::CpuClockUnavailable
+        | TrapKind::OccupancyClockUnavailable
         | TrapKind::StorageFault
         | TrapKind::Other => TrapCode::Unknown,
     }

@@ -40,7 +40,7 @@ fn watch(
         .ok_or(Error::ResourceLimit)?;
     let completion = runtime.clone();
     let span = tracing::info_span!("native_readiness", tenant = %bindings.tenant(), instance = %bindings.instance());
-    let task = runtime.reactor.spawn(tracing::Instrument::instrument(
+    let task = runtime.spawn(tracing::Instrument::instrument(
         async move {
             operation.await;
             completion.settle_future(future, ResultRecord::Ok(Vec::new()));

@@ -103,8 +103,8 @@ async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
     .unwrap();
     tracing::dispatcher::with_default(&dispatch, || {
         tracing::info!(target: "isoplane_host::cell::completion", event = "dispatch_completed",
-            tenant = "tenant-a", app = "app-a", version = "v7", cpu_ns = 33_u64,
-            cpu_complete = false, dispatch_token = u64::MAX, "dispatch completed");
+            tenant = "tenant-a", app = "app-a", version = "v7", occupancy_ns = 33_u64,
+            occupancy_complete = false, dispatch_token = u64::MAX, "dispatch completed");
         tracing::error!(target: "unrelated", "this diagnostic must not enter the dispatch exporter");
     });
     assert!(
@@ -142,14 +142,14 @@ async fn dispatch_fields_reach_otlp_when_the_diagnostic_log_filter_is_off() {
     );
     let attributes = &records[0].attributes;
     assert_eq!(
-        field(attributes, "cpu_ns"),
+        field(attributes, "occupancy_ns"),
         &Value::IntValue(33),
-        "CPU usage must remain a numeric field"
+        "occupancy usage must remain a numeric field"
     );
     assert_eq!(
-        field(attributes, "cpu_complete"),
+        field(attributes, "occupancy_complete"),
         &Value::BoolValue(false),
-        "incomplete CPU evidence must not become complete in transit"
+        "incomplete occupancy evidence must not become complete in transit"
     );
     assert_eq!(
         field(attributes, "dispatch_token"),

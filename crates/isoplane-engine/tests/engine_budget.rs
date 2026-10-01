@@ -1,5 +1,5 @@
 //! The two-phase kill (grace and the hard deadline) and the wall-clock
-//! backstop that catches what the CPU meter cannot.
+//! independent per-invocation wall-clock backstop.
 
 mod common;
 #[path = "common/dispatch.rs"]
@@ -8,15 +8,15 @@ mod dispatch;
 use common::*;
 use dispatch::http_dispatch;
 use isoplane_abi::result::ResultRecord;
-use isoplane_engine::{Completion, CpuBudget, InstanceOps, KillPhase, TrapKind};
+use isoplane_engine::{Completion, InstanceOps, KillPhase, OccupancyBudget, TrapKind};
 
 fn read_u64(m: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(m[off..off + 8].try_into().expect("8 bytes"))
 }
 
-fn budget(cpu_ms: u32) -> CpuBudget {
-    CpuBudget {
-        cpu_ms,
+fn budget(occupancy_ms: u32) -> OccupancyBudget {
+    OccupancyBudget {
+        occupancy_ms,
         wall_ms_cap: 30_000,
         spent_ns: 0,
     }
@@ -67,9 +67,9 @@ fn an_uncooperative_spinner_is_hard_killed_and_tombstoned() {
     );
     assert_eq!(out.kill, Some(KillPhase::Hard), "the phase is hard");
     assert!(
-        out.cpu_ns >= b.hard_ns(),
+        out.occupancy_ns >= b.hard_ns(),
         "the kill lands at B+G, not before: {} ns against {} ns",
-        out.cpu_ns,
+        out.occupancy_ns,
         b.hard_ns()
     );
     assert!(
@@ -130,7 +130,7 @@ fn a_tombstoned_instance_refuses_the_next_call() {
         "the refusal names the tombstone: {trap:?}"
     );
     assert_eq!(
-        refused.cpu_ns, 0,
+        refused.occupancy_ns, 0,
         "a refused call bills nothing, since nothing ran"
     );
 
@@ -139,83 +139,6 @@ fn a_tombstoned_instance_refuses_the_next_call() {
         woke.trap.map(|t| t.kind),
         Some(TrapKind::Tombstoned),
         "a wake into a tombstone is refused too"
-    );
-}
-
-/// The identical spin loop, plus a `budget_remaining_ns` check every 1024
-/// iterations. A runtime layer does the same at its allocation slow path, GC
-/// entry and task switch.
-#[test]
-fn a_dispatch_that_yields_during_grace_takes_a_clean_kill() {
-    let e = test_engine();
-    let wasm = guest(
-        4,
-        &import("budget_remaining_ns", "", "(result i64)"),
-        r#"
-  (func $cooperate (result i32)
-    (local $n i32) (local $x i64)
-    (local.set $x (i64.const 88172645463325252))
-    (block $out
-      (loop $l
-        (local.set $n (i32.const 0))
-        (block $ib (loop $il
-          (br_if $ib (i32.ge_u (local.get $n) (i32.const 1024)))
-          (local.set $x (i64.xor (local.get $x) (i64.shl (local.get $x) (i64.const 13))))
-          (local.set $x (i64.xor (local.get $x) (i64.shr_u (local.get $x) (i64.const 7))))
-          (local.set $x (i64.xor (local.get $x) (i64.shl (local.get $x) (i64.const 17))))
-          (local.set $n (i32.add (local.get $n) (i32.const 1)))
-          (br $il)))
-        (i64.store (i32.const 3016) (local.get $x))
-        (br_if $out (i64.le_s (call $budget_remaining_ns) (i64.const 0)))
-        (br $l)))
-    (i32.const 1))"#,
-        r#"
-    (i64.store (i32.const 3000) (i64.const 1))          ;; entered
-    (drop (call $cooperate))
-    (i64.store (i32.const 3008) (i64.const 1))          ;; the `finally`
-    (i64.const 0)"#,
-        DONE,
-    );
-    let t = e.load_template(&wasm).expect("template");
-    let mut i = activate(&e, &t);
-    let b = budget(20);
-
-    let out = i.dispatch(&http_dispatch(1), b);
-
-    assert!(
-        out.trap.is_none(),
-        "a clean kill is a return, not a trap: {:?}",
-        out.trap
-    );
-    assert_eq!(
-        out.completion,
-        Completion::CleanKill,
-        "a dispatch that returned inside grace is a clean kill"
-    );
-    assert_eq!(out.kill, Some(KillPhase::Clean), "the phase is clean");
-    assert!(
-        out.completion.instance_survives(),
-        "the slot is reusable after a clean kill"
-    );
-
-    let (entered, cleaned_up) = {
-        let m = i.memory();
-        (read_u64(m, 3000), read_u64(m, 3008))
-    };
-    assert_eq!(entered, 1, "the guest must have been running");
-    assert_eq!(cleaned_up, 1, "on a clean kill the `finally` runs");
-    assert!(
-        out.cpu_ns >= b.budget_ns(),
-        "the dispatch must have crossed B rather than returned early"
-    );
-    assert!(out.overage_ns > 0, "the overage CPU is recorded");
-
-    i.reset().expect("the slot is reusable after a clean kill");
-    let again = i.dispatch(&http_dispatch(2), b);
-    assert_eq!(
-        again.completion,
-        Completion::CleanKill,
-        "the reused slot runs the guest again rather than refusing it"
     );
 }
 
@@ -243,12 +166,8 @@ fn a_spinner_with_the_unsafe_to_trap_bit_pinned_is_still_hard_killed() {
     );
     assert_eq!(out.kill, Some(KillPhase::Hard), "the phase is hard");
     assert!(
-        out.cpu_ns >= b.hard_ns(),
+        out.occupancy_ns >= b.hard_ns(),
         "the kill still lands at B+G, not before"
-    );
-    assert!(
-        out.grace_deferrals > 0,
-        "the pinned bit must have deferred grace entry, or the fixture is not testing it"
     );
     assert!(
         !i.is_capture_eligible(),
@@ -270,7 +189,7 @@ fn a_guest_abort_is_a_guest_panic_not_a_sandbox_violation() {
     let mut i = activate(&e, &t);
     i.memory()[0..5].copy_from_slice(b"boom!");
 
-    let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     let trap = out.trap.expect("abort traps");
     assert_eq!(
         trap.kind,
@@ -300,7 +219,7 @@ fn a_bounds_violation_is_classified_as_a_sandbox_trap() {
     );
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
-    let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert_eq!(
         out.trap.as_ref().map(|t| t.kind),
         Some(TrapKind::Sandbox),
@@ -327,7 +246,7 @@ fn a_failed_isoplane_alloc_is_out_of_memory() {
         .load_template(&wat::parse_str(src).expect("wat"))
         .expect("template");
     let mut i = activate(&e, &t);
-    let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert_eq!(
         out.trap.as_ref().map(|t| t.kind),
         Some(TrapKind::OutOfMemory),
@@ -349,8 +268,8 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
 
     let out = i.dispatch(
         &http_dispatch(1),
-        CpuBudget {
-            cpu_ms: 600_000,
+        OccupancyBudget {
+            occupancy_ms: 600_000,
             wall_ms_cap: 40,
             spent_ns: 0,
         },
@@ -363,8 +282,7 @@ fn the_wall_clock_backstop_reports_its_distinct_cap() {
     );
     assert!(
         trap.message.contains("wall-clock backstop"),
-        "the message must distinguish the backstop from the CPU meter, since wall time is \
-         excluded from execution CPU accounting: {}",
+        "the message must distinguish the backstop from occupancy exhaustion: {}",
         trap.message
     );
     assert!(

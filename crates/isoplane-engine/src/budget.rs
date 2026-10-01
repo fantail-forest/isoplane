@@ -1,4 +1,4 @@
-//! CPU budgets and the two-phase kill.
+//! Worker occupancy budgets and the two-phase kill.
 //!
 //! ```text
 //!   0                                B                 B+G
@@ -13,7 +13,8 @@
 //!
 //! `G = max(2 ms, 10% of B)`. A dispatch that returns inside the grace window
 //! takes a clean kill: the instance is consistent and its overage is recorded.
-//! One still executing at B+G takes the hard kill.
+//! A check observing B+G or more takes the hard kill. Checks are best effort;
+//! scheduler delays can skip grace or delay termination.
 
 use anyhow::bail;
 use isoplane_abi::status::PollStatus;
@@ -21,27 +22,27 @@ use isoplane_abi::status::PollStatus;
 use crate::Completion;
 
 #[derive(Debug, Clone, Copy)]
-pub struct CpuBudget {
-    pub cpu_ms: u32,
-    /// Wall-clock backstop against a dispatch pinned off-CPU.
+pub struct OccupancyBudget {
+    pub occupancy_ms: u32,
+    /// Independent elapsed-time cap for one invocation, including debugger sessions.
     pub wall_ms_cap: u32,
-    /// Thread CPU burned by earlier slices of the same dispatch, so a guest
+    /// Worker occupancy burned by earlier slices of the same dispatch, so a guest
     /// that parks inside grace comes back with the remainder of G rather than
     /// a fresh one.
     pub spent_ns: u64,
 }
 
-impl CpuBudget {
+impl OccupancyBudget {
     pub fn http() -> Self {
         Self {
-            cpu_ms: 50,
+            occupancy_ms: 50,
             wall_ms_cap: 30_000,
             spent_ns: 0,
         }
     }
 
     pub fn budget_ns(self) -> u64 {
-        (self.cpu_ms as u64).saturating_mul(1_000_000)
+        (self.occupancy_ms as u64).saturating_mul(1_000_000)
     }
 
     /// G. The floor matters more than the fraction: a tenth of a small budget
@@ -66,23 +67,18 @@ impl CpuBudget {
 /// The floor on the grace window.
 pub const GRACE_FLOOR_NS: u64 = 2_000_000;
 
-/// How many epoch ticks must fit inside the smallest grace window for grace
-/// to be deliverable. One would be arithmetically sufficient and useless: the
-/// check is emitted at back-edges and calls, so a guest between two back-edges
-/// when the tick fires does not see it until the next one.
+/// Minimum nominal epoch ticks within the smallest grace window.
+/// Scheduling delays can still prevent grace delivery.
 pub const MIN_GRACE_TICKS: u64 = 4;
 
-/// Refuses an epoch tick too coarse to deliver the grace floor. The failure
-/// this guards is silent: every over-budget dispatch takes the hard trap
-/// having been offered a window no tick could open.
+/// Refuses an epoch interval too coarse for the configured grace policy.
 pub(crate) fn check_grace_deliverable(epoch_tick_us: u64) -> crate::Result<()> {
     let tick_ns = epoch_tick_us.max(1).saturating_mul(1_000);
     let ticks_in_floor = GRACE_FLOOR_NS / tick_ns;
     if ticks_in_floor < MIN_GRACE_TICKS {
         bail!(
             "epoch_tick_us = {epoch_tick_us} fits only {ticks_in_floor} tick(s) inside the \
-             {} ms grace floor, fewer than the {MIN_GRACE_TICKS} needed to deliver grace; every \
-             budget kill on this engine would be a hard kill",
+             {} ms grace floor, fewer than the {MIN_GRACE_TICKS} required by the grace policy",
             GRACE_FLOOR_NS / 1_000_000
         );
     }
@@ -91,9 +87,9 @@ pub(crate) fn check_grace_deliverable(epoch_tick_us: u64) -> crate::Result<()> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KillPhase {
-    /// Entered grace and returned inside it.
+    /// Entered grace and returned before a hard-kill check.
     Clean,
-    /// Still executing at B+G; terminated without unwinding and tombstoned.
+    /// A check observed B+G or more; terminated without unwinding and tombstoned.
     Hard,
 }
 
@@ -106,22 +102,22 @@ impl KillPhase {
     }
 }
 
-/// Whether a returned CPU value accounts for the entire invocation.
+/// Whether a returned occupancy value accounts for the entire invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CpuMeasurement {
+pub enum OccupancyMeasurement {
     /// Both clock readings succeeded.
     Complete,
     /// No guest invocation was attempted.
     NotExecuted,
-    /// The CPU value is only a known floor; the end reading was unavailable.
+    /// The occupancy value is only a known floor; the end reading was unavailable.
     Incomplete,
 }
 
 /// The existing execution bound that ended this invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionLimit {
-    /// Thread CPU exhausted its budget, including any grace.
-    Cpu,
+    /// Worker occupancy exhausted its budget, including any grace.
+    Occupancy,
     /// The invocation's wall-clock backstop fired.
     Wall,
 }
@@ -131,10 +127,10 @@ pub enum ExecutionLimit {
 pub struct DispatchOutcome {
     pub status: PollStatus,
     pub completion: Completion,
-    /// Thread CPU over this hot interval, overage included. The compute meter.
-    pub cpu_ns: u64,
-    /// Completeness of the CPU floor above.
-    pub cpu_measurement: CpuMeasurement,
+    /// Worker occupancy over this hot interval, overage included. The compute meter.
+    pub occupancy_ns: u64,
+    /// Completeness of the occupancy floor above.
+    pub occupancy_measurement: OccupancyMeasurement,
     /// Typed discriminator for a budget or wall backstop outcome.
     pub execution_limit: Option<ExecutionLimit>,
     /// For observability only.
@@ -142,7 +138,7 @@ pub struct DispatchOutcome {
     pub trap: Option<TrapInfo>,
     /// `Some` when this slice ended a dispatch that entered grace.
     pub kill: Option<KillPhase>,
-    /// Thread CPU burned past B, broken out so the meter can report it apart
+    /// Worker occupancy burned past B, broken out so the meter can report it apart
     /// from the budget.
     pub overage_ns: u64,
     /// Epoch ticks that found the unsafe-to-trap bit set and deferred grace
@@ -170,8 +166,8 @@ pub enum TrapKind {
     CapabilityViolation,
     /// A call into an instance that a previous kill or trap tombstoned.
     Tombstoned,
-    /// A host CPU clock read failed, so execution could not enforce its budget.
-    CpuClockUnavailable,
+    /// A host occupancy clock read failed, so execution could not enforce its budget.
+    OccupancyClockUnavailable,
     /// Storage beneath the instance's mapped template failed a read: the
     /// platform's fault, not the guest's.
     StorageFault,
@@ -187,7 +183,7 @@ impl TrapKind {
             TrapKind::OutOfMemory => "out_of_memory",
             TrapKind::CapabilityViolation => "capability_violation",
             TrapKind::Tombstoned => "tombstoned",
-            TrapKind::CpuClockUnavailable => "cpu_clock_unavailable",
+            TrapKind::OccupancyClockUnavailable => "occupancy_clock_unavailable",
             TrapKind::StorageFault => "storage_fault",
             TrapKind::Other => "trap",
         }
@@ -201,27 +197,27 @@ mod tests {
     #[test]
     fn grace_is_the_larger_of_two_milliseconds_and_a_tenth_of_the_budget() {
         assert_eq!(
-            CpuBudget::http().grace_ns(),
+            OccupancyBudget::http().grace_ns(),
             5_000_000,
             "a tenth of the 50 ms default dominates the floor"
         );
         assert_eq!(
-            CpuBudget::http().hard_ns(),
+            OccupancyBudget::http().hard_ns(),
             55_000_000,
             "the hard deadline is B plus G"
         );
-        let small = CpuBudget {
-            cpu_ms: 5,
-            ..CpuBudget::http()
+        let small = OccupancyBudget {
+            occupancy_ms: 5,
+            ..OccupancyBudget::http()
         };
         assert_eq!(
             small.grace_ns(),
             2_000_000,
             "a tenth of 5 ms is below the floor, so the floor applies"
         );
-        let large = CpuBudget {
-            cpu_ms: 300_000,
-            ..CpuBudget::http()
+        let large = OccupancyBudget {
+            occupancy_ms: 300_000,
+            ..OccupancyBudget::http()
         };
         assert_eq!(
             large.grace_ns(),
@@ -231,19 +227,19 @@ mod tests {
     }
 
     #[test]
-    fn configured_cpu_budgets_get_deliverable_grace_windows() {
+    fn configured_occupancy_budgets_get_deliverable_grace_windows() {
         let tick_ns = crate::EngineConfig::default().epoch_tick_us * 1_000;
         for budget_ms in [100, 30000, 300000] {
-            let b = CpuBudget {
-                cpu_ms: budget_ms,
-                ..CpuBudget::http()
+            let b = OccupancyBudget {
+                occupancy_ms: budget_ms,
+                ..OccupancyBudget::http()
             };
             let g = b.grace_ns();
             assert!(
                 g / tick_ns >= MIN_GRACE_TICKS,
                 "a {} ms budget gives G = {g} ns, only {} epoch tick(s) at {tick_ns} \
                  ns; a dispatch with this budget could reach B+G before grace could be opened",
-                b.cpu_ms,
+                b.occupancy_ms,
                 g / tick_ns,
             );
         }

@@ -70,6 +70,12 @@ struct Entry {
     waiting: Option<PendingWait>,
 }
 
+impl Drop for Entry {
+    fn drop(&mut self) {
+        self.cancel_task();
+    }
+}
+
 #[derive(Debug)]
 struct PendingWait {
     span: tracing::Span,
@@ -466,6 +472,26 @@ mod tests {
             outcome.is_cancelled(),
             "reactor work must be cancelled, not panic"
         );
+    }
+
+    #[tokio::test]
+    async fn delivering_an_externally_completed_future_releases_its_reactor_work() {
+        let table = table();
+        let owner = InstanceId(1);
+        let id = table
+            .alloc(owner, 1, "clock_deadline_in", 8)
+            .expect("future allocation");
+        let (task, _release) = held_task().await;
+        table.attach_task(id, task.abort_handle());
+        assert!(
+            matches!(table.complete(id, ResultRecord::Ok(vec![])), WakeTarget::Instance(instance) if instance == owner)
+        );
+        assert_eq!(
+            table.take_ready(owner),
+            Some((id, ResultRecord::Ok(vec![])))
+        );
+        assert_cancelled(task).await;
+        assert_eq!(table.live_futures(), 0);
     }
 
     #[tokio::test]

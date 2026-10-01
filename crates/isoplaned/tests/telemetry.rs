@@ -252,18 +252,18 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
         "the deployed version must remain attributable"
     );
     assert_eq!(
-        field(attributes, "cpu_complete"),
+        field(attributes, "occupancy_complete"),
         &Value::BoolValue(true),
-        "a normally completed measured dispatch must retain complete CPU evidence"
+        "a normally completed measured dispatch must retain complete occupancy evidence"
     );
     assert!(
-        matches!(field(attributes, "cpu_ns"), Value::IntValue(_)),
-        "actual measured CPU must reach OTLP numerically"
+        matches!(field(attributes, "occupancy_ns"), Value::IntValue(_)),
+        "actual measured occupancy must reach OTLP numerically"
     );
     assert_eq!(
-        field(attributes, "activation_cpu_included"),
+        field(attributes, "activation_occupancy_included"),
         &Value::BoolValue(false),
-        "the exporter must not broaden the scope of measured CPU"
+        "the exporter must not broaden the scope of measured occupancy"
     );
     let trace_payload = traces.receive().await;
     assert_eq!(
@@ -339,7 +339,7 @@ async fn an_actual_http_guest_completion_crosses_the_otlp_boundary() {
     }
     assert_eq!(
         completion.trace_id, dispatch.trace_id,
-        "CPU completion and stage timings must correlate to the same request"
+        "occupancy completion and stage timings must correlate to the same request"
     );
     let activation = spans
         .iter()

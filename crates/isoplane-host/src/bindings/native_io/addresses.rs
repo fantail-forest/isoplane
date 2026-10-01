@@ -37,7 +37,7 @@ impl Addresses {
         let exceptions = bindings.reach().exceptions.to_vec();
         let tenant = bindings.tenant().to_owned();
         let instance = bindings.instance();
-        let task = runtime.reactor.spawn(async move {
+        let task = runtime.spawn(async move {
             let result = completion
                 .egress
                 .resolve_name(

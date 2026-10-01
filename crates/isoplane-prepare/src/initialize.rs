@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use isoplane_abi::config::InitSandbox;
-use isoplane_engine::{Completion, CpuBudget, ImportCall, InstanceOps, IsoplaneEngine};
+use isoplane_engine::{Completion, ImportCall, InstanceOps, IsoplaneEngine, OccupancyBudget};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -22,8 +22,8 @@ pub struct Initialization {
     pub runtime_config: Vec<u8>,
     /// Policy selected by the caller; it is never widened by preparation.
     pub sandbox: InitSandbox,
-    /// Total initialization CPU budget across replay passes.
-    pub cpu_ms: u32,
+    /// Total initialization occupancy budget across replay passes.
+    pub occupancy_ms: u32,
     /// Total initialization wall backstop, including asynchronous waits and replay passes.
     pub wall_ms: u32,
     /// Maximum replay passes before refusal.
@@ -53,10 +53,10 @@ impl Initialization {
 pub struct Initialized {
     /// Units deferred because they requested forbidden capabilities.
     pub deferred: Vec<u32>,
-    /// CPU charged by the shared engine across all passes.
-    pub cpu_ns: u64,
-    /// CPU of the preparation thread across compilation, replay and state verification.
-    pub preparation_cpu_ns: u64,
+    /// Execution and reactor occupancy across all passes.
+    pub occupancy_ns: u64,
+    /// Preparation occupancy across compilation, replay and verification, excluding idle I/O waits.
+    pub preparation_occupancy_ns: u64,
     /// The capability each deferred unit attempted.
     pub deferred_reasons: Vec<(u32, String)>,
     /// Forbidden capability attempts across replay passes.
@@ -165,9 +165,13 @@ enum Stage {
     Application,
 }
 
-/// Runs `stage` on `instance` until it completes or fails, waking it from
-/// `host` while it is parked, then has the guest collect its garbage, and
-/// adds the CPU both used to `cpu_ns`.
+#[derive(Default)]
+struct InitializationUsage {
+    occupancy_ns: u64,
+    unoccupied_ns: u64,
+}
+
+/// Runs a stage through its host wakes and final collection, excluding idle waits.
 fn run_stage(
     instance: &mut isoplane_engine::Instance,
     stage: Stage,
@@ -177,14 +181,14 @@ fn run_stage(
         &tokio::runtime::Runtime,
     )>,
     start: Instant,
-    cpu_ns: &mut u64,
+    usage: &mut InitializationUsage,
 ) -> Result<isoplane_engine::DispatchOutcome, PrepareError> {
-    let budget = initialization_budget(request, *cpu_ns, start.elapsed())?;
+    let budget = initialization_budget(request, usage.occupancy_ns, start.elapsed())?;
     let mut outcome = match stage {
         Stage::Runtime => instance.run_initialize_runtime(budget),
         Stage::Application => instance.run_initialize(budget),
     };
-    *cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+    usage.occupancy_ns = usage.occupancy_ns.saturating_add(outcome.occupancy_ns);
     while outcome.completion == Completion::Parked {
         let Some((io, reactor)) = host else {
             return Err(PrepareError::InvalidRequest(
@@ -194,18 +198,25 @@ fn run_stage(
         let remaining = Duration::from_millis(u64::from(request.wall_ms))
             .checked_sub(start.elapsed())
             .ok_or(PrepareError::Limit("initialization wall time"))?;
+        let reactor_start_ns = io.reactor_occupancy_ns();
+        let wait_start = Instant::now();
         let completion = reactor
             .block_on(async { tokio::time::timeout(remaining, io.next_completion()).await })
             .map_err(|_| PrepareError::Limit("initialization wall time"))?
             .ok_or(PrepareError::InvalidRequest(
                 "initializer is pending without a host wake source",
             ))?;
+        let reactor_ns = io.reactor_occupancy_ns().saturating_sub(reactor_start_ns);
+        usage.occupancy_ns = usage.occupancy_ns.saturating_add(reactor_ns);
+        usage.unoccupied_ns = usage
+            .unoccupied_ns
+            .saturating_add((wait_start.elapsed().as_nanos() as u64).saturating_sub(reactor_ns));
         outcome = instance.wake(
             completion.0,
             &completion.1,
-            initialization_budget(request, *cpu_ns, start.elapsed())?,
+            initialization_budget(request, usage.occupancy_ns, start.elapsed())?,
         );
-        *cpu_ns = cpu_ns.saturating_add(outcome.cpu_ns);
+        usage.occupancy_ns = usage.occupancy_ns.saturating_add(outcome.occupancy_ns);
     }
     let ran_guest_code = match stage {
         Stage::Runtime => instance.has_initialize_runtime(),
@@ -219,9 +230,9 @@ fn run_stage(
     // into that instance's delta.
     let collected = instance.run_gc_hint(
         isoplane_host::hibernate_capture::GC_HINT_SNAPSHOT,
-        initialization_budget(request, *cpu_ns, start.elapsed())?,
+        initialization_budget(request, usage.occupancy_ns, start.elapsed())?,
     );
-    *cpu_ns = cpu_ns.saturating_add(collected.cpu_ns);
+    usage.occupancy_ns = usage.occupancy_ns.saturating_add(collected.occupancy_ns);
     Ok(collected)
 }
 
@@ -262,12 +273,12 @@ pub(crate) fn initialize_with_cache(
             "deployment settings must be a bounded JSON object of strings",
         ));
     }
-    if request.cpu_ms == 0 || request.wall_ms == 0 || request.max_passes == 0 {
+    if request.occupancy_ms == 0 || request.wall_ms == 0 || request.max_passes == 0 {
         return Err(PrepareError::InvalidRequest(
             "initialization limits must be positive",
         ));
     }
-    let cpu_start = preparation_cpu()?;
+    let occupancy_start_ns = preparation_occupancy()?;
     let mut deferred_reasons = Vec::new();
     let mut capability_refusals = 0;
     let (template, instrumented, compiled) = load(engine, cache, application_files, &capture)?;
@@ -283,7 +294,7 @@ pub(crate) fn initialize_with_cache(
         .map_err(PrepareError::Io)?;
     let initialization_start = Instant::now();
     let mut deferred = BTreeSet::new();
-    let mut cpu_ns = 0;
+    let mut usage = InitializationUsage::default();
     for pass in 1..=request.max_passes {
         let io = match (&request.network, &reactor) {
             (Some(network), Some(reactor)) => {
@@ -321,7 +332,7 @@ pub(crate) fn initialize_with_cache(
                 request,
                 host,
                 initialization_start,
-                &mut cpu_ns,
+                &mut usage,
             )?;
             if let Some(then) = then.filter(|_| outcome.completion == Completion::Done) {
                 outcome = run_stage(
@@ -330,10 +341,10 @@ pub(crate) fn initialize_with_cache(
                     request,
                     host,
                     initialization_start,
-                    &mut cpu_ns,
+                    &mut usage,
                 )?;
             }
-            initialization_budget(request, cpu_ns, initialization_start.elapsed())?;
+            initialization_budget(request, usage.occupancy_ns, initialization_start.elapsed())?;
             if outcome.completion != Completion::Done {
                 #[cfg(target_os = "linux")]
                 if matches!(capture, CaptureMode::RuntimeBaseline { .. })
@@ -410,8 +421,10 @@ pub(crate) fn initialize_with_cache(
                 restored: None,
                 initialized: Initialized {
                     deferred: Vec::new(),
-                    cpu_ns,
-                    preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
+                    occupancy_ns: usage.occupancy_ns,
+                    preparation_occupancy_ns: preparation_occupancy()?
+                        .saturating_sub(occupancy_start_ns)
+                        .saturating_sub(usage.unoccupied_ns),
                     deferred_reasons,
                     capability_refusals,
                     pal_calls: instance
@@ -615,8 +628,10 @@ pub(crate) fn initialize_with_cache(
             restored: Some(restored_template),
             initialized: Initialized {
                 deferred,
-                cpu_ns,
-                preparation_cpu_ns: preparation_cpu()?.saturating_sub(cpu_start),
+                occupancy_ns: usage.occupancy_ns,
+                preparation_occupancy_ns: preparation_occupancy()?
+                    .saturating_sub(occupancy_start_ns)
+                    .saturating_sub(usage.unoccupied_ns),
                 deferred_reasons,
                 capability_refusals,
                 pal_calls,
@@ -880,9 +895,9 @@ impl isoplane_engine::bindings::InitializationBindings for Bindings {
     }
 }
 
-fn preparation_cpu() -> Result<u64, PrepareError> {
-    isoplane_engine::try_thread_cpu_nanos().ok_or(PrepareError::InvalidRequest(
-        "preparation thread CPU clock is unavailable",
+fn preparation_occupancy() -> Result<u64, PrepareError> {
+    isoplane_engine::try_occupancy_nanos().ok_or(PrepareError::InvalidRequest(
+        "preparation worker occupancy clock is unavailable",
     ))
 }
 
@@ -890,13 +905,13 @@ fn initialization_budget(
     request: &Initialization,
     spent_ns: u64,
     elapsed: Duration,
-) -> Result<CpuBudget, PrepareError> {
+) -> Result<OccupancyBudget, PrepareError> {
     let remaining = Duration::from_millis(u64::from(request.wall_ms))
         .checked_sub(elapsed)
         .filter(|remaining| !remaining.is_zero())
         .ok_or(PrepareError::Limit("initialization wall time"))?;
-    Ok(CpuBudget {
-        cpu_ms: request.cpu_ms,
+    Ok(OccupancyBudget {
+        occupancy_ms: request.occupancy_ms,
         wall_ms_cap: u32::try_from(
             remaining
                 .as_nanos()
@@ -917,7 +932,7 @@ mod budget_tests {
             config: Vec::new(),
             runtime_config: b"{}".to_vec(),
             sandbox: InitSandbox::Sealed,
-            cpu_ms: 50,
+            occupancy_ms: 50,
             wall_ms: 100,
             max_passes: 2,
             log_bytes: 0,
@@ -939,11 +954,11 @@ mod budget_tests {
         );
         assert_eq!(
             wake.spent_ns, 7_000_000,
-            "CPU consumed before a wait must remain charged"
+            "Occupancy consumed before a wait must remain charged"
         );
         assert_eq!(
-            wake.cpu_ms, initial.cpu_ms,
-            "waking must retain the original total CPU budget"
+            wake.occupancy_ms, initial.occupancy_ms,
+            "waking must retain the original total occupancy budget"
         );
     }
 

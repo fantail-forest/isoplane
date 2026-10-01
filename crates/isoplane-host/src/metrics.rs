@@ -87,7 +87,7 @@ pub struct Metrics {
     /// that is never answered; for a discarded one it is the correct outcome.
     pub wakes_dropped: AtomicU64,
     pub traps: AtomicU64,
-    /// Every CPU-budget kill, clean and hard.
+    /// Every occupancy-budget kill, clean and hard.
     pub budget_kills: AtomicU64,
     /// Dispatches that entered grace and returned inside it; the slot was
     /// reused.
@@ -105,8 +105,8 @@ pub struct Metrics {
     /// Host calls refused because the target was a tombstone. Counts refusals,
     /// not tombstones: a cell never asked to call a killed instance reads zero.
     pub tombstone_refusals: AtomicU64,
-    /// CPU recorded past the budget on kills of either phase; already inside
-    /// the tenant's `cpu_ns`.
+    /// occupancy recorded past the budget on kills of either phase; already inside
+    /// the tenant's `occupancy_ns`.
     pub overage_ns: AtomicU64,
 
     pub shed: AtomicU64,
@@ -165,7 +165,7 @@ pub struct Metrics {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TenantCounters {
     pub dispatches: u64,
-    pub cpu_ns: u64,
+    pub occupancy_ns: u64,
     pub traps: u64,
 }
 
@@ -174,11 +174,11 @@ impl Metrics {
         Self::default()
     }
 
-    pub fn record_tenant(&self, tenant: &str, cpu_ns: u64, trapped: bool) {
+    pub fn record_tenant(&self, tenant: &str, occupancy_ns: u64, trapped: bool) {
         let mut g = self.by_tenant.lock();
         let e = g.entry(tenant.to_string()).or_default();
         e.dispatches += 1;
-        e.cpu_ns += cpu_ns;
+        e.occupancy_ns += occupancy_ns;
         if trapped {
             e.traps += 1;
         }
@@ -268,7 +268,7 @@ impl Metrics {
             dirty_pages_p99: self.dirty_pages.p99(),
             park_p50_ms: self.park_ms.p50(),
             // Process-wide, and both crates' clocks: the engine's is where the
-            // recorded `cpu_ns` comes from, this crate's is the log-CPU share.
+            // recorded `occupancy_ns` comes from, this crate's is the log-occupancy share.
             clock_read_failures: crate::meters::clock_read_failures()
                 + isoplane_engine::clock_read_failures(),
             trap_rate: {
@@ -299,8 +299,8 @@ impl Metrics {
                 c.dispatches
             ));
             out.push_str(&format!(
-                "isoplane_tenant_cpu_ms{{tenant=\"{tenant}\"}} {:.3}\n",
-                c.cpu_ns as f64 / 1e6
+                "isoplane_tenant_occupancy_ms{{tenant=\"{tenant}\"}} {:.3}\n",
+                c.occupancy_ns as f64 / 1e6
             ));
             out.push_str(&format!(
                 "isoplane_tenant_traps{{tenant=\"{tenant}\"}} {}\n",
@@ -458,7 +458,7 @@ impl MetricsSnapshot {
                     t.clone(),
                     serde_json::json!({
                         "dispatches": c.dispatches,
-                        "cpu_ms": c.cpu_ns as f64 / 1e6,
+                        "occupancy_ms": c.occupancy_ns as f64 / 1e6,
                         "traps": c.traps,
                     }),
                 )
@@ -600,7 +600,7 @@ mod tests {
             "isoplane_cell_instances_parked",
             "isoplane_cell_instances_hibernated",
             "isoplane_cell_trap_rate",
-            "isoplane_tenant_cpu_ms{tenant=\"acme\"} 2.000",
+            "isoplane_tenant_occupancy_ms{tenant=\"acme\"} 2.000",
         ] {
             assert!(
                 text.contains(needle),

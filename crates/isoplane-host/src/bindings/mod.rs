@@ -227,7 +227,7 @@ impl HostBindings for CellBindings {
             "clock_deadline_in" => {
                 let ms = call.scalars[0];
                 let rt2 = rt.clone();
-                let task = rt.reactor.spawn(async move {
+                let task = self.ctx.spawn(&rt.reactor, async move {
                     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                     CellBindings::settle(&rt2, id, ResultRecord::Ok(Vec::new()));
                 });

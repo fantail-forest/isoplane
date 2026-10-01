@@ -2,15 +2,15 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::meters::CpuInterval;
+use crate::meters::OccupancyInterval;
 
 use super::CellBindings;
 
 impl CellBindings {
-    /// Log CPU is already on the dispatch's meter; the interval makes the
+    /// Log occupancy is already on the dispatch's meter; the interval makes the
     /// share visible and the byte cap bounds volume.
     pub(super) fn log_emit(&self, payload: &[u8], scalars: [u64; 3]) -> i64 {
-        let cpu = CpuInterval::start();
+        let interval = OccupancyInterval::start();
         let Ok(level @ 0..=4) = u8::try_from(scalars[0]) else {
             self.ctx
                 .latch_trap(isoplane_abi::status::TrapCode::Protocol);
@@ -43,7 +43,7 @@ impl CellBindings {
             %fields,
             "guest log"
         );
-        self.ctx.meters.record_log_cpu(cpu.elapsed_ns());
+        self.ctx.meters.record_log_occupancy(interval.elapsed_ns());
         0
     }
 
@@ -72,6 +72,26 @@ mod tests {
     use super::*;
     use isoplane_engine::HostBindings;
     use std::sync::Arc;
+
+    #[test]
+    fn logging_records_its_occupancy_share_without_billing_it_twice() {
+        let output = TestLogCapture::default();
+        let subscriber = output.dispatch();
+        let _subscriber = tracing::dispatcher::set_default(&subscriber);
+        let context = ctx();
+        context.begin_dispatch(1, 1);
+        let mut bindings = CellBindings::new(context.clone());
+        crate::occupancy_clock::with_readings([100, 350], || {
+            bindings.call_sync(call("log_emit", b"a", [2, 0, 0]));
+        });
+        assert_eq!(context.meters.log_occupancy_ns(), 250);
+        assert_eq!(
+            context.meters.occupancy_ns(),
+            0,
+            "the enclosing invocation owns accounting"
+        );
+        assert_eq!(output.records().len(), 1);
+    }
 
     #[test]
     fn the_largest_configured_log_budget_cannot_wrap() {

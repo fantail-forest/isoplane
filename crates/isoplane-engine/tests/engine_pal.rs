@@ -4,7 +4,7 @@
 mod common;
 
 use common::*;
-use isoplane_engine::{Completion, CpuBudget, InstanceOps};
+use isoplane_engine::{Completion, InstanceOps, OccupancyBudget};
 
 fn read_u32(m: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(m[off..off + 4].try_into().expect("4 bytes"))
@@ -25,7 +25,7 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
         }),
         trace: TraceContext::default(),
         cancel_future: 0,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 1_700_000_000_000,
     }
 }
@@ -85,7 +85,8 @@ fn a_module_with_wasi_imports_instantiates_through_the_pal_adapter() {
 
     let mut i = activate(&e, &t);
     assert_eq!(
-        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "the module dispatches"
     );
@@ -112,7 +113,8 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     };
 
     assert_eq!(
-        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "the dispatch completes"
     );
@@ -128,7 +130,8 @@ fn the_pal_clock_is_quantized_and_frozen_within_a_slice() {
     );
 
     assert_eq!(
-        i.dispatch(&http_dispatch(2), CpuBudget::http()).completion,
+        i.dispatch(&http_dispatch(2), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "the second dispatch completes"
     );
@@ -161,7 +164,8 @@ fn the_pal_entropy_delegation_draws_per_call_and_never_caches() {
     let mut i = activate(&e, &t);
 
     assert_eq!(
-        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "the dispatch completes"
     );
@@ -210,7 +214,7 @@ fn a_pal_trap_on_call_stub_traps_rather_than_answering() {
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
 
-    let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert_eq!(
         out.completion,
         Completion::Trapped,
@@ -239,7 +243,8 @@ fn the_pal_environment_delegation_answers_empty() {
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
     assert_eq!(
-        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "the dispatch completes"
     );
@@ -259,7 +264,7 @@ mod native_readiness {
     use super::common::{guest, test_engine, DONE};
     use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
     use isoplane_abi::native_io::{Request, ResourceHandle, Response};
-    use isoplane_engine::{Completion, CpuBudget, HostBindings, ImportCall, InstanceOps};
+    use isoplane_engine::{Completion, HostBindings, ImportCall, InstanceOps, OccupancyBudget};
 
     #[derive(Default)]
     struct ReadyHost {
@@ -328,11 +333,11 @@ mod native_readiness {
                     }),
                     trace: TraceContext::default(),
                     cancel_future: 0,
-                    cpu_budget_ms: 30_000,
+                    occupancy_budget_ms: 30_000,
                     now_ms: 1,
                 },
-                CpuBudget {
-                    cpu_ms: 30_000,
+                OccupancyBudget {
+                    occupancy_ms: 30_000,
                     wall_ms_cap: 60_000,
                     spent_ns: 0,
                 },
@@ -370,7 +375,7 @@ mod native_readiness {
             .expect("the send fixture must activate");
         assert_eq!(
             instance
-                .dispatch(&super::http_dispatch(1), CpuBudget::http())
+                .dispatch(&super::http_dispatch(1), OccupancyBudget::http())
                 .completion,
             Completion::Done,
             "a nonblocking send must return its result without trapping"

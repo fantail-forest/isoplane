@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Context;
 use parking_lot::{Condvar, Mutex};
@@ -104,26 +104,10 @@ fn run(engine: wasmtime::Engine, shared: Arc<Shared>) {
             break;
         }
 
-        // An absolute schedule so error does not accumulate. `thread::sleep`
-        // alone cannot hold a sub-millisecond cadence; sleeping to just short
-        // of the deadline and spinning the remainder does, at a bounded CPU
-        // cost paid only while a dispatch is hot.
-        let mut next = Instant::now() + shared.tick;
         while *shared.hot.lock() > 0 && !shared.stop.load(Ordering::Acquire) {
-            let now = Instant::now();
-            if next > now {
-                let d = next - now;
-                const SPIN_TAIL: Duration = Duration::from_micros(60);
-                if d > SPIN_TAIL {
-                    std::thread::sleep(d - SPIN_TAIL);
-                }
-                while Instant::now() < next {
-                    std::hint::spin_loop();
-                }
-            } else {
-                next = now;
-            }
-            next += shared.tick;
+            // Epochs request a check; the guest's monotonic meter determines
+            // exhaustion even when the scheduler delivers this tick late.
+            std::thread::sleep(shared.tick);
             engine.increment_epoch();
         }
     }

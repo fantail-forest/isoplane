@@ -146,8 +146,8 @@ async fn a_node_reports_measurements_from_served_requests() {
         "the cell counted the same 20 dispatches the proxy did"
     );
     assert!(
-        metric("isoplane_cpu_ms_total").unwrap() > 0.0,
-        "twenty dispatches of real guest code recorded some CPU: {text}"
+        metric("isoplane_occupancy_ms_total").unwrap() > 0.0,
+        "twenty dispatches of real guest code recorded some occupancy: {text}"
     );
     assert!(!text.contains("NaN"), "nothing renders as NaN");
     rig.shutdown().await;

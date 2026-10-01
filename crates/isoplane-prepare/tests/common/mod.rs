@@ -17,7 +17,7 @@ pub fn request() -> Initialization {
         runtime_config: b"{}".to_vec(),
         config: b"{}".to_vec(),
         sandbox: InitSandbox::Sealed,
-        cpu_ms: 1000,
+        occupancy_ms: 1000,
         wall_ms: 5000,
         max_passes: 4,
         log_bytes: 1024,

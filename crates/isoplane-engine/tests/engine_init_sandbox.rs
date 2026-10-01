@@ -4,15 +4,15 @@
 mod common;
 
 use common::*;
-use isoplane_engine::{Completion, CpuBudget, InstanceOps, TrapKind};
+use isoplane_engine::{Completion, InstanceOps, OccupancyBudget, TrapKind};
 
 fn read_u32(m: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(m[off..off + 4].try_into().expect("4 bytes"))
 }
 
-fn budget(cpu_ms: u32) -> CpuBudget {
-    CpuBudget {
-        cpu_ms,
+fn budget(occupancy_ms: u32) -> OccupancyBudget {
+    OccupancyBudget {
+        occupancy_ms,
         wall_ms_cap: 30_000,
         spent_ns: 0,
     }
@@ -177,7 +177,7 @@ fn outside_the_init_sandbox_every_declared_import_is_reachable() {
     );
     let t = e.load_template(&wasm).expect("template");
     let mut i = activate(&e, &t);
-    let out = i.run_initialize(CpuBudget::http());
+    let out = i.run_initialize(OccupancyBudget::http());
     assert_eq!(
         out.completion,
         Completion::Done,

@@ -29,7 +29,6 @@ pub mod activator;
 pub mod bindings;
 pub mod breaker;
 pub mod cell;
-pub mod cpu_clock;
 pub mod debug;
 pub mod dispatcher;
 pub mod disposition;
@@ -42,7 +41,9 @@ pub mod hibernate_policy;
 pub mod memory_pressure;
 pub mod meters;
 pub mod metrics;
+mod occupancy_clock;
 pub mod pool;
+pub mod reactor_accounting;
 pub mod response;
 mod response_transport;
 mod sharded_map;
@@ -125,5 +126,5 @@ pub fn mono_ns() -> Option<u64> {
     meters::try_read_mono_ns()
 }
 
-/// Native CPU time for the calling thread: the sole compute meter.
-pub use meters::read_thread_cpu_ns as thread_cpu_ns;
+/// Monotonic timestamp for measuring active worker intervals.
+pub use meters::read_occupancy_ns as occupancy_ns;

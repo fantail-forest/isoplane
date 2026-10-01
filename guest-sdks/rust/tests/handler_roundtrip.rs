@@ -43,7 +43,7 @@ fn record(path: &str) -> DispatchRecord {
         }),
         trace: TraceContext::default(),
         cancel_future: 999,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 1_700_000_000_000,
     }
 }

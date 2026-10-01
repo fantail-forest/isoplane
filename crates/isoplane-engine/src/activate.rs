@@ -10,7 +10,7 @@ use isoplane_abi::imports::exports as guest_exports;
 
 use crate::bindings::{Bindings, HostBindings, InitializationBindings};
 use crate::instance::Live;
-use crate::state::{BudgetExceeded, Kill, StoreState, WallCapExceeded};
+use crate::state::{Kill, StoreState, WallCapExceeded};
 use crate::template::TemplateInner;
 use crate::{EngineInner, Instance, IsoplaneEngine, Result, Template};
 
@@ -86,39 +86,11 @@ pub(crate) fn instantiate(
         Ok(())
     });
 
-    // Epochs are wall-clock ticks and cannot express a CPU budget; they give
-    // a periodic, guest-preempting callback in which the thread clock is
-    // compared. The order of the two comparisons is the two-phase kill: the
-    // hard deadline at B+G first and unconditionally, ignoring the
-    // unsafe-to-trap bit, so a pinned bit buys exactly the grace window; then
-    // grace entry at B, which does not trap and defers while the bit is set,
-    // because delivering `Cancelled` into a half-mutated GC is the corruption
-    // tombstones exist to contain.
+    // Epochs request a best-effort check; the monotonic meter determines usage.
     store.epoch_deadline_callback(|mut ctx| {
         let m = ctx.data().meter;
-        let cpu = m.dispatch_cpu_ns(crate::meter::thread_cpu_nanos()?);
-
-        if cpu >= m.hard_ns() {
-            ctx.data_mut().kill = Some(Kill::CpuHard);
-            return Err(BudgetExceeded {
-                cpu_ns: cpu,
-                budget_ns: m.cpu_budget_ns,
-                grace_ns: m.grace_ns,
-            }
-            .into());
-        }
-
-        // A deferral leaves `grace_at_ns` unset so the next tick tries again.
-        if cpu >= m.cpu_budget_ns && ctx.data().grace_at_ns.is_none() {
-            if ctx.data().unsafe_to_trap {
-                ctx.data_mut().grace_deferrals += 1;
-            } else if let Some(mut b) = ctx.data_mut().bindings.take() {
-                b.enter_grace();
-                let d = ctx.data_mut();
-                d.bindings = Some(b);
-                d.grace_at_ns = Some(cpu);
-            }
-        }
+        ctx.data_mut()
+            .check_occupancy(crate::meter::occupancy_nanos()?)?;
 
         if let Some(w) = m.wall0 {
             let wall = w.elapsed().as_nanos() as u64;

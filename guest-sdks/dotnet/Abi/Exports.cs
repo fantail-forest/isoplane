@@ -112,7 +112,7 @@ public static unsafe class Exports<TRouter>
 
             TraceDispatch(d);
 
-            _ctx = new Ctx((long)d.NowMs, d.CpuBudgetMs);
+            _ctx = new Ctx((long)d.NowMs, d.OccupancyBudgetMs);
             FutureTable.Reset();
             FutureTable.BeginCancellation(d.CancelFuture);
 

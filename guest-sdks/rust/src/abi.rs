@@ -137,7 +137,7 @@ isoplane_imports! {
     fn init_config_get(ptr: i32, cap: i32) -> i32;
 
     // ---- observability ----------------------------------------------------
-    /// `(level, ptr, len)`. Counts against the dispatch CPU budget, which is
+    /// `(level, ptr, len)`. Counts against the dispatch occupancy budget, which is
     /// what stops log-as-compute abuse.
     fn log_emit(level: i32, ptr: i32, len: i32);
     fn trace_span_begin(ptr: i32, len: i32) -> i32;
@@ -170,9 +170,8 @@ isoplane_imports! {
     /// This SDK reads it at its own equivalent boundaries — see
     /// [`crate::budget`].
     ///
-    /// It is not a clock. It advances only with this guest's own thread CPU, so
-    /// differencing it measures the guest measuring itself and gives back no
-    /// fine-grained wall-clock timer.
+    /// Rounded to the host clock quantum while preserving the cancellation
+    /// boundary; this does not expose a fine-grained wall-clock timer.
     fn budget_remaining_ns() -> i64;
     /// The runtime layer's *unsafe-to-trap* bit: non-zero while a GC phase or a
     /// scheduler queue mutation is in progress. Grace entry defers while it is

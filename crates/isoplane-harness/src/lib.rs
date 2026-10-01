@@ -18,8 +18,8 @@ use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceCon
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::prepared::PreparedTemplate;
 use isoplane_engine::{
-    Completion, CpuBudget, DispatchOutcome, Instance, InstanceImage, InstanceOps, IsoplaneEngine,
-    PlatformFiles, Template,
+    Completion, DispatchOutcome, Instance, InstanceImage, InstanceOps, IsoplaneEngine,
+    OccupancyBudget, PlatformFiles, Template,
 };
 
 use isoplane_host::bindings::{
@@ -40,7 +40,7 @@ pub const GUEST_LIMITS: Limits = Limits {
     module_bytes_compressed: 52428800,
     package_bytes: 52428800,
     instance_memory_max: 134217728,
-    cpu_ms_per_http_dispatch: 30000,
+    occupancy_ms_per_http_dispatch: 30000,
     subrequests_per_dispatch: 200,
     pending_futures_per_dispatch: 64,
 };
@@ -393,7 +393,7 @@ impl ReturnedGuest {
                 }),
                 trace: TraceContext::default(),
                 cancel_future: 0,
-                cpu_budget_ms: self.context.limits.cpu_ms_per_http_dispatch,
+                occupancy_budget_ms: self.context.limits.occupancy_ms_per_http_dispatch,
                 now_ms: self.context.slice_clock_ms(),
             },
             budget(&self.context),
@@ -558,9 +558,9 @@ fn capture(instance: &mut Instance, outcome: &DispatchOutcome) -> Option<(Instan
     })
 }
 
-fn budget(context: &InstanceCtx) -> CpuBudget {
-    CpuBudget {
-        cpu_ms: context.limits.cpu_ms_per_http_dispatch,
+fn budget(context: &InstanceCtx) -> OccupancyBudget {
+    OccupancyBudget {
+        occupancy_ms: context.limits.occupancy_ms_per_http_dispatch,
         wall_ms_cap: isoplane_host::CellConfig::default().wall_ms_cap,
         spent_ns: 0,
     }

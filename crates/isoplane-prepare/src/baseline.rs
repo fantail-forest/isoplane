@@ -34,7 +34,7 @@ impl BuildRequest {
                 config: Vec::new(),
                 runtime_config: b"{}".to_vec(),
                 sandbox: initialization.sandbox,
-                cpu_ms: initialization.cpu_ms,
+                occupancy_ms: initialization.occupancy_ms,
                 wall_ms: initialization.wall_ms,
                 max_passes: 1,
                 log_bytes: initialization.log_bytes,

@@ -63,6 +63,8 @@ pub struct InstanceCtx {
     /// Exact peers an operator lets this application reach where the node's policy refuses.
     pub endpoint_exceptions: Arc<[std::net::SocketAddr]>,
     pub meters: Arc<Meters>,
+    pub(crate) reactor_observer:
+        Mutex<Option<std::sync::Weak<dyn crate::reactor_accounting::Observer>>>,
     /// `None` in tests that exercise the slot machinery without a cell.
     pub rt: Option<Arc<CellRuntime>>,
 
@@ -71,7 +73,7 @@ pub struct InstanceCtx {
     /// The current top-level work item, the unit the future cap applies to.
     pub(super) dispatch: AtomicU64,
     pub(super) subrequests: AtomicU32,
-    /// Bounds log volume independently of the CPU it already costs.
+    /// Bounds log volume independently of its occupied-worker cost.
     pub(super) log_bytes: AtomicU32,
     pub(super) entropy_calls: AtomicU64,
     /// A trap the vtable owes the guest but cannot raise from a call that
@@ -148,6 +150,7 @@ impl InstanceCtx {
             entropy_calls: AtomicU64::new(0),
             trap_latch: Mutex::new(None),
             cancelled: AtomicBool::new(false),
+            reactor_observer: Mutex::new(None),
             dispatch_generation: AtomicU64::new(0),
             cancelled_generation: AtomicU64::new(0),
             cancel_future: AtomicU64::new(0),
@@ -203,6 +206,23 @@ impl InstanceCtx {
         self.cancelled.store(false, Ordering::Relaxed);
         self.cancel_future.store(0, Ordering::Relaxed);
         self.begin_slice(now_ms, dispatch);
+    }
+
+    pub(crate) fn reactor_usage(&self) -> crate::reactor_accounting::TaskUsage {
+        let observer = self
+            .reactor_observer
+            .lock()
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade);
+        crate::reactor_accounting::TaskUsage::new(self.meters.clone(), observer)
+    }
+
+    pub(crate) fn spawn(
+        &self,
+        reactor: &tokio::runtime::Handle,
+        future: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> tokio::task::JoinHandle<()> {
+        reactor.spawn(self.reactor_usage().measure(future))
     }
 
     pub fn set_cancel_future(&self, id: u64) {
@@ -287,7 +307,7 @@ mod tests {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
-                cpu_ms_per_http_dispatch: 100,
+                occupancy_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },

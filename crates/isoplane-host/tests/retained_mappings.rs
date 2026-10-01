@@ -6,7 +6,7 @@ use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::HttpRequest;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
-    Completion, CpuBudget, EngineConfig, HostBindings, ImportCall, IsoplaneEngine,
+    Completion, EngineConfig, HostBindings, ImportCall, IsoplaneEngine, OccupancyBudget,
 };
 use isoplane_host::cell::{CellConfig, Target};
 use isoplane_host::{EngineActivator, LifecycleTier, ModuleId};
@@ -57,7 +57,9 @@ fn a_hibernated_guest_restores_its_delta_into_the_same_mapping() {
         .activate(&source, Box::new(NoImports))
         .expect("initialize");
     assert_eq!(
-        initialization.run_initialize(CpuBudget::http()).completion,
+        initialization
+            .run_initialize(OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "initialization must finish"
     );

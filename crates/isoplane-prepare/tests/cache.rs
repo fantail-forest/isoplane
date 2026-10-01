@@ -265,7 +265,7 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        cpu_ms_per_http_dispatch: 100,
+        occupancy_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -288,7 +288,7 @@ fn initialization_without_a_memory_maximum_obeys_the_application_budget() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        cpu_ms_per_http_dispatch: 100,
+        occupancy_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     };
@@ -307,7 +307,7 @@ fn preparation_identity_binds_the_plan_memory_default() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        cpu_ms_per_http_dispatch: 100,
+        occupancy_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     };

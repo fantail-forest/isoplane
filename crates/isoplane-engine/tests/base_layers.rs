@@ -8,7 +8,7 @@ use std::path::Path;
 
 use common::*;
 use isoplane_engine::prepared::{PreparedError, PreparedIdentity};
-use isoplane_engine::{Completion, CpuBudget, InstanceOps, IsoplaneEngine, Template};
+use isoplane_engine::{Completion, InstanceOps, IsoplaneEngine, OccupancyBudget, Template};
 
 fn identity(seed: u8) -> PreparedIdentity {
     PreparedIdentity {
@@ -48,7 +48,7 @@ fn baseline(engine: &IsoplaneEngine, wasm: &[u8], directory: &Path) -> Template 
     let mut instance = activate(engine, &source);
     assert_eq!(
         instance
-            .run_initialize_runtime(CpuBudget::http())
+            .run_initialize_runtime(OccupancyBudget::http())
             .completion,
         Completion::Done,
         "the runtime stage must complete before capture"
@@ -72,7 +72,7 @@ fn baseline(engine: &IsoplaneEngine, wasm: &[u8], directory: &Path) -> Template 
 /// and returns the fully initialized memory it was captured from.
 fn layer(engine: &IsoplaneEngine, base: &Template, directory: &Path) -> Vec<u8> {
     let mut instance = activate(engine, base);
-    let outcome = instance.run_initialize(CpuBudget::http());
+    let outcome = instance.run_initialize(OccupancyBudget::http());
     assert_eq!(
         outcome.completion,
         Completion::Done,
@@ -190,7 +190,7 @@ fn distinct_layers_keep_their_mappings_and_release_private_pages_across_eviction
             );
             assert_eq!(
                 instance
-                    .dispatch(&dispatch::http_dispatch(1), CpuBudget::http())
+                    .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::http())
                     .completion,
                 Completion::Done,
                 "guest must reach a capture boundary"
@@ -260,7 +260,7 @@ fn initialize_layer(
 ) -> isoplane_engine::Instance {
     let mut instance = activate(engine, base);
     assert_eq!(
-        instance.run_initialize(CpuBudget::http()).completion,
+        instance.run_initialize(OccupancyBudget::http()).completion,
         Completion::Done,
         "initializer must complete"
     );
@@ -379,7 +379,7 @@ fn an_instance_of_a_layer_keeps_its_writes_to_base_and_layer_pages_private() {
     let mut concurrent = activate(&engine, &template);
     assert_eq!(
         writer
-            .dispatch(&dispatch::http_dispatch(1), CpuBudget::http())
+            .dispatch(&dispatch::http_dispatch(1), OccupancyBudget::http())
             .completion,
         Completion::Done,
         "the handler must overwrite a base page and a layer page"

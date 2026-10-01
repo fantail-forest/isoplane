@@ -231,8 +231,8 @@ mod tests {
                     },
                 },
                 completion,
-                cpu_ns: 0,
-                cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+                occupancy_ns: 0,
+                occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
                 execution_limit: None,
                 wall_ns: 0,
                 trap: None,
@@ -247,7 +247,7 @@ mod tests {
         fn dispatch(
             &mut self,
             _rec: &isoplane_abi::dispatch::DispatchRecord,
-            _b: isoplane_engine::CpuBudget,
+            _b: isoplane_engine::OccupancyBudget,
         ) -> isoplane_engine::DispatchOutcome {
             if self.tombstoned {
                 return self.outcome(Completion::Trapped);
@@ -258,7 +258,7 @@ mod tests {
             &mut self,
             _f: u64,
             _r: &isoplane_abi::result::ResultRecord,
-            _b: isoplane_engine::CpuBudget,
+            _b: isoplane_engine::OccupancyBudget,
         ) -> isoplane_engine::DispatchOutcome {
             if self.tombstoned {
                 return self.outcome(Completion::Trapped);

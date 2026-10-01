@@ -4,7 +4,7 @@
 mod common;
 
 use common::*;
-use isoplane_engine::{Completion, CpuBudget, EngineConfig, InstanceOps, IsoplaneEngine};
+use isoplane_engine::{Completion, EngineConfig, InstanceOps, IsoplaneEngine, OccupancyBudget};
 
 fn echo_guest() -> Vec<u8> {
     guest(4, "", "", DONE, DONE)
@@ -53,7 +53,7 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
         }),
         trace: TraceContext::default(),
         cancel_future: 0,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 1_700_000_000_000,
     }
 }
@@ -197,7 +197,8 @@ fn a_mapped_artifact_is_equivalent_to_the_compiled_template() {
 
     let mut i = activate(&e, &b);
     assert_eq!(
-        i.dispatch(&http_dispatch(1), CpuBudget::http()).completion,
+        i.dispatch(&http_dispatch(1), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "a mapped template dispatches like a compiled one"
     );
@@ -315,7 +316,7 @@ fn replacing_a_non_null_function_refuses_a_lossy_checkpoint() {
         .load_template(&table_guest("(table.set (i32.const 0) (ref.func $second))"))
         .expect("table fixture");
     let mut instance = activate(&engine, &template);
-    let outcome = instance.dispatch(&http_dispatch(1), CpuBudget::http());
+    let outcome = instance.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert_eq!(
         outcome.completion,
         Completion::Done,
@@ -345,7 +346,7 @@ fn unchanged_function_and_null_slots_capture_across_independent_stores() {
         let mut instance = activate(&engine, &template);
         assert_eq!(
             instance
-                .dispatch(&http_dispatch(1), CpuBudget::http())
+                .dispatch(&http_dispatch(1), OccupancyBudget::http())
                 .completion,
             Completion::Done,
             "writing the original references must execute"
@@ -368,7 +369,7 @@ fn growing_a_table_refuses_an_unrepresentable_checkpoint() {
     let mut instance = activate(&engine, &template);
     assert_eq!(
         instance
-            .dispatch(&http_dispatch(1), CpuBudget::http())
+            .dispatch(&http_dispatch(1), OccupancyBudget::http())
             .completion,
         Completion::Done,
         "table growth must execute within the declared maximum"
@@ -398,7 +399,7 @@ fn changing_a_slots_nullness_refuses_a_lossy_checkpoint() {
         let mut instance = activate(&engine, &template);
         assert_eq!(
             instance
-                .dispatch(&http_dispatch(1), CpuBudget::http())
+                .dispatch(&http_dispatch(1), OccupancyBudget::http())
                 .completion,
             Completion::Done,
             "the nullness change must execute"

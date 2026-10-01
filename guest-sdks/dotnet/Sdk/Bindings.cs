@@ -94,14 +94,14 @@ public sealed class Ctx
     /// </summary>
     public long NowMs { get; }
     /// <summary>
-    /// CPU milliseconds this dispatch may use before it is killed.
+    /// Occupied-worker milliseconds available to this dispatch before cancellation grace.
     /// </summary>
-    public uint CpuBudgetMs { get; }
+    public uint OccupancyBudgetMs { get; }
 
-    internal Ctx(long nowMs, uint cpuBudgetMs)
+    internal Ctx(long nowMs, uint occupancyBudgetMs)
     {
         NowMs = nowMs;
-        CpuBudgetMs = cpuBudgetMs;
+        OccupancyBudgetMs = occupancyBudgetMs;
     }
 }
 

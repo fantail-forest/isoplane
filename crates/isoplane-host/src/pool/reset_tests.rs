@@ -8,7 +8,7 @@ use crate::{InstanceId, ModuleId};
 use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest};
 use isoplane_engine::{
-    Completion, CpuBudget, EngineConfig, HostBindings, ImportCall, IsoplaneEngine, Template,
+    Completion, EngineConfig, HostBindings, ImportCall, IsoplaneEngine, OccupancyBudget, Template,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -125,14 +125,14 @@ fn completed_start_guest() -> (InstancePool, Arc<Slot>, Arc<ResetStartActivator>
         }),
         trace: Default::default(),
         cancel_future: 0,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 1,
     };
     let outcome = slot
         .enter()
         .unwrap()
         .instance()
-        .dispatch(&dispatch, CpuBudget::http());
+        .dispatch(&dispatch, OccupancyBudget::http());
     assert_eq!(
         outcome.completion,
         Completion::Done,

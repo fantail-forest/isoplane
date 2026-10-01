@@ -1,7 +1,7 @@
 mod common;
 
 use isoplane_engine::bindings::{BindingError, InitializationBindings};
-use isoplane_engine::{Completion, CpuBudget, ImportCall, Instance, InstanceOps};
+use isoplane_engine::{Completion, ImportCall, Instance, InstanceOps, OccupancyBudget};
 
 struct NoImports;
 impl InitializationBindings for NoImports {
@@ -25,10 +25,12 @@ fn dispatch(instance: &mut Instance) -> Completion {
         },
         trace: Default::default(),
         cancel_future: 0,
-        cpu_budget_ms: 1000,
+        occupancy_budget_ms: 1000,
         now_ms: 0,
     };
-    instance.dispatch(&record, CpuBudget::http()).completion
+    instance
+        .dispatch(&record, OccupancyBudget::http())
+        .completion
 }
 
 #[test]

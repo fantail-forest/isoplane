@@ -108,10 +108,10 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
         "trapper",
         FakeBehaviour::program([Step::Trap(TrapCode::Panic)]),
     );
-    let spinner = app(&r, "spinner", FakeBehaviour::program([Step::Spin]));
+    let spinner = app(&r, "spinner", FakeBehaviour::program([Step::HardKill]));
 
     let mut rec = http(&r.cell, &trapper, "/trap");
-    rec.cpu_budget_ms = 50;
+    rec.occupancy_budget_ms = 50;
     let out = r
         .cell
         .dispatch_blocking(
@@ -126,7 +126,7 @@ fn a_hard_kill_is_not_counted_as_a_trap() {
     assert_eq!(out.status, 500, "a trap is a 500");
 
     let mut rec = http(&r.cell, &spinner, "/spin");
-    rec.cpu_budget_ms = 50;
+    rec.occupancy_budget_ms = 50;
     let out = r
         .cell
         .dispatch_blocking(

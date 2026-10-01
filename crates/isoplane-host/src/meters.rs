@@ -1,19 +1,20 @@
-//! Per-application CPU usage and dispatch counters.
-//! Wall-clock and park time are recorded separately.
+//! Per-application worker occupancy during execution and attributed host work.
+//! Parked time is recorded separately.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use isoplane_engine::DispatchOutcome;
 
-pub use crate::cpu_clock::{
-    clock_read_failures, read_thread_cpu_ns, try_read_mono_ns, try_read_thread_cpu_ns, CpuInterval,
+pub use crate::occupancy_clock::{
+    clock_read_failures, read_occupancy_ns, try_read_mono_ns, try_read_occupancy_ns,
+    OccupancyInterval,
 };
 
 /// Dispatch and lifecycle counters for one registered module.
 #[derive(Debug, Default)]
 pub struct Meters {
-    /// Accumulated thread CPU time.
-    cpu_ns: AtomicU64,
+    /// Accumulated worker occupancy.
+    occupancy_ns: AtomicU64,
     /// Recorded separately from active execution time.
     wall_ns: AtomicU64,
     dispatches: AtomicU64,
@@ -23,16 +24,16 @@ pub struct Meters {
     captures: AtomicU64,
     /// Recorded separately from active execution time.
     observed_park_ms: AtomicU64,
-    /// Already inside `cpu_ns`; broken out so the share is visible.
-    log_cpu_ns: AtomicU64,
+    /// Already inside `occupancy_ns`; broken out so the share is visible.
+    log_occupancy_ns: AtomicU64,
     trapped: AtomicU64,
     budget_kills: AtomicU64,
     clean_kills: AtomicU64,
     hard_kills: AtomicU64,
-    /// CPU consumed past the budget, already included in `cpu_ns`.
+    /// Occupancy past the budget, already included in `occupancy_ns`.
     overage_ns: AtomicU64,
     shed: AtomicU64,
-    /// Active intervals with an unreadable thread clock endpoint.
+    /// Active intervals with an unreadable monotonic clock endpoint.
     incomplete_intervals: AtomicU64,
 }
 
@@ -41,9 +42,10 @@ impl Meters {
         Self::default()
     }
 
-    pub fn record_cpu(&self, out: &DispatchOutcome) {
-        self.cpu_ns.fetch_add(out.cpu_ns, Ordering::Relaxed);
-        if out.cpu_measurement == isoplane_engine::CpuMeasurement::Incomplete {
+    pub fn record_occupancy(&self, out: &DispatchOutcome) {
+        self.occupancy_ns
+            .fetch_add(out.occupancy_ns, Ordering::Relaxed);
+        if out.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete {
             self.incomplete_intervals.fetch_add(1, Ordering::Relaxed);
         }
         self.wall_ns.fetch_add(out.wall_ns, Ordering::Relaxed);
@@ -53,7 +55,7 @@ impl Meters {
     pub fn record_interval(&self, ns: Option<u64>) {
         match ns {
             Some(ns) => {
-                self.cpu_ns.fetch_add(ns, Ordering::Relaxed);
+                self.occupancy_ns.fetch_add(ns, Ordering::Relaxed);
             }
             None => {
                 self.incomplete_intervals.fetch_add(1, Ordering::Relaxed);
@@ -75,8 +77,8 @@ impl Meters {
     pub fn record_park(&self, ms: u64) {
         self.observed_park_ms.fetch_add(ms, Ordering::Relaxed);
     }
-    pub fn record_log_cpu(&self, ns: u64) {
-        self.log_cpu_ns.fetch_add(ns, Ordering::Relaxed);
+    pub fn record_log_occupancy(&self, ns: u64) {
+        self.log_occupancy_ns.fetch_add(ns, Ordering::Relaxed);
     }
     pub fn record_trap(&self) {
         self.trapped.fetch_add(1, Ordering::Relaxed);
@@ -94,11 +96,11 @@ impl Meters {
         self.shed.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn cpu_ns(&self) -> u64 {
-        self.cpu_ns.load(Ordering::Relaxed)
+    pub fn occupancy_ns(&self) -> u64 {
+        self.occupancy_ns.load(Ordering::Relaxed)
     }
-    pub fn cpu_ms(&self) -> f64 {
-        self.cpu_ns() as f64 / 1e6
+    pub fn occupancy_ms(&self) -> f64 {
+        self.occupancy_ns() as f64 / 1e6
     }
     pub fn wall_ns(&self) -> u64 {
         self.wall_ns.load(Ordering::Relaxed)
@@ -118,8 +120,8 @@ impl Meters {
     pub fn observed_park_ms(&self) -> u64 {
         self.observed_park_ms.load(Ordering::Relaxed)
     }
-    pub fn log_cpu_ns(&self) -> u64 {
-        self.log_cpu_ns.load(Ordering::Relaxed)
+    pub fn log_occupancy_ns(&self) -> u64 {
+        self.log_occupancy_ns.load(Ordering::Relaxed)
     }
     pub fn trapped(&self) -> u64 {
         self.trapped.load(Ordering::Relaxed)
@@ -133,7 +135,7 @@ impl Meters {
     pub fn hard_kills(&self) -> u64 {
         self.hard_kills.load(Ordering::Relaxed)
     }
-    /// A subset of [`Meters::cpu_ns`], never an addition to it.
+    /// A subset of [`Meters::occupancy_ns`], never an addition to it.
     pub fn overage_ns(&self) -> u64 {
         self.overage_ns.load(Ordering::Relaxed)
     }
@@ -151,12 +153,12 @@ mod tests {
     use isoplane_abi::status::PollStatus;
     use isoplane_engine::Completion;
 
-    fn outcome(cpu_ns: u64, wall_ns: u64) -> DispatchOutcome {
+    fn outcome(occupancy_ns: u64, wall_ns: u64) -> DispatchOutcome {
         DispatchOutcome {
             status: PollStatus::Pending,
             completion: Completion::Parked,
-            cpu_ns,
-            cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+            occupancy_ns,
+            occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
             wall_ns,
             trap: None,
@@ -172,8 +174,8 @@ mod tests {
         let out = DispatchOutcome {
             status: PollStatus::Done { response: 0 },
             completion: Completion::CleanKill,
-            cpu_ns: 53_000_000,
-            cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+            occupancy_ns: 53_000_000,
+            occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
             wall_ns: 53_500_000,
             trap: None,
@@ -181,10 +183,10 @@ mod tests {
             overage_ns: 3_000_000,
             grace_deferrals: 0,
         };
-        m.record_cpu(&out);
+        m.record_occupancy(&out);
         m.record_budget_kill(isoplane_engine::KillPhase::Clean, out.overage_ns);
 
-        assert_eq!(m.cpu_ns(), 53_000_000, "the meter must not stop at B");
+        assert_eq!(m.occupancy_ns(), 53_000_000, "the meter must not stop at B");
         assert_eq!(m.overage_ns(), 3_000_000, "the overage share is visible");
         assert_eq!(m.clean_kills(), 1, "a clean kill is counted as one");
         assert_eq!(m.hard_kills(), 0, "and not as a hard kill");
@@ -199,8 +201,8 @@ mod tests {
             let out = DispatchOutcome {
                 status: PollStatus::Done { response: 0 },
                 completion: Completion::CleanKill,
-                cpu_ns: budget_ns + over,
-                cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+                occupancy_ns: budget_ns + over,
+                occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
                 execution_limit: None,
                 wall_ns: 0,
                 trap: None,
@@ -208,18 +210,18 @@ mod tests {
                 overage_ns: over,
                 grace_deferrals: 0,
             };
-            m.record_cpu(&out);
+            m.record_occupancy(&out);
             m.record_budget_kill(isoplane_engine::KillPhase::Clean, out.overage_ns);
         }
         assert_eq!(m.overage_ns(), 8_400_000, "every overage is summed");
         assert!(
-            m.cpu_ns() > 3 * budget_ns,
+            m.occupancy_ns() > 3 * budget_ns,
             "three over-budget dispatches measured {} ns, which is at most 3xB; the overage was \
              dropped somewhere",
-            m.cpu_ns()
+            m.occupancy_ns()
         );
         assert!(
-            m.overage_ns() < m.cpu_ns(),
+            m.overage_ns() < m.occupancy_ns(),
             "the overage is a subset of the one compute meter, not an addition to it"
         );
     }
@@ -227,10 +229,14 @@ mod tests {
     #[test]
     fn wall_clock_is_recorded_separately_from_active_time() {
         let m = Meters::new();
-        m.record_cpu(&outcome(1_000, 1_000_000_000));
+        m.record_occupancy(&outcome(1_000, 1_000_000_000));
         m.record_park(60_000);
-        assert_eq!(m.cpu_ns(), 1_000, "only the CPU interval is measured");
+        assert_eq!(
+            m.occupancy_ns(),
+            1_000,
+            "only the occupancy interval is measured"
+        );
         assert_eq!(m.observed_park_ms(), 60_000, "park time is recorded");
-        assert_eq!(m.cpu_ms(), 0.001, "a second off-CPU adds no CPU time");
+        assert_eq!(m.occupancy_ms(), 0.001, "a second parked adds no occupied time");
     }
 }

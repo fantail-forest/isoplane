@@ -15,8 +15,8 @@ public sealed class Ctx
 
 | name | description |
 | --- | --- |
-| [CpuBudgetMs](Ctx/CpuBudgetMs.md) { get; } | CPU milliseconds this dispatch may use before it is killed. |
 | [NowMs](Ctx/NowMs.md) { get; } | The clock at dispatch start, in milliseconds, frozen for the slice. |
+| [OccupancyBudgetMs](Ctx/OccupancyBudgetMs.md) { get; } | Occupied-worker milliseconds available to this dispatch before cancellation grace. |
 
 ## See Also
 

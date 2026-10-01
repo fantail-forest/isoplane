@@ -86,7 +86,7 @@ async fn a_debug_request_initializes_raw_state_and_is_discarded_after_completion
     let rig = rig(false);
     let record = rig.cell.http_record(&rig.module, request());
     assert_eq!(
-        record.cpu_budget_ms, DEBUG_BUDGET_MS,
+        record.occupancy_budget_ms, DEBUG_BUDGET_MS,
         "debugger pauses must use the explicit local execution backstop"
     );
     let result = rig

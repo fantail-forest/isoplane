@@ -221,7 +221,7 @@ impl Rig {
             body: vec![],
         };
         let mut record = self.cell.http_record(&self.module, request);
-        record.cpu_budget_ms = 30_000;
+        record.occupancy_budget_ms = 30_000;
         self.cell
             .submit(&self.module, Target::Handler { route: path.into() }, record)
             .expect("probe dispatch must be queued")

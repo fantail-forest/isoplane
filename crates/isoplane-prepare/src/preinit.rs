@@ -7,8 +7,8 @@ use isoplane_abi::{
 };
 use isoplane_engine::{EngineConfig, IsoplaneEngine, ModuleHash, PlatformFiles};
 
-/// Default local initialization CPU budget across replay passes.
-pub const DEFAULT_INITIALIZATION_CPU_MS: u32 = 30_000;
+/// Default local initialization occupancy budget across replay passes.
+pub const DEFAULT_INITIALIZATION_OCCUPANCY_MS: u32 = 30_000;
 /// Default local initialization wall backstop, including waits and replay passes.
 pub const DEFAULT_INITIALIZATION_WALL_MS: u32 = 60_000;
 /// Default local initialization replay limit.
@@ -47,8 +47,8 @@ pub struct PreInitOutcome {
     pub deferred_units: Vec<u32>,
     /// Number of initialization passes executed.
     pub passes: u32,
-    /// CPU of the preparation thread, including compilation, in milliseconds.
-    pub init_cpu_ms: u64,
+    /// Preparation-worker occupancy, including compilation, in milliseconds.
+    pub init_occupancy_ms: u64,
     /// Length of the portable initialized module in bytes.
     pub template_bytes: u64,
     /// Digest of explicit initialization inputs; fresh random output is excluded.
@@ -186,7 +186,7 @@ impl PreInitializer {
                     .clone()
                     .unwrap_or_else(|| b"{}".to_vec()),
                 sandbox: self.pal,
-                cpu_ms: DEFAULT_INITIALIZATION_CPU_MS,
+                occupancy_ms: DEFAULT_INITIALIZATION_OCCUPANCY_MS,
                 wall_ms: DEFAULT_INITIALIZATION_WALL_MS,
                 max_passes: DEFAULT_INITIALIZATION_PASSES,
                 log_bytes: DEFAULT_INITIALIZATION_LOG_BYTES,
@@ -205,7 +205,7 @@ impl PreInitializer {
                     module_bytes_compressed: 52428800,
                     package_bytes: 52428800,
                     instance_memory_max: 536870912,
-                    cpu_ms_per_http_dispatch: 300000,
+                    occupancy_ms_per_http_dispatch: 300000,
                     subrequests_per_dispatch: 10000,
                     pending_futures_per_dispatch: 4096,
                 },
@@ -221,7 +221,7 @@ impl PreInitializer {
                 template_wasm,
                 deferred_units: output.deferred,
                 passes: output.passes,
-                init_cpu_ms: output.preparation_cpu_ns / 1_000_000,
+                init_occupancy_ms: output.preparation_occupancy_ns / 1_000_000,
                 reproducible_digest: digest,
                 deferred_reasons: output.deferred_reasons,
                 init_logs: output.logs,

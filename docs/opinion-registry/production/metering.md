@@ -1,5 +1,17 @@
 # Metering
 
+## Account for occupied workers
+
+Compute usage is monotonic elapsed time while an execution or reactor worker
+services a guest and cannot service another. Include synchronous host work and
+OS descheduling inside that interval. Exclude queueing and parked I/O while the
+worker is available for other work; reactor accounting surrounds each active
+poll, not the lifetime of the asynchronous operation.
+
+Watchdog deadlines are best-effort thresholds. Scheduling delays may cause
+overshoot; tests prove interruption, cleanup and accounting without asserting
+realtime delivery. Use controlled clocks for exact boundary checks.
+
 ## Export meter output as events, not internal counters
 
 Use per-dispatch completion events and exported aggregates to assess resource usage. An in-process counter alone does not provide durable accounting.
@@ -31,7 +43,7 @@ neither post-response guest execution nor a guarantee of warm state to customers
 
 ## Enforce limits where they are metered
 
-Enforce a CPU budget in the engine that meters it, a memory ceiling in the allocator that accounts it, and a pending-future cap in the table that holds them. A limit that is configured and never enforced is a lie in the config schema.
+Enforce a worker-occupancy budget in the engine that meters it, a memory ceiling in the allocator that accounts it, and a pending-future cap in the table that holds them. A limit that is configured and never enforced is a lie in the config schema.
 
 **Not this:** A concurrency cap documented as configured and never enforced.
 
@@ -39,7 +51,7 @@ Enforce a CPU budget in the engine that meters it, a memory ceiling in the alloc
 
 ## Share production defaults and choose test budgets deliberately
 
-Define production CPU defaults once and test that production wiring applies them. Qualify budget enforcement with explicit boundary and rejection cases. Tests of unrelated behavior may supply a budget that lets that behavior complete; their result does not establish that the workload fits a production tier.
+Define production worker-occupancy defaults once and test that production wiring applies them. Qualify budget enforcement with explicit boundary and rejection cases. Tests of unrelated behavior may supply a budget that lets that behavior complete; their result does not establish that the workload fits a production tier.
 
 **Not this:** An implicit test-only default presented as production qualification, or an unrelated behavior test failing because it inherited a tight production budget.
 

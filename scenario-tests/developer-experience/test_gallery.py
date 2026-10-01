@@ -214,7 +214,7 @@ class Gallery(unittest.TestCase):
             dotnet=Path(os.environ['ISOPLANE_TEST_DOTNET']),
             prepared=Path(os.environ['ISOPLANE_TEST_SCENARIO_DIRECTORY']),
             schema=Path(os.environ['ISOPLANE_TEST_SCHEMA']),
-            name='gallery', limits_json={'module_bytes_compressed': 52428800, 'package_bytes': 52428800, 'instance_memory_max': 536870912, 'cpu_ms_per_http_dispatch': 300000, 'subrequests_per_dispatch': 10000, 'pending_futures_per_dispatch': 4096}, configuration='Release')
+            name='gallery', limits_json={'module_bytes_compressed': 52428800, 'package_bytes': 52428800, 'instance_memory_max': 536870912, 'occupancy_ms_per_http_dispatch': 300000, 'subrequests_per_dispatch': 10000, 'pending_futures_per_dispatch': 4096}, configuration='Release')
         isoplane = Path(os.environ['ISOPLANE_TEST_CLI_ASSEMBLY'])
         scratch = repo / '.test-runs/gallery'
         scratch.mkdir(parents=True, exist_ok=True)

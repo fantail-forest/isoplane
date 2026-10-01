@@ -37,7 +37,7 @@ impl CellBindings {
             Err(error) => return self.settle_now(id, ResultRecord::Err(error)),
         };
         let rt2 = rt.clone();
-        let task = rt.reactor.spawn(async move {
+        let task = self.ctx.spawn(&rt.reactor, async move {
             let result = match read.read(max_bytes).await {
                 Ok(bytes) => ResultRecord::Ok(bytes),
                 Err(error) => ResultRecord::Err(error),
@@ -107,7 +107,7 @@ impl CellBindings {
         let exceptions = self.ctx.endpoint_exceptions.clone();
         let tenant = self.ctx.tenant.clone();
         let rt2 = rt.clone();
-        let task = rt.reactor.spawn(async move {
+        let task = self.ctx.spawn(&rt.reactor, async move {
             let svc = rt2.services.clone();
             let checked = svc
                 .egress
@@ -159,7 +159,7 @@ impl CellBindings {
         };
         let resource = operation.handle();
         let rt2 = rt.clone();
-        let task = rt.reactor.spawn(async move {
+        let task = self.ctx.spawn(&rt.reactor, async move {
             let result = operation.read(body, max).await;
             CellBindings::settle(&rt2, id, from_typed(result));
         });
@@ -186,7 +186,7 @@ impl CellBindings {
         if let Some(stream) = stream {
             let write = stream.prepare(payload.to_vec());
             let rt2 = rt.clone();
-            let task = rt.reactor.spawn(async move {
+            let task = self.ctx.spawn(&rt.reactor, async move {
                 let result = write.send().await.map(|count| count as u32);
                 CellBindings::settle(&rt2, id, from_typed(result));
             });
@@ -217,7 +217,7 @@ impl CellBindings {
                     let write = stream.prepare(std::mem::take(&mut head.body));
                     if let Some(rt) = self.rt() {
                         let owner = stream.clone();
-                        let task = rt.reactor.spawn(async move {
+                        let task = self.ctx.spawn(&rt.reactor, async move {
                             if let Err(error) = write.send().await {
                                 stream.fail(format!("initial response body: {error:?}"));
                             }

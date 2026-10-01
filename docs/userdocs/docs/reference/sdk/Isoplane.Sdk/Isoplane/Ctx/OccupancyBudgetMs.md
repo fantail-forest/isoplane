@@ -3,12 +3,12 @@ mdx:
   format: md
 ---
 
-# Ctx.CpuBudgetMs property
+# Ctx.OccupancyBudgetMs property
 
-CPU milliseconds this dispatch may use before it is killed.
+Occupied-worker milliseconds available to this dispatch before cancellation grace.
 
 ```csharp
-public uint CpuBudgetMs { get; }
+public uint OccupancyBudgetMs { get; }
 ```
 
 ## See Also

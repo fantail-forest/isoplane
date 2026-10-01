@@ -41,7 +41,7 @@ pub fn prepare(name: &str, platform_files: PlatformFiles) -> Result<BuildProduct
             config: Vec::new(),
             runtime_config: b"{}".to_vec(),
             sandbox: InitSandbox::RuntimeBringUp,
-            cpu_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_CPU_MS,
+            occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
             max_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,

@@ -278,7 +278,7 @@ mod queue_tests {
             }),
             trace: Default::default(),
             cancel_future: 0,
-            cpu_budget_ms: 30_000,
+            occupancy_budget_ms: 30_000,
             now_ms: 0,
         };
         let activator = Arc::new(crate::fakes::FakeActivator::new(
@@ -286,7 +286,7 @@ mod queue_tests {
         ));
         let entry = Arc::new(super::super::ModuleEntry {
             tenant: "queue-test".into(),
-            debug_cpu_ms: None,
+            debug_occupancy_ms: None,
             limits: Limits::default(),
             manifest: isoplane_abi::config::AppManifest {
                 guest_memory_bytes: None,
@@ -308,7 +308,7 @@ mod queue_tests {
         let completion = super::super::DispatchCompletion::new(
             entry,
             &rec,
-            isoplane_engine::CpuBudget::http(),
+            isoplane_engine::OccupancyBudget::http(),
             Arc::new(crate::mono_ns),
         )
         .expect("queue fixture correlation token");

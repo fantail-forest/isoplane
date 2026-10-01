@@ -28,7 +28,7 @@ pub(super) type CompletionClock = Arc<dyn Fn() -> Option<u64> + Send + Sync>;
 pub(super) enum TerminalReason {
     Success,
     GuestTrap,
-    CpuLimit,
+    OccupancyLimit,
     WallLimit,
     RequestCancelled,
     TransportFailure,
@@ -38,7 +38,7 @@ pub(super) enum TerminalReason {
     RestoreFailed,
     CaptureFailed,
     HostPanic,
-    CpuClockUnavailable,
+    OccupancyClockUnavailable,
     CellStopped,
 }
 
@@ -47,7 +47,7 @@ impl TerminalReason {
         match self {
             Self::Success => "success",
             Self::GuestTrap => "guest_trap",
-            Self::CpuLimit => "cpu_limit",
+            Self::OccupancyLimit => "occupancy_limit",
             Self::WallLimit => "execution_wall_limit",
             Self::RequestCancelled => "request_cancelled",
             Self::TransportFailure => "transport_failure",
@@ -57,7 +57,7 @@ impl TerminalReason {
             Self::RestoreFailed => "restore_failed",
             Self::CaptureFailed => "capture_failed",
             Self::HostPanic => "host_panic",
-            Self::CpuClockUnavailable => "cpu_clock_unavailable",
+            Self::OccupancyClockUnavailable => "occupancy_clock_unavailable",
             Self::CellStopped => "cell_stopped",
         }
     }
@@ -65,7 +65,8 @@ impl TerminalReason {
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Usage {
-    pub(super) cpu_ns: u64,
+    pub(super) occupancy_ns: u64,
+    reactor_occupancy_ns: u64,
     pub(super) hot_wall_ns: u64,
     pub(super) slices: u32,
     incomplete: bool,
@@ -73,7 +74,7 @@ pub(super) struct Usage {
     overage_ns: u64,
     limit: Option<isoplane_engine::ExecutionLimit>,
     kill_phase: Option<isoplane_engine::KillPhase>,
-    capture_hint_cpu_ns: u64,
+    capture_hint_occupancy_ns: u64,
     capture_hint_wall_ns: u64,
     capture_hints: u32,
     hint_incomplete: bool,
@@ -87,6 +88,8 @@ struct State {
     usage: Usage,
     outcome: Option<(TerminalReason, u16)>,
     emitted: bool,
+    finish_requested: bool,
+    reactor_tasks: usize,
     responded: bool,
     io_kind: Option<std::io::ErrorKind>,
     os_error: Option<i32>,
@@ -100,7 +103,7 @@ pub(super) struct DispatchCompletion {
     module: ModuleId,
     dispatch_id: u64,
     kind: &'static str,
-    budget: CpuBudget,
+    budget: OccupancyBudget,
     started_ns: Option<u64>,
     clock: CompletionClock,
     span: tracing::Span,
@@ -112,7 +115,7 @@ impl DispatchCompletion {
     pub(super) fn new(
         entry: Arc<ModuleEntry>,
         record: &DispatchRecord,
-        budget: CpuBudget,
+        budget: OccupancyBudget,
         clock: CompletionClock,
     ) -> crate::Result<Arc<Self>> {
         let token = DispatchToken::next(&NEXT_TOKEN)?;
@@ -139,6 +142,8 @@ impl DispatchCompletion {
                 usage: Usage::default(),
                 outcome: None,
                 emitted: false,
+                finish_requested: false,
+                reactor_tasks: 0,
                 responded: false,
                 io_kind: None,
                 os_error: None,
@@ -181,9 +186,10 @@ impl DispatchCompletion {
         let mut state = self.state.lock();
         let usage = &mut state.usage;
         usage.invoking = false;
-        usage.cpu_ns = usage.cpu_ns.saturating_add(outcome.cpu_ns);
+        usage.occupancy_ns = usage.occupancy_ns.saturating_add(outcome.occupancy_ns);
         usage.hot_wall_ns = usage.hot_wall_ns.saturating_add(outcome.wall_ns);
-        usage.incomplete |= outcome.cpu_measurement == isoplane_engine::CpuMeasurement::Incomplete;
+        usage.incomplete |=
+            outcome.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete;
         usage.overage_ns = outcome.overage_ns;
         usage.limit = outcome.execution_limit;
         usage.kill_phase = outcome.kill;
@@ -191,14 +197,14 @@ impl DispatchCompletion {
         if outcome
             .trap
             .as_ref()
-            .is_some_and(|trap| trap.kind == isoplane_engine::TrapKind::CpuClockUnavailable)
+            .is_some_and(|trap| trap.kind == isoplane_engine::TrapKind::OccupancyClockUnavailable)
         {
-            state.outcome = Some((TerminalReason::CpuClockUnavailable, 500));
+            state.outcome = Some((TerminalReason::OccupancyClockUnavailable, 500));
         }
     }
 
-    pub(super) fn next_budget(&self) -> CpuBudget {
-        self.budget.after(self.usage().cpu_ns)
+    pub(super) fn next_budget(&self) -> OccupancyBudget {
+        self.budget.after(self.usage().occupancy_ns)
     }
 
     pub(super) fn usage(&self) -> Usage {
@@ -228,7 +234,7 @@ impl DispatchCompletion {
             headers,
             body,
             completion,
-            cpu_ns: state.usage.cpu_ns,
+            occupancy_ns: state.usage.occupancy_ns,
             wall_ns: state.usage.hot_wall_ns,
             slices: state.usage.slices,
             instance,
@@ -297,7 +303,9 @@ impl DispatchCompletion {
             Completion::Trapped => TerminalReason::GuestTrap,
             Completion::BudgetKill | Completion::CleanKill => match state.usage.limit {
                 Some(isoplane_engine::ExecutionLimit::Wall) => TerminalReason::WallLimit,
-                Some(isoplane_engine::ExecutionLimit::Cpu) | None => TerminalReason::CpuLimit,
+                Some(isoplane_engine::ExecutionLimit::Occupancy) | None => {
+                    TerminalReason::OccupancyLimit
+                }
             },
             Completion::Parked => return,
         };
@@ -320,6 +328,10 @@ impl DispatchCompletion {
 
     pub(super) fn finish(&self) {
         let mut state = self.state.lock();
+        state.finish_requested = true;
+        if state.reactor_tasks != 0 {
+            return;
+        }
         if state.emitted {
             return;
         }
@@ -350,14 +362,14 @@ impl DispatchCompletion {
                     (Some("unclassified_host_error"), false)
                 }
             }
-            TerminalReason::CpuLimit
+            TerminalReason::OccupancyLimit
             | TerminalReason::SnapshotCapacityUnavailable
             | TerminalReason::WallLimit
             | TerminalReason::RequestCancelled
             | TerminalReason::TransportFailure
             | TerminalReason::EntryRefused
             | TerminalReason::HostPanic
-            | TerminalReason::CpuClockUnavailable
+            | TerminalReason::OccupancyClockUnavailable
             | TerminalReason::CellStopped => (Some(reason.label()), true),
         };
         drop(state);
@@ -368,18 +380,20 @@ impl DispatchCompletion {
             dispatch_token = self.token.0, dispatch_id = self.dispatch_id, dispatch_kind = self.kind,
             instance, acquired, outcome = reason.label(), status,
             error_kind, error_classification_complete, io_kind, os_error, guest_trap_code,
-            cpu_scope = "dispatch_invocations", activation_cpu_included = false,
-            cpu_ns = usage.cpu_ns, cpu_complete = !usage.incomplete && !usage.invoking,
+            occupancy_scope = "dispatch_invocations_and_reactor_polls", activation_occupancy_included = false,
+            invocation_occupancy_ns = usage.occupancy_ns.saturating_sub(usage.reactor_occupancy_ns),
+            reactor_occupancy_ns = usage.reactor_occupancy_ns,
+            occupancy_ns = usage.occupancy_ns, occupancy_complete = !usage.incomplete && !usage.invoking,
             hot_wall_ns = usage.hot_wall_ns,
             hot_wall_complete = !usage.invoking,
-            capture_hint_cpu_ns = usage.capture_hint_cpu_ns,
+            capture_hint_occupancy_ns = usage.capture_hint_occupancy_ns,
             capture_hint_wall_ns = usage.capture_hint_wall_ns,
             capture_hint_complete = !usage.hint_incomplete && !usage.hint_running,
             capture_hints = usage.capture_hints,
-            total_guest_cpu_ns = usage.cpu_ns.saturating_add(usage.capture_hint_cpu_ns),
-            total_guest_cpu_complete = !usage.incomplete && !usage.invoking && !usage.hint_incomplete && !usage.hint_running,
+            total_guest_occupancy_ns = usage.occupancy_ns.saturating_add(usage.capture_hint_occupancy_ns),
+            total_guest_occupancy_complete = !usage.incomplete && !usage.invoking && !usage.hint_incomplete && !usage.hint_running,
             total_wall_ns, total_wall_complete = total_wall_ns.is_some(),
-            slices = usage.slices, cpu_budget_ns = self.budget.budget_ns(),
+            slices = usage.slices, occupancy_budget_ns = self.budget.budget_ns(),
             execution_wall_cap_ns = u64::from(self.budget.wall_ms_cap) * 1_000_000,
             overage_ns = usage.overage_ns, kill_phase = usage.kill_phase.map(|phase| phase.as_str()),
             "dispatch completed"
@@ -388,6 +402,34 @@ impl DispatchCompletion {
 
     pub(super) fn settlement(self: &Arc<Self>) -> CompletionSettlement {
         CompletionSettlement(self.clone())
+    }
+}
+
+impl crate::reactor_accounting::Observer for DispatchCompletion {
+    fn started(&self) {
+        self.state.lock().reactor_tasks += 1;
+    }
+
+    fn interval(&self, ns: Option<u64>) {
+        let mut state = self.state.lock();
+        match ns {
+            Some(ns) => {
+                state.usage.occupancy_ns = state.usage.occupancy_ns.saturating_add(ns);
+                state.usage.reactor_occupancy_ns =
+                    state.usage.reactor_occupancy_ns.saturating_add(ns);
+            }
+            None => state.usage.incomplete = true,
+        }
+    }
+
+    fn finished(&self) {
+        let mut state = self.state.lock();
+        state.reactor_tasks -= 1;
+        let finish = state.finish_requested && state.reactor_tasks == 0;
+        drop(state);
+        if finish {
+            self.finish();
+        }
     }
 }
 
@@ -402,10 +444,12 @@ impl crate::hibernate_policy::CaptureObserver for DispatchCompletion {
         let mut state = self.state.lock();
         let usage = &mut state.usage;
         usage.hint_running = false;
-        usage.capture_hint_cpu_ns = usage.capture_hint_cpu_ns.saturating_add(outcome.cpu_ns);
+        usage.capture_hint_occupancy_ns = usage
+            .capture_hint_occupancy_ns
+            .saturating_add(outcome.occupancy_ns);
         usage.capture_hint_wall_ns = usage.capture_hint_wall_ns.saturating_add(outcome.wall_ns);
         usage.hint_incomplete |=
-            outcome.cpu_measurement == isoplane_engine::CpuMeasurement::Incomplete;
+            outcome.occupancy_measurement == isoplane_engine::OccupancyMeasurement::Incomplete;
         if outcome.trap.is_some() {
             usage.trap_kind = outcome.trap.as_ref().map(|trap| trap.kind);
         }
@@ -446,8 +490,8 @@ impl Cell {
         DispatchCompletion::new(
             entry,
             record,
-            CpuBudget {
-                cpu_ms: record.cpu_budget_ms,
+            OccupancyBudget {
+                occupancy_ms: record.occupancy_budget_ms,
                 wall_ms_cap: self.cfg.wall_ms_cap,
                 spent_ns: 0,
             },
@@ -500,7 +544,10 @@ pub(super) mod test_events {
     }
 
     #[derive(Clone, Default)]
-    pub(crate) struct Events(Arc<Mutex<Vec<serde_json::Map<String, Value>>>>);
+    pub(crate) struct Events(
+        Arc<Mutex<Vec<serde_json::Map<String, Value>>>>,
+        Arc<parking_lot::Condvar>,
+    );
 
     #[derive(Default)]
     struct Fields(serde_json::Map<String, Value>);
@@ -534,6 +581,7 @@ pub(super) mod test_events {
             event.record(&mut fields);
             if fields.0.get("event").and_then(Value::as_str) == Some("dispatch_completed") {
                 self.0.lock().push(fields.0);
+                self.1.notify_all();
             }
         }
     }
@@ -548,6 +596,18 @@ pub(super) mod test_events {
         pub(crate) fn scope<T>(&self, f: impl FnOnce() -> T) -> T {
             let subscriber = tracing::Dispatch::new(Registry::default().with(self.clone()));
             tracing::dispatcher::with_default(&subscriber, f)
+        }
+
+        pub(crate) fn completed(&self, count: usize) -> Vec<serde_json::Map<String, Value>> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut records = self.0.lock();
+            while records.len() < count {
+                assert!(
+                    !self.1.wait_until(&mut records, deadline).timed_out(),
+                    "dispatch completion did not arrive"
+                );
+            }
+            records.clone()
         }
 
         pub(crate) fn records(&self) -> Vec<serde_json::Map<String, Value>> {

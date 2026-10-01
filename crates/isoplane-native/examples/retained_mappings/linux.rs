@@ -5,8 +5,8 @@ use isoplane_abi::config::{HandlerLifecycle, Limits};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
-    Completion, CpuBudget, DormantInstance, EngineConfig, HostBindings, InstanceOps,
-    IsoplaneEngine, Template,
+    Completion, DormantInstance, EngineConfig, HostBindings, InstanceOps, IsoplaneEngine,
+    OccupancyBudget, Template,
 };
 use isoplane_host::bindings::{CellBindings, InstanceCtx, Tenancy};
 use isoplane_host::{InstanceId, ModuleId};
@@ -18,22 +18,22 @@ const PLAN: Limits = Limits {
     module_bytes_compressed: 52428800,
     package_bytes: 52428800,
     instance_memory_max: 536870912,
-    cpu_ms_per_http_dispatch: 300000,
+    occupancy_ms_per_http_dispatch: 300000,
     subrequests_per_dispatch: 10000,
     pending_futures_per_dispatch: 4096,
 };
 
-fn initialization_budget() -> CpuBudget {
-    CpuBudget {
-        cpu_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_CPU_MS,
+fn initialization_budget() -> OccupancyBudget {
+    OccupancyBudget {
+        occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
         wall_ms_cap: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
         spent_ns: 0,
     }
 }
 
-fn request_budget() -> CpuBudget {
-    CpuBudget {
-        cpu_ms: PLAN.limits().cpu_ms_per_http_dispatch,
+fn request_budget() -> OccupancyBudget {
+    OccupancyBudget {
+        occupancy_ms: PLAN.limits().occupancy_ms_per_http_dispatch,
         wall_ms_cap: isoplane_host::CellConfig::default().wall_ms_cap,
         spent_ns: 0,
     }
@@ -153,7 +153,7 @@ fn run(
             scope.spawn(move || -> Result<Vec<serde_json::Value>> {
                 let record = DispatchRecord { dispatch_id: 1, kind: DispatchKind::Http(HttpRequest {
                     method: "GET".into(), url: "https://mapping.test/".into(), path: "/".into(), query: vec![], headers: vec![], body: vec![],
-                }), trace: TraceContext::default(), cancel_future: 0, cpu_budget_ms: request_budget().cpu_ms, now_ms: 0 };
+                }), trace: TraceContext::default(), cancel_future: 0, occupancy_budget_ms: request_budget().occupancy_ms, now_ms: 0 };
                 barrier.wait();
                 let mut rows = Vec::new();
                 for guest in chunk {

@@ -7,7 +7,7 @@ mod managed;
 use common::*;
 use isoplane_abi::result::ResultRecord;
 use isoplane_abi::status::PollStatus;
-use isoplane_engine::{Completion, CpuBudget, DispatchOutcome, Instance, InstanceOps};
+use isoplane_engine::{Completion, DispatchOutcome, Instance, InstanceOps, OccupancyBudget};
 
 fn read_u32(m: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(m[off..off + 4].try_into().expect("4 bytes"))
@@ -31,7 +31,7 @@ fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
         }),
         trace: TraceContext::default(),
         cancel_future: 0,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 1_700_000_000_000,
     }
 }
@@ -49,7 +49,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
 
     assert!(!i.is_parked(), "a fresh instance is not parked");
 
-    let out = i.dispatch(&http_dispatch(1), CpuBudget::http());
+    let out = i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert_eq!(
         out.status,
         PollStatus::Pending,
@@ -57,7 +57,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
     );
     assert!(i.is_parked(), "an instance that returned pending is parked");
 
-    i.wake(1, &ResultRecord::Ok(vec![]), CpuBudget::http());
+    i.wake(1, &ResultRecord::Ok(vec![]), OccupancyBudget::http());
     assert!(
         !i.is_parked(),
         "an instance that returned done is not parked"
@@ -66,7 +66,7 @@ fn an_instance_is_parked_only_after_returning_pending() {
     let wasm = guest(4, "", "", "(unreachable)", DONE);
     let t2 = e.load_template(&wasm).expect("template");
     let mut j = activate(&e, &t2);
-    j.dispatch(&http_dispatch(1), CpuBudget::http());
+    j.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert!(
         !j.is_parked(),
         "a trapped instance is never parked however empty its stack"
@@ -92,7 +92,7 @@ fn capture_and_restore_round_trip_mutable_globals() {
 
     let mut i = activate(&e, &t);
     for n in 0..3 {
-        i.dispatch(&http_dispatch(n), CpuBudget::http());
+        i.dispatch(&http_dispatch(n), OccupancyBudget::http());
     }
     let img = i.capture_mutable_state().expect("capture");
     assert_eq!(img.memory_pages, 4, "the captured size is the fixture's");
@@ -133,7 +133,7 @@ fn gc_hint_reaches_the_guest_and_leaves_a_parked_instance_parked() {
     assert!(t.has_gc_hint(), "the fixture exports the hint");
 
     let mut i = activate(&e, &t);
-    i.dispatch(&http_dispatch(1), CpuBudget::http());
+    i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert!(i.is_parked(), "the fixture parks");
 
     let out = i.gc_hint(255);
@@ -164,7 +164,7 @@ fn gc_hint_is_optional() {
         .expect("template");
     assert!(!t.has_gc_hint(), "the fixture exports no hint");
     let mut i = activate(&e, &t);
-    i.dispatch(&http_dispatch(1), CpuBudget::http());
+    i.dispatch(&http_dispatch(1), OccupancyBudget::http());
     assert_eq!(
         i.gc_hint(255).completion,
         Completion::Done,
@@ -197,8 +197,8 @@ fn aspnet_request_scopes_remain_isolated_after_restoring_guest_state() {
         http.path = "/scope".into();
         http.url = "http://example.test/scope".into();
     }
-    let budget = CpuBudget {
-        cpu_ms: 30_000,
+    let budget = OccupancyBudget {
+        occupancy_ms: 30_000,
         wall_ms_cap: 30_000,
         spent_ns: 0,
     };
@@ -255,8 +255,8 @@ fn aspnet_cancellation_after_restore_disposes_the_request_scope() {
         http.path = "/cancel".into();
         http.url = "http://example.test/cancel".into();
     }
-    let budget = CpuBudget {
-        cpu_ms: 30_000,
+    let budget = OccupancyBudget {
+        occupancy_ms: 30_000,
         wall_ms_cap: 30_000,
         spent_ns: 0,
     };
@@ -327,7 +327,7 @@ fn acknowledge_response_writes(
     instance: &mut Instance,
     recorder: &Recorder,
     mut outcome: DispatchOutcome,
-    budget: CpuBudget,
+    budget: OccupancyBudget,
 ) -> DispatchOutcome {
     for _ in 0..8 {
         if outcome.completion != Completion::Parked {

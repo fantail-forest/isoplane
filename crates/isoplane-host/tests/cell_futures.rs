@@ -65,7 +65,7 @@ fn the_pending_futures_cap_traps_the_guest() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        cpu_ms_per_http_dispatch: 100,
+        occupancy_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -92,7 +92,7 @@ fn the_pending_futures_cap_traps_the_guest() {
                     module_bytes_compressed: 5242880,
                     package_bytes: 52428800,
                     instance_memory_max: 134217728,
-                    cpu_ms_per_http_dispatch: 100,
+                    occupancy_ms_per_http_dispatch: 100,
                     subrequests_per_dispatch: 20,
                     pending_futures_per_dispatch: 6,
                 },
@@ -278,14 +278,14 @@ fn operator_budgets_reach_the_dispatch_and_pending_future_table() {
     let module = act.module().clone();
     let mut app = manifest("bounded", HandlerLifecycle::Reuse, Limits::default());
     app.resource_limits.pending_futures_per_dispatch = Some(2);
-    app.resource_limits.cpu_ms_per_http_dispatch = Some(1234);
+    app.resource_limits.occupancy_ms_per_http_dispatch = Some(1234);
     r.cell
         .register_module("acme", act, app)
         .expect("configured module registers");
     let rec = http(&r.cell, &module, "/bounded");
     assert_eq!(
-        rec.cpu_budget_ms, 1234,
-        "dispatch must carry the configured CPU budget"
+        rec.occupancy_budget_ms, 1234,
+        "dispatch must carry the configured occupancy budget"
     );
     let out = r
         .cell

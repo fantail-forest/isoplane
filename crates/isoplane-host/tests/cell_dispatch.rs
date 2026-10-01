@@ -67,7 +67,7 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
 
     let spinner = Arc::new(FakeActivator::named(
         ModuleId::new("spinner", "v1"),
-        FakeBehaviour::program([Step::Spin]),
+        FakeBehaviour::program([Step::HardKill]),
     ));
     let spin_mod = spinner.module().clone();
     r.cell
@@ -106,7 +106,7 @@ fn a_budget_killed_spinner_does_not_block_another_tenants_wake() {
     for i in 0..2 {
         let mut rec = http(&r.cell, &spin_mod, "/spin");
         rec.dispatch_id = 1000 + i;
-        rec.cpu_budget_ms = 50;
+        rec.occupancy_budget_ms = 50;
         spins.push(
             r.cell
                 .submit(
@@ -201,7 +201,7 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
     );
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("hangs", "v1"),
-        FakeBehaviour::program([Step::Spin]),
+        FakeBehaviour::program([Step::HardKill]),
     ));
     let module = act.module().clone();
     r.cell
@@ -212,11 +212,11 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
         )
         .unwrap();
 
-    let mut killed_cpu = Vec::new();
+    let mut killed_occupancy = Vec::new();
     for i in 0..3 {
         let mut rec = http(&r.cell, &module, "/hang");
         rec.dispatch_id = i;
-        rec.cpu_budget_ms = 10;
+        rec.occupancy_budget_ms = 10;
         let out = r
             .cell
             .dispatch_blocking(
@@ -233,17 +233,17 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
             Completion::BudgetKill,
             "the spinner was killed"
         );
-        killed_cpu.push(out.cpu_ns);
+        killed_occupancy.push(out.occupancy_ns);
     }
     assert!(
-        killed_cpu.iter().all(|c| *c > 5_000_000),
-        "every kill cost real CPU: {killed_cpu:?}"
+        killed_occupancy.iter().all(|c| *c > 5_000_000),
+        "every kill cost real occupancy: {killed_occupancy:?}"
     );
     let activations_before = act.activation_count();
 
     let mut rec = http(&r.cell, &module, "/hang");
     rec.dispatch_id = 99;
-    rec.cpu_budget_ms = 10;
+    rec.occupancy_budget_ms = 10;
     let out = r
         .cell
         .dispatch_blocking(
@@ -257,7 +257,10 @@ fn the_breaker_fails_a_repeat_offender_fast_without_entering_the_guest() {
         .unwrap();
     assert_eq!(out.status, 503, "the breaker answers 503");
     assert_eq!(out.trap.as_deref(), Some("breaker_open"));
-    assert_eq!(out.cpu_ns, 0, "the breaker burned CPU to say no");
+    assert_eq!(
+        out.occupancy_ns, 0,
+        "the breaker burned occupancy to say no"
+    );
     assert_eq!(
         act.activation_count(),
         activations_before,
@@ -386,10 +389,6 @@ fn many_dispatches_share_one_channel_and_stay_matchable() {
     r.cell.shutdown();
 }
 
-/// A spinner holds its thread until its budget kills it, so with one thread
-/// and a one-deep lane the outcome is determined: one Hot, one queued, the
-/// rest shed. A parking guest would drain the lane as fast as the test fills
-/// it.
 #[test]
 fn a_shed_submission_says_so_rather_than_going_quiet() {
     let r = rig(
@@ -399,9 +398,14 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
             ..CellConfig::for_test("shed")
         },
     );
+    let (entered, observed) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
     let act = Arc::new(FakeActivator::named(
         ModuleId::new("spin", "v1"),
-        FakeBehaviour::program([Step::Spin]),
+        FakeBehaviour::program([Step::Hold {
+            entered,
+            release: Arc::new(parking_lot::Mutex::new(released)),
+        }]),
     ));
     let module = act.module().clone();
     r.cell
@@ -415,7 +419,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
     let (tx, rx) = std::sync::mpsc::sync_channel::<isoplane_host::DispatchResult>(128);
     let mut rec = http(&r.cell, &module, "/spin");
     rec.dispatch_id = 0;
-    rec.cpu_budget_ms = 50;
+    rec.occupancy_budget_ms = 50;
     assert!(r.cell.submit_with(
         &module,
         Target::Handler {
@@ -424,18 +428,16 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
         rec,
         tx.clone()
     ));
-    assert!(
-        wait_for(|| r.cell.hot_count() == 1, Duration::from_secs(5)),
-        "the spinner never became Hot, so the queue state below is not determined"
-    );
+    observed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("worker reached the explicit hold");
 
     let mut shed = 0;
     let mut accepted = 1;
     for i in 1..64u64 {
         let mut rec = http(&r.cell, &module, "/spin");
         rec.dispatch_id = i;
-        // The queued one runs too, and the drain below waits two seconds.
-        rec.cpu_budget_ms = 50;
+        rec.occupancy_budget_ms = 50;
         if r.cell.submit_with(
             &module,
             Target::Handler {
@@ -460,6 +462,7 @@ fn a_shed_submission_says_so_rather_than_going_quiet() {
         "the cell must count what it shed"
     );
 
+    drop(release);
     let mut got = 0;
     while rx.recv_timeout(Duration::from_secs(2)).is_ok() {
         got += 1;

@@ -43,8 +43,8 @@ pub struct PreparationContext<'a> {
     pub runtime: isoplane_prepare::RuntimeProfile,
     /// Immutable application content served within this template only.
     pub application_files: isoplane_engine::PlatformFiles,
-    /// Initialization CPU backstop across all replay passes.
-    pub cpu_ms: u32,
+    /// Initialization occupancy budget across all replay passes.
+    pub occupancy_ms: u32,
     /// Total initialization wall backstop, including waits and replay passes.
     pub wall_ms: u32,
     /// Maximum replay passes.
@@ -231,7 +231,7 @@ impl Deployer {
             runtime_config,
             config: serde_json::to_vec(&manifest.init_visible_vars)?,
             sandbox: opts.init_sandbox,
-            cpu_ms: context.cpu_ms,
+            occupancy_ms: context.occupancy_ms,
             wall_ms: context.wall_ms,
             max_passes: context.max_passes,
             log_bytes: context.log_bytes,

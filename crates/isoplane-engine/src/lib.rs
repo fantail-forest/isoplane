@@ -4,7 +4,7 @@
 //! pre-reserved slot. Captured images can retain their mappings across reset
 //! and hibernation. A
 //! dispatch is a synchronous call on the caller's thread, metered by the
-//! thread CPU clock and killed through the epoch counter.
+//! worker occupancy clock and killed through the epoch counter.
 
 use std::sync::Arc;
 
@@ -37,14 +37,15 @@ mod wtconfig;
 pub use artifact::{ArtifactPaths, CompilationCache};
 pub use bindings::{HostBindings, ImportCall};
 pub use budget::{
-    CpuBudget, CpuMeasurement, DispatchOutcome, ExecutionLimit, KillPhase, TrapInfo, TrapKind,
+    DispatchOutcome, ExecutionLimit, KillPhase, OccupancyBudget, OccupancyMeasurement, TrapInfo,
+    TrapKind,
 };
 pub use compiler::COMPILER_STACK_BYTES;
 pub use image::{MemoryImage, PAGE};
 pub use instance::{Completion, Instance, InstanceOps};
 pub use mapped::DormantInstance;
 pub use meter::clock_read_failures;
-pub use meter::try_thread_cpu_nanos;
+pub use meter::try_occupancy_nanos;
 pub use pal::platform_files::{PlatformFile, PlatformFiles, PlatformFilesError};
 pub use snapshot::InstanceImage;
 pub use template::{ModuleHash, Template, TemplateStorageFailed, DEFERRED_INIT_SECTION};

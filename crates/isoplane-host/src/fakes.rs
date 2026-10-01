@@ -15,11 +15,11 @@ use isoplane_abi::status::{PollStatus, TrapCode};
 use isoplane_abi::PAGE_SIZE;
 use isoplane_engine::budget::{TrapInfo, TrapKind};
 use isoplane_engine::{
-    Completion, CpuBudget, DispatchOutcome, HostBindings, ImportCall, InstanceImage, InstanceOps,
-    ModuleHash,
+    Completion, DispatchOutcome, HostBindings, ImportCall, InstanceImage, InstanceOps, ModuleHash,
+    OccupancyBudget,
 };
 
-use crate::meters::CpuInterval;
+use crate::meters::OccupancyInterval;
 use crate::pool::Activator;
 use crate::ModuleId;
 
@@ -37,14 +37,16 @@ pub enum Step {
     /// Enter cancellation grace and return to receive its wake.
     EnterGrace,
     Trap(TrapCode),
-    /// Burn CPU past the budget, ignore the grace window, and be hard-killed
-    /// at the deadline.
-    Spin,
-    /// Burn CPU past the budget, notice grace, unwind for `unwind_us` and
-    /// return `done`: the clean kill. `unwind_us` past the grace window turns
-    /// this into a `Spin`.
-    CooperativeSpin {
-        unwind_us: u64,
+    /// Hold the worker until the test drops the release sender.
+    Hold {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+    },
+    /// Report a hard budget kill without running an actual busy loop.
+    HardKill,
+    /// Report a cooperative budget kill with prescribed overage.
+    CleanKill {
+        overage_ns: u64,
     },
     /// Touch `pages` pages of linear memory.
     Dirty {
@@ -78,8 +80,8 @@ pub struct FakeBehaviour {
     pub lazy_init_probe: bool,
     /// Initial scripted memory bytes; zero selects one WebAssembly page.
     pub memory_bytes: usize,
-    /// Prescribed CPU for each non-spinning slice in accounting tests.
-    pub slice_cpu: Option<std::time::Duration>,
+    /// Prescribed occupancy for each ordinary slice in accounting tests.
+    pub slice_occupancy: Option<std::time::Duration>,
     /// Emit the scripted final response through the streaming transport.
     pub response_streaming: bool,
 }
@@ -90,7 +92,7 @@ impl FakeBehaviour {
             program: vec![],
             lazy_init_probe: false,
             memory_bytes: isoplane_abi::WASM_PAGE_SIZE,
-            slice_cpu: None,
+            slice_occupancy: None,
             response_streaming: false,
         }
     }
@@ -99,7 +101,7 @@ impl FakeBehaviour {
             program: steps.into_iter().collect(),
             lazy_init_probe: false,
             memory_bytes: isoplane_abi::WASM_PAGE_SIZE,
-            slice_cpu: None,
+            slice_occupancy: None,
             response_streaming: false,
         }
     }
@@ -132,9 +134,9 @@ pub struct FakeInstance {
 }
 
 impl FakeInstance {
-    fn run(&mut self, budget: CpuBudget, rec: Option<&DispatchRecord>) -> DispatchOutcome {
+    fn run(&mut self, budget: OccupancyBudget, rec: Option<&DispatchRecord>) -> DispatchOutcome {
         self.stack_empty = false;
-        let cpu = CpuInterval::start();
+        let interval = OccupancyInterval::start();
         let wall = std::time::Instant::now();
 
         let observed_init = if self.behaviour.lazy_init_probe {
@@ -257,44 +259,40 @@ impl FakeInstance {
                 });
                 PollStatus::Done { response: h }
             }
-            Step::Spin | Step::CooperativeSpin { .. } => {
-                let cooperative = matches!(step, Step::CooperativeSpin { .. });
-                let unwind_ns = match step {
-                    Step::CooperativeSpin { unwind_us } => unwind_us * 1_000,
-                    _ => 0,
-                };
-                let b_ns = budget.budget_ns();
-                let hard_ns = budget.hard_ns();
-                let wall_deadline =
-                    std::time::Duration::from_millis(budget.wall_ms_cap.max(1) as u64);
-                let mut entered_grace = false;
-                let mut x: u64 = 0;
-                loop {
-                    for i in 0..20_000u64 {
-                        x = x.wrapping_mul(6364136223846793005).wrapping_add(i);
-                    }
-                    std::hint::black_box(x);
-                    let now = budget.spent_ns + cpu.elapsed_ns();
-                    if !entered_grace && now >= b_ns {
-                        entered_grace = true;
-                        self.bindings.enter_grace();
-                        if cooperative {
-                            let stop = cpu.elapsed_ns() + unwind_ns;
-                            while cpu.elapsed_ns() < stop {
-                                for i in 0..1_000u64 {
-                                    x = x.wrapping_mul(2862933555777941757).wrapping_add(i);
-                                }
-                                std::hint::black_box(x);
-                            }
-                            break;
-                        }
-                    }
-                    if now >= hard_ns || wall.elapsed() >= wall_deadline {
-                        break;
+            Step::Hold { entered, release } => {
+                entered
+                    .send(())
+                    .expect("the hold observer remains available");
+                match release
+                    .lock()
+                    .recv_timeout(std::time::Duration::from_secs(30))
+                {
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) | Ok(()) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        panic!("test did not release held worker")
                     }
                 }
-                let cpu_ns = cpu.elapsed_ns();
-                let overage_ns = (budget.spent_ns + cpu_ns).saturating_sub(b_ns);
+                let response = self.respond(isoplane_abi::dispatch::ResponseHead {
+                    status: 200,
+                    headers: vec![],
+                    body: vec![],
+                    streaming: false,
+                });
+                PollStatus::Done { response }
+            }
+            Step::HardKill | Step::CleanKill { .. } => {
+                let (cooperative, overage_ns) = if let Step::CleanKill { overage_ns } = step {
+                    (true, overage_ns)
+                } else {
+                    (false, budget.grace_ns())
+                };
+                let occupancy_ns = budget
+                    .budget_ns()
+                    .saturating_add(overage_ns)
+                    .saturating_sub(budget.spent_ns);
+                if cooperative {
+                    self.bindings.enter_grace();
+                }
                 self.stack_empty = true;
                 self.last_parked = false;
                 if cooperative {
@@ -302,8 +300,8 @@ impl FakeInstance {
                     return DispatchOutcome {
                         status: PollStatus::Done { response: 0 },
                         completion: Completion::CleanKill,
-                        cpu_ns,
-                        cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+                        occupancy_ns,
+                        occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
                         execution_limit: None,
                         wall_ns: wall.elapsed().as_nanos() as u64,
                         trap: None,
@@ -318,13 +316,13 @@ impl FakeInstance {
                         code: TrapCode::Unknown,
                     },
                     completion: Completion::BudgetKill,
-                    cpu_ns,
-                    cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+                    occupancy_ns,
+                    occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
                     execution_limit: None,
                     wall_ns: wall.elapsed().as_nanos() as u64,
                     trap: Some(TrapInfo {
                         kind: TrapKind::BudgetExceeded,
-                        message: "cpu budget exceeded at the B+G hard deadline; terminated \
+                        message: "occupancy budget exceeded at the B+G hard deadline; terminated \
                                   without unwinding"
                             .into(),
                     }),
@@ -342,12 +340,12 @@ impl FakeInstance {
         DispatchOutcome {
             status,
             completion,
-            cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+            occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
-            cpu_ns: self
+            occupancy_ns: self
                 .behaviour
-                .slice_cpu
-                .map_or_else(|| cpu.elapsed_ns(), |value| value.as_nanos() as u64),
+                .slice_occupancy
+                .map_or_else(|| interval.elapsed_ns(), |value| value.as_nanos() as u64),
             wall_ns: wall.elapsed().as_nanos() as u64,
             trap: match status {
                 PollStatus::Trapped { .. } => Some(TrapInfo {
@@ -397,10 +395,15 @@ fn fake_payload_for(name: &'static str) -> Vec<u8> {
 }
 
 impl InstanceOps for FakeInstance {
-    fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn dispatch(&mut self, rec: &DispatchRecord, budget: OccupancyBudget) -> DispatchOutcome {
         self.run(budget, Some(rec))
     }
-    fn wake(&mut self, future: u64, res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn wake(
+        &mut self,
+        future: u64,
+        res: &ResultRecord,
+        budget: OccupancyBudget,
+    ) -> DispatchOutcome {
         self.wakes_seen.lock().push((future, res.clone()));
         self.run(budget, None)
     }
@@ -414,8 +417,8 @@ impl InstanceOps for FakeInstance {
         DispatchOutcome {
             status: PollStatus::Done { response: 0 },
             completion: Completion::Done,
-            cpu_ns: 0,
-            cpu_measurement: isoplane_engine::CpuMeasurement::Complete,
+            occupancy_ns: 0,
+            occupancy_measurement: isoplane_engine::OccupancyMeasurement::Complete,
             execution_limit: None,
             wall_ns: 0,
             trap: None,

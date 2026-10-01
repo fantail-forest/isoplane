@@ -7,7 +7,7 @@ use crate::common::{activate, guest, DONE};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_abi::filesystem::{Operation, IMPORTS};
 use isoplane_abi::imports::Ty;
-use isoplane_engine::{Completion, CpuBudget, InstanceOps, IsoplaneEngine};
+use isoplane_engine::{Completion, InstanceOps, IsoplaneEngine, OccupancyBudget};
 
 /// The preopened root descriptor, stored by the module prologue.
 pub const ROOT: &str = "(i32.load (i32.const 1010))";
@@ -79,7 +79,9 @@ pub fn run(engine: &IsoplaneEngine, wasm: &[u8]) -> Vec<u8> {
         .expect("filesystem imports must validate and link");
     let mut instance = activate(engine, &template);
     assert_eq!(
-        instance.dispatch(&dispatch(), CpuBudget::http()).completion,
+        instance
+            .dispatch(&dispatch(), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "a filesystem result must return normally through the engine"
     );
@@ -99,7 +101,7 @@ pub fn dispatch() -> DispatchRecord {
         }),
         trace: TraceContext::default(),
         cancel_future: 0,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 0,
     }
 }

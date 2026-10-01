@@ -54,6 +54,8 @@ impl PreparationIo {
             metrics: Arc::new(Metrics::default()),
             wake: wake.clone(),
             reactor,
+            meters: Arc::new(crate::meters::Meters::new()),
+            observer: None,
         };
         Self {
             resources: Mutex::new(Resources::new(ResourceLimits {
@@ -83,6 +85,11 @@ impl PreparationIo {
             }
             notified.await;
         }
+    }
+
+    /// Active reactor-poll occupancy; time waiting for I/O is excluded.
+    pub fn reactor_occupancy_ns(&self) -> u64 {
+        self.runtime.meters.occupancy_ns()
     }
 
     /// Count operations whose reactor work has not completed.

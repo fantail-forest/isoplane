@@ -167,7 +167,7 @@ pub const IMPORTS: &[ImportDef] = &[
 
     // ---- observability ----------------------------------------------------
     ImportDef { buf: BufSpec::In(1), init_visible: true, ..imp!("log_emit", Observe, Sig { params: &[I32, I32, I32], results: &[] }, SYNC,
-        "structured log at `trace=0` .. `error=4`; the CPU counts against the dispatch budget, \
+        "structured log at `trace=0` .. `error=4`; worker occupancy counts against the dispatch budget, \
          which is what stops log-as-compute abuse") },
     imp!("trace_span_begin", Observe, BUF_TO_I32, SYNC,
         "opens a trace span and returns its id, for correlating work inside one dispatch"),
@@ -209,7 +209,7 @@ pub const IMPORTS: &[ImportDef] = &[
     // they read and write lives in the engine's store, beside the meter the
     // epoch callback compares against.
     ImportDef { buf: BufSpec::None, ..imp!("budget_remaining_ns", Ctx, Sig { params: &[], results: &[I64] }, SYNC,
-        "signed nanoseconds left against this dispatch's CPU budget; negative once the dispatch is \
+        "signed nanoseconds left against this dispatch's occupancy budget, rounded to the host clock quantum; negative once the dispatch is \
          in its grace window and still falling, so a guest can tell `at budget` from `deep into \
          grace` and decide how much unwinding it can still afford") },
     ImportDef { buf: BufSpec::None, ..imp!("unsafe_to_trap", Ctx, Sig { params: &[I32], results: &[] }, SYNC,

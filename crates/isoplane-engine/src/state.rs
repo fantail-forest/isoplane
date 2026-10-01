@@ -13,25 +13,24 @@ use crate::EngineConfig;
 /// inferred from the error chain, so classification is exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kill {
-    /// Thread CPU passed B+G and the epoch callback trapped. There is no
+    /// Worker occupancy passed B+G and the epoch callback trapped. There is no
     /// `Clean` variant: a clean kill is the guest returning, and leaves a
     /// `grace_at_ns` record rather than an error.
-    CpuHard,
-    /// The wall-clock backstop against a dispatch pinned off-CPU. Bypasses
-    /// grace, since a dispatch that is not running has nothing to unwind.
+    OccupancyHard,
+    /// The independent elapsed-time backstop for one invocation. Bypasses grace.
     Wall,
 }
 
-/// The CPU budget state the epoch callback consults.
+/// The occupancy budget state the epoch callback consults.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Meter {
-    pub cpu0_ns: u64,
+    pub occupancy0_ns: u64,
     pub wall0: Option<Instant>,
     /// B. Crossing it enters grace.
-    pub cpu_budget_ns: u64,
-    /// G. `cpu_budget_ns + grace_ns` is the only deadline that traps.
+    pub occupancy_budget_ns: u64,
+    /// G. `occupancy_budget_ns + grace_ns` is the only deadline that traps.
     pub grace_ns: u64,
-    /// Thread CPU burned by earlier slices of the same dispatch; B and G are
+    /// Worker occupancy burned by earlier slices of the same dispatch; B and G are
     /// per dispatch, not per slice.
     pub spent_ns: u64,
     pub wall_cap_ns: u64,
@@ -41,23 +40,36 @@ pub(crate) struct Meter {
 
 impl Meter {
     #[inline]
-    pub fn dispatch_cpu_ns(&self, now_ns: u64) -> u64 {
+    pub fn dispatch_occupancy_ns(&self, now_ns: u64) -> u64 {
         self.spent_ns
-            .saturating_add(now_ns.saturating_sub(self.cpu0_ns))
+            .saturating_add(now_ns.saturating_sub(self.occupancy0_ns))
+    }
+
+    pub fn remaining_budget_ns(&self, now_ns: u64) -> i64 {
+        let remaining =
+            i128::from(self.occupancy_budget_ns) - i128::from(self.dispatch_occupancy_ns(now_ns));
+        let quantum = i128::from(isoplane_abi::pal::CLOCK_QUANTUM_NS);
+        // Preserve the cancellation boundary without exposing a fine wall clock.
+        let coarse = if remaining > 0 {
+            ((remaining + quantum - 1) / quantum) * quantum
+        } else {
+            remaining.div_euclid(quantum) * quantum
+        };
+        coarse.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
     }
 
     #[inline]
     pub fn hard_ns(&self) -> u64 {
-        self.cpu_budget_ns.saturating_add(self.grace_ns)
+        self.occupancy_budget_ns.saturating_add(self.grace_ns)
     }
 }
 
 impl Default for Meter {
     fn default() -> Self {
         Self {
-            cpu0_ns: 0,
+            occupancy0_ns: 0,
             wall0: None,
-            cpu_budget_ns: u64::MAX,
+            occupancy_budget_ns: u64::MAX,
             grace_ns: 0,
             spent_ns: 0,
             wall_cap_ns: u64::MAX,
@@ -138,7 +150,7 @@ pub(crate) struct StoreState {
     pub wasm_depth: i32,
     pub meter: Meter,
     pub kill: Option<Kill>,
-    /// `Some(cpu_ns)` once the dispatch crossed B and the host was told. A
+    /// `Some(occupancy_ns)` once the dispatch crossed B and the host was told. A
     /// deferral on the unsafe-to-trap bit leaves it `None` so the next tick
     /// tries again.
     pub grace_at_ns: Option<u64>,
@@ -197,6 +209,27 @@ impl StoreState {
         }
     }
 
+    pub(crate) fn check_occupancy(&mut self, now_ns: u64) -> Result<(), BudgetExceeded> {
+        let occupancy_ns = self.meter.dispatch_occupancy_ns(now_ns);
+        if occupancy_ns >= self.meter.hard_ns() {
+            self.kill = Some(Kill::OccupancyHard);
+            return Err(BudgetExceeded {
+                occupancy_ns,
+                budget_ns: self.meter.occupancy_budget_ns,
+                grace_ns: self.meter.grace_ns,
+            });
+        }
+        if occupancy_ns >= self.meter.occupancy_budget_ns && self.grace_at_ns.is_none() {
+            if self.unsafe_to_trap {
+                self.grace_deferrals += 1;
+            } else if let Some(bindings) = self.bindings.as_mut() {
+                bindings.enter_grace();
+                self.grace_at_ns = Some(occupancy_ns);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn reset_execution(&mut self) {
         self.memory = None;
         self.wasm_depth = 0;
@@ -252,17 +285,17 @@ impl StoreState {
     }
 }
 
-/// The hard kill, raised from the epoch deadline callback at B+G. The message
+/// The hard kill, raised when an epoch callback observes B+G or more. The message
 /// names both numbers so a tenant can tell "my code is slow" from "my code
 /// cannot be interrupted".
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "cpu budget exceeded: {cpu_ns} ns of thread CPU against a {budget_ns} ns budget \
-     (+{grace_ns} ns grace); the dispatch was still executing at the hard deadline and was \
+    "occupancy budget exceeded: {occupancy_ns} ns of worker occupancy against a {budget_ns} ns budget \
+     (+{grace_ns} ns grace); the dispatch was still executing when the hard deadline was checked and was \
      terminated without unwinding"
 )]
 pub(crate) struct BudgetExceeded {
-    pub cpu_ns: u64,
+    pub occupancy_ns: u64,
     pub budget_ns: u64,
     pub grace_ns: u64,
 }
@@ -336,5 +369,118 @@ mod resource_limit_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod occupancy_tests {
+    use super::*;
+    use crate::ImportCall;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct GraceCalls(Arc<AtomicUsize>);
+
+    impl HostBindings for GraceCalls {
+        fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
+            panic!("budget checks do not call guest imports")
+        }
+        fn call_sync(&mut self, _: ImportCall<'_>) -> i64 {
+            panic!("budget checks do not call guest imports")
+        }
+        fn slice_clock_ms(&self) -> u64 {
+            0
+        }
+        fn enter_grace(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn state() -> (StoreState, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut state = StoreState::new(
+            Box::new(GraceCalls(calls.clone())),
+            &EngineConfig::default(),
+        );
+        state.meter = Meter {
+            occupancy0_ns: 1_000,
+            occupancy_budget_ns: 100,
+            grace_ns: 20,
+            spent_ns: 30,
+            ..Meter::default()
+        };
+        (state, calls)
+    }
+
+    #[test]
+    fn guest_budget_reads_are_coarse_and_preserve_the_cancellation_boundary() {
+        let meter = Meter {
+            occupancy0_ns: 100,
+            occupancy_budget_ns: 2_000_000,
+            ..Meter::default()
+        };
+        for (elapsed, expected) in [
+            (0, 2_000_000),
+            (1, 2_000_000),
+            (999_999, 2_000_000),
+            (1_000_000, 1_000_000),
+            (1_999_999, 1_000_000),
+            (2_000_000, 0),
+            (2_000_001, -1_000_000),
+        ] {
+            assert_eq!(meter.remaining_budget_ns(100 + elapsed), expected);
+        }
+    }
+
+    #[test]
+    fn prior_slices_count_toward_grace_and_grace_is_delivered_once() {
+        let (mut state, calls) = state();
+        state.check_occupancy(1_069).expect("below budget");
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        state.check_occupancy(1_070).expect("budget enters grace");
+        state.check_occupancy(1_089).expect("still in grace");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(state.grace_at_ns, Some(100));
+        let error = state.check_occupancy(1_090).expect_err("hard deadline");
+        assert_eq!(error.occupancy_ns, 120);
+        assert_eq!(state.kill, Some(Kill::OccupancyHard));
+    }
+
+    #[test]
+    fn unsafe_runtime_work_defers_grace_but_cannot_defer_the_hard_kill() {
+        let (mut state, calls) = state();
+        state.unsafe_to_trap = true;
+        state.check_occupancy(1_070).expect("grace defers");
+        assert_eq!(state.grace_deferrals, 1);
+        assert_eq!(state.grace_at_ns, None);
+        state
+            .check_occupancy(1_090)
+            .expect_err("pinned bit cannot prevent hard kill");
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(state.kill, Some(Kill::OccupancyHard));
+    }
+
+    #[test]
+    fn clearing_the_unsafe_bit_allows_the_next_check_to_deliver_grace() {
+        let (mut state, calls) = state();
+        state.unsafe_to_trap = true;
+        state.check_occupancy(1_070).expect("grace defers");
+        state.unsafe_to_trap = false;
+        state.check_occupancy(1_071).expect("grace can now enter");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(state.grace_at_ns, Some(101));
+    }
+
+    #[test]
+    fn a_delayed_check_can_skip_grace_without_granting_a_fresh_budget() {
+        let (mut state, calls) = state();
+        let error = state
+            .check_occupancy(10_000)
+            .expect_err("late check still enforces budget");
+        assert_eq!(error.occupancy_ns, 9_030);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        assert_eq!(state.kill, Some(Kill::OccupancyHard));
     }
 }

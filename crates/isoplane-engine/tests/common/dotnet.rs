@@ -8,8 +8,8 @@ use std::sync::{Mutex, OnceLock};
 use super::bindings::{Recorder, TestBindings};
 use isoplane_abi::dispatch::{DispatchKind, DispatchRecord, HttpRequest, TraceContext};
 use isoplane_engine::{
-    Completion, CpuBudget, DispatchOutcome, EngineConfig, Instance, InstanceOps, IsoplaneEngine,
-    Template,
+    Completion, DispatchOutcome, EngineConfig, Instance, InstanceOps, IsoplaneEngine,
+    OccupancyBudget, Template,
 };
 pub use isoplane_fixtures::GuestRuntime;
 #[path = "managed.rs"]
@@ -112,9 +112,9 @@ impl Fixture {
 }
 
 /// A generous budget: these tests prove behaviour, not limits.
-pub fn budget() -> CpuBudget {
-    CpuBudget {
-        cpu_ms: 30_000,
+pub fn budget() -> OccupancyBudget {
+    OccupancyBudget {
+        occupancy_ms: 30_000,
         wall_ms_cap: 60_000,
         spent_ns: 0,
     }
@@ -176,7 +176,7 @@ impl Request {
             }),
             trace: TraceContext::default(),
             cancel_future: 0,
-            cpu_budget_ms: budget().cpu_ms,
+            occupancy_budget_ms: budget().occupancy_ms,
             now_ms: self.now_ms,
         }
     }

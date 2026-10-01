@@ -792,7 +792,7 @@ impl Resources {
                         .ok_or(Error::ResourceLimit)?;
                     let completion = runtime.clone();
                     let ready = ready.clone();
-                    let task = runtime.reactor.spawn(async move {
+                    let task = runtime.spawn(async move {
                         let duration_ms = duration
                             .0
                             .div_ceil(isoplane_abi::pal::CLOCK_QUANTUM_NS as u64);
@@ -1027,7 +1027,7 @@ impl Resources {
         let completion = runtime.clone();
         let tenant = bindings.tenant().to_owned();
         let instance = bindings.instance();
-        let task = runtime.reactor.spawn(async move {
+        let task = runtime.spawn(async move {
             let result = async {
                 let stream = policy.connect(&owner, destination).await.map_err(Error::from)?;
                 Ok(Connection {

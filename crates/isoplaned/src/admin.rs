@@ -43,8 +43,8 @@ impl Latency {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NodeSnapshot {
     pub dispatches_total: u64,
-    /// Recorded CPU: the thread clock over hot intervals, summed over tenants.
-    pub cpu_ms_total: f64,
+    /// Recorded occupancy: monotonic time over active worker intervals, summed over tenants.
+    pub occupancy_ms_total: f64,
     pub activation: Latency,
     pub wake: Latency,
     pub instances_hot: u64,

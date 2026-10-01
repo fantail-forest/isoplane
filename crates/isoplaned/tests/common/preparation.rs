@@ -86,7 +86,7 @@ impl LocalDeployment for RealCells {
             engine: self.engine(),
             provider: &provider,
             runtime: guest.runtime.clone(),
-            cpu_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_CPU_MS,
+            occupancy_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_OCCUPANCY_MS,
             wall_ms: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_WALL_MS,
             max_passes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_PASSES,
             log_bytes: isoplane_prepare::preinit::DEFAULT_INITIALIZATION_LOG_BYTES,

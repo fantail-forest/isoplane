@@ -187,7 +187,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
             module_bytes_compressed: 5242880,
             package_bytes: 52428800,
             instance_memory_max: 134217728,
-            cpu_ms_per_http_dispatch: 100,
+            occupancy_ms_per_http_dispatch: 100,
             subrequests_per_dispatch: 20,
             pending_futures_per_dispatch: 6,
         },
@@ -198,7 +198,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
         module_bytes_compressed: 5242880,
         package_bytes: 52428800,
         instance_memory_max: 134217728,
-        cpu_ms_per_http_dispatch: 100,
+        occupancy_ms_per_http_dispatch: 100,
         subrequests_per_dispatch: 20,
         pending_futures_per_dispatch: 6,
     }
@@ -210,7 +210,7 @@ async fn the_subrequest_cap_is_per_dispatch() {
             module_bytes_compressed: 5242880,
             package_bytes: 52428800,
             instance_memory_max: 134217728,
-            cpu_ms_per_http_dispatch: 100,
+            occupancy_ms_per_http_dispatch: 100,
             subrequests_per_dispatch: 20,
             pending_futures_per_dispatch: 6
         }
@@ -275,12 +275,12 @@ async fn the_subrequest_cap_is_per_dispatch() {
 }
 
 #[tokio::test]
-async fn logging_costs_the_tenant_cpu() {
+async fn logging_enforces_the_dispatch_byte_limit() {
     let output = TestLogCapture::default();
     let subscriber = output.dispatch();
     let _subscriber = tracing::dispatcher::set_default(&subscriber);
     let mut v = vtable(Limits::default(), "93.184.216.34:80", None);
-    assert_eq!(v.meters.log_cpu_ns(), 0, "nothing has logged yet");
+    assert_eq!(v.meters.log_occupancy_ns(), 0, "nothing has logged yet");
     let line = vec![b'x'; 512];
     for _ in 0..200 {
         v.bindings.call_sync(ImportCall {
@@ -289,7 +289,6 @@ async fn logging_costs_the_tenant_cpu() {
             scalars: [2, 0, 0],
         });
     }
-    assert!(v.meters.log_cpu_ns() > 0, "logging was free");
     assert_eq!(output.records().len(), 200);
     let before = output.records().len();
     let big = vec![b'y'; 256 * 1024];

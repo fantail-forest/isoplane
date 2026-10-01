@@ -11,7 +11,8 @@ use filesystem::{call, dispatch, RET, ROOT};
 use isoplane_abi::filesystem::Operation;
 use isoplane_abi::imports::MAX_OUT_BUFFER_BYTES;
 use isoplane_engine::{
-    Completion, CpuBudget, EngineConfig, InstanceOps, IsoplaneEngine, PlatformFile, PlatformFiles,
+    Completion, EngineConfig, InstanceOps, IsoplaneEngine, OccupancyBudget, PlatformFile,
+    PlatformFiles,
 };
 
 const BUNDLE: &[u8] = b"-----BEGIN CERTIFICATE-----\nMIIBisoplane\n-----END CERTIFICATE-----\n";
@@ -830,7 +831,7 @@ fn file_descriptors_and_directory_cursors_survive_capture_in_guest_memory_alone(
     let wasm = filesystem::lifecycle_module(&park, &wake, &strings());
     let template = engine.load_template(&wasm).expect("lifecycle template");
     let mut original = activate(&engine, &template);
-    original.dispatch(&dispatch(), CpuBudget::http());
+    original.dispatch(&dispatch(), OccupancyBudget::http());
     assert!(
         original.is_parked(),
         "the guest parks with its descriptors open"
@@ -846,7 +847,7 @@ fn file_descriptors_and_directory_cursors_survive_capture_in_guest_memory_alone(
     let result = restored.wake(
         1,
         &isoplane_abi::result::ResultRecord::Ok(vec![]),
-        CpuBudget::http(),
+        OccupancyBudget::http(),
     );
     assert_eq!(
         result.completion,

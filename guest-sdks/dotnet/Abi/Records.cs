@@ -12,7 +12,7 @@ public sealed class DispatchRecord
     internal ulong DispatchId;
     internal DispatchKind Kind;
     internal ulong CancelFuture;
-    internal uint CpuBudgetMs;
+    internal uint OccupancyBudgetMs;
     internal ulong NowMs;
 
     // Populated for DispatchKind.Http.
@@ -51,7 +51,7 @@ public sealed class DispatchRecord
         r.Bool();
 
         d.CancelFuture = r.U64();
-        d.CpuBudgetMs = r.U32();
+        d.OccupancyBudgetMs = r.U32();
         d.NowMs = r.U64();
         return d;
     }

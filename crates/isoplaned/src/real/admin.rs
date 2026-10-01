@@ -38,7 +38,7 @@ impl RealNodeAdmin {
                     for (tenant, t) in s.tenants {
                         let e = a.tenants.entry(tenant).or_default();
                         e.dispatches += t.dispatches;
-                        e.cpu_ns += t.cpu_ns;
+                        e.occupancy_ns += t.occupancy_ns;
                         e.traps += t.traps;
                     }
                     // Quantiles do not add; a node is as slow as its slowest
@@ -74,7 +74,8 @@ impl crate::admin::NodeAdmin for RealNodeAdmin {
         };
         crate::admin::NodeSnapshot {
             dispatches_total: m.dispatches,
-            cpu_ms_total: m.tenants.values().map(|t| t.cpu_ns).sum::<u64>() as f64 / 1e6,
+            occupancy_ms_total: m.tenants.values().map(|t| t.occupancy_ns).sum::<u64>() as f64
+                / 1e6,
             activation: crate::admin::Latency {
                 p50_us: m.activation_p50_us,
                 p99_us: m.activation_p99_us,

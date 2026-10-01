@@ -29,8 +29,9 @@ pub struct DispatchResult {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub completion: Completion,
-    /// The recorded meter.
-    pub cpu_ns: u64,
+    /// Occupancy measured when this response is assembled.
+    /// The final dispatch completion event also includes remaining reactor work.
+    pub occupancy_ns: u64,
     /// Telemetry only.
     pub wall_ns: u64,
     pub trap: Option<String>,
@@ -49,7 +50,7 @@ impl DispatchResult {
             headers: vec![("retry-after".into(), "1".into())],
             body: b"cell shed load".to_vec(),
             completion: Completion::Trapped,
-            cpu_ns: 0,
+            occupancy_ns: 0,
             wall_ns: 0,
             trap: Some("shed".into()),
             instance: InstanceId(0),
@@ -64,7 +65,7 @@ impl DispatchResult {
             headers: vec![],
             body: b"hang breaker open".to_vec(),
             completion: Completion::Trapped,
-            cpu_ns: 0,
+            occupancy_ns: 0,
             wall_ns: 0,
             trap: Some("breaker_open".into()),
             instance: InstanceId(0),
@@ -355,21 +356,21 @@ impl Cell {
         self.rt.settle_future(id, result);
     }
 
-    pub(crate) fn cpu_budget_ms(&self, module: &ModuleId) -> u32 {
+    pub(crate) fn occupancy_budget_ms(&self, module: &ModuleId) -> u32 {
         self.modules.read().get(module).map_or(30000, |m| {
-            m.debug_cpu_ms
-                .unwrap_or(m.manifest.effective_limits().cpu_ms_per_http_dispatch)
+            m.debug_occupancy_ms
+                .unwrap_or(m.manifest.effective_limits().occupancy_ms_per_http_dispatch)
         })
     }
 
     pub fn http_record(&self, module: &ModuleId, req: isoplane_abi::HttpRequest) -> DispatchRecord {
-        let cpu_budget_ms = self.cpu_budget_ms(module);
+        let occupancy_budget_ms = self.occupancy_budget_ms(module);
         DispatchRecord {
             dispatch_id: self.next_dispatch.fetch_add(1, Ordering::Relaxed),
             kind: DispatchKind::Http(req),
             trace: TraceContext::default(),
             cancel_future: 0,
-            cpu_budget_ms,
+            occupancy_budget_ms,
             now_ms: crate::now_ms(),
         }
     }

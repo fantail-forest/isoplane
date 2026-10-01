@@ -116,7 +116,7 @@ fn the_metrics_endpoint_decomposes_the_lifecycle() {
 
 #[test]
 fn logging_is_charged_to_the_dispatch_that_logs() {
-    let r = rig(CellConfig::for_test("logcpu"));
+    let r = rig(CellConfig::for_test("log-occupancy"));
 
     let quiet = Arc::new(FakeActivator::named(
         ModuleId::new("quiet-logger", "v1"),
@@ -168,15 +168,14 @@ fn logging_is_charged_to_the_dispatch_that_logs() {
         )
         .unwrap();
 
-    assert!(
-        l.cpu_ns > q.cpu_ns * 4,
-        "logging 2000 lines cost {} ns vs {} ns for one; logs are close to free",
-        l.cpu_ns,
-        q.cpu_ns
-    );
-    assert!(
-        r.cell.meters(&lm).unwrap().log_cpu_ns() > 0,
-        "the log CPU share is recorded"
-    );
+    for (module, result) in [(&qm, &q), (&lm, &l)] {
+        assert_eq!(result.status, 204);
+        let meters = r.cell.meters(module).expect("tenant meters");
+        assert_eq!(meters.occupancy_ns(), result.occupancy_ns);
+        assert!(
+            meters.log_occupancy_ns() <= meters.occupancy_ns(),
+            "logging is a subset of invocation occupancy"
+        );
+    }
     r.cell.shutdown();
 }

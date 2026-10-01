@@ -5,7 +5,7 @@ use filesystem::{call, dispatch, ROOT};
 use isoplane_abi::filesystem::Operation;
 use isoplane_engine::prepared::PreparedIdentity;
 use isoplane_engine::{
-    Completion, CpuBudget, EngineConfig, Instance, InstanceOps, IsoplaneEngine, PlatformFile,
+    Completion, EngineConfig, Instance, InstanceOps, IsoplaneEngine, OccupancyBudget, PlatformFile,
     PlatformFiles, Template,
 };
 
@@ -62,7 +62,9 @@ fn guest(paths: &[&str]) -> Vec<u8> {
 
 fn result(instance: &mut Instance, index: usize) -> Vec<u8> {
     assert_eq!(
-        instance.dispatch(&dispatch(), CpuBudget::http()).completion,
+        instance
+            .dispatch(&dispatch(), OccupancyBudget::http())
+            .completion,
         Completion::Done,
         "reading immutable application files must complete without external I/O"
     );
@@ -256,7 +258,7 @@ fn binding_files_to_an_active_template_leaves_its_instances_namespace_unchanged(
         b"late",
         "the new template must serve the files bound to it"
     );
-    active.dispatch(&dispatch(), CpuBudget::http());
+    active.dispatch(&dispatch(), OccupancyBudget::http());
     assert_ne!(
         active.memory()[1300],
         0,

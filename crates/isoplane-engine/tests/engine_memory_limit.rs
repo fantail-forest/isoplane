@@ -4,7 +4,7 @@ mod bindings;
 
 use bindings::{Recorder, TestBindings};
 use isoplane_abi::WASM_PAGE_SIZE;
-use isoplane_engine::{Completion, CpuBudget, EngineConfig, InstanceOps, IsoplaneEngine};
+use isoplane_engine::{Completion, EngineConfig, InstanceOps, IsoplaneEngine, OccupancyBudget};
 
 fn observed_limit(
     module_pages: Option<u64>,
@@ -51,7 +51,7 @@ fn observed_limit(
         let mut instance = engine
             .activate(&template, Box::new(bindings))
             .expect("the memory query fixture must activate");
-        let outcome = instance.run_initialize(CpuBudget::http());
+        let outcome = instance.run_initialize(OccupancyBudget::http());
         assert_eq!(outcome.completion, Completion::Done,
         "initialization must query its limit and survive growth refused by that same ceiling: {outcome:?}");
         let reported =

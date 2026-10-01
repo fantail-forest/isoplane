@@ -15,7 +15,7 @@ pub fn http_dispatch(id: u64) -> isoplane_abi::dispatch::DispatchRecord {
         }),
         trace: TraceContext::default(),
         cancel_future: 0,
-        cpu_budget_ms: 30_000,
+        occupancy_budget_ms: 30_000,
         now_ms: 1_700_000_000_000,
     }
 }

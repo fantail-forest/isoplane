@@ -219,7 +219,7 @@ pub(super) mod cell_tests {
             }),
             trace: TraceContext::default(),
             cancel_future: 0,
-            cpu_budget_ms: 1_000,
+            occupancy_budget_ms: 1_000,
             now_ms: 0,
         }
     }
@@ -323,7 +323,7 @@ pub(super) mod cell_tests {
              cell"
         );
         cell.shutdown();
-        let records = events.records();
+        let records = events.completed(1);
         assert_eq!(
             records.len(),
             1,
@@ -338,8 +338,8 @@ pub(super) mod cell_tests {
             "panic attribution must retain the registered tenant"
         );
         assert_eq!(
-            records[0]["cpu_complete"], false,
-            "an interrupted invocation cannot claim a complete zero CPU measurement"
+            records[0]["occupancy_complete"], false,
+            "an interrupted invocation cannot claim a complete zero occupancy measurement"
         );
     }
 
@@ -401,7 +401,7 @@ pub(super) mod cell_tests {
         );
         drop(entered);
         cell.shutdown();
-        let records = events.records();
+        let records = events.completed(1);
         assert_eq!(
             records.len(),
             2,
@@ -703,7 +703,7 @@ pub(super) mod cell_tests {
             0,
             "completion must release every owned future"
         );
-        let records = events.records();
+        let records = events.completed(1);
         assert_eq!(
             records.len(),
             1,
@@ -766,7 +766,7 @@ pub(super) mod cell_tests {
             "a failed restoration must close its active dispatch record"
         );
         cell.shutdown();
-        let records = events.records();
+        let records = events.completed(1);
         assert_eq!(
             records.len(),
             1,
@@ -852,7 +852,11 @@ pub(super) mod cell_tests {
 
     #[tokio::test]
     async fn a_streaming_dispatch_bills_every_hot_slice_once_at_final_completion() {
-        let cell = cell(CellConfig::for_test("stream-cpu"), Arc::new(FakeHibernator));
+        let events = Events::default();
+        let cell = cell(
+            CellConfig::for_test("stream-occupancy"),
+            Arc::new(FakeHibernator),
+        );
         let mut behaviour = FakeBehaviour::program([
             Step::Park {
                 imports: vec![("clock_deadline_in", 0)],
@@ -865,24 +869,27 @@ pub(super) mod cell_tests {
                 body: b"AB".to_vec(),
             },
         ]);
-        behaviour.slice_cpu = Some(Duration::from_nanos(11));
+        behaviour.slice_occupancy = Some(Duration::from_nanos(11));
         behaviour.response_streaming = true;
-        let module = app(&cell, "stream-cpu", behaviour);
+        let module = app(&cell, "stream-occupancy", behaviour);
         let stream = crate::response_transport::ResponseTransport::new(1);
         let dispatch = {
             let cell = cell.clone();
             let module = module.clone();
             let stream = stream.clone();
+            let events = events.clone();
             tokio::task::spawn_blocking(move || {
-                cell.dispatch_with_stream(
-                    &module,
-                    Target::Handler {
-                        route: "/go".into(),
-                    },
-                    http(1),
-                    Duration::from_secs(10),
-                    Some(stream),
-                )
+                events.scope(|| {
+                    cell.dispatch_with_stream(
+                        &module,
+                        Target::Handler {
+                            route: "/go".into(),
+                        },
+                        http(1),
+                        Duration::from_secs(10),
+                        Some(stream),
+                    )
+                })
             })
         };
         let mut exchange = stream.exchange().await.expect("stream headers");
@@ -902,9 +909,9 @@ pub(super) mod cell_tests {
             result.slices, 3,
             "both awaited timers and final response must be accounted"
         );
-        assert_eq!(
-            result.cpu_ns, 33,
-            "final usage must sum every prescribed hot slice"
+        assert!(
+            result.occupancy_ns >= 33,
+            "response usage includes every prescribed hot slice"
         );
         tokio::time::timeout(Duration::from_secs(10), async {
             while cell.metrics_raw().request_us.count() == 0 {
@@ -913,10 +920,14 @@ pub(super) mod cell_tests {
         })
         .await
         .expect("dispatch cleanup must settle");
+        let records = events.completed(1);
+        assert_eq!(records[0]["invocation_occupancy_ns"], 33);
         let meters = cell.meters(&module).expect("module meters");
         assert_eq!(
-            meters.cpu_ns(),
-            result.cpu_ns,
+            meters.occupancy_ns(),
+            records[0]["occupancy_ns"]
+                .as_u64()
+                .expect("final occupancy"),
             "streaming must record each hot slice exactly once"
         );
         assert_eq!(

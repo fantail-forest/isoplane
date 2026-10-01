@@ -1,4 +1,4 @@
-//! Native thread CPU and monotonic clocks used by dispatch accounting.
+//! Native worker occupancy and monotonic clocks used by dispatch accounting.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -37,14 +37,54 @@ fn read_clock_ns(read: impl FnOnce() -> Option<u64>) -> Option<u64> {
     measured
 }
 
-/// CPU consumed by the calling thread, or `None` if its clock cannot be read.
-/// Preemption by a neighbour does not consume this thread's CPU budget.
-pub fn try_read_thread_cpu_ns() -> Option<u64> {
-    read_clock_ns(|| {
-        cpu_time::ThreadTime::try_now()
-            .ok()
-            .and_then(|time| u64::try_from(time.as_duration().as_nanos()).ok())
-    })
+/// Monotonic timestamp for measuring occupied worker intervals.
+/// Time descheduled by the OS still occupies the worker and consumes its budget.
+pub fn try_read_occupancy_ns() -> Option<u64> {
+    #[cfg(test)]
+    if let Some(value) = TEST_READINGS.with(|readings| {
+        readings
+            .borrow_mut()
+            .as_mut()
+            .map(|values| values.pop_front().expect("scripted clock exhausted"))
+    }) {
+        return Some(value);
+    }
+    read_clock_ns(isoplane_engine::try_occupancy_nanos)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_READINGS: std::cell::RefCell<Option<std::collections::VecDeque<u64>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_readings<T>(
+    values: impl IntoIterator<Item = u64>,
+    test: impl FnOnce() -> T,
+) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_READINGS.with(|readings| *readings.borrow_mut() = None);
+        }
+    }
+    TEST_READINGS.with(|readings| {
+        assert!(readings.borrow().is_none(), "clock scripts cannot nest");
+        *readings.borrow_mut() = Some(values.into_iter().collect());
+    });
+    let _reset = Reset;
+    let result = test();
+    TEST_READINGS.with(|readings| {
+        assert!(
+            readings
+                .borrow()
+                .as_ref()
+                .expect("script installed")
+                .is_empty(),
+            "scripted clock readings were not consumed"
+        )
+    });
+    result
 }
 
 /// Native monotonic nanoseconds without a per-process origin subtraction.
@@ -93,31 +133,31 @@ fn ticks_to_ns(ticks: i64, frequency: i64) -> Option<u64> {
     u64::try_from(ticks.checked_mul(1_000_000_000)?.checked_div(frequency)?).ok()
 }
 
-/// [`try_read_thread_cpu_ns`] with the unreadable case flattened to `0`, a
+/// [`try_read_occupancy_ns`] with the unreadable case flattened to `0`, a
 /// floor rather than a measurement; the failure is still counted in
 /// [`clock_read_failures`].
-pub fn read_thread_cpu_ns() -> u64 {
-    try_read_thread_cpu_ns().unwrap_or(0)
+pub fn read_occupancy_ns() -> u64 {
+    try_read_occupancy_ns().unwrap_or(0)
 }
 
-/// A thread-CPU measurement over one Hot interval, the interval measured.
-/// Time between two Hot intervals is inside no `CpuInterval`, which is why a
-/// parked instance costs zero CPU.
-pub struct CpuInterval {
+/// A worker-occupancy measurement over one Hot interval, the interval measured.
+/// Time between two Hot intervals is inside no `OccupancyInterval`, which is why a
+/// parked instance costs zero occupancy.
+pub struct OccupancyInterval {
     /// `None` when the clock could not be read at `start`; a zero start would
-    /// attribute the thread's entire lifetime to this interval.
+    /// attribute time before this interval to it.
     start: Option<u64>,
 }
 
-impl CpuInterval {
+impl OccupancyInterval {
     pub fn start() -> Self {
         Self {
-            start: try_read_thread_cpu_ns(),
+            start: try_read_occupancy_ns(),
         }
     }
     /// `None` if either end could not be read.
     pub fn try_elapsed_ns(&self) -> Option<u64> {
-        Some(try_read_thread_cpu_ns()?.saturating_sub(self.start?))
+        Some(try_read_occupancy_ns()?.saturating_sub(self.start?))
     }
     /// An unreadable clock flattened to `0`, still counted in
     /// [`clock_read_failures`].
@@ -137,20 +177,20 @@ mod tests {
         FORCE_CLOCK_FAILURE.with(|f| f.set(true));
 
         assert_eq!(
-            try_read_thread_cpu_ns(),
+            try_read_occupancy_ns(),
             None,
             "an unreadable clock must say so"
         );
         let failures = clock_read_failures();
         assert!(failures > before, "the failed read was not counted");
 
-        assert_eq!(read_thread_cpu_ns(), 0, "the lossy wrapper answers a floor");
+        assert_eq!(read_occupancy_ns(), 0, "the lossy wrapper answers a floor");
         assert!(
             clock_read_failures() > failures,
             "and the floor is still on the record as a failure"
         );
 
-        let iv = CpuInterval::start();
+        let iv = OccupancyInterval::start();
         assert_eq!(
             iv.try_elapsed_ns(),
             None,
@@ -158,16 +198,24 @@ mod tests {
         );
         let m = Meters::new();
         m.record_interval(iv.try_elapsed_ns());
-        assert_eq!(m.cpu_ns(), 0, "an unmeasured interval must not be invented");
+        assert_eq!(
+            m.occupancy_ns(),
+            0,
+            "an unmeasured interval must not be invented"
+        );
         assert_eq!(m.incomplete_intervals(), 1, "...and must not vanish either");
 
         FORCE_CLOCK_FAILURE.with(|f| f.set(false));
 
-        let iv = CpuInterval::start();
+        let iv = OccupancyInterval::start();
         let measured = iv.try_elapsed_ns();
         let measured_ns = measured.expect("a working clock must produce a measurement");
         m.record_interval(measured);
-        assert_eq!(m.cpu_ns(), measured_ns, "the measured interval is recorded");
+        assert_eq!(
+            m.occupancy_ns(),
+            measured_ns,
+            "the measured interval is recorded"
+        );
         assert_eq!(
             m.incomplete_intervals(),
             1,
@@ -178,8 +226,8 @@ mod tests {
     #[test]
     fn the_clock_fault_injection_does_not_escape_its_thread() {
         FORCE_CLOCK_FAILURE.with(|f| f.set(true));
-        assert_eq!(try_read_thread_cpu_ns(), None, "the fault is injected here");
-        let elsewhere = std::thread::spawn(try_read_thread_cpu_ns)
+        assert_eq!(try_read_occupancy_ns(), None, "the fault is injected here");
+        let elsewhere = std::thread::spawn(try_read_occupancy_ns)
             .join()
             .expect("thread");
         assert!(
@@ -227,10 +275,5 @@ mod tests {
                 "invalid or overflowing native clock values must remain unreadable"
             );
         }
-    }
-
-    #[test]
-    fn the_native_thread_clock_measures_cpu_work() {
-        isoplane_fixtures::assert_cpu_clock_advances(try_read_thread_cpu_ns);
     }
 }

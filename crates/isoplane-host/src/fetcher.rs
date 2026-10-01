@@ -61,11 +61,11 @@ impl PinnedHttpFetcher {
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|e| FutureError::Io(format!("handshake: {e}")))?;
-        let task = tokio::spawn(async move {
+        let task = tokio::spawn(crate::reactor_accounting::inherit(async move {
             if let Err(e) = conn.await {
                 tracing::debug!(error = %e, "egress connection closed");
             }
-        });
+        }));
         let connection = ConnectionTask(task.abort_handle());
         let response = sender
             .send_request(req)

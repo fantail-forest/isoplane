@@ -11,9 +11,9 @@ use isoplane_abi::dispatch::DispatchRecord;
 use isoplane_abi::result::ResultRecord;
 use isoplane_abi::status::PollStatus;
 
-use crate::budget::{CpuBudget, CpuMeasurement, ExecutionLimit, KillPhase, TrapKind};
+use crate::budget::{ExecutionLimit, KillPhase, OccupancyBudget, OccupancyMeasurement, TrapKind};
 use crate::call::{call_entry, classify, trap_code_of_kind, trap_kind_of_code};
-use crate::meter::interval_cpu_ns;
+use crate::meter::interval_occupancy_ns;
 use crate::state::{Meter, Reentrancy, StoreState};
 use crate::template::TemplateInner;
 use crate::{DispatchOutcome, EngineInner, InstanceImage, Result, TrapInfo};
@@ -123,14 +123,14 @@ impl Instance {
     /// Run `isoplane_initialize`, for pre-initialisation with bindings whose
     /// `is_init_sandbox()` is true. Ordinary activation never calls this; the
     /// template already ran it.
-    pub fn run_initialize(&mut self, budget: CpuBudget) -> DispatchOutcome {
+    pub fn run_initialize(&mut self, budget: OccupancyBudget) -> DispatchOutcome {
         self.slice(budget, Entry::Initialize)
     }
 
     /// Run `isoplane_initialize_runtime`, which starts only the guest's runtime,
     /// before any application code or data loads. A guest without the export
     /// has no separate runtime stage and completes at once.
-    pub fn run_initialize_runtime(&mut self, budget: CpuBudget) -> DispatchOutcome {
+    pub fn run_initialize_runtime(&mut self, budget: OccupancyBudget) -> DispatchOutcome {
         self.slice(budget, Entry::InitializeRuntime)
     }
 
@@ -144,7 +144,7 @@ impl Instance {
 
     /// Run `isoplane_gc_hint` under `budget`, which preparation charges to
     /// initialization. A guest without the export completes at once.
-    pub fn run_gc_hint(&mut self, pressure: u8, budget: CpuBudget) -> DispatchOutcome {
+    pub fn run_gc_hint(&mut self, pressure: u8, budget: OccupancyBudget) -> DispatchOutcome {
         self.slice(budget, Entry::GcHint(pressure))
     }
 
@@ -154,8 +154,8 @@ impl Instance {
                 code: trap_code_of_kind(kind),
             },
             completion: Completion::Trapped,
-            cpu_ns: 0,
-            cpu_measurement: CpuMeasurement::NotExecuted,
+            occupancy_ns: 0,
+            occupancy_measurement: OccupancyMeasurement::NotExecuted,
             execution_limit: None,
             wall_ns: 0,
             trap: Some(TrapInfo { kind, message: why }),
@@ -167,7 +167,7 @@ impl Instance {
 
     /// One hot interval: meter start, epoch deadline armed, synchronous call
     /// into the guest, meter stop.
-    fn slice(&mut self, budget: CpuBudget, entry: Entry<'_>) -> DispatchOutcome {
+    fn slice(&mut self, budget: OccupancyBudget, entry: Entry<'_>) -> DispatchOutcome {
         if let Some(why) = self.tombstone {
             return self.refuse(
                 TrapKind::Tombstoned,
@@ -200,9 +200,9 @@ impl Instance {
             .unwrap_or(0);
 
         let meter = Meter {
-            cpu0_ns: 0,
+            occupancy0_ns: 0,
             wall0: None,
-            cpu_budget_ns: budget.budget_ns(),
+            occupancy_budget_ns: budget.budget_ns(),
             grace_ns: budget.grace_ns(),
             spent_ns: budget.spent_ns,
             wall_cap_ns: (budget.wall_ms_cap as u64).saturating_mul(1_000_000),
@@ -213,9 +213,11 @@ impl Instance {
         // must not clear the park state.
         let is_gc_hint = matches!(entry, Entry::GcHint(_));
 
-        let cpu0 = match crate::meter::thread_cpu_nanos() {
-            Ok(cpu0) => cpu0,
-            Err(error) => return self.refuse(TrapKind::CpuClockUnavailable, error.to_string()),
+        let occupancy_start_ns = match crate::meter::occupancy_nanos() {
+            Ok(occupancy_start_ns) => occupancy_start_ns,
+            Err(error) => {
+                return self.refuse(TrapKind::OccupancyClockUnavailable, error.to_string())
+            }
         };
 
         // The watchdog only ticks while something is hot, so this precedes
@@ -226,7 +228,7 @@ impl Instance {
         live.store.data_mut().begin_slice(
             clock_ms,
             Meter {
-                cpu0_ns: cpu0,
+                occupancy0_ns: occupancy_start_ns,
                 wall0: Some(wall0),
                 ..meter
             },
@@ -235,11 +237,11 @@ impl Instance {
 
         let raw = call_entry(live, entry);
 
-        // Classification and teardown are outside the invocation's CPU meter.
-        let cpu_end = interval_cpu_ns(cpu0);
-        let (cpu_ns, cpu_measurement) = match cpu_end {
-            Some(cpu_ns) => (cpu_ns, CpuMeasurement::Complete),
-            None => (0, CpuMeasurement::Incomplete),
+        // Classification and teardown are outside the invocation's occupancy meter.
+        let occupancy_end_ns = interval_occupancy_ns(occupancy_start_ns);
+        let (occupancy_ns, occupancy_measurement) = match occupancy_end_ns {
+            Some(occupancy_ns) => (occupancy_ns, OccupancyMeasurement::Complete),
+            None => (0, OccupancyMeasurement::Incomplete),
         };
         let wall_ns = wall0.elapsed().as_nanos() as u64;
 
@@ -311,10 +313,10 @@ impl Instance {
             trap.as_ref().map(|t| t.kind),
             Some(TrapKind::BudgetExceeded)
         );
-        let dispatch_cpu = budget.spent_ns.saturating_add(cpu_ns);
+        let dispatch_occupancy_ns = budget.spent_ns.saturating_add(occupancy_ns);
         // A guest can return between epoch ticks; compare its active execution time
         // with the budget even when the epoch callback did not run.
-        let in_grace = grace_at_ns.is_some() || dispatch_cpu >= budget.budget_ns();
+        let in_grace = grace_at_ns.is_some() || dispatch_occupancy_ns >= budget.budget_ns();
         let completion = if hard_kill {
             Completion::BudgetKill
         } else {
@@ -329,7 +331,7 @@ impl Instance {
             _ => None,
         };
         let overage_ns = if in_grace || hard_kill {
-            dispatch_cpu.saturating_sub(budget.budget_ns())
+            dispatch_occupancy_ns.saturating_sub(budget.budget_ns())
         } else {
             0
         };
@@ -351,12 +353,12 @@ impl Instance {
         DispatchOutcome {
             status,
             completion,
-            cpu_ns,
-            cpu_measurement,
+            occupancy_ns,
+            occupancy_measurement,
             execution_limit: match live.store.data().kill {
-                Some(crate::state::Kill::CpuHard) => Some(ExecutionLimit::Cpu),
+                Some(crate::state::Kill::OccupancyHard) => Some(ExecutionLimit::Occupancy),
                 Some(crate::state::Kill::Wall) => Some(ExecutionLimit::Wall),
-                None if completion == Completion::CleanKill => Some(ExecutionLimit::Cpu),
+                None if completion == Completion::CleanKill => Some(ExecutionLimit::Occupancy),
                 None => None,
             },
             wall_ns,
@@ -377,9 +379,10 @@ pub trait InstanceOps {
         None
     }
     /// Run a dispatch to completion, park, or kill.
-    fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome;
+    fn dispatch(&mut self, rec: &DispatchRecord, budget: OccupancyBudget) -> DispatchOutcome;
     /// Deliver a completed host future.
-    fn wake(&mut self, future: u64, res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome;
+    fn wake(&mut self, future: u64, res: &ResultRecord, budget: OccupancyBudget)
+        -> DispatchOutcome;
     /// Called before hibernation capture so the guest GC can compact and zero
     /// the freed tail; zeroed pages compress out of the delta.
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome;
@@ -447,18 +450,23 @@ impl InstanceOps for Instance {
     fn evict(self: Box<Self>) -> Option<Box<dyn crate::DormantInstance>> {
         crate::mapped::evict(*self)
     }
-    fn dispatch(&mut self, rec: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn dispatch(&mut self, rec: &DispatchRecord, budget: OccupancyBudget) -> DispatchOutcome {
         self.slice(budget, Entry::Handle(rec))
     }
 
-    fn wake(&mut self, future: u64, res: &ResultRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn wake(
+        &mut self,
+        future: u64,
+        res: &ResultRecord,
+        budget: OccupancyBudget,
+    ) -> DispatchOutcome {
         self.slice(budget, Entry::Wake(future, res))
     }
 
     fn gc_hint(&mut self, pressure: u8) -> DispatchOutcome {
         // The hint runs on the hibernation path with no dispatch budget of its
         // own; the HTTP budget stops a guest turning it into free compute.
-        self.run_gc_hint(pressure, CpuBudget::http())
+        self.run_gc_hint(pressure, OccupancyBudget::http())
     }
 
     fn reset(&mut self) -> Result<()> {
@@ -505,7 +513,7 @@ impl InstanceOps for Instance {
     }
 
     /// A guest that busy-waits never returns, so its frame never leaves the
-    /// stack and it is never a capture candidate; it dies at its CPU budget.
+    /// stack and it is never a capture candidate; it dies at its occupancy budget.
     fn is_parked(&self) -> bool {
         let Some(live) = self.live.as_ref() else {
             return false;

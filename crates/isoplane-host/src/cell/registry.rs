@@ -5,7 +5,7 @@ use super::*;
 pub(super) struct ModuleEntry {
     pub(super) tenant: String,
     pub(super) limits: Limits,
-    pub(super) debug_cpu_ms: Option<u32>,
+    pub(super) debug_occupancy_ms: Option<u32>,
     pub(super) manifest: AppManifest,
     pub(super) activator: Arc<dyn Activator>,
     pub(super) pool: InstancePool,
@@ -112,7 +112,7 @@ impl Cell {
         tenant: &str,
         activator: Arc<dyn Activator>,
         manifest: AppManifest,
-        debug_cpu_ms: Option<u32>,
+        debug_occupancy_ms: Option<u32>,
         endpoint_exceptions: Arc<[std::net::SocketAddr]>,
     ) -> crate::Result<()> {
         anyhow::ensure!(
@@ -131,12 +131,12 @@ impl Cell {
         let entry = ModuleEntry {
             tenant: tenant.to_string(),
             limits,
-            debug_cpu_ms,
+            debug_occupancy_ms,
             manifest,
             pool: InstancePool::new(
                 activator.clone(),
                 lifecycle,
-                if debug_cpu_ms.is_some() {
+                if debug_occupancy_ms.is_some() {
                     0
                 } else {
                     self.cfg.max_idle_per_module

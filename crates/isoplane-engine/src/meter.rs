@@ -1,13 +1,15 @@
-//! The compute meter: the calling thread's CPU clock, accumulated over a
-//! dispatch's hot intervals. A parked instance holds no thread, so park time
-//! is unreachable by the meter rather than excluded by policy.
+//! Monotonic worker-occupancy accounting across a dispatch's active intervals.
+//! Parked intervals are outside the meter; OS preemption and synchronous host
+//! work remain inside the occupied worker interval.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 /// Failed clock reads, process-wide, kept distinct from a measured zero.
 static CLOCK_READ_FAILURES: AtomicU64 = AtomicU64::new(0);
 
-/// How many thread-CPU clock reads have failed in this process. Non-zero means
+/// How many worker-occupancy clock reads have failed in this process. Non-zero means
 /// some recorded interval is a floor rather than a measurement.
 pub fn clock_read_failures() -> u64 {
     CLOCK_READ_FAILURES.load(Ordering::Relaxed)
@@ -18,6 +20,7 @@ thread_local! {
     /// Thread-local so one test's injected fault is not another test's flake.
     static READS_BEFORE_FAILURE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static FAIL_INTERVAL_END: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TEST_NOW_NS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
@@ -38,17 +41,20 @@ fn clock_failure_forced() -> bool {
     false
 }
 
-/// Nanoseconds of CPU consumed by the calling thread, or `None` if the clock
-/// could not be read.
+/// Monotonic nanoseconds from a process-local origin, or `None` on overflow.
+/// Differences measure worker occupancy only when taken around active work.
 #[inline]
-pub fn try_thread_cpu_nanos() -> Option<u64> {
+pub fn try_occupancy_nanos() -> Option<u64> {
     if clock_failure_forced() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
     }
-    let measured = cpu_time::ThreadTime::try_now()
-        .ok()
-        .and_then(|time| u64::try_from(time.as_duration().as_nanos()).ok());
+    #[cfg(test)]
+    if let Some(now) = TEST_NOW_NS.get() {
+        return Some(now);
+    }
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    let measured = u64::try_from(ORIGIN.get_or_init(Instant::now).elapsed().as_nanos()).ok();
     if measured.is_none() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
     }
@@ -57,29 +63,31 @@ pub fn try_thread_cpu_nanos() -> Option<u64> {
 
 /// End-point reading for a returned invocation; an unavailable or regressing clock is incomplete.
 #[inline]
-pub(crate) fn interval_cpu_ns(start: u64) -> Option<u64> {
+pub(crate) fn interval_occupancy_ns(start: u64) -> Option<u64> {
     #[cfg(test)]
     if FAIL_INTERVAL_END.get() {
         CLOCK_READ_FAILURES.fetch_add(1, Ordering::Relaxed);
         return None;
     }
-    try_thread_cpu_nanos().and_then(|end| end.checked_sub(start))
+    try_occupancy_nanos().and_then(|end| end.checked_sub(start))
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("thread CPU clock unavailable; guest execution cannot enforce its CPU budget")]
-pub(crate) struct CpuClockUnavailable;
+#[error("worker occupancy clock unavailable; guest execution cannot enforce its occupancy budget")]
+pub(crate) struct OccupancyClockUnavailable;
 
 /// Refuse execution when a budget check has no trustworthy clock reading.
 #[inline]
-pub(crate) fn thread_cpu_nanos() -> Result<u64, CpuClockUnavailable> {
-    try_thread_cpu_nanos().ok_or(CpuClockUnavailable)
+pub(crate) fn occupancy_nanos() -> Result<u64, OccupancyClockUnavailable> {
+    try_occupancy_nanos().ok_or(OccupancyClockUnavailable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CpuBudget, EngineConfig, HostBindings, ImportCall, InstanceOps, IsoplaneEngine};
+    use crate::{
+        EngineConfig, HostBindings, ImportCall, InstanceOps, IsoplaneEngine, OccupancyBudget,
+    };
 
     struct ClockFault;
 
@@ -94,6 +102,7 @@ mod tests {
         fn drop(&mut self) {
             READS_BEFORE_FAILURE.with(|remaining| remaining.set(None));
             FAIL_INTERVAL_END.set(false);
+            TEST_NOW_NS.set(None);
         }
     }
 
@@ -114,6 +123,14 @@ mod tests {
     }
 
     fn instance(imports: &str, initialize: &str) -> crate::Instance {
+        instance_with_bindings(imports, initialize, Box::new(DenyImports))
+    }
+
+    fn instance_with_bindings(
+        imports: &str,
+        initialize: &str,
+        bindings: Box<dyn HostBindings>,
+    ) -> crate::Instance {
         let engine = IsoplaneEngine::new(EngineConfig {
             max_instances: 2,
             max_memory_bytes: 65536,
@@ -133,8 +150,119 @@ mod tests {
         .expect("the clock fixture must assemble");
         let template = engine.load_template(&wasm).expect("the fixture must load");
         engine
-            .activate(&template, Box::new(DenyImports))
+            .activate(&template, bindings)
             .expect("the fixture must activate")
+    }
+
+    #[test]
+    fn synchronous_host_work_counts_as_occupancy_but_time_between_invocations_does_not() {
+        struct HostWork;
+        impl HostBindings for HostWork {
+            fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
+                TEST_NOW_NS.set(Some(TEST_NOW_NS.get().expect("controlled clock") + 1_000));
+                1
+            }
+            fn call_sync(&mut self, call: ImportCall<'_>) -> i64 {
+                panic!("unexpected synchronous import {}", call.import);
+            }
+            fn slice_clock_ms(&self) -> u64 {
+                0
+            }
+        }
+
+        let _reset = ClockFault;
+        TEST_NOW_NS.set(Some(100));
+        let mut guest = instance_with_bindings(
+            r#"(import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))"#,
+            "i64.const 0 call $timer drop",
+            Box::new(HostWork),
+        );
+        let first = guest.run_initialize(OccupancyBudget::http());
+        assert!(first.trap.is_none(), "{:?}", first.trap);
+        assert_eq!(first.occupancy_ns, 1_000);
+        TEST_NOW_NS.set(Some(1_000_000_000));
+        let next = guest.run_initialize(OccupancyBudget::http().after(first.occupancy_ns));
+        assert!(next.trap.is_none(), "{:?}", next.trap);
+        assert_eq!(next.occupancy_ns, 1_000);
+    }
+
+    #[test]
+    fn controlled_occupancy_drives_real_guest_grace_and_hard_kill() {
+        use crate::{Completion, KillPhase};
+        use std::sync::Arc;
+
+        struct Advance {
+            engine: Arc<OnceLock<wasmtime::Engine>>,
+            elapsed_ns: u64,
+            grace_calls: Arc<AtomicU64>,
+        }
+        impl HostBindings for Advance {
+            fn call_future(&mut self, _: ImportCall<'_>) -> u64 {
+                TEST_NOW_NS.set(Some(100 + self.elapsed_ns));
+                self.engine
+                    .get()
+                    .expect("engine installed before entry")
+                    .increment_epoch();
+                1
+            }
+            fn call_sync(&mut self, call: ImportCall<'_>) -> i64 {
+                panic!("unexpected import {}", call.import)
+            }
+            fn slice_clock_ms(&self) -> u64 {
+                0
+            }
+            fn enter_grace(&mut self) {
+                self.grace_calls.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let _reset = ClockFault;
+        let budget = OccupancyBudget::http();
+        for (elapsed_ns, completion, phase, grace_calls) in [
+            (
+                budget.budget_ns() + 1,
+                Completion::CleanKill,
+                KillPhase::Clean,
+                1,
+            ),
+            (
+                budget.hard_ns() + 1,
+                Completion::BudgetKill,
+                KillPhase::Hard,
+                0,
+            ),
+        ] {
+            TEST_NOW_NS.set(Some(100));
+            let engine = Arc::new(OnceLock::new());
+            let observed_grace = Arc::new(AtomicU64::new(0));
+            let mut guest = instance_with_bindings(
+                r#"(import "isoplane" "clock_deadline_in" (func $timer (param i64) (result i64)))
+                    (import "isoplane" "budget_remaining_ns" (func $remaining (result i64)))"#,
+                r#"i64.const 0 call $timer drop
+                    (loop $check
+                        call $remaining i64.const 0 i64.ge_s br_if $check)
+                    i32.const 0 i32.const 1 i32.store"#,
+                Box::new(Advance {
+                    engine: engine.clone(),
+                    elapsed_ns,
+                    grace_calls: observed_grace.clone(),
+                }),
+            );
+            engine
+                .set(guest.engine.wasmtime.clone())
+                .expect("install engine once");
+            let outcome = guest.run_initialize(budget);
+            assert_eq!(outcome.completion, completion, "{:?}", outcome.trap);
+            assert_eq!(outcome.kill, Some(phase));
+            assert_eq!(outcome.occupancy_ns, elapsed_ns);
+            assert_eq!(observed_grace.load(Ordering::Relaxed), grace_calls);
+            if phase == KillPhase::Clean {
+                assert_eq!(guest.memory()[0], 1, "cooperative cleanup executed");
+                guest.reset().expect("clean kill leaves reusable instance");
+            } else {
+                assert!(guest.reset().is_err(), "hard kill tombstones instance");
+            }
+        }
     }
 
     #[test]
@@ -142,7 +270,7 @@ mod tests {
         let before = clock_read_failures();
         let fault = ClockFault::after(0);
         assert_eq!(
-            try_thread_cpu_nanos(),
+            try_occupancy_nanos(),
             None,
             "an unreadable clock must report failure"
         );
@@ -150,7 +278,7 @@ mod tests {
             clock_read_failures() > before,
             "the failed read must be counted"
         );
-        let elsewhere = std::thread::spawn(try_thread_cpu_nanos)
+        let elsewhere = std::thread::spawn(try_occupancy_nanos)
             .join()
             .expect("the probe thread must not panic");
         assert!(
@@ -159,25 +287,20 @@ mod tests {
         );
         drop(fault);
         assert!(
-            try_thread_cpu_nanos().is_some(),
+            try_occupancy_nanos().is_some(),
             "clock reads must recover after the fault"
         );
-    }
-
-    #[test]
-    fn the_native_thread_clock_measures_cpu_work() {
-        isoplane_fixtures::assert_cpu_clock_advances(try_thread_cpu_nanos);
     }
 
     #[test]
     fn an_unreadable_start_clock_refuses_guest_entry() {
         let mut guest = instance("", "i32.const 0 i32.const 1 i32.store");
         let _fault = ClockFault::after(0);
-        let outcome = guest.run_initialize(CpuBudget::http());
+        let outcome = guest.run_initialize(OccupancyBudget::http());
         assert_eq!(
             outcome.completion,
             crate::Completion::Trapped,
-            "guest entry needs a readable CPU clock"
+            "guest entry needs a readable occupancy clock"
         );
         assert_eq!(
             guest.memory()[0],
@@ -185,14 +308,14 @@ mod tests {
             "the refused invocation must not execute guest code"
         );
         assert_eq!(
-            outcome.cpu_measurement,
-            crate::CpuMeasurement::NotExecuted,
+            outcome.occupancy_measurement,
+            crate::OccupancyMeasurement::NotExecuted,
             "start-clock refusal must distinguish no guest entry from an unmeasured invocation"
         );
     }
 
     #[test]
-    fn an_unreadable_budget_clock_traps_instead_of_granting_more_cpu() {
+    fn an_unreadable_budget_clock_traps_instead_of_granting_more_occupancy() {
         let mut guest = instance(
             r#"(import "isoplane" "budget_remaining_ns" (func $budget (result i64)))"#,
             "call $budget drop i32.const 0 i32.const 1 i32.store",
@@ -204,7 +327,7 @@ mod tests {
         )
         .expect_err("an unreadable budget import must trap without relying on the watchdog");
         assert!(
-            error.downcast_ref::<CpuClockUnavailable>().is_some(),
+            error.downcast_ref::<OccupancyClockUnavailable>().is_some(),
             "the import must preserve its typed clock error"
         );
         assert_eq!(
@@ -218,9 +341,9 @@ mod tests {
     fn an_unreadable_epoch_clock_stops_a_guest_without_claiming_budget_exhaustion() {
         let mut guest = instance("", "(loop $spin br $spin)");
         let _fault = ClockFault::after(1);
-        let outcome = guest.run_initialize(CpuBudget {
+        let outcome = guest.run_initialize(OccupancyBudget {
             wall_ms_cap: 10,
-            ..CpuBudget::http()
+            ..OccupancyBudget::http()
         });
         let trap = outcome.trap.expect("the unreadable epoch clock must trap");
         assert_eq!(
@@ -230,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             trap.kind,
-            crate::TrapKind::CpuClockUnavailable,
+            crate::TrapKind::OccupancyClockUnavailable,
             "a missing clock must preserve its typed host-fault reason"
         );
         assert!(
@@ -240,20 +363,20 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_end_clock_marks_the_returned_cpu_floor_incomplete() {
+    fn an_unreadable_end_clock_marks_the_returned_occupancy_floor_incomplete() {
         let mut guest = instance("", "i32.const 0 i32.const 1 i32.store");
         let _fault = ClockFault;
         FAIL_INTERVAL_END.set(true);
-        let outcome = guest.run_initialize(CpuBudget::http());
+        let outcome = guest.run_initialize(OccupancyBudget::http());
         assert_eq!(
             guest.memory()[0],
             1,
             "the end-clock fixture must actually execute guest code"
         );
         assert_eq!(
-            outcome.cpu_measurement,
-            crate::CpuMeasurement::Incomplete,
-            "an unavailable end reading must not certify a complete zero CPU measurement"
+            outcome.occupancy_measurement,
+            crate::OccupancyMeasurement::Incomplete,
+            "an unavailable end reading must not certify a complete zero occupancy measurement"
         );
     }
 
@@ -265,7 +388,7 @@ mod tests {
         );
         let watchdog = guest.engine.watchdog.shared().clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            guest.run_initialize(CpuBudget::http())
+            guest.run_initialize(OccupancyBudget::http())
         }));
         assert!(
             result.is_err(),

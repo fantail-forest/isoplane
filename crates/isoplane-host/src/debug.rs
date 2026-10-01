@@ -8,8 +8,8 @@ use isoplane_abi::dispatch::DispatchRecord;
 use isoplane_abi::native_io::{Error, Request, Response};
 use isoplane_abi::result::ResultRecord;
 use isoplane_engine::{
-    Completion, CpuBudget, CpuMeasurement, DispatchOutcome, HostBindings, ImportCall, Instance,
-    InstanceImage, InstanceOps, IsoplaneEngine, MemoryImage, ModuleHash,
+    Completion, DispatchOutcome, HostBindings, ImportCall, Instance, InstanceImage, InstanceOps,
+    IsoplaneEngine, MemoryImage, ModuleHash, OccupancyBudget, OccupancyMeasurement,
 };
 
 use crate::{Activator, EngineActivator, ModuleId};
@@ -162,33 +162,36 @@ impl DebugInstance {
     fn dispatch_initialized(
         &mut self,
         record: &DispatchRecord,
-        budget: CpuBudget,
+        budget: OccupancyBudget,
         initialize: DispatchOutcome,
     ) -> DispatchOutcome {
         let mut result = self.instance.dispatch(
             record,
-            budget.after(budget.spent_ns.saturating_add(initialize.cpu_ns)),
+            budget.after(budget.spent_ns.saturating_add(initialize.occupancy_ns)),
         );
-        result.cpu_ns = result.cpu_ns.saturating_add(initialize.cpu_ns);
+        result.occupancy_ns = result.occupancy_ns.saturating_add(initialize.occupancy_ns);
         result.wall_ns = result.wall_ns.saturating_add(initialize.wall_ns);
         result.grace_deferrals = result
             .grace_deferrals
             .saturating_add(initialize.grace_deferrals);
-        result.cpu_measurement = match (initialize.cpu_measurement, result.cpu_measurement) {
-            (CpuMeasurement::Incomplete, _) | (_, CpuMeasurement::Incomplete) => {
-                CpuMeasurement::Incomplete
+        result.occupancy_measurement = match (
+            initialize.occupancy_measurement,
+            result.occupancy_measurement,
+        ) {
+            (OccupancyMeasurement::Incomplete, _) | (_, OccupancyMeasurement::Incomplete) => {
+                OccupancyMeasurement::Incomplete
             }
-            (CpuMeasurement::NotExecuted, CpuMeasurement::NotExecuted) => {
-                CpuMeasurement::NotExecuted
+            (OccupancyMeasurement::NotExecuted, OccupancyMeasurement::NotExecuted) => {
+                OccupancyMeasurement::NotExecuted
             }
-            _ => CpuMeasurement::Complete,
+            _ => OccupancyMeasurement::Complete,
         };
         result
     }
 }
 
 impl InstanceOps for DebugInstance {
-    fn dispatch(&mut self, record: &DispatchRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn dispatch(&mut self, record: &DispatchRecord, budget: OccupancyBudget) -> DispatchOutcome {
         if self.initialized {
             return unsupported("a local debugger instance accepts one dispatch");
         }
@@ -203,7 +206,12 @@ impl InstanceOps for DebugInstance {
         }
         self.dispatch_initialized(record, budget, initialize)
     }
-    fn wake(&mut self, future: u64, result: &ResultRecord, budget: CpuBudget) -> DispatchOutcome {
+    fn wake(
+        &mut self,
+        future: u64,
+        result: &ResultRecord,
+        budget: OccupancyBudget,
+    ) -> DispatchOutcome {
         let outcome = self.instance.wake(future, result, budget);
         if outcome.completion == Completion::Parked {
             return outcome;
@@ -250,8 +258,8 @@ fn unsupported(message: &'static str) -> DispatchOutcome {
             code: isoplane_abi::status::TrapCode::CapabilityViolation,
         },
         completion: Completion::Trapped,
-        cpu_ns: 0,
-        cpu_measurement: CpuMeasurement::NotExecuted,
+        occupancy_ns: 0,
+        occupancy_measurement: OccupancyMeasurement::NotExecuted,
         execution_limit: None,
         wall_ns: 0,
         trap: Some(isoplane_engine::TrapInfo {
@@ -336,7 +344,7 @@ mod tests {
             }),
             trace: TraceContext::default(),
             cancel_future: 0,
-            cpu_budget_ms: DEBUG_BUDGET_MS,
+            occupancy_budget_ms: DEBUG_BUDGET_MS,
             now_ms: 1,
         }
     }
@@ -344,7 +352,7 @@ mod tests {
     #[test]
     fn raw_initialization_runs_before_the_first_request() {
         let mut instance = instance("i32.const 42 global.set $initialized");
-        let result = instance.dispatch(&record(), CpuBudget::http());
+        let result = instance.dispatch(&record(), OccupancyBudget::http());
         assert_eq!(
             result.completion,
             Completion::Done,
@@ -360,7 +368,7 @@ mod tests {
     #[test]
     fn initialization_failure_prevents_request_execution() {
         let mut instance = instance("unreachable");
-        let result = instance.dispatch(&record(), CpuBudget::http());
+        let result = instance.dispatch(&record(), OccupancyBudget::http());
         assert_eq!(
             result.completion,
             Completion::Trapped,
@@ -384,13 +392,15 @@ mod tests {
             .expect("the asynchronous initialization fixture must load"),
         );
         assert_eq!(
-            instance.dispatch(&record(), CpuBudget::http()).completion,
+            instance
+                .dispatch(&record(), OccupancyBudget::http())
+                .completion,
             Completion::Parked,
             "asynchronous initialization must park the original request"
         );
         assert_eq!(
             instance
-                .wake(1, &ResultRecord::Ok(Vec::new()), CpuBudget::http())
+                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::http())
                 .completion,
             Completion::Parked,
             "an intermediate initialization wake must keep the request pending"
@@ -402,7 +412,7 @@ mod tests {
         );
         assert_eq!(
             instance
-                .wake(2, &ResultRecord::Ok(Vec::new()), CpuBudget::http())
+                .wake(2, &ResultRecord::Ok(Vec::new()), OccupancyBudget::http())
                 .completion,
             Completion::Done,
             "the final initialization wake must run the original request"
@@ -421,13 +431,15 @@ mod tests {
                 .expect("the failing asynchronous initialization fixture must load"),
         );
         assert_eq!(
-            instance.dispatch(&record(), CpuBudget::http()).completion,
+            instance
+                .dispatch(&record(), OccupancyBudget::http())
+                .completion,
             Completion::Parked,
             "the fixture must reach its asynchronous initialization boundary"
         );
         assert_eq!(
             instance
-                .wake(1, &ResultRecord::Ok(Vec::new()), CpuBudget::http())
+                .wake(1, &ResultRecord::Ok(Vec::new()), OccupancyBudget::http())
                 .completion,
             Completion::Trapped,
             "a failed initialization wake must end the request"
@@ -442,7 +454,7 @@ mod tests {
     #[test]
     fn debugger_instances_refuse_capture_reset_and_a_second_dispatch() {
         let mut instance = instance("i32.const 42 global.set $initialized");
-        let result = instance.dispatch(&record(), CpuBudget::http());
+        let result = instance.dispatch(&record(), OccupancyBudget::http());
         assert_eq!(
             result.completion,
             Completion::Done,
@@ -461,7 +473,9 @@ mod tests {
             "a debug connection cannot be cloned through reset"
         );
         assert_eq!(
-            instance.dispatch(&record(), CpuBudget::http()).completion,
+            instance
+                .dispatch(&record(), OccupancyBudget::http())
+                .completion,
             Completion::Trapped,
             "a debugger instance cannot be reused for another request"
         );
@@ -500,7 +514,7 @@ mod tests {
                 module_bytes_compressed: 5242880,
                 package_bytes: 52428800,
                 instance_memory_max: 134217728,
-                cpu_ms_per_http_dispatch: 100,
+                occupancy_ms_per_http_dispatch: 100,
                 subrequests_per_dispatch: 20,
                 pending_futures_per_dispatch: 6,
             },

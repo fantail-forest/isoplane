@@ -108,12 +108,19 @@ pub fn render(node: &str, proxy: &ProxyMetrics, snap: NodeSnapshot) -> String {
         ),
     );
 
-    line(&mut o, format_args!("# HELP isoplane_cpu_ms_total CPU milliseconds reported by the node"
+    line(&mut o, format_args!("# HELP isoplane_occupancy_ms_total Measured occupied-worker milliseconds over execution and reactor intervals"
     ));
-    line(&mut o, format_args!("# TYPE isoplane_cpu_ms_total counter"));
     line(
         &mut o,
-        format_args!("{} {:.3}", n("isoplane_cpu_ms_total"), snap.cpu_ms_total),
+        format_args!("# TYPE isoplane_occupancy_ms_total counter"),
+    );
+    line(
+        &mut o,
+        format_args!(
+            "{} {:.3}",
+            n("isoplane_occupancy_ms_total"),
+            snap.occupancy_ms_total
+        ),
     );
 
     latency_lines(
@@ -298,7 +305,7 @@ mod tests {
     fn snap() -> NodeSnapshot {
         NodeSnapshot {
             dispatches_total: 12,
-            cpu_ms_total: 4.25,
+            occupancy_ms_total: 4.25,
             activation: Latency::from_samples(vec![300, 700, 900, 4000]),
             wake: Latency::from_samples(vec![8000, 9000, 40000]),
             instances_hot: 1,
@@ -319,7 +326,7 @@ mod tests {
         let out = render("n1", &p, snap());
         for series in [
             "isoplane_dispatches_total",
-            "isoplane_cpu_ms_total",
+            "isoplane_occupancy_ms_total",
             "isoplane_activation_us",
             "isoplane_wake_us",
             "isoplane_instances",

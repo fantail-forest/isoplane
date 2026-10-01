@@ -28,24 +28,24 @@ impl isoplane_engine::InstanceOps for PanicsOnDispatch {
     fn dispatch(
         &mut self,
         _rec: &DispatchRecord,
-        _b: CpuBudget,
+        _b: OccupancyBudget,
     ) -> isoplane_engine::DispatchOutcome {
         if let Some(first) = &mut self.first {
             let mut outcome = first.dispatch(_rec, _b);
             if self.end_clock_unavailable {
-                outcome.cpu_ns = 0;
-                outcome.cpu_measurement = isoplane_engine::CpuMeasurement::Incomplete;
+                outcome.occupancy_ns = 0;
+                outcome.occupancy_measurement = isoplane_engine::OccupancyMeasurement::Incomplete;
             }
             if self.start_clock_unavailable {
-                outcome.cpu_ns = 0;
+                outcome.occupancy_ns = 0;
                 outcome.wall_ns = 0;
-                outcome.cpu_measurement = isoplane_engine::CpuMeasurement::NotExecuted;
+                outcome.occupancy_measurement = isoplane_engine::OccupancyMeasurement::NotExecuted;
                 outcome.completion = Completion::Trapped;
                 outcome.status = isoplane_abi::status::PollStatus::Trapped {
                     code: TrapCode::Unknown,
                 };
                 outcome.trap = Some(isoplane_engine::TrapInfo {
-                    kind: isoplane_engine::TrapKind::CpuClockUnavailable,
+                    kind: isoplane_engine::TrapKind::OccupancyClockUnavailable,
                     message: "controlled clock refusal".into(),
                 });
             }
@@ -57,7 +57,7 @@ impl isoplane_engine::InstanceOps for PanicsOnDispatch {
         &mut self,
         _f: u64,
         _r: &isoplane_abi::result::ResultRecord,
-        _b: CpuBudget,
+        _b: OccupancyBudget,
     ) -> isoplane_engine::DispatchOutcome {
         panic!("a host assertion fired underneath a wake");
     }
@@ -150,7 +150,7 @@ impl Activator for PanicActivator {
                         },
                     )],
                 }]);
-                behaviour.slice_cpu = Some(Duration::from_nanos(11));
+                behaviour.slice_occupancy = Some(Duration::from_nanos(11));
                 Some(FakeActivator::new(behaviour).activate(_b)?)
             }
         };
@@ -171,7 +171,7 @@ pub(in crate::cell) fn panic_activator(module: ModuleId) -> Arc<dyn Activator> {
 }
 
 #[test]
-fn completion_events_keep_queue_and_park_wall_separate_from_hot_cpu() {
+fn completion_events_keep_queue_and_park_wall_separate_from_hot_occupancy() {
     let cell = cell(CellConfig {
         exec_threads: 0,
         ..CellConfig::for_test("completion-clock")
@@ -191,7 +191,7 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_cpu() {
             body: vec![],
         },
     ]);
-    behaviour.slice_cpu = Some(Duration::from_nanos(11));
+    behaviour.slice_occupancy = Some(Duration::from_nanos(11));
     let module = app(&cell, "completion-clock", behaviour);
     let events = Events::default();
     let rx = events
@@ -227,15 +227,15 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_cpu() {
     let response = rx
         .recv_timeout(Duration::from_secs(10))
         .expect("completed response");
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
         "all hot slices must produce one terminal event"
     );
     assert_eq!(
-        records[0]["cpu_ns"], 33,
-        "each prescribed hot slice must contribute CPU exactly once"
+        records[0]["invocation_occupancy_ns"], 33,
+        "each prescribed hot slice must contribute occupancy exactly once"
     );
     assert_eq!(
         records[0]["slices"], 3,
@@ -245,13 +245,15 @@ fn completion_events_keep_queue_and_park_wall_separate_from_hot_cpu() {
         records[0]["total_wall_ns"], 800,
         "total wall must include queueing and both parked intervals from original admission"
     );
-    assert_eq!(
-        response.cpu_ns, 33,
-        "the response and completion must share one accumulator"
+    assert!(
+        response.occupancy_ns >= 33,
+        "the response retains all invocation usage"
     );
     assert_eq!(
-        cell.meters(&module).expect("meters").cpu_ns(),
-        33,
+        cell.meters(&module).expect("meters").occupancy_ns(),
+        records[0]["occupancy_ns"]
+            .as_u64()
+            .expect("total occupancy"),
         "canonical reporting must not double-count slices"
     );
     cell.shutdown();
@@ -277,7 +279,7 @@ fn unavailable_admission_clock_is_reported_as_missing_total_wall() {
         })
         .expect("completed");
     cell.shutdown();
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -365,7 +367,7 @@ fn recorded_fault(
         );
     }
     cell.shutdown();
-    (result, events.records())
+    (result, events.completed(1))
 }
 
 #[test]
@@ -411,7 +413,7 @@ fn an_acquisition_panic_is_contained_and_completes_before_a_slot_exists() {
         "the owning boundary must report caught unwinding"
     );
     assert_eq!(
-        records[0]["cpu_complete"], true,
+        records[0]["occupancy_complete"], true,
         "no dispatch invocation occurred before activation failed"
     );
     assert!(
@@ -421,11 +423,11 @@ fn an_acquisition_panic_is_contained_and_completes_before_a_slot_exists() {
 }
 
 #[test]
-fn a_wake_panic_preserves_prior_slice_cpu_and_marks_the_interrupted_slice_incomplete() {
+fn a_wake_panic_preserves_prior_slice_occupancy_and_marks_the_interrupted_slice_incomplete() {
     let (result, records) = recorded_fault(FaultPoint::Wake);
-    assert_eq!(
-        result.cpu_ns, 11,
-        "panic response must preserve all previously measured CPU"
+    assert!(
+        result.occupancy_ns >= 11,
+        "panic response preserves prior invocation usage"
     );
     assert_eq!(
         records.len(),
@@ -433,11 +435,11 @@ fn a_wake_panic_preserves_prior_slice_cpu_and_marks_the_interrupted_slice_incomp
         "park and caught wake panic must share a completion owner"
     );
     assert_eq!(
-        records[0]["cpu_ns"], 11,
-        "the canonical CPU floor must retain the first slice"
+        records[0]["invocation_occupancy_ns"], 11,
+        "the canonical occupancy floor must retain the first slice"
     );
     assert_eq!(
-        records[0]["cpu_complete"], false,
+        records[0]["occupancy_complete"], false,
         "the interrupted wake cannot be recorded as a complete zero"
     );
     assert_eq!(
@@ -484,13 +486,13 @@ fn real_completion_wasm(imports: &str, data: &str, body: &str) -> Vec<u8> {
 
 fn real_completion_outcome(
     body: &str,
-    cpu_ms: u32,
+    occupancy_ms: u32,
     wall_ms_cap: u32,
 ) -> serde_json::Map<String, serde_json::Value> {
     let (cell, module) = real_completion_cell(real_completion_wasm("", "", body), wall_ms_cap);
     let events = Events::default();
     let record = DispatchRecord {
-        cpu_budget_ms: cpu_ms,
+        occupancy_budget_ms: occupancy_ms,
         ..http(123)
     };
     events
@@ -504,7 +506,7 @@ fn real_completion_outcome(
         })
         .expect("real engine dispatch must end");
     cell.shutdown();
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -529,8 +531,8 @@ fn real_guest_success_has_one_canonical_completion() {
         "a normal empty-stack return must complete successfully"
     );
     assert_eq!(
-        event["cpu_complete"], true,
-        "the real invocation must have a complete CPU reading"
+        event["occupancy_complete"], true,
+        "the real invocation must have a complete occupancy reading"
     );
 }
 
@@ -544,15 +546,15 @@ fn real_guest_trap_has_one_canonical_failure() {
 }
 
 #[test]
-fn real_cpu_hard_kill_is_distinct_from_the_execution_wall_backstop() {
+fn real_occupancy_hard_kill_is_distinct_from_the_execution_wall_backstop() {
     let event = real_completion_outcome(
         "(loop br 0) unreachable",
         0,
         CellConfig::default().wall_ms_cap,
     );
     assert_eq!(
-        event["outcome"], "cpu_limit",
-        "the real CPU hard guard must preserve its typed reason"
+        event["outcome"], "occupancy_limit",
+        "the real occupancy hard guard must preserve its typed reason"
     );
     assert_eq!(
         event["status"], 503,
@@ -561,11 +563,11 @@ fn real_cpu_hard_kill_is_distinct_from_the_execution_wall_backstop() {
 }
 
 #[test]
-fn real_clean_cpu_kill_has_one_budget_completion() {
+fn a_real_zero_budget_dispatch_has_one_budget_completion() {
     let event = real_completion_outcome("i64.const 0", 0, CellConfig::default().wall_ms_cap);
     assert_eq!(
-        event["outcome"], "cpu_limit",
-        "returning at the zero CPU budget is a clean budget outcome"
+        event["outcome"], "occupancy_limit",
+        "returning at the zero occupancy budget is a clean budget outcome"
     );
     assert_eq!(
         event["status"], 503,
@@ -578,7 +580,7 @@ fn real_zero_wall_backstop_reports_execution_wall_limit() {
     let event = real_completion_outcome("(loop br 0) unreachable", 1000, 0);
     assert_eq!(
         event["outcome"], "execution_wall_limit",
-        "a wall backstop must never be relabelled CPU exhaustion"
+        "a wall backstop must never be relabelled occupancy exhaustion"
     );
     assert_eq!(
         event["execution_wall_cap_ns"], 0,
@@ -651,7 +653,7 @@ async fn ended_real_guest_response(transport_failure: bool) {
         "the terminal transport producer must determine the response status"
     );
     cell.shutdown();
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -710,7 +712,7 @@ fn a_real_trapping_capture_hint_completes_its_active_dispatch() {
         "a trapping hint cannot leave the requester parked"
     );
     cell.shutdown();
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -731,12 +733,12 @@ fn a_real_trapping_capture_hint_completes_its_active_dispatch() {
     );
     assert_eq!(
         event["capture_hint_complete"], true,
-        "a returned trapping hint still has a complete CPU measurement"
+        "a returned trapping hint still has a complete occupancy measurement"
     );
     assert_eq!(
-        event["cpu_ns"].as_u64(),
-        Some(cell.meters(&module).expect("meters").cpu_ns()),
-        "hint diagnostics must not silently alter purchased dispatch CPU accounting"
+        event["occupancy_ns"].as_u64(),
+        Some(cell.meters(&module).expect("meters").occupancy_ns()),
+        "hint diagnostics must not silently alter purchased dispatch occupancy accounting"
     );
     assert_eq!(
         cell.futures().live_futures(),
@@ -775,16 +777,16 @@ fn a_panicking_capture_hint_marks_its_usage_incomplete_and_releases_the_dispatch
         cell.force_hibernate(cell.resident_ids()[0]).is_err(),
         "the hint panic must fail capture without escaping containment"
     );
-    assert_eq!(
+    assert!(
         response
             .recv_timeout(Duration::from_secs(10))
             .expect("panic response")
-            .cpu_ns,
-        11,
-        "a failed hint must retain previously measured dispatch CPU"
+            .occupancy_ns
+            >= 11,
+        "a failed hint retains prior invocation usage"
     );
     cell.shutdown();
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -799,12 +801,12 @@ fn a_panicking_capture_hint_marks_its_usage_incomplete_and_releases_the_dispatch
         "an interrupted hint cannot report a complete zero measurement"
     );
     assert_eq!(
-        records[0]["cpu_complete"], true,
+        records[0]["occupancy_complete"], true,
         "the separate dispatch invocation was completely measured"
     );
     assert_eq!(
-        records[0]["total_guest_cpu_complete"], false,
-        "diagnostic guest CPU must expose the interrupted hint"
+        records[0]["total_guest_occupancy_complete"], false,
+        "diagnostic guest occupancy must expose the interrupted hint"
     );
     assert_eq!(
         cell.futures().live_futures(),
@@ -844,7 +846,7 @@ fn shutdown_completes_accepted_queued_work_without_inventing_an_instance() {
         503,
         "accepted queued work must not be abandoned on stop"
     );
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -902,7 +904,7 @@ fn shutdown_ends_parked_owners_and_late_futures_cannot_complete_them_again() {
     );
     cell.complete_future(future, isoplane_abi::result::ResultRecord::Ok(vec![]));
     assert_eq!(
-        events.records().len(),
+        events.completed(1).len(),
         1,
         "a late timer completion cannot duplicate orderly cancellation"
     );
@@ -937,18 +939,18 @@ fn a_worker_that_loses_its_cell_still_finalizes_accepted_queued_owners() {
     );
     cell.shutdown();
     assert_eq!(
-        events.records().len(),
+        events.completed(1).len(),
         1,
         "the weak-cell branch must emit one terminal record"
     );
 }
 
 #[test]
-fn an_unavailable_engine_endpoint_cannot_report_complete_zero_dispatch_cpu() {
+fn an_unavailable_engine_endpoint_cannot_report_complete_zero_dispatch_occupancy() {
     let (result, records) = recorded_fault(FaultPoint::EndClock);
     assert_eq!(
-        result.cpu_ns, 0,
-        "a failed endpoint can return only the known CPU floor"
+        result.occupancy_ns, 0,
+        "a failed endpoint can return only the known occupancy floor"
     );
     assert_eq!(
         records.len(),
@@ -956,15 +958,15 @@ fn an_unavailable_engine_endpoint_cannot_report_complete_zero_dispatch_cpu() {
         "measurement failure cannot erase terminal completion"
     );
     assert_eq!(
-        records[0]["cpu_complete"], false,
+        records[0]["occupancy_complete"], false,
         "the host must consume engine measurement validity rather than certify a complete zero"
     );
     assert_eq!(
-        records[0]["cpu_scope"], "dispatch_invocations",
-        "CPU completeness must name its measured scope"
+        records[0]["occupancy_scope"], "dispatch_invocations_and_reactor_polls",
+        "occupancy completeness must name its measured scope"
     );
     assert_eq!(
-        records[0]["activation_cpu_included"], false,
+        records[0]["activation_occupancy_included"], false,
         "activation usage remains outside the invocation meter"
     );
 }
@@ -1019,9 +1021,9 @@ fn refused_wake(discard: bool) {
     };
     cell.run_dispatch(*job);
     let slot = cell.slot(cell.resident_ids()[0]).expect("parked slot");
-    let measured_cpu_ns = cell
+    let measured_occupancy_ns = cell
         .active
-        .with(&slot.id, |request| request.completion.usage().cpu_ns)
+        .with(&slot.id, |request| request.completion.usage().occupancy_ns)
         .expect("active owner usage");
     if discard {
         slot.discard();
@@ -1036,9 +1038,9 @@ fn refused_wake(discard: bool) {
         result.status, 409,
         "terminal entry refusal must answer the parked requester"
     );
-    assert_eq!(
-        result.cpu_ns, measured_cpu_ns,
-        "entry refusal must preserve prior invocation usage"
+    assert!(
+        result.occupancy_ns >= measured_occupancy_ns,
+        "entry refusal preserves usage, including any reactor work completed since parking"
     );
     assert!(
         !cell.active.contains_key(&slot.id),
@@ -1050,7 +1052,7 @@ fn refused_wake(discard: bool) {
         "terminal refusal must release owned timers"
     );
     cell.run_wake(slot);
-    let records = events.records();
+    let records = events.completed(1);
     assert_eq!(
         records.len(),
         1,
@@ -1092,19 +1094,61 @@ fn a_clock_entry_refusal_reports_no_guest_execution() {
         "clock refusal must finalize its accepted owner once"
     );
     assert_eq!(
-        records[0]["outcome"], "cpu_clock_unavailable",
+        records[0]["outcome"], "occupancy_clock_unavailable",
         "the typed clock refusal must survive host classification"
     );
     assert_eq!(
-        records[0]["cpu_ns"], 0,
-        "refusal before guest entry has no invocation CPU"
+        records[0]["occupancy_ns"], 0,
+        "refusal before guest entry has no invocation occupancy"
     );
     assert_eq!(
-        records[0]["cpu_complete"], true,
+        records[0]["occupancy_complete"], true,
         "known absence of invocation is distinct from missing measurement"
     );
     assert_eq!(
-        result.cpu_ns, 0,
+        result.occupancy_ns, 0,
         "the caller and event must share known invocation usage"
     );
+}
+
+#[test]
+fn completion_includes_the_final_reactor_poll_even_when_that_poll_finishes_the_dispatch() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    let cell = cell(CellConfig {
+        exec_threads: 0,
+        ..CellConfig::for_test("final-reactor-poll")
+    });
+    let module = app(&cell, "final-reactor-poll", FakeBehaviour::done());
+    let events = Events::default();
+    let owner = events
+        .scope(|| cell.completion_owner(&module, &http(1)))
+        .expect("completion owner");
+    let meters = cell.meters(&module).expect("tenant meters");
+    let task = crate::reactor_accounting::TaskUsage::new(meters.clone(), Some(owner.clone()));
+    let mut future = Box::pin(task.measure(async {
+        owner.select(TerminalReason::Success, 200);
+        owner.finish();
+        assert!(
+            events.records().is_empty(),
+            "the current reactor poll is not accounted yet"
+        );
+    }));
+    crate::occupancy_clock::with_readings([100, 150], || {
+        assert_eq!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(())
+        );
+    });
+    drop(future);
+    let records = events.completed(1);
+    assert_eq!(records[0]["occupancy_ns"], 50);
+    assert_eq!(records[0]["reactor_occupancy_ns"], 50);
+    assert_eq!(records[0]["invocation_occupancy_ns"], 0);
+    assert_eq!(meters.occupancy_ns(), 50);
+    owner.finish();
+    assert_eq!(events.records().len(), 1);
+    cell.shutdown();
 }

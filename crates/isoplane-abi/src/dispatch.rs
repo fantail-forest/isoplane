@@ -10,9 +10,9 @@ pub struct DispatchRecord {
     /// W3C trace context.
     pub trace: TraceContext,
     /// The future the host completes to cancel this dispatch. A guest observes
-    /// it at its next await; one that never awaits is killed at its CPU budget.
+    /// it at its next await; one that never awaits is killed at its occupancy budget.
     pub cancel_future: u64,
-    pub cpu_budget_ms: u32,
+    pub occupancy_budget_ms: u32,
     /// Wall clock at dispatch start, frozen for the slice.
     pub now_ms: u64,
 }
