@@ -79,7 +79,7 @@ pub trait SnapshotReservation: Send {
     fn load(&mut self) -> Result<Vec<u8>, SnapshotError>;
 }
 
-/// Anonymous, preallocated files, reclaimed on drop or process termination.
+/// Private, preallocated files, reclaimed on drop or process termination.
 /// Filesystems that cannot allocate physical capacity are rejected.
 pub struct LocalSnapshotStorage {
     root: PathBuf,
@@ -319,7 +319,7 @@ mod tests {
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
         let capacity = SnapshotBytes(8192);
         let mut reservation = storage
-            .reserve_with(capacity, FileExt::allocate)
+            .reserve_with(capacity, allocate_snapshot)
             .expect("reserve snapshot blocks");
         let allocated_bytes = reservation.file.allocated_size().expect("read allocation");
         assert!(
@@ -344,12 +344,26 @@ mod tests {
                 "repeated suspension must retain its original admission capacity"
             );
         }
+        // Windows delete-on-close files can have directory entries, but other
+        // handles cannot read or remove their reserved storage.
+        for entry in std::fs::read_dir(root.path()).expect("list snapshots") {
+            let path = entry.expect("read snapshot entry").path();
+            assert!(
+                File::open(&path).is_err(),
+                "reservation is readable at {path:?}"
+            );
+            assert!(
+                std::fs::remove_file(&path).is_err(),
+                "reservation can be evicted at {path:?}"
+            );
+        }
+        drop(reservation);
         assert_eq!(
             std::fs::read_dir(root.path())
-                .expect("list snapshots")
+                .expect("list released snapshots")
                 .count(),
             0,
-            "active reservations must expose no paths for spool eviction or upload"
+            "releasing a reservation must reclaim its storage"
         );
     }
 
@@ -389,7 +403,7 @@ mod tests {
         let root = tempfile::tempdir().expect("create owned snapshot directory");
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
         let result = storage.reserve_with(SnapshotBytes(4096), |file, capacity| {
-            file.allocate(capacity)?;
+            allocate_snapshot(file, capacity)?;
             Err(io::Error::from(io::ErrorKind::StorageFull))
         });
         assert!(
@@ -406,6 +420,15 @@ mod tests {
     }
 
     #[test]
+    fn unallocated_capacity_is_rejected() {
+        let root = tempfile::tempdir().expect("create snapshot directory");
+        let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
+        let result = storage.reserve_with(SnapshotBytes(8192), |_, _| Ok(()));
+        assert!(matches!(result, Err(SnapshotError::Unreserved { .. })));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn a_sparse_file_does_not_satisfy_a_capacity_reservation() {
         let root = tempfile::tempdir().expect("create owned snapshot directory");
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
@@ -421,7 +444,7 @@ mod tests {
         let root = tempfile::tempdir().expect("create owned snapshot directory");
         let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
         let mut reservation = storage
-            .reserve_with(SnapshotBytes(4096), FileExt::allocate)
+            .reserve_with(SnapshotBytes(4096), allocate_snapshot)
             .expect("reserve snapshot blocks");
         reservation.save(b"old").expect("save original snapshot");
         let path = root.path().join("read-only");
