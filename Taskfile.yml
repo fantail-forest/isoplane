@@ -24,7 +24,7 @@ vars:
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
 
 env:
-  PATH: '{{.USER_HOME}}/.dotnet{{.PATH_SEPARATOR}}{{.USER_HOME}}/.cargo/bin{{.PATH_SEPARATOR}}{{.USER_HOME}}/.local/bin{{.PATH_SEPARATOR}}{{env "PATH"}}{{if eq OS "windows"}};C:/msys64/mingw64/bin;C:/msys64/usr/bin{{end}}'
+  PATH: '{{.USER_HOME}}/.dotnet{{.PATH_SEPARATOR}}{{.USER_HOME}}/.cargo/bin{{.PATH_SEPARATOR}}{{.USER_HOME}}/.local/bin{{.PATH_SEPARATOR}}{{if eq OS "windows"}}C:/msys64/mingw64/bin;C:/msys64/usr/bin;{{end}}{{env "PATH"}}'
   DOTNET_ROOT: '{{env "DOTNET_ROOT" | default (printf "%s/.dotnet" .USER_HOME)}}'
   CARGO_TARGET_DIR: '{{env "CARGO_TARGET_DIR" | default .NATIVE_TARGET}}'
   CARGO_BUILD_BUILD_DIR: '{{env "CARGO_BUILD_BUILD_DIR" | default (env "CARGO_TARGET_DIR") | default .NATIVE_TARGET}}'
