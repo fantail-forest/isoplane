@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.error
 import os
 import shutil
 import selectors
@@ -122,10 +123,15 @@ def objects(d):
 
 
 def request(url, method, path, data=None):
-    with urllib.request.urlopen(
-        urllib.request.Request(url + path, data=data, method=method), timeout=120
-    ) as r:
-        return r.status, r.read()
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(url + path, data=data, method=method), timeout=120
+        ) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as error:
+        with error:
+            body = error.read().decode("utf-8", errors="replace")
+        raise AssertionError(f"{method} {path} returned HTTP {error.code}: {body}") from error
 
 
 def verify_image(url, container, s3, original):
@@ -304,6 +310,9 @@ class Gallery(unittest.TestCase):
                             + ": real guest EXIF/resize/S3/verified-TLS PostgreSQL ingest and retrieval passed",
                             flush=True,
                         )
+                    except Exception:
+                        print(logpath.read_text(), flush=True)
+                        raise
                     finally:
                         process.stdin.close()
                         try:
