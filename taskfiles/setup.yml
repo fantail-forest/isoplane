@@ -28,6 +28,7 @@ tasks:
 
   rust:
     cmds:
+      - rustup component add rustfmt clippy
       - rustup target add wasm32-unknown-unknown wasm32-wasip1
 
   wasm-tools:
