@@ -72,7 +72,7 @@ struct Entry {
 
 impl Drop for Entry {
     fn drop(&mut self) {
-        self.cancel_task();
+        self.abort_task();
     }
 }
 
@@ -97,6 +97,10 @@ impl Entry {
 
     fn cancel_task(&mut self) {
         self.finish_wait("cancelled");
+        self.abort_task();
+    }
+
+    fn abort_task(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
         }
