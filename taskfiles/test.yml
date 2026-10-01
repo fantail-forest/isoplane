@@ -39,11 +39,35 @@ tasks:
 
   managed:
     desc: Run all managed tests using prepared assemblies
-    deps: [':managed:tests', ':native', ':runtime:toolchain', process-fixture]
+    deps: [':managed:tests', ':native', ':runtime:toolchain', process-fixture, managed-bundle-fixture]
     cmds:
       - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
         cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
       - '"{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}'
+
+  managed-bundle-fixture:
+    label: 'managed-bundle-fixture:{{.PLATFORM}}'
+    desc: Prepare reusable assembly, symbol and SDK metadata inputs for bundle tests
+    deps: [':initialize']
+    vars:
+      DIRECTORY: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-bundle-fixture'
+    sources:
+      - tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/**/*
+      - guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets
+      - Directory.Build.props
+      - global.json
+      - taskfiles/test.yml
+    generates:
+      - '{{.DIRECTORY}}/result.json'
+      - '{{.DIRECTORY}}/bin/Application/debug/Application.dll'
+      - '{{.DIRECTORY}}/bin/Application/debug/Application.pdb'
+      - '{{.DIRECTORY}}/bin/Application/debug/fr/Application.resources.dll'
+      - '{{.DIRECTORY}}/bin/Application/debug/fr-CA/Application.resources.dll'
+      - '{{.DIRECTORY}}/bin/Dependency/debug/Dependency.dll'
+      - '{{.DIRECTORY}}/bin/Dependency/debug/Dependency.pdb'
+    cmds:
+      - 'mkdir -p "{{.DIRECTORY}}"'
+      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj -restore -t:IsoplaneManagedBundle -p:UseArtifactsOutput=true -p:ArtifactsPath="{{.DIRECTORY}}" -getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory -getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference -getResultOutputFile:"{{.DIRECTORY}}/result.json" -nodeReuse:false'
 
   process-fixture:
     internal: true

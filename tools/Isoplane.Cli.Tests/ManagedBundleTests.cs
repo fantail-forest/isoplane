@@ -1,3 +1,4 @@
+using Isoplane.TestSupport;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.Text.Json;
@@ -78,9 +79,25 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     [Fact]
     public async Task building_a_bundle_uses_and_cleans_project_local_metadata()
     {
-        var project = fixture.Project;
+        using var directory = new BundleDirectory();
+        var project = directory.Path;
+        await File.WriteAllTextAsync(Path.Combine(project, "Application.csproj"), $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <IsoplaneApplicationFactory>Application.Create</IsoplaneApplicationFactory>
+                <IsoplaneRuntimeDirectory>{System.Security.SecurityElement.Escape(fixture.SharedRuntime)}</IsoplaneRuntimeDirectory>
+              </PropertyGroup>
+              <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
+            </Project>
+            """);
+        await File.WriteAllTextAsync(Path.Combine(project, "Code.cs"),
+            "public static class Application { public static object Create() => new object(); }");
+        await File.WriteAllTextAsync(Path.Combine(project, "NuGet.Config"),
+            "<configuration><packageSources><clear /></packageSources></configuration>");
         var output = Path.Combine(project, "application.tar");
-        await ManagedBundle.CreateAsync(new(project, "Debug", output), CancellationToken.None);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        await ManagedBundle.CreateAsync(new(project, "Debug", output), deadline.Token);
         var scratch = Path.Combine(project, ".isoplane", "bundle");
         Assert.True(File.Exists(output), "The project build must produce its application bundle.");
         Assert.True(Directory.Exists(scratch) && !Directory.EnumerateFileSystemEntries(scratch).Any(),
@@ -265,7 +282,7 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     [Fact]
     public async Task symbolic_links_are_not_written_as_bundle_inputs()
     {
-        using var directory = new BundleDirectory();
+        using var directory = new FileSystemTestDirectory("isoplane-bundle-links-");
         var application = Path.Combine(directory.Path, "Application.dll");
         File.CreateSymbolicLink(application, fixture.Application);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => ManagedBundle.WriteAsync(fixture.Metadata(applicationPath: application), Path.Combine(directory.Path, "application.tar"), CancellationToken.None));
@@ -273,67 +290,41 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
     }
 }
 
-public sealed class ManagedBundleFixture : IAsyncLifetime
+/// <summary>Read-only bundle inputs prepared by Task for this platform.</summary>
+public sealed class ManagedBundleFixture
 {
-    private readonly BundleDirectory directory = new();
-    private string[] platform = [];
-    public JsonElement SdkMetadata { get; private set; }
-    public string Project => Path.Combine(directory.Path, "Application");
-    public string Application => Path.Combine(directory.Path, "Application/bin/Debug/net10.0/Application.dll");
-    public string Satellite(string culture) => Path.Combine(directory.Path, "Application/bin/Debug/net10.0", culture, "Application.resources.dll");
-    public string Dependency => Path.Combine(directory.Path, "Dependency/bin/Debug/net10.0/Dependency.dll");
+    private readonly string[] platform;
+    internal JsonElement SdkMetadata { get; }
+    internal string Application { get; }
+    internal string Dependency { get; }
+    internal string Satellite(string culture) => Path.Combine(Path.GetDirectoryName(Application)!, culture, "Application.resources.dll");
+    internal string SharedRuntime => SdkMetadata.GetProperty("Properties").GetProperty("IsoplaneRuntimeDirectory").GetString()!;
 
-    public async Task InitializeAsync()
+    /// <summary>Load prepared SDK metadata, reporting the preparation command when it is missing.</summary>
+    public ManagedBundleFixture()
     {
-        Directory.CreateDirectory(SharedRuntime);
-        await File.WriteAllTextAsync(Path.Combine(SharedRuntime, "runtime.json"), "{\"sdkVersion\":\"0.0.0-test\"}\n");
-        var dependency = Directory.CreateDirectory(Path.Combine(directory.Path, "Dependency"));
-        var application = Directory.CreateDirectory(Path.Combine(directory.Path, "Application"));
-        await File.WriteAllTextAsync(Path.Combine(directory.Path, "NuGet.Config"), "<configuration><packageSources><clear/></packageSources></configuration>");
-        await File.WriteAllTextAsync(Path.Combine(dependency.FullName, "Dependency.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(dependency.FullName, "Code.cs"), "public static class Dependency { public static string Value => \"dependency\"; }");
-        await File.WriteAllTextAsync(Path.Combine(application.FullName, "Application.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><ProjectReference Include=\"../Dependency/Dependency.csproj\"/><EmbeddedResource Include=\"data.txt\"/></ItemGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(application.FullName, "Code.cs"), "public static class Application { public static string Create() => Dependency.Value; }");
-        await File.WriteAllTextAsync(Path.Combine(application.FullName, "data.txt"), "embedded data");
-        foreach (var culture in new[] { "fr", "fr-CA" })
-            await File.WriteAllTextAsync(Path.Combine(application.FullName, "Messages." + culture + ".resx"),
-                "<root><data name=\"Greeting\" xml:space=\"preserve\"><value>" + culture + " greeting</value></data></root>");
-        var project = System.Xml.Linq.XDocument.Load(Path.Combine(application.FullName, "Application.csproj"));
-        project.Root!.Add(new System.Xml.Linq.XElement("PropertyGroup",
-            new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
-            new System.Xml.Linq.XElement("IsoplaneApplicationFactory", "Application.Create"),
-            new System.Xml.Linq.XElement("IsoplaneRuntimeDirectory", SharedRuntime)));
-        project.Root.Add(new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("None",
-            new System.Xml.Linq.XAttribute("Update", "data.txt"), new System.Xml.Linq.XElement("CopyToOutputDirectory", "PreserveNewest"),
-            new System.Xml.Linq.XElement("TargetPath", "data/greeting.txt"))));
-        project.Root.Add(new System.Xml.Linq.XElement("Import", new System.Xml.Linq.XAttribute("Project", Path.Combine(AppContext.BaseDirectory, "Isoplane.ManagedBundle.targets"))));
-        project.Save(Path.Combine(application.FullName, "Application.csproj"));
-        var resultPath = Path.Combine(directory.Path, "result.json");
-        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory.Path };
-        foreach (var argument in new[] { "msbuild", Path.Combine(application.FullName, "Application.csproj"), "-restore", "-target:IsoplaneManagedBundle", "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory", "-getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference", "-getResultOutputFile:" + resultPath, "-nodeReuse:false" }) start.ArgumentList.Add(argument);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not build managed bundle fixture.");
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-        try
-        {
-            await process.WaitForExitAsync(deadline.Token);
-            Assert.True(process.ExitCode == 0, "Managed bundle fixture compilation must succeed: " + await output + await error);
-        }
-        finally
-        {
-            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
-        }
-        using var result = JsonDocument.Parse(await File.ReadAllBytesAsync(resultPath));
+        var prepared = Environment.GetEnvironmentVariable("ISOPLANE_TEST_MANAGED_BUNDLE")
+            ?? throw new InvalidOperationException("Run task test:managed-bundle-fixture before the managed bundle tests.");
+        var metadata = Path.Combine(prepared, "result.json");
+        if (!File.Exists(metadata))
+            throw new InvalidOperationException($"Missing {metadata}. Run task test:managed-bundle-fixture.");
+        using var result = JsonDocument.Parse(File.ReadAllBytes(metadata));
         SdkMetadata = result.RootElement.Clone();
-        platform = result.RootElement.GetProperty("Items").GetProperty("ReferencePath").EnumerateArray()
+        var items = SdkMetadata.GetProperty("Items");
+        var assemblies = items.GetProperty("IsoplaneBundleAssembly").EnumerateArray()
+            .Select(item => item.GetProperty("FullPath").GetString()!).ToArray();
+        var symbols = items.GetProperty("IsoplaneBundleSymbol").EnumerateArray()
+            .Select(item => item.GetProperty("FullPath").GetString()!);
+        foreach (var path in assemblies.Concat(symbols).Append(Path.Combine(SharedRuntime, "runtime.json")))
+            if (!File.Exists(path))
+                throw new InvalidOperationException($"Missing {path}. Run task test:managed-bundle-fixture.");
+        Application = assemblies.Single(path => Path.GetFileName(path) == "Application.dll");
+        Dependency = assemblies.Single(path => Path.GetFileName(path) == "Dependency.dll");
+        platform = items.GetProperty("ReferencePath").EnumerateArray()
             .Select(item => item.GetProperty("FullPath").GetString()!).Where(path => Path.GetFileName(path) != "Dependency.dll").ToArray();
     }
 
-    /// <summary>Stands in for the runtimes an SDK carries; a bundle only copies their identity.</summary>
-    public string SharedRuntime => Path.Combine(directory.Path, "runtime");
-
-    public JsonElement Metadata(bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false, string? runtimeDirectory = null)
+    internal JsonElement Metadata(bool includeDependency = true, string? asset = null, string? additionalAssembly = null, string? applicationPath = null, string? assetTarget = null, bool includeSatellites = false, string? runtimeDirectory = null)
     {
         var assemblies = new List<string> { applicationPath ?? Application };
         if (includeDependency) assemblies.Add(Dependency);
@@ -347,12 +338,11 @@ public sealed class ManagedBundleFixture : IAsyncLifetime
                 IsoplaneBundleAssembly = assemblies.Select(path => new { FullPath = path }),
                 IsoplaneBundleSymbol = assemblies.Where(path => !path.EndsWith(".resources.dll", StringComparison.Ordinal)).Select(path => new { FullPath = Path.ChangeExtension(path, ".pdb") }),
                 IsoplaneBundlePlatformReference = platform.Select(path => new { FullPath = path }),
-                IsoplaneBundleAsset = (asset is null ? Array.Empty<string>() : [asset]).Select(path => new { FullPath = Path.Combine(directory.Path, path), TargetPath = assetTarget ?? Path.GetFileName(path) })
+                IsoplaneBundleAsset = (asset is null ? Array.Empty<string>() : [asset]).Select(path => new { FullPath = path, TargetPath = assetTarget ?? Path.GetFileName(path) })
             }
         });
     }
 
-    public Task DisposeAsync() { directory.Dispose(); return Task.CompletedTask; }
 }
 
 internal sealed class BundleDirectory : IDisposable

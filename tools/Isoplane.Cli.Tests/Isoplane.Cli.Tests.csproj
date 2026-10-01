@@ -9,6 +9,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="fixtures/**/*.cs" />
+    <EmbeddedResource Remove="fixtures/**/*" />
     <Compile Include="../TestSupport/FileSystemTestDirectory.cs" Link="FileSystemTestDirectory.cs" />
     <Compile Include="../TestSupport/PosixTheoryAttribute.cs" Link="PosixTheoryAttribute.cs" />
     <None Include="../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" Link="Isoplane.ManagedBundle.targets" CopyToOutputDirectory="PreserveNewest" />

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsoplaneManagedBundleBuild>true</IsoplaneManagedBundleBuild>
+    <IsoplaneApplicationFactory>Application.Create</IsoplaneApplicationFactory>
+    <IsoplaneRuntimeDirectory>$(MSBuildThisFileDirectory)../runtime</IsoplaneRuntimeDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Dependency/Dependency.csproj" />
+    <EmbeddedResource Include="data.txt" />
+    <None Update="data.txt" CopyToOutputDirectory="PreserveNewest" TargetPath="data/greeting.txt" />
+  </ItemGroup>
+  <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
+</Project>
