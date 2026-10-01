@@ -1,6 +1,6 @@
 //! One content-addressed pre-initialized WASM image per local application.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
@@ -122,12 +122,24 @@ impl Cache {
             .parent()
             .context("locating local preparation directory")?;
         std::fs::create_dir_all(directory)?;
+        let publication_file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.path.with_extension("wasm-cache.lock"))
+            .context("opening local preparation publication lock")?;
+        let mut publication_lock = fd_lock::RwLock::new(publication_file);
+        let _publication_guard = publication_lock
+            .write()
+            .context("locking local preparation publication")?;
         let mut pending = tempfile::NamedTempFile::new_in(directory)?;
         pending.write_all(self.key.as_bytes())?;
         pending.write_all(blake3::hash(wasm).as_bytes())?;
         pending.write_all(wasm)?;
         pending.flush()?;
         pending
+            .into_temp_path()
             .persist(&self.path)
             .with_context(|| format!("publishing local preparation {}", self.path.display()))?;
         Ok(())
@@ -496,12 +508,18 @@ mod tests {
             image == b"first image" || image == b"second image",
             "concurrent publication must leave a checksum-valid, complete image"
         );
+        let mut files = std::fs::read_dir(first.path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        files.sort();
         assert_eq!(
-            std::fs::read_dir(first.path.parent().unwrap())
-                .unwrap()
-                .count(),
-            1,
-            "publication must retain one cache entry and clean temporary files"
+            files,
+            [
+                "preinitialized.wasm-cache",
+                "preinitialized.wasm-cache.lock"
+            ],
+            "publication must retain one cache entry and its lock, without temporary files"
         );
     }
 
