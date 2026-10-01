@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Seek, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fs4::FileExt;
 
@@ -107,8 +107,14 @@ impl LocalSnapshotStorage {
         capacity: SnapshotBytes,
         allocate: impl FnOnce(&File, u64) -> io::Result<()>,
     ) -> Result<LocalSnapshotReservation, SnapshotError> {
-        let file = tempfile::tempfile_in(&self.root)
+        let file = snapshot_file(&self.root)
             .map_err(|source| self.io_error("create anonymous file for", source))?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|source| self.io_error("restrict access to", source))?;
+        }
         allocate(&file, capacity.0)
             .map_err(|source| self.io_error("reserve capacity for", source))?;
         let allocated = file
@@ -142,12 +148,70 @@ impl SnapshotStorage for LocalSnapshotStorage {
 }
 
 #[cfg(not(target_os = "macos"))]
+fn snapshot_file(root: &Path) -> io::Result<File> {
+    tempfile::tempfile_in(root)
+}
+
+#[cfg(target_os = "macos")]
+fn snapshot_file(root: &Path) -> io::Result<File> {
+    let temporary = tempfile::NamedTempFile::new_in(root)?;
+    let mut metadata_name = std::ffi::OsString::from("._");
+    metadata_name.push(
+        temporary.path().file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "snapshot has no file name")
+        })?,
+    );
+    let metadata = temporary.path().with_file_name(metadata_name);
+    let (file, path) = temporary.into_parts();
+    path.close()?;
+    // macOS provenance can leave an AppleDouble file after unlinking on a share.
+    match std::fs::remove_file(metadata) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(file)
+}
+
 fn allocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
+    match preallocate_snapshot(file, bytes) {
+        // Some shares accept preallocation but leave the file sparse. Writing
+        // the capacity is a fallback; reserve_with still verifies the blocks.
+        Ok(()) if file.allocated_size()? < bytes => materialize_snapshot(file, bytes),
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => {
+            materialize_snapshot(file, bytes)
+        }
+        result => result,
+    }
+}
+
+fn materialize_snapshot(file: &File, bytes: u64) -> io::Result<()> {
+    // Filesystems without preallocation still need real blocks, not sparse length.
+    let mut writer = io::BufWriter::new(file);
+    io::copy(&mut io::repeat(0).take(bytes), &mut writer)?;
+    writer.flush()?;
+    flush_snapshot(file)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn flush_snapshot(file: &File) -> io::Result<()> {
+    file.sync_data()
+}
+
+#[cfg(target_os = "macos")]
+fn flush_snapshot(file: &File) -> io::Result<()> {
+    // These anonymous snapshots only survive within this process. fsync is
+    // sufficient; Rust's F_FULLFSYNC requires device guarantees absent on SMB.
+    nix::unistd::fsync(file).map_err(Into::into)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn preallocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
     file.allocate(bytes)
 }
 
 #[cfg(target_os = "macos")]
-fn allocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
+fn preallocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
     use nix::{fcntl, libc};
 
     // F_ALLOCATECONTIG can succeed with a partial allocation. Admission needs
@@ -164,7 +228,12 @@ fn allocate_snapshot(file: &File, bytes: u64) -> io::Result<()> {
         })?,
         fst_bytesalloc: 0,
     };
-    fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut allocation))?;
+    fcntl::fcntl(file, fcntl::FcntlArg::F_PREALLOCATE(&mut allocation)).map_err(
+        |error| match error {
+            nix::errno::Errno::ENOTSUP => io::Error::new(io::ErrorKind::Unsupported, error),
+            error => error.into(),
+        },
+    )?;
     file.set_len(bytes)
 }
 
@@ -202,7 +271,7 @@ impl SnapshotReservation for LocalSnapshotReservation {
         self.file
             .rewind()
             .and_then(|()| self.file.write_all(bytes))
-            .and_then(|()| self.file.sync_data())
+            .and_then(|()| flush_snapshot(&self.file))
             .map_err(|source| self.io_error("save", source))?;
         self.saved_bytes = Some(bytes.len());
         Ok(())
@@ -223,6 +292,36 @@ impl SnapshotReservation for LocalSnapshotReservation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_reclaimed(root: &std::path::Path) {
+        let retained = std::fs::read_dir(root)
+            .expect("list released snapshots")
+            .map(|entry| entry.expect("read snapshot entry").path())
+            .collect::<Vec<_>>();
+        assert!(
+            retained.is_empty(),
+            "closed snapshots retained files: {retained:?}"
+        );
+    }
+
+    #[test]
+    fn materialized_reservations_own_blocks_and_release_them_on_drop() {
+        let root = tempfile::tempdir().expect("create snapshot directory");
+        let storage = LocalSnapshotStorage::new(root.path()).expect("open snapshot storage");
+        let capacity = SnapshotBytes(32_769);
+        let mut reservation = storage
+            .reserve_with(capacity, materialize_snapshot)
+            .expect("materialized capacity must pass physical block verification");
+        assert_eq!(reservation.reserved_bytes(), capacity);
+        reservation.save(b"saved snapshot").expect("save snapshot");
+        assert_eq!(
+            reservation.load().expect("load snapshot"),
+            b"saved snapshot"
+        );
+        assert!(reservation.file.allocated_size().expect("allocated blocks") >= capacity.0);
+        drop(reservation);
+        assert_reclaimed(root.path());
+    }
 
     #[test]
     fn a_guest_sized_reservation_owns_all_blocks_before_saving() {
@@ -344,8 +443,23 @@ mod tests {
                 "repeated suspension must retain its original admission capacity"
             );
         }
-        // Windows delete-on-close files can have directory entries, but other
-        // handles cannot read or remove their reserved storage.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                reservation
+                    .file
+                    .metadata()
+                    .expect("snapshot metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "NFS can retain an unlinked inode under a private .nfs entry"
+            );
+        }
+        // Windows delete-on-close entries deny access through other handles.
+        #[cfg(windows)]
         for entry in std::fs::read_dir(root.path()).expect("list snapshots") {
             let path = entry.expect("read snapshot entry").path();
             assert!(
@@ -358,13 +472,7 @@ mod tests {
             );
         }
         drop(reservation);
-        assert_eq!(
-            std::fs::read_dir(root.path())
-                .expect("list released snapshots")
-                .count(),
-            0,
-            "releasing a reservation must reclaim its storage"
-        );
+        assert_reclaimed(root.path());
     }
 
     #[test]
@@ -410,13 +518,7 @@ mod tests {
             result.is_err_and(|error| error.is_capacity_exhausted()),
             "admission must receive a typed capacity failure after a failed allocation"
         );
-        assert_eq!(
-            std::fs::read_dir(root.path())
-                .expect("list snapshots")
-                .count(),
-            0,
-            "a partially allocated failed reservation must leave no retained file"
-        );
+        assert_reclaimed(root.path());
     }
 
     #[test]
