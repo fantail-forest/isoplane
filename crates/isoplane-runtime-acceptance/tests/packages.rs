@@ -92,7 +92,9 @@ fn request(runtime: &[u8], files: Vec<PlatformFile>) -> BuildRequest {
         engine: engine_configuration(PlatformFiles::default()),
         application_files: PlatformFiles::new(files)
             .expect("package paths are valid application files"),
-        runtime: RuntimeProfile::raw_wasm(),
+        runtime: RuntimeProfile::SharedRuntime {
+            sdk_version: isoplane_fixtures::release_version(),
+        },
         limits: isoplane_harness::GUEST_LIMITS,
         guest_memory_bytes: None,
         validation_limits: Default::default(),

@@ -2,7 +2,7 @@
 //! its first call with the managed runtime already up and no init entry left
 //! to run.
 
-use isoplane_abi::config::Limits;
+use isoplane_abi::config::{GuestMemoryBytes, Limits};
 use isoplane_control::validator;
 use isoplane_engine::pal::{self, PalSource};
 #[path = "common/managed.rs"]
@@ -11,7 +11,12 @@ mod managed;
 #[test]
 fn the_dotnet_template_activates_without_running_the_runtime_start_up() {
     let wasm = isoplane_fixtures::mono_runtime();
-    validator::validate(&wasm, Limits::default()).expect(".NET guest must validate");
+    validator::validate_with_memory_limit(
+        &wasm,
+        Limits::default(),
+        Some(GuestMemoryBytes::WASM32_MAX),
+    )
+    .expect(".NET guest must validate");
 
     let out = managed::prepare("isoplane_guest_dotnet", Default::default())
         .expect("pre-init must succeed on the managed application");
