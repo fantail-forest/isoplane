@@ -40,9 +40,10 @@ pub(crate) struct Live {
 }
 
 pub struct Instance {
-    pub(crate) engine: Arc<EngineInner>,
-    pub(crate) template: Arc<TemplateInner>,
     pub(crate) live: Option<Live>,
+    // Unmap the live store before the template releases its storage leases.
+    pub(crate) template: Arc<TemplateInner>,
+    pub(crate) engine: Arc<EngineInner>,
     /// Set when a call ended in a way [`Completion::tombstones`] says leaves
     /// the instance inconsistent. wasmtime does not poison a store after a
     /// trap, so every entry point checks this and refuses.

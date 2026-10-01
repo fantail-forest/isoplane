@@ -371,6 +371,9 @@ impl ArtifactPaths {
 /// rather than failing to load.
 fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
+    if matches_existing_artifact(path, bytes)? {
+        return Ok(());
+    }
     let parent = path
         .parent()
         .context("compiled artifact has no parent directory")?;
@@ -379,11 +382,48 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     temporary
         .write_all(bytes)
         .with_context(|| format!("writing artifact {}", path.display()))?;
-    temporary
-        .persist(path)
-        .map_err(|error| error.error)
-        .with_context(|| format!("publishing artifact {}", path.display()))?;
+    match temporary.into_temp_path().persist_noclobber(path) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.error.kind(),
+                std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            // Windows also reports access denied when another writer publishes
+            // an artifact that a reader maps before this rename.
+            if !matches_existing_artifact(path, bytes)? {
+                return Err(error.error)
+                    .with_context(|| format!("publishing artifact {}", path.display()));
+            }
+        }
+        Err(error) => {
+            return Err(error.error)
+                .with_context(|| format!("publishing artifact {}", path.display()));
+        }
+    }
     Ok(())
+}
+
+fn matches_existing_artifact(path: &std::path::Path, bytes: &[u8]) -> Result<bool> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("opening artifact {}", path.display()))
+        }
+    };
+    let digest = blake3::Hasher::new()
+        .update_reader(file)
+        .with_context(|| format!("reading existing artifact {}", path.display()))?
+        .finalize();
+    if digest != blake3::hash(bytes) {
+        bail!(
+            "existing compiled artifact {} has different contents",
+            path.display()
+        );
+    }
+    Ok(true)
 }
 
 /// Bindings for the probe instantiation in `finish_template`. Records that
