@@ -121,7 +121,60 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
     }
     #[cfg(not(windows))]
     options.read(true);
-    options.open(path)?.sync_all()
+    let directory = options.open(path)?;
+    let result = directory.sync_all();
+    #[cfg(windows)]
+    return finish_directory_flush(&directory, result);
+    #[cfg(not(windows))]
+    result
+}
+
+#[cfg(windows)]
+fn finish_directory_flush(directory: &File, result: std::io::Result<()>) -> std::io::Result<()> {
+    use windows_sys::Win32::Foundation::ERROR_INVALID_FUNCTION;
+    use windows_sys::Win32::Storage::InstallableFileSystems::WNNC_NET_SMB;
+
+    if let Err(error) = &result {
+        if error.raw_os_error() == Some(ERROR_INVALID_FUNCTION as i32) {
+            match remote_protocol(directory) {
+                // Some SMB servers support flushing files but not directory handles.
+                Ok(WNNC_NET_SMB) => return Ok(()),
+                Ok(_) => {}
+                Err(query_error) => {
+                    tracing::debug!(%query_error, "could not identify directory protocol; retaining flush error");
+                }
+            }
+        }
+    }
+    result
+}
+
+#[cfg(windows)]
+fn remote_protocol(file: &File) -> std::io::Result<u32> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileRemoteProtocolInfo, GetFileInformationByHandleEx, FILE_REMOTE_PROTOCOL_INFO,
+    };
+
+    let mut info = FILE_REMOTE_PROTOCOL_INFO {
+        StructureVersion: 2,
+        StructureSize: std::mem::size_of::<FILE_REMOTE_PROTOCOL_INFO>() as u16,
+        ..Default::default()
+    };
+    // SAFETY: file keeps the handle alive; info is a writable, correctly sized
+    // FILE_REMOTE_PROTOCOL_INFO for the requested information class.
+    let success = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileRemoteProtocolInfo,
+            (&mut info as *mut FILE_REMOTE_PROTOCOL_INFO).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    };
+    if success == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(info.Protocol)
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -386,6 +439,35 @@ fn advise_file(_file: &File, _range: &ReadAhead) -> Result<()> {
     Err(PreparedError::Invalid(
         "read-ahead is unsupported on this platform",
     ))
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    #[test]
+    fn directory_flush_errors_require_positive_smb_identification() {
+        use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_FUNCTION};
+
+        let unclassified = std::fs::File::open("NUL").expect("open Windows null device");
+        assert!(super::remote_protocol(&unclassified).is_err());
+        let error = super::finish_directory_flush(
+            &unclassified,
+            Err(std::io::Error::from_raw_os_error(
+                ERROR_INVALID_FUNCTION as i32,
+            )),
+        )
+        .expect_err("an unidentified protocol must retain the flush failure");
+        assert_eq!(error.raw_os_error(), Some(ERROR_INVALID_FUNCTION as i32));
+
+        let file = tempfile::tempfile().expect("create file on the test filesystem");
+        let error = super::finish_directory_flush(
+            &file,
+            Err(std::io::Error::from_raw_os_error(
+                ERROR_ACCESS_DENIED as i32,
+            )),
+        )
+        .expect_err("access failures must propagate on every filesystem, including SMB");
+        assert_eq!(error.raw_os_error(), Some(ERROR_ACCESS_DENIED as i32));
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
