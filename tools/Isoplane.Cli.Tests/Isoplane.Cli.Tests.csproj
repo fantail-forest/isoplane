@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../TestSupport/FileSystemTestDirectory.cs" Link="FileSystemTestDirectory.cs" />
+    <Compile Include="../TestSupport/PosixTheoryAttribute.cs" Link="PosixTheoryAttribute.cs" />
     <None Include="../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" Link="Isoplane.ManagedBundle.targets" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
