@@ -40,6 +40,7 @@ To attach to a session started in a terminal, run
 ```
 
 Set `cliPath` in that configuration if `isoplane` is not on VS Code's PATH.
+It accepts an executable or a CLI `.dll` assembly; assemblies run through `dotnet`.
 
 For development, run `npm ci` and `npm run package` in this directory. Install
 the resulting VSIX with VS Code's **Extensions: Install from VSIX** command.
@@ -49,5 +50,7 @@ and the real CLI adapter inside VS Code. Linux CI needs a display, such as
 
 The full editor journey launches a prepared customer application, inspects hover
 and watch expressions, edits a local, and debugs a second request. From the
-repository root, run `ISOPLANE_TEST_CLI=/absolute/path/to/isoplane task test:editor`.
-Task prepares the application and editor dependencies; Linux uses `xvfb-run`.
+repository root, run `task test:editor`. Task prepares the CLI, application and
+editor dependencies; Linux uses `xvfb-run`. Set `ISOPLANE_TEST_CLI` to exercise
+a different CLI executable or assembly. Use `task test:editor -- suite` for the
+registration and adapter checks.

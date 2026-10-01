@@ -62,12 +62,13 @@ tasks:
       - '"{{.EXECUTABLE}}" -m pip install --disable-pip-version-check debugpy==1.8.20'
 
   editor:
-    desc: Exercise launch and value editing inside VS Code using ISOPLANE_TEST_CLI
+    desc: Exercise launch and value editing inside VS Code
     deps: [':fixtures:editor', ':cli', editor:environment]
     env:
       ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
+      ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
     cmds:
-      - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane run test:launch'
+      - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane test -- {{.CLI_ARGS | default "launch"}}'
 
   editor:environment:
     sources:

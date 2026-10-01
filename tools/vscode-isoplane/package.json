@@ -47,7 +47,7 @@
               "cliPath": {
                 "type": "string",
                 "default": "isoplane",
-                "description": "Path to the installed Isoplane CLI executable."
+                "description": "Path to the Isoplane CLI executable or assembly (.dll)."
               },
               "sourceFileMap": {
                 "type": "object",
@@ -87,7 +87,7 @@
               "cliPath": {
                 "type": "string",
                 "default": "isoplane",
-                "description": "Path to the installed Isoplane CLI executable."
+                "description": "Path to the Isoplane CLI executable or assembly (.dll)."
               },
               "console": {
                 "type": "string",

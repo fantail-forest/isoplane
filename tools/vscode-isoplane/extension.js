@@ -19,7 +19,10 @@ function activate(context) {
         }),
         vscode.debug.registerDebugAdapterDescriptorFactory('isoplane', {
             createDebugAdapterDescriptor(session) {
-                return new vscode.DebugAdapterExecutable(session.configuration.cliPath || 'isoplane', ['debug-adapter']);
+                const cli = session.configuration.cliPath || 'isoplane';
+                return cli.toLowerCase().endsWith('.dll')
+                    ? new vscode.DebugAdapterExecutable('dotnet', [cli, 'debug-adapter'])
+                    : new vscode.DebugAdapterExecutable(cli, ['debug-adapter']);
             }
         }),
         vscode.commands.registerCommand('isoplane.detach', async () => {

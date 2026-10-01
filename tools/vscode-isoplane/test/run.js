@@ -5,7 +5,7 @@ const os = require('node:os');
 const { runTests } = require('@vscode/test-electron');
 const cachePath = path.resolve(__dirname, '..', '.vscode-test');
 
-if (!process.env.ISOPLANE_TEST_CLI) throw new Error('ISOPLANE_TEST_CLI must name the built Isoplane CLI executable.');
+if (!process.env.ISOPLANE_TEST_CLI) throw new Error('ISOPLANE_TEST_CLI must name the built Isoplane CLI executable or assembly.');
 const suite = process.argv[2] || 'suite';
 if (!['suite', 'launch'].includes(suite)) throw new Error('Choose suite or launch.');
 if (suite === 'launch' && !process.env.ISOPLANE_TEST_PROJECT) throw new Error('ISOPLANE_TEST_PROJECT must name the prepared debugger test application.');
