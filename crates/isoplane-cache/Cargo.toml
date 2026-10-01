@@ -9,6 +9,7 @@ description = "Bounded local artifact storage with process-held reader leases an
 
 [dependencies]
 fs4.workspace = true
+parking_lot.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

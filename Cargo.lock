@@ -1493,6 +1493,7 @@ name = "isoplane-cache"
 version = "0.1.0"
 dependencies = [
  "fs4",
+ "parking_lot",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",

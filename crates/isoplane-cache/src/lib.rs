@@ -1,8 +1,11 @@
 //! Process-safe retention for regenerable local artifacts.
 #![forbid(unsafe_code)]
 
+use parking_lot::{Mutex, MutexGuard};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::SystemTime;
 
 /// Target disk budget; active readers can temporarily prevent eviction.
@@ -44,11 +47,32 @@ fn io(path: &Path, source: std::io::Error) -> Error {
 pub struct Cache {
     root: PathBuf,
     budget: CacheBytes,
+    entries: Arc<LocalEntries>,
+}
+
+type LocalEntries = Mutex<HashMap<PathBuf, Weak<File>>>;
+
+fn local_entries(root: &Path) -> Arc<LocalEntries> {
+    static ROOTS: OnceLock<Mutex<HashMap<PathBuf, Weak<LocalEntries>>>> = OnceLock::new();
+    let mut roots = ROOTS.get_or_init(Mutex::default).lock();
+    roots.retain(|_, entries| entries.strong_count() != 0);
+    if let Some(entries) = roots.get(root).and_then(Weak::upgrade) {
+        return entries;
+    }
+    let entries = Arc::new(Mutex::default());
+    roots.insert(root.into(), Arc::downgrade(&entries));
+    entries
+}
+
+struct Catalog<'a> {
+    // Close the process lock before allowing another local owner to open it.
+    _file: File,
+    entries: MutexGuard<'a, HashMap<PathBuf, Weak<File>>>,
 }
 
 /// Keeps an entry alive across processes until its last reader releases it.
 pub struct Lease {
-    file: Option<File>,
+    file: Option<Arc<File>>,
     directory: PathBuf,
     cache: Cache,
 }
@@ -57,14 +81,24 @@ impl Cache {
     /// Open private storage. Only entries created by this cache are eligible for eviction.
     pub fn new(root: PathBuf, budget: CacheBytes) -> Result<Self, Error> {
         directory(&root)?;
-        Ok(Self { root, budget })
+        let root = root.canonicalize().map_err(|error| io(&root, error))?;
+        let entries = local_entries(&root);
+        Ok(Self {
+            root,
+            budget,
+            entries,
+        })
     }
 
-    fn catalog(&self) -> Result<File, Error> {
+    fn catalog(&self) -> Result<Catalog<'_>, Error> {
+        let entries = self.entries.lock();
         let path = self.root.join(".storage.lock");
         let file = open_lock(&path)?;
         fs4::FileExt::lock(&file).map_err(|error| io(&path, error))?;
-        Ok(file)
+        Ok(Catalog {
+            _file: file,
+            entries,
+        })
     }
 
     /// Lease an entry and reclaim old inactive entries automatically.
@@ -73,7 +107,7 @@ impl Cache {
     }
 
     fn lease_at(&self, key: CacheKey, now: SystemTime) -> Result<Lease, Error> {
-        let gate = self.catalog()?;
+        let mut gate = self.catalog()?;
         let name: String = key.0.iter().map(|byte| format!("{byte:02x}")).collect();
         let path = self.root.join(name);
         let marker = path.join(".lease");
@@ -81,8 +115,16 @@ impl Cache {
             return Err(Error::Unowned(path));
         }
         directory(&path)?;
-        let file = open_lock(&marker)?;
-        fs4::FileExt::lock_shared(&file).map_err(|error| io(&marker, error))?;
+        // NFS locks can belong to a process rather than an individual open handle.
+        let file = match gate.entries.get(&path).and_then(Weak::upgrade) {
+            Some(file) => file,
+            None => {
+                let file = Arc::new(open_lock(&marker)?);
+                fs4::FileExt::lock_shared(file.as_ref()).map_err(|error| io(&marker, error))?;
+                gate.entries.insert(path.clone(), Arc::downgrade(&file));
+                file
+            }
+        };
         file.set_modified(now).map_err(|error| io(&marker, error))?;
         drop(gate);
         let lease = Lease {
@@ -97,7 +139,8 @@ impl Cache {
     /// Evict least-recently-used inactive entries until the budget is met.
     /// Active entries may exceed the budget; releasing their leases retries eviction.
     pub fn prune(&self) -> Result<(), Error> {
-        let _gate = self.catalog()?;
+        let mut gate = self.catalog()?;
+        gate.entries.retain(|_, file| file.strong_count() != 0);
         let entries = self.root.clone();
         let mut inventory = Vec::new();
         for entry in fs::read_dir(&entries).map_err(|error| io(&entries, error))? {
@@ -116,6 +159,9 @@ impl Cache {
         for (_, path, bytes) in inventory {
             if total <= self.budget.0 {
                 break;
+            }
+            if gate.entries.contains_key(&path) {
+                continue;
             }
             let marker = path.join(".lease");
             let file = open_lock(&marker)?;
@@ -142,7 +188,10 @@ impl Lease {
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        drop(self.file.take());
+        {
+            let _gate = self.cache.entries.lock();
+            drop(self.file.take());
+        }
         if let Err(error) = self.cache.prune() {
             tracing::warn!(%error, "artifact cache retention failed");
         }
@@ -224,6 +273,19 @@ mod tests {
 
     #[test]
     fn another_cache_owner_cannot_evict_a_live_reader() {
+        const CHILD_ENTRY: &str = "ISOPLANE_CACHE_TEST_LEASED_ENTRY";
+        if let Some(path) = std::env::var_os(CHILD_ENTRY) {
+            let path = PathBuf::from(path);
+            Cache::new(path.parent().unwrap().into(), CacheBytes(0))
+                .unwrap()
+                .prune()
+                .unwrap();
+            assert!(
+                path.join("module").is_file(),
+                "another process must preserve a live reader"
+            );
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
         let first = cache.lease(CacheKey([1; 32])).unwrap();
@@ -234,6 +296,27 @@ mod tests {
         assert!(
             second.directory().exists(),
             "a second independent owner must retain its mapped artifact"
+        );
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::another_cache_owner_cannot_evict_a_live_reader",
+                "--nocapture",
+            ])
+            .env(CHILD_ENTRY, second.directory())
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        let path = second.directory().to_path_buf();
+        drop(second);
+        assert!(
+            !path.exists(),
+            "the final local reader releases the cross-process lease"
         );
     }
 
