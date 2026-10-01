@@ -229,7 +229,10 @@ internal static class Toolchain
         try
         {
             await File.WriteAllTextAsync(temporary, content, cancellation);
-            File.Move(temporary, path, overwrite: true);
+            if (File.Exists(path))
+                File.Replace(temporary, path, destinationBackupFileName: null);
+            else
+                File.Move(temporary, path);
         }
         finally
         {

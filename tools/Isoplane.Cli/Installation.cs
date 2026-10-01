@@ -132,7 +132,10 @@ internal sealed class Installation
         try
         {
             File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(record, Json));
-            File.Move(temporary, Path, overwrite: true);
+            if (File.Exists(Path))
+                File.Replace(temporary, Path, destinationBackupFileName: null);
+            else
+                File.Move(temporary, Path);
         }
         finally
         {
