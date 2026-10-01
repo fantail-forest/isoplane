@@ -68,3 +68,8 @@ Runtime exports and platform implementation assemblies are supplied by the serve
 This command needs no login and does not build WASM. External assets and satellite
 assemblies currently produce an explicit unsupported-input diagnostic.
 
+For an HTTPS endpoint using a private CA, set `SSL_CERT_FILE` to a PEM certificate
+bundle. CLI downloads and telemetry use that bundle as their trust roots
+on every platform, while still verifying certificate validity and hostnames.
+Without it, the operating system trust configuration applies.
+

@@ -20,7 +20,7 @@ try
     if (args is ["debug-adapter"]) return await Isoplane.Debugging.AdapterCommand.RunAsync(cancellation.Token, new LocalDebugLauncher());
     if (args[0] == "setup")
     {
-        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        using var client = new HttpClient(CertificateTrust.CreateHandler(allowAutoRedirect: true)) { Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.UserAgent.ParseAdd($"isoplane/{ReleaseIdentity.OfRunningCli().Version}");
         return await Setup.RunAsync(SetupOptions.Parse(args), ReleaseIdentity.OfRunningCli(), Toolchain.Home, SetupMachine.Production(), client, cancellation.Token);
     }
