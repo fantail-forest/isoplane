@@ -39,6 +39,7 @@ env:
   ISOPLANE_TEST_CLI_ASSEMBLY: '{{.CLI}}'
   ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
   ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
+  ISOPLANE_TEST_PYTHON: '{{.PYTHON}}'
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
   ISOPLANE_TEST_PROCESS_FIXTURE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
 

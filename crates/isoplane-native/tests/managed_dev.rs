@@ -203,13 +203,16 @@ fn a_second_managed_process_cannot_share_the_projects_state() {
 }
 
 #[test]
+#[cfg(target_os = "linux")] // The local cutover supervisor requires Linux process sessions and /proc.
 fn the_cutover_supervisor_starts_an_installed_managed_worker() {
     let directory = tempfile::tempdir().unwrap();
     let (app, cli) = project(directory.path());
     source(&app, "cutover worker", "");
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local/cutover.py");
-    let output = std::process::Command::new("python3")
+    let python = std::env::var_os("ISOPLANE_TEST_PYTHON")
+        .expect("run tests through Task to select the configured Python interpreter");
+    let output = std::process::Command::new(python)
         .args(["-c", r#"
 import asyncio, importlib.util, sys, urllib.request
 from types import SimpleNamespace
