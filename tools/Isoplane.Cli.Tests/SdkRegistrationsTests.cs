@@ -53,6 +53,6 @@ public sealed class SdkRegistrationsTests
     {
         var dotnet = DotnetRegistrations.BootstrapDotnet();
         Assert.True(File.Exists(dotnet), "the bootstrap dotnet must be a real executable");
-        Assert.Equal("dotnet", Path.GetFileName(dotnet));
+        Assert.Equal(OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet", Path.GetFileName(dotnet));
     }
 }

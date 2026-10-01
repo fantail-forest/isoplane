@@ -3,6 +3,7 @@ using Isoplane.Native;
 
 try
 {
+    Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
     if (args is ["--version"])
     {
         var identity = ReleaseIdentity.OfRunningCli();
