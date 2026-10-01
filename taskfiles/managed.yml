@@ -36,6 +36,7 @@ tasks:
       - 'test "{{OS}}" = linux || { echo "Run task managed:build on Linux first." >&2; exit 1; }'
       - '"{{.DOTNET}}" build Isoplane.Build.slnf -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
       - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli/Isoplane.Cli.csproj -t:Publish,GenerateToolsSettingsFileFromBuildProperty -p:Configuration=Release -p:NoBuild=true -p:ArtifactsPath="{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+      - task: executable-assemblies
 
   tests:
     run: once
@@ -45,9 +46,19 @@ tasks:
     generates:
       - '{{.MANAGED}}/bin/Isoplane.Cli.Tests/release/Isoplane.Cli.Tests.dll'
       - '{{.MANAGED}}/bin/Isoplane.Debugging.Tests/release/Isoplane.Debugging.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.Testing.Tests/release/Isoplane.Testing.Tests.dll'
+      - '{{.MANAGED}}/bin/Build.Tests/release/Build.Tests.dll'
+      - '{{.MANAGED}}/bin/Isoplane.AspNetCore.Tests/release/Isoplane.AspNetCore.Tests.dll'
     cmds:
       - 'test "{{OS}}" = linux || { echo "Run task managed:tests on Linux first." >&2; exit 1; }'
       - '"{{.DOTNET}}" build Isoplane.slnx -c Release -p:ShouldUnsetParentConfigurationAndPlatform=false -p:SourceRevisionId={{.REVISION}} --artifacts-path "{{.MANAGED}}" -p:IsoplaneManagedOnly=true -p:UseAppHost=false'
+      - task: executable-assemblies
+
+  executable-assemblies:
+    internal: true
+    cmds:
+      # Windows loads PE images with execute access, including over SMB.
+      - 'find "{{.MANAGED}}/bin" "{{.MANAGED}}/publish" -type f -name "*.dll" ! -perm -a=x -exec chmod a+x {} +'
 
   packages:
     run: once

@@ -1,5 +1,4 @@
-# Run Cargo in the Visual Studio developer environment.
-param([ValidateSet('debug', 'release')][string]$Configuration = 'debug')
+# Run a development command in the Visual Studio build environment.
 $ErrorActionPreference = 'Stop'
 $locator = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
 $components = Get-Content "$PSScriptRoot/../scripts/windows-build-components.json" -Raw | ConvertFrom-Json
@@ -12,7 +11,8 @@ foreach ($line in $environment) {
 }
 $env:MSYSTEM = 'MINGW64'
 $env:MSYS2_PATH_TYPE = 'inherit'
-$arguments = @('build', '--locked', '-p', 'isoplane-native')
-if ($Configuration -eq 'release') { $arguments += '--release' }
-& cargo @arguments
+if ($args.Count -eq 0) { throw 'Provide a development command to run.' }
+$command = $args[0]
+$commandArguments = @($args | Select-Object -Skip 1)
+& $command @commandArguments
 exit $LASTEXITCODE

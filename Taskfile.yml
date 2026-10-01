@@ -11,13 +11,14 @@ vars:
   PYTHON: '{{.ISOPLANE_PYTHON | default (ternary "python" "python3" (eq OS "windows"))}}'
   PLATFORM: '{{if eq OS "darwin"}}osx{{else if eq OS "windows"}}win{{else}}{{OS}}{{end}}-{{if eq ARCH "amd64"}}x64{{else}}{{ARCH}}{{end}}'
 
+  DEVELOPMENT_COMMAND: '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/windows-developer.ps1 {{end}}'
+
   NATIVE_LIBRARY: '{{if eq OS "windows"}}isoplane_native.dll{{else if eq OS "darwin"}}libisoplane_native.dylib{{else}}libisoplane_native.so{{end}}'
   MANAGED: '{{.ROOT_DIR}}/.build/clr-anycpu/managed'
   PACKAGES: '{{.ROOT_DIR}}/.build/clr-anycpu/packages'
   CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
   NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
   SCRATCH: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/tmp'
-  HOST_TEMP: '{{env "TEMP" | default (env "TMPDIR") | default "/tmp"}}'
 
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'
   FEED: '{{.ISOPLANE_TEST_RUNTIME_FEED | default (printf "%s/.build/wasm32/runtime/feed" .ROOT_DIR)}}'
@@ -31,7 +32,7 @@ env:
   ISOPLANE_RUNTIME_SOURCE: '{{.ROOT_DIR}}/guest-runtime'
   ISOPLANE_RUNTIME_WORK: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work'
   WASI_SDK_PATH: '{{env "WASI_SDK_PATH" | default (printf "%s/.build/%s/development/runtime-work/wasi-sdk" .ROOT_DIR .PLATFORM)}}'
-  NUGET_SCRATCH: '{{env "NUGET_SCRATCH" | default (printf "%s/NuGetScratch%s" .HOST_TEMP (ternary (env "USER") "" (eq OS "linux")))}}'
+  NUGET_SCRATCH: '{{.SCRATCH}}/nuget'
   TMPDIR: '{{.SCRATCH}}'
   TMP: '{{.SCRATCH}}'
   TEMP: '{{.SCRATCH}}'
@@ -39,6 +40,7 @@ env:
   ISOPLANE_TEST_PACKAGE_FEED: '{{.PACKAGES}}'
   ISOPLANE_TEST_NATIVE_PACKAGE_FEED: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/packages'
   ISOPLANE_TEST_DEBUGGER_PYTHON: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/dap-python/{{if eq OS "windows"}}Scripts/python.exe{{else}}bin/python{{end}}'
+  ISOPLANE_TEST_PROCESS_FIXTURE: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
 
 includes:
   notices: taskfiles/notices.yml
@@ -64,7 +66,7 @@ tasks:
     desc: Run a development command with worktree build and temporary directories
     deps: [initialize]
     cmds:
-      - '{{.CLI_ARGS | default (env "SHELL") | default "bash"}}'
+      - '{{.DEVELOPMENT_COMMAND}}{{.CLI_ARGS | default (env "SHELL") | default "bash"}}'
 
   cli:
     run: once

@@ -8,12 +8,15 @@ internal static class OwnedChild
     {
         if (arguments is ["--debug-fixture", var project, var package, var module])
             return await PreparedDebugSession.RunAsync(project, package, module);
-        if (arguments is ["--run-process", var command])
+        if (arguments is ["--run-process", .. var command])
         {
             using var cancellation = new CommandCancellation();
             try
             {
-                return await Processes.RunAsync("sh", ["-c", command], Environment.CurrentDirectory,
+                return await Processes.RunAsync(
+                    Environment.GetEnvironmentVariable("ISOPLANE_TEST_PROCESS_FIXTURE")
+                        ?? throw new InvalidOperationException("Run task test:managed to prepare the process fixture."),
+                    command, Environment.CurrentDirectory,
                     cancellation.Token);
             }
             catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested) { return 0; }

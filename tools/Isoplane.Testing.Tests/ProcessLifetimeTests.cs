@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -12,7 +13,7 @@ public sealed class ProcessLifetimeTests
     public async Task open_stdin_allows_readiness_and_eof_releases_the_owned_session()
     {
         using var fixture = new SessionFixture();
-        fixture.Script(fixture.Ready + "cat >/dev/null\n");
+        fixture.Configure("ready");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await fixture.WithApplicationAsync(app =>
         {
@@ -25,7 +26,7 @@ public sealed class ProcessLifetimeTests
     public async Task a_descendant_holding_output_after_parent_exit_is_terminated_and_reported()
     {
         using var fixture = new SessionFixture();
-        fixture.Script("sleep 300 &\necho $! > child.pid\n" + fixture.Ready + "cat >/dev/null\nexit 0\n");
+        fixture.Configure("orphan-after-eof");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var child = 0;
         var failure = await fixture.WithApplicationAsync(async app =>
@@ -40,7 +41,7 @@ public sealed class ProcessLifetimeTests
     public async Task a_parent_exiting_before_readiness_cannot_leave_descendants_or_hang_startup()
     {
         using var fixture = new SessionFixture();
-        fixture.Script("sleep 300 &\necho $! > child.pid\nprintf 'application configuration failed\\n' >&2\nexit 23\n");
+        fixture.Configure("startup-failure");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var failure = await Assert.ThrowsAnyAsync<Exception>(() => IsoplaneApplication.StartAsync(fixture.Directory, fixture.Options, deadline.Token));
         Assert.True(failure.ToString().Contains("configuration failed", StringComparison.Ordinal), "Startup failure must retain actionable CLI diagnostics.");
@@ -53,7 +54,7 @@ public sealed class ProcessLifetimeTests
     public async Task cancellation_during_startup_closes_the_owned_session()
     {
         using var fixture = new SessionFixture();
-        fixture.Script("echo $$ > child.tmp\nmv child.tmp child.pid\ncat >/dev/null\n");
+        fixture.Configure("startup-cancel");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource();
         var startup = IsoplaneApplication.StartAsync(fixture.Directory, fixture.Options, cancellation.Token);
@@ -87,7 +88,7 @@ public sealed class ProcessLifetimeTests
     public async Task a_nonzero_exit_during_graceful_cleanup_is_reported_with_bounded_diagnostics()
     {
         using var fixture = new SessionFixture();
-        fixture.Script(fixture.Ready + "cat >/dev/null\nprintf '%0200d cleanup failed\\n' 0 >&2\nexit 17\n");
+        fixture.Configure("cleanup-failure");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         IsoplaneApplication? observed = null;
         var failure = await fixture.WithApplicationAsync(app =>
@@ -108,7 +109,7 @@ public sealed class ProcessLifetimeTests
     public async Task invalid_machine_readiness_is_refused_and_its_process_is_closed(string record)
     {
         using var fixture = new SessionFixture();
-        fixture.Script("echo $$ > child.pid\nprintf '%s\\n' '" + record + "'\ncat >/dev/null\n");
+        fixture.Configure("invalid-readiness", record);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => IsoplaneApplication.StartAsync(fixture.Directory, fixture.Options, deadline.Token));
         Assert.True(failure.Message.Contains(record, StringComparison.Ordinal), "Refused readiness must retain the offending record in bounded diagnostics.");
@@ -139,16 +140,35 @@ public sealed class ProcessLifetimeTests
 
     private static async Task AssertStoppedAsync(int pid, CancellationToken cancellation)
     {
-        var statPath = $"/proc/{pid}/stat";
-        while (File.Exists(statPath))
-        {
-            string stat;
-            try { stat = await File.ReadAllTextAsync(statPath, cancellation); }
-            catch (FileNotFoundException) { return; }
-            if (stat[(stat.LastIndexOf(')') + 2)..].StartsWith("Z ", StringComparison.Ordinal))
-                return;
+        while (await IsRunningAsync(pid, cancellation))
             await Task.Delay(10, cancellation);
+    }
+
+    private static async Task<bool> IsRunningAsync(int pid, CancellationToken cancellation)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                using var process = Process.GetProcessById(pid);
+                return !process.HasExited;
+            }
+            catch (ArgumentException) { return false; }
         }
+        var start = new ProcessStartInfo("ps")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (var argument in new[] { "-o", "stat=", "-p", pid.ToString() })
+            start.ArgumentList.Add(argument);
+        using var query = Process.Start(start) ?? throw new InvalidOperationException("Could not inspect fixture process.");
+        var output = query.StandardOutput.ReadToEndAsync(cancellation);
+        var error = query.StandardError.ReadToEndAsync(cancellation);
+        await query.WaitForExitAsync(cancellation);
+        Assert.True(query.ExitCode is 0 or 1, "Process inspection failed: " + await error);
+        return query.ExitCode == 0 && !(await output).TrimStart().StartsWith("Z", StringComparison.Ordinal);
     }
 
     private sealed class SessionFixture : IDisposable
@@ -164,15 +184,21 @@ public sealed class ProcessLifetimeTests
 
         internal string Directory { get; }
         internal Uri Address { get; }
-        internal ApplicationOptions Options => new() { CliPath = Path.Combine(Directory, "test cli"), ShutdownTimeout = TimeSpan.FromSeconds(1) };
-        internal string Ready => "printf '%s\\n' '" + JsonSerializer.Serialize(new { @event = "ready", url = Address.ToString() }) + "'\n";
-
-        internal void Script(string body)
+        internal ApplicationOptions Options => new()
         {
-            if (!OperatingSystem.IsLinux())
-                throw new PlatformNotSupportedException("Process ownership tests require the packaged runtime's Linux platform.");
-            File.WriteAllText(Options.CliPath, "#!/bin/sh\n" + body);
-            File.SetUnixFileMode(Options.CliPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            CliPath = Environment.GetEnvironmentVariable("ISOPLANE_TEST_PROCESS_FIXTURE")
+                ?? throw new InvalidOperationException("Run task test:managed to prepare the process fixture."),
+            ShutdownTimeout = TimeSpan.FromSeconds(1)
+        };
+
+        internal void Configure(string scenario, string? readiness = null)
+        {
+            Assert.True(File.Exists(Options.CliPath), "Run task test:managed to prepare the process fixture.");
+            File.WriteAllText(Path.Combine(Directory, "process-fixture.json"), JsonSerializer.Serialize(new
+            {
+                scenario,
+                readiness = readiness ?? JsonSerializer.Serialize(new { @event = "ready", url = Address.ToString() })
+            }));
         }
 
         internal async Task<Exception?> WithApplicationAsync(Func<IsoplaneApplication, Task> check, CancellationToken cancellation, Type? expectedCleanupFailure = null, ApplicationOptions? options = null)

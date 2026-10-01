@@ -1,0 +1,37 @@
+version: '3'
+
+tasks:
+  macos:
+    internal: true
+    run: once
+    platforms: [darwin]
+    label: 'runtime:toolchain:{{.PLATFORM}}'
+    vars:
+      VERSION:
+        sh: '. guest-runtime/manifest.env; printf "%s" "$WASI_SDK_VERSION"'
+      HOST_ARCH: '{{if eq ARCH "arm64"}}arm64{{else}}x86_64{{end}}'
+      SHA256: '{{if eq ARCH "arm64"}}e11552913e3f99e834d7fe7da1bd081abaf764759ed76b6097a34c63fc83665e{{else}}d0de2fd3ea5c57060efa87e4356c164bec3689972f2386f0c9a89c58e10cec8d{{end}}'
+      WORK: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/development/runtime-work'
+      ARCHIVE: '{{.WORK}}/downloads/wasi-sdk-{{.VERSION}}-{{.HOST_ARCH}}-macos.tar.gz'
+    sources:
+      - '{{.ROOT_DIR}}/guest-runtime/manifest.env'
+      - '{{.ROOT_DIR}}/taskfiles/wasi-sdk.yml'
+    generates:
+      - '{{.WORK}}/wasi-sdk/VERSION'
+      - '{{.WORK}}/wasi-sdk/bin/clang'
+      - '{{.WORK}}/wasi-sdk/bin/llvm-ar'
+      - '{{.WORK}}/wasi-sdk/bin/llvm-nm'
+    cmds:
+      - |
+        set -eu
+        mkdir -p '{{.WORK}}/downloads'
+        if ! printf '%s  %s\n' '{{.SHA256}}' '{{.ARCHIVE}}' | shasum -a 256 --check --status; then
+          curl --fail --location --retry 3 --output '{{.ARCHIVE}}.part' 'https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-{{regexFind "^[0-9]+" .VERSION}}/wasi-sdk-{{.VERSION}}-{{.HOST_ARCH}}-macos.tar.gz'
+          printf '%s  %s\n' '{{.SHA256}}' '{{.ARCHIVE}}.part' | shasum -a 256 --check
+          mv '{{.ARCHIVE}}.part' '{{.ARCHIVE}}'
+        fi
+        stage=$(mktemp -d '{{.WORK}}/wasi-sdk-stage.XXXXXX')
+        trap 'rm -rf "$stage"' EXIT
+        tar --strip-components=1 -xzf '{{.ARCHIVE}}' -C "$stage"
+        rm -rf '{{.WORK}}/wasi-sdk'
+        mv "$stage" '{{.WORK}}/wasi-sdk'

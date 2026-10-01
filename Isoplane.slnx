@@ -7,4 +7,7 @@
   <Project Path="tools/Isoplane.Testing/Isoplane.Testing.csproj" />
   <Project Path="tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj" />
   <Project Path="tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj" />
+  <Project Path="tools/Isoplane.Testing.Tests/Isoplane.Testing.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/Build.Tests/Build.Tests.csproj" />
+  <Project Path="guest-sdks/dotnet/AspNetCore.Tests/Isoplane.AspNetCore.Tests.csproj" />
 </Solution>

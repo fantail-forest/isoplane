@@ -5,45 +5,61 @@ tasks:
     desc: Prepare fixtures, then run the Rust test suite
     deps: [':initialize', ':fixtures']
     cmds:
-      - 'cargo test --workspace {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --workspace {{.CLI_ARGS}}'
 
   unit:
     desc: Run Rust library tests without preparing integration fixtures
     deps: [':initialize']
     cmds:
-      - 'cargo test --lib {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test --lib {{.CLI_ARGS}}'
 
   rust:
     desc: Prepare Rust WASM fixtures and run selected Rust tests
     deps: [':initialize', ':fixtures:rust']
     cmds:
-      - 'cargo test {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
 
   runtime:
     desc: Run shared runtime acceptance tests
     deps: [':initialize', ':fixtures:acceptance']
     cmds:
-      - 'cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
 
   native:
     desc: Run SDK and CLI integration tests using prepared packages
     deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:debugger:host']
     cmds:
-      - 'cargo test -p isoplane-native {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
 
   debugger:
     desc: Run selected native debugger integration tests
     deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':test:debugger:host']
     cmds:
-      - 'cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
 
   managed:
-    desc: Run the managed CLI and debugger tests using prepared assemblies
-    deps: [':managed:tests', ':native']
+    desc: Run all managed tests using prepared assemblies
+    deps: [':managed:tests', ':native', ':runtime:toolchain', process-fixture]
     cmds:
-      - '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/Isoplane.Cli.Tests/release" -p:Platform={{.PLATFORM}}'
-      - '"{{.DOTNET}}" test tools/Isoplane.Cli.Tests/Isoplane.Cli.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'
-      - '"{{.DOTNET}}" test tools/Isoplane.Debugging.Tests/Isoplane.Debugging.Tests.csproj -c Release --no-build --artifacts-path "{{.MANAGED}}" {{.CLI_ARGS}}'
+      - for: [Isoplane.Cli.Tests, Isoplane.Testing.Tests]
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
+      - '"{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}'
+
+  process-fixture:
+    internal: true
+    label: 'process-fixture:{{.PLATFORM}}'
+    deps: [':initialize']
+    sources:
+      - tools/Isoplane.Testing.Tests/fixtures/ProcessFixture/*
+      - Directory.Build.props
+      - global.json
+      - nuget.config
+      - taskfiles/test.yml
+    generates:
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture{{if eq OS "windows"}}.exe{{end}}'
+      - '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures/bin/ProcessFixture/release/ProcessFixture.dll'
+    cmds:
+      - '"{{.DOTNET}}" build tools/Isoplane.Testing.Tests/fixtures/ProcessFixture -c Release --artifacts-path "{{.ROOT_DIR}}/.build/{{.PLATFORM}}/managed-fixtures"'
 
   debugger:host:
     deps: [':managed:tests', ':native:release']

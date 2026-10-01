@@ -5,13 +5,13 @@ namespace Isoplane.Cli.Tests;
 
 public sealed class ProcessLifetimeTests
 {
-    [Theory]
+    [PosixTheory]
     [InlineData("-TERM")]
     [InlineData("-INT")]
     public async Task stopping_the_cli_cleans_up_its_children_and_exits_successfully(string signal)
     {
         using var fixture = new ProcessFixture();
-        using var cli = fixture.StartCli("sleep 300 & echo $! > child.pid; wait");
+        using var cli = fixture.StartCli("wait-for-child");
         try
         {
             await fixture.WaitForChildAsync();
@@ -33,7 +33,7 @@ public sealed class ProcessLifetimeTests
     public async Task the_cli_preserves_a_command_failure_exit_code()
     {
         using var fixture = new ProcessFixture();
-        using var cli = fixture.StartCli("exit 23");
+        using var cli = fixture.StartCli("exit", "23");
         try
         {
             await cli.WaitForExitAsync(fixture.Cancellation);
@@ -49,7 +49,7 @@ public sealed class ProcessLifetimeTests
     public async Task a_command_exiting_with_pipe_holding_descendants_is_cleaned_up_and_reported()
     {
         using var fixture = new ProcessFixture();
-        var result = await Processes.RunAsync("sh", ["-c", "sleep 300 & echo $! > child.pid; exit 0"],
+        var result = await Processes.RunAsync(fixture.Executable, ["orphan"],
             fixture.Directory, fixture.Cancellation, redirectOutput: true);
         Assert.True(result == 125, "Leaving live descendants must produce an actionable non-success result rather than hanging output collection.");
         await fixture.AssertChildStoppedAsync();
@@ -59,22 +59,22 @@ public sealed class ProcessLifetimeTests
     public async Task a_successful_command_waits_for_its_children_to_finish_cleanup()
     {
         using var fixture = new ProcessFixture();
-        var start = new ProcessStartInfo("sh")
+        var start = new ProcessStartInfo(fixture.Executable)
         {
             WorkingDirectory = fixture.Directory,
             RedirectStandardOutput = true,
             UseShellExecute = false,
         };
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add("exec 3<&0; sh -c 'echo ready; read release <&3' & echo $! > child.pid; exit 0");
+        start.ArgumentList.Add("cleanup-child");
         using var process = Isoplane.Processes.OwnedProcess.Start(start, TimeSpan.FromSeconds(30));
         Assert.True(await process.StandardOutput.ReadLineAsync(fixture.Cancellation) == "ready",
             "The child must hold its cleanup gate before its parent exits.");
         while (true)
         {
             var state = await fixture.ProcessStateAsync(process.Id);
-            Assert.True(state is not null, "The leader must remain unreaped while its child is finishing cleanup.");
-            if (state.StartsWith("Z", StringComparison.Ordinal)) break;
+            Assert.True(OperatingSystem.IsWindows() || state is not null,
+                "The POSIX group leader must remain unreaped while its child is finishing cleanup.");
+            if (state is null || state.StartsWith("Z", StringComparison.Ordinal)) break;
             await Task.Delay(10, fixture.Cancellation);
         }
         Assert.False(process.HasExited, "The command must await the live child's cleanup after the leader exits.");
@@ -89,7 +89,7 @@ public sealed class ProcessLifetimeTests
     {
         using var fixture = new ProcessFixture();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(fixture.Cancellation);
-        var run = Processes.RunAsync("sh", ["-c", "sleep 300 & echo $! > child.pid; wait"],
+        var run = Processes.RunAsync(fixture.Executable, ["wait-for-child"],
             fixture.Directory, cancellation.Token, redirectOutput: true);
         try
         {
@@ -108,13 +108,15 @@ public sealed class ProcessLifetimeTests
         private readonly CancellationTokenSource deadline = new(TimeSpan.FromSeconds(30));
         internal string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("isoplane-child-test-").FullName;
         internal CancellationToken Cancellation => deadline.Token;
+        internal string Executable => Environment.GetEnvironmentVariable("ISOPLANE_TEST_PROCESS_FIXTURE")
+            ?? throw new InvalidOperationException("Run task test:managed to prepare the process fixture.");
 
-        internal Process StartCli(string command)
+        internal Process StartCli(params string[] command)
         {
             var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, WorkingDirectory = Directory };
             start.ArgumentList.Add(typeof(OwnedChild).Assembly.Location);
             start.ArgumentList.Add("--run-process");
-            start.ArgumentList.Add(command);
+            foreach (var argument in command) start.ArgumentList.Add(argument);
             start.Environment["ISOPLANE_HOME"] = Path.Combine(Directory, "home");
             return Process.Start(start) ?? throw new InvalidOperationException("Could not start the CLI.");
         }
@@ -148,6 +150,15 @@ public sealed class ProcessLifetimeTests
 
         internal async Task<string?> ProcessStateAsync(int pid)
         {
+            if (OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    using var child = Process.GetProcessById(pid);
+                    return child.HasExited ? null : "R";
+                }
+                catch (ArgumentException) { return null; }
+            }
             var start = new ProcessStartInfo("ps") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
             foreach (var argument in new[] { "-o", "stat=", "-p", pid.ToString() })
                 start.ArgumentList.Add(argument);
@@ -164,5 +175,15 @@ public sealed class ProcessLifetimeTests
             deadline.Dispose();
             System.IO.Directory.Delete(Directory, recursive: true);
         }
+    }
+}
+
+/// <summary>Exercises POSIX signals on platforms where the CLI registers them.</summary>
+public sealed class PosixTheoryAttribute : TheoryAttribute
+{
+    /// <summary>Windows uses console control events rather than POSIX signals.</summary>
+    public PosixTheoryAttribute()
+    {
+        if (OperatingSystem.IsWindows()) Skip = "POSIX signal delivery is only applicable on Unix.";
     }
 }

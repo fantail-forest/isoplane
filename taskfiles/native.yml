@@ -9,7 +9,7 @@ tasks:
       CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
       CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
-      - '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/native-windows.ps1{{else}}cargo build --locked -p isoplane-native --target-dir "{{.NATIVE_TARGET}}"{{end}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked -p isoplane-native'
 
   release:
     desc: Build optimized native CLI support for this platform
@@ -19,4 +19,4 @@ tasks:
       CARGO_TARGET_DIR: '{{.NATIVE_TARGET}}'
       CARGO_BUILD_BUILD_DIR: '{{.NATIVE_TARGET}}'
     cmds:
-      - '{{if eq OS "windows"}}powershell.exe -NoProfile -ExecutionPolicy Bypass -File taskfiles/native-windows.ps1 -Configuration release{{else}}cargo build --locked --release -p isoplane-native --target-dir "{{.NATIVE_TARGET}}"{{end}}'
+      - '{{.DEVELOPMENT_COMMAND}}cargo build --locked --release -p isoplane-native'
