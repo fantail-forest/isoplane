@@ -232,7 +232,7 @@ impl IsoplaneEngine {
         let directory =
             tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
-        product.publish(&path)?;
+        product.publish_discarded(&path)?;
         // SAFETY: as for `load_prepared_product`; `base` retains its own files.
         unsafe { self.load_prepared_over(base, &path, product.manifest.identity, &[]) }
     }

@@ -4,36 +4,43 @@ tasks:
   default:
     desc: Prepare fixtures, then run the Rust test suite
     deps: [':initialize', ':fixtures']
+    env: &test_env
+      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --workspace {{.CLI_ARGS}}'
 
   unit:
     desc: Run Rust library tests without preparing integration fixtures
     deps: [':initialize']
+    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test --lib {{.CLI_ARGS}}'
 
   rust:
     desc: Prepare Rust WASM fixtures and run selected Rust tests
     deps: [':initialize', ':fixtures:rust']
+    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test {{.CLI_ARGS}}'
 
   runtime:
     desc: Run shared runtime acceptance tests
     deps: [':initialize', ':fixtures:acceptance']
+    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-runtime-acceptance {{.CLI_ARGS}}'
 
   native:
     desc: Run SDK and CLI integration tests using prepared packages
     deps: [':initialize', ':cli', ':fixtures:feed', ':fixtures:package', ':managed:tests', ':test:debugger:environment', ':test:debugger:host']
+    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native {{.CLI_ARGS}}'
 
   debugger:
     desc: Run selected native debugger integration tests
     deps: [':initialize', ':cli', ':managed:tests', ':test:debugger:environment', ':fixtures:feed', ':fixtures:package:debugger', ':fixtures:package:debugger-optimized', ':test:debugger:host']
+    env: *test_env
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}cargo test -p isoplane-native --test installed_dev {{.CLI_ARGS}}'
 
@@ -52,6 +59,7 @@ tasks:
   managed:standard:
     desc: Run managed tests; pass -- --filter <expression> to select tests
     deps: [managed:prepare]
+    env: *test_env
     cmds:
       - |
         "{{.DOTNET}}" test "{{.MANAGED}}"/bin/*/release/*.Tests.dll --parallel {{.CLI_ARGS}}
@@ -118,6 +126,7 @@ tasks:
     env:
       ISOPLANE_TEST_PROJECT: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/editor-fixture/app'
       ISOPLANE_TEST_CLI: '{{env "ISOPLANE_TEST_CLI" | default .CLI}}'
+      ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH: '1'
     cmds:
       - '{{if eq OS "linux"}}xvfb-run -a {{end}}npm --prefix tools/vscode-isoplane test -- {{.CLI_ARGS | default "launch"}}'
 

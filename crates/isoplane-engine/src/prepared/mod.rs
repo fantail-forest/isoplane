@@ -225,7 +225,7 @@ impl IsoplaneEngine {
         let directory =
             tempfile::tempdir_in(storage).map_err(|error| PreparedError::Engine(error.into()))?;
         let path = directory.path().join("prepared");
-        product.publish(&path)?;
+        product.publish_discarded(&path)?;
         // SAFETY: the directory is private to this call and nothing writes its published files;
         // removing it with the call's end unlinks them, which leaves the mappings intact.
         unsafe { self.load_prepared(&path, product.manifest.identity, &[]) }

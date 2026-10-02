@@ -73,10 +73,64 @@ fn io(operation: &'static str, path: &Path, source: std::io::Error) -> PreparedE
     }
 }
 
+/// Whether a publication must survive a crash of the machine holding it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Persistence {
+    Durable,
+    /// A crash may lose the publication or leave it incomplete; verification
+    /// against the manifest rejects an incomplete one.
+    Unflushed,
+}
+
+/// Set to `1` by Task's test targets: tests discard what they publish, so
+/// flushing only costs them time.
+const SKIP_FLUSH_VARIABLE: &str = "ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH";
+
+/// Release builds always publish durably, whatever their environment.
+fn default_persistence() -> Persistence {
+    static PERSISTENCE: std::sync::OnceLock<Persistence> = std::sync::OnceLock::new();
+    if !cfg!(debug_assertions) {
+        return Persistence::Durable;
+    }
+    *PERSISTENCE.get_or_init(|| match std::env::var_os(SKIP_FLUSH_VARIABLE) {
+        None => Persistence::Durable,
+        Some(value) if value == "1" => {
+            tracing::info!(
+                variable = SKIP_FLUSH_VARIABLE,
+                "publishing prepared templates without flushing"
+            );
+            Persistence::Unflushed
+        }
+        Some(value) => {
+            tracing::warn!(
+                variable = SKIP_FLUSH_VARIABLE,
+                ?value,
+                "unrecognized value; publishing prepared templates durably"
+            );
+            Persistence::Durable
+        }
+    })
+}
+
 impl PreparedTemplate {
     /// Atomically publishes a new directory of read-only payloads; existing
-    /// versions are never overwritten.
+    /// versions are never overwritten. Flushes the publication for crash
+    /// durability, except in a debug build whose environment sets
+    /// `ISOPLANE_TEST_SKIP_PUBLICATION_FLUSH=1`.
     pub fn publish(&self, directory: &Path) -> Result<()> {
+        self.publish_as(directory, default_persistence())
+    }
+
+    /// Publishes without flushing, for a directory no one reads after the caller returns.
+    pub(super) fn publish_discarded(&self, directory: &Path) -> Result<()> {
+        self.publish_as(directory, Persistence::Unflushed)
+    }
+
+    fn publish_as(
+        &self,
+        directory: &Path,
+        persistence: Persistence,
+    ) -> Result<()> {
         let parent = directory.parent().ok_or(PreparedError::Invalid(
             "publication directory has no parent",
         ))?;
@@ -90,7 +144,7 @@ impl PreparedTemplate {
             tempfile::tempdir_in(parent).map_err(|e| io("create staging directory", parent, e))?;
         for (index, name) in PAYLOAD_NAMES.iter().enumerate() {
             let path = temporary.path().join(name);
-            write_new(&path, &self.payloads[index])?;
+            write_new(&path, &self.payloads[index], persistence)?;
             let mut permissions = std::fs::metadata(&path)
                 .map_err(|e| io("stat published payload", &path, e))?
                 .permissions();
@@ -99,89 +153,39 @@ impl PreparedTemplate {
                 .map_err(|e| io("make published payload read-only", &path, e))?;
         }
         let metadata = postcard::to_allocvec(&self.manifest)?;
-        write_new(&temporary.path().join(MANIFEST), &metadata)?;
-        sync_directory(temporary.path())
-            .map_err(|e| io("sync staging directory", temporary.path(), e))?;
+        write_new(&temporary.path().join(MANIFEST), &metadata, persistence)?;
+        #[cfg(unix)]
+        if persistence == Persistence::Durable {
+            sync_directory(temporary.path())
+                .map_err(|e| io("sync staging directory", temporary.path(), e))?;
+        }
         std::fs::rename(temporary.path(), directory)
             .map_err(|e| io("publish directory", directory, e))?;
-        sync_directory(parent).map_err(|e| io("sync parent", parent, e))?;
+        #[cfg(unix)]
+        if persistence == Persistence::Durable {
+            sync_directory(parent).map_err(|e| io("sync parent", parent, e))?;
+        }
         Ok(())
     }
 }
 
+/// Persists the entries that name a directory's contents. Windows documents no
+/// directory flush and NTFS journals directory changes in order, so publication
+/// there flushes only files: a crash can lose the latest publication, and
+/// verification against the manifest rejects any incomplete one.
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> std::io::Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
-
-        // Directory handles require backup semantics; FlushFileBuffers requires write access.
-        options.write(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
-    }
-    #[cfg(not(windows))]
-    options.read(true);
-    let directory = options.open(path)?;
-    let result = directory.sync_all();
-    #[cfg(windows)]
-    return finish_directory_flush(&directory, result);
-    #[cfg(not(windows))]
-    result
+    File::open(path)?.sync_all()
 }
 
-#[cfg(windows)]
-fn finish_directory_flush(directory: &File, result: std::io::Result<()>) -> std::io::Result<()> {
-    use windows_sys::Win32::Foundation::ERROR_INVALID_FUNCTION;
-    use windows_sys::Win32::Storage::InstallableFileSystems::WNNC_NET_SMB;
-
-    if let Err(error) = &result {
-        if error.raw_os_error() == Some(ERROR_INVALID_FUNCTION as i32) {
-            match remote_protocol(directory) {
-                // Some SMB servers support flushing files but not directory handles.
-                Ok(WNNC_NET_SMB) => return Ok(()),
-                Ok(_) => {}
-                Err(query_error) => {
-                    tracing::debug!(%query_error, "could not identify directory protocol; retaining flush error");
-                }
-            }
-        }
-    }
-    result
-}
-
-#[cfg(windows)]
-fn remote_protocol(file: &File) -> std::io::Result<u32> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FileRemoteProtocolInfo, GetFileInformationByHandleEx, FILE_REMOTE_PROTOCOL_INFO,
-    };
-
-    let mut info = FILE_REMOTE_PROTOCOL_INFO {
-        StructureVersion: 2,
-        StructureSize: std::mem::size_of::<FILE_REMOTE_PROTOCOL_INFO>() as u16,
-        ..Default::default()
-    };
-    // SAFETY: file keeps the handle alive; info is a writable, correctly sized
-    // FILE_REMOTE_PROTOCOL_INFO for the requested information class.
-    let success = unsafe {
-        GetFileInformationByHandleEx(
-            file.as_raw_handle(),
-            FileRemoteProtocolInfo,
-            (&mut info as *mut FILE_REMOTE_PROTOCOL_INFO).cast(),
-            std::mem::size_of_val(&info) as u32,
-        )
-    };
-    if success == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(info.Protocol)
-}
-
-fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+fn write_new(path: &Path, bytes: &[u8], persistence: Persistence) -> Result<()> {
     let mut file = File::create_new(path).map_err(|e| io("create payload", path, e))?;
     file.write_all(bytes)
         .map_err(|e| io("write payload", path, e))?;
-    file.sync_all().map_err(|e| io("sync payload", path, e))
+    if persistence == Persistence::Durable {
+        file.sync_all().map_err(|e| io("sync payload", path, e))?;
+    }
+    Ok(())
 }
 
 #[tracing::instrument(name = "template_manifest_verify", skip_all)]
@@ -439,35 +443,6 @@ fn advise_file(_file: &File, _range: &ReadAhead) -> Result<()> {
     Err(PreparedError::Invalid(
         "read-ahead is unsupported on this platform",
     ))
-}
-
-#[cfg(all(test, windows))]
-mod windows_tests {
-    #[test]
-    fn directory_flush_errors_require_positive_smb_identification() {
-        use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_FUNCTION};
-
-        let unclassified = std::fs::File::open("NUL").expect("open Windows null device");
-        assert!(super::remote_protocol(&unclassified).is_err());
-        let error = super::finish_directory_flush(
-            &unclassified,
-            Err(std::io::Error::from_raw_os_error(
-                ERROR_INVALID_FUNCTION as i32,
-            )),
-        )
-        .expect_err("an unidentified protocol must retain the flush failure");
-        assert_eq!(error.raw_os_error(), Some(ERROR_INVALID_FUNCTION as i32));
-
-        let file = tempfile::tempfile().expect("create file on the test filesystem");
-        let error = super::finish_directory_flush(
-            &file,
-            Err(std::io::Error::from_raw_os_error(
-                ERROR_ACCESS_DENIED as i32,
-            )),
-        )
-        .expect_err("access failures must propagate on every filesystem, including SMB");
-        assert_eq!(error.raw_os_error(), Some(ERROR_ACCESS_DENIED as i32));
-    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
