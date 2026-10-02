@@ -45,12 +45,12 @@ cargo metadata --no-deps --format-version 1 \
 | ------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Rust**                 | `Cargo.toml` (`rust-version`), `Dockerfile`             | `rust-version` declares the minimum supported version; the Dockerfile pins the build toolchain. Nightly is never required for build, test, lint, or docs.                                                                                |
 | **wasmtime**             | `Cargo.toml`                                            | One version across the workspace, shared by preparation and execution.                                                |
-| **Build orchestration**   | `Taskfile.yml`, `taskfiles/`                             | Use Task for repository build dependencies and preparation; native build tools own compilation and incrementality. |
+| **Build orchestration**   | `Taskfile.yml`, `taskfiles/`                             | Run common operations through Task; `task --list` is the menu. Task handles repository build dependencies, preparation and per-platform build directories; native build tools own compilation and incrementality. |
 | **.NET SDK**             | `global.json`, consumed by `Dockerfile`                         | Policy: pin one SDK version. The image installs the version declared in `global.json`.                                                                                                           |
 | **wasi-sdk, wasm-tools** | `Dockerfile`                                            | The C# guest linker and the wasm inspection tool.                                                                                                |
-| **Lint**                 | `cargo clippy --workspace --all-targets -- -D warnings` | Full Rust gate before merging or releasing code changes; lint affected packages during development. See the validation workflow. |
-| **Format**               | `rustfmt.toml` (root and `guests/`)                     | Check affected workspaces during development; `cargo fmt --all --check` in both workspaces is the full format gate. Default rustfmt settings; never `#[rustfmt::skip]`. |
-| **Tests**                | `cargo test`                                            | Prepare prerequisites through Task before running tests. Fixture helpers resolve and load prepared artifacts. |
+| **Lint**                 | `task lint`                                             | Full Rust gate before merging or releasing code changes; lint affected packages (`task lint -- -p <name>`) during development. See the validation workflow. |
+| **Format**               | `rustfmt.toml` (root and `guests/`)                     | Check affected workspaces during development; `task format:check` is the full format gate. Default rustfmt settings; never `#[rustfmt::skip]`. |
+| **Tests**                | `task test`, `task test:unit`, `task test:rust`         | The test tasks prepare their prerequisites before running `cargo test`. Fixture helpers resolve and load prepared artifacts. |
 | **Database** | PostgreSQL for relational integrations | Use the PostgreSQL protocol; local PostgreSQL containers are suitable for tests. See the relational-storage opinion. |
 | **HTTP**                 | hyper 1, tokio                                          |                                                                                                                                                  |
 | **Wire formats**         | postcard (guest boundary, deltas), JSON (operator API)  |                                                                                                                                                  |
@@ -68,20 +68,22 @@ scripts/dev                                       # A development shell
 scripts/dev --container --build                    # Optional Linux toolchain image
 scripts/dev --container --stop                     # Remove your container when done
 
-cargo build --workspace --all-targets              # Build crates, tests, examples
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check && (cd guests && cargo fmt --all --check)   # The format gate
+task build                                         # Build crates, tests, examples
+task lint                                          # The Rust lint gate; task lint -- -p <name> for one package
+task format                                        # Format both workspaces; task format:check is the gate
 
 task test -- -- --skip a_prepared_release_installs_builds_applications_and_uninstalls # Rust suite without the installation journey
-cargo test --workspace                             # Requires a prepared release for the installation journey
-cargo test -p isoplane-host                            # One crate
-cargo test -p isoplane-host --test cell                # One integration test binary
+task test                                          # Requires a prepared release for the installation journey
+task test:unit -- -p isoplane-engine               # One crate's library tests, without fixtures
+task test:rust -- -p isoplane-host --test cell_dispatch # One integration test binary, with Rust fixtures
+task test:managed:standard -- --filter "FullyQualifiedName~NativeSessionTests" # Selected managed tests
+scripts/dev cargo <args>                           # Any other Cargo command; plain cargo fails by design
 
 scripts/dev guests/build.sh                        # Rust guests -> .build/wasm32/rust-guests/*.wasm
 scripts/dev guests/build-dotnet.sh --if-stale      # managed probes -> .build/clr-anycpu/probes/*.tar
 
-cargo run -p isoplaned -- --config isoplaned.toml          # Run a node
-cargo run -p isoplaned -- --config isoplaned.toml --check  # Validate a config without running
+task daemon -- --config isoplaned.toml            # Run a node
+task daemon -- --config isoplaned.toml --check    # Validate a config without running
 isoplane deploy --app <name> --project <directory> --team <name>
 isoplane doctor <wasm>             # Validate a module locally
 
