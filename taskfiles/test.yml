@@ -50,7 +50,7 @@ tasks:
         cmd: '"{{.DOTNET}}" msbuild taskfiles/StageCli.proj -nologo -p:NativeLibrary="{{.NATIVE_TARGET}}/debug/{{.NATIVE_LIBRARY}}" -p:CliDirectory="{{.MANAGED}}/bin/{{.ITEM}}/release" -p:Platform={{.PLATFORM}}'
 
   managed:standard:
-    internal: true
+    desc: Run managed tests; pass -- --filter <expression> to select tests
     deps: [managed:prepare]
     cmds:
       - |

@@ -70,6 +70,36 @@ tasks:
     cmds:
       - '{{.DEVELOPMENT_COMMAND}}{{.CLI_ARGS | default (env "SHELL") | default "bash"}}'
 
+  build:
+    desc: Build every Rust crate, test and example for this platform
+    deps: [initialize]
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo build --workspace --all-targets {{.CLI_ARGS}}'
+
+  lint:
+    desc: Lint all Rust targets, or the packages given as -- -p <name>
+    deps: [initialize]
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo clippy {{.CLI_ARGS | default "--workspace"}} --all-targets -- -D warnings'
+
+  format:
+    desc: Format both Cargo workspaces
+    cmds:
+      - cargo fmt --all
+      - cargo fmt --all --manifest-path guests/Cargo.toml
+
+  format:check:
+    desc: Check formatting in both Cargo workspaces
+    cmds:
+      - cargo fmt --all --check
+      - cargo fmt --all --check --manifest-path guests/Cargo.toml
+
+  daemon:
+    desc: Run isoplaned with the arguments after --
+    deps: [initialize]
+    cmds:
+      - '{{.DEVELOPMENT_COMMAND}}cargo run -p isoplaned -- {{.CLI_ARGS}}'
+
   cli:
     run: once
     desc: Prepare the shared managed CLI and platform native support

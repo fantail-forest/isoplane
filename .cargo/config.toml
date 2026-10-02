@@ -1,3 +1,9 @@
+[build]
+# Hosts share this worktree, so each needs its own target directory, which
+# scripts/dev and Task set through CARGO_TARGET_DIR. This path is a file, so
+# Cargo run without them fails instead of sharing one directory across hosts.
+target-dir = ".run-cargo-through-scripts-dev"
+
 [net]
 # Use the developer's Git/SSH authentication for private source dependencies.
 git-fetch-with-cli = true

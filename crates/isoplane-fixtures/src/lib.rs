@@ -17,13 +17,13 @@ pub(crate) fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Cargo output selected by the test task, or Cargo's default directory.
+/// Cargo output selected by Task through `CARGO_TARGET_DIR`.
 pub fn target_directory() -> &'static Path {
     static TARGET: OnceLock<PathBuf> = OnceLock::new();
     TARGET.get_or_init(|| {
-        std::env::var_os("CARGO_TARGET_DIR")
-            .map(|path| repo_root().join(path))
-            .unwrap_or_else(|| repo_root().join("target"))
+        let path = std::env::var_os("CARGO_TARGET_DIR")
+            .unwrap_or_else(|| panic!("CARGO_TARGET_DIR is unset; run tests through task test"));
+        repo_root().join(path)
     })
 }
 
