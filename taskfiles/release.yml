@@ -96,7 +96,6 @@ tasks:
           scripts/developer-preview-readme.md > "{{.RELEASE}}/README.md"
 
   publication:
-    method: timestamp
     desc: Pack the publication feed with native libraries from all three platforms
     deps: [shared]
     vars:
