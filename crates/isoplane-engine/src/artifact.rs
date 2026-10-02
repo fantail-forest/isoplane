@@ -382,27 +382,68 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     temporary
         .write_all(bytes)
         .with_context(|| format!("writing artifact {}", path.display()))?;
-    match temporary.into_temp_path().persist_noclobber(path) {
+    match publish_noclobber(temporary.into_temp_path(), path, |temporary, path| {
+        temporary.persist_noclobber(path)
+    }) {
         Ok(()) => {}
         Err(error)
             if matches!(
-                error.error.kind(),
+                error.kind(),
                 std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
             ) =>
         {
             // Windows also reports access denied when another writer publishes
             // an artifact that a reader maps before this rename.
             if !matches_existing_artifact(path, bytes)? {
-                return Err(error.error)
+                return Err(error)
                     .with_context(|| format!("publishing artifact {}", path.display()));
             }
         }
         Err(error) => {
-            return Err(error.error)
-                .with_context(|| format!("publishing artifact {}", path.display()));
+            return Err(error).with_context(|| format!("publishing artifact {}", path.display()));
         }
     }
     Ok(())
+}
+
+/// Give `temporary` the name `path` unless something already has it, which
+/// fails with `AlreadyExists`. Apple's SMB and NFS clients reject the
+/// exclusive rename; NFS still supports hard links, which also refuse an
+/// existing name.
+fn publish_noclobber(
+    temporary: tempfile::TempPath,
+    path: &std::path::Path,
+    rename_noclobber: impl FnOnce(
+        tempfile::TempPath,
+        &std::path::Path,
+    ) -> std::result::Result<(), tempfile::PathPersistError>,
+) -> std::io::Result<()> {
+    match rename_noclobber(temporary, path) {
+        Ok(()) => Ok(()),
+        Err(error) if exclusive_rename_unsupported(&error.error) => {
+            std::fs::hard_link(&error.path, path)?;
+            if let Err(cleanup) = error.path.close() {
+                // The artifact is already published under its final name; the
+                // stray temporary name costs only space.
+                tracing::warn!(
+                    artifact = %path.display(),
+                    error = %cleanup,
+                    "published artifact left its temporary name behind"
+                );
+            }
+            Ok(())
+        }
+        Err(error) => Err(error.error),
+    }
+}
+
+fn exclusive_rename_unsupported(error: &std::io::Error) -> bool {
+    // std maps EOPNOTSUPP to `Unsupported` but not Apple's distinct ENOTSUP.
+    #[cfg(unix)]
+    if error.raw_os_error() == Some(libc::ENOTSUP) {
+        return true;
+    }
+    error.kind() == std::io::ErrorKind::Unsupported
 }
 
 fn matches_existing_artifact(path: &std::path::Path, bytes: &[u8]) -> Result<bool> {
@@ -539,4 +580,48 @@ fn check_cache_path(path: &std::path::Path, directory: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn unsupported_exclusive_rename(
+        temporary: tempfile::TempPath,
+        _path: &std::path::Path,
+    ) -> std::result::Result<(), tempfile::PathPersistError> {
+        #[cfg(unix)]
+        let error = std::io::Error::from_raw_os_error(libc::ENOTSUP);
+        #[cfg(not(unix))]
+        let error = std::io::Error::from(std::io::ErrorKind::Unsupported);
+        Err(tempfile::PathPersistError {
+            error,
+            path: temporary,
+        })
+    }
+
+    fn temporary_holding(directory: &std::path::Path, bytes: &[u8]) -> tempfile::TempPath {
+        let mut file = tempfile::NamedTempFile::new_in(directory).expect("create temporary file");
+        file.write_all(bytes).expect("write temporary file");
+        file.into_temp_path()
+    }
+
+    #[test]
+    fn without_exclusive_rename_publication_links_and_never_replaces_an_artifact() {
+        let directory = tempfile::tempdir().expect("create test directory");
+        let path = directory.path().join("artifact.meta");
+
+        let first = temporary_holding(directory.path(), b"first");
+        let first_name = first.to_path_buf();
+        publish_noclobber(first, &path, unsupported_exclusive_rename).expect("publish first");
+        assert_eq!(std::fs::read(&path).expect("read artifact"), b"first");
+        assert!(!first_name.exists(), "temporary name should be removed");
+
+        let second = temporary_holding(directory.path(), b"second");
+        let error = publish_noclobber(second, &path, unsupported_exclusive_rename)
+            .expect_err("an existing artifact must not be replaced");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).expect("read artifact"), b"first");
+    }
 }
