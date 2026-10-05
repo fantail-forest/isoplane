@@ -18,6 +18,8 @@ vars:
   PACKAGES: '{{.ROOT_DIR}}/.build/clr-anycpu/packages'
   CLI: '{{.MANAGED}}/bin/Isoplane.Cli/release/Isoplane.Cli.dll'
   NATIVE_TARGET: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/native'
+  RELEASE_NATIVE_ROOT: '{{.ISOPLANE_RELEASE_NATIVE_ROOT | default (printf "%s/.build" .ROOT_DIR)}}'
+  RELEASE_NATIVE_LIBRARY: '{{.RELEASE_NATIVE_ROOT}}/{{.PLATFORM}}/native/release/{{.NATIVE_LIBRARY}}'
   SCRATCH: '{{.ROOT_DIR}}/.build/{{.PLATFORM}}/tmp'
 
   MODULES: '{{.ISOPLANE_TEST_RUNTIME_MODULES | default (printf "%s/.build/wasm32/runtime-modules" .ROOT_DIR)}}'

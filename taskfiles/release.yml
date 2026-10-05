@@ -45,7 +45,7 @@ tasks:
     deps: [shared, ':native:release']
     sources:
       - '{{.MANAGED}}/publish/Isoplane.Cli/release/**/*'
-      - '{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}'
+      - '{{.RELEASE_NATIVE_LIBRARY}}'
       - '{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg'
       - '{{.NOTICES}}/**/*'
       - '{{.ROOT_DIR}}/licenses/Isoplane-SDK-LICENSE.txt'
@@ -60,7 +60,7 @@ tasks:
       - defer: 'rm -rf "{{.STAGE}}"'
       - 'rm -rf "{{.STAGE}}"'
       - 'mkdir -p "{{.STAGE}}" "{{.RELEASE}}"'
-      - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageToolchain -p:ManagedDirectory="{{.MANAGED}}" -p:NativeLibrary="{{.NATIVE_TARGET}}/release/{{.NATIVE_LIBRARY}}" -p:NoticeDirectory="{{.NOTICES}}" -p:StageDirectory="{{.STAGE}}/payload"'
+      - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageToolchain -p:ManagedDirectory="{{.MANAGED}}" -p:NativeLibrary="{{.RELEASE_NATIVE_LIBRARY}}" -p:NoticeDirectory="{{.NOTICES}}" -p:StageDirectory="{{.STAGE}}/payload"'
       - task: '{{if eq OS "windows"}}windows-installer{{else}}workload{{end}}'
       - '{{if eq OS "windows"}}tar.exe{{else}}tar{{end}} -czf "{{.STAGE}}/toolchain.tgz" -C "{{.STAGE}}/bundle" .'
       - 'mv "{{.STAGE}}/toolchain.tgz" "{{.RELEASE}}/toolchain.tgz"'
@@ -105,7 +105,7 @@ tasks:
       - '{{.PACKAGES}}/*.{{.VERSION}}.nupkg'
       - '{{.MANAGED}}/publish/Isoplane.Cli/release/**/*'
       - '{{.MANAGED}}/bin/Isoplane.Native/release/*'
-      - '{{.ROOT_DIR}}/.build/*/native/release/*isoplane_native*'
+      - '{{.RELEASE_NATIVE_ROOT}}/*/native/release/*isoplane_native*'
       - '{{.ROOT_DIR}}/taskfiles/NativePackages/**/*'
       - '{{.ROOT_DIR}}/taskfiles/NativeAssets.props'
       - '{{.ROOT_DIR}}/taskfiles/release.yml'
@@ -127,6 +127,6 @@ tasks:
     cmds:
       - 'mkdir -p "{{.PUBLICATION}}/nuget/{{.VERSION}}"'
       - for: [Isoplane.Native, Isoplane.Cli]
-        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -p:PackageOutputPath="{{.PUBLICATION}}/nuget/{{.VERSION}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.ROOT_DIR}}/.build"'
+        cmd: '"{{.DOTNET}}" msbuild taskfiles/NativePackages/NativePackages.csproj -restore -t:Pack -p:NoBuild=true -p:Configuration=Release -p:ArtifactsPath="{{.ROOT_DIR}}/.build/{{.PLATFORM}}/publication/{{.ITEM}}" -p:PackageOutputPath="{{.PUBLICATION}}/nuget/{{.VERSION}}" -p:PackageId={{.ITEM}} -p:ManagedDirectory="{{.MANAGED}}" -p:IsoplaneNativeRoot="{{.RELEASE_NATIVE_ROOT}}"'
       - 'cp "{{.PACKAGES}}/Isoplane.Sdk.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.AspNetCore.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Templates.{{.VERSION}}.nupkg" "{{.PACKAGES}}/Isoplane.Testing.{{.VERSION}}.nupkg" "{{.PUBLICATION}}/nuget/{{.VERSION}}/"'
       - '{{.PYTHON}} scripts/assemble-publication.py --releases "{{.RELEASES}}" --version {{.VERSION}} --output "{{.PUBLICATION}}"'

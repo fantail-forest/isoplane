@@ -20,7 +20,7 @@ tasks:
       - task: ':setup:licenses'
       - 'mkdir -p "{{.NOTICES}}"'
       - 'cargo about generate --locked --fail --manifest-path crates/isoplane-native/Cargo.toml --target x86_64-unknown-linux-gnu --target aarch64-apple-darwin --target x86_64-pc-windows-msvc --format json --output-file "{{.NOTICES}}/rust-dependencies.json"'
-      - cmd: '"{{.USER_HOME}}/.dotnet/tools/nuget-license" -i Isoplane.slnx -t -d "{{.NOTICES}}/managed" -o JsonPretty -fo "{{.NOTICES}}/managed-dependencies.json"'
+      - cmd: '"{{.USER_HOME}}/.dotnet/tools/nuget-license" -i Isoplane.slnx --exclude-projects-matching "*.Tests*" -t -d "{{.NOTICES}}/managed" -o JsonPretty -fo "{{.NOTICES}}/managed-dependencies.json"'
       - |
         for component in dotnet-runtime icu openssl; do
           mkdir -p "{{.NOTICES}}/$component"
