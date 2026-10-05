@@ -62,7 +62,7 @@ tasks:
       - 'mkdir -p "{{.STAGE}}" "{{.RELEASE}}"'
       - '"{{.DOTNET}}" msbuild taskfiles/Release.proj -nologo -t:StageToolchain -p:ManagedDirectory="{{.MANAGED}}" -p:NativeLibrary="{{.RELEASE_NATIVE_LIBRARY}}" -p:NoticeDirectory="{{.NOTICES}}" -p:StageDirectory="{{.STAGE}}/payload"'
       - task: '{{if eq OS "windows"}}windows-installer{{else}}workload{{end}}'
-      - '{{if eq OS "windows"}}tar.exe{{else}}tar{{end}} -czf "{{.STAGE}}/toolchain.tgz" -C "{{.STAGE}}/bundle" .'
+      - '"{{if eq OS "windows"}}{{env "SystemRoot"}}/System32/tar.exe{{else}}tar{{end}}" -czf "{{.STAGE}}/toolchain.tgz" -C "{{.STAGE}}/bundle" .'
       - 'mv "{{.STAGE}}/toolchain.tgz" "{{.RELEASE}}/toolchain.tgz"'
 
   workload:
