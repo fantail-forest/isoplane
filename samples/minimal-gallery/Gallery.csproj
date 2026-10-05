@@ -1,4 +1,4 @@
-<Project Sdk="Isoplane.Sdk/0.1.0-preview.3">
+<Project Sdk="Isoplane.Sdk/0.1.0-preview.4">
   <PropertyGroup>
     <IsoplaneApplicationFactory>MinimalGallery.Application.Create</IsoplaneApplicationFactory>
     <ImplicitUsings>enable</ImplicitUsings>

@@ -6,7 +6,7 @@
     <_IsoplaneBuildRoot Condition="'$(ISOPLANE_BUILD_ROOT)' != ''">$([MSBuild]::NormalizeDirectory('$(ISOPLANE_BUILD_ROOT)'))</_IsoplaneBuildRoot>
     <UseArtifactsOutput Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">true</UseArtifactsOutput>
     <ArtifactsPath Condition="'$(_IsoplaneBuildRoot)' == '$(MSBuildThisFileDirectory)' AND '$(ArtifactsPath)' == ''">$(_IsoplaneBuildRoot).build/clr-anycpu/managed</ArtifactsPath>
-    <Version>0.1.0-preview.3</Version>
+    <Version>0.1.0-preview.4</Version>
     <RepositoryUrl>https://github.com/fantail-forest/isoplane</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
