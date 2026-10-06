@@ -222,22 +222,6 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
             }
         }
     }
-    let streamed = Request::builder()
-        .method("POST")
-        .uri("/streaming")
-        .header("host", "quotes.isoplane.dev")
-        .body(Full::new(Bytes::from_static(b"selected route")))
-        .expect("mixed streaming route request");
-    let streamed = common::request(rig.proxy, streamed).await;
-    assert_eq!(
-        streamed.status, 200,
-        "the same router must explicitly select its streaming handler"
-    );
-    assert_eq!(
-        streamed.body,
-        format!("stream:{}", base64.encode(b"selected route")),
-        "streaming selection must preserve upload bytes without changing buffered routes"
-    );
     let invalid = Request::builder()
         .uri("/probe")
         .header("host", "quotes.isoplane.dev")
@@ -247,6 +231,40 @@ async fn a_csharp_handler_receives_request_fields_for_every_standard_http_method
     assert_eq!(common::request(rig.proxy, invalid).await.status, 422,
         "the fixture must reject mismatched request fields, including those checked only by status for HEAD and CONNECT");
     rig.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_csharp_streaming_handler_receives_its_upload() {
+    use base64::Engine as _;
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::Request;
+
+    let rig = start_with(
+        common::preparation::Guest::from("isoplane_guest_dotnet_upload"),
+        InitSandbox::RuntimeBringUp,
+    )
+    .await;
+    let upload = Request::builder()
+        .method("POST")
+        .uri("/upload")
+        .header("host", "quotes.isoplane.dev")
+        .body(Full::new(Bytes::from_static(b"streamed upload")))
+        .expect("a streaming upload request");
+    let response = common::request(rig.proxy, upload).await;
+    assert_eq!(
+        response.status, 200,
+        "a handler taking a StreamingRequest must receive the dispatch: {}",
+        response.body
+    );
+    assert_eq!(
+        response.body,
+        format!(
+            "stream:{}",
+            base64::engine::general_purpose::STANDARD.encode(b"streamed upload")
+        ),
+        "the handler must read the upload's bytes from its body stream"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

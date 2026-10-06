@@ -6,11 +6,19 @@ using Isoplane;
 
 namespace Isoplane.App;
 
-public sealed class RandomnessProbe : IIsoplaneHandler
+public static class RandomnessProbe
 {
-    private static readonly RandomNumberGenerator InstanceRandom = RandomNumberGenerator.Create();
+    private static RandomNumberGenerator InstanceRandom = null!;
 
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        InstanceRandom = RandomNumberGenerator.Create();
+        return Task.CompletedTask;
+    }
+
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         if (request.Path == "/instance")
         {

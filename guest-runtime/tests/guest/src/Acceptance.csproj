@@ -15,7 +15,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <BaseOutputPath>$(ISOPLANE_FIXTURE_ARTIFACTS)/bin/</BaseOutputPath>
-    <IsoplaneApplicationFactory>Acceptance.Application.Create</IsoplaneApplicationFactory>
     <RootNamespace>Acceptance</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>

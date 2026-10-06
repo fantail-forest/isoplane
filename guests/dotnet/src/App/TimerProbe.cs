@@ -4,13 +4,14 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Exercises ordinary managed deadlines across host parking.</summary>
-public sealed class TimerProbe : IIsoplaneHandler
+public static class TimerProbe
 {
-    private int _abandonedCallbacks;
-    private int _requests;
+    private static int _abandonedCallbacks;
+    private static int _requests;
 
     /// <summary>Exercises awaited timers and observes abandoned timer continuations.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request, Ctx context)
     {
         _requests++;
         if (request.Path == "/abandon")
@@ -23,7 +24,7 @@ public sealed class TimerProbe : IIsoplaneHandler
         await Task.Delay(100).ConfigureAwait(false);
         return Response.Text("timer resumed");
     }
-    private async Task AbandonedDelay()
+    private static async Task AbandonedDelay()
     {
         await Task.Delay(100).ConfigureAwait(false);
         _abandonedCallbacks++;

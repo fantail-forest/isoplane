@@ -5,17 +5,20 @@ using Isoplane;
 
 namespace Isoplane.App;
 
-internal sealed class MemoryProbe : IIsoplaneHandler
+internal static class MemoryProbe
 {
-    private readonly long _initialMemoryBytes;
+    private static long _initialMemoryBytes;
 
-    public MemoryProbe()
+    [Initializer]
+    public static Task InitializeAsync()
     {
         GC.Collect();
         _initialMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        return Task.CompletedTask;
     }
 
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         GC.Collect();
         long currentMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;

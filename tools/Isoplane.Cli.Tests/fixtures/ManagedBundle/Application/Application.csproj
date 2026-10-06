@@ -2,7 +2,6 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsoplaneManagedBundleBuild>true</IsoplaneManagedBundleBuild>
-    <IsoplaneApplicationFactory>Application.Create</IsoplaneApplicationFactory>
     <IsoplaneRuntimeDirectory>$(MSBuildThisFileDirectory)../runtime</IsoplaneRuntimeDirectory>
   </PropertyGroup>
   <ItemGroup>

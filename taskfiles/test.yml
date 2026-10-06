@@ -86,7 +86,7 @@ tasks:
       - '{{.DIRECTORY}}/bin/Dependency/debug/Dependency.pdb'
     cmds:
       - 'mkdir -p "{{.DIRECTORY}}"'
-      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj -restore -t:IsoplaneManagedBundle -p:UseArtifactsOutput=true -p:ArtifactsPath="{{.DIRECTORY}}" -getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory -getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference -getResultOutputFile:"{{.DIRECTORY}}/result.json" -nodeReuse:false'
+      - '"{{.DOTNET}}" msbuild tools/Isoplane.Cli.Tests/fixtures/ManagedBundle/Application/Application.csproj -restore -t:IsoplaneManagedBundle -p:UseArtifactsOutput=true -p:ArtifactsPath="{{.DIRECTORY}}" -getProperty:AssemblyName,IsoplaneRuntimeDirectory -getItem:ReferencePath,IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference -getResultOutputFile:"{{.DIRECTORY}}/result.json" -nodeReuse:false'
 
   process-fixture:
     internal: true

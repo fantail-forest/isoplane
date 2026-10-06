@@ -6,7 +6,7 @@ namespace Isoplane.MonoRuntime;
 
 /// <summary>
 /// The runtime's router: at boot it loads the served package and hands every
-/// dispatch to the router the package's factory selects.
+/// dispatch to the router for the package's entry.
 /// </summary>
 internal sealed class PackageRouter : IStreamingHttpRouter
 {

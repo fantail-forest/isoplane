@@ -10,10 +10,10 @@ namespace AdapterFixture;
 /// <summary>Exercises the ASP.NET transport, request scopes, and hosted startup.</summary>
 public static class Application
 {
-    /// <summary>Builds the transport fixture and warms its ordinary and scoped read routes.</summary>
-    public static WebApplication Create()
+    /// <summary>Runs the transport fixture and warms its ordinary and scoped read routes.</summary>
+    public static async Task Main(string[] args)
     {
-        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(args);
         builder.Services.AddScoped<RequestScope>();
         builder.Services.AddHostedService<StartupService>();
         var app = builder.Build();
@@ -74,11 +74,10 @@ public static class Application
         });
         Isoplane.Initialization.Initializing += async () =>
         {
-            var application = new IsoplaneApplication(app);
-            await application.WarmupAsync("/");
-            await application.WarmupAsync("/scope");
+            await app.WarmupAsync("/");
+            await app.WarmupAsync("/scope");
         };
-        return app;
+        await app.RunAsync();
     }
 }
 

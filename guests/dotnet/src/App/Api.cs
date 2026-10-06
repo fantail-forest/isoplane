@@ -15,9 +15,10 @@ namespace Isoplane.App;
 /// still gets an empty stack at the await (invariant 3). Everything that
 /// makes that true lives in <c>Runtime/</c> and none of it is visible here.
 /// </summary>
-public sealed class Api : IIsoplaneHandler
+public static class Api
 {
-    public async Task<Response> HandleAsync(Request req, Ctx ctx)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
     {
         await Task.Delay(1);
         return Response.Text(req.Path);

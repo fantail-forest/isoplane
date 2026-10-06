@@ -10,9 +10,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <BaseOutputPath>$(ISOPLANE_FIXTURE_ARTIFACTS)/bin/</BaseOutputPath>
-    <IsoplaneApplicationFactory>AdapterFixture.Application.Create</IsoplaneApplicationFactory>
   </PropertyGroup>
   <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../../guest-sdks/dotnet/AspNetCore/Isoplane.AspNetCore.csproj" />
   </ItemGroup>

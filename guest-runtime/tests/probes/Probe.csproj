@@ -10,11 +10,9 @@
     <Nullable>enable</Nullable>
     <DefineConstants>$(DefineConstants);$(IsoplaneProbeSymbol)</DefineConstants>
     <BaseOutputPath>$(ISOPLANE_FIXTURE_ARTIFACTS)/bin/</BaseOutputPath>
-    <IsoplaneApplicationFactory>Isoplane.Probes.Factory.Create</IsoplaneApplicationFactory>
   </PropertyGroup>
   <Import Project="../../../guest-sdks/dotnet/Build/Isoplane.ManagedBundle.props" />
   <ItemGroup>
-    <Compile Include="Factory.cs" />
     <Compile Include="../../../guests/dotnet/src/App/$(IsoplaneProbe).cs" />
     <EmbeddedResource Include="../../../guests/dotnet/src/App/filesystem-resource.txt" LogicalName="filesystem-resource" Condition="'$(IsoplaneProbe)' == 'FilesystemProbe'" />
     <ProjectReference Include="../../../guest-sdks/dotnet/Isoplane.Sdk.csproj" />

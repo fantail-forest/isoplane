@@ -6,12 +6,20 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Retains deployment settings in the initialized guest template.</summary>
-public sealed class ConfigProbe : IIsoplaneHandler
+public static class ConfigProbe
 {
-    private readonly IReadOnlyList<KeyValuePair<string, string>> variables = DeploymentConfiguration.ReadVariables();
+    private static IReadOnlyList<KeyValuePair<string, string>> variables = [];
+
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        variables = DeploymentConfiguration.ReadVariables();
+        return Task.CompletedTask;
+    }
 
     /// <summary>Returns the captured names and values in their declared order.</summary>
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         var body = new StringBuilder();
         foreach (var variable in variables)

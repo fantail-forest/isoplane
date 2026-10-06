@@ -45,4 +45,3 @@ emits no maximum by default.
 | Directory   | What it is                                                                                         |
 | ----------- | -------------------------------------------------------------------------------------------------- |
 | `dotnet/`   | Managed behavior probes packaged for the shared runtime. See `dotnet/README.md`.                             |
-| `publish-cs/` | Source fixture staged with an isolated SDK by the CLI's C# publish and reload test. |

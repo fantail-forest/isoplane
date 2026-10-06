@@ -4,7 +4,7 @@
   <PropertyGroup>
     <AssemblyName Condition="'$(IsoplaneDebuggerOptimized)' != 'true'">Debugger</AssemblyName>
     <AssemblyName Condition="'$(IsoplaneDebuggerOptimized)' == 'true'">DebuggerOptimized</AssemblyName>
-    <IsoplaneApplicationFactory>Debugger.Application.Create</IsoplaneApplicationFactory>
+    <OutputType>Exe</OutputType>
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
     <Optimize Condition="'$(IsoplaneDebuggerOptimized)' != 'true'">false</Optimize>
     <Optimize Condition="'$(IsoplaneDebuggerOptimized)' == 'true'">true</Optimize>

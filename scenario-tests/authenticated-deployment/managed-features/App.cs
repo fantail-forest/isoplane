@@ -12,10 +12,10 @@ namespace ManagedFeatures;
 /// <summary>Exercises interpreted managed code and EF query translation after deployment.</summary>
 public static class App
 {
-    /// <summary>Builds the application and warms its managed-feature read route before template capture.</summary>
-    public static WebApplication Create()
+    /// <summary>Runs the application and warms its managed-feature read route before template capture.</summary>
+    public static async Task Main(string[] args)
     {
-        var builder = IsoplaneHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(args);
         builder.Services.AddScoped<QueryService>();
         var app = builder.Build();
         app.Use(async (context, next) =>
@@ -39,8 +39,8 @@ public static class App
             Console.WriteLine("source-free-console");
             return "source free";
         });
-        Isoplane.Initialization.Initializing += () => new IsoplaneApplication(app).WarmupAsync("/");
-        return app;
+        Isoplane.Initialization.Initializing += () => app.WarmupAsync("/");
+        await app.RunAsync();
     }
 
     public sealed class QueryService

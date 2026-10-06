@@ -8,11 +8,19 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Exercises the managed view of the empty read-only filesystem.</summary>
-public sealed class FilesystemProbe : IIsoplaneHandler
+public static class FilesystemProbe
 {
-    private static readonly string InitialDirectory = Directory.GetCurrentDirectory();
+    private static string InitialDirectory = "";
 
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        InitialDirectory = Directory.GetCurrentDirectory();
+        return Task.CompletedTask;
+    }
+
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         string result;
         try

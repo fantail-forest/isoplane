@@ -11,14 +11,13 @@ using System.Threading.Tasks;
 using Isoplane.Build;
 using Isoplane.AspNetCore;
 using Isoplane;
-using Microsoft.AspNetCore.Builder;
 
 namespace Isoplane.MonoRuntime;
 
 /// <summary>
 /// The runtime's fixed application loader. It loads the application package
 /// the host serves beneath <see cref="Root"/> and returns the router for the
-/// factory the package's manifest names. It runs during initialization, so the
+/// entry the package's manifest records. It runs during initialization, so the
 /// loaded assemblies are part of the captured template rather than of each
 /// instance.
 /// </summary>
@@ -53,13 +52,12 @@ public static class PackageLoader
                 HandlerApplication library => new AttributedHandlerRouter(Method(entry, library.Http),
                     library.Initializer is null ? null : Method(entry, library.Initializer),
                     library.Activated is null ? null : Method(entry, library.Activated)),
-                FactoryApplication factory => CreateRouter(entry, factory.Factory),
                 _ => throw Refuse(new PackageManifestException("the application manifest records no entry"))
             };
         }
         catch (ArgumentException error)
         {
-            throw Refuse(new PackageFactoryException("an application method does not have the shape its attribute requires: " + error.Message));
+            throw Refuse(new PackageEntryException("an application method does not have the shape its attribute requires: " + error.Message));
         }
     }
 
@@ -68,7 +66,7 @@ public static class PackageLoader
         const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly;
         MethodInfo[] methods = entry.GetType(reference.Type)?.GetMethods(Declared).Where(method => method.Name == reference.Method).ToArray() ?? [];
         return methods.Length == 1 ? methods[0]
-            : throw Refuse(new PackageFactoryException($"'{reference}' is not one static method of '{entry.GetName().Name}'"));
+            : throw Refuse(new PackageEntryException($"'{reference}' is not one static method of '{entry.GetName().Name}'"));
     }
 
     private static ManagedApplication ReadManifest()
@@ -123,32 +121,6 @@ public static class PackageLoader
         throw Refuse(new PackageAssemblyConflictException($"package assembly '{key}' is supplied by the runtime"));
     }
 
-    private static IIsoplaneRouter CreateRouter(Assembly entry, string factory)
-    {
-        int separator = factory.LastIndexOf('.');
-        string typeName = separator > 0 ? factory[..separator] : "";
-        Type? type = entry.GetExportedTypes().SingleOrDefault(candidate => candidate.FullName?.Replace('+', '.') == typeName);
-        MethodInfo? method = type?.GetMethod(factory[(separator + 1)..], BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes);
-        if (method is null || method.IsGenericMethodDefinition)
-            throw Refuse(new PackageFactoryException($"'{factory}' is not a public static parameterless method of '{entry.GetName().Name}'"));
-        if (typeof(IIsoplaneRouter).IsAssignableFrom(method.ReturnType))
-        {
-            Func<IIsoplaneRouter?> create = method.CreateDelegate<Func<IIsoplaneRouter?>>();
-            return create() ?? throw Refuse(new PackageFactoryException($"'{factory}' returned no router"));
-        }
-        if (typeof(IIsoplaneHandler).IsAssignableFrom(method.ReturnType))
-        {
-            Func<IIsoplaneHandler?> create = method.CreateDelegate<Func<IIsoplaneHandler?>>();
-            return new HandlerFactoryRouter(() => create()
-                ?? throw Refuse(new PackageFactoryException($"'{factory}' returned no handler")));
-        }
-        // Compared by name first: binding the type loads ASP.NET, which only
-        // an ASP.NET package carries.
-        if (method.ReturnType.FullName == WebApplications.TypeName)
-            return WebApplications.Router(method, factory);
-        throw Refuse(new PackageFactoryException($"'{factory}' returns '{method.ReturnType.FullName}', not IIsoplaneHandler, IIsoplaneRouter or WebApplication"));
-    }
-
     /// <summary>
     /// The export boundary reports only an exception's type, so the context
     /// of a refusal goes to the guest log first.
@@ -170,22 +142,12 @@ internal sealed partial class ManifestJson : JsonSerializerContext;
 /// <summary>ASP.NET applications, kept apart so only they bind ASP.NET.</summary>
 internal static class WebApplications
 {
-    internal const string TypeName = "Microsoft.AspNetCore.Builder.WebApplication";
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    internal static IIsoplaneRouter Router(MethodInfo method, string factory)
-    {
-        if (method.ReturnType != typeof(WebApplication))
-            throw PackageLoader.Refuse(new PackageFactoryException($"'{factory}' returns a WebApplication the runtime's ASP.NET adapter does not bind"));
-        return new WebApplicationRouter(method.CreateDelegate<Func<WebApplication>>());
-    }
-
     /// <summary>The router for an executable's asynchronous entry point.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static IIsoplaneRouter EntryPoint(MethodInfo main)
     {
         if (!typeof(Task).IsAssignableFrom(main.ReturnType))
-            throw PackageLoader.Refuse(new PackageFactoryException($"the entry point '{main.DeclaringType?.FullName}.{main.Name}' does not return a Task"));
+            throw PackageLoader.Refuse(new PackageEntryException($"the entry point '{main.DeclaringType?.FullName}.{main.Name}' does not return a Task"));
         object?[]? arguments = main.GetParameters().Length == 0 ? null : [Array.Empty<string>()];
         return new EntryPointRouter(() => (Task)main.Invoke(null, BindingFlags.DoNotWrapExceptions, null, arguments, null)!,
             main.Module.Assembly.GetName().Name!);
@@ -196,4 +158,4 @@ internal sealed class PackageManifestException(string message) : Exception(messa
 
 internal sealed class PackageAssemblyConflictException(string message) : Exception(message);
 
-internal sealed class PackageFactoryException(string message) : Exception(message);
+internal sealed class PackageEntryException(string message) : Exception(message);

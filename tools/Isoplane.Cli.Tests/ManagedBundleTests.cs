@@ -27,7 +27,6 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
                     new System.Xml.Linq.XElement("TargetFramework", "net10.0"),
                     new System.Xml.Linq.XElement("RuntimeFrameworkVersion", version),
                     new System.Xml.Linq.XElement("IsoplaneManagedBundleBuild", "true"),
-                    new System.Xml.Linq.XElement("IsoplaneApplicationFactory", "Application.Create"),
                     new System.Xml.Linq.XElement("OutputType", "Library"),
                     new System.Xml.Linq.XElement("CopyLocalLockFileAssemblies", "true")),
                 new System.Xml.Linq.XElement("ItemGroup", new System.Xml.Linq.XElement("PackageReference",
@@ -85,14 +84,26 @@ public sealed class ManagedBundleTests : IClassFixture<ManagedBundleFixture>
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <TargetFramework>net10.0</TargetFramework>
-                <IsoplaneApplicationFactory>Application.Create</IsoplaneApplicationFactory>
                 <IsoplaneRuntimeDirectory>{System.Security.SecurityElement.Escape(fixture.SharedRuntime)}</IsoplaneRuntimeDirectory>
               </PropertyGroup>
               <Import Project="$(ISOPLANE_BUILD_ROOT)/guest-sdks/dotnet/Build/Isoplane.ManagedBundle.targets" />
             </Project>
             """);
-        await File.WriteAllTextAsync(Path.Combine(project, "Code.cs"),
-            "public static class Application { public static object Create() => new object(); }");
+        await File.WriteAllTextAsync(Path.Combine(project, "Code.cs"), """
+            using System.Threading.Tasks;
+            namespace Isoplane
+            {
+                // Stand-ins for the SDK types the bundler recognises by name.
+                public sealed class HttpHandlerAttribute : System.Attribute { }
+                public sealed class Request { }
+                public sealed class Response { }
+            }
+            public static class Application
+            {
+                [Isoplane.HttpHandler]
+                public static Task<Isoplane.Response> HandleAsync(Isoplane.Request request) => Task.FromResult(new Isoplane.Response());
+            }
+            """);
         await File.WriteAllTextAsync(Path.Combine(project, "NuGet.Config"),
             "<configuration><packageSources><clear /></packageSources></configuration>");
         var output = Path.Combine(project, "application.tar");
@@ -332,7 +343,7 @@ public sealed class ManagedBundleFixture
         if (additionalAssembly is not null) assemblies.Add(additionalAssembly);
         return JsonSerializer.SerializeToElement(new
         {
-            Properties = new { AssemblyName = "Application", IsoplaneApplicationFactory = "Application.Create", IsoplaneRuntimeDirectory = runtimeDirectory ?? SharedRuntime },
+            Properties = new { AssemblyName = "Application", IsoplaneRuntimeDirectory = runtimeDirectory ?? SharedRuntime },
             Items = new
             {
                 IsoplaneBundleAssembly = assemblies.Select(path => new { FullPath = path }),

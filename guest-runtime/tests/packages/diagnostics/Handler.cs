@@ -10,13 +10,11 @@ namespace Diagnostics;
 /// Each path makes the Mono runtime report through its own logger, or asks it
 /// for more memory than a limited instance may have.
 /// </summary>
-public sealed class Handler : IIsoplaneHandler
+public static class Handler
 {
-    /// <summary>The package's declared factory.</summary>
-    public static IIsoplaneHandler Create() => new Handler();
-
     /// <summary>Runs the report the request path names.</summary>
-    public Task<Response> HandleAsync(Request req, Ctx ctx)
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request req, Ctx ctx)
     {
         switch (req.Path)
         {

@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -12,7 +11,6 @@ internal sealed class IsoplaneServer : IServer
     private readonly Func<ResponseTransport> createTransport;
     private readonly IServiceProvider services;
     private Func<IFeatureCollection, Task>? dispatch;
-    private Task? started;
 
     public IsoplaneServer(Func<ResponseTransport> createTransport, IServiceProvider services, IHostApplicationLifetime lifetime, ApplicationStartup? startup = null)
     {
@@ -22,10 +20,6 @@ internal sealed class IsoplaneServer : IServer
     }
 
     internal bool Started => dispatch is not null;
-
-    // An entry point that awaits RunAsync has already started its host.
-    internal Task StartApplicationAsync(WebApplication application) =>
-        Started ? Task.CompletedTask : started ??= application.StartAsync();
 
     /// <summary>Builds the route table now, so a template captures it instead of each instance's first request.</summary>
     internal void PrimeEndpoints() => _ = services.GetService<Microsoft.AspNetCore.Routing.EndpointDataSource>()?.Endpoints;

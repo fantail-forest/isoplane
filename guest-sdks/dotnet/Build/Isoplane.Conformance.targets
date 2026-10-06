@@ -19,7 +19,7 @@
     </ItemGroup>
     <Isoplane.Conformance.InspectManagedAssemblies Assemblies="@(_IsoplaneConformanceAssembly)"
         ApplicationAssemblies="@(_IsoplaneConformanceApplication)"
-        EntryAssembly="@(IntermediateAssembly)" ApplicationFactory="$(IsoplaneApplicationFactory)"
+        EntryAssembly="@(IntermediateAssembly)"
         AnalyzeDependencies="$(IsoplaneAnalyzeDependencies)" WarnOnNativeImports="$(IsoplaneWarnOnNativeImports)"
         NoWarn="$(NoWarn)" WarningsAsErrors="$(WarningsAsErrors)"
         WarningsNotAsErrors="$(WarningsNotAsErrors)" TreatWarningsAsErrors="$([MSBuild]::ValueOrDefault('$(TreatWarningsAsErrors)', 'false'))" />

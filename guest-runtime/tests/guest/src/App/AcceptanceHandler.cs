@@ -10,7 +10,7 @@ namespace Acceptance;
 /// an exception the family did not classify is reported by type name so a
 /// test failure names the managed failure rather than a trap.
 /// </summary>
-public sealed class AcceptanceHandler : IIsoplaneHandler
+public sealed class AcceptanceHandler
 {
     private readonly EventLoop _eventLoop = new();
     private readonly Sockets _sockets = new();
@@ -24,7 +24,7 @@ public sealed class AcceptanceHandler : IIsoplaneHandler
     private readonly Reflection _reflection = new();
 
     /// <summary>Dispatches on the family segment of the path.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    public async Task<Response> HandleAsync(Request request)
     {
         string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length == 0) return Response.Text("acceptance");

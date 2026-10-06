@@ -26,7 +26,7 @@ public sealed class StreamingTests
             await release.Task;
             await context.Response.Body.WriteAsync("B"u8.ToArray());
         });
-        var request = new IsoplaneApplication(app).HandleAsync(Request());
+        var request = app.HandleAsync(Request());
         await first.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(transport.Started.Task.IsCompleted && !request.IsCompleted,
             "response headers must be published before the waiting handler completes");
@@ -54,7 +54,7 @@ public sealed class StreamingTests
             await context.Response.Body.WriteAsync(new byte[] { 7 });
             returned = true;
         });
-        var request = new IsoplaneApplication(app).HandleAsync(Request());
+        var request = app.HandleAsync(Request());
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(!returned && !request.IsCompleted, "guest execution must await a blocked host write");
         accepted.SetResult();
@@ -78,7 +78,7 @@ public sealed class StreamingTests
             Assert.True(error is InvalidOperationException && !callback,
                 "CompleteAsync freezes writes without prematurely running completion callbacks");
         });
-        await new IsoplaneApplication(app).HandleAsync(Request());
+        await app.HandleAsync(Request());
         Assert.True(callback && transport.Bytes.ToArray().SequenceEqual(new byte[] { 9 }),
             "completion callbacks run after the handler with the final accepted body");
     }
@@ -98,7 +98,7 @@ public sealed class StreamingTests
             context.Response.OnCompleted(() => { callback = true; return Task.CompletedTask; });
             await context.Response.Body.WriteAsync(new byte[] { 1 });
         });
-        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
         Assert.True(error is IOException && callback, "a failed body write must propagate after completion callbacks run");
         Assert.True(transport.Started.Task.IsCompleted && transport.Bytes.Length == 0,
             "a post-header failure must not fabricate accepted response bytes");

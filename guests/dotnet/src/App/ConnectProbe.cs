@@ -8,10 +8,11 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Exercises an ordinary managed outbound TCP connection.</summary>
-public sealed class ConnectProbe : IIsoplaneHandler
+public static class ConnectProbe
 {
     /// <summary>Connects to the test endpoint and disposes the socket after resuming.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request, Ctx context)
     {
         string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         IPAddress address = IPAddress.Parse(parts[0]);

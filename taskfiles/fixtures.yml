@@ -55,6 +55,7 @@ tasks:
       - task: dotnet:isoplane_guest_dotnet_filesystem
       - task: dotnet:isoplane_guest_aspnet
       - task: dotnet:isoplane_guest_dotnet_request
+      - task: dotnet:isoplane_guest_dotnet_upload
       - task: dotnet:isoplane_guest_dotnet
 
   dotnet:isoplane_guest_dotnet_activation:
@@ -189,6 +190,13 @@ tasks:
         vars:
           NAME: isoplane_guest_dotnet_request
           PROBE: RequestProbe
+
+  dotnet:isoplane_guest_dotnet_upload:
+    cmds:
+      - task: probe:build
+        vars:
+          NAME: isoplane_guest_dotnet_upload
+          PROBE: UploadProbe
 
   dotnet:isoplane_guest_dotnet:
     cmds:

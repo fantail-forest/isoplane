@@ -49,7 +49,7 @@ public sealed class ManagedBundleTests : MsbuildTests
         var project = Path.Combine(directory, "Application.csproj");
         new XDocument(new XElement("Project",
             new XElement("Import", new XAttribute("Project", "Sdk.props"), new XAttribute("Sdk", "Microsoft.NET.Sdk")),
-            new XElement("PropertyGroup", new XElement("TargetFramework", "net10.0"), new XElement("IsoplaneManagedBundleBuild", "true"),  new XElement("IsoplaneApplicationFactory", "Application.Create")),
+            new XElement("PropertyGroup", new XElement("TargetFramework", "net10.0"), new XElement("IsoplaneManagedBundleBuild", "true")),
             new XElement("ItemGroup", new XElement("Compile", new XAttribute("Remove", "dependency/**/*.cs")),
                 packageReference ? new XElement("PackageReference", new XAttribute("Include", packageId), new XAttribute("Version", "1.0.0")) : new XElement("ProjectReference", new XAttribute("Include", "dependency/Dependency.csproj")),
                 new XElement("None", new XAttribute("Update", "data.txt"), new XAttribute("CopyToOutputDirectory", "PreserveNewest")),

@@ -10,13 +10,11 @@ namespace Native;
 /// Attempts one native transition per request path, before and after a host
 /// timer, and answers the outcome of each: the exception type, or <c>called</c>.
 /// </summary>
-public sealed class Handler : IIsoplaneHandler
+public static class Handler
 {
-    /// <summary>The package's declared factory.</summary>
-    public static IIsoplaneHandler Create() => new Handler();
-
     /// <summary>Answers <c>before/after</c> for the transition the path names.</summary>
-    public async Task<Response> HandleAsync(Request req, Ctx ctx)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
     {
         string before = Attempt(req.Path);
         await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);

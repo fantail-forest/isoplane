@@ -2,7 +2,7 @@
   <Import Project="../tools/Build/Isoplane.ManagedBundle.props" />
   <PropertyGroup>
     <!-- An ASP.NET application is its Program.cs; the runtime invokes that entry point. -->
-    <OutputType Condition="'$(IsoplaneApplicationFactory)' == ''">Exe</OutputType>
+    <OutputType>Exe</OutputType>
     <SupportsHotReload>false</SupportsHotReload>
     <RunCommand Condition="'$(RunCommand)' == ''">isoplane</RunCommand>
   </PropertyGroup>

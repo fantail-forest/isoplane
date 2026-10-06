@@ -19,10 +19,11 @@ public sealed class HostingTests
         builder.Services.AddSingleton<Func<ResponseTransport>>(() => new RecordingResponseTransport());
         return builder;
     }
-    private static Request Request(string path = "/") => Isoplane.Request.FromDispatch(new DispatchRecord
+    private static DispatchRecord Dispatch(string path = "/") => new()
     {
         Kind = DispatchKind.Http, Method = "GET", Path = path.Split('?')[0], Url = path
-    });
+    };
+    private static Request Request(string path = "/") => Isoplane.Request.FromDispatch(Dispatch(path));
 
     [Fact]
     public async Task hosted_services_start_once_when_requests_begin()
@@ -32,92 +33,82 @@ public sealed class HostingTests
         builder.Services.AddSingleton<IHostedService>(new Service(events));
         await using var app = builder.Build();
         app.MapGet("/", () => "ready");
-        var runtime = new IsoplaneApplication(app);
-        Assert.True(events.Count == 0, "building template state must not start hosted services");
-        await runtime.HandleAsync(Request());
-        await runtime.HandleAsync(Request());
+        Assert.True(events.Count == 0, "building the application must not start hosted services");
+        await app.HandleAsync(Request());
+        await app.HandleAsync(Request());
         Assert.True(events.SequenceEqual(["start"]), "the host starts once across sequential requests");
         await app.StopAsync();
         Assert.True(events.SequenceEqual(["start", "stop"]), "the .NET host stops registered services");
     }
 
     [Fact]
-    public async Task preparation_starts_hosts_after_user_hooks_and_reuses_existing_warmup()
+    public async Task a_request_waits_for_the_host_its_entry_point_is_starting()
     {
-        var hookRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var startupRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var startupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startupRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var events = new List<string>();
-        var coldBuilder = Builder();
-        coldBuilder.Services.AddSingleton<IHostedService>(new StartupService(async () =>
+        WebApplication? application = null;
+        var router = new EntryPointRouter(async () =>
         {
-            events.Add("cold.start");
-            startupEntered.SetResult();
-            await startupRelease.Task;
-        }));
-        var warmBuilder = Builder();
-        warmBuilder.Services.AddSingleton<IHostedService>(new StartupService(() =>
-        {
-            events.Add("warm.start");
-            return Task.CompletedTask;
-        }));
-        await using var cold = coldBuilder.Build();
-        await using var warm = warmBuilder.Build();
-        cold.MapGet("/", () => "ready");
-        warm.MapGet("/", () => "ready");
-        int factories = 0;
-        new WebApplicationRouter(() => { factories++; return cold; }).Boot();
-        new WebApplicationRouter(() => { factories++; return warm; }).Boot();
-        Func<Task> callback = async () =>
-        {
-            await hookRelease.Task;
-            await new IsoplaneApplication(warm).WarmupAsync("/");
-            events.Add("hook.completed");
-        };
-        Initialization.Initializing += callback;
+            var builder = Builder();
+            builder.Services.AddSingleton<IHostedService>(new StartupService(async () =>
+            {
+                startupEntered.SetResult();
+                await startupRelease.Task;
+                events.Add("host");
+            }));
+            application = builder.Build();
+            application.MapGet("/", () => { events.Add("request"); return "ready"; });
+            await application.RunAsync();
+        }, "Application");
+        router.Boot();
         try
         {
-            Task initialization = Initialization.EnterAsync();
-            Assert.True(events.Count == 0 && !initialization.IsCompleted,
-                "automatic startup must wait for the application's initialization hook");
-            hookRelease.SetResult();
+            var first = router.Route(Dispatch(), null!);
             await startupEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
-            Assert.True(events.SequenceEqual(["warm.start", "hook.completed", "cold.start"]),
-                "automatic startup must follow user warmup and must not repeat its host startup");
-            Assert.False(initialization.IsCompleted, "template initialization must await hosted-service startup");
+            Assert.True(events.Count == 0 && !first.IsCompleted, "a request must wait for hosted services to start");
             startupRelease.SetResult();
-            await initialization;
-            await Initialization.EnterAsync();
-            await new IsoplaneApplication(cold).HandleAsync(Request());
-            await new IsoplaneApplication(warm).HandleAsync(Request());
-            Assert.True(factories == 2 && events.SequenceEqual(["warm.start", "hook.completed", "cold.start"]),
-                "preparation and real requests must reuse each factory's application and completed startup");
+            Assert.Equal("ready", System.Text.Encoding.UTF8.GetString((await first).Body));
+            await router.Route(Dispatch(), null!);
+            Assert.Equal(["host", "request", "request"], events);
         }
         finally
         {
-            Initialization.Initializing -= callback;
-            hookRelease.TrySetResult();
             startupRelease.TrySetResult();
+            if (application is not null) await application.DisposeAsync();
         }
     }
 
     [Fact]
-    public async Task failed_host_startup_is_retained_without_retrying_services()
+    public async Task an_entry_point_that_returns_without_running_an_application_is_refused()
+    {
+        var router = new EntryPointRouter(() => Task.CompletedTask, "Application");
+        router.Boot();
+        var error = await Record.ExceptionAsync(() => router.Route(Dispatch(), null!));
+        Assert.True(error is InvalidOperationException && error.Message.Contains("RunAsync", StringComparison.Ordinal),
+            "an entry point that starts no application must be refused with the missing call named: " + error);
+    }
+
+    [Fact]
+    public async Task a_failed_host_startup_fails_every_request_without_restarting_services()
     {
         int starts = 0;
-        var builder = Builder();
-        builder.Services.AddSingleton<IHostedService>(new StartupService(() =>
+        var router = new EntryPointRouter(async () =>
         {
-            starts++;
-            throw new InvalidOperationException("startup failed");
-        }));
-        await using var app = builder.Build();
-        var first = new IsoplaneApplication(app);
-        var second = new IsoplaneApplication(app);
-        var failure = await Record.ExceptionAsync(first.StartAsync);
-        var repeated = await Record.ExceptionAsync(second.StartAsync);
-        Assert.True(failure is InvalidOperationException && ReferenceEquals(failure, repeated) && starts == 1,
-            "a startup failure must remain failed across adapters without rerunning hosted services");
+            var builder = Builder();
+            builder.Services.AddSingleton<IHostedService>(new StartupService(() =>
+            {
+                starts++;
+                throw new InvalidOperationException("startup failed");
+            }));
+            await using var application = builder.Build();
+            await application.RunAsync();
+        }, "Application");
+        router.Boot();
+        var failure = await Record.ExceptionAsync(() => router.Route(Dispatch(), null!));
+        var repeated = await Record.ExceptionAsync(() => router.Route(Dispatch(), null!));
+        Assert.True(failure is InvalidOperationException { Message: "startup failed" } && ReferenceEquals(failure, repeated) && starts == 1,
+            "a startup failure must reach every request without rerunning hosted services");
     }
 
     private sealed class StartupService(Func<Task> start) : IHostedService
@@ -147,7 +138,7 @@ public sealed class HostingTests
             context.Response.OnCompleted(() => { events.Add("complete-last"); return Task.CompletedTask; });
             await context.Response.WriteAsync("ok");
         });
-        await new IsoplaneApplication(app).HandleAsync(Request());
+        await app.HandleAsync(Request());
         Assert.True(events.SequenceEqual(["before", "handler", "start-last", "start-first", "after", "complete-last", "complete-first"]),
             "middleware wraps the handler; callbacks run in reverse registration order");
     }
@@ -167,10 +158,9 @@ public sealed class HostingTests
             if (throws) throw new InvalidOperationException("fixture failure");
             return Task.CompletedTask;
         });
-        var runtime = new IsoplaneApplication(app);
         for (var i = 0; i < 2; i++)
         {
-            var error = await Record.ExceptionAsync(() => runtime.HandleAsync(Request()));
+            var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
             Assert.True(throws ? error is InvalidOperationException : error is null,
                 "the request pipeline propagates handler exceptions and succeeds otherwise");
         }
@@ -191,7 +181,7 @@ public sealed class HostingTests
             Assert.True(context.RequestAborted.IsCancellationRequested, "Abort cancels RequestAborted");
             return Task.CompletedTask;
         });
-        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
         Assert.True(error is OperationCanceledException, "aborted requests must end with cancellation");
         Assert.True(scope.Disposed, "aborted requests dispose their DI scope");
     }
@@ -208,7 +198,7 @@ public sealed class HostingTests
             context.Response.Headers.Append("Set-Cookie", "b=two");
             await context.Response.Body.WriteAsync(new byte[] { 0, 255, 1 });
         });
-        var response = await new IsoplaneApplication(app).HandleAsync(Request());
+        var response = await app.HandleAsync(Request());
         Assert.True(response.Status == 201 && response.Body.SequenceEqual(new byte[] { 0, 255, 1 }), "the transport preserves status and binary bytes");
         Assert.True(response.Headers.Where(header => header.Key == "Set-Cookie").Select(header => header.Value).SequenceEqual(["a=one", "b=two"]), "Set-Cookie values remain separate");
     }
@@ -233,7 +223,7 @@ public sealed class HostingTests
         });
         try
         {
-            var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
+            var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
             Assert.True(error is OperationCanceledException, "host cancellation must end the request");
             Assert.True(scope.Disposed, "host cancellation must dispose the request scope");
         }
@@ -254,7 +244,7 @@ public sealed class HostingTests
             Assert.True(status is InvalidOperationException && header is InvalidOperationException,
                 "started response status and headers must be immutable");
         });
-        await new IsoplaneApplication(app).HandleAsync(Request());
+        await app.HandleAsync(Request());
     }
 
     [Fact]
@@ -270,7 +260,7 @@ public sealed class HostingTests
             context.Response.OnCompleted(() => throw new InvalidOperationException("completion failure"));
             throw new ApplicationException("handler failure");
         });
-        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
         Assert.True(scope.Disposed, "a failed completion callback must not suppress request scope disposal");
         Assert.True(error is AggregateException aggregate && aggregate.Flatten().InnerExceptions.Count == 2,
             "handler and completion failures must both be reported");
@@ -288,7 +278,7 @@ public sealed class HostingTests
             writer.Advance(3);
             return Task.CompletedTask;
         });
-        var response = await new IsoplaneApplication(app).HandleAsync(Request());
+        var response = await app.HandleAsync(Request());
         Assert.True(response.Body.SequenceEqual(new byte[] { 1, 2, 3 }),
             "server completion flushes pending response pipe bytes");
     }
@@ -310,7 +300,7 @@ public sealed class HostingTests
                 default: throw new ArgumentOutOfRangeException(nameof(operation));
             }
         });
-        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
         Assert.True(error is NotSupportedException,
             $"unsupported {operation} must fail explicitly at the response boundary");
     }
@@ -323,8 +313,7 @@ public sealed class HostingTests
         builder.Services.AddSingleton<IHostedService>(background);
         await using var app = builder.Build();
         app.MapGet("/", () => "ready");
-        var runtime = new IsoplaneApplication(app);
-        var error = await Record.ExceptionAsync(() => runtime.HandleAsync(Request()));
+        var error = await Record.ExceptionAsync(() => app.HandleAsync(Request()));
         Assert.True(error is NotSupportedException, "ongoing background services require a supported host-owned lifetime");
         Assert.True(!background.Started, "unsupported background work must be rejected before execution");
     }
@@ -363,7 +352,7 @@ public sealed class HostingTests
             Headers = [new("X-Input", "first"), new("X-Input", "second")],
             Body = [0, 255]
         });
-        await new IsoplaneApplication(app).HandleAsync(request);
+        await app.HandleAsync(request);
     }
 
     [Fact]
@@ -375,9 +364,9 @@ public sealed class HostingTests
         builder.Services.AddScoped(_ => { scoped = true; return new Scope(); });
         await using var app = builder.Build();
         app.MapGet("/", (Scope scope) => "ok").Add(_ => routes = true);
-        var runtime = new IsoplaneApplication(app);
+        (await app.StartedAsync()).PrimeEndpoints();
         Assert.True(routes && !scoped, "pre-initialization materializes routing while request scopes remain uncreated");
-        await runtime.HandleAsync(Request());
+        await app.HandleAsync(Request());
         Assert.True(scoped, "the request creates its scoped dependencies after activation");
     }
 
@@ -399,14 +388,14 @@ public sealed class HostingTests
             await next(context);
         });
         app.MapGet("/todos", (Scope scope, int page) => new { page });
-        var first = new IsoplaneApplication(app);
-        await first.WarmupAsync("/todos?page=1");
+        await app.StartedAsync();
+        await app.WarmupAsync("/todos?page=1");
         Assert.True(transports == 0, "warmup must not create a host response stream");
         Assert.True(scopes.Count == 1 && scopes[0].Disposed, "warmup must dispose its request scope before capture");
-        Assert.True(events.SequenceEqual(["start", "middleware", "completed"]), "warmup must await host startup, middleware and completion callbacks");
-        await new IsoplaneApplication(app).HandleAsync(Request("/todos?page=2"));
+        Assert.True(events.SequenceEqual(["start", "middleware", "completed"]), "warmup must run middleware and completion callbacks on the started host");
+        await app.HandleAsync(Request("/todos?page=2"));
         Assert.True(transports == 1 && events.Count(e => e == "start") == 1,
-            "a separate adapter for the same app must reuse startup and send real responses to the host");
+            "a request after warmup must reuse the started host and send its response to the host");
     }
 
     [Theory]
@@ -419,7 +408,8 @@ public sealed class HostingTests
         builder.Services.AddScoped(_ => scope);
         await using var app = builder.Build();
         app.MapGet("/", (Scope _) => Results.StatusCode(status));
-        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).WarmupAsync("/"));
+        await app.StartedAsync();
+        var error = await Record.ExceptionAsync(() => app.WarmupAsync("/"));
         Assert.True(error is HttpRequestException { StatusCode: var code } && (int?)code == status,
             "warmup must report the endpoint's unsuccessful HTTP status");
         Assert.True(scope.Disposed, "failed warmup responses must still dispose scoped services");
@@ -432,8 +422,19 @@ public sealed class HostingTests
     public async Task warmup_requires_an_application_relative_path(string path)
     {
         await using var app = Builder().Build();
-        var error = await Record.ExceptionAsync(() => new IsoplaneApplication(app).WarmupAsync(path));
+        await app.StartedAsync();
+        var error = await Record.ExceptionAsync(() => app.WarmupAsync(path));
         Assert.True(error is ArgumentException, "warmup must refuse paths that name an external host");
+    }
+
+    [Fact]
+    public async Task warmup_refuses_an_application_that_has_not_started()
+    {
+        await using var app = Builder().Build();
+        app.MapGet("/", () => "ready");
+        var error = await Record.ExceptionAsync(() => app.WarmupAsync("/"));
+        Assert.True(error is InvalidOperationException && error.Message.Contains("RunAsync", StringComparison.Ordinal),
+            "warmup before the host starts must say when it can run: " + error);
     }
 
     private sealed class Scope : IAsyncDisposable

@@ -13,10 +13,10 @@ namespace Web;
 /// <summary>Minimal API routes over a singleton, a content file and a streamed upload.</summary>
 public static class Application
 {
-    /// <summary>The package's declared factory; warms the pipeline before template capture.</summary>
-    public static WebApplication Create()
+    /// <summary>Builds the application, subscribes its warm-up and runs it.</summary>
+    public static async Task Main(string[] args)
     {
-        var builder = IsoplaneHosting.CreateBuilder(typeof(Application).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(args);
         builder.Services.AddSingleton<Greeter>();
         var app = builder.Build();
         app.MapGet("/hello/{name}", async (string name, Greeter greeter) =>
@@ -36,11 +36,10 @@ public static class Application
         });
         Initialization.Initializing += async () =>
         {
-            var application = new IsoplaneApplication(app);
-            await application.WarmupAsync("/warm");
-            await application.WarmupAsync("/hello/warmup");
+            await app.WarmupAsync("/warm");
+            await app.WarmupAsync("/hello/warmup");
         };
-        return app;
+        await app.RunAsync();
     }
 }
 

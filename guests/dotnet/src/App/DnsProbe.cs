@@ -8,10 +8,11 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Exercises the ordinary managed asynchronous DNS API.</summary>
-public sealed class DnsProbe : IIsoplaneHandler
+public static class DnsProbe
 {
     /// <summary>Returns the first host-resolved address.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request, Ctx context)
     {
         using var cancellation = new CancellationTokenSource();
         if (request.Path == "/cancel.test") cancellation.CancelAfter(100);

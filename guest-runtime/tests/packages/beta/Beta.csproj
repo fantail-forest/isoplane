@@ -9,7 +9,6 @@
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Beta</AssemblyName>
-    <IsoplaneApplicationFactory>Beta.Handler.Create</IsoplaneApplicationFactory>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="library/**/*.cs" />

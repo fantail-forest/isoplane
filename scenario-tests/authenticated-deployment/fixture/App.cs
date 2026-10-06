@@ -15,10 +15,10 @@ public static class App
         if (resources.GetString("Greeting", CultureInfo.GetCultureInfo("fr-CA")) != "bonjour")
             throw new MissingManifestResourceException("Satellite culture fallback was lost.");
     }
-    /// <summary>Builds the application and warms its read route before template capture.</summary>
-    public static WebApplication Create()
+    /// <summary>Runs the application and warms its read route before template capture.</summary>
+    public static async Task Main(string[] args)
     {
-        var builder = IsoplaneHosting.CreateBuilder(typeof(App).Assembly.GetName().Name!);
+        var builder = IsoplaneHosting.CreateBuilder(args);
         VerifyData();
         var app = builder.Build();
         app.MapGet("/", (ILoggerFactory logging) =>
@@ -28,7 +28,7 @@ public static class App
             Console.WriteLine("source-free-console");
             return "source free";
         });
-        Isoplane.Initialization.Initializing += () => new IsoplaneApplication(app).WarmupAsync("/");
-        return app;
+        Isoplane.Initialization.Initializing += () => app.WarmupAsync("/");
+        await app.RunAsync();
     }
 }

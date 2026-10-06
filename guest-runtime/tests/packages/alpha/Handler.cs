@@ -7,24 +7,23 @@ using Isoplane;
 namespace Alpha;
 
 /// <summary>Answers after one host timer, so each request parks once.</summary>
-public sealed class Handler : IIsoplaneHandler
+public static class Handler
 {
     private static bool libraryLoadedDuringInitialization;
-    /// <summary>The package's declared factory; warms the response path before template capture.</summary>
-    public static IIsoplaneHandler Create()
+
+    /// <summary>Warms the response path before template capture.</summary>
+    [Initializer]
+    public static Task InitializeAsync()
     {
-        Initialization.Initializing += () =>
-        {
-            libraryLoadedDuringInitialization = AppDomain.CurrentDomain.GetAssemblies()
-                .Any(assembly => assembly.GetName().Name == "Beta.Library");
-            GC.KeepAlive(Answer("/warmup"));
-            return Task.CompletedTask;
-        };
-        return new Handler();
+        libraryLoadedDuringInitialization = AppDomain.CurrentDomain.GetAssemblies()
+            .Any(assembly => assembly.GetName().Name == "Beta.Library");
+        GC.KeepAlive(Answer("/warmup"));
+        return Task.CompletedTask;
     }
 
     /// <summary>Answers <c>alpha:</c> and the request path.</summary>
-    public async Task<Response> HandleAsync(Request req, Ctx ctx)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
     {
         if (req.Path == "/load-library")
         {
@@ -38,6 +37,6 @@ public sealed class Handler : IIsoplaneHandler
 
     private static Response Answer(string path) => Response.Text("alpha:" + path);
 
-    /// <summary>A public static method of the wrong shape to be named as a factory.</summary>
+    /// <summary>A public static method of the wrong shape to be recorded as the handler.</summary>
     public static string Describe() => "not a handler";
 }

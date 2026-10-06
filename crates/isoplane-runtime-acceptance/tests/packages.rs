@@ -285,7 +285,7 @@ async fn a_packages_initialization_hook_runs_once_before_its_template_is_capture
         serde_json::from_str(&body).unwrap_or_else(|error| panic!("{body} is JSON: {error}"));
     assert_eq!(
         report["Warmups"], 1,
-        "the hook the package's factory registers must warm the template exactly once: {body}"
+        "the package's initializer must warm the template exactly once: {body}"
     );
 }
 
@@ -303,7 +303,7 @@ async fn an_aspnet_packages_warmup_runs_once_before_its_template_is_captured() {
     let body = answer_across_restored_stores(package("web"), "/hello/isoplane").await;
     assert!(
         body.ends_with("; warmups=1"),
-        "the warm-up the package's factory registers must reach its pipeline exactly once: {body}"
+        "the warm-up the package's entry point subscribes must reach its pipeline exactly once: {body}"
     );
 }
 
@@ -394,11 +394,15 @@ async fn a_package_file_defining_another_assembly_is_refused() {
 }
 
 #[tokio::test]
-async fn a_factory_that_returns_no_handler_is_refused() {
+async fn a_recorded_handler_of_another_shape_is_refused() {
     let files = package("alpha");
     let manifest = String::from_utf8(package_file(&files, "application.json"))
         .expect("the manifest is UTF-8")
-        .replace("Alpha.Handler.Create", "Alpha.Handler.Describe");
+        .replace("\"HandleAsync\"", "\"Describe\"");
+    assert!(
+        manifest.contains("\"Describe\""),
+        "the manifest must name its handler method for this test to replace: {manifest}"
+    );
     let detail = refusal(with_package_file(
         files,
         "application.json",
@@ -406,17 +410,21 @@ async fn a_factory_that_returns_no_handler_is_refused() {
     ))
     .await;
     assert!(
-        detail.contains("PackageFactoryException"),
-        "a factory must return a handler: {detail}"
+        detail.contains("PackageEntryException"),
+        "the recorded handler must take a request and return a response: {detail}"
     );
 }
 
 #[tokio::test]
-async fn a_missing_factory_is_refused() {
+async fn a_recorded_handler_the_assembly_lacks_is_refused() {
     let files = package("alpha");
     let manifest = String::from_utf8(package_file(&files, "application.json"))
         .expect("the manifest is UTF-8")
-        .replace("Alpha.Handler.Create", "Alpha.Handler.Missing");
+        .replace("\"HandleAsync\"", "\"Missing\"");
+    assert!(
+        manifest.contains("\"Missing\""),
+        "the manifest must name its handler method for this test to replace: {manifest}"
+    );
     let detail = refusal(with_package_file(
         files,
         "application.json",
@@ -424,8 +432,8 @@ async fn a_missing_factory_is_refused() {
     ))
     .await;
     assert!(
-        detail.contains("PackageFactoryException"),
-        "the declared factory must exist: {detail}"
+        detail.contains("PackageEntryException"),
+        "the recorded handler must exist: {detail}"
     );
 }
 

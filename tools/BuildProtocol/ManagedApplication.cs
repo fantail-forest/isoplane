@@ -17,7 +17,6 @@ internal sealed record MethodReference(string Type, string Method)
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
 [JsonDerivedType(typeof(EntryPointApplication), "entryPoint")]
 [JsonDerivedType(typeof(HandlerApplication), "handler")]
-[JsonDerivedType(typeof(FactoryApplication), "factory")]
 internal abstract record ApplicationEntry;
 
 /// <summary>An executable whose asynchronous <c>Main</c> runs until it awaits its host.</summary>
@@ -25,9 +24,6 @@ internal sealed record EntryPointApplication(MethodReference Main) : Application
 
 /// <summary>A library whose attributed static methods receive dispatches and lifecycle events.</summary>
 internal sealed record HandlerApplication(MethodReference Http, MethodReference? Initializer, MethodReference? Activated) : ApplicationEntry;
-
-/// <summary>A library that names a method returning its router, handler or ASP.NET application.</summary>
-internal sealed record FactoryApplication(string Factory) : ApplicationEntry;
 
 internal static class BuildJson
 {

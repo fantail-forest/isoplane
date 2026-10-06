@@ -6,9 +6,10 @@ using Isoplane;
 
 namespace Isoplane.App;
 
-public sealed class StreamingProbe : IIsoplaneHandler
+public static class StreamingProbe
 {
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request, Ctx context)
     {
         if (request.Path == "/pending")
         {

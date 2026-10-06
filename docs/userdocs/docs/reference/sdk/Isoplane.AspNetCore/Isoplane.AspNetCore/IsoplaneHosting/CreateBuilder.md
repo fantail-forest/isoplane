@@ -3,34 +3,7 @@ mdx:
   format: md
 ---
 
-# IsoplaneHosting.CreateBuilder method (1 of 2)
-
-Creates an ASP.NET builder with host-provided runtime configuration and sandbox logging.
-
-```csharp
-public static WebApplicationBuilder CreateBuilder(string applicationName)
-```
-
-| parameter | description |
-| --- | --- |
-| applicationName | The assembly name used to discover application endpoints. |
-
-## Return Value
-
-A builder configured to receive requests from Isoplane without opening a listener.
-
-## Remarks
-
-The environment name is Production. Configuration files and environment variables are not loaded. Configuration, including local User Secrets, is available during template initialization and activation. Captured settings belong to the deployment that prepared the template.
-
-## See Also
-
-* class [IsoplaneHosting](../IsoplaneHosting.md)
-* namespace [Isoplane.AspNetCore](../../Isoplane.AspNetCore.md)
-
----
-
-# IsoplaneHosting.CreateBuilder method (2 of 2)
+# IsoplaneHosting.CreateBuilder method
 
 Creates the builder for an application's `Program.cs`.
 

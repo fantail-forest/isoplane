@@ -4,7 +4,6 @@
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Alpha</AssemblyName>
-    <IsoplaneApplicationFactory>Alpha.Handler.Create</IsoplaneApplicationFactory>
   </PropertyGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <Import Project="../Package.targets" />

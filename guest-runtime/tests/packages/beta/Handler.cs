@@ -17,39 +17,37 @@ namespace Beta;
 public sealed record Report(string Path, string Sha256, int Total, string Deflated, string Greeting, int Warmups);
 
 /// <summary>Answers after one host timer with work that touches its whole closure.</summary>
-public sealed class Handler(Accumulator<int> accumulator) : IIsoplaneHandler
+public static class Handler
 {
     private static readonly ResourceManager Strings = new("Beta.Strings", typeof(Handler).Assembly);
+    private static Accumulator<int> accumulator = null!;
     private static int warmups;
 
     /// <summary>
-    /// The package's declared factory, resolving the handler through dependency
-    /// injection and warming its response path before template capture.
+    /// Resolves the accumulator through dependency injection and warms the
+    /// response path before template capture.
     /// </summary>
-    public static IIsoplaneHandler Create()
+    [Initializer]
+    public static Task InitializeAsync()
     {
-        Handler handler = new ServiceCollection()
+        accumulator = new ServiceCollection()
             .AddSingleton(new Accumulator<int>())
-            .AddSingleton<Handler>()
             .BuildServiceProvider()
-            .GetRequiredService<Handler>();
-        Initialization.Initializing += () =>
-        {
-            warmups++;
-            GC.KeepAlive(handler.Answer("/warmup"));
-            return Task.CompletedTask;
-        };
-        return handler;
+            .GetRequiredService<Accumulator<int>>();
+        warmups++;
+        GC.KeepAlive(Answer("/warmup"));
+        return Task.CompletedTask;
     }
 
     /// <summary>Answers the JSON <see cref="Report"/> for the request path.</summary>
-    public async Task<Response> HandleAsync(Request req, Ctx ctx)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
     {
         await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
         return Answer(req.Path);
     }
 
-    private Response Answer(string requestPath)
+    private static Response Answer(string requestPath)
     {
         byte[] path = Encoding.UTF8.GetBytes(requestPath);
         var report = new Report(

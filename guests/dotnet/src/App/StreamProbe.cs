@@ -10,10 +10,11 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Exercises ordinary asynchronous NetworkStream reads and writes.</summary>
-public sealed class StreamProbe : IIsoplaneHandler
+public static class StreamProbe
 {
     /// <summary>Reads the endpoint's payload and writes the same bytes back.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request, Ctx context)
     {
         string[] parts = request.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         IPAddress address = IPAddress.Parse(parts[0]);

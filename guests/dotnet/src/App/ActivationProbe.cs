@@ -7,38 +7,39 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>
-/// A generator seeded once at boot, before the template snapshot, and
+/// A generator seeded once during initialization, before the template snapshot, and
 /// reseeded on activation: the activation hook is what keeps two copies of
 /// the template from drawing the same sequence.
 /// </summary>
-internal sealed class ActivationProbe : IIsoplaneHandler
+internal static class ActivationProbe
 {
     private static Random _seeded = Fresh();
     private static int _activations;
     private static int _initializations;
     private static string _preparedSetting = "";
 
-    static ActivationProbe()
+    [Initializer]
+    public static async Task InitializeAsync()
     {
-        Initialization.Initializing += async () =>
-        {
-            await Task.Yield();
-            _initializations++;
-            _preparedSetting = RuntimeConfiguration.ReadValues()["probe"];
-        };
-        Activation.Activated += async () =>
-        {
-            await Task.Yield();
-            if (RuntimeConfiguration.ReadValues().ContainsKey("activation-timer"))
-                await Task.Delay(1);
-            _activations++;
-            _seeded = Fresh();
-        };
+        await Task.Yield();
+        _initializations++;
+        _preparedSetting = RuntimeConfiguration.ReadValues()["probe"];
+    }
+
+    [Activated]
+    public static async Task ActivatedAsync()
+    {
+        await Task.Yield();
+        if (RuntimeConfiguration.ReadValues().ContainsKey("activation-timer"))
+            await Task.Delay(1);
+        _activations++;
+        _seeded = Fresh();
     }
 
     private static Random Fresh() => new(RandomNumberGenerator.GetInt32(int.MaxValue));
 
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         switch (request.Path)
         {

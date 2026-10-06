@@ -7,10 +7,11 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Exercises managed exceptions for forbidden inbound networking.</summary>
-public sealed class NetworkRefusalProbe : IIsoplaneHandler
+public static class NetworkRefusalProbe
 {
     /// <summary>Returns the actual SocketError raised by an attempted listener.</summary>
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         try
         {

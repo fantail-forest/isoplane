@@ -9,17 +9,25 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>
-/// Lists the machine root store while the application is constructed, which
-/// pre-initialisation does, so the template carries the store's cache of
+/// Lists the machine root store while the application initializes, so the
+/// template carries the store's cache of
 /// the bundle served at preparation. Answers <c>/at-boot</c> with that
 /// listing and <c>/roots</c> with what the store lists now, each as
 /// <c>roots=N thumbprint,thumbprint,…</c> sorted.
 /// </summary>
-internal sealed class TrustProbe : IIsoplaneHandler
+internal static class TrustProbe
 {
-    private readonly string _atBoot = Roots();
+    private static string _atBoot = "";
 
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [Initializer]
+    public static Task InitializeAsync()
+    {
+        _atBoot = Roots();
+        return Task.CompletedTask;
+    }
+
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         string text = request.Path switch
         {

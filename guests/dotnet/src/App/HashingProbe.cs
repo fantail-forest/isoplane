@@ -7,12 +7,13 @@ using Isoplane;
 
 namespace Isoplane.App;
 
-public sealed class HashingProbe : IIsoplaneHandler
+public static class HashingProbe
 {
     private static IncrementalHash? saved;
     private static SHA256? savedSha;
 
-    public Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static Task<Response> HandleAsync(Request request, Ctx context)
     {
         byte[] data = request.Body.ToArray();
         byte[] key = Convert.FromHexString(request.Query[0].Value);

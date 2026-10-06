@@ -6,10 +6,11 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Emits Console and SDK-provider records on both sides of a host future.</summary>
-public sealed class LogProbe : IIsoplaneHandler
+public static class LogProbe
 {
     /// <summary>Completes after the host resumes the logging request.</summary>
-    public async Task<Response> HandleAsync(Request req, Ctx ctx)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request req, Ctx ctx)
     {
         if (req.Path == "/after-response")
         {

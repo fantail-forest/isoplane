@@ -14,10 +14,7 @@ mdx:
 | class [BindingException](./Isoplane/BindingException.md) | A capability call the host refused or could not complete; [`IsoplaneError`](./Isoplane/BindingException/IsoplaneError.md) says which. |
 | class [Ctx](./Isoplane/Ctx.md) | The per-dispatch context. |
 | static class [DeploymentConfiguration](./Isoplane/DeploymentConfiguration.md) | Non-secret settings fixed for an application version at deployment. |
-| class [HandlerFactoryRouter](./Isoplane/HandlerFactoryRouter.md) | Routes every dispatch, as a request, to the handler a factory builds once per wasm instance. This is the router the SDK generates for an application factory returning [`IIsoplaneHandler`](./Isoplane/IIsoplaneHandler.md). |
-| class [HandlerRouter&lt;TApp&gt;](./Isoplane/HandlerRouter-1.md) | Routes HTTP dispatches to a Handler; any other trigger is a `PostcardException`. |
 | class [HttpHandlerAttribute](./Isoplane/HttpHandlerAttribute.md) | Marks the static method that handles every HTTP request to an application that has no entry point. |
-| interface [IIsoplaneHandler](./Isoplane/IIsoplaneHandler.md) | A Handler: an HTTP request in, a response out. |
 | interface [IIsoplaneRouter](./Isoplane/IIsoplaneRouter.md) | What routes a decoded dispatch to guest code. `Exports` is generic over one of these, so the SDK names no tenant type. |
 | static class [Initialization](./Isoplane/Initialization.md) | Initializes reusable application state before its deployment template is captured. |
 | class [InitializerAttribute](./Isoplane/InitializerAttribute.md) | Marks the static method that prepares reusable state before the application's template is captured. |

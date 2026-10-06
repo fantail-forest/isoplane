@@ -8,7 +8,7 @@
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Web</AssemblyName>
-    <IsoplaneApplicationFactory>Web.Application.Create</IsoplaneApplicationFactory>
+    <OutputType>Exe</OutputType>
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>
   <ItemGroup>

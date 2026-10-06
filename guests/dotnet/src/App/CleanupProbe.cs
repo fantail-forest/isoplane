@@ -7,15 +7,16 @@ using Isoplane;
 namespace Isoplane.App;
 
 /// <summary>Leaves pending operations at a response boundary and reports later callbacks.</summary>
-public sealed class CleanupProbe : IIsoplaneHandler
+public static class CleanupProbe
 {
-    private int _requests;
-    private int _callbacks;
-    private Socket? _idleSocket;
-    private readonly TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static int _requests;
+    private static int _callbacks;
+    private static Socket? _idleSocket;
+    private static readonly TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Arms one abandoned operation, or observes the same guest on a later request.</summary>
-    public async Task<Response> HandleAsync(Request request, Ctx context)
+    [HttpHandler]
+    public static async Task<Response> HandleAsync(Request request, Ctx context)
     {
         _requests++;
         if (request.Path == "/idle-socket")
@@ -58,13 +59,13 @@ public sealed class CleanupProbe : IIsoplaneHandler
         return Response.Text("armed");
     }
 
-    private async Task AfterSignalAsync()
+    private static async Task AfterSignalAsync()
     {
         await _signal.Task.ConfigureAwait(false);
         _callbacks++;
     }
 
-    private async Task AbandonAsync(string operation)
+    private static async Task AbandonAsync(string operation)
     {
         try
         {

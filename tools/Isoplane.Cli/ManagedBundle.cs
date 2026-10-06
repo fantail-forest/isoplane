@@ -65,7 +65,7 @@ internal static class ManagedBundle
             List<string> arguments = ["msbuild", projects[0], "-target:IsoplaneManagedBundle",
                 "-nodeReuse:false", "-property:UseSharedCompilation=false",
                 "-property:IsoplaneManagedBundleBuild=true", "-property:Configuration=" + options.Configuration,
-                "-getProperty:AssemblyName,IsoplaneApplicationFactory,IsoplaneRuntimeDirectory",
+                "-getProperty:AssemblyName,IsoplaneRuntimeDirectory",
                 "-getItem:IsoplaneBundleAssembly,IsoplaneBundleSymbol,IsoplaneBundleAsset,IsoplaneBundlePlatformReference",
                 "-getResultOutputFile:" + metadata, "-nologo"];
             if (options.NoBuild)
@@ -92,9 +92,7 @@ internal static class ManagedBundle
         AssemblyClosure.Validate(assemblies, platform);
         var entry = properties.GetProperty("AssemblyName").GetString();
         if (!assemblies.ContainsKey(entry ?? "")) throw new InvalidOperationException("The bundle has no application entry assembly.");
-        var factory = properties.GetProperty("IsoplaneApplicationFactory").GetString();
-        ApplicationEntry application = string.IsNullOrWhiteSpace(factory)
-            ? ApplicationEntryDiscovery.Discover(assemblies[entry!].Origin) : new FactoryApplication(factory);
+        var application = ApplicationEntryDiscovery.Discover(assemblies[entry!].Origin);
         var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, application, GuestExecution.Interpreted), BuildJson.Options);
         var runtime = new SharedRuntime(properties.GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "").Identity;
         var partial = output + "." + Guid.NewGuid().ToString("N") + ".tmp";

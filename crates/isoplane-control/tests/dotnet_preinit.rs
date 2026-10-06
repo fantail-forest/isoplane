@@ -119,10 +119,10 @@ fn host_linker(engine: &wasmtime::Engine) -> wasmtime::Linker<Host> {
 }
 
 #[test]
-fn a_failed_managed_application_factory_refuses_pre_initialization() {
+fn a_failed_managed_application_initializer_refuses_pre_initialization() {
     let result = managed::prepare("isoplane_guest_dotnet_failing_boot", Default::default());
     let Err(error) = result else {
-        panic!("a failed application factory must fail deployment");
+        panic!("a failed application initializer must fail deployment");
     };
     assert_eq!(
         error.stage,

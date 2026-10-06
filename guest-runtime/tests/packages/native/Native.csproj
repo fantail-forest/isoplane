@@ -4,7 +4,6 @@
   <Import Project="../Package.props" />
   <PropertyGroup>
     <AssemblyName>Native</AssemblyName>
-    <IsoplaneApplicationFactory>Native.Handler.Create</IsoplaneApplicationFactory>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
