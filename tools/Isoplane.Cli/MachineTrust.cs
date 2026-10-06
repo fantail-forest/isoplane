@@ -4,21 +4,20 @@ using System.Text;
 
 namespace Isoplane.Cli;
 
-/// <summary>A PEM bundle of trusted roots and the SHA-256 the session checks it against.</summary>
-internal sealed record TrustedRoots(string Bundle, string Sha256);
-
 /// <summary>
 /// The certificate authorities this machine trusts, as .NET reports them,
 /// exported for a guest that validates TLS itself. A development session
-/// trusts what any other .NET program on the machine trusts.
+/// trusts what any other .NET program on the machine trusts; the session adds
+/// the platform's public roots, which a Windows store holds only once used.
 /// </summary>
 internal static class MachineTrust
 {
     /// <summary>
-    /// Writes the machine's roots beneath <paramref name="directory"/>. Returns
-    /// null when .NET reports none, leaving the session on the platform's bundle.
+    /// Writes the machine's roots as PEM beneath <paramref name="directory"/> and
+    /// returns the file. Returns null when .NET reports none, leaving the
+    /// session on the platform's bundle.
     /// </summary>
-    internal static TrustedRoots? Export(string directory)
+    internal static string? Export(string directory)
     {
         var roots = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var distrusted = Certificates(StoreName.Disallowed).Select(certificate => certificate.Thumbprint).ToHashSet(StringComparer.Ordinal);
@@ -38,7 +37,7 @@ internal static class MachineTrust
             File.WriteAllBytes(partial, pem);
             File.Move(partial, bundle, overwrite: true);
         }
-        return new(bundle, Convert.ToHexStringLower(SHA256.HashData(pem)));
+        return bundle;
     }
 
     private static IEnumerable<X509Certificate2> Certificates(StoreName name)

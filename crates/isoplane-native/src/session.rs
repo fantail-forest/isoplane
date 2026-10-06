@@ -47,8 +47,8 @@ pub(crate) struct Options {
     state_directory: PathBuf,
     runtime_library: PathBuf,
     compilation_directory: PathBuf,
-    #[serde(default)]
-    trust: isoplane_trust::TrustConfig,
+    /// The developer machine's trusted roots, exported by the CLI as PEM.
+    machine_roots: Option<PathBuf>,
     #[serde(default)]
     pub(crate) configuration: std::collections::BTreeMap<String, String>,
     log_filter: Option<String>,
@@ -84,7 +84,15 @@ impl Options {
             isoplane_prepare::package::PackageLimits::of(&self.manifest),
         )
         .with_context(|| format!("serving the application package {}", self.package.display()))?;
-        let trust = isoplane_trust::TrustBundle::load(&self.trust)?;
+        let trust = match &self.machine_roots {
+            Some(path) => {
+                let machine = std::fs::read(path).with_context(|| {
+                    format!("reading the machine's trusted roots {}", path.display())
+                })?;
+                isoplane_trust::TrustBundle::local_development(&machine)?
+            }
+            None => isoplane_trust::TrustBundle::load(&isoplane_trust::TrustConfig::default())?,
+        };
         let mut files = vec![isoplane_engine::PlatformFile {
             path: isoplane_trust::GUEST_PATH.into(),
             bytes: trust.pem().into(),

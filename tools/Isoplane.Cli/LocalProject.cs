@@ -44,8 +44,7 @@ internal sealed class LocalProject(string directory)
             ["debug_endpoint"] = debugEndpoint,
             ["package"] = package ?? Package,
         };
-        if (settings.Trust is { } trust)
-            options["trust"] = new Dictionary<string, object?> { ["bundle"] = trust.Bundle, ["sha256"] = trust.Sha256 };
+        if (settings.MachineRoots is { } roots) options["machine_roots"] = roots;
         return JsonSerializer.SerializeToUtf8Bytes(options);
     }
 }

@@ -91,6 +91,8 @@ pub struct Manifest {
 pub enum TrustSource {
     Shipped,
     Operator(PathBuf),
+    /// A developer machine's own roots, followed by the shipped ones.
+    LocalDevelopment,
 }
 
 impl std::fmt::Display for TrustSource {
@@ -98,6 +100,9 @@ impl std::fmt::Display for TrustSource {
         match self {
             TrustSource::Shipped => write!(f, "shipped with this build (trust/ca-bundle.pem)"),
             TrustSource::Operator(path) => write!(f, "`{}` (trust.bundle)", path.display()),
+            TrustSource::LocalDevelopment => {
+                write!(f, "this machine's trusted roots and the shipped bundle")
+            }
         }
     }
 }
@@ -243,6 +248,39 @@ impl TrustBundle {
         }
     }
 
+    /// The roots a local development session serves: the developer machine's
+    /// own, as its tools exported them, followed by the shipped public roots.
+    /// A Windows certificate store holds only the roots that machine has
+    /// already needed, so a machine's roots alone can leave a common public
+    /// authority untrusted. The guest's TLS decides what each root is good
+    /// for; a machine root this host's own verifier would refuse is served.
+    pub fn local_development(machine_pem: &[u8]) -> Result<Self, TrustError> {
+        let source = TrustSource::LocalDevelopment;
+        let mut pem = machine_pem.to_vec();
+        if !pem.ends_with(b"\n") {
+            pem.push(b'\n');
+        }
+        pem.extend_from_slice(SHIPPED_PEM);
+        let mut certificate_count = 0;
+        for (index, certificate) in CertificateDer::pem_slice_iter(&pem).enumerate() {
+            certificate.map_err(|error| TrustError::InvalidCertificate {
+                bundle: source.clone(),
+                entry: index + 1,
+                error: error.to_string(),
+            })?;
+            certificate_count += 1;
+        }
+        Ok(TrustBundle {
+            sha256: Sha256::digest(&pem).into(),
+            pem,
+            certificate_count,
+            source,
+            manifest: None,
+            last_check_unix_secs: None,
+            warn_after_days: default_warn_after_days(),
+        })
+    }
+
     fn shipped(warn_after_days: u32) -> Result<Self, TrustError> {
         let manifest = parse_manifest(SHIPPED_MANIFEST_NAME, SHIPPED_MANIFEST)?;
         let expected = manifest.bundle_sha256.clone();
@@ -384,6 +422,7 @@ impl TrustBundle {
             source: match &self.source {
                 TrustSource::Shipped => "shipped".to_string(),
                 TrustSource::Operator(path) => path.display().to_string(),
+                TrustSource::LocalDevelopment => "local development".to_string(),
             },
             bundle_date: self.manifest.as_ref().map(|m| m.bundle_date.clone()),
             generation: self.manifest.as_ref().map(|m| m.generation),
@@ -521,6 +560,53 @@ mod tests {
             sha256: Some(sha256.to_string()),
             warn_after_days: 30,
         }
+    }
+
+    #[test]
+    fn a_local_development_bundle_serves_the_machine_roots_before_the_shipped_ones() {
+        let shipped = TrustBundle::load(&TrustConfig::default()).expect("the shipped bundle loads");
+        let first = SHIPPED_PEM
+            .windows(b"-----END CERTIFICATE-----".len())
+            .position(|window| window == b"-----END CERTIFICATE-----")
+            .expect("the shipped bundle holds a certificate")
+            + b"-----END CERTIFICATE-----".len();
+        let machine = &SHIPPED_PEM[..first];
+        let bundle = TrustBundle::local_development(machine).expect("a machine export loads");
+        assert_eq!(
+            bundle.source(),
+            &TrustSource::LocalDevelopment,
+            "the bundle must say where its roots came from"
+        );
+        assert!(
+            bundle.pem().starts_with(machine) && bundle.pem().ends_with(SHIPPED_PEM),
+            "the machine's roots and every shipped root must both be served"
+        );
+        assert_eq!(
+            bundle.facts().certificate_count,
+            shipped.facts().certificate_count + 1,
+            "each served certificate is counted, including one both sources hold"
+        );
+        assert_ne!(
+            bundle.modified_ns(),
+            shipped.modified_ns(),
+            "different served bytes must carry a different modification time"
+        );
+    }
+
+    #[test]
+    fn a_local_development_bundle_refuses_a_malformed_machine_export() {
+        let malformed = b"-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----\n";
+        assert!(
+            matches!(
+                TrustBundle::local_development(malformed),
+                Err(TrustError::InvalidCertificate {
+                    bundle: TrustSource::LocalDevelopment,
+                    entry: 1,
+                    ..
+                })
+            ),
+            "a damaged export must be reported, not served"
+        );
     }
 
     #[test]

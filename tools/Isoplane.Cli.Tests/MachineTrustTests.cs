@@ -9,7 +9,7 @@ namespace Isoplane.Cli.Tests;
 public sealed class MachineTrustTests
 {
     [Fact]
-    public async Task a_root_named_by_SSL_CERT_FILE_is_exported_with_the_hash_the_session_checks()
+    public async Task a_root_named_by_SSL_CERT_FILE_is_exported_for_the_session()
     {
         var directory = Directory.CreateTempSubdirectory("isoplane-machine-trust-");
         try
@@ -33,12 +33,10 @@ public sealed class MachineTrustTests
             await process.WaitForExitAsync(deadline.Token);
             Assert.True(process.ExitCode == 0, "Exporting machine trust must succeed: " + await errors);
 
-            using var exported = JsonDocument.Parse(await output);
-            var bundle = exported.RootElement.GetProperty("Bundle").GetString()!;
+            var bundle = JsonSerializer.Deserialize<string>(await output)!;
             var roots = new X509Certificate2Collection();
             roots.ImportFromPemFile(bundle);
             Assert.Contains(roots, root => root.Thumbprint == authority.Thumbprint);
-            Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(bundle))), exported.RootElement.GetProperty("Sha256").GetString());
         }
         finally { directory.Delete(recursive: true); }
     }

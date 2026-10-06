@@ -103,7 +103,7 @@ public sealed class LaunchProfileTests : IDisposable
         Assert.Equal(536870912UL, manifest.GetProperty("limits").GetProperty("instance_memory_max").GetUInt64());
         Assert.Equal(67108864UL, manifest.GetProperty("guest_memory_bytes").GetUInt64());
         Assert.Equal(100UL, manifest.GetProperty("resource_limits").GetProperty("occupancy_ms_per_http_dispatch").GetUInt64());
-        Assert.False(options.RootElement.TryGetProperty("trust", out _), "A session without exported roots must leave the platform bundle selected.");
+        Assert.False(options.RootElement.TryGetProperty("machine_roots", out _), "A session without exported roots must leave the platform bundle selected.");
     }
 
     [Fact]

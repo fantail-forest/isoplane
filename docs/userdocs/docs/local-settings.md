@@ -103,7 +103,8 @@ A local session can connect to any address your machine can reach, including
 
 For TLS it trusts the certificate authorities your machine trusts, as any .NET
 program does: the Windows certificate store, the macOS keychain, or the system
-certificate directory on Linux. To trust a private authority for one run without
+certificate directory on Linux. It also trusts the public authorities Isoplane
+trusts when deployed. To trust a private authority for one run without
 installing it, name its PEM file in `SSL_CERT_FILE`:
 
 ```bash

@@ -6,7 +6,7 @@ namespace Isoplane.Cli;
 /// What a development session runs an application with: its name, listener,
 /// configuration, limits and trusted roots. Nothing here reaches a deployment.
 /// </summary>
-internal sealed record DevelopmentSettings(string Name, ushort? Port, Dictionary<string, string> Configuration, LimitOverrides Limits, TrustedRoots? Trust)
+internal sealed record DevelopmentSettings(string Name, ushort? Port, Dictionary<string, string> Configuration, LimitOverrides Limits, string? MachineRoots)
 {
     /// <summary>The prefix of environment variables that supply application settings to a session.</summary>
     internal const string SettingPrefix = "ISOPLANE_APP_";
