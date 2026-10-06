@@ -31,7 +31,18 @@
     <Error Condition="'@(_IsoplaneAspNetAssembly)' == ''" Text="isoplane: selected managed ASP.NET implementation pack missing; restore the project before publishing." />
     <ItemGroup>
       <_IsoplaneAspNetAssembly Remove="@(ResolvedCompileFileDefinitions)" MatchOnMetadata="Filename;Extension" MatchOnMetadataOptions="CaseInsensitive" />
-      <Reference Include="@(_IsoplaneAspNetAssembly)" Private="true" />
+      <!-- Compiled against, and packaged from the pack by the bundle; not copied beside the application.
+           These images are built for linux-x64, so .NET tools that run the entry point on another
+           platform could not load a copy. -->
+      <Reference Include="@(_IsoplaneAspNetAssembly)" Private="false" />
+    </ItemGroup>
+  </Target>
+  <!-- .NET tools that run the entry point on the developer's machine, such as dotnet ef, take
+       ASP.NET from the installed shared framework. Any 10.0 patch serves them. -->
+  <Target Name="IsoplaneAspNetCoreToolingFramework" BeforeTargets="GenerateBuildRuntimeConfigurationFiles"
+          Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
+    <ItemGroup>
+      <RuntimeFramework Include="Microsoft.AspNetCore.App" FrameworkName="Microsoft.AspNetCore.App" Version="10.0.0" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplaneAspNetCoreGenerator" BeforeTargets="CoreCompile" DependsOnTargets="IsoplaneSelectAspNetCore"
