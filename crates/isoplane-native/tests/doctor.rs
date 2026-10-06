@@ -427,19 +427,10 @@ fn pages(limits: Limits) -> u32 {
 }
 
 #[test]
-fn doctor_takes_numeric_limits_from_the_app_manifest() {
-    let tmp = tempfile::tempdir().expect("a temporary directory");
-    let dir = tmp.path().to_path_buf();
-    std::fs::create_dir_all(dir.join("out")).unwrap();
-    std::fs::write(
-        dir.join("isoplane.toml"),
-        "name = \"pinched\"\nlimits = \"enterprise\"\n",
-    )
-    .unwrap();
-    let p = dir.join("out").join("bigmem.wasm");
-    std::fs::write(
-        &p,
-        module_with(
+fn doctor_takes_the_memory_ceiling_from_its_flag() {
+    let (_directory, path) = write_module(
+        "bigmem.wasm",
+        &module_with(
             &[("isoplane", "http_fetch")],
             &[
                 "isoplane_alloc",
@@ -456,18 +447,31 @@ fn doctor_takes_numeric_limits_from_the_app_manifest() {
                 pending_futures_per_dispatch: 4096,
             })),
         ),
-    )
-    .unwrap();
+    );
+    let path = path.to_str().unwrap();
 
-    let out = run(&["doctor", "--no-color", p.to_str().unwrap()]);
+    let default = run(&["doctor", "--no-color", path]);
+    assert_eq!(
+        default.code,
+        Some(2),
+        "the default limits refuses memory only the larger memory ceiling admits: {}",
+        default.stdout
+    );
+    let out = run(&[
+        "doctor",
+        "--no-color",
+        path,
+        "--guest-memory-bytes",
+        "536870912",
+    ]);
     assert_eq!(
         out.code,
         Some(0),
-        "the app's numeric limits admits memory the default limits would refuse: {}",
+        "the selected limits admits memory the default limits refuses: {}",
         out.stdout
     );
     assert!(
-        out.stdout.contains("numeric limits") && out.stdout.contains("isoplane.toml"),
+        out.stdout.contains("numeric limits"),
         "the limits and where it came from are stated: {}",
         out.stdout
     );
@@ -670,149 +674,4 @@ fn invalid_doctor_memory_budgets_name_the_supported_byte_constraints() {
             out.stderr
         );
     }
-}
-
-#[test]
-fn doctor_inherits_the_module_manifests_memory_ceiling_and_reports_its_source() {
-    let (directory, path) = write_module(
-        "large.wasm",
-        &module_with(
-            &[],
-            &[
-                "isoplane_alloc",
-                "isoplane_handle",
-                "isoplane_wake",
-                "memory",
-            ],
-            Some(8192),
-        ),
-    );
-    let manifest = directory.path().join("isoplane.toml");
-    std::fs::write(
-        &manifest,
-        "name='large'\nlimits='standard'\nguest_memory_bytes=536870912\n",
-    )
-    .unwrap();
-    let out = run(&["doctor", "--json", path.to_str().unwrap()]);
-    assert_eq!(
-        out.code,
-        Some(0),
-        "a numeric budgets must not discard the manifest memory ceiling: {}",
-        out.stdout
-    );
-    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-
-    assert_eq!(
-        verdict["guest_memory_bytes"], 536870912_u64,
-        "doctor must apply manifest memory"
-    );
-    assert_eq!(
-        verdict["guest_memory_from"],
-        format!("guest_memory_bytes in {}", manifest.display()),
-        "the verdict must name the memory setting's actual manifest"
-    );
-    let text = run(&["doctor", "--no-color", path.to_str().unwrap()]);
-    assert_eq!(
-        text.code,
-        Some(0),
-        "the inherited policy must also pass text-mode validation"
-    );
-    assert!(
-        text.stdout.contains(&format!(
-            "guest memory ceiling: 536870912 bytes (guest_memory_bytes in {}",
-            manifest.display()
-        )),
-        "text output must identify the inherited memory ceiling: {}",
-        text.stdout
-    );
-}
-
-#[test]
-fn an_explicit_doctor_memory_flag_overrides_the_manifest() {
-    let (directory, path) = write_module(
-        "large.wasm",
-        &module_with(
-            &[],
-            &[
-                "isoplane_alloc",
-                "isoplane_handle",
-                "isoplane_wake",
-                "memory",
-            ],
-            Some(8192),
-        ),
-    );
-    std::fs::write(
-        directory.path().join("isoplane.toml"),
-        "name='large'\nlimits='standard'\nguest_memory_bytes=536870912\n",
-    )
-    .unwrap();
-    let out = run(&[
-        "doctor",
-        "--json",
-        path.to_str().unwrap(),
-        "--guest-memory-bytes",
-        "134217728",
-    ]);
-    assert_eq!(
-        out.code,
-        Some(2),
-        "the smaller flag must override the otherwise admitting manifest"
-    );
-    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(
-        verdict["guest_memory_bytes"], 134217728,
-        "the effective ceiling must come from the flag"
-    );
-    assert_eq!(
-        verdict["guest_memory_from"], "--guest-memory-bytes",
-        "the memory source must identify the winning flag"
-    );
-}
-
-#[test]
-fn a_nearer_manifest_without_memory_does_not_inherit_an_enclosing_apps_budget() {
-    let directory = tempfile::tempdir().unwrap();
-    std::fs::write(
-        directory.path().join("isoplane.toml"),
-        "name='outer'\nguest_memory_bytes=536870912\n",
-    )
-    .unwrap();
-    let nested = directory.path().join("nested");
-    std::fs::create_dir(&nested).unwrap();
-    std::fs::write(
-        nested.join("isoplane.toml"),
-        "name='inner'\nlimits='standard'\n",
-    )
-    .unwrap();
-    let path = nested.join("large.wasm");
-    std::fs::write(
-        &path,
-        module_with(
-            &[],
-            &[
-                "isoplane_alloc",
-                "isoplane_handle",
-                "isoplane_wake",
-                "memory",
-            ],
-            Some(8192),
-        ),
-    )
-    .unwrap();
-    let out = run(&["doctor", "--json", path.to_str().unwrap()]);
-    assert_eq!(
-        out.code,
-        Some(2),
-        "an outer application's ceiling cannot authorize the inner module"
-    );
-    let verdict: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(
-        verdict["guest_memory_from"], "limits",
-        "an absent setting must use the selected limits ceiling"
-    );
-    assert_eq!(
-        verdict["guest_memory_bytes"], 134217728,
-        "the inner app must retain its default memory ceiling"
-    );
 }

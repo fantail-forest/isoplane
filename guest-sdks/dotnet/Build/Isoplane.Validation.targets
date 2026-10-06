@@ -14,9 +14,6 @@
     <IsoplaneCli Condition="'$(IsoplaneCli)' == ''">isoplane</IsoplaneCli>
     <IsoplaneCliAssembly Condition="'$(IsoplaneCliAssembly)' == ''">$(ISOPLANE_CLI_ASSEMBLY)</IsoplaneCliAssembly>
 
-    <!-- Empty: `isoplane doctor` reads the plan from the app's `isoplane.toml`. Not
-         defaulted from IsoplaneMemoryMaxBytes, which is what the module declares
-         rather than what it is allowed to. -->
   </PropertyGroup>
 
   <Target Name="IsoplaneValidateModule"

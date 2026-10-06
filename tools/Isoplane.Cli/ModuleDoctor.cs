@@ -1,8 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Tomlyn;
-using Tomlyn.Model;
 using Isoplane.Native;
 
 namespace Isoplane.Cli;
@@ -34,7 +32,7 @@ internal static class ModuleDoctor
             }
         }
         if (module is null) throw new ArgumentException("Usage: isoplane doctor MODULE [--guest-memory-bytes BYTES] [--json]");
-        var policy = ResolvePolicy(module, memoryBytes);
+        var policy = ResolvePolicy(memoryBytes);
         var report = ModuleValidator.Validate(File.ReadAllBytes(module), JsonSerializer.SerializeToUtf8Bytes(policy.Settings));
         report["limits_from"] = policy.LimitsFrom;
         report["guest_memory_from"] = policy.MemoryFrom;
@@ -49,57 +47,15 @@ internal static class ModuleDoctor
         return arguments[index];
     }
 
-    internal static (Dictionary<string, object> Settings, string LimitsFrom, string MemoryFrom) ResolvePolicy(
-        string module, ulong? memoryBytes)
+    /// <summary>
+    /// The validation policy for a module: numeric budgets and the memory ceiling the flags
+    /// select, and otherwise the platform's defaults.
+    /// </summary>
+    internal static (Dictionary<string, object> Settings, string LimitsFrom, string MemoryFrom) ResolvePolicy(ulong? memoryBytes)
     {
-        var path = FindManifest(Path.GetDirectoryName(module)!) ?? FindManifest(Environment.CurrentDirectory);
-        var manifest = path is null ? null : ReadManifest(path);
         Dictionary<string, object> settings = [];
-        var limitsFrom = "no isoplane.toml found; using the default";
-        if (manifest?.TryGetValue("limits", out var limit) == true)
-        {
-            if (limit is not TomlTable) throw new ArgumentException($"limits in {path} must be a numeric budget table.");
-            settings["limits"] = limit;
-            limitsFrom = $"limits in {path}";
-        }
-        else if (path is not null) limitsFrom = $"{path} declares no `limits`; using the default";
-        var memoryFrom = "limits";
-        if (memoryBytes is not null)
-        {
-            settings["guest_memory_bytes"] = memoryBytes.Value;
-            memoryFrom = "--guest-memory-bytes";
-        }
-        else if (manifest?.TryGetValue("guest_memory_bytes", out var ceiling) == true)
-        {
-            settings["guest_memory_bytes"] = ceiling!;
-            memoryFrom = $"guest_memory_bytes in {path}";
-        }
-        if (manifest?.TryGetValue("validation_limits", out var structural) == true)
-            settings["validation_limits"] = structural!;
-        return (settings, limitsFrom, memoryFrom);
-    }
-
-    private static string? FindManifest(string directory)
-    {
-        for (var current = new DirectoryInfo(directory); current is not null; current = current.Parent)
-        {
-            var path = Path.Combine(current.FullName, "isoplane.toml");
-            if (File.Exists(path)) return path;
-        }
-        return null;
-    }
-
-    private static TomlTable ReadManifest(string path)
-    {
-        try
-        {
-            return TomlSerializer.Deserialize<TomlTable>(File.ReadAllText(path))
-                ?? throw new ArgumentException($"No project settings in {path}.");
-        }
-        catch (TomlException error)
-        {
-            throw new ArgumentException($"Cannot read {path}: {error.Message}", error);
-        }
+        if (memoryBytes is not null) settings["guest_memory_bytes"] = memoryBytes.Value;
+        return (settings, "the default", memoryBytes is null ? "limits" : "--guest-memory-bytes");
     }
 
     private static void Render(string module, JsonObject report)

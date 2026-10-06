@@ -40,7 +40,7 @@ impl<T: 'static> Default for Slot<T> {
 }
 
 /// Stateless entrypoint. Whether an instance is reused between requests or
-/// reset first is `isoplane.toml`'s `lifecycle`.
+/// reset first is the app manifest's `lifecycle`.
 pub trait Handler: Sized + 'static {
     fn new() -> Self;
 

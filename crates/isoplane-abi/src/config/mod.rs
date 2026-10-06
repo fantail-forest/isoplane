@@ -1,4 +1,4 @@
-//! `isoplane.toml`: the app manifest, its resource limits, and
+//! The app manifest, its resource limits, and
 //! the node-level facts the daemon and the command share.
 
 mod lifecycle;

@@ -47,21 +47,13 @@ public sealed class ModuleValidationTests
     }
 
     [Theory]
-    [InlineData(null, 262144UL)]
-    [InlineData(524288UL, 524288UL)]
-    public void doctor_flags_override_only_the_corresponding_manifest_policy(ulong? memory, ulong expectedMemory)
+    [InlineData(524288UL, "the default", "--guest-memory-bytes")]
+    public void each_doctor_flag_selects_only_its_own_policy(ulong? memory, string limitsFrom, string memoryFrom)
     {
-        var directory = Directory.CreateTempSubdirectory("isoplane-policy-");
-        try
-        {
-            File.WriteAllText(Path.Combine(directory.FullName, "isoplane.toml"), "limits = { module_bytes_compressed = 5242880, package_bytes = 52428800, instance_memory_max = 134217728, occupancy_ms_per_http_dispatch = 100, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\nguest_memory_bytes=262144\n");
-            var policy = ModuleDoctor.ResolvePolicy(Path.Combine(directory.FullName, "app.wasm"), memory);
-            var report = ModuleValidator.Validate(Module, JsonSerializer.SerializeToUtf8Bytes(policy.Settings));
-            Assert.True(report["limits"]!["instance_memory_max"]!.GetValue<ulong>() == 134217728UL
-                && report["guest_memory_bytes"]!.GetValue<ulong>() == expectedMemory,
-                "An explicit doctor flag must override its manifest setting without changing the other policy.");
-        }
-        finally { directory.Delete(recursive: true); }
+        var policy = ModuleDoctor.ResolvePolicy(memory);
+        var report = ModuleValidator.Validate(Module, JsonSerializer.SerializeToUtf8Bytes(policy.Settings));
+        Assert.Equal((limitsFrom, memoryFrom), (policy.LimitsFrom, policy.MemoryFrom));
+        if (memory is not null) Assert.Equal(memory.Value, report["guest_memory_bytes"]!.GetValue<ulong>());
     }
 
     [Fact]
@@ -71,10 +63,9 @@ public sealed class ModuleValidationTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try
         {
+            // An empty module: it has none of the exports an application needs.
             var module = Path.Combine(directory.FullName, "module.wasm");
-            await File.WriteAllBytesAsync(module, Module, deadline.Token);
-            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "isoplane.toml"),
-                "limits = { module_bytes_compressed = 5242880, package_bytes = 52428800, instance_memory_max = 134217728, occupancy_ms_per_http_dispatch = 100, subrequests_per_dispatch = 20, pending_futures_per_dispatch = 6 }\n[validation_limits]\nmax_functions=1\n", deadline.Token);
+            await File.WriteAllBytesAsync(module, Convert.FromBase64String("AGFzbQEAAAA="), deadline.Token);
             var start = new ProcessStartInfo("dotnet")
             {
                 WorkingDirectory = directory.FullName,
@@ -82,7 +73,7 @@ public sealed class ModuleValidationTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            foreach (var argument in new[] { typeof(CliPaths).Assembly.Location, "doctor", module, "--json" })
+            foreach (var argument in new[] { typeof(CliPaths).Assembly.Location, "doctor", module, "--guest-memory-bytes", "134217728", "--json" })
                 start.ArgumentList.Add(argument);
             start.Environment["ISOPLANE_CLI"] = Path.Combine(directory.FullName, "nonexistent-isoplane");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start module diagnostics.");
@@ -94,7 +85,7 @@ public sealed class ModuleValidationTests
                 Assert.True(process.ExitCode == 2, $"A rejected module must return the SDK's rejection code: {await errors}");
                 using var report = JsonDocument.Parse(await output);
                 Assert.True(report.RootElement.GetProperty("rejected").GetBoolean(),
-                    "The managed command must resolve manifest policy and return the native validator's verdict.");
+                    "The managed command must apply the selected plan and return the native validator's verdict.");
             }
             finally
             {

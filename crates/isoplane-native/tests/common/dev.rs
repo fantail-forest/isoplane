@@ -323,14 +323,6 @@ impl Drop for Dev {
     }
 }
 
-pub fn manifest(dir: &std::path::Path, extra: &str) {
-    std::fs::write(
-        dir.join("isoplane.toml"),
-        format!("name='local-app'\n{extra}"),
-    )
-    .unwrap();
-}
-
 pub fn guest(body: &str) -> Vec<u8> {
     guest_module(body, None)
 }
