@@ -93,8 +93,9 @@ internal static class ManagedBundle
         var entry = properties.GetProperty("AssemblyName").GetString();
         if (!assemblies.ContainsKey(entry ?? "")) throw new InvalidOperationException("The bundle has no application entry assembly.");
         var factory = properties.GetProperty("IsoplaneApplicationFactory").GetString();
-        if (string.IsNullOrWhiteSpace(factory)) throw new InvalidOperationException("The project must name its application factory.");
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, factory, GuestExecution.Interpreted), BuildJson.Options);
+        ApplicationEntry application = string.IsNullOrWhiteSpace(factory)
+            ? ApplicationEntryDiscovery.Discover(assemblies[entry!].Origin) : new FactoryApplication(factory);
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(new ManagedApplication(entry!, application, GuestExecution.Interpreted), BuildJson.Options);
         var runtime = new SharedRuntime(properties.GetProperty("IsoplaneRuntimeDirectory").GetString() ?? "").Identity;
         var partial = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try

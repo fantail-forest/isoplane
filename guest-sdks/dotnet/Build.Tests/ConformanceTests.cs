@@ -89,7 +89,13 @@ public sealed class ConformanceTests : MsbuildTests
             new XElement("ItemGroup", new XElement("ProjectReference", new XAttribute("Include", Path.Combine(library, "Library.csproj")))),
             new XElement("Import", new XAttribute("Project", Path.Combine(SdkDirectory(), "Build/Isoplane.ManagedBundle.targets"))),
             new XElement("Import", new XAttribute("Project", Path.Combine(directory, "tools/Build/Isoplane.Conformance.targets"))))).Save(project);
-        File.WriteAllText(Path.Combine(application, "Application.cs"), "public static class Application { }");
+        File.WriteAllText(Path.Combine(application, "Application.cs"), """
+            namespace Isoplane { class HttpHandlerAttribute : System.Attribute; class Request; class Response; }
+            public static class Application
+            {
+                [Isoplane.HttpHandler] static System.Threading.Tasks.Task<Isoplane.Response> HandleAsync(Isoplane.Request request) => throw null!;
+            }
+            """);
         var start = Msbuild(project, "-restore");
         start.ArgumentList.Add("-t:Build");
         var result = await Run(start);
@@ -135,6 +141,7 @@ public sealed class ConformanceTests : MsbuildTests
         metadata.AddMethodImport(method, MethodImportAttributes.None, metadata.GetOrAddString("read"),
             metadata.AddModuleReference(metadata.GetOrAddString("platform-only")));
         var runtime = metadata.AddAssemblyReference(metadata.GetOrAddString("System.Runtime"), new Version(10, 0), default, default, 0, default);
+        AddHandler(metadata, runtime);
         foreach (var (ns, type, member) in new[] { ("System.Threading", "Thread", "Start"), ("System.Threading.Tasks", "Task", "Wait") })
         {
             var reference = metadata.AddTypeReference(runtime, metadata.GetOrAddString(ns), metadata.GetOrAddString(type));
@@ -143,5 +150,24 @@ public sealed class ConformanceTests : MsbuildTests
         var bytes = new BlobBuilder();
         new ManagedPEBuilder(new PEHeaderBuilder(), new MetadataRootBuilder(metadata), new BlobBuilder()).Serialize(bytes);
         return bytes.ToArray();
+    }
+
+    /// <summary>The entry an application assembly needs: <c>[HttpHandler] static Task&lt;Response&gt; Handle(Request)</c>.</summary>
+    private static void AddHandler(MetadataBuilder metadata, AssemblyReferenceHandle runtime)
+    {
+        var sdk = metadata.AddAssemblyReference(metadata.GetOrAddString("Isoplane.Sdk"), new Version(1, 0), default, default, 0, default);
+        TypeReferenceHandle Type(EntityHandle scope, string ns, string name) =>
+            metadata.AddTypeReference(scope, metadata.GetOrAddString(ns), metadata.GetOrAddString(name));
+        var signature = new BlobBuilder();
+        new BlobEncoder(signature).MethodSignature().Parameters(1,
+            returns => returns.Type().GenericInstantiation(Type(runtime, "System.Threading.Tasks", "Task`1"), 1, false)
+                .AddArgument().Type(Type(sdk, "Isoplane", "Response"), false),
+            parameters => parameters.AddParameter().Type().Type(Type(sdk, "Isoplane", "Request"), false));
+        var handler = metadata.AddMethodDefinition(MethodAttributes.Static, MethodImplAttributes.IL,
+            metadata.GetOrAddString("Handle"), metadata.GetOrAddBlob(signature), -1, MetadataTokens.ParameterHandle(1));
+        var constructor = new BlobBuilder();
+        new BlobEncoder(constructor).MethodSignature(isInstanceMethod: true).Parameters(0, returns => returns.Void(), _ => { });
+        metadata.AddCustomAttribute(handler, metadata.AddMemberReference(Type(sdk, "Isoplane", "HttpHandlerAttribute"),
+            metadata.GetOrAddString(".ctor"), metadata.GetOrAddBlob(constructor)), metadata.GetOrAddBlob(new byte[] { 1, 0, 0, 0 }));
     }
 }

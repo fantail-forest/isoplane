@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Isoplane.AspNetCore.Tests" />
+    <InternalsVisibleTo Include="Isoplane.MonoRuntime" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Isoplane.Sdk.csproj" />
     <ProjectReference Include="../Conformance/Conformance.csproj" ReferenceOutputAssembly="false" PrivateAssets="all"

@@ -27,6 +27,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <InternalsVisibleTo Include="Isoplane.AspNetCore.Tests" />
     <InternalsVisibleTo Include="Isoplane.AspNetCore" />
+    <InternalsVisibleTo Include="Isoplane.MonoRuntime" />
     <Compile Include="Abi/**/*.cs" Exclude="Abi/Tests/**/*.cs" />
     <Compile Include="Runtime/**/*.cs" />
     <Compile Include="Sdk/**/*.cs" />

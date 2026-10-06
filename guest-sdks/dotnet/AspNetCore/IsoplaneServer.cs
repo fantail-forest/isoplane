@@ -7,19 +7,29 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace Isoplane.AspNetCore;
 
-internal sealed class IsoplaneServer(Func<ResponseTransport> createTransport) : IServer
+internal sealed class IsoplaneServer : IServer
 {
+    private readonly Func<ResponseTransport> createTransport;
+    private readonly IServiceProvider services;
     private Func<IFeatureCollection, Task>? dispatch;
     private Task? started;
 
-    internal Task StartApplicationAsync(WebApplication application) => started ??= StartApplicationCoreAsync(application);
-
-    private static async Task StartApplicationCoreAsync(WebApplication application)
+    public IsoplaneServer(Func<ResponseTransport> createTransport, IServiceProvider services, IHostApplicationLifetime lifetime, ApplicationStartup? startup = null)
     {
-        if (application.Services.GetServices<IHostedService>().Any(service => service is BackgroundService))
-            throw new NotSupportedException("Isoplane ASP.NET does not support BackgroundService work between completed dispatches. Use hosted services for bounded startup work.");
-        await application.StartAsync();
+        this.createTransport = createTransport;
+        this.services = services;
+        startup?.Observe(this, lifetime);
     }
+
+    internal bool Started => dispatch is not null;
+
+    // An entry point that awaits RunAsync has already started its host.
+    internal Task StartApplicationAsync(WebApplication application) =>
+        Started ? Task.CompletedTask : started ??= application.StartAsync();
+
+    /// <summary>Builds the route table now, so a template captures it instead of each instance's first request.</summary>
+    internal void PrimeEndpoints() => _ = services.GetService<Microsoft.AspNetCore.Routing.EndpointDataSource>()?.Endpoints;
+
     public IFeatureCollection Features { get; } = new FeatureCollection();
 
     public Task StartAsync<TContext>(IHttpApplication<TContext> application, CancellationToken cancellationToken)

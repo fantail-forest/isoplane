@@ -17,7 +17,7 @@ internal sealed class LifecycleHook
         await InvokeCallbacksAsync(completing);
     }
 
-    private static async Task InvokeCallbacksAsync(Func<Task>? callbacks)
+    internal static async Task InvokeCallbacksAsync(Func<Task>? callbacks)
     {
         if (callbacks is null) return;
         foreach (Func<Task> callback in callbacks.GetInvocationList())

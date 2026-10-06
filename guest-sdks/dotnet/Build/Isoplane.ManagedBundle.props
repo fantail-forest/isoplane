@@ -2,6 +2,9 @@
   <PropertyGroup>
     <IsoplaneManagedBundleBuild>true</IsoplaneManagedBundleBuild>
     <OutputType>Library</OutputType>
+    <UseAppHost>false</UseAppHost>
+    <!-- An executable for wasi-wasm would otherwise have an installed wasi workload link it a runtime. -->
+    <UsingWasiRuntimeWorkload>false</UsingWasiRuntimeWorkload>
     <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>

@@ -268,14 +268,15 @@ public static unsafe class Exports<TRouter>
     }
 
     /// <summary>
-    /// Logs the operation, application and exception type before trapping.
-    /// Exception types remain available with <c>UseSystemResourceKeys</c> and no stack traces.
+    /// Logs the operation, application and exception before trapping. The host
+    /// reports only that the guest trapped, so this line is what tells an
+    /// application author which of their own failures ended it.
     /// </summary>
     private static long Panic(string operation, Exception e)
     {
         try
         {
-            Log(3, operation + " failed for " + typeof(TRouter).FullName + ": unhandled " + e.GetType().FullName);
+            Log(3, operation + " failed for " + typeof(TRouter).FullName + ": unhandled " + e.GetType().FullName + ": " + e.Message);
         }
         catch
         {
@@ -288,7 +289,7 @@ public static unsafe class Exports<TRouter>
     {
         try
         {
-            Log(3, "unhandled " + e.GetType().FullName);
+            Log(3, "unhandled " + e.GetType().FullName + ": " + e.Message);
         }
         catch
         {

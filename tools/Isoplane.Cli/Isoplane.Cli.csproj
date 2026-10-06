@@ -18,6 +18,7 @@
     <PackageReference Include="Tomlyn" Version="2.10.1" />
     <Compile Include="../BuildProtocol/ManagedApplication.cs" Link="ManagedApplication.cs" />
     <Compile Include="../BuildProtocol/AssemblyClosure.cs" Link="AssemblyClosure.cs" />
+    <Compile Include="../BuildProtocol/ApplicationEntryDiscovery.cs" Link="ApplicationEntryDiscovery.cs" />
     <Compile Include="../BuildProtocol/AssetPaths.cs" Link="AssetPaths.cs" />
     <InternalsVisibleTo Include="Isoplane.Cli.Tests" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.11" />

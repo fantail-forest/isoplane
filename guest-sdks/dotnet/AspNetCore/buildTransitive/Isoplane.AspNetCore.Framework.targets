@@ -38,7 +38,14 @@
           Condition="'$(IsoplaneAspNetCoreProvidedAssemblies)' != 'true'">
     <ItemGroup>
       <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Microsoft.AspNetCore.Http.RequestDelegateGenerator'" />
-      <Analyzer Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.ref/$(IsoplaneAspNetCoreRuntimeVersion)/analyzers/dotnet/cs/Microsoft.AspNetCore.Http.RequestDelegateGenerator.dll" />
+      <!-- The analyzers and generators the removed framework reference would have supplied.
+           One a package already supplies, such as the logging generator, is not added twice. -->
+      <_IsoplaneAspNetAnalyzer Include="$(NuGetPackageRoot)/microsoft.aspnetcore.app.ref/$(IsoplaneAspNetCoreRuntimeVersion)/analyzers/dotnet/cs/*.dll" />
+      <_IsoplaneAspNetAnalyzer Remove="@(Analyzer)" MatchOnMetadata="Filename" MatchOnMetadataOptions="CaseInsensitive" />
+      <!-- As with a framework reference, these two run only where the project enables them. -->
+      <_IsoplaneAspNetAnalyzer Remove="@(_IsoplaneAspNetAnalyzer)" Condition="'%(Filename)' == 'Microsoft.AspNetCore.Http.RequestDelegateGenerator' AND '$(EnableRequestDelegateGenerator)' != 'true'" />
+      <_IsoplaneAspNetAnalyzer Remove="@(_IsoplaneAspNetAnalyzer)" Condition="'%(Filename)' == 'Microsoft.Extensions.Configuration.Binder.SourceGeneration' AND '$(EnableConfigurationBindingGenerator)' != 'true'" />
+      <Analyzer Include="@(_IsoplaneAspNetAnalyzer)" />
     </ItemGroup>
   </Target>
   <Target Name="IsoplaneAspNetCoreTransitiveFramework" AfterTargets="AddTransitiveFrameworkReferences">

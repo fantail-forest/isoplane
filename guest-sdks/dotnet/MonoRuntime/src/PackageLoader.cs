@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 using Isoplane.Build;
 using Isoplane.AspNetCore;
 using Isoplane;
@@ -31,11 +32,10 @@ public static class PackageLoader
 
     /// <summary>
     /// Resolves package assemblies on demand in the default context and returns the
-    /// router the SDK generates for the declared factory, not yet booted.
+    /// router for the entry the package's manifest records, not yet booted.
     /// Throws when the manifest selects another execution mode, when the
-    /// runtime already supplies a package assembly's name, or when the factory
-    /// is not a public static parameterless method returning
-    /// <see cref="IIsoplaneHandler"/>, <see cref="IIsoplaneRouter"/>, or an ASP.NET <c>WebApplication</c>.
+    /// runtime already supplies a package assembly's name, or when the entry
+    /// names a method the entry assembly does not define with the recorded shape.
     /// </summary>
     public static IIsoplaneRouter Load()
     {
@@ -44,7 +44,31 @@ public static class PackageLoader
         Dictionary<string, string> assemblies = Index(context, Path.Combine(Root, "assemblies"));
         context.Resolving += (loading, name) =>
             assemblies.TryGetValue(Key(name), out string? path) ? loading.LoadFromAssemblyPath(path) : null;
-        return CreateRouter(context.LoadFromAssemblyName(new AssemblyName(application.Assembly)), application.Factory);
+        Assembly entry = context.LoadFromAssemblyName(new AssemblyName(application.Assembly));
+        try
+        {
+            return application.Entry switch
+            {
+                EntryPointApplication executable => WebApplications.EntryPoint(Method(entry, executable.Main)),
+                HandlerApplication library => new AttributedHandlerRouter(Method(entry, library.Http),
+                    library.Initializer is null ? null : Method(entry, library.Initializer),
+                    library.Activated is null ? null : Method(entry, library.Activated)),
+                FactoryApplication factory => CreateRouter(entry, factory.Factory),
+                _ => throw Refuse(new PackageManifestException("the application manifest records no entry"))
+            };
+        }
+        catch (ArgumentException error)
+        {
+            throw Refuse(new PackageFactoryException("an application method does not have the shape its attribute requires: " + error.Message));
+        }
+    }
+
+    private static MethodInfo Method(Assembly entry, MethodReference reference)
+    {
+        const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        MethodInfo[] methods = entry.GetType(reference.Type)?.GetMethods(Declared).Where(method => method.Name == reference.Method).ToArray() ?? [];
+        return methods.Length == 1 ? methods[0]
+            : throw Refuse(new PackageFactoryException($"'{reference}' is not one static method of '{entry.GetName().Name}'"));
     }
 
     private static ManagedApplication ReadManifest()
@@ -154,6 +178,17 @@ internal static class WebApplications
         if (method.ReturnType != typeof(WebApplication))
             throw PackageLoader.Refuse(new PackageFactoryException($"'{factory}' returns a WebApplication the runtime's ASP.NET adapter does not bind"));
         return new WebApplicationRouter(method.CreateDelegate<Func<WebApplication>>());
+    }
+
+    /// <summary>The router for an executable's asynchronous entry point.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static IIsoplaneRouter EntryPoint(MethodInfo main)
+    {
+        if (!typeof(Task).IsAssignableFrom(main.ReturnType))
+            throw PackageLoader.Refuse(new PackageFactoryException($"the entry point '{main.DeclaringType?.FullName}.{main.Name}' does not return a Task"));
+        object?[]? arguments = main.GetParameters().Length == 0 ? null : [Array.Empty<string>()];
+        return new EntryPointRouter(() => (Task)main.Invoke(null, BindingFlags.DoNotWrapExceptions, null, arguments, null)!,
+            main.Module.Assembly.GetName().Name!);
     }
 }
 

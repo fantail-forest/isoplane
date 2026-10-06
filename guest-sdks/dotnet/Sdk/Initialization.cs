@@ -21,7 +21,18 @@ public static class Initialization
     /// </remarks>
     public static event Func<Task>? Initializing;
 
+    internal static event Func<Task>? Starting;
+
     internal static event Func<Task>? Completing;
 
-    internal static Task EnterAsync() => Hook.EnterAsync(Initializing, Completing);
+    internal static Task EnterAsync() => Hook.EnterAsync(RunStagesAsync);
+
+    // Each stage reads its subscribers when it begins: an entry point that
+    // awaits before subscribing is still resumed by Starting first.
+    private static async Task RunStagesAsync()
+    {
+        await LifecycleHook.InvokeCallbacksAsync(Starting);
+        await LifecycleHook.InvokeCallbacksAsync(Initializing);
+        await LifecycleHook.InvokeCallbacksAsync(Completing);
+    }
 }
