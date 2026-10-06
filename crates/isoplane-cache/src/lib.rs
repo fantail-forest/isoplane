@@ -52,6 +52,9 @@ pub struct Cache {
 
 type LocalEntries = Mutex<HashMap<PathBuf, Weak<File>>>;
 
+/// Where evicted entries wait until all their files can be deleted.
+const EVICTED: &str = ".evicted";
+
 fn local_entries(root: &Path) -> Arc<LocalEntries> {
     static ROOTS: OnceLock<Mutex<HashMap<PathBuf, Weak<LocalEntries>>>> = OnceLock::new();
     let mut roots = ROOTS.get_or_init(Mutex::default).lock();
@@ -138,9 +141,12 @@ impl Cache {
 
     /// Evict least-recently-used inactive entries until the budget is met.
     /// Active entries may exceed the budget; releasing their leases retries eviction.
+    /// An evicted entry frees its key at once. Files the filesystem cannot
+    /// delete yet are deleted by a later call.
     pub fn prune(&self) -> Result<(), Error> {
         let mut gate = self.catalog()?;
         gate.entries.retain(|_, file| file.strong_count() != 0);
+        self.delete_evicted_entries()?;
         let entries = self.root.clone();
         let mut inventory = Vec::new();
         for entry in fs::read_dir(&entries).map_err(|error| io(&entries, error))? {
@@ -172,10 +178,65 @@ impl Cache {
             }
             // The catalog excludes new readers while Windows requires closing before deletion.
             drop(file);
-            fs::remove_dir_all(&path).map_err(|error| io(&path, error))?;
+            self.evict(&path)?;
             total -= bytes;
         }
         Ok(())
+    }
+
+    /// Moves an entry out of its key before deleting it. Deleting in place
+    /// could stop after the lease marker was gone, and a directory without its
+    /// marker is refused as unowned by every later lease of that key. NFS
+    /// stops there whenever another process still has a file open, such as a
+    /// child spawned while the entry was leased.
+    fn evict(&self, entry: &Path) -> Result<(), Error> {
+        let evicted = self.root.join(EVICTED);
+        directory(&evicted)?;
+        let mut number = 0_u32;
+        let destination = loop {
+            let candidate = evicted.join(number.to_string());
+            if fs::symlink_metadata(&candidate).is_err() {
+                break candidate;
+            }
+            number += 1;
+        };
+        fs::rename(entry, &destination).map_err(|error| io(entry, error))?;
+        delete_evicted(&destination);
+        Ok(())
+    }
+
+    /// Retries the deletions earlier evictions could not finish.
+    fn delete_evicted_entries(&self) -> Result<(), Error> {
+        let evicted = self.root.join(EVICTED);
+        if evicted.is_symlink() {
+            return Err(Error::Unowned(evicted));
+        }
+        let entries = match fs::read_dir(&evicted) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(io(&evicted, error)),
+        };
+        for entry in entries {
+            delete_evicted(&entry.map_err(|error| io(&evicted, error))?.path());
+        }
+        Ok(())
+    }
+}
+
+/// Deletes an evicted entry, leaving what cannot be deleted yet for the next attempt.
+fn delete_evicted(path: &Path) {
+    // macOS keeps a `._name` file beside an entry on filesystems without
+    // extended attributes, and deletes it with the entry.
+    let deleted = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(error) => Err(error),
+    };
+    match deleted {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            tracing::warn!(%error, path = %path.display(), "evicted cache entry is not fully deleted yet");
+        }
+        Ok(()) | Err(_) => {}
     }
 }
 
@@ -190,7 +251,14 @@ impl Drop for Lease {
     fn drop(&mut self) {
         {
             let _gate = self.cache.entries.lock();
-            drop(self.file.take());
+            // The last reader unlocks instead of leaving that to the close: a child
+            // process spawned while the lease was held keeps the open file, and
+            // with it the lock, until it executes its program.
+            if let Some(file) = self.file.take().and_then(Arc::into_inner) {
+                if let Err(error) = fs4::FileExt::unlock(&file) {
+                    tracing::warn!(%error, directory = %self.directory.display(), "artifact cache lease release failed");
+                }
+            }
         }
         if let Err(error) = self.cache.prune() {
             tracing::warn!(%error, "artifact cache retention failed");
@@ -268,6 +336,103 @@ mod tests {
         assert!(
             !path.exists(),
             "releasing the final reader must reclaim over-budget artifacts automatically"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_process_holding_a_released_lease_file_does_not_delay_reclamation() {
+        const CHILD: &str = "ISOPLANE_CACHE_TEST_HOLDS_LEASE_FILE";
+        if std::env::var_os(CHILD).is_some() {
+            // Keeps its inherited copy of the lease file open until the parent closes this pipe.
+            std::io::copy(&mut std::io::stdin(), &mut std::io::sink()).unwrap();
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
+        let reader = cache.lease(CacheKey([1; 32])).unwrap();
+        let path = reader.directory().to_path_buf();
+        fs::write(path.join("module.cwasm"), b"compiled").unwrap();
+        // Any process spawned while a lease is held shares its open lease file
+        // from its fork until it executes. Passing the file as standard error
+        // keeps it open for the child's whole life.
+        let inherited = reader.file.as_ref().unwrap().try_clone().unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "tests::a_child_process_holding_a_released_lease_file_does_not_delay_reclamation",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(inherited);
+        let mut child = command.spawn().unwrap();
+        drop(command);
+        drop(reader);
+        let reclaimed = !path.exists();
+        drop(child.stdin.take());
+        assert!(
+            child.wait().unwrap().success(),
+            "the child must hold the lease file until released"
+        );
+        assert!(
+            reclaimed,
+            "releasing the final reader must reclaim its artifact while a child process still holds the lease file open"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_that_cannot_be_deleted_yet_frees_its_key() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
+        let reader = cache.lease(CacheKey([1; 32])).unwrap();
+        let path = reader.directory().to_path_buf();
+        // One of these stops the deletion on any filesystem: a directory that
+        // refuses changes where permissions are enforced, and a file that is
+        // still open on NFS.
+        let sealed = path.join("sealed");
+        fs::create_dir(&sealed).unwrap();
+        fs::write(sealed.join("module.cwasm"), b"compiled").unwrap();
+        let open = File::open(sealed.join("module.cwasm")).unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o500)).unwrap();
+        drop(reader);
+        let waiting = root.path().join(EVICTED).join("0");
+        assert!(
+            waiting.join("sealed").is_dir() && !path.exists(),
+            "an entry whose files cannot all be deleted must wait outside its key"
+        );
+        let again = cache
+            .lease(CacheKey([1; 32]))
+            .expect("the key must be leasable while its evicted entry waits for deletion");
+        assert!(
+            !again.directory().join("sealed").exists(),
+            "a new lease of the key must start from an empty entry"
+        );
+        fs::write(again.directory().join("module.cwasm"), b"compiled").unwrap();
+        drop(again);
+        assert!(
+            !path.exists() && waiting.is_dir() && !waiting.with_file_name("1").exists(),
+            "a later eviction must complete beside the one still waiting"
+        );
+        drop(open);
+        fs::set_permissions(waiting.join("sealed"), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn a_later_prune_deletes_what_an_eviction_left_behind() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::new(root.path().into(), CacheBytes(0)).unwrap();
+        let left = root.path().join(EVICTED).join("0");
+        fs::create_dir_all(&left).unwrap();
+        fs::write(left.join("module.cwasm"), b"compiled").unwrap();
+        cache.prune().unwrap();
+        assert!(
+            !left.exists(),
+            "retention must delete an evicted entry an earlier attempt left behind"
         );
     }
 
