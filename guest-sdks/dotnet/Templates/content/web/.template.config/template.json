@@ -2,7 +2,7 @@
   "$schema": "http://json.schemastore.org/template",
   "author": "Isoplane",
   "classifications": ["Web", "Isoplane", "Empty"],
-  "identity": "Isoplane.Templates.Web",
+  "identity": "Isoplane.Templates.AspNetCore",
   "name": "Isoplane ASP.NET Core Empty",
   "description": "An empty ASP.NET Core application that runs in the Isoplane sandbox.",
   "shortName": "isoplane-web",
