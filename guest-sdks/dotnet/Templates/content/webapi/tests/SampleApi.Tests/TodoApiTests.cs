@@ -56,9 +56,8 @@ public sealed class TodoApiTests(SandboxFixture sandbox)
         using var completed = await sandbox.Client.PutAsJsonAsync($"/todos/{todo.Id}", new UpdateTodo(todo.Title, IsComplete: true));
         Assert.True(completed.IsSuccessStatusCode, sandbox.Diagnostics);
 
-        var notification = System.Text.Json.JsonSerializer.Deserialize<CompletionNotification>(
-            await sandbox.Webhook.NextAsync(TimeSpan.FromSeconds(30)), System.Text.Json.JsonSerializerOptions.Web)!;
-        Assert.Equal(todo.Id, notification.Id);
+        var notification = await sandbox.Webhook.ReceiveAsync<CompletionNotification>(
+            delivery => delivery.Id == todo.Id, TimeSpan.FromSeconds(30));
         Assert.Equal("Notify someone", notification.Title);
     }
 

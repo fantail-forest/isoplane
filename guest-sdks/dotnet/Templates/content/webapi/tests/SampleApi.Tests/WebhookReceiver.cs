@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Channels;
+using System.Text.Json;
 
 namespace SampleApi.Tests;
 
@@ -8,8 +8,9 @@ namespace SampleApi.Tests;
 public sealed class WebhookReceiver : IAsyncDisposable
 {
     private readonly HttpListener listener = new();
-    private readonly Channel<string> received = Channel.CreateUnbounded<string>();
+    private readonly List<string> received = [];
     private readonly Task listening;
+    private TaskCompletionSource arrival = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public WebhookReceiver()
     {
@@ -21,11 +22,34 @@ public sealed class WebhookReceiver : IAsyncDisposable
 
     public Uri Url { get; }
 
-    /// <summary>Waits for the next posted body.</summary>
-    public async Task<string> NextAsync(TimeSpan timeout)
+    /// <summary>
+    /// Waits for a posted body that <paramref name="matches"/>. The tests share one
+    /// receiver, so each names the delivery it expects instead of taking the next to arrive.
+    /// </summary>
+    /// <exception cref="TimeoutException">No matching body arrived within <paramref name="timeout"/>.</exception>
+    public async Task<T> ReceiveAsync<T>(Func<T, bool> matches, TimeSpan timeout)
     {
         using var deadline = new CancellationTokenSource(timeout);
-        return await received.Reader.ReadAsync(deadline.Token);
+        var examined = 0;
+        while (true)
+        {
+            string[] bodies;
+            Task next;
+            lock (received)
+            {
+                bodies = [.. received.Skip(examined)];
+                next = arrival.Task;
+            }
+            examined += bodies.Length;
+            foreach (var body in bodies)
+                if (JsonSerializer.Deserialize<T>(body, JsonSerializerOptions.Web) is { } delivery && matches(delivery))
+                    return delivery;
+            try { await next.WaitAsync(deadline.Token); }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException($"None of the {examined} webhook deliveries received within {timeout} matched.");
+            }
+        }
     }
 
     private async Task ListenAsync()
@@ -35,11 +59,23 @@ public sealed class WebhookReceiver : IAsyncDisposable
             HttpListenerContext context;
             try { context = await listener.GetContextAsync(); }
             catch (Exception stopped) when (stopped is HttpListenerException or ObjectDisposedException) { return; }
-            using (var body = new StreamReader(context.Request.InputStream))
-                received.Writer.TryWrite(await body.ReadToEndAsync());
+            using (var reader = new StreamReader(context.Request.InputStream))
+                Record(await reader.ReadToEndAsync());
             context.Response.StatusCode = (int)HttpStatusCode.NoContent;
             context.Response.Close();
         }
+    }
+
+    private void Record(string body)
+    {
+        TaskCompletionSource arrived;
+        lock (received)
+        {
+            received.Add(body);
+            arrived = arrival;
+            arrival = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        arrived.SetResult();
     }
 
     private static int FreePort()
