@@ -60,10 +60,12 @@ async fn activation_finishes_before_dispatch(runtime: GuestRuntime) {
     cell.set_runtime_configuration(
         "tenant",
         &module,
-        RuntimeConfiguration::from_json(br#"{"activation-timer":"enabled"}"#)
-            .expect("the activation timer fixture setting must be valid"),
+        // The guest is not pre-initialized here, so its initializer runs before
+        // the first dispatch and reads `probe`.
+        RuntimeConfiguration::from_json(br#"{"activation-timer":"enabled","probe":"unprepared"}"#)
+            .expect("the activation fixture settings must be valid"),
     )
-    .expect("the activation fixture must receive its timer setting");
+    .expect("the activation fixture must receive its settings");
 
     let mut first_instance = None;
     for _ in 0..2 {
